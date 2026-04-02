@@ -3,8 +3,8 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
-use sui_core::{Color, Error, Rect, Result, Size, WindowId};
-use sui_scene::{Brush, SceneCommand, SceneFrame};
+use sui_core::{Color, Error, Rect, Result, Size, Transform, WindowId};
+use sui_scene::{Brush, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle};
 use winit::window::Window;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,6 +464,7 @@ impl Vertex {
 fn build_vertices(frame: &SceneFrame) -> Vec<Vertex> {
     let viewport = frame.viewport;
     let mut vertices = Vec::new();
+    let mut state = SceneRasterState::default();
 
     for command in frame.scene.commands() {
         match command {
@@ -477,10 +478,45 @@ fn build_vertices(frame: &SceneFrame) -> Vec<Vertex> {
             }
             SceneCommand::FillRect { rect, brush } => {
                 let Brush::Solid(color) = brush;
-                append_rect(&mut vertices, *rect, *color, viewport);
+                append_painted_rect(&mut vertices, &state, *rect, *color, viewport);
+            }
+            SceneCommand::StrokeRect {
+                rect,
+                brush,
+                stroke,
+            } => {
+                let Brush::Solid(color) = brush;
+                append_stroke_rect(&mut vertices, &state, *rect, *color, *stroke, viewport);
+            }
+            SceneCommand::DrawText(text) => {
+                append_text_run(&mut vertices, &state, text, viewport);
+            }
+            SceneCommand::DrawImage { rect, source } => {
+                append_image_placeholder(&mut vertices, &state, *rect, source, viewport);
+            }
+            SceneCommand::PushClip { rect } => {
+                state.push_clip(*rect);
+            }
+            SceneCommand::PopClip => {
+                state.pop_clip();
+            }
+            SceneCommand::PushTransform { transform } => {
+                state.push_transform(*transform);
+            }
+            SceneCommand::PopTransform => {
+                state.pop_transform();
             }
             SceneCommand::Label { rect, text, color } => {
-                append_label(&mut vertices, *rect, text, *color, viewport);
+                append_text_run(
+                    &mut vertices,
+                    &state,
+                    &TextRun {
+                        rect: *rect,
+                        text: text.clone(),
+                        style: TextStyle::new(*color),
+                    },
+                    viewport,
+                );
             }
         }
     }
@@ -488,33 +524,207 @@ fn build_vertices(frame: &SceneFrame) -> Vec<Vertex> {
     vertices
 }
 
-fn append_label(vertices: &mut Vec<Vertex>, rect: Rect, text: &str, color: Color, viewport: Size) {
+#[derive(Debug, Clone)]
+struct SceneRasterState {
+    current_transform: Transform,
+    transform_stack: Vec<Transform>,
+    clip_stack: Vec<Rect>,
+}
+
+impl Default for SceneRasterState {
+    fn default() -> Self {
+        Self {
+            current_transform: Transform::IDENTITY,
+            transform_stack: Vec::new(),
+            clip_stack: Vec::new(),
+        }
+    }
+}
+
+impl SceneRasterState {
+    fn push_clip(&mut self, rect: Rect) {
+        let transformed = self.current_transform.transform_rect_bbox(rect);
+        let clip = match self.current_clip() {
+            Some(current) => current.intersection(transformed).unwrap_or(Rect::ZERO),
+            None => transformed,
+        };
+        self.clip_stack.push(clip);
+    }
+
+    fn pop_clip(&mut self) {
+        let _ = self.clip_stack.pop();
+    }
+
+    fn push_transform(&mut self, transform: Transform) {
+        self.transform_stack.push(self.current_transform);
+        self.current_transform = self.current_transform.then(transform);
+    }
+
+    fn pop_transform(&mut self) {
+        self.current_transform = self.transform_stack.pop().unwrap_or(Transform::IDENTITY);
+    }
+
+    fn current_clip(&self) -> Option<Rect> {
+        self.clip_stack.last().copied()
+    }
+
+    fn visible_rect(&self, rect: Rect) -> Option<Rect> {
+        let transformed = self.current_transform.transform_rect_bbox(rect);
+
+        match self.current_clip() {
+            Some(clip) => transformed.intersection(clip),
+            None => Some(transformed),
+        }
+    }
+}
+
+fn append_text_run(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    text: &TextRun,
+    viewport: Size,
+) {
+    let rect = text.rect;
+    let color = text.style.color;
+
     if rect.is_empty() {
         return;
     }
 
-    let visible_chars = text.chars().filter(|ch| !ch.is_whitespace()).count().max(1) as f32;
-    let full_width = (visible_chars * 10.0).min(rect.width());
+    let visible_chars = text
+        .text
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .count()
+        .max(1) as f32;
+    let glyph_width = (text.style.font_size * 0.62).max(4.0);
+    let full_width = (visible_chars * glyph_width).min(rect.width());
+    let top_band_height = (text.style.font_size * 0.28).min(rect.height() * 0.45);
+    let lower_band_height = (text.style.line_height * 0.16).min(rect.height() * 0.35);
     let primary = Rect::new(
         rect.x(),
         rect.y() + rect.height() * 0.2,
         full_width,
-        rect.height() * 0.22,
+        top_band_height,
     );
     let secondary = Rect::new(
         rect.x(),
         rect.y() + rect.height() * 0.58,
         (full_width * 0.7).max(rect.width() * 0.25),
-        rect.height() * 0.18,
+        lower_band_height,
     );
 
-    append_rect(vertices, primary, color, viewport);
-    append_rect(
+    append_painted_rect(vertices, state, primary, color, viewport);
+    append_painted_rect(
         vertices,
+        state,
         secondary,
         color.with_alpha((color.alpha * 0.8).clamp(0.0, 1.0)),
         viewport,
     );
+}
+
+fn append_image_placeholder(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    rect: Rect,
+    source: &sui_scene::ImageSource,
+    viewport: Size,
+) {
+    if rect.is_empty() {
+        return;
+    }
+
+    let seed = source.image.get() as f32;
+    let fallback = Color::rgba(
+        ((seed * 0.17).sin() * 0.25) + 0.45,
+        ((seed * 0.11).cos() * 0.20) + 0.45,
+        ((seed * 0.07).sin() * 0.15) + 0.50,
+        0.85,
+    )
+    .clamped();
+    let fill = source
+        .tint
+        .map(|tint| tint.with_alpha((tint.alpha * 0.35).clamp(0.18, 0.65)))
+        .unwrap_or(fallback);
+    let border = source.tint.unwrap_or(Color::WHITE).with_alpha(0.95);
+
+    append_painted_rect(vertices, state, rect, fill, viewport);
+    append_stroke_rect(
+        vertices,
+        state,
+        rect,
+        border,
+        StrokeStyle::new(1.5),
+        viewport,
+    );
+
+    let inset = rect.inflate(-rect.width() * 0.18, -rect.height() * 0.18);
+    if !inset.is_empty() {
+        append_painted_rect(
+            vertices,
+            state,
+            Rect::new(
+                inset.x(),
+                inset.y(),
+                inset.width(),
+                (inset.height() * 0.24).max(1.0),
+            ),
+            border.with_alpha(0.35),
+            viewport,
+        );
+    }
+}
+
+fn append_stroke_rect(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    rect: Rect,
+    color: Color,
+    stroke: StrokeStyle,
+    viewport: Size,
+) {
+    if rect.is_empty() {
+        return;
+    }
+
+    let thickness = stroke
+        .width
+        .max(1.0)
+        .min((rect.width() * 0.5).max(1.0))
+        .min((rect.height() * 0.5).max(1.0));
+
+    let top = Rect::new(rect.x(), rect.y(), rect.width(), thickness);
+    let bottom = Rect::new(rect.x(), rect.max_y() - thickness, rect.width(), thickness);
+    let left = Rect::new(
+        rect.x(),
+        rect.y() + thickness,
+        thickness,
+        (rect.height() - (thickness * 2.0)).max(0.0),
+    );
+    let right = Rect::new(
+        rect.max_x() - thickness,
+        rect.y() + thickness,
+        thickness,
+        (rect.height() - (thickness * 2.0)).max(0.0),
+    );
+
+    append_painted_rect(vertices, state, top, color, viewport);
+    append_painted_rect(vertices, state, bottom, color, viewport);
+    append_painted_rect(vertices, state, left, color, viewport);
+    append_painted_rect(vertices, state, right, color, viewport);
+}
+
+fn append_painted_rect(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    rect: Rect,
+    color: Color,
+    viewport: Size,
+) {
+    if let Some(visible) = state.visible_rect(rect) {
+        append_rect(vertices, visible, color, viewport);
+    }
 }
 
 fn append_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, viewport: Size) {
@@ -621,3 +831,67 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return in.color;
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::{build_vertices, to_ndc};
+    use sui_core::{Color, Rect, Size, Transform, WindowId};
+    use sui_scene::{Scene, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle};
+
+    #[test]
+    fn build_vertices_applies_clip_and_transform_to_fill_rects() {
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::PushTransform {
+            transform: Transform::translation(10.0, 5.0),
+        });
+        scene.push(SceneCommand::PushClip {
+            rect: Rect::new(0.0, 0.0, 16.0, 12.0),
+        });
+        scene.push(SceneCommand::FillRect {
+            rect: Rect::new(4.0, 3.0, 20.0, 10.0),
+            brush: Color::WHITE.into(),
+        });
+
+        let vertices = build_vertices(&SceneFrame {
+            window_id: WindowId::new(1),
+            viewport: Size::new(100.0, 100.0),
+            dirty_regions: Vec::new(),
+            scene,
+        });
+
+        assert_eq!(vertices.len(), 6);
+        assert_eq!(
+            vertices[0].position,
+            to_ndc(14.0, 8.0, Size::new(100.0, 100.0))
+        );
+        assert_eq!(
+            vertices[5].position,
+            to_ndc(26.0, 17.0, Size::new(100.0, 100.0))
+        );
+    }
+
+    #[test]
+    fn build_vertices_supports_text_and_stroke_primitives() {
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(4.0, 6.0, 80.0, 24.0),
+            text: "scene".to_string(),
+            style: TextStyle::new(Color::WHITE),
+        }));
+        scene.push(SceneCommand::StrokeRect {
+            rect: Rect::new(2.0, 2.0, 20.0, 10.0),
+            brush: Color::rgba(1.0, 0.0, 0.0, 1.0).into(),
+            stroke: StrokeStyle::new(2.0),
+        });
+
+        let vertices = build_vertices(&SceneFrame {
+            window_id: WindowId::new(2),
+            viewport: Size::new(100.0, 80.0),
+            dirty_regions: Vec::new(),
+            scene,
+        });
+
+        assert!(!vertices.is_empty());
+        assert!(vertices.len() >= 30);
+    }
+}

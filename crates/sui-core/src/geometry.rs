@@ -222,9 +222,125 @@ impl Rect {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transform {
+    pub xx: f32,
+    pub yx: f32,
+    pub xy: f32,
+    pub yy: f32,
+    pub dx: f32,
+    pub dy: f32,
+}
+
+impl Transform {
+    pub const IDENTITY: Self = Self::new(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+
+    pub const fn new(xx: f32, yx: f32, xy: f32, yy: f32, dx: f32, dy: f32) -> Self {
+        Self {
+            xx,
+            yx,
+            xy,
+            yy,
+            dx,
+            dy,
+        }
+    }
+
+    pub const fn translation(x: f32, y: f32) -> Self {
+        Self::new(1.0, 0.0, 0.0, 1.0, x, y)
+    }
+
+    pub const fn translation_vector(delta: Vector) -> Self {
+        Self::translation(delta.x, delta.y)
+    }
+
+    pub const fn scale(x: f32, y: f32) -> Self {
+        Self::new(x, 0.0, 0.0, y, 0.0, 0.0)
+    }
+
+    pub fn rotation(radians: f32) -> Self {
+        let (sin, cos) = radians.sin_cos();
+        Self::new(cos, sin, -sin, cos, 0.0, 0.0)
+    }
+
+    pub const fn is_identity(self) -> bool {
+        self.xx == 1.0
+            && self.yx == 0.0
+            && self.xy == 0.0
+            && self.yy == 1.0
+            && self.dx == 0.0
+            && self.dy == 0.0
+    }
+
+    pub fn then(self, next: Self) -> Self {
+        Self::new(
+            (next.xx * self.xx) + (next.xy * self.yx),
+            (next.yx * self.xx) + (next.yy * self.yx),
+            (next.xx * self.xy) + (next.xy * self.yy),
+            (next.yx * self.xy) + (next.yy * self.yy),
+            (next.xx * self.dx) + (next.xy * self.dy) + next.dx,
+            (next.yx * self.dx) + (next.yy * self.dy) + next.dy,
+        )
+    }
+
+    pub fn transform_point(self, point: Point) -> Point {
+        Point::new(
+            (self.xx * point.x) + (self.xy * point.y) + self.dx,
+            (self.yx * point.x) + (self.yy * point.y) + self.dy,
+        )
+    }
+
+    pub fn transform_vector(self, vector: Vector) -> Vector {
+        Vector::new(
+            (self.xx * vector.x) + (self.xy * vector.y),
+            (self.yx * vector.x) + (self.yy * vector.y),
+        )
+    }
+
+    pub fn transform_rect_bbox(self, rect: Rect) -> Rect {
+        if rect.is_empty() {
+            return rect;
+        }
+
+        let top_left = self.transform_point(rect.origin);
+        let top_right = self.transform_point(Point::new(rect.max_x(), rect.y()));
+        let bottom_left = self.transform_point(Point::new(rect.x(), rect.max_y()));
+        let bottom_right = self.transform_point(Point::new(rect.max_x(), rect.max_y()));
+
+        let min_x = top_left
+            .x
+            .min(top_right.x)
+            .min(bottom_left.x)
+            .min(bottom_right.x);
+        let min_y = top_left
+            .y
+            .min(top_right.y)
+            .min(bottom_left.y)
+            .min(bottom_right.y);
+        let max_x = top_left
+            .x
+            .max(top_right.x)
+            .max(bottom_left.x)
+            .max(bottom_right.x);
+        let max_y = top_left
+            .y
+            .max(top_right.y)
+            .max(bottom_left.y)
+            .max(bottom_right.y);
+
+        Rect::from_points(Point::new(min_x, min_y), Point::new(max_x, max_y))
+    }
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Point, Rect, Vector};
+    use super::{Point, Rect, Transform, Vector};
 
     #[test]
     fn point_and_vector_math_is_stable() {
@@ -244,5 +360,26 @@ mod tests {
             left.intersection(right),
             Some(Rect::new(8.0, 2.0, 2.0, 8.0))
         );
+    }
+
+    #[test]
+    fn transform_composition_applies_in_order() {
+        let transform = Transform::scale(2.0, 3.0).then(Transform::translation(5.0, 7.0));
+
+        assert_eq!(
+            transform.transform_point(Point::new(4.0, 2.0)),
+            Point::new(13.0, 13.0)
+        );
+    }
+
+    #[test]
+    fn transform_rect_bbox_covers_rotated_rect() {
+        let rect = Rect::new(0.0, 0.0, 10.0, 4.0);
+        let bbox = Transform::rotation(std::f32::consts::FRAC_PI_2).transform_rect_bbox(rect);
+
+        assert!((bbox.x() + 4.0).abs() < 0.001);
+        assert!(bbox.y().abs() < 0.001);
+        assert!((bbox.width() - 4.0).abs() < 0.001);
+        assert!((bbox.height() - 10.0).abs() < 0.001);
     }
 }

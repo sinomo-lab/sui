@@ -15,7 +15,7 @@ pub use event::{
     PointerButtons, PointerEvent, PointerEventKind, PointerKind, ScrollDelta, WakeEvent,
     WindowEvent,
 };
-pub use geometry::{Point, Rect, Size, Vector};
+pub use geometry::{Point, Rect, Size, Transform, Vector};
 pub use id::{AsyncWakeToken, FontHandle, ImageHandle, SurfaceId, TimerToken, WidgetId, WindowId};
 pub use invalidation::{DirtyRegion, InvalidationKind, InvalidationRequest, InvalidationTarget};
 pub use semantics::{

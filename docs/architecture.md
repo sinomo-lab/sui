@@ -214,6 +214,8 @@ The current `Scene` and `SceneFrame` types are a minimal version of the right id
 - paint bounds for invalidation and culling
 - optional debug and diagnostic annotations
 
+The workspace now has the first concrete step in that direction: `sui-scene` supports explicit text runs, image draws, stroke rectangles, and clip/transform stack commands in addition to fills and clears. The current `sui-render-wgpu` backend still rasterizes text and images as placeholders, but the scene boundary no longer hardcodes labels as the only non-rectangular visual primitive.
+
 `SceneFrame` should remain immutable once produced so render backends can consume it safely and so tooling can inspect a stable snapshot.
 
 ## Semantics Architecture

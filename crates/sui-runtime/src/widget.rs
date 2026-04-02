@@ -2,10 +2,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sui_core::{
     AsyncWakeToken, Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
-    Rect, SemanticsNode, Size, TimerToken, WidgetId, WindowId,
+    Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{Brush, Scene, SceneCommand};
+use sui_scene::{Brush, ImageSource, Scene, SceneCommand, StrokeStyle, TextRun, TextStyle};
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TIMER_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -734,12 +734,59 @@ impl PaintCtx {
         self.fill_rect(self.bounds, brush);
     }
 
-    pub fn label(&mut self, rect: Rect, text: impl Into<String>, color: Color) {
-        self.scene.push(SceneCommand::Label {
+    pub fn stroke_rect(&mut self, rect: Rect, brush: impl Into<Brush>, stroke: StrokeStyle) {
+        self.scene.push(SceneCommand::StrokeRect {
+            rect,
+            brush: brush.into(),
+            stroke,
+        });
+    }
+
+    pub fn stroke_bounds(&mut self, brush: impl Into<Brush>, stroke: StrokeStyle) {
+        self.stroke_rect(self.bounds, brush, stroke);
+    }
+
+    pub fn draw_text(&mut self, rect: Rect, text: impl Into<String>, style: TextStyle) {
+        self.scene.push(SceneCommand::DrawText(TextRun {
             rect,
             text: text.into(),
-            color,
+            style,
+        }));
+    }
+
+    pub fn label(&mut self, rect: Rect, text: impl Into<String>, color: Color) {
+        self.draw_text(rect, text, TextStyle::new(color));
+    }
+
+    pub fn draw_image(&mut self, rect: Rect, image: sui_core::ImageHandle) {
+        self.scene.push(SceneCommand::DrawImage {
+            rect,
+            source: ImageSource::new(image),
         });
+    }
+
+    pub fn draw_image_source(&mut self, rect: Rect, source: ImageSource) {
+        self.scene.push(SceneCommand::DrawImage { rect, source });
+    }
+
+    pub fn push_clip_rect(&mut self, rect: Rect) {
+        self.scene.push(SceneCommand::PushClip { rect });
+    }
+
+    pub fn pop_clip(&mut self) {
+        self.scene.push(SceneCommand::PopClip);
+    }
+
+    pub fn push_transform(&mut self, transform: Transform) {
+        self.scene.push(SceneCommand::PushTransform { transform });
+    }
+
+    pub fn translate(&mut self, delta: Vector) {
+        self.push_transform(Transform::translation_vector(delta));
+    }
+
+    pub fn pop_transform(&mut self) {
+        self.scene.push(SceneCommand::PopTransform);
     }
 
     pub fn push(&mut self, command: SceneCommand) {
@@ -874,9 +921,11 @@ mod tests {
         WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
     };
     use sui_core::{
-        Color, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole, WidgetId, WindowId,
+        Color, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole, Vector, WidgetId,
+        WindowId,
     };
     use sui_layout::Constraints;
+    use sui_scene::{SceneCommand, StrokeStyle, TextStyle};
 
     struct LabelWidget;
 
@@ -1031,5 +1080,60 @@ mod tests {
         assert_eq!(children.len(), 2);
         assert_eq!(paint.scene().commands().len(), 2);
         assert_eq!(semantics.nodes().len(), 2);
+    }
+
+    #[test]
+    fn paint_ctx_emits_extended_scene_commands() {
+        let mut paint = PaintCtx::new(
+            WindowId::new(11),
+            WidgetId::new(12),
+            Rect::new(0.0, 0.0, 120.0, 60.0),
+            None,
+        );
+
+        paint.stroke_rect(
+            Rect::new(4.0, 5.0, 20.0, 10.0),
+            Color::WHITE,
+            StrokeStyle::new(2.0),
+        );
+        paint.draw_text(
+            Rect::new(8.0, 10.0, 80.0, 20.0),
+            "hello",
+            TextStyle::new(Color::BLACK),
+        );
+        paint.draw_image(
+            Rect::new(0.0, 0.0, 16.0, 16.0),
+            sui_core::ImageHandle::new(3),
+        );
+        paint.push_clip_rect(Rect::new(0.0, 0.0, 50.0, 50.0));
+        paint.translate(Vector::new(3.0, 4.0));
+        paint.pop_transform();
+        paint.pop_clip();
+
+        assert!(matches!(
+            paint.scene().commands()[0],
+            SceneCommand::StrokeRect { .. }
+        ));
+        assert!(matches!(
+            paint.scene().commands()[1],
+            SceneCommand::DrawText(_)
+        ));
+        assert!(matches!(
+            paint.scene().commands()[2],
+            SceneCommand::DrawImage { .. }
+        ));
+        assert!(matches!(
+            paint.scene().commands()[3],
+            SceneCommand::PushClip { .. }
+        ));
+        assert!(matches!(
+            paint.scene().commands()[4],
+            SceneCommand::PushTransform { .. }
+        ));
+        assert!(matches!(
+            paint.scene().commands()[5],
+            SceneCommand::PopTransform
+        ));
+        assert!(matches!(paint.scene().commands()[6], SceneCommand::PopClip));
     }
 }
