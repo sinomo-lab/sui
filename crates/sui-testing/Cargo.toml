@@ -6,8 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+png = "0.17"
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
 sui-platform = { workspace = true }
+sui-render-wgpu = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }

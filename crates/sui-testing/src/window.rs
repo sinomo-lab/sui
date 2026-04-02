@@ -2,7 +2,13 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{Result, SemanticsRole, WindowId};
 
-use crate::{harness::Harness, locator::Locator, selector::Selector, snapshot::WindowSnapshot};
+use crate::{
+    harness::Harness,
+    locator::Locator,
+    screenshot::{ArtifactBundle, Screenshot},
+    selector::Selector,
+    snapshot::WindowSnapshot,
+};
 
 #[derive(Clone)]
 pub struct TestWindow {
@@ -31,6 +37,18 @@ impl TestWindow {
 
     pub fn advance_time(&self, delta: f64) -> Result<()> {
         self.harness.borrow_mut().advance_time(delta)
+    }
+
+    pub fn capture_screenshot(&self) -> Result<Screenshot> {
+        let mut harness = self.harness.borrow_mut();
+        harness.run_until_idle()?;
+        harness.capture_screenshot(self.window_id)
+    }
+
+    pub fn capture_artifacts(&self) -> Result<ArtifactBundle> {
+        let mut harness = self.harness.borrow_mut();
+        harness.run_until_idle()?;
+        harness.capture_artifacts(self.window_id)
     }
 
     pub fn locator(&self, selector: Selector) -> Locator {

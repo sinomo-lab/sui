@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
-use sui_render_wgpu::WgpuRenderer;
+use sui_render_wgpu::{RgbaImage, WgpuRenderer};
 use sui_runtime::Runtime;
 
 use crate::{AccessibilityBridge, AccessibilitySnapshot};
@@ -107,6 +107,10 @@ impl HeadlessPlatform {
 
     pub fn renderer(&self) -> &WgpuRenderer {
         &self.renderer
+    }
+
+    pub fn capture_rgba(&self, window_id: WindowId) -> Result<RgbaImage> {
+        self.renderer.capture_rgba(window_id)
     }
 
     pub fn accessibility_snapshot(&self, window_id: WindowId) -> Option<&AccessibilitySnapshot> {

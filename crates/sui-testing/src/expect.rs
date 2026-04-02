@@ -1,6 +1,12 @@
+use std::path::Path;
+
 use sui_core::{Error, Result, SemanticsValue};
 
-use crate::{diagnostics::format_failure, locator::Locator};
+use crate::{
+    diagnostics::format_failure,
+    locator::Locator,
+    screenshot::{diff_screenshot, read_png, screenshot_mismatch_paths},
+};
 
 #[derive(Clone)]
 pub struct Expectation {
@@ -74,6 +80,37 @@ impl Expectation {
             let count = locator.resolve_all(harness)?.len();
             Ok((count == expected).then_some(()))
         })
+    }
+
+    pub fn to_match_screenshot(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref().to_path_buf();
+        let expected = read_png(&path).map_err(|error| Error::new(format!(
+            "failed to read screenshot baseline {}: {}",
+            path.display(),
+            error.message()
+        )))?;
+        let timeout = self.timeout.unwrap_or_else(|| self.locator.default_timeout());
+        let mut harness = self.locator.harness().borrow_mut();
+        let actual = harness
+            .run_until(timeout, |harness| {
+                let actual = self.locator.capture_screenshot_from(harness)?;
+                Ok((actual == expected).then_some(actual))
+            })
+            .or_else(|_| self.locator.capture_screenshot_from(&harness))?;
+
+        if actual == expected {
+            return Ok(());
+        }
+
+        let (actual_path, diff_path) = screenshot_mismatch_paths(&path);
+        actual.write_png(&actual_path)?;
+        diff_screenshot(&expected, &actual)?.write_png(&diff_path)?;
+        Err(Error::new(format!(
+            "screenshot assertion failed for {}. Wrote actual screenshot to {} and diff image to {}",
+            path.display(),
+            actual_path.display(),
+            diff_path.display()
+        )))
     }
 
     fn wait_for<F>(&self, action: &str, mut predicate: F) -> Result<()>

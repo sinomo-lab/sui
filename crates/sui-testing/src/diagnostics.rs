@@ -20,6 +20,17 @@ pub(crate) fn format_failure(
         snapshot.focus_state.focused_widget,
         snapshot.accessibility.root
     );
+    if let Some(scene) = &snapshot.scene_summary {
+        let _ = writeln!(
+            message,
+            "scene: viewport=({}, {}), dirty_regions={}, commands={}",
+            scene.viewport.width,
+            scene.viewport.height,
+            scene.dirty_regions.len(),
+            scene.command_count,
+        );
+        let _ = writeln!(message, "scene command breakdown: {:?}", scene.command_breakdown);
+    }
     let _ = writeln!(message, "Semantics snapshot:");
     for node in &snapshot.accessibility.nodes {
         let _ = writeln!(message, "  {}", format_semantics_node(node));

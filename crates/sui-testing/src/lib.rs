@@ -5,6 +5,7 @@ mod diagnostics;
 mod expect;
 mod harness;
 mod locator;
+mod screenshot;
 mod selector;
 mod snapshot;
 mod window;
@@ -12,17 +13,27 @@ mod window;
 pub use app::{IntoTestRuntime, TestApp};
 pub use expect::Expectation;
 pub use locator::Locator;
+pub use screenshot::{ArtifactBundle, Screenshot};
 pub use selector::Selector;
-pub use snapshot::WindowSnapshot;
+pub use snapshot::{SceneSummary, WindowSnapshot};
 pub use window::TestWindow;
 
 pub mod prelude {
-    pub use crate::{Expectation, IntoTestRuntime, Locator, Selector, TestApp, TestWindow};
+    pub use crate::{
+        ArtifactBundle, Expectation, IntoTestRuntime, Locator, SceneSummary, Screenshot,
+        Selector, TestApp, TestWindow,
+    };
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::RefCell,
+        fs,
+        path::PathBuf,
+        rc::Rc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use crate::TestApp;
     use sui_core::{
@@ -596,5 +607,75 @@ mod tests {
             .to_be_visible()?;
 
         Ok(())
+    }
+
+    #[test]
+    fn screenshot_capture_and_artifact_bundles_work() -> Result<()> {
+        let app = build_app()?;
+        let window = app.main_window()?;
+
+        let screenshot = window.capture_screenshot()?;
+        assert!(screenshot.width() > 0);
+        assert!(screenshot.height() > 0);
+
+        let artifacts = window.capture_artifacts()?;
+        assert!(artifacts.screenshot.is_some());
+        assert!(artifacts.semantics_overlay.is_some());
+        assert!(artifacts.widget_overlay.is_some());
+        assert!(artifacts.snapshot.scene_summary.is_some());
+
+        let dir = unique_temp_path("artifacts");
+        artifacts.write_to_dir(&dir)?;
+
+        assert!(dir.join("summary.txt").exists());
+        assert!(dir.join("semantics.txt").exists());
+        assert!(dir.join("widget-graph.txt").exists());
+        assert!(dir.join("scene.txt").exists());
+        assert!(dir.join("screenshot.png").exists());
+        assert!(dir.join("semantics-overlay.png").exists());
+        assert!(dir.join("widget-overlay.png").exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn screenshot_expectations_compare_against_png_baselines() -> Result<()> {
+        let app = build_app()?;
+        let window = app.main_window()?;
+        let save = window.get_by_role(SemanticsRole::Button).with_name("Save");
+        let baseline = unique_temp_path("save-button.png");
+
+        save.capture_screenshot()?.write_png(&baseline)?;
+        save.expect().to_match_screenshot(&baseline)?;
+
+        save.click()?;
+
+        let error = save
+            .expect()
+            .with_timeout(0.0)
+            .to_match_screenshot(&baseline)
+            .unwrap_err();
+        let actual = baseline.with_file_name("save-button.actual.png");
+        let diff = baseline.with_file_name("save-button.diff.png");
+
+        assert!(actual.exists());
+        assert!(diff.exists());
+        assert!(error.message().contains("screenshot assertion failed"));
+
+        Ok(())
+    }
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time is after unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "sui-testing-{}-{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&dir).expect("temporary screenshot directory created");
+        dir.join(name)
     }
 }

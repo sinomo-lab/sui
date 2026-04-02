@@ -126,7 +126,7 @@ crates/
       diagnostics.rs
       clock.rs
       protocol.rs      # optional later phase
-      screenshot.rs    # optional feature-gated
+      screenshot.rs
 ```
 
 ### Module responsibilities
@@ -177,7 +177,13 @@ crates/
 `diagnostics.rs`
 
 - structured failure reporting
-- artifact capture: semantics tree, widget graph, last scene frame, screenshots, event trace
+- artifact capture: semantics tree, widget graph, scene summary, screenshots, overlays, and event trace
+
+`screenshot.rs`
+
+- screenshot capture helpers and PNG encode/decode utilities
+- screenshot diffing and overlay generation for semantics and widget bounds
+- structured artifact bundle writing for failed or exploratory test runs
 
 `clock.rs`
 
@@ -451,6 +457,12 @@ Recommended visual assertions:
 - `to_match_screenshot_with_threshold(...)`
 - `capture_screenshot()` for manual debugging
 
+Phase 2 can reasonably expose these through the Rust API as methods such as:
+
+- `window.capture_screenshot()`
+- `window.capture_artifacts()`
+- `locator.expect().to_match_screenshot(path)`
+
 Pixel assertions should be reserved for:
 
 - renderer regressions
@@ -582,6 +594,13 @@ Deliver:
 - screenshot assertions
 - structured failure artifact bundles
 - optional scene overlays for debugging hit testing and semantics bounds
+
+Concrete Rust-facing APIs for this phase can include:
+
+- `WgpuRenderer::capture_rgba(window_id)` for offscreen readback
+- `TestWindow::capture_screenshot()`
+- `TestWindow::capture_artifacts()`
+- `Expectation::to_match_screenshot(path)`
 
 ### Phase 3: semantics action dispatch and recorder tooling
 

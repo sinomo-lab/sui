@@ -10,6 +10,7 @@ use crate::{
     diagnostics::format_failure,
     expect::Expectation,
     harness::Harness,
+    screenshot::Screenshot,
     selector::Selector,
 };
 
@@ -139,6 +140,12 @@ impl Locator {
         self.harness.borrow_mut().dispatch_event(self.window_id, event)
     }
 
+    pub fn capture_screenshot(&self) -> Result<Screenshot> {
+        let mut harness = self.harness.borrow_mut();
+        harness.run_until_idle()?;
+        self.capture_screenshot_from(&harness)
+    }
+
     pub fn describe(&self) -> String {
         if self.scopes.is_empty() {
             return self.selector.describe();
@@ -226,6 +233,12 @@ impl Locator {
             .snapshot(self.window_id)
             .unwrap_or_else(|_| harness.fallback_snapshot(self.window_id));
         Error::new(format_failure(action, &self.describe(), &snapshot, detail))
+    }
+
+    pub(crate) fn capture_screenshot_from(&self, harness: &Harness) -> Result<Screenshot> {
+        let node = self.resolve_unique(harness)?;
+        let screenshot = harness.capture_screenshot(self.window_id)?;
+        screenshot.crop(node.bounds)
     }
 
     fn resolve_scope_ids(&self, snapshot: &AccessibilitySnapshot) -> Vec<WidgetId> {

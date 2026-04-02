@@ -44,12 +44,53 @@ pub struct WgpuRenderer {
     instance: wgpu::Instance,
     frames_rendered: usize,
     capabilities: RendererCapabilities,
-    last_frame: Option<SceneFrame>,
+    last_frames: HashMap<WindowId, SceneFrame>,
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
     image_cache: HashMap<ImageHandle, CachedImageTexture>,
     surfaces: HashMap<WindowId, SurfaceState>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RgbaImage {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+impl RgbaImage {
+    pub fn new(width: u32, height: u32, pixels: Vec<u8>) -> Result<Self> {
+        let expected_len = width as usize * height as usize * 4;
+        if pixels.len() != expected_len {
+            return Err(Error::new(format!(
+                "RGBA image pixel buffer length {} does not match {}x{} image size",
+                pixels.len(), width, height
+            )));
+        }
+
+        Ok(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+
+    pub fn into_pixels(self) -> Vec<u8> {
+        self.pixels
+    }
 }
 
 const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
@@ -72,6 +113,7 @@ impl WgpuRenderer {
     pub fn remove_window(&mut self, window_id: WindowId) {
         self.surfaces.remove(&window_id);
         self.offscreen_targets.remove(&window_id);
+        self.last_frames.remove(&window_id);
     }
 
     pub fn render(&mut self, frame: &SceneFrame) -> Result<()> {
@@ -86,7 +128,7 @@ impl WgpuRenderer {
         }
 
         self.frames_rendered += 1;
-        self.last_frame = Some(frame.clone());
+        self.last_frames.insert(frame.window_id, frame.clone());
         Ok(())
     }
 
@@ -98,8 +140,88 @@ impl WgpuRenderer {
         self.frames_rendered
     }
 
-    pub fn last_frame(&self) -> Option<&SceneFrame> {
-        self.last_frame.as_ref()
+    pub fn last_frame(&self, window_id: WindowId) -> Option<&SceneFrame> {
+        self.last_frames.get(&window_id)
+    }
+
+    pub fn capture_rgba(&self, window_id: WindowId) -> Result<RgbaImage> {
+        let shared = self
+            .shared
+            .as_ref()
+            .ok_or_else(|| Error::new("renderer has not initialized a wgpu device yet"))?;
+        let target = self.offscreen_targets.get(&window_id).ok_or_else(|| {
+            Error::new(format!(
+                "window {} does not have an offscreen render target available for screenshot capture",
+                window_id.get()
+            ))
+        })?;
+
+        let bytes_per_row = target.size.0 * 4;
+        let padded_bytes_per_row = bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer_size = padded_bytes_per_row as u64 * target.size.1 as u64;
+        let buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SUI screenshot readback"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = shared
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("SUI screenshot readback encoder"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(target.size.1),
+                },
+            },
+            wgpu::Extent3d {
+                width: target.size.0,
+                height: target.size.1,
+                depth_or_array_layers: 1,
+            },
+        );
+        shared.queue.submit([encoder.finish()]);
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        shared
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| Error::new(format!("failed to poll device for screenshot capture: {error}")))?;
+        receiver
+            .recv()
+            .map_err(|error| Error::new(format!("failed to receive screenshot readback completion: {error}")))?
+            .map_err(|error| Error::new(format!("failed to map screenshot readback buffer: {error}")))?;
+
+        let mapped = slice.get_mapped_range();
+        let mut pixels = Vec::with_capacity((target.size.0 * target.size.1 * 4) as usize);
+        for row in 0..target.size.1 as usize {
+            let start = row * padded_bytes_per_row as usize;
+            let row_slice = &mapped[start..start + bytes_per_row as usize];
+            for chunk in row_slice.chunks_exact(4) {
+                pixels.extend_from_slice(&[chunk[2], chunk[1], chunk[0], chunk[3]]);
+            }
+        }
+        drop(mapped);
+        buffer.unmap();
+
+        RgbaImage::new(target.size.0, target.size.1, pixels)
     }
 
     fn text_engine(&mut self) -> Result<&mut TextEngine> {
@@ -638,7 +760,7 @@ impl Default for WgpuRenderer {
             instance: wgpu::Instance::default(),
             frames_rendered: 0,
             capabilities: RendererCapabilities::default(),
-            last_frame: None,
+            last_frames: HashMap::new(),
             shared: None,
             text_engine: None,
             image_cache: HashMap::new(),
@@ -653,6 +775,7 @@ impl fmt::Debug for WgpuRenderer {
         f.debug_struct("WgpuRenderer")
             .field("frames_rendered", &self.frames_rendered)
             .field("capabilities", &self.capabilities)
+            .field("last_frame_count", &self.last_frames.len())
             .field("has_device", &self.shared.is_some())
             .field("surface_count", &self.surfaces.len())
             .finish()

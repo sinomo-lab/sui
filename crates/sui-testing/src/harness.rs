@@ -2,7 +2,10 @@ use sui_core::{Error, Event, Result, WindowId};
 use sui_platform::{AccessibilitySnapshot, HeadlessPlatform};
 use sui_runtime::{FocusState, Runtime, WidgetGraphSnapshot};
 
-use crate::snapshot::WindowSnapshot;
+use crate::{
+    screenshot::{ArtifactBundle, Screenshot, semantics_overlay, widget_overlay},
+    snapshot::{SceneSummary, WindowSnapshot},
+};
 
 pub(crate) struct Harness {
     runtime: Runtime,
@@ -107,6 +110,11 @@ impl Harness {
         let title = self.runtime.window_title(window_id)?.to_string();
         let focus_state = self.runtime.focus_state(window_id)?;
         let widget_graph = self.runtime.widget_graph(window_id)?;
+        let scene_summary = self
+            .platform
+            .renderer()
+            .last_frame(window_id)
+            .map(SceneSummary::from_frame);
 
         Ok(WindowSnapshot {
             window_id,
@@ -114,6 +122,30 @@ impl Harness {
             accessibility,
             widget_graph,
             focus_state,
+            scene_summary,
+        })
+    }
+
+    pub(crate) fn capture_screenshot(&self, window_id: WindowId) -> Result<Screenshot> {
+        let image = self.platform.capture_rgba(window_id)?;
+        Ok(Screenshot::from_rgba_image(image))
+    }
+
+    pub(crate) fn capture_artifacts(&self, window_id: WindowId) -> Result<ArtifactBundle> {
+        let snapshot = self.snapshot(window_id)?;
+        let screenshot = self.capture_screenshot(window_id).ok();
+        let semantics_overlay = screenshot
+            .as_ref()
+            .map(|image| semantics_overlay(image, &snapshot));
+        let widget_overlay = screenshot
+            .as_ref()
+            .map(|image| widget_overlay(image, &snapshot));
+
+        Ok(ArtifactBundle {
+            snapshot,
+            screenshot,
+            semantics_overlay,
+            widget_overlay,
         })
     }
 
@@ -136,6 +168,7 @@ impl Harness {
                 nodes: Vec::new(),
             }),
             focus_state: self.runtime.focus_state(window_id).unwrap_or(FocusState::default()),
+            scene_summary: None,
         }
     }
 
