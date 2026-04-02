@@ -222,6 +222,289 @@ impl Rect {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum PathElement {
+    MoveTo(Point),
+    LineTo(Point),
+    QuadTo {
+        ctrl: Point,
+        to: Point,
+    },
+    CubicTo {
+        ctrl1: Point,
+        ctrl2: Point,
+        to: Point,
+    },
+    Close,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Path {
+    elements: Vec<PathElement>,
+    bounds: Rect,
+}
+
+impl Path {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn builder() -> PathBuilder {
+        PathBuilder::new()
+    }
+
+    pub fn rect(rect: Rect) -> Self {
+        let mut builder = Self::builder();
+        builder.push_rect(rect);
+        builder.build()
+    }
+
+    pub fn circle(center: Point, radius: f32) -> Self {
+        let mut builder = Self::builder();
+        builder.push_circle(center, radius);
+        builder.build()
+    }
+
+    pub fn rounded_rect(rect: Rect, radius: f32) -> Self {
+        let mut builder = Self::builder();
+        builder.push_rounded_rect(rect, radius);
+        builder.build()
+    }
+
+    pub fn arc(center: Point, radius: f32, start_angle: f32, sweep_angle: f32) -> Self {
+        let mut builder = Self::builder();
+        builder.push_arc(center, radius, start_angle, sweep_angle);
+        builder.build()
+    }
+
+    pub fn elements(&self) -> &[PathElement] {
+        &self.elements
+    }
+
+    pub const fn bounds(&self) -> Rect {
+        self.bounds
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
+}
+
+impl From<Rect> for Path {
+    fn from(value: Rect) -> Self {
+        Self::rect(value)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PathBuilder {
+    elements: Vec<PathElement>,
+    min: Option<Point>,
+    max: Option<Point>,
+}
+
+impl PathBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn move_to(&mut self, to: Point) -> &mut Self {
+        self.include_point(to);
+        self.elements.push(PathElement::MoveTo(to));
+        self
+    }
+
+    pub fn line_to(&mut self, to: Point) -> &mut Self {
+        self.include_point(to);
+        self.elements.push(PathElement::LineTo(to));
+        self
+    }
+
+    pub fn quad_to(&mut self, ctrl: Point, to: Point) -> &mut Self {
+        self.include_point(ctrl);
+        self.include_point(to);
+        self.elements.push(PathElement::QuadTo { ctrl, to });
+        self
+    }
+
+    pub fn cubic_to(&mut self, ctrl1: Point, ctrl2: Point, to: Point) -> &mut Self {
+        self.include_point(ctrl1);
+        self.include_point(ctrl2);
+        self.include_point(to);
+        self.elements
+            .push(PathElement::CubicTo { ctrl1, ctrl2, to });
+        self
+    }
+
+    pub fn close(&mut self) -> &mut Self {
+        self.elements.push(PathElement::Close);
+        self
+    }
+
+    pub fn push_rect(&mut self, rect: Rect) -> &mut Self {
+        if rect.is_empty() {
+            return self;
+        }
+
+        self.move_to(rect.origin)
+            .line_to(Point::new(rect.max_x(), rect.y()))
+            .line_to(Point::new(rect.max_x(), rect.max_y()))
+            .line_to(Point::new(rect.x(), rect.max_y()))
+            .close();
+        self
+    }
+
+    pub fn push_circle(&mut self, center: Point, radius: f32) -> &mut Self {
+        if radius <= 0.0 {
+            return self;
+        }
+
+        self.append_arc_segments(center, radius, 0.0, std::f32::consts::TAU, true);
+        self.close()
+    }
+
+    pub fn push_rounded_rect(&mut self, rect: Rect, radius: f32) -> &mut Self {
+        if rect.is_empty() {
+            return self;
+        }
+
+        let radius = radius
+            .max(0.0)
+            .min(rect.width() * 0.5)
+            .min(rect.height() * 0.5);
+        if radius <= 0.0 {
+            return self.push_rect(rect);
+        }
+
+        let min_x = rect.x();
+        let min_y = rect.y();
+        let max_x = rect.max_x();
+        let max_y = rect.max_y();
+
+        self.move_to(Point::new(min_x + radius, min_y))
+            .line_to(Point::new(max_x - radius, min_y));
+        self.append_arc_segments(
+            Point::new(max_x - radius, min_y + radius),
+            radius,
+            -std::f32::consts::FRAC_PI_2,
+            std::f32::consts::FRAC_PI_2,
+            false,
+        );
+        self.line_to(Point::new(max_x, max_y - radius));
+        self.append_arc_segments(
+            Point::new(max_x - radius, max_y - radius),
+            radius,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+            false,
+        );
+        self.line_to(Point::new(min_x + radius, max_y));
+        self.append_arc_segments(
+            Point::new(min_x + radius, max_y - radius),
+            radius,
+            std::f32::consts::FRAC_PI_2,
+            std::f32::consts::FRAC_PI_2,
+            false,
+        );
+        self.line_to(Point::new(min_x, min_y + radius));
+        self.append_arc_segments(
+            Point::new(min_x + radius, min_y + radius),
+            radius,
+            std::f32::consts::PI,
+            std::f32::consts::FRAC_PI_2,
+            false,
+        );
+        self.close()
+    }
+
+    pub fn push_arc(
+        &mut self,
+        center: Point,
+        radius: f32,
+        start_angle: f32,
+        sweep_angle: f32,
+    ) -> &mut Self {
+        if radius <= 0.0 || sweep_angle == 0.0 {
+            return self;
+        }
+
+        self.append_arc_segments(center, radius, start_angle, sweep_angle, true);
+        self
+    }
+
+    pub fn build(self) -> Path {
+        let bounds = match (self.min, self.max) {
+            (Some(min), Some(max)) => Rect::from_points(min, max),
+            _ => Rect::ZERO,
+        };
+
+        Path {
+            elements: self.elements,
+            bounds,
+        }
+    }
+
+    fn include_point(&mut self, point: Point) {
+        match (self.min.as_mut(), self.max.as_mut()) {
+            (Some(min), Some(max)) => {
+                min.x = min.x.min(point.x);
+                min.y = min.y.min(point.y);
+                max.x = max.x.max(point.x);
+                max.y = max.y.max(point.y);
+            }
+            _ => {
+                self.min = Some(point);
+                self.max = Some(point);
+            }
+        }
+    }
+
+    fn append_arc_segments(
+        &mut self,
+        center: Point,
+        radius: f32,
+        start_angle: f32,
+        sweep_angle: f32,
+        move_to_start: bool,
+    ) {
+        if radius <= 0.0 || sweep_angle == 0.0 {
+            return;
+        }
+
+        let segment_count = (sweep_angle.abs() / std::f32::consts::FRAC_PI_2).ceil() as usize;
+        let segment_count = segment_count.max(1);
+        let delta = sweep_angle / segment_count as f32;
+
+        for index in 0..segment_count {
+            let start = start_angle + (delta * index as f32);
+            let end = start + delta;
+            let start_point = arc_point(center, radius, start);
+            let end_point = arc_point(center, radius, end);
+            let tangent_scale = (4.0 / 3.0) * ((end - start) * 0.25).tan();
+            let ctrl1 = Point::new(
+                start_point.x - (start.sin() * radius * tangent_scale),
+                start_point.y + (start.cos() * radius * tangent_scale),
+            );
+            let ctrl2 = Point::new(
+                end_point.x + (end.sin() * radius * tangent_scale),
+                end_point.y - (end.cos() * radius * tangent_scale),
+            );
+
+            if index == 0 && move_to_start {
+                self.move_to(start_point);
+            }
+            self.cubic_to(ctrl1, ctrl2, end_point);
+        }
+    }
+}
+
+fn arc_point(center: Point, radius: f32, angle: f32) -> Point {
+    Point::new(
+        center.x + (radius * angle.cos()),
+        center.y + (radius * angle.sin()),
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Transform {
     pub xx: f32,
@@ -329,6 +612,81 @@ impl Transform {
             .max(bottom_right.y);
 
         Rect::from_points(Point::new(min_x, min_y), Point::new(max_x, max_y))
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::{Path, PathElement, Point, Rect};
+
+    fn assert_rect_approx_eq(actual: Rect, expected: Rect) {
+        assert!((actual.x() - expected.x()).abs() < 0.001);
+        assert!((actual.y() - expected.y()).abs() < 0.001);
+        assert!((actual.width() - expected.width()).abs() < 0.001);
+        assert!((actual.height() - expected.height()).abs() < 0.001);
+    }
+
+    #[test]
+    fn path_builder_tracks_elements_and_bounds() {
+        let mut builder = Path::builder();
+        builder
+            .move_to(Point::new(2.0, 3.0))
+            .quad_to(Point::new(12.0, 1.0), Point::new(18.0, 9.0))
+            .line_to(Point::new(6.0, 15.0))
+            .close();
+
+        let path = builder.build();
+
+        assert_eq!(path.bounds(), Rect::new(2.0, 1.0, 16.0, 14.0));
+        assert_eq!(path.elements().len(), 4);
+        assert!(matches!(path.elements()[0], PathElement::MoveTo(_)));
+        assert!(matches!(path.elements()[1], PathElement::QuadTo { .. }));
+        assert!(matches!(path.elements()[3], PathElement::Close));
+    }
+
+    #[test]
+    fn rect_conversion_builds_closed_path() {
+        let path = Path::from(Rect::new(4.0, 5.0, 12.0, 8.0));
+
+        assert_eq!(path.bounds(), Rect::new(4.0, 5.0, 12.0, 8.0));
+        assert_eq!(path.elements().len(), 5);
+        assert!(matches!(path.elements()[4], PathElement::Close));
+    }
+
+    #[test]
+    fn circle_builder_emits_closed_cubic_path() {
+        let path = Path::circle(Point::new(10.0, 20.0), 8.0);
+
+        assert_rect_approx_eq(path.bounds(), Rect::new(2.0, 12.0, 16.0, 16.0));
+        assert_eq!(path.elements().len(), 6);
+        assert!(matches!(path.elements()[0], PathElement::MoveTo(_)));
+        assert!(matches!(path.elements()[1], PathElement::CubicTo { .. }));
+        assert!(matches!(path.elements()[5], PathElement::Close));
+    }
+
+    #[test]
+    fn rounded_rect_builder_preserves_bounds() {
+        let path = Path::rounded_rect(Rect::new(4.0, 6.0, 24.0, 12.0), 3.0);
+
+        assert_rect_approx_eq(path.bounds(), Rect::new(4.0, 6.0, 24.0, 12.0));
+        assert_eq!(path.elements().len(), 10);
+        assert!(matches!(path.elements()[2], PathElement::CubicTo { .. }));
+        assert!(matches!(path.elements()[9], PathElement::Close));
+    }
+
+    #[test]
+    fn arc_builder_emits_open_curved_path() {
+        let path = Path::arc(
+            Point::new(20.0, 20.0),
+            10.0,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+        );
+
+        assert_eq!(path.bounds(), Rect::new(20.0, 20.0, 10.0, 10.0));
+        assert_eq!(path.elements().len(), 2);
+        assert!(matches!(path.elements()[0], PathElement::MoveTo(_)));
+        assert!(matches!(path.elements()[1], PathElement::CubicTo { .. }));
     }
 }
 

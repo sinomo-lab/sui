@@ -6,10 +6,10 @@ pub use containers::{Align, Background, SizedBox, Stack};
 pub use sui_core::{
     AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, Error, Event, FontHandle,
     ImageHandle, ImeEvent, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
-    KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-    PointerKind, Rect, Result, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole,
-    SemanticsState, SemanticsValue, Size, SurfaceId, TimerToken, ToggleState, Transform, Vector,
-    WakeEvent, WidgetId, WindowEvent, WindowId,
+    KeyboardEvent, Modifiers, Path, PathBuilder, PathElement, Point, PointerButton, PointerButtons,
+    PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsAction,
+    SemanticsNode, SemanticsRole, SemanticsState, SemanticsValue, Size, SurfaceId, TimerToken,
+    ToggleState, Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 pub use sui_layout::Padding as Insets;
 pub use sui_layout::{Alignment, Axis, Constraints, Padding};
@@ -107,9 +107,9 @@ impl Default for Style {
 pub mod prelude {
     pub use crate::{
         Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, Color, Constraints,
-        Event, EventCtx, FontHandle, ImeEvent, Insets, KeyboardEvent, LayoutCtx, PaintCtx, Point,
-        PointerEvent, Rect, RegisteredFont, Result, SemanticsCtx, SingleChild, Size, SizedBox,
-        Stack, StrokeStyle, Style, TextStyle, Theme, TimerToken, Transform, WakeEvent, Widget,
-        WidgetChildren, WidgetPod, WindowBuilder, containers::Padding,
+        Event, EventCtx, FontHandle, ImeEvent, Insets, KeyboardEvent, LayoutCtx, PaintCtx, Path,
+        PathBuilder, Point, PointerEvent, Rect, RegisteredFont, Result, SemanticsCtx, SingleChild,
+        Size, SizedBox, Stack, StrokeStyle, Style, TextStyle, Theme, TimerToken, Transform,
+        WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder, containers::Padding,
     };
 }

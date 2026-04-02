@@ -3,11 +3,14 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
-use lyon_path::{Path, builder::PathBuilder as LyonPathBuilder, math::point};
+use lyon_path::{Path as LyonPath, builder::PathBuilder as LyonPathBuilder, math::point};
 use lyon_tessellation::{
-    BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor, VertexBuffers,
+    BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor, StrokeOptions,
+    StrokeTessellator, StrokeVertex, StrokeVertexConstructor, VertexBuffers,
 };
-use sui_core::{Color, Error, Point, Rect, Result, Size, Transform, WindowId};
+use sui_core::{
+    Color, Error, Path as ScenePath, PathElement, Point, Rect, Result, Size, Transform, WindowId,
+};
 use sui_scene::{Brush, FontRegistry, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle};
 use ttf_parser::GlyphId;
 use winit::window::Window;
@@ -492,6 +495,13 @@ impl FillVertexConstructor<[f32; 2]> for TessellatedPoint {
     }
 }
 
+impl StrokeVertexConstructor<[f32; 2]> for TessellatedPoint {
+    fn new_vertex(&mut self, vertex: StrokeVertex<'_, '_>) -> [f32; 2] {
+        let position = vertex.position();
+        [position.x, position.y]
+    }
+}
+
 fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<Vertex>> {
     let viewport = frame.viewport;
     let mut vertices = Vec::new();
@@ -518,6 +528,18 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
             } => {
                 let Brush::Solid(color) = brush;
                 append_stroke_rect(&mut vertices, &state, *rect, *color, *stroke, viewport);
+            }
+            SceneCommand::FillPath { path, brush } => {
+                let Brush::Solid(color) = brush;
+                append_painted_path(&mut vertices, &state, path, *color, viewport)?;
+            }
+            SceneCommand::StrokePath {
+                path,
+                brush,
+                stroke,
+            } => {
+                let Brush::Solid(color) = brush;
+                append_stroked_path(&mut vertices, &state, path, *color, *stroke, viewport)?;
             }
             SceneCommand::DrawText(text) => {
                 text_engine.append_text_run(
@@ -879,7 +901,7 @@ fn tessellate_glyph(
     transform: Transform,
     viewport: Size,
 ) -> Result<()> {
-    let mut path_builder = Path::builder();
+    let mut path_builder = LyonPath::builder();
     {
         let mut outline = GlyphOutlineBuilder {
             builder: &mut path_builder,
@@ -897,15 +919,147 @@ fn tessellate_glyph(
     }
 
     let path = path_builder.build();
+    tessellate_filled_lyon_path(vertices, &path, color, viewport)
+}
+
+fn append_painted_path(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    path: &ScenePath,
+    color: Color,
+    viewport: Size,
+) -> Result<()> {
+    if path.is_empty() || viewport.is_empty() {
+        return Ok(());
+    }
+
+    if state.visible_rect(path.bounds()).is_none() {
+        return Ok(());
+    }
+
+    let lyon_path = build_lyon_path(path, state.current_transform);
+    tessellate_filled_lyon_path(vertices, &lyon_path, color, viewport)
+}
+
+fn append_stroked_path(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    path: &ScenePath,
+    color: Color,
+    stroke: StrokeStyle,
+    viewport: Size,
+) -> Result<()> {
+    if path.is_empty() || viewport.is_empty() {
+        return Ok(());
+    }
+
+    let line_width = stroke.width.max(1.0);
+    if state
+        .visible_rect(path.bounds().inflate(line_width * 0.5, line_width * 0.5))
+        .is_none()
+    {
+        return Ok(());
+    }
+
+    let lyon_path = build_lyon_path(path, state.current_transform);
+    let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
+    let mut builder = BuffersBuilder::new(&mut buffers, TessellatedPoint);
+    let mut tessellator = StrokeTessellator::new();
+    tessellator
+        .tessellate_path(
+            &lyon_path,
+            &StrokeOptions::default().with_line_width(line_width),
+            &mut builder,
+        )
+        .map_err(|error| Error::new(format!("failed to tessellate stroked path: {error}")))?;
+
+    append_indexed_triangles(vertices, &buffers, color, viewport);
+    Ok(())
+}
+
+fn tessellate_filled_lyon_path(
+    vertices: &mut Vec<Vertex>,
+    path: &LyonPath,
+    color: Color,
+    viewport: Size,
+) -> Result<()> {
     let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
     let mut builder = BuffersBuilder::new(&mut buffers, TessellatedPoint);
     let mut tessellator = FillTessellator::new();
     tessellator
-        .tessellate_path(&path, &FillOptions::default(), &mut builder)
-        .map_err(|error| Error::new(format!("failed to tessellate glyph outline: {error}")))?;
+        .tessellate_path(path, &FillOptions::default(), &mut builder)
+        .map_err(|error| Error::new(format!("failed to tessellate filled path: {error}")))?;
 
     append_indexed_triangles(vertices, &buffers, color, viewport);
     Ok(())
+}
+
+fn build_lyon_path(path: &ScenePath, transform: Transform) -> LyonPath {
+    let mut builder = LyonPath::builder();
+    let mut contour_open = false;
+
+    for element in path.elements() {
+        match element {
+            PathElement::MoveTo(point_value) => {
+                if contour_open {
+                    LyonPathBuilder::end(&mut builder, false);
+                }
+                LyonPathBuilder::begin(
+                    &mut builder,
+                    transform_path_point(*point_value, transform),
+                    &[],
+                );
+                contour_open = true;
+            }
+            PathElement::LineTo(point_value) => {
+                if contour_open {
+                    LyonPathBuilder::line_to(
+                        &mut builder,
+                        transform_path_point(*point_value, transform),
+                        &[],
+                    );
+                }
+            }
+            PathElement::QuadTo { ctrl, to } => {
+                if contour_open {
+                    LyonPathBuilder::quadratic_bezier_to(
+                        &mut builder,
+                        transform_path_point(*ctrl, transform),
+                        transform_path_point(*to, transform),
+                        &[],
+                    );
+                }
+            }
+            PathElement::CubicTo { ctrl1, ctrl2, to } => {
+                if contour_open {
+                    LyonPathBuilder::cubic_bezier_to(
+                        &mut builder,
+                        transform_path_point(*ctrl1, transform),
+                        transform_path_point(*ctrl2, transform),
+                        transform_path_point(*to, transform),
+                        &[],
+                    );
+                }
+            }
+            PathElement::Close => {
+                if contour_open {
+                    LyonPathBuilder::end(&mut builder, true);
+                    contour_open = false;
+                }
+            }
+        }
+    }
+
+    if contour_open {
+        LyonPathBuilder::end(&mut builder, false);
+    }
+
+    builder.build()
+}
+
+fn transform_path_point(point_value: Point, transform: Transform) -> lyon_path::math::Point {
+    let scene = transform.transform_point(point_value);
+    point(scene.x, scene.y)
 }
 
 fn append_indexed_triangles(
@@ -1211,7 +1365,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 mod tests {
     use super::{TextEngine, build_vertices, to_ndc};
     use std::sync::Arc;
-    use sui_core::{Color, FontHandle, Rect, Size, Transform, WindowId};
+    use sui_core::{Color, FontHandle, Path, Point, Rect, Size, Transform, WindowId};
     use sui_scene::{
         FontRegistry, RegisteredFont, Scene, SceneCommand, SceneFrame, StrokeStyle, TextRun,
         TextStyle,
@@ -1265,14 +1419,19 @@ mod tests {
         )
         .unwrap();
 
+        let expected_min = to_ndc(14.0, 8.0, Size::new(100.0, 100.0));
+        let expected_max = to_ndc(26.0, 17.0, Size::new(100.0, 100.0));
+
         assert_eq!(vertices.len(), 6);
-        assert_eq!(
-            vertices[0].position,
-            to_ndc(14.0, 8.0, Size::new(100.0, 100.0))
+        assert!(
+            vertices
+                .iter()
+                .any(|vertex| vertex.position == expected_min)
         );
-        assert_eq!(
-            vertices[5].position,
-            to_ndc(26.0, 17.0, Size::new(100.0, 100.0))
+        assert!(
+            vertices
+                .iter()
+                .any(|vertex| vertex.position == expected_max)
         );
     }
 
@@ -1305,6 +1464,48 @@ mod tests {
 
         assert!(!vertices.is_empty());
         assert!(vertices.len() >= 30);
+    }
+
+    #[test]
+    fn build_vertices_supports_non_rect_paths() {
+        let mut triangle = Path::builder();
+        triangle
+            .move_to(Point::new(10.0, 10.0))
+            .line_to(Point::new(40.0, 10.0))
+            .line_to(Point::new(24.0, 36.0))
+            .close();
+
+        let mut curve = Path::builder();
+        curve
+            .move_to(Point::new(8.0, 44.0))
+            .quad_to(Point::new(24.0, 24.0), Point::new(48.0, 44.0));
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::FillPath {
+            path: triangle.build(),
+            brush: Color::rgba(0.2, 0.8, 0.4, 1.0).into(),
+        });
+        scene.push(SceneCommand::StrokePath {
+            path: curve.build(),
+            brush: Color::rgba(0.9, 0.4, 0.2, 1.0).into(),
+            stroke: StrokeStyle::new(3.0),
+        });
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let vertices = build_vertices(
+            &SceneFrame {
+                window_id: WindowId::new(5),
+                viewport: Size::new(80.0, 60.0),
+                dirty_regions: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+            },
+            &mut text_engine,
+        )
+        .unwrap();
+
+        assert!(!vertices.is_empty());
+        assert!(vertices.len() >= 12);
     }
 
     #[test]

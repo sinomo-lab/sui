@@ -2,7 +2,9 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use sui_core::{Color, DirtyRegion, FontHandle, ImageHandle, Rect, Size, Transform, WindowId};
+use sui_core::{
+    Color, DirtyRegion, FontHandle, ImageHandle, Path, Rect, Size, Transform, WindowId,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Brush {
@@ -103,6 +105,15 @@ pub enum SceneCommand {
     },
     StrokeRect {
         rect: Rect,
+        brush: Brush,
+        stroke: StrokeStyle,
+    },
+    FillPath {
+        path: Path,
+        brush: Brush,
+    },
+    StrokePath {
+        path: Path,
         brush: Brush,
         stroke: StrokeStyle,
     },
@@ -238,7 +249,7 @@ mod tests {
         TextRun, TextStyle,
     };
     use std::sync::Arc;
-    use sui_core::{Color, FontHandle, ImageHandle, Rect, Transform, WindowId};
+    use sui_core::{Color, FontHandle, ImageHandle, Path, Rect, Transform, WindowId};
 
     #[test]
     fn scene_command_variants_store_extended_primitives() {
@@ -257,6 +268,10 @@ mod tests {
             brush: Brush::Solid(Color::BLACK),
             stroke: StrokeStyle::new(2.0),
         };
+        let path_fill = SceneCommand::FillPath {
+            path: Path::from(Rect::new(3.0, 4.0, 12.0, 10.0)),
+            brush: Brush::Solid(Color::WHITE),
+        };
         let transform = SceneCommand::PushTransform {
             transform: Transform::translation(3.0, 5.0),
         };
@@ -264,6 +279,7 @@ mod tests {
         assert!(matches!(text, SceneCommand::DrawText(_)));
         assert!(matches!(image, SceneCommand::DrawImage { .. }));
         assert!(matches!(stroke, SceneCommand::StrokeRect { .. }));
+        assert!(matches!(path_fill, SceneCommand::FillPath { .. }));
         assert!(matches!(transform, SceneCommand::PushTransform { .. }));
     }
 

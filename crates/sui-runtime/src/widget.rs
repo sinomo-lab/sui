@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sui_core::{
-    AsyncWakeToken, Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
-    Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
+    AsyncWakeToken, Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Path,
+    Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{Brush, ImageSource, Scene, SceneCommand, StrokeStyle, TextRun, TextStyle};
@@ -723,6 +723,13 @@ impl PaintCtx {
         self.scene.push(SceneCommand::Clear(color));
     }
 
+    pub fn fill(&mut self, path: impl Into<Path>, brush: impl Into<Brush>) {
+        self.scene.push(SceneCommand::FillPath {
+            path: path.into(),
+            brush: brush.into(),
+        });
+    }
+
     pub fn fill_rect(&mut self, rect: Rect, brush: impl Into<Brush>) {
         self.scene.push(SceneCommand::FillRect {
             rect,
@@ -732,6 +739,14 @@ impl PaintCtx {
 
     pub fn fill_bounds(&mut self, brush: impl Into<Brush>) {
         self.fill_rect(self.bounds, brush);
+    }
+
+    pub fn stroke(&mut self, path: impl Into<Path>, brush: impl Into<Brush>, stroke: StrokeStyle) {
+        self.scene.push(SceneCommand::StrokePath {
+            path: path.into(),
+            brush: brush.into(),
+            stroke,
+        });
     }
 
     pub fn stroke_rect(&mut self, rect: Rect, brush: impl Into<Brush>, stroke: StrokeStyle) {
@@ -1091,11 +1106,12 @@ mod tests {
             None,
         );
 
-        paint.stroke_rect(
-            Rect::new(4.0, 5.0, 20.0, 10.0),
-            Color::WHITE,
-            StrokeStyle::new(2.0),
-        );
+        let mut path = sui_core::Path::builder();
+        path.move_to(Point::new(4.0, 5.0))
+            .line_to(Point::new(24.0, 5.0))
+            .line_to(Point::new(14.0, 15.0))
+            .close();
+        paint.stroke(path.build(), Color::WHITE, StrokeStyle::new(2.0));
         paint.draw_text(
             Rect::new(8.0, 10.0, 80.0, 20.0),
             "hello",
@@ -1112,7 +1128,7 @@ mod tests {
 
         assert!(matches!(
             paint.scene().commands()[0],
-            SceneCommand::StrokeRect { .. }
+            SceneCommand::StrokePath { .. }
         ));
         assert!(matches!(
             paint.scene().commands()[1],
