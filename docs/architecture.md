@@ -45,7 +45,7 @@ The current workspace already contains the phase-1 skeleton of this design:
 - `sui-render-wgpu` owns renderer execution
 - `sui-platform` owns host integration
 - `sui` acts as the public facade
-- `sui-dev` acts as the development host
+- `sui-dev` acts as the development host and now launches a real desktop window by default
 
 The remaining work is to deepen these crates rather than replace them.
 
@@ -344,6 +344,10 @@ The public facade:
 The manual testbed and development app.
 
 It should remain outside the stable API surface and evolve freely as the architecture grows.
+
+Current workspace status:
+
+- `cargo run -p sui-dev` launches the real desktop host through `sui::Application::run()`
 
 ## End-to-End Data Flow
 

@@ -6,5 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bytemuck = { workspace = true }
+pollster = { workspace = true }
 sui-core = { workspace = true }
 sui-scene = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }

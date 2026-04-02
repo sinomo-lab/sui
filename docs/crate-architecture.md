@@ -264,6 +264,10 @@ Owns:
 - performance experiments and renderer diagnostics
 - not part of the stable API surface
 
+Current workspace status:
+
+- `cargo run -p sui-dev` launches the real desktop playground window
+
 ## Dependency Rules
 
 The architecture should enforce these directional rules:

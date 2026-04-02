@@ -21,6 +21,8 @@ panic = "abort"
 opt-level = 2
 
 [workspace.dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
 sui = { path = "crates/sui" }
 sui-core = { path = "crates/sui-core" }
 sui-dev = { path = "crates/sui-dev" }
@@ -29,3 +31,5 @@ sui-platform = { path = "crates/sui-platform" }
 sui-render-wgpu = { path = "crates/sui-render-wgpu" }
 sui-runtime = { path = "crates/sui-runtime" }
 sui-scene = { path = "crates/sui-scene" }
+wgpu = "29.0.1"
+winit = "0.30.13"

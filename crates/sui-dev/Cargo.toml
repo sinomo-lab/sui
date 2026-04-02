@@ -4,6 +4,12 @@ version.workspace = true
 description = "Playground and smoke-test binary for the SUI workspace."
 edition.workspace = true
 rust-version.workspace = true
+publish = false
+default-run = "sui-dev"
+
+[[bin]]
+name = "sui-dev"
+path = "src/main.rs"
 
 [dependencies]
 sui = { workspace = true }

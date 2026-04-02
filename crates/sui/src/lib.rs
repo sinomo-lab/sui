@@ -14,7 +14,7 @@ pub use sui_core::{
 pub use sui_layout::Padding as Insets;
 pub use sui_layout::{Alignment, Axis, Constraints, Padding};
 #[cfg(feature = "desktop")]
-pub use sui_platform::{DesktopPlatform, PlatformWindow};
+pub use sui_platform::{DesktopPlatform, HeadlessPlatform, PlatformWindow};
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{RendererCapabilities, RendererInterop, WgpuRenderer};
 pub use sui_runtime::{
