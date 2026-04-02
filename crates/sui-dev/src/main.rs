@@ -8,19 +8,7 @@ fn main() -> Result<()> {
 }
 
 fn run_desktop_app() -> Result<()> {
-    let state = Rc::new(RefCell::new(GalleryState {
-        name: "Ada".to_string(),
-        subscribed: true,
-        button_presses: 0,
-    }));
-
-    Application::new()
-        .window(
-            WindowBuilder::new()
-                .title("SUI Widget Gallery")
-                .root(GalleryRoot::new(state)),
-        )
-        .run()
+    build_gallery_application(default_gallery_state()).run()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -40,6 +28,22 @@ impl GalleryRoot {
             child: SingleChild::new(build_gallery(state)),
         }
     }
+}
+
+fn default_gallery_state() -> Rc<RefCell<GalleryState>> {
+    Rc::new(RefCell::new(GalleryState {
+        name: "Ada".to_string(),
+        subscribed: true,
+        button_presses: 0,
+    }))
+}
+
+fn build_gallery_application(state: Rc<RefCell<GalleryState>>) -> Application {
+    Application::new().window(
+        WindowBuilder::new()
+            .title("SUI Widget Gallery")
+            .root(GalleryRoot::new(state)),
+    )
 }
 
 impl Widget for GalleryRoot {
@@ -302,5 +306,111 @@ impl Widget for GallerySummary {
             state.button_presses,
         ));
         ctx.push(node);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, fs, path::PathBuf, rc::Rc};
+
+    use super::{GalleryState, build_gallery_application, default_gallery_state};
+    use sui::prelude::Result;
+    use sui::{SemanticsRole, SemanticsValue};
+    use sui_testing::prelude::TestApp;
+
+    #[test]
+    fn gallery_can_write_visual_artifacts_for_inspection() -> Result<()> {
+        let artifact_root = gallery_artifact_root();
+        reset_dir(&artifact_root)?;
+
+        let default_app =
+            TestApp::from_runtime(build_gallery_application(default_gallery_state()).build()?)?;
+        let default_window = default_app.main_window()?;
+        let initial_dir = artifact_root.join("initial");
+        let initial_artifacts = default_window.capture_artifacts()?;
+        initial_artifacts.write_to_dir(&initial_dir)?;
+
+        let configured_state = Rc::new(RefCell::new(GalleryState {
+            name: "Grace Hopper".to_string(),
+            subscribed: false,
+            button_presses: 1,
+        }));
+        let configured_app =
+            TestApp::from_runtime(build_gallery_application(configured_state).build()?)?;
+        let configured_window = configured_app.main_window()?;
+        let configured_dir = artifact_root.join("configured");
+        let configured_artifacts = configured_window.capture_artifacts()?;
+        configured_artifacts.write_to_dir(&configured_dir)?;
+
+        let summary = configured_artifacts
+            .snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Gallery summary")
+            })
+            .expect("gallery summary semantics node present");
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("Grace Hopper"))
+        );
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("off"))
+        );
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("1"))
+        );
+
+        let input = configured_artifacts
+            .snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput && node.name.as_deref() == Some("Name")
+            })
+            .expect("name input semantics node present");
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Text("Grace Hopper".to_string()))
+        );
+
+        assert!(initial_dir.join("summary.txt").exists());
+        assert!(initial_dir.join("screenshot.png").exists());
+        assert!(configured_dir.join("summary.txt").exists());
+        assert!(configured_dir.join("screenshot.png").exists());
+
+        Ok(())
+    }
+
+    fn gallery_artifact_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("ui-artifacts")
+            .join("sui-dev-gallery")
+    }
+
+    fn reset_dir(path: &PathBuf) -> Result<()> {
+        if path.exists() {
+            fs::remove_dir_all(path).map_err(|error| {
+                sui::Error::new(format!("failed to clear {}: {error}", path.display()))
+            })?;
+        }
+        fs::create_dir_all(path).map_err(|error| {
+            sui::Error::new(format!("failed to create {}: {error}", path.display()))
+        })?;
+        Ok(())
     }
 }

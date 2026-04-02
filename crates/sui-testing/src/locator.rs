@@ -115,15 +115,16 @@ impl Locator {
 
         let mut harness = self.harness.borrow_mut();
         let timeout = harness.default_timeout();
-        harness
+        let result = harness
             .run_until(timeout, |harness| {
                 Ok(self
                     .resolve_unique(harness)
                     .ok()
                     .filter(|node| node.state.focused))
             })
-            .map(|_| ())
-            .map_err(|_| self.failure("focus", "locator did not become focused"))
+            .map(|_| ());
+        drop(harness);
+        result.map_err(|_| self.failure("focus", "locator did not become focused"))
     }
 
     pub fn press(&self, key: impl Into<String>) -> Result<()> {
@@ -218,18 +219,18 @@ impl Locator {
     fn action_point(&self, action: &str) -> Result<Point> {
         let mut harness = self.harness.borrow_mut();
         let timeout = harness.default_timeout();
-        harness
-            .run_until(timeout, |harness| {
-                let Ok(node) = self.resolve_unique(harness) else {
-                    return Ok(None);
-                };
-                if !self.selector.is_visible(&node) || node.state.disabled {
-                    return Ok(None);
-                }
+        let result = harness.run_until(timeout, |harness| {
+            let Ok(node) = self.resolve_unique(harness) else {
+                return Ok(None);
+            };
+            if !self.selector.is_visible(&node) || node.state.disabled {
+                return Ok(None);
+            }
 
-                Ok(Some(center(node.bounds)))
-            })
-            .map_err(|_| self.failure(action, "locator never became uniquely actionable"))
+            Ok(Some(center(node.bounds)))
+        });
+        drop(harness);
+        result.map_err(|_| self.failure(action, "locator never became uniquely actionable"))
     }
 
     fn is_focused(&self) -> Result<bool> {
