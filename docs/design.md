@@ -2,6 +2,7 @@
 
 ## Companion Documents
 
+- [Core Architecture](./architecture.md)
 - [Crate Architecture and API Boundary Plan](./crate-architecture.md)
 
 ## Vision
