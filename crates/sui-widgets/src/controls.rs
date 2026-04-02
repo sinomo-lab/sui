@@ -1,11 +1,156 @@
 use sui_core::{
-    Color, Event, ImeEvent, KeyState, PointerButton, PointerEventKind, Rect, SemanticsAction,
-    SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState,
+    Color, Event, ImeEvent, KeyState, Path, PathBuilder, Point, PointerButton,
+    PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
+    ToggleState,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::StrokeStyle;
 use sui_text::{TextMeasurement, TextStyle};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ControlPalette {
+    pub text: Color,
+    pub placeholder: Color,
+    pub surface: Color,
+    pub surface_hover: Color,
+    pub surface_pressed: Color,
+    pub surface_focus: Color,
+    pub border: Color,
+    pub border_hover: Color,
+    pub border_focus: Color,
+    pub focus_ring: Color,
+    pub accent: Color,
+    pub accent_hover: Color,
+    pub accent_pressed: Color,
+    pub accent_border: Color,
+    pub accent_border_hover: Color,
+    pub accent_border_focus: Color,
+    pub accent_text: Color,
+}
+
+impl Default for ControlPalette {
+    fn default() -> Self {
+        Self {
+            text: Color::rgba(0.08, 0.11, 0.16, 1.0),
+            placeholder: Color::rgba(0.39, 0.47, 0.57, 1.0),
+            surface: Color::rgba(0.99, 0.995, 1.0, 1.0),
+            surface_hover: Color::rgba(0.965, 0.977, 0.993, 1.0),
+            surface_pressed: Color::rgba(0.94, 0.955, 0.978, 1.0),
+            surface_focus: Color::rgba(0.972, 0.984, 1.0, 1.0),
+            border: Color::rgba(0.79, 0.84, 0.90, 1.0),
+            border_hover: Color::rgba(0.68, 0.75, 0.84, 1.0),
+            border_focus: Color::rgba(0.19, 0.49, 0.92, 1.0),
+            focus_ring: Color::rgba(0.19, 0.49, 0.92, 0.28),
+            accent: Color::rgba(0.11, 0.43, 0.92, 1.0),
+            accent_hover: Color::rgba(0.08, 0.39, 0.87, 1.0),
+            accent_pressed: Color::rgba(0.07, 0.34, 0.76, 1.0),
+            accent_border: Color::rgba(0.09, 0.37, 0.78, 1.0),
+            accent_border_hover: Color::rgba(0.08, 0.33, 0.72, 1.0),
+            accent_border_focus: Color::rgba(0.16, 0.46, 0.88, 1.0),
+            accent_text: Color::rgba(1.0, 1.0, 1.0, 1.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ControlTypography {
+    pub body_font_size: f32,
+    pub body_line_height: f32,
+}
+
+impl Default for ControlTypography {
+    fn default() -> Self {
+        Self {
+            body_font_size: 14.0,
+            body_line_height: 20.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ControlMetrics {
+    pub min_height: f32,
+    pub button_min_width: f32,
+    pub button_padding: Insets,
+    pub checkbox_padding: Insets,
+    pub checkbox_indicator_size: f32,
+    pub checkbox_gap: f32,
+    pub text_input_min_width: f32,
+    pub text_input_padding: Insets,
+    pub corner_radius: f32,
+    pub indicator_corner_radius: f32,
+    pub border_width: f32,
+    pub focus_ring_width: f32,
+    pub focus_ring_outset: f32,
+    pub caret_width: f32,
+}
+
+impl Default for ControlMetrics {
+    fn default() -> Self {
+        Self {
+            min_height: 40.0,
+            button_min_width: 88.0,
+            button_padding: Insets {
+                left: 14.0,
+                top: 10.0,
+                right: 14.0,
+                bottom: 10.0,
+            },
+            checkbox_padding: Insets {
+                left: 10.0,
+                top: 8.0,
+                right: 10.0,
+                bottom: 8.0,
+            },
+            checkbox_indicator_size: 18.0,
+            checkbox_gap: 10.0,
+            text_input_min_width: 240.0,
+            text_input_padding: Insets {
+                left: 12.0,
+                top: 10.0,
+                right: 12.0,
+                bottom: 10.0,
+            },
+            corner_radius: 8.0,
+            indicator_corner_radius: 5.0,
+            border_width: 1.0,
+            focus_ring_width: 2.0,
+            focus_ring_outset: 2.0,
+            caret_width: 2.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct DefaultTheme {
+    pub palette: ControlPalette,
+    pub typography: ControlTypography,
+    pub metrics: ControlMetrics,
+}
+
+impl DefaultTheme {
+    pub fn text_style(&self, color: Color) -> TextStyle {
+        TextStyle {
+            font_size: self.typography.body_font_size.max(1.0),
+            line_height: self.typography.body_line_height.max(1.0),
+            color,
+            ..TextStyle::default()
+        }
+    }
+
+    pub fn body_text_style(&self) -> TextStyle {
+        self.text_style(self.palette.text)
+    }
+
+    pub fn placeholder_text_style(&self) -> TextStyle {
+        self.text_style(self.palette.placeholder)
+    }
+
+    pub fn button_text_style(&self) -> TextStyle {
+        self.text_style(self.palette.accent_text)
+    }
+}
 
 pub struct Label {
     text: String,
@@ -17,9 +162,14 @@ impl Label {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
-            style: TextStyle::default(),
+            style: DefaultTheme::default().body_text_style(),
             measurement: None,
         }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.style = theme.body_text_style();
+        self
     }
 
     pub fn text(&self) -> &str {
@@ -73,10 +223,12 @@ impl Widget for Label {
 }
 
 pub struct Button {
+    theme: DefaultTheme,
     label: String,
-    text_style: TextStyle,
-    padding: Insets,
-    min_size: Size,
+    text_style: Option<TextStyle>,
+    padding: Option<Insets>,
+    min_width: Option<f32>,
+    min_height: Option<f32>,
     hovered: bool,
     pressed: bool,
     label_measurement: Option<TextMeasurement>,
@@ -86,18 +238,12 @@ pub struct Button {
 impl Button {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
+            theme: DefaultTheme::default(),
             label: label.into(),
-            text_style: TextStyle {
-                color: Color::WHITE,
-                ..TextStyle::default()
-            },
-            padding: Insets {
-                left: 14.0,
-                top: 10.0,
-                right: 14.0,
-                bottom: 10.0,
-            },
-            min_size: Size::new(96.0, 40.0),
+            text_style: None,
+            padding: None,
+            min_width: None,
+            min_height: None,
             hovered: false,
             pressed: false,
             label_measurement: None,
@@ -113,18 +259,28 @@ impl Button {
         self.label = label.into();
     }
 
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+        self.text_style = Some(text_style);
+        self
+    }
+
     pub fn min_width(mut self, width: f32) -> Self {
-        self.min_size.width = width.max(0.0);
+        self.min_width = Some(width.max(0.0));
         self
     }
 
     pub fn min_height(mut self, height: f32) -> Self {
-        self.min_size.height = height.max(0.0);
+        self.min_height = Some(height.max(0.0));
         self
     }
 
     pub fn padding(mut self, padding: Insets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
@@ -148,6 +304,24 @@ impl Button {
             ctx.request_paint();
             ctx.request_semantics();
         }
+    }
+
+    fn resolved_text_style(&self) -> TextStyle {
+        self.text_style
+            .clone()
+            .unwrap_or_else(|| self.theme.button_text_style())
+    }
+
+    fn resolved_padding(&self) -> Insets {
+        self.padding.unwrap_or(self.theme.metrics.button_padding)
+    }
+
+    fn resolved_min_size(&self) -> Size {
+        Size::new(
+            self.min_width
+                .unwrap_or(self.theme.metrics.button_min_width),
+            self.min_height.unwrap_or(self.theme.metrics.min_height),
+        )
     }
 }
 
@@ -216,41 +390,52 @@ impl Widget for Button {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        let measurement = measure_text(ctx, &self.label, &self.text_style);
+        let text_style = self.resolved_text_style();
+        let padding = self.resolved_padding();
+        let min_size = self.resolved_min_size();
+        let measurement = measure_text(ctx, &self.label, &text_style);
         self.label_measurement = Some(measurement);
 
-        let width =
-            (measurement.width + self.padding.left + self.padding.right).max(self.min_size.width);
-        let height = (measurement.height.max(self.text_style.line_height)
-            + self.padding.top
-            + self.padding.bottom)
-            .max(self.min_size.height);
+        let width = (measurement.width + padding.left + padding.right).max(min_size.width);
+        let height = (measurement.height.max(text_style.line_height) + padding.top + padding.bottom)
+            .max(min_size.height);
 
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = self.theme.palette;
+        let metrics = self.theme.metrics;
+        let text_style = self.resolved_text_style();
+        let padding = self.resolved_padding();
         let background = if self.pressed {
-            Color::rgba(0.12, 0.29, 0.50, 1.0)
-        } else if ctx.is_focused() {
-            Color::rgba(0.25, 0.52, 0.88, 1.0)
+            palette.accent_pressed
         } else if self.hovered {
-            Color::rgba(0.20, 0.36, 0.62, 1.0)
+            palette.accent_hover
         } else {
-            Color::rgba(0.17, 0.24, 0.37, 1.0)
+            palette.accent
         };
         let border = if ctx.is_focused() {
-            Color::rgba(0.80, 0.87, 1.0, 1.0)
+            palette.accent_border_focus
+        } else if self.hovered {
+            palette.accent_border_hover
         } else {
-            Color::rgba(0.24, 0.33, 0.48, 1.0)
+            palette.accent_border
         };
 
-        ctx.fill_bounds(background);
-        ctx.stroke_bounds(border, StrokeStyle::new(1.0));
+        draw_control_frame(
+            ctx,
+            ctx.bounds(),
+            metrics.corner_radius,
+            metrics,
+            background,
+            border,
+            ctx.is_focused().then_some(palette.focus_ring),
+        );
         ctx.draw_text(
-            inset_rect(ctx.bounds(), self.padding),
+            inset_rect(ctx.bounds(), padding),
             self.label.clone(),
-            self.text_style.clone(),
+            text_style,
         );
     }
 
@@ -274,12 +459,13 @@ impl Widget for Button {
 }
 
 pub struct Checkbox {
+    theme: DefaultTheme,
     label: String,
     checked: bool,
-    text_style: TextStyle,
-    padding: Insets,
-    indicator_size: f32,
-    gap: f32,
+    text_style: Option<TextStyle>,
+    padding: Option<Insets>,
+    indicator_size: Option<f32>,
+    gap: Option<f32>,
     hovered: bool,
     pressed: bool,
     label_measurement: Option<TextMeasurement>,
@@ -289,20 +475,13 @@ pub struct Checkbox {
 impl Checkbox {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
+            theme: DefaultTheme::default(),
             label: label.into(),
             checked: false,
-            text_style: TextStyle {
-                color: Color::rgba(0.94, 0.96, 0.99, 1.0),
-                ..TextStyle::default()
-            },
-            padding: Insets {
-                left: 8.0,
-                top: 6.0,
-                right: 8.0,
-                bottom: 6.0,
-            },
-            indicator_size: 18.0,
-            gap: 10.0,
+            text_style: None,
+            padding: None,
+            indicator_size: None,
+            gap: None,
             hovered: false,
             pressed: false,
             label_measurement: None,
@@ -317,6 +496,31 @@ impl Checkbox {
 
     pub fn is_checked(&self) -> bool {
         self.checked
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+        self.text_style = Some(text_style);
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = Some(padding);
+        self
+    }
+
+    pub fn indicator_size(mut self, indicator_size: f32) -> Self {
+        self.indicator_size = Some(indicator_size.max(0.0));
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = Some(gap.max(0.0));
+        self
     }
 
     pub fn set_checked(&mut self, checked: bool) {
@@ -344,6 +548,25 @@ impl Checkbox {
             ctx.request_paint();
             ctx.request_semantics();
         }
+    }
+
+    fn resolved_text_style(&self) -> TextStyle {
+        self.text_style
+            .clone()
+            .unwrap_or_else(|| self.theme.body_text_style())
+    }
+
+    fn resolved_padding(&self) -> Insets {
+        self.padding.unwrap_or(self.theme.metrics.checkbox_padding)
+    }
+
+    fn resolved_indicator_size(&self) -> f32 {
+        self.indicator_size
+            .unwrap_or(self.theme.metrics.checkbox_indicator_size)
+    }
+
+    fn resolved_gap(&self) -> f32 {
+        self.gap.unwrap_or(self.theme.metrics.checkbox_gap)
     }
 }
 
@@ -412,50 +635,101 @@ impl Widget for Checkbox {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        let measurement = measure_text(ctx, &self.label, &self.text_style);
+        let text_style = self.resolved_text_style();
+        let padding = self.resolved_padding();
+        let indicator_size = self.resolved_indicator_size();
+        let gap = self.resolved_gap();
+        let measurement = measure_text(ctx, &self.label, &text_style);
         self.label_measurement = Some(measurement);
 
-        let width = self.padding.left
-            + self.indicator_size
-            + self.gap
+        let width = padding.left
+            + indicator_size
+            + gap
             + measurement.width
-            + self.padding.right;
-        let height = (self
-            .indicator_size
-            .max(measurement.height.max(self.text_style.line_height))
-            + self.padding.top
-            + self.padding.bottom)
-            .max(32.0);
+            + padding.right;
+        let height = (indicator_size.max(measurement.height.max(text_style.line_height))
+            + padding.top
+            + padding.bottom)
+            .max(self.theme.metrics.min_height);
 
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let background = if self.hovered {
-            Color::rgba(0.15, 0.18, 0.24, 1.0)
+        let palette = self.theme.palette;
+        let metrics = self.theme.metrics;
+        let text_style = self.resolved_text_style();
+        let padding = self.resolved_padding();
+        let indicator_size = self.resolved_indicator_size();
+        let gap = self.resolved_gap();
+        let background = if self.pressed {
+            palette.surface_pressed
+        } else if self.hovered {
+            palette.surface_hover
+        } else if ctx.is_focused() {
+            palette.surface_focus
         } else {
-            Color::rgba(0.12, 0.14, 0.19, 1.0)
+            palette.surface
         };
         let border = if ctx.is_focused() {
-            Color::rgba(0.66, 0.74, 0.93, 1.0)
+            palette.border_focus
+        } else if self.hovered {
+            palette.border_hover
         } else {
-            Color::rgba(0.34, 0.40, 0.50, 1.0)
+            palette.border
         };
-        let indicator = indicator_rect(ctx.bounds(), self.padding, self.indicator_size);
-        let label_rect =
-            checkbox_label_rect(ctx.bounds(), self.padding, self.indicator_size, self.gap);
+        let indicator = indicator_rect(ctx.bounds(), padding, indicator_size);
+        let label_rect = checkbox_label_rect(ctx.bounds(), padding, indicator_size, gap);
 
-        ctx.fill_bounds(background);
-        ctx.stroke_bounds(border, StrokeStyle::new(1.0));
-        ctx.fill_rect(indicator, Color::rgba(0.08, 0.10, 0.14, 1.0));
-        ctx.stroke_rect(indicator, border, StrokeStyle::new(1.0));
+        draw_control_frame(
+            ctx,
+            ctx.bounds(),
+            metrics.corner_radius,
+            metrics,
+            background,
+            border,
+            ctx.is_focused().then_some(palette.focus_ring),
+        );
+
+        let indicator_background = if self.checked {
+            if self.pressed {
+                palette.accent_pressed
+            } else if self.hovered {
+                palette.accent_hover
+            } else {
+                palette.accent
+            }
+        } else if self.hovered {
+            palette.surface_focus
+        } else {
+            palette.surface_pressed
+        };
+        let indicator_border = if self.checked {
+            if ctx.is_focused() {
+                palette.accent_border_focus
+            } else {
+                palette.accent_border
+            }
+        } else {
+            border
+        };
+
+        draw_control_shape(
+            ctx,
+            indicator,
+            metrics.indicator_corner_radius,
+            metrics.border_width,
+            indicator_background,
+            indicator_border,
+        );
         if self.checked {
-            ctx.fill_rect(
-                indicator.inflate(-4.0, -4.0),
-                Color::rgba(0.31, 0.67, 0.47, 1.0),
+            ctx.stroke(
+                checkmark_path(indicator.inflate(-4.0, -4.0)),
+                palette.accent_text,
+                StrokeStyle::new(2.0),
             );
         }
-        ctx.draw_text(label_rect, self.label.clone(), self.text_style.clone());
+        ctx.draw_text(label_rect, self.label.clone(), text_style);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -483,13 +757,15 @@ impl Widget for Checkbox {
 }
 
 pub struct TextInput {
+    theme: DefaultTheme,
     name: String,
     value: String,
     placeholder: String,
     composition: String,
-    text_style: TextStyle,
-    padding: Insets,
-    min_size: Size,
+    text_style: Option<TextStyle>,
+    padding: Option<Insets>,
+    min_width: Option<f32>,
+    min_height: Option<f32>,
     hovered: bool,
     visible_measurement: Option<TextMeasurement>,
     input_measurement: Option<TextMeasurement>,
@@ -499,21 +775,15 @@ pub struct TextInput {
 impl TextInput {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
+            theme: DefaultTheme::default(),
             name: name.into(),
             value: String::new(),
             placeholder: String::new(),
             composition: String::new(),
-            text_style: TextStyle {
-                color: Color::rgba(0.95, 0.96, 0.98, 1.0),
-                ..TextStyle::default()
-            },
-            padding: Insets {
-                left: 12.0,
-                top: 10.0,
-                right: 12.0,
-                bottom: 10.0,
-            },
-            min_size: Size::new(220.0, 44.0),
+            text_style: None,
+            padding: None,
+            min_width: None,
+            min_height: None,
             hovered: false,
             visible_measurement: None,
             input_measurement: None,
@@ -523,6 +793,31 @@ impl TextInput {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+        self.text_style = Some(text_style);
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = Some(padding);
+        self
+    }
+
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = Some(width.max(0.0));
+        self
+    }
+
+    pub fn min_height(mut self, height: f32) -> Self {
+        self.min_height = Some(height.max(0.0));
+        self
     }
 
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
@@ -593,6 +888,24 @@ impl TextInput {
             ctx.request_paint();
             ctx.request_semantics();
         }
+    }
+
+    fn resolved_text_style(&self) -> TextStyle {
+        self.text_style
+            .clone()
+            .unwrap_or_else(|| self.theme.body_text_style())
+    }
+
+    fn resolved_padding(&self) -> Insets {
+        self.padding.unwrap_or(self.theme.metrics.text_input_padding)
+    }
+
+    fn resolved_min_size(&self) -> Size {
+        Size::new(
+            self.min_width
+                .unwrap_or(self.theme.metrics.text_input_min_width),
+            self.min_height.unwrap_or(self.theme.metrics.min_height),
+        )
     }
 }
 
@@ -667,9 +980,12 @@ impl Widget for TextInput {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        let text_style = self.resolved_text_style();
+        let padding = self.resolved_padding();
+        let min_size = self.resolved_min_size();
         let visible_text = self.visible_text();
         let input_text = self.input_text();
-        let visible_measurement = measure_text(ctx, &visible_text, &self.text_style);
+        let visible_measurement = measure_text(ctx, &visible_text, &text_style);
         let input_measurement = if input_text.is_empty() {
             TextMeasurement {
                 width: 0.0,
@@ -677,51 +993,60 @@ impl Widget for TextInput {
                 bounds: Rect::new(0.0, 0.0, 0.0, visible_measurement.height),
             }
         } else {
-            measure_text(ctx, &input_text, &self.text_style)
+            measure_text(ctx, &input_text, &text_style)
         };
 
         self.visible_measurement = Some(visible_measurement);
         self.input_measurement = Some(input_measurement);
 
-        let width = (visible_measurement.width + self.padding.left + self.padding.right)
-            .max(self.min_size.width);
-        let height = (visible_measurement.height.max(self.text_style.line_height)
-            + self.padding.top
-            + self.padding.bottom)
-            .max(self.min_size.height);
+        let width = (visible_measurement.width + padding.left + padding.right).max(min_size.width);
+        let height = (visible_measurement.height.max(text_style.line_height)
+            + padding.top
+            + padding.bottom)
+            .max(min_size.height);
 
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = self.theme.palette;
+        let metrics = self.theme.metrics;
+        let text_style = self.resolved_text_style();
+        let padding = self.resolved_padding();
         let background = if ctx.is_focused() {
-            Color::rgba(0.16, 0.20, 0.28, 1.0)
+            palette.surface_focus
         } else if self.hovered {
-            Color::rgba(0.14, 0.17, 0.24, 1.0)
+            palette.surface_hover
         } else {
-            Color::rgba(0.12, 0.14, 0.19, 1.0)
+            palette.surface
         };
         let border = if ctx.is_focused() {
-            Color::rgba(0.66, 0.74, 0.93, 1.0)
+            palette.border_focus
+        } else if self.hovered {
+            palette.border_hover
         } else {
-            Color::rgba(0.34, 0.40, 0.50, 1.0)
+            palette.border
         };
-        let content_rect = inset_rect(ctx.bounds(), self.padding);
+        let content_rect = inset_rect(ctx.bounds(), padding);
         let display_text = self.visible_text();
         let placeholder = self.input_text().is_empty();
 
-        ctx.fill_bounds(background);
-        ctx.stroke_bounds(border, StrokeStyle::new(1.0));
+        draw_control_frame(
+            ctx,
+            ctx.bounds(),
+            metrics.corner_radius,
+            metrics,
+            background,
+            border,
+            ctx.is_focused().then_some(palette.focus_ring),
+        );
         ctx.draw_text(
             content_rect,
             display_text,
             if placeholder {
-                TextStyle {
-                    color: Color::rgba(0.56, 0.61, 0.69, 1.0),
-                    ..self.text_style.clone()
-                }
+                self.theme.placeholder_text_style()
             } else {
-                self.text_style.clone()
+                text_style.clone()
             },
         );
 
@@ -732,13 +1057,16 @@ impl Widget for TextInput {
                     .map(|measurement| measurement.width)
                     .unwrap_or(0.0);
             let caret_rect = Rect::new(
-                caret_x.min(content_rect.max_x()),
+                caret_x.min((content_rect.max_x() - metrics.caret_width).max(content_rect.x())),
                 content_rect.y(),
-                1.0,
-                content_rect.height().max(self.text_style.line_height),
+                metrics.caret_width,
+                content_rect.height().max(text_style.line_height),
             );
             ctx.set_ime_composition_rect(caret_rect);
-            ctx.fill_rect(caret_rect, Color::rgba(0.84, 0.89, 1.0, 1.0));
+            ctx.fill(
+                rounded_rect_path(caret_rect, metrics.caret_width * 0.5),
+                palette.accent_text,
+            );
         }
     }
 
@@ -791,6 +1119,64 @@ fn keyboard_text(event: &sui_core::KeyboardEvent) -> Option<&str> {
         .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
 }
 
+fn draw_control_frame(
+    ctx: &mut PaintCtx,
+    bounds: Rect,
+    radius: f32,
+    metrics: ControlMetrics,
+    background: Color,
+    border: Color,
+    focus_ring: Option<Color>,
+) {
+    if let Some(focus_ring) = focus_ring {
+        ctx.stroke(
+            rounded_rect_path(
+                bounds.inflate(metrics.focus_ring_outset, metrics.focus_ring_outset),
+                radius + metrics.focus_ring_outset,
+            ),
+            focus_ring,
+            StrokeStyle::new(metrics.focus_ring_width),
+        );
+    }
+
+    draw_control_shape(ctx, bounds, radius, metrics.border_width, background, border);
+}
+
+fn draw_control_shape(
+    ctx: &mut PaintCtx,
+    bounds: Rect,
+    radius: f32,
+    border_width: f32,
+    background: Color,
+    border: Color,
+) {
+    let shape = rounded_rect_path(bounds, radius);
+    ctx.fill(shape.clone(), background);
+    ctx.stroke(shape, border, StrokeStyle::new(border_width));
+}
+
+fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
+    Path::rounded_rect(rect, radius.min(rect.width().min(rect.height()) * 0.5))
+}
+
+fn checkmark_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + (rect.width() * 0.18),
+            rect.y() + (rect.height() * 0.54),
+        ))
+        .line_to(Point::new(
+            rect.x() + (rect.width() * 0.42),
+            rect.y() + (rect.height() * 0.76),
+        ))
+        .line_to(Point::new(
+            rect.x() + (rect.width() * 0.82),
+            rect.y() + (rect.height() * 0.28),
+        ));
+    builder.build()
+}
+
 fn inset_rect(rect: Rect, padding: Insets) -> Rect {
     Rect::new(
         rect.x() + padding.left,
@@ -821,7 +1207,7 @@ fn checkbox_label_rect(bounds: Rect, padding: Insets, indicator_size: f32, gap: 
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use super::{Button, Checkbox, Label, TextInput};
+    use super::{Button, Checkbox, DefaultTheme, Label, TextInput};
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, SemanticsRole, Size,
@@ -1045,5 +1431,72 @@ mod tests {
     fn button_obeys_minimum_size() {
         let output = render(Button::new("Go").min_width(140.0).min_height(44.0));
         assert_eq!(output.frame.viewport, Size::new(140.0, 44.0));
+    }
+
+    #[test]
+    fn controls_default_to_touch_safe_heights() {
+        assert_eq!(
+            render(Button::new("Go")).frame.viewport.height,
+            DefaultTheme::default().metrics.min_height
+        );
+        assert_eq!(
+            render(Checkbox::new("Subscribe")).frame.viewport.height,
+            DefaultTheme::default().metrics.min_height
+        );
+        assert_eq!(
+            render(TextInput::new("Name")).frame.viewport.height,
+            DefaultTheme::default().metrics.min_height
+        );
+    }
+
+    #[test]
+    fn button_theme_is_public_and_changes_metrics_and_typography() {
+        let mut theme = DefaultTheme::default();
+        theme.metrics.button_min_width = 156.0;
+        theme.metrics.min_height = 52.0;
+        theme.typography.body_font_size = 16.0;
+        theme.typography.body_line_height = 24.0;
+        theme.palette.accent_text = Color::rgba(0.10, 0.12, 0.15, 1.0);
+
+        let output = render(Button::new("Theme").theme(theme));
+
+        assert_eq!(output.frame.viewport, Size::new(156.0, 52.0));
+        let label = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(text) => Some(text),
+                _ => None,
+            })
+            .expect("button label draw command present");
+        assert_eq!(label.style.font_size, 16.0);
+        assert_eq!(label.style.line_height, 24.0);
+        assert_eq!(label.style.color, theme.palette.accent_text);
+    }
+
+    #[test]
+    fn label_theme_uses_default_widget_typography() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 15.0;
+        theme.typography.body_line_height = 22.0;
+        theme.palette.text = Color::rgba(0.78, 0.82, 0.90, 1.0);
+
+        let output = render(Label::new("Body").theme(theme));
+        let label = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(text) => Some(text),
+                _ => None,
+            })
+            .expect("label draw command present");
+
+        assert_eq!(label.style.font_size, 15.0);
+        assert_eq!(label.style.line_height, 22.0);
+        assert_eq!(label.style.color, theme.palette.text);
     }
 }

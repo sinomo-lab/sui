@@ -55,7 +55,7 @@ impl Widget for GalleryRoot {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.clear(Color::rgba(0.06, 0.07, 0.09, 1.0));
+        ctx.clear(Color::rgba(0.95, 0.968, 0.985, 1.0));
         self.child.paint(ctx);
     }
 
@@ -98,20 +98,20 @@ fn build_gallery(state: Rc<RefCell<GalleryState>>) -> impl Widget {
                         Label::new("SUI Widget Gallery")
                             .font_size(30.0)
                             .line_height(34.0)
-                            .color(Color::rgba(0.96, 0.97, 0.99, 1.0)),
+                            .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
                     )
                     .with_child(
                         Label::new(
-                            "First pass of common built-in controls: text, button, checkbox, and text input. Layout still comes from the existing container primitives.",
+                            "Default SUI widgets now use a light, clean palette, compact 40 px targets, and restrained corner radii for a more professional baseline.",
                         )
                         .font_size(15.0)
                         .line_height(20.0)
-                        .color(Color::rgba(0.72, 0.77, 0.84, 1.0)),
+                        .color(Color::rgba(0.40, 0.48, 0.58, 1.0)),
                     ),
             )
             .with_child(panel(
                 "Common controls",
-                "These are the widgets implemented in sui-widgets first because they fit the current retained runtime, semantics model, and event surface cleanly.",
+                "These defaults should feel contemporary and light, while still staying dense enough for inspectors, toolbars, and side panels.",
                 Stack::vertical()
                     .spacing(14.0)
                     .alignment(Alignment::Stretch)
@@ -143,20 +143,20 @@ fn build_gallery(state: Rc<RefCell<GalleryState>>) -> impl Widget {
                             )
                             .with_child(
                                 Label::new(
-                                    "The button updates shared gallery state. The input and checkbox also push state changes through callbacks.",
+                                    "Primary actions, boolean toggles, and text fields should feel related by default instead of looking like separate experiments.",
                                 )
                                 .font_size(14.0)
                                 .line_height(18.0)
-                                .color(Color::rgba(0.66, 0.71, 0.78, 1.0)),
+                                .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
                             ),
                     )
                     .with_child(
                         Label::new(
-                            "Text input currently supports focus, direct keyboard typing, IME composition commits, placeholder rendering, and backspace. That is intentionally minimal for this phase.",
+                            "The interaction model is still intentionally small in scope, but the default presentation now targets real application chrome rather than placeholder controls.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)
-                        .color(Color::rgba(0.59, 0.65, 0.73, 1.0)),
+                        .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
                     ),
             ))
             .with_child(panel(
@@ -169,19 +169,19 @@ fn build_gallery(state: Rc<RefCell<GalleryState>>) -> impl Widget {
                         Label::new("Section heading")
                             .font_size(22.0)
                             .line_height(26.0)
-                            .color(Color::rgba(0.93, 0.95, 0.99, 1.0)),
+                            .color(Color::rgba(0.13, 0.17, 0.23, 1.0)),
                     )
                     .with_child(
                         Label::new("Body copy can use the same widget with different size and color settings.")
                             .font_size(15.0)
                             .line_height(20.0)
-                            .color(Color::rgba(0.73, 0.78, 0.85, 1.0)),
+                            .color(Color::rgba(0.38, 0.46, 0.56, 1.0)),
                     )
                     .with_child(
                         Label::new("Secondary note")
                             .font_size(13.0)
                             .line_height(18.0)
-                            .color(Color::rgba(0.56, 0.62, 0.70, 1.0)),
+                            .color(Color::rgba(0.50, 0.57, 0.66, 1.0)),
                     ),
             ))
             .with_child(panel(
@@ -197,7 +197,7 @@ where
     W: Widget + 'static,
 {
     Background::new(
-        Color::rgba(0.11, 0.13, 0.18, 1.0),
+        Color::rgba(0.985, 0.99, 1.0, 1.0),
         Padding::all(
             18.0,
             Stack::vertical()
@@ -207,13 +207,13 @@ where
                     Label::new(title)
                         .font_size(20.0)
                         .line_height(24.0)
-                        .color(Color::rgba(0.95, 0.97, 0.99, 1.0)),
+                        .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
                 )
                 .with_child(
                     Label::new(subtitle)
                         .font_size(14.0)
                         .line_height(19.0)
-                        .color(Color::rgba(0.69, 0.75, 0.82, 1.0)),
+                        .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
                 )
                 .with_child(body),
         ),
@@ -253,8 +253,8 @@ impl Widget for GallerySummary {
             "Not subscribed"
         };
 
-        ctx.fill_bounds(Color::rgba(0.08, 0.10, 0.14, 1.0));
-        ctx.stroke_bounds(Color::rgba(0.22, 0.30, 0.43, 1.0), StrokeStyle::new(1.0));
+        ctx.fill_bounds(Color::rgba(0.985, 0.99, 1.0, 1.0));
+        ctx.stroke_bounds(Color::rgba(0.80, 0.85, 0.91, 1.0), StrokeStyle::new(1.0));
         ctx.label(
             Rect::new(
                 ctx.bounds().x() + 14.0,
@@ -263,7 +263,7 @@ impl Widget for GallerySummary {
                 24.0,
             ),
             greeting,
-            Color::rgba(0.95, 0.97, 0.99, 1.0),
+            Color::rgba(0.11, 0.15, 0.21, 1.0),
         );
         ctx.label(
             Rect::new(
@@ -273,7 +273,7 @@ impl Widget for GallerySummary {
                 20.0,
             ),
             format!("button presses: {}", state.button_presses),
-            Color::rgba(0.72, 0.78, 0.85, 1.0),
+            Color::rgba(0.41, 0.49, 0.58, 1.0),
         );
         ctx.label(
             Rect::new(
@@ -283,7 +283,7 @@ impl Widget for GallerySummary {
                 20.0,
             ),
             format!("subscription: {}", subscription),
-            Color::rgba(0.72, 0.78, 0.85, 1.0),
+            Color::rgba(0.41, 0.49, 0.58, 1.0),
         );
     }
 

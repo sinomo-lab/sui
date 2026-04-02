@@ -1,10 +1,20 @@
 #![forbid(unsafe_code)]
 
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    fmt,
+    sync::Arc,
+};
+
 pub mod containers;
 pub mod controls;
 
 pub use containers::{Align, Background, SizedBox, Stack};
-pub use controls::{Button, Checkbox, Label, TextInput};
+pub use controls::{
+    Button, Checkbox, ControlMetrics, ControlPalette, DefaultTheme, ControlTypography, Label,
+    TextInput,
+};
 pub use sui_core::{
     AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, Error, Event, FontHandle,
     ImageHandle, ImeEvent, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
@@ -34,18 +44,150 @@ pub use sui_text::{
     TextMeasurement, TextRun, TextStyle,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+pub trait ThemeExtension: Any + Send + Sync {}
+
+impl<T> ThemeExtension for T where T: Any + Send + Sync {}
+
+#[derive(Clone, Default)]
+pub struct ThemeExtensions {
+    values: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+}
+
+impl ThemeExtensions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert<T>(&mut self, value: T) -> Option<Arc<T>>
+    where
+        T: ThemeExtension,
+    {
+        self.values
+            .insert(TypeId::of::<T>(), Arc::new(value))
+            .and_then(|previous| Arc::downcast::<T>(previous).ok())
+    }
+
+    pub fn get<T>(&self) -> Option<&T>
+    where
+        T: ThemeExtension,
+    {
+        self.values
+            .get(&TypeId::of::<T>())
+            .and_then(|value| value.as_ref().downcast_ref::<T>())
+    }
+
+    pub fn get_arc<T>(&self) -> Option<Arc<T>>
+    where
+        T: ThemeExtension,
+    {
+        self.values
+            .get(&TypeId::of::<T>())
+            .and_then(|value| Arc::clone(value).downcast::<T>().ok())
+    }
+
+    pub fn contains<T>(&self) -> bool
+    where
+        T: ThemeExtension,
+    {
+        self.values.contains_key(&TypeId::of::<T>())
+    }
+
+    pub fn remove<T>(&mut self) -> Option<Arc<T>>
+    where
+        T: ThemeExtension,
+    {
+        self.values
+            .remove(&TypeId::of::<T>())
+            .and_then(|value| Arc::downcast::<T>(value).ok())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+}
+
+impl fmt::Debug for ThemeExtensions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ThemeExtensions")
+            .field("len", &self.values.len())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Theme {
     pub background: Color,
     pub foreground: Color,
+    pub default_widgets: DefaultTheme,
+    pub extensions: ThemeExtensions,
 }
 
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            background: Color::rgba(0.08, 0.09, 0.11, 1.0),
-            foreground: Color::rgba(0.95, 0.96, 0.98, 1.0),
+            background: Color::rgba(0.96, 0.972, 0.988, 1.0),
+            foreground: Color::rgba(0.12, 0.15, 0.20, 1.0),
+            default_widgets: DefaultTheme::default(),
+            extensions: ThemeExtensions::default(),
         }
+    }
+}
+
+impl Theme {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_default_widgets(mut self, theme: DefaultTheme) -> Self {
+        self.default_widgets = theme;
+        self
+    }
+
+    pub fn with_extension<T>(mut self, value: T) -> Self
+    where
+        T: ThemeExtension,
+    {
+        self.extensions.insert(value);
+        self
+    }
+
+    pub fn insert_extension<T>(&mut self, value: T) -> Option<Arc<T>>
+    where
+        T: ThemeExtension,
+    {
+        self.extensions.insert(value)
+    }
+
+    pub fn extension<T>(&self) -> Option<&T>
+    where
+        T: ThemeExtension,
+    {
+        self.extensions.get::<T>()
+    }
+
+    pub fn extension_arc<T>(&self) -> Option<Arc<T>>
+    where
+        T: ThemeExtension,
+    {
+        self.extensions.get_arc::<T>()
+    }
+
+    pub fn has_extension<T>(&self) -> bool
+    where
+        T: ThemeExtension,
+    {
+        self.extensions.contains::<T>()
+    }
+
+    pub fn remove_extension<T>(&mut self) -> Option<Arc<T>>
+    where
+        T: ThemeExtension,
+    {
+        self.extensions.remove::<T>()
     }
 }
 
@@ -126,11 +268,80 @@ impl Default for Style {
 pub mod prelude {
     pub use crate::{
         Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, Button, Checkbox,
-        Color, Constraints, Event, EventCtx, FontHandle, ImageHandle, ImeEvent, Insets,
-        KeyboardEvent, Label, LayoutCtx, PaintCtx, Path, PathBuilder, Point, PointerEvent, Rect,
-        RegisteredFont, RegisteredImage, Result, SemanticsCtx, ShapedText, SingleChild, Size,
-        SizedBox, Stack, StrokeStyle, Style, TextInput, TextLayout, TextMeasurement, TextStyle,
-        Theme, TimerToken, Transform, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
-        containers::Padding,
+        Color, Constraints, ControlMetrics, ControlPalette, ControlTypography, DefaultTheme,
+        Event, EventCtx, FontHandle, ImageHandle, ImeEvent, Insets, KeyboardEvent, Label,
+        LayoutCtx, PaintCtx, Path, PathBuilder, Point, PointerEvent, Rect, RegisteredFont,
+        RegisteredImage, Result, SemanticsCtx, ShapedText, SingleChild, Size, SizedBox, Stack,
+        StrokeStyle, Style, TextInput, TextLayout, TextMeasurement, TextStyle, Theme,
+        ThemeExtension, ThemeExtensions, TimerToken, Transform, WakeEvent, Widget,
+        WidgetChildren, WidgetPod, WindowBuilder, containers::Padding,
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{DefaultTheme, Theme};
+
+    #[derive(Debug, PartialEq)]
+    struct CustomWidgetTheme {
+        radius: f32,
+        density: u8,
+    }
+
+    #[test]
+    fn theme_stores_default_widget_theme_separately_from_extensions() {
+        let mut defaults = DefaultTheme::default();
+        defaults.metrics.min_height = 44.0;
+
+        let theme = Theme::new()
+            .with_default_widgets(defaults)
+            .with_extension(CustomWidgetTheme {
+                radius: 6.0,
+                density: 2,
+            });
+
+        assert_eq!(theme.default_widgets.metrics.min_height, 44.0);
+        assert!(theme.has_extension::<CustomWidgetTheme>());
+        assert_eq!(
+            theme.extension::<CustomWidgetTheme>(),
+            Some(&CustomWidgetTheme {
+                radius: 6.0,
+                density: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn theme_extensions_support_arc_access_and_removal() {
+        let mut theme = Theme::new();
+        theme.insert_extension(CustomWidgetTheme {
+            radius: 12.0,
+            density: 3,
+        });
+
+        let extension = theme
+            .extension_arc::<CustomWidgetTheme>()
+            .expect("custom widget theme present");
+        assert_eq!(
+            Arc::as_ref(&extension),
+            &CustomWidgetTheme {
+                radius: 12.0,
+                density: 3,
+            }
+        );
+
+        let removed = theme
+            .remove_extension::<CustomWidgetTheme>()
+            .expect("custom widget theme removed");
+        assert_eq!(
+            Arc::as_ref(&removed),
+            &CustomWidgetTheme {
+                radius: 12.0,
+                density: 3,
+            }
+        );
+        assert!(!theme.has_extension::<CustomWidgetTheme>());
+    }
 }

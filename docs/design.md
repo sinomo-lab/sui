@@ -82,6 +82,33 @@ Accessibility metadata should not be an afterthought layered onto widgets later.
 
 SUI does not need to implement collaboration itself, but it should avoid architectural choices that make synchronization unnecessarily difficult. Event flow, state updates, and invalidation behavior should remain explicit and inspectable so applications can integrate collaboration systems without fighting the framework.
 
+## Default Widget Style
+
+The built-in widgets in `sui-widgets` should ship with a clear default visual language rather than looking like unstyled placeholder controls.
+
+The default style should balance three constraints:
+
+- modern enough to feel current next to web-inspired application shells and inspector panels
+- compact enough for dense professional tool UIs
+- touch-safe enough that the same controls remain comfortable on tablets and other direct-input surfaces
+
+That leads to the following baseline rules for first-party widgets:
+
+- Use a restrained neutral light palette with a small number of high-contrast accent colors. The default should feel crisp and contemporary rather than heavy or overly stylized.
+- Use rounded geometry and subtle borders by default, but keep the radii restrained. Controls should read as intentionally designed surfaces, not raw rectangles or overly soft pills.
+- Default body typography should stay around `14px / 20px` equivalent sizing so dense panels remain readable without feeling oversized.
+- Interactive controls should default to roughly `40px` minimum height. This keeps inspector and property panels compact while still preserving a comfortable hit target for touch and pen input.
+- Small visual elements such as checkbox indicators or drag affordances must not become tiny click targets. The visible glyph may stay compact, but the interactive row or surrounding surface should provide the larger target.
+- Hover, pressed, and focused states should be distinct without relying on dramatic motion or heavy skeuomorphic shading. Focus visibility is mandatory and should survive both mouse and keyboard navigation.
+- Text inputs should prioritize legibility and editing clarity: visible caret, readable placeholder styling, and strong focus treatment.
+- Buttons should default to a primary-action style that feels usable out of the box, while still allowing applications to layer richer theming later.
+
+These defaults are not meant to replace a future inherited theming system. They are the baseline that makes SUI usable before global theme propagation exists, and they should therefore live in first-party widgets rather than in example code alone.
+
+The current public API for this is `DefaultTheme` in `sui-widgets` and the top-level `sui` facade. Applications can clone `DefaultTheme::default()`, adjust palette, metrics, or typography tokens, and apply the result to built-in widgets explicitly.
+
+The broader theme container should also remain extensible. The top-level `Theme` type should support typed theme extensions so applications and third-party widget libraries can attach additional schema for their own widgets without needing SUI to predefine every possible theme field.
+
 ## Primary Use Cases
 
 SUI is intended for applications such as:
