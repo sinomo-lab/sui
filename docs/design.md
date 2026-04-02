@@ -1,0 +1,48 @@
+# SUI Design
+
+- Event driven UI toolkit
+- Mainly target Rust wgpu, cross-platform, mobile friendly
+- Support WASM build for web embedding
+- Basic layout system
+- - One pass layout
+- - Widgets can override layout behavior if flexible/multi-pass layout are needed
+- Vector graphics
+- - Basic shapes, rotation, transformation
+- - Path editing
+- - Boolean operation
+- - Filling, gradient
+- Pixel graphics
+- - Pixel perfect rendering
+- - Scaling, rotation, transformation
+- - Pixel editing tools, brush, eraser, layer blend
+- - Extensible brush engine (e.g. custom compute shader)
+- Texts
+- - Multi-language support
+- - Fonts loading and management
+- - Text layout tools
+- - Artistic text, convert to vector shape
+- - Text area and markdown rendering
+- Infinity canvas support, tiling, chunk based rendering, mipmap
+- Common UI Widgets
+- - Buttons, toggles, check boxes, radio, etc.
+- - Input fields, sliders, value adjustments (drag to adjust with numerical input), etc.
+- - Tables
+- - Groups (give render hint to child elements so they looks like grouped together)
+- - Misc UI wdigets, breadcrumb, etc.
+- - Layout tools inspired by tailwind css
+- Drag and drop support
+- Keyboard navigation
+- Multi-language support (not owning translation/i18n solutions, but provide necessary support for whatever solutions user use, e.g. text input need to support IME instead of read raw keyboard event).
+- Color management
+- Multi-media support
+- - Video playback
+- - Audio playback
+- - Playback control widgets
+- - Wave visualizer
+- Render to texture
+- Embedding content (external library provide texture or draw overlay, we bridge paint surface and event)
+- Themes
+- Basic 3D support (mainly just expose the raw wgpu funcnality with helpers to make the integration smoothly)
+- HTML intergration in wasm build (embedding HTML content and being embedded into HTML canvas, event handling such as drag and drop between sui and html elements)
+
+The main use case is graphics heavy softwares such as vector graphics editor, image editor, video editor, node graph editor, scientific visualization softwares. The goal is to provide basic building blocks for this type of software.
