@@ -104,6 +104,15 @@ impl Runtime {
         Ok(window_id)
     }
 
+    pub fn remove_window(&mut self, window_id: WindowId) -> Result<()> {
+        let Some(window_index) = self.windows.iter().position(|window| window.id == window_id) else {
+            return Err(Error::new(format!("window {} does not exist", window_id.get())));
+        };
+
+        self.windows.remove(window_index);
+        Ok(())
+    }
+
     pub fn handle_event(&mut self, window_id: WindowId, event: Event) -> Result<()> {
         let window = self.window_mut(window_id)?;
         window.handle_event(event);
@@ -1076,5 +1085,17 @@ mod tests {
         let (runtime, window_id, _, _) = build_runtime();
 
         assert!(runtime.needs_render(window_id).unwrap());
+    }
+
+    #[test]
+    fn removing_a_window_tears_down_runtime_state() {
+        let (mut runtime, window_id, _, _) = build_runtime();
+
+        runtime.remove_window(window_id).unwrap();
+
+        assert!(runtime.window_ids().is_empty());
+        assert!(runtime.needs_render(window_id).is_err());
+        assert!(runtime.focus_state(window_id).is_err());
+        assert!(runtime.render(window_id).is_err());
     }
 }

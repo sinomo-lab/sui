@@ -81,7 +81,15 @@ impl DesktopPlatform {
     }
 
     fn sync_windows(&mut self, runtime: &Runtime) -> Result<()> {
-        for window_id in runtime.window_ids() {
+        let runtime_window_ids = runtime.window_ids();
+
+        self.windows
+            .retain(|window| runtime_window_ids.contains(&window.id));
+        self.pending_events.retain(|queued_event| {
+            runtime_window_ids.contains(&queued_event.window_id)
+        });
+
+        for window_id in runtime_window_ids {
             if self.windows.iter().any(|window| window.id == window_id) {
                 continue;
             }
@@ -152,8 +160,10 @@ impl DesktopPlatform {
         }
 
         if is_close {
-            self.windows[window_index].open = false;
-            self.windows[window_index].redraw_requested = false;
+            runtime.remove_window(window_id)?;
+            self.pending_events
+                .retain(|pending_event| pending_event.window_id != window_id);
+            self.windows.swap_remove(window_index);
         }
 
         Ok(())
@@ -188,7 +198,9 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::DesktopPlatform;
-    use sui_core::{Color, CustomEvent, Event, Rect, Result, SemanticsNode, SemanticsRole};
+    use sui_core::{
+        Color, CustomEvent, Event, Rect, Result, SemanticsNode, SemanticsRole, WindowEvent,
+    };
     use sui_runtime::{
         Application, EventCtx, PaintCtx, Runtime, SemanticsCtx, Widget, WindowBuilder,
     };
@@ -268,6 +280,24 @@ mod tests {
         assert_eq!(counters.borrow().paints, 2);
         assert_eq!(platform.renderer().frames_rendered(), 2);
         assert!(!runtime.needs_render(window_id)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn close_requested_removes_window_from_platform_and_runtime() -> Result<()> {
+        let counters = Rc::new(RefCell::new(Counters::default()));
+        let (mut runtime, window_id) = build_runtime(counters);
+        let mut platform = DesktopPlatform::new();
+
+        let _ = platform.run(&mut runtime)?;
+
+        platform.dispatch_event(&runtime, window_id, Event::Window(WindowEvent::CloseRequested))?;
+        let windows = platform.run(&mut runtime)?;
+
+        assert!(windows.is_empty());
+        assert!(runtime.window_ids().is_empty());
+        assert!(runtime.needs_render(window_id).is_err());
 
         Ok(())
     }
