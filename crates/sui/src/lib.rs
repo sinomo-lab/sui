@@ -13,8 +13,9 @@ pub use sui_platform::{DesktopPlatform, PlatformWindow};
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{RendererCapabilities, RendererInterop, WgpuRenderer};
 pub use sui_runtime::{
-    Application, EventCtx, LayoutCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
-    WindowBuilder,
+    Application, EventCtx, EventPhase, FocusState, FrameSchedule, LayoutCtx, PaintCtx,
+    RenderOutput, Runtime, SemanticsCtx, Widget, WidgetGraphSnapshot, WidgetNodeSnapshot,
+    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
 };
 pub use sui_scene::{Brush, Scene, SceneCommand, SceneFrame};
 
@@ -54,6 +55,6 @@ pub mod prelude {
     pub use crate::{
         Application, Brush, Color, Constraints, Event, EventCtx, ImeEvent, KeyboardEvent,
         LayoutCtx, PaintCtx, Point, PointerEvent, Rect, Result, SemanticsCtx, Size, Style,
-        Theme, Widget, WindowBuilder,
+        Theme, Widget, WidgetPod, WindowBuilder,
     };
 }

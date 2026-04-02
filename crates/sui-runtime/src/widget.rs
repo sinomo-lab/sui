@@ -1,9 +1,28 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Rect,
     SemanticsNode, Size, WidgetId, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{Brush, Scene, SceneCommand};
+
+static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventPhase {
+    Capture,
+    Target,
+    Bubble,
+}
+
+pub trait WidgetPodVisitor {
+    fn visit(&mut self, child: &WidgetPod);
+}
+
+pub trait WidgetPodMutVisitor {
+    fn visit(&mut self, child: &mut WidgetPod);
+}
 
 pub trait Widget {
     fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
@@ -15,23 +34,229 @@ pub trait Widget {
     fn paint(&self, _ctx: &mut PaintCtx) {}
 
     fn semantics(&self, _ctx: &mut SemanticsCtx) {}
+
+    fn accepts_focus(&self) -> bool {
+        false
+    }
+
+    fn focus_changed(&mut self, _ctx: &mut EventCtx, _focused: bool) {}
+
+    fn visit_children(&self, _visitor: &mut dyn WidgetPodVisitor) {}
+
+    fn visit_children_mut(&mut self, _visitor: &mut dyn WidgetPodMutVisitor) {}
+}
+
+pub struct WidgetPod {
+    id: WidgetId,
+    bounds: Rect,
+    widget: Box<dyn Widget>,
+}
+
+impl WidgetPod {
+    pub fn new<W>(widget: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            id: WidgetId::new(NEXT_WIDGET_ID.fetch_add(1, Ordering::Relaxed)),
+            bounds: Rect::ZERO,
+            widget: Box::new(widget),
+        }
+    }
+
+    pub const fn id(&self) -> WidgetId {
+        self.id
+    }
+
+    pub const fn bounds(&self) -> Rect {
+        self.bounds
+    }
+
+    pub fn set_bounds(&mut self, bounds: Rect) {
+        self.bounds = bounds;
+    }
+
+    pub fn layout(&mut self, parent_ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        let mut child_ctx = LayoutCtx::new(parent_ctx.window_id(), self.id);
+        let size = self.widget.layout(&mut child_ctx, constraints);
+        self.bounds = Rect::from_origin_size(self.bounds.origin, size);
+        parent_ctx.extend_invalidations(child_ctx.take_invalidations());
+        size
+    }
+
+    pub fn paint(&self, parent_ctx: &mut PaintCtx) {
+        let mut child_ctx = PaintCtx::new(
+            parent_ctx.window_id(),
+            self.id,
+            self.bounds,
+            parent_ctx.focused_widget_id(),
+        );
+        self.widget.paint(&mut child_ctx);
+
+        let (scene, invalidations) = child_ctx.into_parts();
+        parent_ctx.extend_scene(scene);
+        parent_ctx.extend_invalidations(invalidations);
+    }
+
+    pub fn semantics(&self, parent_ctx: &mut SemanticsCtx) {
+        let mut child_ctx = SemanticsCtx::new(
+            parent_ctx.window_id(),
+            self.id,
+            parent_ctx.root_widget_id(),
+            self.bounds,
+            parent_ctx.focused_widget_id(),
+        );
+        self.widget.semantics(&mut child_ctx);
+        parent_ctx.extend_nodes(child_ctx.into_nodes());
+    }
+
+    pub(crate) fn accepts_focus(&self) -> bool {
+        self.widget.accepts_focus()
+    }
+
+    pub(crate) fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.widget.visit_children(visitor);
+    }
+
+    pub(crate) fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.widget.visit_children_mut(visitor);
+    }
+
+    pub(crate) fn dispatch_event_for(
+        &mut self,
+        target: WidgetId,
+        window_id: WindowId,
+        phase: EventPhase,
+        focused_widget: Option<WidgetId>,
+        event: &Event,
+    ) -> Option<EventDispatch> {
+        self.find_mut(target, &mut |pod| pod.dispatch_event(window_id, phase, focused_widget, event))
+    }
+
+    pub(crate) fn notify_focus_change_for(
+        &mut self,
+        target: WidgetId,
+        window_id: WindowId,
+        focused_widget: Option<WidgetId>,
+        focused: bool,
+    ) -> Option<Vec<InvalidationRequest>> {
+        self.find_mut(target, &mut |pod| pod.focus_changed(window_id, focused_widget, focused))
+    }
+
+    fn dispatch_event(
+        &mut self,
+        window_id: WindowId,
+        phase: EventPhase,
+        focused_widget: Option<WidgetId>,
+        event: &Event,
+    ) -> EventDispatch {
+        let mut ctx = EventCtx::new(window_id, self.id, self.bounds, phase, focused_widget);
+        self.widget.event(&mut ctx, event);
+        EventDispatch {
+            handled: ctx.is_handled(),
+            invalidations: ctx.take_invalidations(),
+            focus_request: ctx.take_focus_request(),
+        }
+    }
+
+    fn focus_changed(
+        &mut self,
+        window_id: WindowId,
+        focused_widget: Option<WidgetId>,
+        focused: bool,
+    ) -> Vec<InvalidationRequest> {
+        let mut ctx = EventCtx::new(
+            window_id,
+            self.id,
+            self.bounds,
+            EventPhase::Target,
+            focused_widget,
+        );
+        self.widget.focus_changed(&mut ctx, focused);
+        ctx.take_invalidations()
+    }
+
+    fn find_mut<R, F>(&mut self, target: WidgetId, f: &mut F) -> Option<R>
+    where
+        F: FnMut(&mut WidgetPod) -> R,
+    {
+        if self.id == target {
+            return Some(f(self));
+        }
+
+        let mut result = None;
+        let mut visitor = FindMutVisitor {
+            target,
+            callback: f,
+            result: &mut result,
+        };
+        self.visit_children_mut(&mut visitor);
+        result
+    }
+}
+
+struct FindMutVisitor<'a, F, R>
+where
+    F: FnMut(&mut WidgetPod) -> R,
+{
+    target: WidgetId,
+    callback: &'a mut F,
+    result: &'a mut Option<R>,
+}
+
+impl<F, R> WidgetPodMutVisitor for FindMutVisitor<'_, F, R>
+where
+    F: FnMut(&mut WidgetPod) -> R,
+{
+    fn visit(&mut self, child: &mut WidgetPod) {
+        if self.result.is_none() {
+            *self.result = child.find_mut(self.target, self.callback);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FocusRequest {
+    Focus(WidgetId),
+    Clear,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EventDispatch {
+    pub handled: bool,
+    pub invalidations: Vec<InvalidationRequest>,
+    pub focus_request: Option<FocusRequest>,
 }
 
 #[derive(Debug, Clone)]
 pub struct EventCtx {
     window_id: WindowId,
     widget_id: WidgetId,
+    bounds: Rect,
+    phase: EventPhase,
+    focused_widget_id: Option<WidgetId>,
     handled: bool,
     invalidations: Vec<InvalidationRequest>,
+    focus_request: Option<FocusRequest>,
 }
 
 impl EventCtx {
-    pub(crate) fn new(window_id: WindowId, widget_id: WidgetId) -> Self {
+    pub(crate) fn new(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        bounds: Rect,
+        phase: EventPhase,
+        focused_widget_id: Option<WidgetId>,
+    ) -> Self {
         Self {
             window_id,
             widget_id,
+            bounds,
+            phase,
+            focused_widget_id,
             handled: false,
             invalidations: Vec::new(),
+            focus_request: None,
         }
     }
 
@@ -43,12 +268,36 @@ impl EventCtx {
         self.widget_id
     }
 
+    pub const fn bounds(&self) -> Rect {
+        self.bounds
+    }
+
+    pub const fn phase(&self) -> EventPhase {
+        self.phase
+    }
+
+    pub const fn focused_widget_id(&self) -> Option<WidgetId> {
+        self.focused_widget_id
+    }
+
+    pub fn is_focused(&self) -> bool {
+        self.focused_widget_id == Some(self.widget_id)
+    }
+
     pub const fn is_handled(&self) -> bool {
         self.handled
     }
 
     pub fn set_handled(&mut self) {
         self.handled = true;
+    }
+
+    pub fn request_focus(&mut self) {
+        self.focus_request = Some(FocusRequest::Focus(self.widget_id));
+    }
+
+    pub fn clear_focus(&mut self) {
+        self.focus_request = Some(FocusRequest::Clear);
     }
 
     pub fn request(&mut self, request: InvalidationRequest) {
@@ -65,7 +314,8 @@ impl EventCtx {
 
     pub fn request_paint_rect(&mut self, rect: Rect) {
         self.request(
-            InvalidationRequest::new(InvalidationTarget::Widget(self.widget_id),
+            InvalidationRequest::new(
+                InvalidationTarget::Widget(self.widget_id),
                 InvalidationKind::Paint,
             )
             .with_region(rect),
@@ -94,6 +344,10 @@ impl EventCtx {
 
     pub(crate) fn take_invalidations(&mut self) -> Vec<InvalidationRequest> {
         std::mem::take(&mut self.invalidations)
+    }
+
+    pub(crate) fn take_focus_request(&mut self) -> Option<FocusRequest> {
+        self.focus_request.take()
     }
 
     fn request_widget(&mut self, kind: InvalidationKind) {
@@ -152,6 +406,10 @@ impl LayoutCtx {
         std::mem::take(&mut self.invalidations)
     }
 
+    pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {
+        self.invalidations.extend(invalidations);
+    }
+
     fn request_widget(&mut self, kind: InvalidationKind) {
         self.request(InvalidationRequest::new(
             InvalidationTarget::Widget(self.widget_id),
@@ -164,16 +422,23 @@ impl LayoutCtx {
 pub struct PaintCtx {
     window_id: WindowId,
     widget_id: WidgetId,
+    focused_widget_id: Option<WidgetId>,
     bounds: Rect,
     scene: Scene,
     invalidations: Vec<InvalidationRequest>,
 }
 
 impl PaintCtx {
-    pub(crate) fn new(window_id: WindowId, widget_id: WidgetId, bounds: Rect) -> Self {
+    pub(crate) fn new(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        bounds: Rect,
+        focused_widget_id: Option<WidgetId>,
+    ) -> Self {
         Self {
             window_id,
             widget_id,
+            focused_widget_id,
             bounds,
             scene: Scene::new(),
             invalidations: Vec::new(),
@@ -186,6 +451,14 @@ impl PaintCtx {
 
     pub const fn widget_id(&self) -> WidgetId {
         self.widget_id
+    }
+
+    pub const fn focused_widget_id(&self) -> Option<WidgetId> {
+        self.focused_widget_id
+    }
+
+    pub fn is_focused(&self) -> bool {
+        self.focused_widget_id == Some(self.widget_id)
     }
 
     pub const fn bounds(&self) -> Rect {
@@ -237,7 +510,8 @@ impl PaintCtx {
 
     pub fn request_paint_rect(&mut self, rect: Rect) {
         self.request(
-            InvalidationRequest::new(InvalidationTarget::Widget(self.widget_id),
+            InvalidationRequest::new(
+                InvalidationTarget::Widget(self.widget_id),
                 InvalidationKind::Paint,
             )
             .with_region(rect),
@@ -246,6 +520,16 @@ impl PaintCtx {
 
     pub fn invalidations(&self) -> &[InvalidationRequest] {
         &self.invalidations
+    }
+
+    pub(crate) fn extend_scene(&mut self, scene: Scene) {
+        for command in scene.commands().iter().cloned() {
+            self.scene.push(command);
+        }
+    }
+
+    pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {
+        self.invalidations.extend(invalidations);
     }
 
     pub(crate) fn into_parts(self) -> (Scene, Vec<InvalidationRequest>) {
@@ -263,16 +547,26 @@ impl PaintCtx {
 #[derive(Debug, Clone)]
 pub struct SemanticsCtx {
     window_id: WindowId,
+    widget_id: WidgetId,
     root_widget_id: WidgetId,
+    focused_widget_id: Option<WidgetId>,
     bounds: Rect,
     nodes: Vec<SemanticsNode>,
 }
 
 impl SemanticsCtx {
-    pub(crate) fn new(window_id: WindowId, root_widget_id: WidgetId, bounds: Rect) -> Self {
+    pub(crate) fn new(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        root_widget_id: WidgetId,
+        bounds: Rect,
+        focused_widget_id: Option<WidgetId>,
+    ) -> Self {
         Self {
             window_id,
+            widget_id,
             root_widget_id,
+            focused_widget_id,
             bounds,
             nodes: Vec::new(),
         }
@@ -283,11 +577,19 @@ impl SemanticsCtx {
     }
 
     pub const fn widget_id(&self) -> WidgetId {
-        self.root_widget_id
+        self.widget_id
     }
 
     pub const fn root_widget_id(&self) -> WidgetId {
         self.root_widget_id
+    }
+
+    pub const fn focused_widget_id(&self) -> Option<WidgetId> {
+        self.focused_widget_id
+    }
+
+    pub fn is_focused(&self) -> bool {
+        self.focused_widget_id == Some(self.widget_id)
     }
 
     pub const fn bounds(&self) -> Rect {
@@ -302,6 +604,10 @@ impl SemanticsCtx {
         &self.nodes
     }
 
+    pub(crate) fn extend_nodes(&mut self, nodes: Vec<SemanticsNode>) {
+        self.nodes.extend(nodes);
+    }
+
     pub(crate) fn into_nodes(self) -> Vec<SemanticsNode> {
         self.nodes
     }
@@ -309,38 +615,80 @@ impl SemanticsCtx {
 
 #[cfg(test)]
 mod tests {
-    use super::{EventCtx, LayoutCtx, PaintCtx};
-    use sui_core::{InvalidationKind, Rect, WidgetId, WindowId};
+    use super::{EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, Widget, WidgetPod};
+    use sui_core::{Color, InvalidationKind, Rect, SemanticsNode, SemanticsRole, WidgetId, WindowId};
+    use sui_layout::Constraints;
+
+    struct LabelWidget;
+
+    impl Widget for LabelWidget {
+        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> sui_core::Size {
+            constraints.clamp(sui_core::Size::new(48.0, 20.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::rgba(0.2, 0.3, 0.4, 1.0));
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            ctx.push(SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::Text,
+                ctx.bounds(),
+            ));
+        }
+    }
 
     #[test]
-    fn event_ctx_tracks_widget_scoped_invalidations() {
-        let mut ctx = EventCtx::new(WindowId::new(1), WidgetId::new(2));
+    fn event_ctx_tracks_widget_scoped_invalidations_and_focus() {
+        let mut ctx = EventCtx::new(
+            WindowId::new(1),
+            WidgetId::new(2),
+            Rect::new(8.0, 12.0, 24.0, 36.0),
+            EventPhase::Target,
+            None,
+        );
 
         ctx.request_layout();
         ctx.request_paint_rect(Rect::new(8.0, 12.0, 24.0, 36.0));
+        ctx.request_focus();
         ctx.set_handled();
 
         assert!(ctx.is_handled());
+        assert_eq!(ctx.bounds(), Rect::new(8.0, 12.0, 24.0, 36.0));
         assert_eq!(ctx.invalidations().len(), 2);
         assert_eq!(ctx.invalidations()[0].kind, InvalidationKind::Layout);
         assert_eq!(ctx.invalidations()[1].region, Some(Rect::new(8.0, 12.0, 24.0, 36.0)));
     }
 
     #[test]
-    fn layout_and_paint_ctx_expose_widget_metadata() {
+    fn widget_pod_merges_child_layout_paint_and_semantics() {
+        let mut pod = WidgetPod::new(LabelWidget);
+        pod.set_bounds(Rect::new(4.0, 6.0, 0.0, 0.0));
+
         let mut layout = LayoutCtx::new(WindowId::new(3), WidgetId::new(4));
-        layout.request_paint();
+        let size = pod.layout(&mut layout, Constraints::tight(sui_core::Size::new(64.0, 32.0)));
 
         let mut paint = PaintCtx::new(
             WindowId::new(3),
             WidgetId::new(4),
             Rect::new(0.0, 0.0, 120.0, 60.0),
+            None,
         );
-        paint.fill_bounds(sui_core::Color::rgba(0.2, 0.3, 0.4, 1.0));
+        pod.paint(&mut paint);
 
-        assert_eq!(layout.window_id(), WindowId::new(3));
-        assert_eq!(paint.widget_id(), WidgetId::new(4));
-        assert_eq!(paint.bounds(), Rect::new(0.0, 0.0, 120.0, 60.0));
+        let mut semantics = SemanticsCtx::new(
+            WindowId::new(3),
+            WidgetId::new(4),
+            WidgetId::new(4),
+            Rect::new(0.0, 0.0, 120.0, 60.0),
+            None,
+        );
+        pod.semantics(&mut semantics);
+
+        assert_eq!(size, sui_core::Size::new(64.0, 32.0));
+        assert_eq!(pod.bounds(), Rect::new(4.0, 6.0, 64.0, 32.0));
         assert_eq!(paint.scene().commands().len(), 1);
+        assert_eq!(semantics.nodes().len(), 1);
     }
 }

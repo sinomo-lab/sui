@@ -55,7 +55,7 @@ The remaining work is to deepen these crates rather than replace them.
 
 The canonical UI representation is a retained widget graph with stable identity. Every node has a `WidgetId`, explicit state, geometry, and semantic contribution.
 
-The current scaffold stores a single boxed root widget per window. The target architecture extends this into a runtime-owned graph with the following responsibilities:
+The current runtime now uses retained `WidgetPod` child ownership and window-level graph snapshots. That foundation should continue to grow into a richer runtime-owned graph with the following responsibilities:
 
 - parent-child ownership and lifecycle
 - stable identity for focus, testing, semantics, and future collaboration hooks
@@ -393,7 +393,7 @@ These hooks should operate on the same core artifacts used by the real runtime s
 For the current workspace, the recommended phase-1 target is:
 
 - keep `sui-core`, `sui-layout`, `sui-scene`, `sui-runtime`, `sui-render-wgpu`, `sui-platform`, `sui`, and `sui-dev`
-- deepen `sui-runtime` into a real retained widget graph with scheduling and focus state
+- keep deepening `sui-runtime` beyond the current retained graph, scheduler, and focus foundations
 - deepen `sui-scene` into a richer paint graph
 - keep `sui-render-wgpu` as the only GPU-owning crate
 - keep `sui-platform` as the only host-owning crate
@@ -411,11 +411,11 @@ These should be added by extending the existing boundaries, not by moving respon
 
 The architecture above implies the following implementation order:
 
-1. replace the single-root `Box<dyn Widget>` runtime state with a runtime-owned widget graph and child storage model
-2. introduce a frame scheduler that tracks invalidation kinds separately instead of rendering everything on every call
-3. add focus, hit-testing, and event path calculation to `sui-runtime`
+1. deepen the retained `WidgetPod` model into richer container, hit-test, and lifecycle primitives without regressing stable identity
+2. expand the frame scheduler with timers, async wakeups, and renderer-resource work queues
+3. add pointer capture, richer event targeting, and default focus traversal to `sui-runtime`
 4. evolve `sui-scene` from a flat command list into a richer scene frame with clips, transforms, text, and cached-layer descriptors
 5. move platform execution in `sui-platform` to a real event pump that drives `sui-runtime` rather than calling a one-shot render path
-6. expand semantics generation into a tree synchronized with layout and focus
+6. expand semantics generation into a tree synchronized with layout, focus, and future accessibility actions
 
 If these steps are followed, SUI will preserve the intent of the design document while staying compatible with the existing workspace structure.
