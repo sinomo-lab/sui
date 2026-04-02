@@ -92,7 +92,8 @@ impl Harness {
     }
 
     pub(crate) fn dispatch_event(&mut self, window_id: WindowId, event: Event) -> Result<()> {
-        self.platform.dispatch_event(&self.runtime, window_id, event)?;
+        self.platform
+            .dispatch_event(&self.runtime, window_id, event)?;
         self.run_until_idle()
     }
 
@@ -163,11 +164,17 @@ impl Harness {
                 focused_widget: None,
                 nodes: Vec::new(),
             },
-            widget_graph: self.runtime.widget_graph(window_id).unwrap_or(WidgetGraphSnapshot {
-                root: Default::default(),
-                nodes: Vec::new(),
-            }),
-            focus_state: self.runtime.focus_state(window_id).unwrap_or(FocusState::default()),
+            widget_graph: self
+                .runtime
+                .widget_graph(window_id)
+                .unwrap_or(WidgetGraphSnapshot {
+                    root: Default::default(),
+                    nodes: Vec::new(),
+                }),
+            focus_state: self
+                .runtime
+                .focus_state(window_id)
+                .unwrap_or(FocusState::default()),
             scene_summary: None,
         }
     }

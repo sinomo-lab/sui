@@ -263,8 +263,7 @@ impl SceneFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, ImageRegistry, ImageSource, RegisteredImage, SceneCommand, SceneFrame,
-        StrokeStyle,
+        Brush, ImageRegistry, ImageSource, RegisteredImage, SceneCommand, SceneFrame, StrokeStyle,
     };
     use std::sync::Arc;
     use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, WindowId};

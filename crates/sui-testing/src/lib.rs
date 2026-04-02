@@ -20,8 +20,8 @@ pub use window::TestWindow;
 
 pub mod prelude {
     pub use crate::{
-        ArtifactBundle, Expectation, IntoTestRuntime, Locator, SceneSummary, Screenshot,
-        Selector, TestApp, TestWindow,
+        ArtifactBundle, Expectation, IntoTestRuntime, Locator, SceneSummary, Screenshot, Selector,
+        TestApp, TestWindow,
     };
 }
 
@@ -37,8 +37,8 @@ mod tests {
 
     use crate::TestApp;
     use sui_core::{
-        Color, Event, ImeEvent, KeyState, PointerEventKind, Result, SemanticsAction,
-        SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken, WakeEvent,
+        Color, Event, ImeEvent, KeyState, PointerEventKind, Result, SemanticsAction, SemanticsNode,
+        SemanticsRole, SemanticsValue, Size, TimerToken, WakeEvent,
     };
     use sui_layout::Constraints;
     use sui_runtime::{
@@ -260,9 +260,12 @@ mod tests {
         }
 
         fn semantics(&self, ctx: &mut SemanticsCtx) {
-            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::TextInput, ctx.bounds());
+            let mut node =
+                SemanticsNode::new(ctx.widget_id(), SemanticsRole::TextInput, ctx.bounds());
             node.name = Some("Name".to_string());
-            node.value = Some(SemanticsValue::Text(self.state.borrow().input_value.clone()));
+            node.value = Some(SemanticsValue::Text(
+                self.state.borrow().input_value.clone(),
+            ));
             node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
             ctx.push(node);
         }
@@ -487,11 +490,7 @@ mod tests {
                 Color::rgba(0.17, 0.24, 0.37, 1.0)
             };
             ctx.fill_bounds(color);
-            ctx.label(
-                ctx.bounds(),
-                "Select",
-                Color::rgba(0.95, 0.96, 0.98, 1.0),
-            );
+            ctx.label(ctx.bounds(), "Select", Color::rgba(0.95, 0.96, 0.98, 1.0));
         }
 
         fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -670,11 +669,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time is after unix epoch")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "sui-testing-{}-{}",
-            std::process::id(),
-            nonce
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("sui-testing-{}-{}", std::process::id(), nonce));
         fs::create_dir_all(&dir).expect("temporary screenshot directory created");
         dir.join(name)
     }

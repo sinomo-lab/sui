@@ -7,10 +7,7 @@ use sui_core::{
 use sui_platform::AccessibilitySnapshot;
 
 use crate::{
-    diagnostics::format_failure,
-    expect::Expectation,
-    harness::Harness,
-    screenshot::Screenshot,
+    diagnostics::format_failure, expect::Expectation, harness::Harness, screenshot::Screenshot,
     selector::Selector,
 };
 
@@ -86,12 +83,18 @@ impl Locator {
 
     pub fn hover(&self) -> Result<()> {
         let point = self.action_point("hover")?;
-        self.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)))
+        self.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            point,
+        )))
     }
 
     pub fn click(&self) -> Result<()> {
         let point = self.action_point("click")?;
-        self.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)))?;
+        self.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            point,
+        )))?;
 
         let mut down = PointerEvent::new(PointerEventKind::Down, point);
         down.button = Some(PointerButton::Primary);
@@ -114,7 +117,10 @@ impl Locator {
         let timeout = harness.default_timeout();
         harness
             .run_until(timeout, |harness| {
-                Ok(self.resolve_unique(harness).ok().filter(|node| node.state.focused))
+                Ok(self
+                    .resolve_unique(harness)
+                    .ok()
+                    .filter(|node| node.state.focused))
             })
             .map(|_| ())
             .map_err(|_| self.failure("focus", "locator did not become focused"))
@@ -123,7 +129,10 @@ impl Locator {
     pub fn press(&self, key: impl Into<String>) -> Result<()> {
         self.focus()?;
         let key = key.into();
-        self.dispatch_event(Event::Keyboard(KeyboardEvent::new(key.clone(), KeyState::Pressed)))?;
+        self.dispatch_event(Event::Keyboard(KeyboardEvent::new(
+            key.clone(),
+            KeyState::Pressed,
+        )))?;
         self.dispatch_event(Event::Keyboard(KeyboardEvent::new(key, KeyState::Released)))
     }
 
@@ -131,13 +140,17 @@ impl Locator {
         self.focus()?;
         let text = text.into();
         self.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
-        self.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate { text: text.clone() }))?;
+        self.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate {
+            text: text.clone(),
+        }))?;
         self.dispatch_event(Event::Ime(ImeEvent::CompositionCommit { text }))?;
         self.dispatch_event(Event::Ime(ImeEvent::CompositionEnd))
     }
 
     pub fn dispatch_event(&self, event: Event) -> Result<()> {
-        self.harness.borrow_mut().dispatch_event(self.window_id, event)
+        self.harness
+            .borrow_mut()
+            .dispatch_event(self.window_id, event)
     }
 
     pub fn capture_screenshot(&self) -> Result<Screenshot> {
@@ -287,7 +300,11 @@ fn center(bounds: sui_core::Rect) -> Point {
     )
 }
 
-fn is_descendant(snapshot: &AccessibilitySnapshot, node_id: WidgetId, ancestor_id: WidgetId) -> bool {
+fn is_descendant(
+    snapshot: &AccessibilitySnapshot,
+    node_id: WidgetId,
+    ancestor_id: WidgetId,
+) -> bool {
     let mut current = parent_id(snapshot, node_id);
 
     while let Some(parent) = current {

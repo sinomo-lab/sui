@@ -10,3 +10,4 @@ sui-core = { workspace = true }
 sui-layout = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
+sui-text = { workspace = true }

@@ -336,7 +336,11 @@ impl TextSystem {
         self.shape_text_internal(text.into(), style, Some(box_size), font_registry)
     }
 
-    pub fn shape_text_run(&self, run: &TextRun, font_registry: &FontRegistry) -> Result<TextLayout> {
+    pub fn shape_text_run(
+        &self,
+        run: &TextRun,
+        font_registry: &FontRegistry,
+    ) -> Result<TextLayout> {
         self.shape_text(
             run.text.clone(),
             run.rect.size,
@@ -647,7 +651,9 @@ fn build_cluster_geometries(line: &LineSpec, line_origin_x: f32) -> Vec<TextClus
     }
 
     for glyph in &line.glyphs {
-        let cluster = glyph.cluster.clamp(line.byte_range.start, line.byte_range.end);
+        let cluster = glyph
+            .cluster
+            .clamp(line.byte_range.start, line.byte_range.end);
         if cluster != current_start {
             clusters.push(TextClusterGeometry {
                 range: current_start..cluster.max(current_start),

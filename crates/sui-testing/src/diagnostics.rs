@@ -13,12 +13,16 @@ pub(crate) fn format_failure(
     let mut message = String::new();
     let _ = writeln!(message, "{action} failed: {detail}");
     let _ = writeln!(message, "selector: {selector_description}");
-    let _ = writeln!(message, "window: {} ({})", snapshot.title, snapshot.window_id.get());
+    let _ = writeln!(
+        message,
+        "window: {} ({})",
+        snapshot.title,
+        snapshot.window_id.get()
+    );
     let _ = writeln!(
         message,
         "focus: {:?}, semantics_root: {:?}",
-        snapshot.focus_state.focused_widget,
-        snapshot.accessibility.root
+        snapshot.focus_state.focused_widget, snapshot.accessibility.root
     );
     if let Some(scene) = &snapshot.scene_summary {
         let _ = writeln!(
@@ -29,7 +33,11 @@ pub(crate) fn format_failure(
             scene.dirty_regions.len(),
             scene.command_count,
         );
-        let _ = writeln!(message, "scene command breakdown: {:?}", scene.command_breakdown);
+        let _ = writeln!(
+            message,
+            "scene command breakdown: {:?}",
+            scene.command_breakdown
+        );
     }
     let _ = writeln!(message, "Semantics snapshot:");
     for node in &snapshot.accessibility.nodes {

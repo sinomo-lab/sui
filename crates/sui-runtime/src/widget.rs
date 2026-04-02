@@ -8,9 +8,7 @@ use sui_core::{
     Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{
-    Brush, ImageSource, Scene, SceneCommand, StrokeStyle,
-};
+use sui_scene::{Brush, ImageSource, Scene, SceneCommand, StrokeStyle};
 use sui_text::{
     FontRegistry, ShapedText, TextLayout, TextMeasurement, TextRun, TextStyle, TextSystem,
 };

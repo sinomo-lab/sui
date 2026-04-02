@@ -69,7 +69,9 @@ impl Screenshot {
         let clamped_bottom = bottom.min(self.height);
 
         if left >= clamped_right || top >= clamped_bottom {
-            return Err(Error::new("cannot capture screenshot for an empty or out-of-bounds region"));
+            return Err(Error::new(
+                "cannot capture screenshot for an empty or out-of-bounds region",
+            ));
         }
 
         let width = clamped_right - left;
@@ -96,7 +98,11 @@ impl ArtifactBundle {
 
         fs::write(dir.join("summary.txt"), format_summary(&self.snapshot)).map_err(io_error)?;
         fs::write(dir.join("semantics.txt"), format_semantics(&self.snapshot)).map_err(io_error)?;
-        fs::write(dir.join("widget-graph.txt"), format_widget_graph(&self.snapshot)).map_err(io_error)?;
+        fs::write(
+            dir.join("widget-graph.txt"),
+            format_widget_graph(&self.snapshot),
+        )
+        .map_err(io_error)?;
 
         if let Some(scene) = &self.snapshot.scene_summary {
             fs::write(dir.join("scene.txt"), format_scene(scene)).map_err(io_error)?;
@@ -151,12 +157,19 @@ pub(crate) fn diff_screenshot(expected: &Screenshot, actual: &Screenshot) -> Res
         }
     }
 
-    Ok(Screenshot { width, height, pixels })
+    Ok(Screenshot {
+        width,
+        height,
+        pixels,
+    })
 }
 
 pub(crate) fn screenshot_mismatch_paths(path: &Path) -> (PathBuf, PathBuf) {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("screenshot");
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("screenshot");
     let actual = parent.join(format!("{stem}.actual.png"));
     let diff = parent.join(format!("{stem}.diff.png"));
     (actual, diff)
@@ -191,7 +204,10 @@ pub(crate) fn widget_overlay(base: &Screenshot, snapshot: &WindowSnapshot) -> Sc
 fn format_summary(snapshot: &WindowSnapshot) -> String {
     let mut lines = vec![
         format!("window: {} ({})", snapshot.title, snapshot.window_id.get()),
-        format!("focus: {:?}", snapshot.focus_state.focused_widget.map(|id| id.get())),
+        format!(
+            "focus: {:?}",
+            snapshot.focus_state.focused_widget.map(|id| id.get())
+        ),
         format!("semantics nodes: {}", snapshot.accessibility.nodes.len()),
         format!("widget graph nodes: {}", snapshot.widget_graph.nodes.len()),
     ];

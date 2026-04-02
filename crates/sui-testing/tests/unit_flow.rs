@@ -68,16 +68,8 @@ impl Widget for FormRoot {
         let viewport = constraints.clamp(Size::new(420.0, 220.0));
         let control = Constraints::tight(Size::new(200.0, 44.0));
 
-        self.children.as_mut_slice()[0].layout_at(
-            ctx,
-            control,
-            sui_core::Point::new(24.0, 24.0),
-        );
-        self.children.as_mut_slice()[1].layout_at(
-            ctx,
-            control,
-            sui_core::Point::new(24.0, 92.0),
-        );
+        self.children.as_mut_slice()[0].layout_at(ctx, control, sui_core::Point::new(24.0, 24.0));
+        self.children.as_mut_slice()[1].layout_at(ctx, control, sui_core::Point::new(24.0, 92.0));
 
         viewport
     }

@@ -1861,6 +1861,7 @@ dependencies = [
  "sui-layout",
  "sui-runtime",
  "sui-scene",
+ "sui-text",
 ]
 
 [[package]]

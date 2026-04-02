@@ -67,7 +67,9 @@ impl RgbaImage {
         if pixels.len() != expected_len {
             return Err(Error::new(format!(
                 "RGBA image pixel buffer length {} does not match {}x{} image size",
-                pixels.len(), width, height
+                pixels.len(),
+                width,
+                height
             )));
         }
 
@@ -205,11 +207,21 @@ impl WgpuRenderer {
         shared
             .device
             .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|error| Error::new(format!("failed to poll device for screenshot capture: {error}")))?;
+            .map_err(|error| {
+                Error::new(format!(
+                    "failed to poll device for screenshot capture: {error}"
+                ))
+            })?;
         receiver
             .recv()
-            .map_err(|error| Error::new(format!("failed to receive screenshot readback completion: {error}")))?
-            .map_err(|error| Error::new(format!("failed to map screenshot readback buffer: {error}")))?;
+            .map_err(|error| {
+                Error::new(format!(
+                    "failed to receive screenshot readback completion: {error}"
+                ))
+            })?
+            .map_err(|error| {
+                Error::new(format!("failed to map screenshot readback buffer: {error}"))
+            })?;
 
         let mapped = slice.get_mapped_range();
         let mut pixels = Vec::with_capacity((target.size.0 * target.size.1 * 4) as usize);
@@ -1950,7 +1962,9 @@ mod tests {
     use super::{DrawOpKind, TextEngine, build_draw_ops, build_vertices, to_ndc};
     use std::sync::Arc;
     use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WindowId};
-    use sui_scene::{ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame, StrokeStyle};
+    use sui_scene::{
+        ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame, StrokeStyle,
+    };
     use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
 
     fn load_test_font() -> RegisteredFont {

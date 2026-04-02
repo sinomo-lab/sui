@@ -40,7 +40,11 @@ impl Expectation {
     pub fn to_be_hidden(&self) -> Result<()> {
         self.wait_for("to_be_hidden", |locator, harness| {
             let nodes = locator.resolve_all(harness)?;
-            if nodes.is_empty() || nodes.iter().all(|node| !locator.selector().is_visible(node)) {
+            if nodes.is_empty()
+                || nodes
+                    .iter()
+                    .all(|node| !locator.selector().is_visible(node))
+            {
                 Ok(Some(()))
             } else {
                 Ok(None)
@@ -60,7 +64,9 @@ impl Expectation {
         self.wait_for("to_have_text", move |locator, harness| {
             let node = locator.resolve_unique(harness).ok();
             Ok(node
-                .filter(|node| locator.selector().node_text(node).as_deref() == Some(expected.as_str()))
+                .filter(|node| {
+                    locator.selector().node_text(node).as_deref() == Some(expected.as_str())
+                })
                 .map(|_| ()))
         })
     }
@@ -70,7 +76,9 @@ impl Expectation {
         self.wait_for("to_have_value", move |locator, harness| {
             let node = locator.resolve_unique(harness).ok();
             Ok(node
-                .filter(|node| value_as_string(node.value.as_ref()).as_deref() == Some(expected.as_str()))
+                .filter(|node| {
+                    value_as_string(node.value.as_ref()).as_deref() == Some(expected.as_str())
+                })
                 .map(|_| ()))
         })
     }
@@ -84,12 +92,16 @@ impl Expectation {
 
     pub fn to_match_screenshot(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref().to_path_buf();
-        let expected = read_png(&path).map_err(|error| Error::new(format!(
-            "failed to read screenshot baseline {}: {}",
-            path.display(),
-            error.message()
-        )))?;
-        let timeout = self.timeout.unwrap_or_else(|| self.locator.default_timeout());
+        let expected = read_png(&path).map_err(|error| {
+            Error::new(format!(
+                "failed to read screenshot baseline {}: {}",
+                path.display(),
+                error.message()
+            ))
+        })?;
+        let timeout = self
+            .timeout
+            .unwrap_or_else(|| self.locator.default_timeout());
         let mut harness = self.locator.harness().borrow_mut();
         let actual = harness
             .run_until(timeout, |harness| {
@@ -117,14 +129,16 @@ impl Expectation {
     where
         F: FnMut(&Locator, &crate::harness::Harness) -> Result<Option<()>>,
     {
-        let timeout = self.timeout.unwrap_or_else(|| self.locator.default_timeout());
+        let timeout = self
+            .timeout
+            .unwrap_or_else(|| self.locator.default_timeout());
         let mut harness = self.locator.harness().borrow_mut();
         harness
             .run_until(timeout, |harness| predicate(&self.locator, harness))
             .map_err(|_| {
-                let snapshot = harness.snapshot(self.locator.window_id()).unwrap_or_else(|_| {
-                    harness.fallback_snapshot(self.locator.window_id())
-                });
+                let snapshot = harness
+                    .snapshot(self.locator.window_id())
+                    .unwrap_or_else(|_| harness.fallback_snapshot(self.locator.window_id()));
                 Error::new(format_failure(
                     action,
                     &self.locator.describe(),
