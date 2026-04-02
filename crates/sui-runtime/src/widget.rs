@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sui_core::{
-    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Rect,
+    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point, Rect,
     SemanticsNode, Size, WidgetId, WindowId,
 };
 use sui_layout::Constraints;
@@ -46,6 +46,132 @@ pub trait Widget {
     fn visit_children_mut(&mut self, _visitor: &mut dyn WidgetPodMutVisitor) {}
 }
 
+pub struct SingleChild {
+    child: WidgetPod,
+}
+
+impl SingleChild {
+    pub fn new<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::from_pod(WidgetPod::new(child))
+    }
+
+    pub fn from_pod(child: WidgetPod) -> Self {
+        Self { child }
+    }
+
+    pub fn child(&self) -> &WidgetPod {
+        &self.child
+    }
+
+    pub fn child_mut(&mut self) -> &mut WidgetPod {
+        &mut self.child
+    }
+
+    pub fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        self.child.layout(ctx, constraints)
+    }
+
+    pub fn layout_at(
+        &mut self,
+        ctx: &mut LayoutCtx,
+        constraints: Constraints,
+        origin: Point,
+    ) -> Size {
+        self.child.layout_at(ctx, constraints, origin)
+    }
+
+    pub fn set_bounds(&mut self, bounds: Rect) {
+        self.child.set_bounds(bounds);
+    }
+
+    pub fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    pub fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    pub fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        visitor.visit(&self.child);
+    }
+
+    pub fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        visitor.visit(&mut self.child);
+    }
+}
+
+#[derive(Default)]
+pub struct WidgetChildren {
+    children: Vec<WidgetPod>,
+}
+
+impl WidgetChildren {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            children: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub fn push<W>(&mut self, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.push_pod(WidgetPod::new(child));
+    }
+
+    pub fn push_pod(&mut self, child: WidgetPod) {
+        self.children.push(child);
+    }
+
+    pub fn len(&self) -> usize {
+        self.children.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.children.is_empty()
+    }
+
+    pub fn as_slice(&self) -> &[WidgetPod] {
+        &self.children
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [WidgetPod] {
+        &mut self.children
+    }
+
+    pub fn paint(&self, ctx: &mut PaintCtx) {
+        for child in &self.children {
+            child.paint(ctx);
+        }
+    }
+
+    pub fn semantics(&self, ctx: &mut SemanticsCtx) {
+        for child in &self.children {
+            child.semantics(ctx);
+        }
+    }
+
+    pub fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        for child in &self.children {
+            visitor.visit(child);
+        }
+    }
+
+    pub fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        for child in &mut self.children {
+            visitor.visit(child);
+        }
+    }
+}
+
 pub struct WidgetPod {
     id: WidgetId,
     bounds: Rect,
@@ -81,6 +207,17 @@ impl WidgetPod {
         let size = self.widget.layout(&mut child_ctx, constraints);
         self.bounds = Rect::from_origin_size(self.bounds.origin, size);
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
+        size
+    }
+
+    pub fn layout_at(
+        &mut self,
+        parent_ctx: &mut LayoutCtx,
+        constraints: Constraints,
+        origin: Point,
+    ) -> Size {
+        let size = self.layout(parent_ctx, constraints);
+        self.bounds = Rect::from_origin_size(origin, size);
         size
     }
 
@@ -130,7 +267,9 @@ impl WidgetPod {
         focused_widget: Option<WidgetId>,
         event: &Event,
     ) -> Option<EventDispatch> {
-        self.find_mut(target, &mut |pod| pod.dispatch_event(window_id, phase, focused_widget, event))
+        self.find_mut(target, &mut |pod| {
+            pod.dispatch_event(window_id, phase, focused_widget, event)
+        })
     }
 
     pub(crate) fn notify_focus_change_for(
@@ -140,7 +279,9 @@ impl WidgetPod {
         focused_widget: Option<WidgetId>,
         focused: bool,
     ) -> Option<Vec<InvalidationRequest>> {
-        self.find_mut(target, &mut |pod| pod.focus_changed(window_id, focused_widget, focused))
+        self.find_mut(target, &mut |pod| {
+            pod.focus_changed(window_id, focused_widget, focused)
+        })
     }
 
     fn dispatch_event(
@@ -615,8 +756,13 @@ impl SemanticsCtx {
 
 #[cfg(test)]
 mod tests {
-    use super::{EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, Widget, WidgetPod};
-    use sui_core::{Color, InvalidationKind, Rect, SemanticsNode, SemanticsRole, WidgetId, WindowId};
+    use super::{
+        EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+        WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    };
+    use sui_core::{
+        Color, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole, WidgetId, WindowId,
+    };
     use sui_layout::Constraints;
 
     struct LabelWidget;
@@ -658,7 +804,10 @@ mod tests {
         assert_eq!(ctx.bounds(), Rect::new(8.0, 12.0, 24.0, 36.0));
         assert_eq!(ctx.invalidations().len(), 2);
         assert_eq!(ctx.invalidations()[0].kind, InvalidationKind::Layout);
-        assert_eq!(ctx.invalidations()[1].region, Some(Rect::new(8.0, 12.0, 24.0, 36.0)));
+        assert_eq!(
+            ctx.invalidations()[1].region,
+            Some(Rect::new(8.0, 12.0, 24.0, 36.0))
+        );
     }
 
     #[test]
@@ -667,7 +816,10 @@ mod tests {
         pod.set_bounds(Rect::new(4.0, 6.0, 0.0, 0.0));
 
         let mut layout = LayoutCtx::new(WindowId::new(3), WidgetId::new(4));
-        let size = pod.layout(&mut layout, Constraints::tight(sui_core::Size::new(64.0, 32.0)));
+        let size = pod.layout(
+            &mut layout,
+            Constraints::tight(sui_core::Size::new(64.0, 32.0)),
+        );
 
         let mut paint = PaintCtx::new(
             WindowId::new(3),
@@ -690,5 +842,80 @@ mod tests {
         assert_eq!(pod.bounds(), Rect::new(4.0, 6.0, 64.0, 32.0));
         assert_eq!(paint.scene().commands().len(), 1);
         assert_eq!(semantics.nodes().len(), 1);
+    }
+
+    #[test]
+    fn single_child_wraps_layout_and_visitation() {
+        struct CaptureVisitor {
+            ids: Vec<WidgetId>,
+        }
+
+        impl WidgetPodVisitor for CaptureVisitor {
+            fn visit(&mut self, child: &WidgetPod) {
+                self.ids.push(child.id());
+            }
+        }
+
+        impl WidgetPodMutVisitor for CaptureVisitor {
+            fn visit(&mut self, child: &mut WidgetPod) {
+                self.ids.push(child.id());
+            }
+        }
+
+        let mut child = SingleChild::new(LabelWidget);
+        let mut layout = LayoutCtx::new(WindowId::new(7), WidgetId::new(8));
+        let size = child.layout_at(
+            &mut layout,
+            Constraints::tight(sui_core::Size::new(80.0, 24.0)),
+            Point::new(12.0, 18.0),
+        );
+
+        let mut visitor = CaptureVisitor { ids: Vec::new() };
+        child.visit_children(&mut visitor);
+        child.visit_children_mut(&mut visitor);
+
+        assert_eq!(size, sui_core::Size::new(80.0, 24.0));
+        assert_eq!(child.child().bounds(), Rect::new(12.0, 18.0, 80.0, 24.0));
+        assert_eq!(visitor.ids, vec![child.child().id(), child.child().id()]);
+    }
+
+    #[test]
+    fn widget_children_bulk_paint_and_semantics_delegate_to_all_children() {
+        let mut children = WidgetChildren::with_capacity(2);
+        children.push(LabelWidget);
+        children.push(LabelWidget);
+
+        let mut layout = LayoutCtx::new(WindowId::new(9), WidgetId::new(10));
+        children.as_mut_slice()[0].layout_at(
+            &mut layout,
+            Constraints::tight(sui_core::Size::new(40.0, 18.0)),
+            Point::new(0.0, 0.0),
+        );
+        children.as_mut_slice()[1].layout_at(
+            &mut layout,
+            Constraints::tight(sui_core::Size::new(60.0, 18.0)),
+            Point::new(44.0, 0.0),
+        );
+
+        let mut paint = PaintCtx::new(
+            WindowId::new(9),
+            WidgetId::new(10),
+            Rect::new(0.0, 0.0, 120.0, 40.0),
+            None,
+        );
+        children.paint(&mut paint);
+
+        let mut semantics = SemanticsCtx::new(
+            WindowId::new(9),
+            WidgetId::new(10),
+            WidgetId::new(10),
+            Rect::new(0.0, 0.0, 120.0, 40.0),
+            None,
+        );
+        children.semantics(&mut semantics);
+
+        assert_eq!(children.len(), 2);
+        assert_eq!(paint.scene().commands().len(), 2);
+        assert_eq!(semantics.nodes().len(), 2);
     }
 }

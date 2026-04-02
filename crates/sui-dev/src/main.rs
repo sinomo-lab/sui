@@ -16,7 +16,10 @@ impl Widget for AppRoot {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
-        ctx.fill_rect(Rect::new(48.0, 48.0, 320.0, 120.0), Color::rgba(0.16, 0.19, 0.25, 1.0));
+        ctx.fill_rect(
+            Rect::new(48.0, 48.0, 320.0, 120.0),
+            Color::rgba(0.16, 0.19, 0.25, 1.0),
+        );
         ctx.label(
             Rect::new(64.0, 76.0, 280.0, 36.0),
             "SUI facade scaffold",
@@ -25,11 +28,8 @@ impl Widget for AppRoot {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(
-            ctx.root_widget_id(),
-            SemanticsRole::Window,
-            ctx.bounds(),
-        );
+        let mut node =
+            SemanticsNode::new(ctx.root_widget_id(), SemanticsRole::Window, ctx.bounds());
         node.name = Some("SUI Playground".to_string());
         node.description = Some("Phase-1 scaffold application".to_string());
         node.state = SemanticsState::default();

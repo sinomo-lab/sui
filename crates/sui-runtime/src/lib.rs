@@ -11,11 +11,11 @@ use sui_core::{
 use sui_layout::Constraints;
 use sui_scene::SceneFrame;
 
-pub use widget::{
-    EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, Widget, WidgetPod,
-    WidgetPodMutVisitor, WidgetPodVisitor,
-};
 use widget::FocusRequest;
+pub use widget::{
+    EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
+    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+};
 
 pub struct WindowBuilder {
     title: String,
@@ -82,19 +82,6 @@ impl Application {
 
         Ok(runtime)
     }
-
-    pub fn run(self) -> Result<()> {
-        let mut runtime = self.build()?;
-        runtime.tick(0.0);
-
-        for window_id in runtime.window_ids() {
-            if runtime.needs_render(window_id)? {
-                let _ = runtime.render(window_id)?;
-            }
-        }
-
-        Ok(())
-    }
 }
 
 pub struct Runtime {
@@ -137,6 +124,11 @@ impl Runtime {
     pub fn semantics(&self, window_id: WindowId) -> Result<&[SemanticsNode]> {
         let window = self.window(window_id)?;
         Ok(&window.last_semantics)
+    }
+
+    pub fn window_title(&self, window_id: WindowId) -> Result<&str> {
+        let window = self.window(window_id)?;
+        Ok(&window.title)
     }
 
     pub fn window_ids(&self) -> Vec<WindowId> {
@@ -340,16 +332,18 @@ impl WindowState {
 
         let target = match &event {
             Event::Pointer(_) => hit_target.unwrap_or(self.root.id()),
-            Event::Keyboard(_) | Event::Ime(_) => self.focus.focused_widget.unwrap_or(self.root.id()),
+            Event::Keyboard(_) | Event::Ime(_) => {
+                self.focus.focused_widget.unwrap_or(self.root.id())
+            }
             _ => self.root.id(),
         };
 
         let route = self.route_event(target, &event);
         let mut invalidations = route.invalidations;
 
-        let focus_request = route.focus_request.or_else(|| {
-            self.default_focus_request(&event, hit_target, &route.path)
-        });
+        let focus_request = route
+            .focus_request
+            .or_else(|| self.default_focus_request(&event, hit_target, &route.path));
 
         if let Some(request) = focus_request {
             invalidations.extend(self.apply_focus_request(request));
@@ -397,7 +391,9 @@ impl WindowState {
 
         if matches!(event, Event::Keyboard(_) | Event::Ime(_))
             && self.focus.focused_widget.is_some()
-            && !self.graph.contains(self.focus.focused_widget.unwrap_or_default())
+            && !self
+                .graph
+                .contains(self.focus.focused_widget.unwrap_or_default())
         {
             self.focus.focused_widget = None;
         }
@@ -498,10 +494,17 @@ impl WindowState {
                 path.iter()
                     .rev()
                     .copied()
-                    .find(|widget_id| self.graph.node(*widget_id).is_some_and(|node| node.accepts_focus))
+                    .find(|widget_id| {
+                        self.graph
+                            .node(*widget_id)
+                            .is_some_and(|node| node.accepts_focus)
+                    })
                     .map(FocusRequest::Focus)
                     .or_else(|| Some(FocusRequest::Clear))
-                    .filter(|request| matches!(request, FocusRequest::Focus(id) if *id == hit_target) || matches!(request, FocusRequest::Clear))
+                    .filter(|request| {
+                        matches!(request, FocusRequest::Focus(id) if *id == hit_target)
+                            || matches!(request, FocusRequest::Clear)
+                    })
             }
             Event::Window(WindowEvent::Focused(false)) => Some(FocusRequest::Clear),
             _ => None,
@@ -525,20 +528,24 @@ impl WindowState {
 
         if let Some(widget_id) = previous_focus {
             invalidations.extend(self.focus_transition_invalidations(widget_id));
-            if let Some(extra) = self
-                .root
-                .notify_focus_change_for(widget_id, self.id, self.focus.focused_widget, false)
-            {
+            if let Some(extra) = self.root.notify_focus_change_for(
+                widget_id,
+                self.id,
+                self.focus.focused_widget,
+                false,
+            ) {
                 invalidations.extend(extra);
             }
         }
 
         if let Some(widget_id) = next_focus {
             invalidations.extend(self.focus_transition_invalidations(widget_id));
-            if let Some(extra) = self
-                .root
-                .notify_focus_change_for(widget_id, self.id, self.focus.focused_widget, true)
-            {
+            if let Some(extra) = self.root.notify_focus_change_for(
+                widget_id,
+                self.id,
+                self.focus.focused_widget,
+                true,
+            ) {
                 invalidations.extend(extra);
             }
         }
@@ -728,7 +735,12 @@ impl WidgetGraph {
         Some(path)
     }
 
-    fn collect(&mut self, pod: &WidgetPod, parent: Option<WidgetId>, focused_widget: Option<WidgetId>) {
+    fn collect(
+        &mut self,
+        pod: &WidgetPod,
+        parent: Option<WidgetId>,
+        focused_widget: Option<WidgetId>,
+    ) {
         let id = pod.id();
         self.order.push(id);
 
@@ -782,7 +794,8 @@ struct CollectChildrenVisitor<'a> {
 impl WidgetPodVisitor for CollectChildrenVisitor<'_> {
     fn visit(&mut self, child: &WidgetPod) {
         self.children.push(child.id());
-        self.graph.collect(child, Some(self.parent), self.focused_widget);
+        self.graph
+            .collect(child, Some(self.parent), self.focused_widget);
     }
 }
 
@@ -820,7 +833,11 @@ fn collect_dirty_regions(
         .map(|request| DirtyRegion::new(request.region.unwrap_or(viewport_rect), request.kind))
         .collect();
 
-    if repainted && dirty_regions.iter().all(|region| region.kind != InvalidationKind::Paint) {
+    if repainted
+        && dirty_regions
+            .iter()
+            .all(|region| region.kind != InvalidationKind::Paint)
+    {
         dirty_regions.push(DirtyRegion::new(viewport_rect, InvalidationKind::Paint));
     }
 
@@ -839,13 +856,13 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Application, EventCtx, FocusState, FrameSchedule, LayoutCtx, PaintCtx,
-        Runtime, SemanticsCtx, Widget, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPod,
+        Application, EventCtx, FocusState, FrameSchedule, LayoutCtx, PaintCtx, Runtime,
+        SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot, WidgetNodeSnapshot,
         WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_core::{
         Color, CustomEvent, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, Rect, SemanticsNode, SemanticsRole, Size,
+        PointerEvent, PointerEventKind, SemanticsNode, SemanticsRole, Size,
     };
     use sui_layout::Constraints;
 
@@ -898,21 +915,25 @@ mod tests {
 
     struct TestRoot {
         counters: Rc<RefCell<Counters>>,
-        child: WidgetPod,
+        child: SingleChild,
     }
 
     impl Widget for TestRoot {
         fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-            if let Event::Custom(custom) = event && custom.kind == "semantics-only" {
+            if let Event::Custom(custom) = event
+                && custom.kind == "semantics-only"
+            {
                 ctx.request_semantics();
             }
         }
 
         fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            let child_size = self.child.layout(ctx, Constraints::tight(Size::new(120.0, 40.0)));
-            self.child
-                .set_bounds(Rect::from_origin_size(Point::new(32.0, 24.0), child_size));
+            self.child.layout_at(
+                ctx,
+                Constraints::tight(Size::new(120.0, 40.0)),
+                Point::new(32.0, 24.0),
+            );
             size
         }
 
@@ -933,27 +954,30 @@ mod tests {
         }
 
         fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-            visitor.visit(&self.child);
+            self.child.visit_children(visitor);
         }
 
         fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-            visitor.visit(&mut self.child);
+            self.child.visit_children_mut(visitor);
         }
     }
 
-    fn build_runtime() -> (Runtime, sui_core::WindowId, Rc<RefCell<Counters>>, Rc<RefCell<Counters>>) {
+    fn build_runtime() -> (
+        Runtime,
+        sui_core::WindowId,
+        Rc<RefCell<Counters>>,
+        Rc<RefCell<Counters>>,
+    ) {
         let root_counters = Rc::new(RefCell::new(Counters::default()));
         let leaf_counters = Rc::new(RefCell::new(Counters::default()));
 
         let runtime = Application::new()
-            .window(
-                WindowBuilder::new().title("Test").root(TestRoot {
-                    counters: Rc::clone(&root_counters),
-                    child: WidgetPod::new(FocusLeaf {
-                        counters: Rc::clone(&leaf_counters),
-                    }),
+            .window(WindowBuilder::new().title("Test").root(TestRoot {
+                counters: Rc::clone(&root_counters),
+                child: SingleChild::new(FocusLeaf {
+                    counters: Rc::clone(&leaf_counters),
                 }),
-            )
+            }))
             .build()
             .unwrap();
 
@@ -988,10 +1012,7 @@ mod tests {
         let leaf_paint_before = leaf_counters.borrow().paint;
 
         runtime
-            .handle_event(
-                window_id,
-                Event::Custom(CustomEvent::new("semantics-only")),
-            )
+            .handle_event(window_id, Event::Custom(CustomEvent::new("semantics-only")))
             .unwrap();
 
         assert_eq!(
