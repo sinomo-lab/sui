@@ -3,8 +3,13 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
-use sui_core::{Color, Error, Rect, Result, Size, Transform, WindowId};
+use lyon_path::{Path, builder::PathBuilder as LyonPathBuilder, math::point};
+use lyon_tessellation::{
+    BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor, VertexBuffers,
+};
+use sui_core::{Color, Error, Point, Rect, Result, Size, Transform, WindowId};
 use sui_scene::{Brush, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle};
+use ttf_parser::GlyphId;
 use winit::window::Window;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +38,7 @@ pub struct WgpuRenderer {
     capabilities: RendererCapabilities,
     last_frame: Option<SceneFrame>,
     shared: Option<SharedRenderer>,
+    text_engine: Option<TextEngine>,
     surfaces: HashMap<WindowId, SurfaceState>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
 }
@@ -83,6 +89,17 @@ impl WgpuRenderer {
 
     pub fn last_frame(&self) -> Option<&SceneFrame> {
         self.last_frame.as_ref()
+    }
+
+    fn text_engine(&mut self) -> Result<&mut TextEngine> {
+        if self.text_engine.is_none() {
+            self.text_engine = Some(TextEngine::new()?);
+        }
+
+        Ok(self
+            .text_engine
+            .as_mut()
+            .expect("text engine initialized before returning mutable reference"))
     }
 
     fn ensure_shared(&mut self, compatible_surface: Option<&wgpu::Surface<'_>>) -> Result<()> {
@@ -272,6 +289,10 @@ impl WgpuRenderer {
         target_format: wgpu::TextureFormat,
         view: &wgpu::TextureView,
     ) -> Result<()> {
+        let vertices = {
+            let text_engine = self.text_engine()?;
+            build_vertices(frame, text_engine)?
+        };
         let shared = self
             .shared
             .as_mut()
@@ -281,7 +302,6 @@ impl WgpuRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("SUI scene encoder"),
             });
-        let vertices = build_vertices(frame);
         let vertex_buffer = if vertices.is_empty() {
             None
         } else {
@@ -365,6 +385,7 @@ impl Default for WgpuRenderer {
             capabilities: RendererCapabilities::default(),
             last_frame: None,
             shared: None,
+            text_engine: None,
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
         }
@@ -461,7 +482,17 @@ impl Vertex {
     }
 }
 
-fn build_vertices(frame: &SceneFrame) -> Vec<Vertex> {
+#[derive(Clone, Copy)]
+struct TessellatedPoint;
+
+impl FillVertexConstructor<[f32; 2]> for TessellatedPoint {
+    fn new_vertex(&mut self, vertex: FillVertex<'_>) -> [f32; 2] {
+        let position = vertex.position();
+        [position.x, position.y]
+    }
+}
+
+fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<Vertex>> {
     let viewport = frame.viewport;
     let mut vertices = Vec::new();
     let mut state = SceneRasterState::default();
@@ -489,7 +520,7 @@ fn build_vertices(frame: &SceneFrame) -> Vec<Vertex> {
                 append_stroke_rect(&mut vertices, &state, *rect, *color, *stroke, viewport);
             }
             SceneCommand::DrawText(text) => {
-                append_text_run(&mut vertices, &state, text, viewport);
+                text_engine.append_text_run(&mut vertices, &state, text, viewport)?;
             }
             SceneCommand::DrawImage { rect, source } => {
                 append_image_placeholder(&mut vertices, &state, *rect, source, viewport);
@@ -507,7 +538,7 @@ fn build_vertices(frame: &SceneFrame) -> Vec<Vertex> {
                 state.pop_transform();
             }
             SceneCommand::Label { rect, text, color } => {
-                append_text_run(
+                text_engine.append_text_run(
                     &mut vertices,
                     &state,
                     &TextRun {
@@ -516,12 +547,12 @@ fn build_vertices(frame: &SceneFrame) -> Vec<Vertex> {
                         style: TextStyle::new(*color),
                     },
                     viewport,
-                );
+                )?;
             }
         }
     }
 
-    vertices
+    Ok(vertices)
 }
 
 #[derive(Debug, Clone)]
@@ -578,50 +609,370 @@ impl SceneRasterState {
     }
 }
 
-fn append_text_run(
-    vertices: &mut Vec<Vertex>,
-    state: &SceneRasterState,
+#[derive(Debug)]
+struct TextEngine {
+    font_db: fontdb::Database,
+    default_font: fontdb::ID,
+}
+
+impl TextEngine {
+    fn new() -> Result<Self> {
+        let mut font_db = fontdb::Database::new();
+        font_db.load_system_fonts();
+
+        let families = [fontdb::Family::SansSerif];
+        let default_font = font_db
+            .query(&fontdb::Query {
+                families: &families,
+                weight: fontdb::Weight::NORMAL,
+                stretch: fontdb::Stretch::Normal,
+                style: fontdb::Style::Normal,
+            })
+            .or_else(|| font_db.faces().next().map(|face| face.id))
+            .ok_or_else(|| Error::new("failed to locate a system font for text rendering"))?;
+
+        Ok(Self {
+            font_db,
+            default_font,
+        })
+    }
+
+    fn append_text_run(
+        &mut self,
+        vertices: &mut Vec<Vertex>,
+        state: &SceneRasterState,
+        text: &TextRun,
+        viewport: Size,
+    ) -> Result<()> {
+        if text.rect.is_empty() || text.text.is_empty() || viewport.is_empty() {
+            return Ok(());
+        }
+
+        let shaped = self.shape_text_run(text)?;
+        if shaped.measurement.width <= 0.0 || shaped.measurement.height <= 0.0 {
+            return Ok(());
+        }
+        if state.visible_rect(shaped.measurement.bounds).is_none() {
+            return Ok(());
+        }
+
+        let font_id = self.default_font;
+        self.font_db
+            .with_face_data(font_id, |font_data, face_index| -> Result<()> {
+                let face = rustybuzz::Face::from_slice(font_data, face_index)
+                    .ok_or_else(|| Error::new("failed to parse system font for shaping"))?;
+
+                for glyph in &shaped.glyphs {
+                    if let Some(bounds) = glyph.bounds {
+                        if bounds.intersection(text.rect).is_none() {
+                            continue;
+                        }
+
+                        if let Some(clip) = state.current_clip() {
+                            let transformed = state.current_transform.transform_rect_bbox(bounds);
+                            if transformed.intersection(clip).is_none() {
+                                continue;
+                            }
+                        }
+                    }
+
+                    tessellate_glyph(
+                        vertices,
+                        &face,
+                        glyph,
+                        text.style.color,
+                        state.current_transform,
+                        viewport,
+                    )?;
+                }
+
+                Ok(())
+            })
+            .transpose()?
+            .ok_or_else(|| Error::new("failed to access font data for text rendering"))?;
+
+        Ok(())
+    }
+
+    fn shape_text_run(&self, text: &TextRun) -> Result<ShapedTextLayout> {
+        let font_id = self.default_font;
+        self.font_db
+            .with_face_data(
+                font_id,
+                |font_data, face_index| -> Result<ShapedTextLayout> {
+                    let face = rustybuzz::Face::from_slice(font_data, face_index)
+                        .ok_or_else(|| Error::new("failed to parse system font for measurement"))?;
+                    shape_text_run_with_face(&face, text)
+                },
+            )
+            .transpose()?
+            .ok_or_else(|| Error::new("failed to access font data for text measurement"))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TextMeasurement {
+    width: f32,
+    height: f32,
+    bounds: Rect,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ShapedGlyph {
+    glyph_id: u16,
+    origin_x: f32,
+    origin_y: f32,
+    scale: f32,
+    bounds: Option<Rect>,
+}
+
+#[derive(Debug, Clone)]
+struct ShapedTextLayout {
+    glyphs: Vec<ShapedGlyph>,
+    measurement: TextMeasurement,
+}
+
+fn shape_text_run_with_face(
+    face: &rustybuzz::Face<'_>,
     text: &TextRun,
+) -> Result<ShapedTextLayout> {
+    let units_per_em = face.units_per_em() as f32;
+    if units_per_em <= 0.0 {
+        return Err(Error::new(
+            "text face reported an invalid units-per-em value",
+        ));
+    }
+
+    let scale = text.style.font_size / units_per_em;
+    let ascent = f32::from(face.ascender()) * scale;
+    let descent = f32::from(face.descender().abs()) * scale;
+    let natural_line_height = f32::from(face.height().abs()) * scale;
+    let line_height = text
+        .style
+        .line_height
+        .max(natural_line_height)
+        .max(text.style.font_size);
+    let lines: Vec<&str> = text.text.split('\n').collect();
+    let line_count = lines.len().max(1);
+    let block_height = line_height * line_count as f32;
+    let block_top = text.rect.y() + ((text.rect.height() - block_height).max(0.0) * 0.5);
+
+    let mut glyphs = Vec::new();
+    let mut measured_width: f32 = 0.0;
+    let mut measured_bounds: Option<(f32, f32, f32, f32)> = None;
+
+    for (line_index, line) in lines.iter().enumerate() {
+        let mut buffer = rustybuzz::UnicodeBuffer::new();
+        buffer.push_str(line);
+        buffer.guess_segment_properties();
+        let direction = buffer.direction();
+        let shaped = rustybuzz::shape(face, &[], buffer);
+        let glyph_infos = shaped.glyph_infos();
+        let glyph_positions = shaped.glyph_positions();
+        let line_width = glyph_positions
+            .iter()
+            .map(|position| position.x_advance as f32 * scale)
+            .sum::<f32>()
+            .abs();
+
+        let mut pen_x = match direction {
+            rustybuzz::Direction::RightToLeft => text.rect.max_x() - line_width,
+            _ => text.rect.x(),
+        };
+        let mut pen_y = block_top + ascent + (line_index as f32 * line_height);
+        measured_width = measured_width.max(line_width);
+
+        for (info, position) in glyph_infos.iter().zip(glyph_positions.iter()) {
+            let glyph_id = match u16::try_from(info.glyph_id) {
+                Ok(glyph_id) => glyph_id,
+                Err(_) => continue,
+            };
+            let origin_x = pen_x + (position.x_offset as f32 * scale);
+            let origin_y = pen_y - (position.y_offset as f32 * scale);
+            let bounds = face.glyph_bounding_box(GlyphId(glyph_id)).map(|bbox| {
+                let min_x = origin_x + (f32::from(bbox.x_min) * scale);
+                let max_x = origin_x + (f32::from(bbox.x_max) * scale);
+                let min_y = origin_y - (f32::from(bbox.y_max) * scale);
+                let max_y = origin_y - (f32::from(bbox.y_min) * scale);
+                Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
+            });
+
+            if let Some(bounds) = bounds {
+                measured_bounds = Some(match measured_bounds {
+                    Some((min_x, min_y, max_x, max_y)) => (
+                        min_x.min(bounds.x()),
+                        min_y.min(bounds.y()),
+                        max_x.max(bounds.max_x()),
+                        max_y.max(bounds.max_y()),
+                    ),
+                    None => (bounds.x(), bounds.y(), bounds.max_x(), bounds.max_y()),
+                });
+            }
+
+            glyphs.push(ShapedGlyph {
+                glyph_id,
+                origin_x,
+                origin_y,
+                scale,
+                bounds,
+            });
+
+            pen_x += position.x_advance as f32 * scale;
+            pen_y -= position.y_advance as f32 * scale;
+        }
+    }
+
+    let measured_bounds = measured_bounds.unwrap_or_else(|| {
+        (
+            text.rect.x(),
+            block_top,
+            text.rect.x() + measured_width,
+            block_top + block_height,
+        )
+    });
+    let bounds = Rect::new(
+        measured_bounds.0,
+        measured_bounds.1,
+        (measured_bounds.2 - measured_bounds.0).max(0.0),
+        (measured_bounds.3 - measured_bounds.1).max(0.0),
+    );
+
+    Ok(ShapedTextLayout {
+        glyphs,
+        measurement: TextMeasurement {
+            width: measured_width,
+            height: block_height.max(ascent + descent),
+            bounds,
+        },
+    })
+}
+
+fn tessellate_glyph(
+    vertices: &mut Vec<Vertex>,
+    face: &rustybuzz::Face<'_>,
+    glyph: &ShapedGlyph,
+    color: Color,
+    transform: Transform,
+    viewport: Size,
+) -> Result<()> {
+    let mut path_builder = Path::builder();
+    {
+        let mut outline = GlyphOutlineBuilder {
+            builder: &mut path_builder,
+            transform,
+            glyph: *glyph,
+            contour_open: false,
+        };
+        if face
+            .outline_glyph(GlyphId(glyph.glyph_id), &mut outline)
+            .is_none()
+        {
+            return Ok(());
+        }
+        outline.finish();
+    }
+
+    let path = path_builder.build();
+    let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
+    let mut builder = BuffersBuilder::new(&mut buffers, TessellatedPoint);
+    let mut tessellator = FillTessellator::new();
+    tessellator
+        .tessellate_path(&path, &FillOptions::default(), &mut builder)
+        .map_err(|error| Error::new(format!("failed to tessellate glyph outline: {error}")))?;
+
+    append_indexed_triangles(vertices, &buffers, color, viewport);
+    Ok(())
+}
+
+fn append_indexed_triangles(
+    vertices: &mut Vec<Vertex>,
+    buffers: &VertexBuffers<[f32; 2], u32>,
+    color: Color,
     viewport: Size,
 ) {
-    let rect = text.rect;
-    let color = text.style.color;
-
-    if rect.is_empty() {
+    if viewport.is_empty() {
         return;
     }
 
-    let visible_chars = text
-        .text
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .count()
-        .max(1) as f32;
-    let glyph_width = (text.style.font_size * 0.62).max(4.0);
-    let full_width = (visible_chars * glyph_width).min(rect.width());
-    let top_band_height = (text.style.font_size * 0.28).min(rect.height() * 0.45);
-    let lower_band_height = (text.style.line_height * 0.16).min(rect.height() * 0.35);
-    let primary = Rect::new(
-        rect.x(),
-        rect.y() + rect.height() * 0.2,
-        full_width,
-        top_band_height,
-    );
-    let secondary = Rect::new(
-        rect.x(),
-        rect.y() + rect.height() * 0.58,
-        (full_width * 0.7).max(rect.width() * 0.25),
-        lower_band_height,
-    );
+    let rgba = color.clamped().to_array();
+    for index in &buffers.indices {
+        let position = buffers.vertices[*index as usize];
+        let ndc = to_ndc(position[0], position[1], viewport);
+        vertices.push(Vertex {
+            position: [ndc[0], ndc[1]],
+            color: rgba,
+        });
+    }
+}
 
-    append_painted_rect(vertices, state, primary, color, viewport);
-    append_painted_rect(
-        vertices,
-        state,
-        secondary,
-        color.with_alpha((color.alpha * 0.8).clamp(0.0, 1.0)),
-        viewport,
-    );
+struct GlyphOutlineBuilder<'a, B>
+where
+    B: LyonPathBuilder,
+{
+    builder: &'a mut B,
+    transform: Transform,
+    glyph: ShapedGlyph,
+    contour_open: bool,
+}
+
+impl<'a, B> GlyphOutlineBuilder<'a, B>
+where
+    B: LyonPathBuilder,
+{
+    fn point(&self, x: f32, y: f32) -> lyon_path::math::Point {
+        let scene = self.transform.transform_point(Point::new(
+            self.glyph.origin_x + (x * self.glyph.scale),
+            self.glyph.origin_y - (y * self.glyph.scale),
+        ));
+        point(scene.x, scene.y)
+    }
+
+    fn finish(&mut self) {
+        if self.contour_open {
+            LyonPathBuilder::end(self.builder, true);
+            self.contour_open = false;
+        }
+    }
+}
+
+impl<B> ttf_parser::OutlineBuilder for GlyphOutlineBuilder<'_, B>
+where
+    B: LyonPathBuilder,
+{
+    fn move_to(&mut self, x: f32, y: f32) {
+        if self.contour_open {
+            LyonPathBuilder::end(self.builder, true);
+        }
+        LyonPathBuilder::begin(self.builder, self.point(x, y), &[]);
+        self.contour_open = true;
+    }
+
+    fn line_to(&mut self, x: f32, y: f32) {
+        LyonPathBuilder::line_to(self.builder, self.point(x, y), &[]);
+    }
+
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        LyonPathBuilder::quadratic_bezier_to(
+            self.builder,
+            self.point(x1, y1),
+            self.point(x, y),
+            &[],
+        );
+    }
+
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        LyonPathBuilder::cubic_bezier_to(
+            self.builder,
+            self.point(x1, y1),
+            self.point(x2, y2),
+            self.point(x, y),
+            &[],
+        );
+    }
+
+    fn close(&mut self) {
+        self.finish();
+    }
 }
 
 fn append_image_placeholder(
@@ -834,7 +1185,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_vertices, to_ndc};
+    use super::{TextEngine, build_vertices, to_ndc};
     use sui_core::{Color, Rect, Size, Transform, WindowId};
     use sui_scene::{Scene, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle};
 
@@ -852,12 +1203,17 @@ mod tests {
             brush: Color::WHITE.into(),
         });
 
-        let vertices = build_vertices(&SceneFrame {
-            window_id: WindowId::new(1),
-            viewport: Size::new(100.0, 100.0),
-            dirty_regions: Vec::new(),
-            scene,
-        });
+        let mut text_engine = TextEngine::new().unwrap();
+        let vertices = build_vertices(
+            &SceneFrame {
+                window_id: WindowId::new(1),
+                viewport: Size::new(100.0, 100.0),
+                dirty_regions: Vec::new(),
+                scene,
+            },
+            &mut text_engine,
+        )
+        .unwrap();
 
         assert_eq!(vertices.len(), 6);
         assert_eq!(
@@ -884,14 +1240,35 @@ mod tests {
             stroke: StrokeStyle::new(2.0),
         });
 
-        let vertices = build_vertices(&SceneFrame {
-            window_id: WindowId::new(2),
-            viewport: Size::new(100.0, 80.0),
-            dirty_regions: Vec::new(),
-            scene,
-        });
+        let mut text_engine = TextEngine::new().unwrap();
+        let vertices = build_vertices(
+            &SceneFrame {
+                window_id: WindowId::new(2),
+                viewport: Size::new(100.0, 80.0),
+                dirty_regions: Vec::new(),
+                scene,
+            },
+            &mut text_engine,
+        )
+        .unwrap();
 
         assert!(!vertices.is_empty());
         assert!(vertices.len() >= 30);
+    }
+
+    #[test]
+    fn text_engine_shapes_text_with_font_metrics() {
+        let text = TextRun {
+            rect: Rect::new(8.0, 10.0, 160.0, 32.0),
+            text: "office".to_string(),
+            style: TextStyle::new(Color::WHITE),
+        };
+
+        let text_engine = TextEngine::new().unwrap();
+        let layout = text_engine.shape_text_run(&text).unwrap();
+
+        assert!(!layout.glyphs.is_empty());
+        assert!(layout.measurement.width > 0.0);
+        assert!(layout.measurement.height >= text.style.font_size);
     }
 }

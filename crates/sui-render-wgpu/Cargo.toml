@@ -7,8 +7,13 @@ rust-version.workspace = true
 
 [dependencies]
 bytemuck = { workspace = true }
+fontdb = { workspace = true }
+lyon_path = { workspace = true }
+lyon_tessellation = { workspace = true }
 pollster = { workspace = true }
+rustybuzz = { workspace = true }
 sui-core = { workspace = true }
 sui-scene = { workspace = true }
+ttf-parser = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
