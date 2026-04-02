@@ -1,23 +1,15 @@
 #![forbid(unsafe_code)]
 
+mod widget;
+
 use sui_core::{
-    Color, DirtyRegion, Error, Event, InvalidationKind, Rect, Result, SemanticsNode,
-    Size, WidgetId, WindowId,
+    DirtyRegion, Error, Event, InvalidationKind, InvalidationRequest, Point, Rect, Result,
+    SemanticsNode, Size, WidgetId, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{Brush, Scene, SceneCommand, SceneFrame};
+use sui_scene::SceneFrame;
 
-pub trait Widget {
-    fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
-
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        constraints.max
-    }
-
-    fn paint(&self, _ctx: &mut PaintCtx) {}
-
-    fn semantics(&self, _ctx: &mut SemanticsCtx) {}
-}
+pub use widget::{EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, Widget};
 
 pub struct WindowBuilder {
     title: String,
@@ -56,6 +48,7 @@ impl WindowBuilder {
             root,
             root_widget_id,
             last_semantics: Vec::new(),
+            pending_invalidations: Vec::new(),
         })
     }
 }
@@ -128,8 +121,9 @@ impl Runtime {
 
     pub fn handle_event(&mut self, window_id: WindowId, event: Event) -> Result<()> {
         let window = self.window_mut(window_id)?;
-        let mut ctx = EventCtx::new(window_id);
+        let mut ctx = EventCtx::new(window_id, window.root_widget_id);
         window.root.event(&mut ctx, &event);
+        window.pending_invalidations.extend(ctx.take_invalidations());
         Ok(())
     }
 
@@ -138,24 +132,28 @@ impl Runtime {
     pub fn render(&mut self, window_id: WindowId) -> Result<RenderOutput> {
         let window = self.window_mut(window_id)?;
 
-        let mut layout_ctx = LayoutCtx::new(window_id);
+        let mut layout_ctx = LayoutCtx::new(window_id, window.root_widget_id);
         let viewport = window.root.layout(&mut layout_ctx, Constraints::UNBOUNDED);
+        let bounds = Rect::from_origin_size(Point::ZERO, viewport);
 
-        let mut paint_ctx = PaintCtx::new(window_id);
+        let mut paint_ctx = PaintCtx::new(window_id, window.root_widget_id, bounds);
         window.root.paint(&mut paint_ctx);
 
-        let mut semantics_ctx = SemanticsCtx::new(window_id, window.root_widget_id);
+        let mut semantics_ctx = SemanticsCtx::new(window_id, window.root_widget_id, bounds);
         window.root.semantics(&mut semantics_ctx);
         window.last_semantics = semantics_ctx.into_nodes();
+
+        let mut invalidations = std::mem::take(&mut window.pending_invalidations);
+        invalidations.extend(layout_ctx.take_invalidations());
+        let (scene, paint_invalidations) = paint_ctx.into_parts();
+        invalidations.extend(paint_invalidations);
+        let dirty_regions = collect_dirty_regions(viewport, &invalidations);
 
         let frame = SceneFrame {
             window_id,
             viewport,
-            dirty_regions: vec![DirtyRegion {
-                area: Rect::new(0.0, 0.0, viewport.width, viewport.height),
-                kind: InvalidationKind::Paint,
-            }],
-            scene: paint_ctx.into_scene(),
+            dirty_regions,
+            scene,
         };
 
         Ok(RenderOutput {
@@ -213,6 +211,26 @@ struct WindowState {
     root: Box<dyn Widget>,
     root_widget_id: WidgetId,
     last_semantics: Vec<SemanticsNode>,
+    pending_invalidations: Vec<InvalidationRequest>,
+}
+
+fn collect_dirty_regions(viewport: Size, invalidations: &[InvalidationRequest]) -> Vec<DirtyRegion> {
+    let viewport_rect = Rect::from_origin_size(Point::ZERO, viewport);
+
+    if invalidations.is_empty() {
+        return vec![DirtyRegion::new(viewport_rect, InvalidationKind::Paint)];
+    }
+
+    let mut dirty_regions: Vec<_> = invalidations
+        .iter()
+        .map(|request| DirtyRegion::new(request.region.unwrap_or(viewport_rect), request.kind))
+        .collect();
+
+    if dirty_regions.iter().all(|region| region.kind != InvalidationKind::Paint) {
+        dirty_regions.push(DirtyRegion::new(viewport_rect, InvalidationKind::Paint));
+    }
+
+    dirty_regions
 }
 
 #[derive(Debug, Clone)]
@@ -220,137 +238,4 @@ pub struct RenderOutput {
     pub title: String,
     pub frame: SceneFrame,
     pub semantics: Vec<SemanticsNode>,
-}
-
-#[derive(Debug, Clone)]
-pub struct EventCtx {
-    pub window_id: WindowId,
-    invalidations: Vec<InvalidationKind>,
-}
-
-impl EventCtx {
-    pub fn new(window_id: WindowId) -> Self {
-        Self {
-            window_id,
-            invalidations: Vec::new(),
-        }
-    }
-
-    pub fn request(&mut self, kind: InvalidationKind) {
-        self.invalidations.push(kind);
-    }
-
-    pub fn request_layout(&mut self) {
-        self.request(InvalidationKind::Layout);
-    }
-
-    pub fn request_paint(&mut self) {
-        self.request(InvalidationKind::Paint);
-    }
-
-    pub fn request_semantics(&mut self) {
-        self.request(InvalidationKind::Semantics);
-    }
-
-    pub fn invalidations(&self) -> &[InvalidationKind] {
-        &self.invalidations
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct LayoutCtx {
-    pub window_id: WindowId,
-    invalidations: Vec<InvalidationKind>,
-}
-
-impl LayoutCtx {
-    pub fn new(window_id: WindowId) -> Self {
-        Self {
-            window_id,
-            invalidations: Vec::new(),
-        }
-    }
-
-    pub fn request_layout(&mut self) {
-        self.invalidations.push(InvalidationKind::Layout);
-    }
-
-    pub fn invalidations(&self) -> &[InvalidationKind] {
-        &self.invalidations
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PaintCtx {
-    pub window_id: WindowId,
-    scene: Scene,
-}
-
-impl PaintCtx {
-    pub fn new(window_id: WindowId) -> Self {
-        Self {
-            window_id,
-            scene: Scene::new(),
-        }
-    }
-
-    pub fn clear(&mut self, color: Color) {
-        self.scene.push(SceneCommand::Clear(color));
-    }
-
-    pub fn fill_rect(&mut self, rect: Rect, brush: impl Into<Brush>) {
-        self.scene.push(SceneCommand::FillRect {
-            rect,
-            brush: brush.into(),
-        });
-    }
-
-    pub fn label(&mut self, rect: Rect, text: impl Into<String>, color: Color) {
-        self.scene.push(SceneCommand::Label {
-            rect,
-            text: text.into(),
-            color,
-        });
-    }
-
-    pub fn scene(&self) -> &Scene {
-        &self.scene
-    }
-
-    pub fn into_scene(self) -> Scene {
-        self.scene
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SemanticsCtx {
-    pub window_id: WindowId,
-    root_widget_id: WidgetId,
-    nodes: Vec<SemanticsNode>,
-}
-
-impl SemanticsCtx {
-    pub fn new(window_id: WindowId, root_widget_id: WidgetId) -> Self {
-        Self {
-            window_id,
-            root_widget_id,
-            nodes: Vec::new(),
-        }
-    }
-
-    pub fn root_widget_id(&self) -> WidgetId {
-        self.root_widget_id
-    }
-
-    pub fn push(&mut self, node: SemanticsNode) {
-        self.nodes.push(node);
-    }
-
-    pub fn nodes(&self) -> &[SemanticsNode] {
-        &self.nodes
-    }
-
-    pub fn into_nodes(self) -> Vec<SemanticsNode> {
-        self.nodes
-    }
 }

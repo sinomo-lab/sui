@@ -16,8 +16,15 @@ impl From<Color> for Brush {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SceneCommand {
     Clear(Color),
-    FillRect { rect: Rect, brush: Brush },
-    Label { rect: Rect, text: String, color: Color },
+    FillRect {
+        rect: Rect,
+        brush: Brush,
+    },
+    Label {
+        rect: Rect,
+        text: String,
+        color: Color,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

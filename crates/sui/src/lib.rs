@@ -1,10 +1,11 @@
 #![forbid(unsafe_code)]
 
 pub use sui_core::{
-    Color, CustomEvent, DirtyRegion, Error, Event, FontHandle, ImeEvent, ImageHandle,
-    InvalidationKind, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
-    PointerEvent, PointerEventKind, Rect, Result, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsState, Size, SurfaceId, WidgetId, WindowEvent, WindowId,
+    Color, ColorSpace, CustomEvent, DirtyRegion, Error, Event, FontHandle, ImageHandle, ImeEvent,
+    InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent, Modifiers,
+    Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect,
+    Result, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsState,
+    SemanticsValue, Size, SurfaceId, ToggleState, Vector, WidgetId, WindowEvent, WindowId,
 };
 pub use sui_layout::{Alignment, Axis, Constraints, Padding};
 #[cfg(feature = "desktop")]
@@ -12,8 +13,8 @@ pub use sui_platform::{DesktopPlatform, PlatformWindow};
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{RendererCapabilities, RendererInterop, WgpuRenderer};
 pub use sui_runtime::{
-    Application, EventCtx, LayoutCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx,
-    Widget, WindowBuilder,
+    Application, EventCtx, LayoutCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
+    WindowBuilder,
 };
 pub use sui_scene::{Brush, Scene, SceneCommand, SceneFrame};
 
@@ -51,8 +52,8 @@ impl Default for Style {
 
 pub mod prelude {
     pub use crate::{
-        Application, Brush, Color, Constraints, Event, EventCtx, ImeEvent,
-        KeyboardEvent, LayoutCtx, PaintCtx, PointerEvent, Result, SemanticsCtx,
-        Size, Style, Theme, Widget, WindowBuilder,
+        Application, Brush, Color, Constraints, Event, EventCtx, ImeEvent, KeyboardEvent,
+        LayoutCtx, PaintCtx, Point, PointerEvent, Rect, Result, SemanticsCtx, Size, Style,
+        Theme, Widget, WindowBuilder,
     };
 }
