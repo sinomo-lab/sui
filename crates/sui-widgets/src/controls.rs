@@ -573,6 +573,20 @@ impl TextInput {
         }
     }
 
+    fn insert_text(&mut self, text: &str, ctx: &mut EventCtx) {
+        if text.is_empty() {
+            return;
+        }
+
+        self.value.push_str(text);
+        self.composition.clear();
+        self.commit_text_change();
+        ctx.request_layout();
+        ctx.request_paint();
+        ctx.request_semantics();
+        ctx.set_handled();
+    }
+
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
             self.hovered = hovered;
@@ -619,13 +633,7 @@ impl Widget for TextInput {
                 ctx.set_handled();
             }
             Event::Ime(ImeEvent::CompositionCommit { text }) if ctx.is_focused() => {
-                self.value.push_str(text);
-                self.composition.clear();
-                self.commit_text_change();
-                ctx.request_layout();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+                self.insert_text(text, ctx);
             }
             Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() => {
                 if !self.composition.is_empty() {
@@ -648,6 +656,11 @@ impl Widget for TextInput {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Keyboard(key) if ctx.is_focused() && self.composition.is_empty() => {
+                if let Some(text) = keyboard_text(key) {
+                    self.insert_text(text, ctx);
+                }
             }
             _ => {}
         }
@@ -760,6 +773,22 @@ fn measure_text(ctx: &mut LayoutCtx, text: &str, style: &TextStyle) -> TextMeasu
             height: style.line_height,
             bounds: Rect::new(0.0, 0.0, 0.0, style.line_height),
         })
+}
+
+fn keyboard_text(event: &sui_core::KeyboardEvent) -> Option<&str> {
+    if event.state != KeyState::Pressed
+        || event.is_composing
+        || event.modifiers.control
+        || event.modifiers.alt
+        || event.modifiers.meta
+    {
+        return None;
+    }
+
+    event
+        .text
+        .as_deref()
+        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
 }
 
 fn inset_rect(rect: Rect, padding: Insets) -> Rect {
@@ -941,6 +970,7 @@ mod tests {
             Event::Keyboard(KeyboardEvent {
                 key: "Backspace".to_string(),
                 code: "Backspace".to_string(),
+                text: None,
                 state: KeyState::Pressed,
                 modifiers: Modifiers::NONE,
                 repeat: false,
@@ -965,6 +995,49 @@ mod tests {
             Some(sui_core::SemanticsValue::Text("Ad".to_string()))
         );
         assert!(output.ime_composition_rect.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_ignores_process_key_without_text() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .placeholder("Type a name")
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 16.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent {
+                key: "Process".to_string(),
+                code: "KeyA".to_string(),
+                text: None,
+                state: KeyState::Pressed,
+                modifiers: Modifiers::NONE,
+                repeat: false,
+                is_composing: false,
+            }),
+        )?;
+
+        assert!(changes.borrow().is_empty());
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .unwrap();
+        assert_eq!(
+            input.value,
+            Some(sui_core::SemanticsValue::Text(String::new()))
+        );
         Ok(())
     }
 

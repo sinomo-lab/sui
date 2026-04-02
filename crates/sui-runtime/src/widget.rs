@@ -207,10 +207,13 @@ impl WidgetPod {
     }
 
     pub fn set_bounds(&mut self, bounds: Rect) {
+        let delta = bounds.origin - self.bounds.origin;
         self.bounds = bounds;
+        self.translate_descendants(delta);
     }
 
     pub fn layout(&mut self, parent_ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        let origin = self.bounds.origin;
         let mut child_ctx = LayoutCtx::new(
             parent_ctx.window_id(),
             self.id,
@@ -218,7 +221,8 @@ impl WidgetPod {
             Arc::clone(&parent_ctx.font_registry),
         );
         let size = self.widget.layout(&mut child_ctx, constraints);
-        self.bounds = Rect::from_origin_size(self.bounds.origin, size);
+        self.bounds = Rect::from_origin_size(origin, size);
+        self.translate_descendants(origin.to_vector());
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
         size
     }
@@ -230,7 +234,9 @@ impl WidgetPod {
         origin: Point,
     ) -> Size {
         let size = self.layout(parent_ctx, constraints);
+        let delta = origin - self.bounds.origin;
         self.bounds = Rect::from_origin_size(origin, size);
+        self.translate_descendants(delta);
         size
     }
 
@@ -367,6 +373,34 @@ impl WidgetPod {
         };
         self.visit_children_mut(&mut visitor);
         result
+    }
+
+    fn translate_descendants(&mut self, delta: Vector) {
+        if delta == Vector::ZERO {
+            return;
+        }
+
+        let mut visitor = TranslateVisitor { delta };
+        self.visit_children_mut(&mut visitor);
+    }
+
+    fn translate_subtree(&mut self, delta: Vector) {
+        if delta == Vector::ZERO {
+            return;
+        }
+
+        self.bounds = self.bounds.translate(delta);
+        self.translate_descendants(delta);
+    }
+}
+
+struct TranslateVisitor {
+    delta: Vector,
+}
+
+impl WidgetPodMutVisitor for TranslateVisitor {
+    fn visit(&mut self, child: &mut WidgetPod) {
+        child.translate_subtree(self.delta);
     }
 }
 

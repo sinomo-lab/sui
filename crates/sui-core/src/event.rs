@@ -160,6 +160,7 @@ pub enum KeyState {
 pub struct KeyboardEvent {
     pub key: String,
     pub code: String,
+    pub text: Option<String>,
     pub state: KeyState,
     pub modifiers: Modifiers,
     pub repeat: bool,
@@ -172,12 +173,29 @@ impl KeyboardEvent {
 
         Self {
             code: key.clone(),
+            text: keyboard_text_for_key(&key, state),
             key,
             state,
             modifiers: Modifiers::NONE,
             repeat: false,
             is_composing: false,
         }
+    }
+}
+
+fn keyboard_text_for_key(key: &str, state: KeyState) -> Option<String> {
+    if state != KeyState::Pressed {
+        return None;
+    }
+
+    if key.is_empty() || key.chars().any(char::is_control) {
+        return None;
+    }
+
+    if key.chars().count() == 1 {
+        Some(key.to_string())
+    } else {
+        None
     }
 }
 

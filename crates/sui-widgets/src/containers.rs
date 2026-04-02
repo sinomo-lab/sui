@@ -691,4 +691,34 @@ mod tests {
         assert_eq!(graph.nodes[1].bounds, Rect::new(0.0, 0.0, 18.0, 10.0));
         assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 14.0, 12.0, 8.0));
     }
+
+    #[test]
+    fn nested_containers_preserve_global_child_bounds() {
+        let (output, graph) = render_root(Padding::all(
+            24.0,
+            Background::new(
+                Brush::Solid(Color::rgba(0.1, 0.1, 0.1, 1.0)),
+                Padding::all(
+                    18.0,
+                    Stack::vertical()
+                        .spacing(10.0)
+                        .with_child(FixedBox::new(
+                            Size::new(50.0, 12.0),
+                            Color::rgba(0.7, 0.2, 0.2, 1.0),
+                        ))
+                        .with_child(FixedBox::new(
+                            Size::new(30.0, 8.0),
+                            Color::rgba(0.2, 0.7, 0.2, 1.0),
+                        )),
+                ),
+            ),
+        ));
+
+        assert_eq!(output.frame.viewport, Size::new(134.0, 114.0));
+        assert_eq!(graph.nodes[1].bounds, Rect::new(24.0, 24.0, 86.0, 66.0));
+        assert_eq!(graph.nodes[2].bounds, Rect::new(24.0, 24.0, 86.0, 66.0));
+        assert_eq!(graph.nodes[3].bounds, Rect::new(42.0, 42.0, 50.0, 30.0));
+        assert_eq!(graph.nodes[4].bounds, Rect::new(42.0, 42.0, 50.0, 12.0));
+        assert_eq!(graph.nodes[5].bounds, Rect::new(42.0, 64.0, 30.0, 8.0));
+    }
 }

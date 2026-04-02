@@ -467,6 +467,7 @@ impl<'a> DesktopApp<'a> {
                 let keyboard_event = KeyboardEvent {
                     key: logical_key_to_string(&event.logical_key),
                     code: physical_key_to_string(&event.physical_key),
+                    text: event.text.as_ref().map(|text| text.to_string()),
                     state: match event.state {
                         ElementState::Pressed => KeyState::Pressed,
                         ElementState::Released => KeyState::Released,

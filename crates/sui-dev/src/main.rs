@@ -152,7 +152,7 @@ fn build_gallery(state: Rc<RefCell<GalleryState>>) -> impl Widget {
                     )
                     .with_child(
                         Label::new(
-                            "Text input currently supports focus, IME composition commits, placeholder rendering, and backspace. That is intentionally minimal for this phase.",
+                            "Text input currently supports focus, direct keyboard typing, IME composition commits, placeholder rendering, and backspace. That is intentionally minimal for this phase.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)
@@ -317,6 +317,41 @@ mod tests {
     use sui::prelude::Result;
     use sui::{SemanticsRole, SemanticsValue};
     use sui_testing::prelude::TestApp;
+
+    #[test]
+    fn gallery_text_input_accepts_plain_keyboard_typing() -> Result<()> {
+        let state = Rc::new(RefCell::new(GalleryState::default()));
+        let app = TestApp::from_runtime(build_gallery_application(Rc::clone(&state)).build()?)?;
+        let window = app.main_window()?;
+
+        let input = window.get_by_role(SemanticsRole::TextInput).with_name("Name");
+        input.focus()?;
+        input.press("A")?;
+        input.press("d")?;
+        input.press("a")?;
+        input.expect().to_have_value("Ada")?;
+
+        assert_eq!(state.borrow().name, "Ada");
+
+        let snapshot = window.snapshot()?;
+        let summary = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Gallery summary")
+            })
+            .expect("gallery summary semantics node present");
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("Ada"))
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn gallery_can_write_visual_artifacts_for_inspection() -> Result<()> {
