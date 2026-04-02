@@ -9,9 +9,13 @@ use lyon_tessellation::{
     StrokeTessellator, StrokeVertex, StrokeVertexConstructor, VertexBuffers,
 };
 use sui_core::{
-    Color, Error, Path as ScenePath, PathElement, Point, Rect, Result, Size, Transform, WindowId,
+    Color, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result, Size,
+    Transform, WindowId,
 };
-use sui_scene::{Brush, FontRegistry, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle};
+use sui_scene::{
+    Brush, FontRegistry, RegisteredImage, RegisteredImageFormat, SceneCommand, SceneFrame,
+    StrokeStyle, TextRun, TextStyle,
+};
 use ttf_parser::GlyphId;
 use winit::window::Window;
 
@@ -42,6 +46,7 @@ pub struct WgpuRenderer {
     last_frame: Option<SceneFrame>,
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
+    image_cache: HashMap<ImageHandle, CachedImageTexture>,
     surfaces: HashMap<WindowId, SurfaceState>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
 }
@@ -126,11 +131,43 @@ impl WgpuRenderer {
         }))
         .map_err(|error| Error::new(format!("failed to create wgpu device: {error}")))?;
 
+        let image_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("SUI image bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let image_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SUI image sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+
         self.shared = Some(SharedRenderer {
             adapter,
             device,
             queue,
             pipelines: HashMap::new(),
+            image_bind_group_layout,
+            image_sampler,
         });
 
         Ok(())
@@ -298,15 +335,17 @@ impl WgpuRenderer {
             let text_engine = self.text_engine()?;
             build_draw_ops(frame, text_engine)?
         };
-        let shared = self
-            .shared
-            .as_mut()
-            .expect("renderer shared state initialized");
-        let mut encoder = shared
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("SUI scene encoder"),
-            });
+        let mut encoder = {
+            let shared = self
+                .shared
+                .as_ref()
+                .expect("renderer shared state initialized");
+            shared
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("SUI scene encoder"),
+                })
+        };
         if draw_ops.is_empty() {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SUI scene clear pass"),
@@ -332,6 +371,10 @@ impl WgpuRenderer {
         } else {
             let stencil_view = if draw_ops.iter().any(|op| !op.clip_paths.is_empty()) {
                 let size = normalize_viewport(frame.viewport).unwrap_or((1, 1));
+                let shared = self
+                    .shared
+                    .as_ref()
+                    .expect("renderer shared state initialized");
                 let stencil_texture = shared.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("SUI scene stencil"),
                     size: wgpu::Extent3d {
@@ -363,25 +406,45 @@ impl WgpuRenderer {
                     wgpu::LoadOp::Load
                 };
 
-                let vertex_buffer = create_vertex_buffer(
-                    &shared.device,
-                    &shared.queue,
-                    &op.vertices,
-                    "SUI scene vertices",
-                );
-                let clip_buffers: Vec<Option<wgpu::Buffer>> = op
-                    .clip_paths
-                    .iter()
-                    .enumerate()
-                    .map(|(clip_index, vertices)| {
-                        create_vertex_buffer(
-                            &shared.device,
-                            &shared.queue,
-                            vertices,
-                            &format!("SUI clip vertices {clip_index}"),
-                        )
-                    })
-                    .collect();
+                let vertex_buffer = {
+                    let shared = self
+                        .shared
+                        .as_ref()
+                        .expect("renderer shared state initialized");
+                    create_vertex_buffer(
+                        &shared.device,
+                        &shared.queue,
+                        &op.vertices,
+                        "SUI scene vertices",
+                    )
+                };
+                let clip_buffers: Vec<Option<wgpu::Buffer>> = {
+                    let shared = self
+                        .shared
+                        .as_ref()
+                        .expect("renderer shared state initialized");
+                    op.clip_paths
+                        .iter()
+                        .enumerate()
+                        .map(|(clip_index, vertices)| {
+                            create_vertex_buffer(
+                                &shared.device,
+                                &shared.queue,
+                                vertices,
+                                &format!("SUI clip vertices {clip_index}"),
+                            )
+                        })
+                        .collect()
+                };
+                let image_bind_group = match op.kind {
+                    DrawOpKind::Solid => None,
+                    DrawOpKind::Image { handle } => {
+                        let image = frame.image_registry.get(handle).ok_or_else(|| {
+                            Error::new(format!("image handle {} is not registered", handle.get()))
+                        })?;
+                        Some(self.ensure_image_bind_group(handle, image)?)
+                    }
+                };
 
                 let depth_stencil_attachment = if op.clip_paths.is_empty() {
                     None
@@ -415,6 +478,11 @@ impl WgpuRenderer {
                     multiview_mask: None,
                 });
 
+                let shared = self
+                    .shared
+                    .as_mut()
+                    .expect("renderer shared state initialized");
+
                 if !op.clip_paths.is_empty() {
                     let clip_pipeline = shared.clip_pipeline(target_format);
                     render_pass.set_pipeline(clip_pipeline);
@@ -429,22 +497,113 @@ impl WgpuRenderer {
                 }
 
                 if let Some(buffer) = vertex_buffer.as_ref() {
-                    let pipeline = if op.clip_paths.is_empty() {
-                        shared.pipeline(target_format)
-                    } else {
-                        let pipeline = shared.clipped_pipeline(target_format);
-                        render_pass.set_stencil_reference(op.clip_paths.len() as u32);
-                        pipeline
+                    let pipeline = match (op.kind, op.clip_paths.is_empty()) {
+                        (DrawOpKind::Solid, true) => shared.pipeline(target_format),
+                        (DrawOpKind::Solid, false) => {
+                            let pipeline = shared.clipped_pipeline(target_format);
+                            render_pass.set_stencil_reference(op.clip_paths.len() as u32);
+                            pipeline
+                        }
+                        (DrawOpKind::Image { .. }, true) => shared.image_pipeline(target_format),
+                        (DrawOpKind::Image { .. }, false) => {
+                            let pipeline = shared.clipped_image_pipeline(target_format);
+                            render_pass.set_stencil_reference(op.clip_paths.len() as u32);
+                            pipeline
+                        }
                     };
                     render_pass.set_pipeline(pipeline);
+                    if let Some(bind_group) = image_bind_group.as_ref() {
+                        render_pass.set_bind_group(0, bind_group, &[]);
+                    }
                     render_pass.set_vertex_buffer(0, buffer.slice(..));
                     render_pass.draw(0..op.vertices.len() as u32, 0..1);
                 }
             }
         }
 
-        shared.queue.submit([encoder.finish()]);
+        self.shared
+            .as_ref()
+            .expect("renderer shared state initialized")
+            .queue
+            .submit([encoder.finish()]);
         Ok(())
+    }
+
+    fn ensure_image_bind_group(
+        &mut self,
+        handle: ImageHandle,
+        image: &RegisteredImage,
+    ) -> Result<wgpu::BindGroup> {
+        if let Some(cached) = self.image_cache.get(&handle) {
+            return Ok(cached.bind_group.clone());
+        }
+
+        let shared = self
+            .shared
+            .as_ref()
+            .expect("renderer shared state initialized");
+        let texture_format = match image.format() {
+            RegisteredImageFormat::Rgba8 => wgpu::TextureFormat::Rgba8UnormSrgb,
+        };
+        let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("SUI image texture"),
+            size: wgpu::Extent3d {
+                width: image.width(),
+                height: image.height(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: texture_format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        shared.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            image.bytes(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(image.width() * 4),
+                rows_per_image: Some(image.height()),
+            },
+            wgpu::Extent3d {
+                width: image.width(),
+                height: image.height(),
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SUI image bind group"),
+            layout: &shared.image_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&shared.image_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+            ],
+        });
+
+        self.image_cache.insert(
+            handle,
+            CachedImageTexture {
+                _texture: texture,
+                _view: view,
+                bind_group: bind_group.clone(),
+            },
+        );
+
+        Ok(bind_group)
     }
 
     fn create_surface_state(
@@ -481,6 +640,7 @@ impl Default for WgpuRenderer {
             last_frame: None,
             shared: None,
             text_engine: None,
+            image_cache: HashMap::new(),
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
         }
@@ -503,6 +663,8 @@ struct SharedRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipelines: HashMap<(wgpu::TextureFormat, PipelineKind), wgpu::RenderPipeline>,
+    image_bind_group_layout: wgpu::BindGroupLayout,
+    image_sampler: wgpu::Sampler,
 }
 
 impl SharedRenderer {
@@ -518,43 +680,67 @@ impl SharedRenderer {
         self.pipeline_for(format, PipelineKind::ClipMask)
     }
 
+    fn image_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::Textured)
+    }
+
+    fn clipped_image_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::TexturedClipped)
+    }
+
     fn pipeline_for(
         &mut self,
         format: wgpu::TextureFormat,
         kind: PipelineKind,
     ) -> &wgpu::RenderPipeline {
         self.pipelines.entry((format, kind)).or_insert_with(|| {
+            let shader_label = match kind {
+                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
+                    "SUI solid scene shader"
+                }
+                PipelineKind::Textured | PipelineKind::TexturedClipped => {
+                    "SUI textured scene shader"
+                }
+            };
+            let shader_source = match kind {
+                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
+                    SHADER_SOURCE
+                }
+                PipelineKind::Textured | PipelineKind::TexturedClipped => TEXTURED_SHADER_SOURCE,
+            };
             let shader = self
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("SUI solid scene shader"),
-                    source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
+                    label: Some(shader_label),
+                    source: wgpu::ShaderSource::Wgsl(shader_source.into()),
                 });
 
             let depth_stencil = match kind {
-                PipelineKind::Solid => None,
-                PipelineKind::Clipped => Some(wgpu::DepthStencilState {
-                    format: STENCIL_FORMAT,
-                    depth_write_enabled: Some(false),
-                    depth_compare: Some(wgpu::CompareFunction::Always),
-                    stencil: wgpu::StencilState {
-                        front: wgpu::StencilFaceState {
-                            compare: wgpu::CompareFunction::Equal,
-                            fail_op: wgpu::StencilOperation::Keep,
-                            depth_fail_op: wgpu::StencilOperation::Keep,
-                            pass_op: wgpu::StencilOperation::Keep,
+                PipelineKind::Solid | PipelineKind::Textured => None,
+                PipelineKind::Clipped | PipelineKind::TexturedClipped => {
+                    Some(wgpu::DepthStencilState {
+                        format: STENCIL_FORMAT,
+                        depth_write_enabled: Some(false),
+                        depth_compare: Some(wgpu::CompareFunction::Always),
+                        stencil: wgpu::StencilState {
+                            front: wgpu::StencilFaceState {
+                                compare: wgpu::CompareFunction::Equal,
+                                fail_op: wgpu::StencilOperation::Keep,
+                                depth_fail_op: wgpu::StencilOperation::Keep,
+                                pass_op: wgpu::StencilOperation::Keep,
+                            },
+                            back: wgpu::StencilFaceState {
+                                compare: wgpu::CompareFunction::Equal,
+                                fail_op: wgpu::StencilOperation::Keep,
+                                depth_fail_op: wgpu::StencilOperation::Keep,
+                                pass_op: wgpu::StencilOperation::Keep,
+                            },
+                            read_mask: u32::MAX,
+                            write_mask: 0,
                         },
-                        back: wgpu::StencilFaceState {
-                            compare: wgpu::CompareFunction::Equal,
-                            fail_op: wgpu::StencilOperation::Keep,
-                            depth_fail_op: wgpu::StencilOperation::Keep,
-                            pass_op: wgpu::StencilOperation::Keep,
-                        },
-                        read_mask: u32::MAX,
-                        write_mask: 0,
-                    },
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                        bias: wgpu::DepthBiasState::default(),
+                    })
+                }
                 PipelineKind::ClipMask => Some(wgpu::DepthStencilState {
                     format: STENCIL_FORMAT,
                     depth_write_enabled: Some(false),
@@ -583,15 +769,28 @@ impl SharedRenderer {
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })];
+            let layout = match kind {
+                PipelineKind::Textured | PipelineKind::TexturedClipped => Some(
+                    self.device
+                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("SUI textured scene pipeline layout"),
+                            bind_group_layouts: &[Some(&self.image_bind_group_layout)],
+                            immediate_size: 0,
+                        }),
+                ),
+                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => None,
+            };
 
             self.device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(match kind {
                         PipelineKind::Solid => "SUI solid scene pipeline",
                         PipelineKind::Clipped => "SUI clipped scene pipeline",
+                        PipelineKind::Textured => "SUI textured scene pipeline",
+                        PipelineKind::TexturedClipped => "SUI clipped textured scene pipeline",
                         PipelineKind::ClipMask => "SUI clip mask pipeline",
                     }),
-                    layout: None,
+                    layout: layout.as_ref(),
                     vertex: wgpu::VertexState {
                         module: &shader,
                         entry_point: Some("vs_main"),
@@ -603,7 +802,10 @@ impl SharedRenderer {
                     multisample: wgpu::MultisampleState::default(),
                     fragment: match kind {
                         PipelineKind::ClipMask => None,
-                        PipelineKind::Solid | PipelineKind::Clipped => Some(wgpu::FragmentState {
+                        PipelineKind::Solid
+                        | PipelineKind::Clipped
+                        | PipelineKind::Textured
+                        | PipelineKind::TexturedClipped => Some(wgpu::FragmentState {
                             module: &shader,
                             entry_point: Some("fs_main"),
                             targets: &fragment_targets,
@@ -621,7 +823,15 @@ impl SharedRenderer {
 enum PipelineKind {
     Solid,
     Clipped,
+    Textured,
+    TexturedClipped,
     ClipMask,
+}
+
+struct CachedImageTexture {
+    _texture: wgpu::Texture,
+    _view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
 }
 
 struct SurfaceState {
@@ -641,11 +851,12 @@ struct OffscreenTarget {
 struct Vertex {
     position: [f32; 2],
     color: [f32; 4],
+    tex_coords: [f32; 2],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4, 2 => Float32x2];
 
     fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -683,8 +894,15 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
     Ok(vertices)
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DrawOpKind {
+    Solid,
+    Image { handle: ImageHandle },
+}
+
+#[derive(Debug, Clone)]
 struct DrawOp {
+    kind: DrawOpKind,
     vertices: Vec<Vertex>,
     clip_paths: Vec<Vec<Vertex>>,
 }
@@ -704,13 +922,13 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                     *color,
                     viewport,
                 );
-                push_draw_op(&mut draw_ops, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::FillRect { rect, brush } => {
                 let Brush::Solid(color) = brush;
                 let mut vertices = Vec::new();
                 append_painted_rect(&mut vertices, &state, *rect, *color, viewport);
-                push_draw_op(&mut draw_ops, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::StrokeRect {
                 rect,
@@ -720,13 +938,13 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                 let Brush::Solid(color) = brush;
                 let mut vertices = Vec::new();
                 append_stroke_rect(&mut vertices, &state, *rect, *color, *stroke, viewport);
-                push_draw_op(&mut draw_ops, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::FillPath { path, brush } => {
                 let Brush::Solid(color) = brush;
                 let mut vertices = Vec::new();
                 append_painted_path(&mut vertices, &state, path, *color, viewport)?;
-                push_draw_op(&mut draw_ops, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::StrokePath {
                 path,
@@ -736,7 +954,7 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                 let Brush::Solid(color) = brush;
                 let mut vertices = Vec::new();
                 append_stroked_path(&mut vertices, &state, path, *color, *stroke, viewport)?;
-                push_draw_op(&mut draw_ops, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::DrawText(text) => {
                 let mut vertices = Vec::new();
@@ -747,12 +965,25 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                     frame.font_registry.as_ref(),
                     viewport,
                 )?;
-                push_draw_op(&mut draw_ops, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::DrawImage { rect, source } => {
                 let mut vertices = Vec::new();
-                append_image_placeholder(&mut vertices, &state, *rect, source, viewport);
-                push_draw_op(&mut draw_ops, vertices, &state);
+                let image = frame.image_registry.get(source.image).ok_or_else(|| {
+                    Error::new(format!(
+                        "image handle {} is not registered",
+                        source.image.get()
+                    ))
+                })?;
+                append_image(&mut vertices, &state, *rect, source, image, viewport);
+                push_draw_op(
+                    &mut draw_ops,
+                    DrawOpKind::Image {
+                        handle: source.image,
+                    },
+                    vertices,
+                    &state,
+                );
             }
             SceneCommand::PushClip { rect } => {
                 state.push_clip(*rect);
@@ -782,7 +1013,7 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                     frame.font_registry.as_ref(),
                     viewport,
                 )?;
-                push_draw_op(&mut draw_ops, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
         }
     }
@@ -1334,6 +1565,7 @@ fn append_indexed_triangles(
         vertices.push(Vertex {
             position: [ndc[0], ndc[1]],
             color: rgba,
+            tex_coords: [0.0, 0.0],
         });
     }
 }
@@ -1408,56 +1640,93 @@ where
     }
 }
 
-fn append_image_placeholder(
+fn append_image(
     vertices: &mut Vec<Vertex>,
     state: &SceneRasterState,
     rect: Rect,
     source: &sui_scene::ImageSource,
+    image: &RegisteredImage,
     viewport: Size,
 ) {
-    if rect.is_empty() {
+    if rect.is_empty() || viewport.is_empty() {
         return;
     }
 
-    let seed = source.image.get() as f32;
-    let fallback = Color::rgba(
-        ((seed * 0.17).sin() * 0.25) + 0.45,
-        ((seed * 0.11).cos() * 0.20) + 0.45,
-        ((seed * 0.07).sin() * 0.15) + 0.50,
-        0.85,
-    )
-    .clamped();
-    let fill = source
-        .tint
-        .map(|tint| tint.with_alpha((tint.alpha * 0.35).clamp(0.18, 0.65)))
-        .unwrap_or(fallback);
-    let border = source.tint.unwrap_or(Color::WHITE).with_alpha(0.95);
+    let transformed = state.current_transform.transform_rect_bbox(rect);
+    let Some(visible) = (match state.current_clip_bounds() {
+        Some(clip) => transformed.intersection(clip),
+        None => Some(transformed),
+    }) else {
+        return;
+    };
 
-    append_painted_rect(vertices, state, rect, fill, viewport);
-    append_stroke_rect(
-        vertices,
-        state,
-        rect,
-        border,
-        StrokeStyle::new(1.5),
-        viewport,
-    );
-
-    let inset = rect.inflate(-rect.width() * 0.18, -rect.height() * 0.18);
-    if !inset.is_empty() {
-        append_painted_rect(
-            vertices,
-            state,
-            Rect::new(
-                inset.x(),
-                inset.y(),
-                inset.width(),
-                (inset.height() * 0.24).max(1.0),
-            ),
-            border.with_alpha(0.35),
-            viewport,
-        );
+    if transformed.width() <= 0.0 || transformed.height() <= 0.0 {
+        return;
     }
+
+    let image_width = image.width() as f32;
+    let image_height = image.height() as f32;
+    let source_rect = source
+        .source_rect
+        .unwrap_or(Rect::new(0.0, 0.0, image_width, image_height));
+    let source_min_x = source_rect.x().clamp(0.0, image_width);
+    let source_min_y = source_rect.y().clamp(0.0, image_height);
+    let source_max_x = source_rect.max_x().clamp(source_min_x, image_width);
+    let source_max_y = source_rect.max_y().clamp(source_min_y, image_height);
+    if source_max_x <= source_min_x || source_max_y <= source_min_y {
+        return;
+    }
+
+    let u0 = source_min_x / image_width;
+    let v0 = source_min_y / image_height;
+    let u1 = source_max_x / image_width;
+    let v1 = source_max_y / image_height;
+
+    let left = ((visible.x() - transformed.x()) / transformed.width()).clamp(0.0, 1.0);
+    let right = ((visible.max_x() - transformed.x()) / transformed.width()).clamp(0.0, 1.0);
+    let top = ((visible.y() - transformed.y()) / transformed.height()).clamp(0.0, 1.0);
+    let bottom = ((visible.max_y() - transformed.y()) / transformed.height()).clamp(0.0, 1.0);
+
+    let uv_left = u0 + ((u1 - u0) * left);
+    let uv_right = u0 + ((u1 - u0) * right);
+    let uv_top = v0 + ((v1 - v0) * top);
+    let uv_bottom = v0 + ((v1 - v0) * bottom);
+    let min = to_ndc(visible.x(), visible.y(), viewport);
+    let max = to_ndc(visible.max_x(), visible.max_y(), viewport);
+    let tint = source.tint.unwrap_or(Color::WHITE).clamped().to_array();
+
+    vertices.extend_from_slice(&[
+        Vertex {
+            position: [min[0], min[1]],
+            color: tint,
+            tex_coords: [uv_left, uv_top],
+        },
+        Vertex {
+            position: [max[0], min[1]],
+            color: tint,
+            tex_coords: [uv_right, uv_top],
+        },
+        Vertex {
+            position: [min[0], max[1]],
+            color: tint,
+            tex_coords: [uv_left, uv_bottom],
+        },
+        Vertex {
+            position: [min[0], max[1]],
+            color: tint,
+            tex_coords: [uv_left, uv_bottom],
+        },
+        Vertex {
+            position: [max[0], min[1]],
+            color: tint,
+            tex_coords: [uv_right, uv_top],
+        },
+        Vertex {
+            position: [max[0], max[1]],
+            color: tint,
+            tex_coords: [uv_right, uv_bottom],
+        },
+    ]);
 }
 
 fn append_stroke_rect(
@@ -1524,36 +1793,48 @@ fn append_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, viewport: S
         Vertex {
             position: [min[0], min[1]],
             color: rgba,
+            tex_coords: [0.0, 0.0],
         },
         Vertex {
             position: [max[0], min[1]],
             color: rgba,
+            tex_coords: [0.0, 0.0],
         },
         Vertex {
             position: [min[0], max[1]],
             color: rgba,
+            tex_coords: [0.0, 0.0],
         },
         Vertex {
             position: [min[0], max[1]],
             color: rgba,
+            tex_coords: [0.0, 0.0],
         },
         Vertex {
             position: [max[0], min[1]],
             color: rgba,
+            tex_coords: [0.0, 0.0],
         },
         Vertex {
             position: [max[0], max[1]],
             color: rgba,
+            tex_coords: [0.0, 0.0],
         },
     ]);
 }
 
-fn push_draw_op(draw_ops: &mut Vec<DrawOp>, vertices: Vec<Vertex>, state: &SceneRasterState) {
+fn push_draw_op(
+    draw_ops: &mut Vec<DrawOp>,
+    kind: DrawOpKind,
+    vertices: Vec<Vertex>,
+    state: &SceneRasterState,
+) {
     if vertices.is_empty() {
         return;
     }
 
     draw_ops.push(DrawOp {
+        kind,
         vertices,
         clip_paths: state.current_path_clips(),
     });
@@ -1647,14 +1928,46 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+const TEXTURED_SHADER_SOURCE: &str = r#"
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) tex_coords: vec2<f32>,
+};
+
+@group(0) @binding(0)
+var image_sampler: sampler;
+
+@group(0) @binding(1)
+var image_texture: texture_2d<f32>;
+
+@vertex
+fn vs_main(
+    @location(0) position: vec2<f32>,
+    @location(1) color: vec4<f32>,
+    @location(2) tex_coords: vec2<f32>,
+) -> VsOut {
+    var out: VsOut;
+    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.color = color;
+    out.tex_coords = tex_coords;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return textureSample(image_texture, image_sampler, in.tex_coords) * in.color;
+}
+"#;
+
 #[cfg(test)]
 mod tests {
-    use super::{TextEngine, build_draw_ops, build_vertices, to_ndc};
+    use super::{DrawOpKind, TextEngine, build_draw_ops, build_vertices, to_ndc};
     use std::sync::Arc;
-    use sui_core::{Color, FontHandle, Path, Point, Rect, Size, Transform, WindowId};
+    use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WindowId};
     use sui_scene::{
-        FontRegistry, RegisteredFont, Scene, SceneCommand, SceneFrame, StrokeStyle, TextRun,
-        TextStyle,
+        FontRegistry, ImageRegistry, ImageSource, RegisteredFont, RegisteredImage, Scene,
+        SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle,
     };
 
     fn load_test_font() -> RegisteredFont {
@@ -1700,6 +2013,7 @@ mod tests {
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
         )
@@ -1743,6 +2057,7 @@ mod tests {
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
         )
@@ -1785,6 +2100,7 @@ mod tests {
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
         )
@@ -1817,6 +2133,7 @@ mod tests {
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
         )
@@ -1869,6 +2186,7 @@ mod tests {
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(fonts),
+                image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
         )
@@ -1897,6 +2215,7 @@ mod tests {
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
         ) {
@@ -1908,6 +2227,76 @@ mod tests {
             error
                 .to_string()
                 .contains("font handle 404 is not registered")
+        );
+    }
+
+    #[test]
+    fn build_draw_ops_uses_registered_image_handle() {
+        let handle = ImageHandle::new(23);
+        let mut images = ImageRegistry::new();
+        images.insert(
+            handle,
+            RegisteredImage::from_rgba8(
+                2,
+                2,
+                vec![
+                    255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+                ],
+            )
+            .unwrap(),
+        );
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawImage {
+            rect: Rect::new(4.0, 6.0, 32.0, 24.0),
+            source: ImageSource::new(handle),
+        });
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let ops = build_draw_ops(
+            &SceneFrame {
+                window_id: WindowId::new(7),
+                viewport: Size::new(96.0, 64.0),
+                dirty_regions: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(images),
+            },
+            &mut text_engine,
+        )
+        .unwrap();
+
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(ops[0].kind, DrawOpKind::Image { handle: value } if value == handle));
+        assert_eq!(ops[0].vertices.len(), 6);
+    }
+
+    #[test]
+    fn build_draw_ops_errors_for_unregistered_image_handle() {
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawImage {
+            rect: Rect::new(4.0, 6.0, 32.0, 24.0),
+            source: ImageSource::new(ImageHandle::new(88)),
+        });
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let error = build_draw_ops(
+            &SceneFrame {
+                window_id: WindowId::new(8),
+                viewport: Size::new(96.0, 64.0),
+                dirty_regions: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            },
+            &mut text_engine,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("image handle 88 is not registered")
         );
     }
 }

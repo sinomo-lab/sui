@@ -8,12 +8,12 @@ use std::{
 };
 
 use sui_core::{
-    AsyncWakeToken, DirtyRegion, Error, Event, FontHandle, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, Point, PointerEventKind, Rect, Result, SemanticsNode, Size, TimerToken,
-    WakeEvent, WidgetId, WindowEvent, WindowId,
+    AsyncWakeToken, DirtyRegion, Error, Event, FontHandle, ImageHandle, InvalidationKind,
+    InvalidationRequest, InvalidationTarget, Point, PointerEventKind, Rect, Result, SemanticsNode,
+    Size, TimerToken, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{FontRegistry, RegisteredFont, SceneFrame};
+use sui_scene::{FontRegistry, ImageRegistry, RegisteredFont, RegisteredImage, SceneFrame};
 
 pub use widget::{
     EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
@@ -65,7 +65,9 @@ impl Default for WindowBuilder {
 pub struct Application {
     windows: Vec<WindowBuilder>,
     next_font_id: u64,
+    next_image_id: u64,
     font_registry: Arc<FontRegistry>,
+    image_registry: Arc<ImageRegistry>,
 }
 
 impl Application {
@@ -100,8 +102,40 @@ impl Application {
         Ok(handle)
     }
 
+    pub fn register_image(&mut self, handle: ImageHandle, image: RegisteredImage) -> Result<()> {
+        if Arc::make_mut(&mut self.image_registry)
+            .insert(handle, image)
+            .is_some()
+        {
+            return Err(Error::new(format!(
+                "image handle {} is already registered",
+                handle.get()
+            )));
+        }
+
+        self.next_image_id = self.next_image_id.max(handle.get() + 1);
+        Ok(())
+    }
+
+    pub fn register_rgba_image(
+        &mut self,
+        width: u32,
+        height: u32,
+        data: impl Into<Vec<u8>>,
+    ) -> Result<ImageHandle> {
+        let handle = ImageHandle::new(self.next_image_id.max(1));
+        self.next_image_id = handle.get() + 1;
+        self.register_image(handle, RegisteredImage::from_rgba8(width, height, data)?)?;
+        Ok(handle)
+    }
+
     pub fn build(self) -> Result<Runtime> {
-        let mut runtime = Runtime::with_font_registry(self.next_font_id, self.font_registry);
+        let mut runtime = Runtime::with_registries(
+            self.next_font_id,
+            self.font_registry,
+            self.next_image_id,
+            self.image_registry,
+        );
 
         for window in self.windows {
             runtime.add_window(window)?;
@@ -116,7 +150,9 @@ impl Default for Application {
         Self {
             windows: Vec::new(),
             next_font_id: 1,
+            next_image_id: 1,
             font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
         }
     }
 }
@@ -124,20 +160,34 @@ impl Default for Application {
 pub struct Runtime {
     next_window_id: u64,
     next_font_id: u64,
+    next_image_id: u64,
     font_registry: Arc<FontRegistry>,
+    image_registry: Arc<ImageRegistry>,
     windows: Vec<WindowState>,
 }
 
 impl Runtime {
     pub fn new() -> Self {
-        Self::with_font_registry(1, Arc::new(FontRegistry::new()))
+        Self::with_registries(
+            1,
+            Arc::new(FontRegistry::new()),
+            1,
+            Arc::new(ImageRegistry::new()),
+        )
     }
 
-    fn with_font_registry(next_font_id: u64, font_registry: Arc<FontRegistry>) -> Self {
+    fn with_registries(
+        next_font_id: u64,
+        font_registry: Arc<FontRegistry>,
+        next_image_id: u64,
+        image_registry: Arc<ImageRegistry>,
+    ) -> Self {
         Self {
             next_window_id: 1,
             next_font_id: next_font_id.max(1),
+            next_image_id: next_image_id.max(1),
             font_registry,
+            image_registry,
             windows: Vec::new(),
         }
     }
@@ -225,14 +275,46 @@ impl Runtime {
         Ok(handle)
     }
 
+    pub fn register_image(&mut self, handle: ImageHandle, image: RegisteredImage) -> Result<()> {
+        if Arc::make_mut(&mut self.image_registry)
+            .insert(handle, image)
+            .is_some()
+        {
+            return Err(Error::new(format!(
+                "image handle {} is already registered",
+                handle.get()
+            )));
+        }
+
+        self.next_image_id = self.next_image_id.max(handle.get() + 1);
+        Ok(())
+    }
+
+    pub fn register_rgba_image(
+        &mut self,
+        width: u32,
+        height: u32,
+        data: impl Into<Vec<u8>>,
+    ) -> Result<ImageHandle> {
+        let handle = ImageHandle::new(self.next_image_id.max(1));
+        self.next_image_id = handle.get() + 1;
+        self.register_image(handle, RegisteredImage::from_rgba8(width, height, data)?)?;
+        Ok(handle)
+    }
+
     pub fn font_registry(&self) -> &Arc<FontRegistry> {
         &self.font_registry
     }
 
+    pub fn image_registry(&self) -> &Arc<ImageRegistry> {
+        &self.image_registry
+    }
+
     pub fn render(&mut self, window_id: WindowId) -> Result<RenderOutput> {
         let font_registry = Arc::clone(&self.font_registry);
+        let image_registry = Arc::clone(&self.image_registry);
         let window = self.window_mut(window_id)?;
-        Ok(window.render(font_registry))
+        Ok(window.render(font_registry, image_registry))
     }
 
     pub fn semantics(&self, window_id: WindowId) -> Result<&[SemanticsNode]> {
@@ -866,7 +948,11 @@ impl WindowState {
         invalidations
     }
 
-    fn render(&mut self, font_registry: Arc<FontRegistry>) -> RenderOutput {
+    fn render(
+        &mut self,
+        font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
+    ) -> RenderOutput {
         let mut invalidations = std::mem::take(&mut self.pending_invalidations);
         let mut repainted = false;
 
@@ -900,6 +986,7 @@ impl WindowState {
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::clone(&font_registry),
+                image_registry: Arc::clone(&image_registry),
             });
         }
 
@@ -929,6 +1016,7 @@ impl WindowState {
             .unwrap_or_else(|| SceneFrame::new(self.id, viewport));
         frame.dirty_regions = dirty_regions;
         frame.font_registry = font_registry;
+        frame.image_registry = image_registry;
 
         self.schedule.clear();
 
@@ -1192,12 +1280,12 @@ mod tests {
         WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_core::{
-        AsyncWakeToken, Color, CustomEvent, Event, FontHandle, KeyState, KeyboardEvent, Point,
-        PointerButton, PointerButtons, PointerEvent, PointerEventKind, SemanticsNode,
-        SemanticsRole, Size, TimerToken, WakeEvent,
+        AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
+        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent,
     };
     use sui_layout::Constraints;
-    use sui_scene::RegisteredFont;
+    use sui_scene::{RegisteredFont, RegisteredImage};
 
     #[derive(Default)]
     struct Counters {
@@ -1512,6 +1600,23 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
 
         assert!(output.frame.font_registry.contains(handle));
+    }
+
+    #[test]
+    fn runtime_attaches_registered_images_to_render_output() {
+        let (mut runtime, window_id, _, _) = build_runtime();
+        let handle = ImageHandle::new(7);
+
+        runtime
+            .register_image(
+                handle,
+                RegisteredImage::from_rgba8(1, 1, vec![255, 0, 0, 255]).unwrap(),
+            )
+            .unwrap();
+
+        let output = runtime.render(window_id).unwrap();
+
+        assert!(output.frame.image_registry.contains(handle));
     }
 
     #[test]

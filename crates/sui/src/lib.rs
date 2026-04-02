@@ -24,8 +24,8 @@ pub use sui_runtime::{
     WindowBuilder,
 };
 pub use sui_scene::{
-    Brush, FontRegistry, ImageSource, RegisteredFont, Scene, SceneCommand, SceneFrame, StrokeStyle,
-    TextRun, TextStyle,
+    Brush, FontRegistry, ImageRegistry, ImageSource, RegisteredFont, RegisteredImage,
+    RegisteredImageFormat, Scene, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,6 +64,19 @@ impl Application {
 
     pub fn register_font_bytes(&mut self, data: impl Into<Vec<u8>>) -> Result<FontHandle> {
         self.inner.register_font_bytes(data)
+    }
+
+    pub fn register_image(&mut self, handle: ImageHandle, image: RegisteredImage) -> Result<()> {
+        self.inner.register_image(handle, image)
+    }
+
+    pub fn register_rgba_image(
+        &mut self,
+        width: u32,
+        height: u32,
+        data: impl Into<Vec<u8>>,
+    ) -> Result<ImageHandle> {
+        self.inner.register_rgba_image(width, height, data)
     }
 
     pub fn build(self) -> Result<Runtime> {
@@ -107,9 +120,10 @@ impl Default for Style {
 pub mod prelude {
     pub use crate::{
         Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, Color, Constraints,
-        Event, EventCtx, FontHandle, ImeEvent, Insets, KeyboardEvent, LayoutCtx, PaintCtx, Path,
-        PathBuilder, Point, PointerEvent, Rect, RegisteredFont, Result, SemanticsCtx, SingleChild,
-        Size, SizedBox, Stack, StrokeStyle, Style, TextStyle, Theme, TimerToken, Transform,
-        WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder, containers::Padding,
+        Event, EventCtx, FontHandle, ImageHandle, ImeEvent, Insets, KeyboardEvent, LayoutCtx,
+        PaintCtx, Path, PathBuilder, Point, PointerEvent, Rect, RegisteredFont, RegisteredImage,
+        Result, SemanticsCtx, SingleChild, Size, SizedBox, Stack, StrokeStyle, Style, TextStyle,
+        Theme, TimerToken, Transform, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
+        containers::Padding,
     };
 }
