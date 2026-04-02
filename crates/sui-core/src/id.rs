@@ -40,3 +40,5 @@ define_id!(WindowId);
 define_id!(SurfaceId);
 define_id!(ImageHandle);
 define_id!(FontHandle);
+define_id!(TimerToken);
+define_id!(AsyncWakeToken);

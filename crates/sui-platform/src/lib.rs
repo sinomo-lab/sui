@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use sui_core::{Error, Event, Result, Size, WindowEvent, WindowId};
+use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
 use sui_render_wgpu::WgpuRenderer;
 use sui_runtime::Runtime;
 
@@ -40,6 +40,8 @@ impl DesktopPlatform {
 
     pub fn pump(&mut self, runtime: &mut Runtime) -> Result<bool> {
         self.sync_windows(runtime)?;
+        runtime.tick(self.frame_clock);
+        self.queue_ready_events(runtime);
         self.queue_redraw_requests(runtime)?;
 
         let mut did_work = false;
@@ -50,6 +52,20 @@ impl DesktopPlatform {
         }
 
         Ok(did_work)
+    }
+
+    pub fn advance_time(&mut self, delta: f64) {
+        self.frame_clock += delta;
+    }
+
+    pub fn wake_async(
+        &mut self,
+        runtime: &mut Runtime,
+        window_id: WindowId,
+        token: AsyncWakeToken,
+    ) -> Result<bool> {
+        self.sync_windows(runtime)?;
+        runtime.wake_async(window_id, token)
     }
 
     pub fn dispatch_event(
@@ -80,14 +96,22 @@ impl DesktopPlatform {
         &self.renderer
     }
 
+    fn queue_ready_events(&mut self, runtime: &mut Runtime) {
+        self.pending_events.extend(
+            runtime
+                .drain_ready_events()
+                .into_iter()
+                .map(|(window_id, event)| QueuedEvent { window_id, event }),
+        );
+    }
+
     fn sync_windows(&mut self, runtime: &Runtime) -> Result<()> {
         let runtime_window_ids = runtime.window_ids();
 
         self.windows
             .retain(|window| runtime_window_ids.contains(&window.id));
-        self.pending_events.retain(|queued_event| {
-            runtime_window_ids.contains(&queued_event.window_id)
-        });
+        self.pending_events
+            .retain(|queued_event| runtime_window_ids.contains(&queued_event.window_id));
 
         for window_id in runtime_window_ids {
             if self.windows.iter().any(|window| window.id == window_id) {
@@ -199,7 +223,8 @@ mod tests {
 
     use super::DesktopPlatform;
     use sui_core::{
-        Color, CustomEvent, Event, Rect, Result, SemanticsNode, SemanticsRole, WindowEvent,
+        AsyncWakeToken, Color, CustomEvent, Event, Rect, Result, SemanticsNode, SemanticsRole,
+        TimerToken, WakeEvent, WindowEvent,
     };
     use sui_runtime::{
         Application, EventCtx, PaintCtx, Runtime, SemanticsCtx, Widget, WindowBuilder,
@@ -209,6 +234,10 @@ mod tests {
     struct Counters {
         events: usize,
         paints: usize,
+        timer_wakes: usize,
+        async_wakes: usize,
+        timer_token: Option<TimerToken>,
+        async_token: Option<AsyncWakeToken>,
     }
 
     struct TestRoot {
@@ -217,11 +246,33 @@ mod tests {
 
     impl Widget for TestRoot {
         fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-            if let Event::Custom(custom) = event
-                && custom.kind == "repaint"
-            {
-                self.counters.borrow_mut().events += 1;
-                ctx.request_paint();
+            match event {
+                Event::Custom(custom) if custom.kind == "repaint" => {
+                    self.counters.borrow_mut().events += 1;
+                    ctx.request_paint();
+                }
+                Event::Custom(custom) if custom.kind == "arm-wakeups" => {
+                    let mut counters = self.counters.borrow_mut();
+                    counters.timer_token = Some(ctx.schedule_timer_after(3.0));
+                    counters.async_token = Some(ctx.register_async_wakeup());
+                }
+                Event::Wake(WakeEvent::Timer { token, .. }) => {
+                    let mut counters = self.counters.borrow_mut();
+                    if counters.timer_token == Some(*token) {
+                        counters.timer_wakes += 1;
+                        ctx.request_paint();
+                        ctx.set_handled();
+                    }
+                }
+                Event::Wake(WakeEvent::Async { token, .. }) => {
+                    let mut counters = self.counters.borrow_mut();
+                    if counters.async_token == Some(*token) {
+                        counters.async_wakes += 1;
+                        ctx.request_paint();
+                        ctx.set_handled();
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -292,12 +343,49 @@ mod tests {
 
         let _ = platform.run(&mut runtime)?;
 
-        platform.dispatch_event(&runtime, window_id, Event::Window(WindowEvent::CloseRequested))?;
+        platform.dispatch_event(
+            &runtime,
+            window_id,
+            Event::Window(WindowEvent::CloseRequested),
+        )?;
         let windows = platform.run(&mut runtime)?;
 
         assert!(windows.is_empty());
         assert!(runtime.window_ids().is_empty());
         assert!(runtime.needs_render(window_id).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn wakeups_reenter_the_platform_pump_and_trigger_repaint() -> Result<()> {
+        let counters = Rc::new(RefCell::new(Counters::default()));
+        let (mut runtime, window_id) = build_runtime(Rc::clone(&counters));
+        let mut platform = DesktopPlatform::new();
+
+        let _ = platform.run(&mut runtime)?;
+
+        platform.dispatch_event(
+            &runtime,
+            window_id,
+            Event::Custom(CustomEvent::new("arm-wakeups")),
+        )?;
+        let _ = platform.run(&mut runtime)?;
+
+        let async_token = counters.borrow().async_token.unwrap();
+        assert_eq!(counters.borrow().paints, 1);
+
+        assert!(platform.wake_async(&mut runtime, window_id, async_token)?);
+        let _ = platform.run(&mut runtime)?;
+
+        assert_eq!(counters.borrow().async_wakes, 1);
+        assert_eq!(counters.borrow().paints, 2);
+
+        platform.advance_time(3.0);
+        let _ = platform.run(&mut runtime)?;
+
+        assert_eq!(counters.borrow().timer_wakes, 1);
+        assert_eq!(counters.borrow().paints, 3);
 
         Ok(())
     }

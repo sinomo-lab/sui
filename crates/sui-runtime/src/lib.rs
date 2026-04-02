@@ -2,20 +2,21 @@
 
 mod widget;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use sui_core::{
-    DirtyRegion, Error, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
-    PointerEventKind, Rect, Result, SemanticsNode, Size, WidgetId, WindowEvent, WindowId,
+    AsyncWakeToken, DirtyRegion, Error, Event, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, Point, PointerEventKind, Rect, Result, SemanticsNode, Size, TimerToken,
+    WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::SceneFrame;
 
-use widget::FocusRequest;
 pub use widget::{
     EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
     WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
+use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
 
 pub struct WindowBuilder {
     title: String,
@@ -105,8 +106,15 @@ impl Runtime {
     }
 
     pub fn remove_window(&mut self, window_id: WindowId) -> Result<()> {
-        let Some(window_index) = self.windows.iter().position(|window| window.id == window_id) else {
-            return Err(Error::new(format!("window {} does not exist", window_id.get())));
+        let Some(window_index) = self
+            .windows
+            .iter()
+            .position(|window| window.id == window_id)
+        else {
+            return Err(Error::new(format!(
+                "window {} does not exist",
+                window_id.get()
+            )));
         };
 
         self.windows.remove(window_index);
@@ -123,6 +131,32 @@ impl Runtime {
         for window in &mut self.windows {
             window.last_tick_time = frame_time;
         }
+    }
+
+    pub fn drain_ready_events(&mut self) -> Vec<(WindowId, Event)> {
+        let mut ready = Vec::new();
+
+        for window in &mut self.windows {
+            let window_id = window.id;
+            ready.extend(
+                window
+                    .drain_ready_events()
+                    .into_iter()
+                    .map(|event| (window_id, event)),
+            );
+        }
+
+        ready
+    }
+
+    pub fn next_wakeup_time(&self, window_id: WindowId) -> Result<Option<f64>> {
+        let window = self.window(window_id)?;
+        Ok(window.next_wakeup_time())
+    }
+
+    pub fn wake_async(&mut self, window_id: WindowId, token: AsyncWakeToken) -> Result<bool> {
+        let window = self.window_mut(window_id)?;
+        Ok(window.wake_async(token))
     }
 
     pub fn render(&mut self, window_id: WindowId) -> Result<RenderOutput> {
@@ -161,6 +195,15 @@ impl Runtime {
 
     pub fn focused_widget(&self, window_id: WindowId) -> Result<Option<WidgetId>> {
         Ok(self.focus_state(window_id)?.focused_widget)
+    }
+
+    pub fn pointer_capture_target(
+        &self,
+        window_id: WindowId,
+        pointer_id: u64,
+    ) -> Result<Option<WidgetId>> {
+        let window = self.window(window_id)?;
+        Ok(window.pointer_capture.get(&pointer_id).copied())
     }
 
     pub fn widget_graph(&self, window_id: WindowId) -> Result<WidgetGraphSnapshot> {
@@ -288,6 +331,13 @@ pub struct WidgetGraphSnapshot {
     pub nodes: Vec<WidgetNodeSnapshot>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ScheduledTimer {
+    token: TimerToken,
+    deadline: f64,
+    target: WidgetId,
+}
+
 struct WindowState {
     id: WindowId,
     title: String,
@@ -300,6 +350,11 @@ struct WindowState {
     last_frame: Option<SceneFrame>,
     last_semantics: Vec<SemanticsNode>,
     pending_invalidations: Vec<InvalidationRequest>,
+    pointer_capture: HashMap<u64, WidgetId>,
+    scheduled_timers: Vec<ScheduledTimer>,
+    delivering_timers: HashMap<TimerToken, WidgetId>,
+    async_wake_targets: HashMap<AsyncWakeToken, WidgetId>,
+    pending_async_wakeups: VecDeque<AsyncWakeToken>,
     last_tick_time: f64,
 }
 
@@ -322,6 +377,11 @@ impl WindowState {
             last_frame: None,
             last_semantics: Vec::new(),
             pending_invalidations: Vec::new(),
+            pointer_capture: HashMap::new(),
+            scheduled_timers: Vec::new(),
+            delivering_timers: HashMap::new(),
+            async_wake_targets: HashMap::new(),
+            pending_async_wakeups: VecDeque::new(),
             last_tick_time: 0.0,
         }
     }
@@ -339,27 +399,75 @@ impl WindowState {
             _ => None,
         };
 
-        let target = match &event {
-            Event::Pointer(_) => hit_target.unwrap_or(self.root.id()),
-            Event::Keyboard(_) | Event::Ime(_) => {
-                self.focus.focused_widget.unwrap_or(self.root.id())
-            }
-            _ => self.root.id(),
-        };
+        let target = self.resolve_event_target(&event, hit_target);
 
         let route = self.route_event(target, &event);
-        let mut invalidations = route.invalidations;
+        let mut invalidations = route.effects.invalidations;
 
         let focus_request = route
             .focus_request
             .or_else(|| self.default_focus_request(&event, hit_target, &route.path));
 
         if let Some(request) = focus_request {
-            invalidations.extend(self.apply_focus_request(request));
+            let focus_effects = self.apply_focus_request(request);
+            invalidations.extend(focus_effects.invalidations);
+            self.apply_wake_requests(focus_effects.wake_requests);
+            self.apply_pointer_capture_requests(focus_effects.pointer_capture_requests);
         }
 
+        self.apply_wake_requests(route.effects.wake_requests);
+        self.apply_pointer_capture_requests(route.effects.pointer_capture_requests);
+        self.finish_event(&event);
         self.schedule.extend(&invalidations);
         self.pending_invalidations.extend(invalidations);
+    }
+
+    fn next_wakeup_time(&self) -> Option<f64> {
+        if !self.pending_async_wakeups.is_empty() {
+            return Some(self.last_tick_time);
+        }
+
+        self.scheduled_timers
+            .iter()
+            .map(|timer| timer.deadline)
+            .min_by(|left, right| left.total_cmp(right))
+    }
+
+    fn drain_ready_events(&mut self) -> Vec<Event> {
+        let now = self.last_tick_time;
+        let mut ready = Vec::new();
+        let mut pending_timers = Vec::with_capacity(self.scheduled_timers.len());
+
+        for timer in self.scheduled_timers.drain(..) {
+            if timer.deadline <= now {
+                self.delivering_timers.insert(timer.token, timer.target);
+                ready.push(Event::Wake(WakeEvent::Timer {
+                    token: timer.token,
+                    time: now,
+                    deadline: timer.deadline,
+                }));
+            } else {
+                pending_timers.push(timer);
+            }
+        }
+        self.scheduled_timers = pending_timers;
+
+        while let Some(token) = self.pending_async_wakeups.pop_front() {
+            if self.async_wake_targets.contains_key(&token) {
+                ready.push(Event::Wake(WakeEvent::Async { token, time: now }));
+            }
+        }
+
+        ready
+    }
+
+    fn wake_async(&mut self, token: AsyncWakeToken) -> bool {
+        if !self.async_wake_targets.contains_key(&token) {
+            return false;
+        }
+
+        self.pending_async_wakeups.push_back(token);
+        true
     }
 
     fn preprocess_window_event(&mut self, event: &Event) {
@@ -380,6 +488,9 @@ impl WindowState {
             }
             WindowEvent::Focused(focused) => {
                 self.focus.window_focused = *focused;
+                if !focused {
+                    self.pointer_capture.clear();
+                }
             }
             WindowEvent::RedrawRequested => {
                 self.schedule.mark(InvalidationKind::Paint);
@@ -408,12 +519,95 @@ impl WindowState {
         }
     }
 
+    fn resolve_event_target(&self, event: &Event, hit_target: Option<WidgetId>) -> WidgetId {
+        match event {
+            Event::Pointer(pointer) => self
+                .pointer_capture
+                .get(&pointer.pointer_id)
+                .copied()
+                .or(hit_target)
+                .unwrap_or(self.root.id()),
+            Event::Keyboard(_) | Event::Ime(_) => {
+                self.focus.focused_widget.unwrap_or(self.root.id())
+            }
+            Event::Wake(wake_event) => self.wake_target(*wake_event).unwrap_or(self.root.id()),
+            _ => self.root.id(),
+        }
+    }
+
+    fn wake_target(&self, wake_event: WakeEvent) -> Option<WidgetId> {
+        match wake_event {
+            WakeEvent::Timer { token, .. } => self.delivering_timers.get(&token).copied(),
+            WakeEvent::Async { token, .. } => self.async_wake_targets.get(&token).copied(),
+        }
+    }
+
+    fn apply_wake_requests(&mut self, requests: Vec<WakeRequest>) {
+        for request in requests {
+            match request {
+                WakeRequest::ScheduleTimer {
+                    token,
+                    deadline,
+                    target,
+                } => {
+                    self.scheduled_timers.retain(|timer| timer.token != token);
+                    self.scheduled_timers.push(ScheduledTimer {
+                        token,
+                        deadline,
+                        target,
+                    });
+                }
+                WakeRequest::CancelTimer { token } => {
+                    self.scheduled_timers.retain(|timer| timer.token != token);
+                    self.delivering_timers.remove(&token);
+                }
+                WakeRequest::RegisterAsync { token, target } => {
+                    self.async_wake_targets.insert(token, target);
+                }
+                WakeRequest::UnregisterAsync { token } => {
+                    self.async_wake_targets.remove(&token);
+                    self.pending_async_wakeups.retain(|queued| *queued != token);
+                }
+            }
+        }
+    }
+
+    fn apply_pointer_capture_requests(&mut self, requests: Vec<PointerCaptureRequest>) {
+        for request in requests {
+            match request {
+                PointerCaptureRequest::Capture { pointer_id, target } => {
+                    self.pointer_capture.insert(pointer_id, target);
+                }
+                PointerCaptureRequest::Release { pointer_id } => {
+                    self.pointer_capture.remove(&pointer_id);
+                }
+            }
+        }
+    }
+
+    fn finish_event(&mut self, event: &Event) {
+        match event {
+            Event::Pointer(pointer)
+                if matches!(
+                    pointer.kind,
+                    PointerEventKind::Up | PointerEventKind::Cancel
+                ) =>
+            {
+                self.pointer_capture.remove(&pointer.pointer_id);
+            }
+            Event::Wake(WakeEvent::Timer { token, .. }) => {
+                self.delivering_timers.remove(token);
+            }
+            _ => {}
+        }
+    }
+
     fn route_event(&mut self, target: WidgetId, event: &Event) -> EventRouteResult {
         let path = self
             .graph
             .path_to(target)
             .unwrap_or_else(|| vec![self.root.id()]);
-        let mut invalidations = Vec::new();
+        let mut effects = EventEffects::default();
         let mut handled = false;
         let mut focus_request = None;
 
@@ -424,16 +618,19 @@ impl WindowState {
                     .dispatch_event_for(
                         widget_id,
                         self.id,
+                        self.last_tick_time,
                         EventPhase::Capture,
                         self.focus.focused_widget,
                         event,
                     )
                     .unwrap_or_else(|| empty_dispatch());
-                invalidations.extend(dispatch.invalidations);
-                if dispatch.focus_request.is_some() {
-                    focus_request = dispatch.focus_request;
+                let dispatch_handled = dispatch.handled;
+                let dispatch_focus_request = dispatch.focus_request;
+                effects.extend(dispatch);
+                if dispatch_focus_request.is_some() {
+                    focus_request = dispatch_focus_request;
                 }
-                if dispatch.handled {
+                if dispatch_handled {
                     handled = true;
                     break;
                 }
@@ -447,16 +644,19 @@ impl WindowState {
                 .dispatch_event_for(
                     target_id,
                     self.id,
+                    self.last_tick_time,
                     EventPhase::Target,
                     self.focus.focused_widget,
                     event,
                 )
                 .unwrap_or_else(|| empty_dispatch());
-            invalidations.extend(dispatch.invalidations);
-            if dispatch.focus_request.is_some() {
-                focus_request = dispatch.focus_request;
+            let dispatch_handled = dispatch.handled;
+            let dispatch_focus_request = dispatch.focus_request;
+            effects.extend(dispatch);
+            if dispatch_focus_request.is_some() {
+                focus_request = dispatch_focus_request;
             }
-            handled = dispatch.handled;
+            handled = dispatch_handled;
         }
 
         if !handled && path.len() > 1 {
@@ -466,16 +666,19 @@ impl WindowState {
                     .dispatch_event_for(
                         widget_id,
                         self.id,
+                        self.last_tick_time,
                         EventPhase::Bubble,
                         self.focus.focused_widget,
                         event,
                     )
                     .unwrap_or_else(|| empty_dispatch());
-                invalidations.extend(dispatch.invalidations);
-                if dispatch.focus_request.is_some() {
-                    focus_request = dispatch.focus_request;
+                let dispatch_handled = dispatch.handled;
+                let dispatch_focus_request = dispatch.focus_request;
+                effects.extend(dispatch);
+                if dispatch_focus_request.is_some() {
+                    focus_request = dispatch_focus_request;
                 }
-                if dispatch.handled {
+                if dispatch_handled {
                     break;
                 }
             }
@@ -483,7 +686,7 @@ impl WindowState {
 
         EventRouteResult {
             path,
-            invalidations,
+            effects,
             focus_request,
         }
     }
@@ -520,42 +723,48 @@ impl WindowState {
         }
     }
 
-    fn apply_focus_request(&mut self, request: FocusRequest) -> Vec<InvalidationRequest> {
+    fn apply_focus_request(&mut self, request: FocusRequest) -> EventEffects {
         let next_focus = match request {
             FocusRequest::Focus(widget_id) => Some(widget_id),
             FocusRequest::Clear => None,
         };
 
         if self.focus.focused_widget == next_focus {
-            return Vec::new();
+            return EventEffects::default();
         }
 
         let previous_focus = self.focus.focused_widget;
         self.focus.focused_widget = next_focus;
 
-        let mut invalidations = Vec::new();
+        let mut effects = EventEffects::default();
 
         if let Some(widget_id) = previous_focus {
-            invalidations.extend(self.focus_transition_invalidations(widget_id));
+            effects
+                .invalidations
+                .extend(self.focus_transition_invalidations(widget_id));
             if let Some(extra) = self.root.notify_focus_change_for(
                 widget_id,
                 self.id,
+                self.last_tick_time,
                 self.focus.focused_widget,
                 false,
             ) {
-                invalidations.extend(extra);
+                effects.extend(extra);
             }
         }
 
         if let Some(widget_id) = next_focus {
-            invalidations.extend(self.focus_transition_invalidations(widget_id));
+            effects
+                .invalidations
+                .extend(self.focus_transition_invalidations(widget_id));
             if let Some(extra) = self.root.notify_focus_change_for(
                 widget_id,
                 self.id,
+                self.last_tick_time,
                 self.focus.focused_widget,
                 true,
             ) {
-                invalidations.extend(extra);
+                effects.extend(extra);
             }
         }
 
@@ -564,7 +773,7 @@ impl WindowState {
         self.schedule.mark(InvalidationKind::HitTest);
         self.refresh_graph();
 
-        invalidations
+        effects
     }
 
     fn focus_transition_invalidations(&self, widget_id: WidgetId) -> Vec<InvalidationRequest> {
@@ -671,7 +880,29 @@ impl WindowState {
 
     fn refresh_graph(&mut self) {
         self.graph = WidgetGraph::rebuild(&self.root, self.focus.focused_widget);
+        self.prune_runtime_state();
         self.schedule.hit_test = false;
+    }
+
+    fn prune_runtime_state(&mut self) {
+        self.pointer_capture
+            .retain(|_, widget_id| self.graph.contains(*widget_id));
+        self.scheduled_timers
+            .retain(|timer| self.graph.contains(timer.target));
+        self.delivering_timers
+            .retain(|_, widget_id| self.graph.contains(*widget_id));
+        self.async_wake_targets
+            .retain(|_, widget_id| self.graph.contains(*widget_id));
+        self.pending_async_wakeups
+            .retain(|token| self.async_wake_targets.contains_key(token));
+
+        if self
+            .focus
+            .focused_widget
+            .is_some_and(|widget_id| !self.graph.contains(widget_id))
+        {
+            self.focus.focused_widget = None;
+        }
     }
 
     fn layout_constraints(&self) -> Constraints {
@@ -810,8 +1041,24 @@ impl WidgetPodVisitor for CollectChildrenVisitor<'_> {
 
 struct EventRouteResult {
     path: Vec<WidgetId>,
-    invalidations: Vec<InvalidationRequest>,
+    effects: EventEffects,
     focus_request: Option<FocusRequest>,
+}
+
+#[derive(Default)]
+struct EventEffects {
+    invalidations: Vec<InvalidationRequest>,
+    wake_requests: Vec<WakeRequest>,
+    pointer_capture_requests: Vec<PointerCaptureRequest>,
+}
+
+impl EventEffects {
+    fn extend(&mut self, dispatch: widget::EventDispatch) {
+        self.invalidations.extend(dispatch.invalidations);
+        self.wake_requests.extend(dispatch.wake_requests);
+        self.pointer_capture_requests
+            .extend(dispatch.pointer_capture_requests);
+    }
 }
 
 fn empty_dispatch() -> widget::EventDispatch {
@@ -819,6 +1066,8 @@ fn empty_dispatch() -> widget::EventDispatch {
         handled: false,
         invalidations: Vec::new(),
         focus_request: None,
+        wake_requests: Vec::new(),
+        pointer_capture_requests: Vec::new(),
     }
 }
 
@@ -870,8 +1119,9 @@ mod tests {
         WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_core::{
-        Color, CustomEvent, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, SemanticsNode, SemanticsRole, Size,
+        AsyncWakeToken, Color, CustomEvent, Event, KeyState, KeyboardEvent, Point, PointerButton,
+        PointerButtons, PointerEvent, PointerEventKind, SemanticsNode, SemanticsRole, Size,
+        TimerToken, WakeEvent,
     };
     use sui_layout::Constraints;
 
@@ -971,6 +1221,130 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct PointerCaptureState {
+        moves: usize,
+        ups: usize,
+    }
+
+    struct PointerCaptureLeaf {
+        state: Rc<RefCell<PointerCaptureState>>,
+    }
+
+    impl Widget for PointerCaptureLeaf {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            let Event::Pointer(pointer) = event else {
+                return;
+            };
+
+            match pointer.kind {
+                PointerEventKind::Down => {
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                }
+                PointerEventKind::Move => {
+                    self.state.borrow_mut().moves += 1;
+                    ctx.set_handled();
+                }
+                PointerEventKind::Up => {
+                    self.state.borrow_mut().ups += 1;
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+    }
+
+    #[derive(Default)]
+    struct WakeState {
+        timer_token: Option<TimerToken>,
+        async_token: Option<AsyncWakeToken>,
+        timer_wakes: usize,
+        async_wakes: usize,
+    }
+
+    struct WakeLeaf {
+        state: Rc<RefCell<WakeState>>,
+    }
+
+    impl Widget for WakeLeaf {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Pointer(pointer) if pointer.kind == PointerEventKind::Down => {
+                    let mut state = self.state.borrow_mut();
+                    state.timer_token = Some(ctx.schedule_timer_after(3.0));
+                    state.async_token = Some(ctx.register_async_wakeup());
+                    ctx.set_handled();
+                }
+                Event::Wake(WakeEvent::Timer { token, .. }) => {
+                    let mut state = self.state.borrow_mut();
+                    if state.timer_token == Some(*token) {
+                        state.timer_wakes += 1;
+                        ctx.request_paint();
+                        ctx.set_handled();
+                    }
+                }
+                Event::Wake(WakeEvent::Async { token, .. }) => {
+                    let mut state = self.state.borrow_mut();
+                    if state.async_token == Some(*token) {
+                        state.async_wakes += 1;
+                        ctx.request_paint();
+                        ctx.set_handled();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+    }
+
+    struct ChildRoot<W> {
+        child: SingleChild,
+        _marker: std::marker::PhantomData<W>,
+    }
+
+    impl<W> ChildRoot<W> {
+        fn new(child: W) -> Self
+        where
+            W: Widget + 'static,
+        {
+            Self {
+                child: SingleChild::new(child),
+                _marker: std::marker::PhantomData,
+            }
+        }
+    }
+
+    impl<W> Widget for ChildRoot<W>
+    where
+        W: Widget + 'static,
+    {
+        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.child.layout_at(
+                ctx,
+                Constraints::tight(Size::new(120.0, 40.0)),
+                Point::new(32.0, 24.0),
+            );
+            size
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
     fn build_runtime() -> (
         Runtime,
         sui_core::WindowId,
@@ -996,6 +1370,46 @@ mod tests {
 
     fn graph_child(graph: &WidgetGraphSnapshot) -> &WidgetNodeSnapshot {
         &graph.nodes[1]
+    }
+
+    fn build_pointer_capture_runtime() -> (
+        Runtime,
+        sui_core::WindowId,
+        Rc<RefCell<PointerCaptureState>>,
+    ) {
+        let state = Rc::new(RefCell::new(PointerCaptureState::default()));
+
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Pointer Capture")
+                    .root(ChildRoot::new(PointerCaptureLeaf {
+                        state: Rc::clone(&state),
+                    })),
+            )
+            .build()
+            .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id, state)
+    }
+
+    fn build_wake_runtime() -> (Runtime, sui_core::WindowId, Rc<RefCell<WakeState>>) {
+        let state = Rc::new(RefCell::new(WakeState::default()));
+
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Wake")
+                    .root(ChildRoot::new(WakeLeaf {
+                        state: Rc::clone(&state),
+                    })),
+            )
+            .build()
+            .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id, state)
     }
 
     #[test]
@@ -1078,6 +1492,94 @@ mod tests {
 
         assert_eq!(leaf_counters.borrow().keyboard, 1);
         assert!(leaf_counters.borrow().focus_changes >= 1);
+    }
+
+    #[test]
+    fn pointer_capture_routes_drag_events_until_pointer_up() {
+        let (mut runtime, window_id, state) = build_pointer_capture_runtime();
+
+        let _ = runtime.render(window_id).unwrap();
+        let child_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 7;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        assert_eq!(
+            runtime.pointer_capture_target(window_id, 7).unwrap(),
+            Some(child_id)
+        );
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, Point::new(260.0, 140.0));
+        moved.pointer_id = 7;
+        moved.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(moved))
+            .unwrap();
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, Point::new(260.0, 140.0));
+        up.pointer_id = 7;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up)).unwrap();
+
+        assert_eq!(state.borrow().moves, 1);
+        assert_eq!(state.borrow().ups, 1);
+        assert_eq!(runtime.pointer_capture_target(window_id, 7).unwrap(), None);
+    }
+
+    #[test]
+    fn timers_and_async_wakeups_reenter_runtime_with_registered_target() {
+        let (mut runtime, window_id, state) = build_wake_runtime();
+
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 11;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        let async_token = state.borrow().async_token.unwrap();
+        let timer_token = state.borrow().timer_token.unwrap();
+
+        assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), Some(3.0));
+        assert!(runtime.wake_async(window_id, async_token).unwrap());
+
+        let ready = runtime.drain_ready_events();
+        assert_eq!(ready.len(), 1);
+        assert!(matches!(
+            ready[0],
+            (ready_window, Event::Wake(WakeEvent::Async { token, time }))
+                if ready_window == window_id && token == async_token && time == 0.0
+        ));
+
+        for (ready_window, event) in ready {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+
+        assert_eq!(state.borrow().async_wakes, 1);
+
+        runtime.tick(3.0);
+        let ready = runtime.drain_ready_events();
+        assert_eq!(ready.len(), 1);
+        assert!(matches!(
+            ready[0],
+            (ready_window, Event::Wake(WakeEvent::Timer { token, time, deadline }))
+                if ready_window == window_id && token == timer_token && time == 3.0 && deadline == 3.0
+        ));
+
+        for (ready_window, event) in ready {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+
+        assert_eq!(state.borrow().timer_wakes, 1);
+        assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
     }
 
     #[test]

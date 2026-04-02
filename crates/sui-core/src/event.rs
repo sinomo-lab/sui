@@ -1,4 +1,4 @@
-use crate::{Point, Size, Vector};
+use crate::{AsyncWakeToken, Point, Size, TimerToken, Vector};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers {
@@ -137,6 +137,19 @@ impl PointerEvent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WakeEvent {
+    Timer {
+        token: TimerToken,
+        time: f64,
+        deadline: f64,
+    },
+    Async {
+        token: AsyncWakeToken,
+        time: f64,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyState {
     Pressed,
@@ -209,6 +222,7 @@ pub enum Event {
     Pointer(PointerEvent),
     Keyboard(KeyboardEvent),
     Ime(ImeEvent),
+    Wake(WakeEvent),
     Window(WindowEvent),
     Custom(CustomEvent),
 }

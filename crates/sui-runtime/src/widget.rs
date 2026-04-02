@@ -1,13 +1,15 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sui_core::{
-    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point, Rect,
-    SemanticsNode, Size, WidgetId, WindowId,
+    AsyncWakeToken, Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
+    Rect, SemanticsNode, Size, TimerToken, WidgetId, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{Brush, Scene, SceneCommand};
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_TIMER_TOKEN: AtomicU64 = AtomicU64::new(1);
+static NEXT_ASYNC_WAKE_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventPhase {
@@ -263,12 +265,13 @@ impl WidgetPod {
         &mut self,
         target: WidgetId,
         window_id: WindowId,
+        current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
         event: &Event,
     ) -> Option<EventDispatch> {
         self.find_mut(target, &mut |pod| {
-            pod.dispatch_event(window_id, phase, focused_widget, event)
+            pod.dispatch_event(window_id, current_time, phase, focused_widget, event)
         })
     }
 
@@ -276,45 +279,64 @@ impl WidgetPod {
         &mut self,
         target: WidgetId,
         window_id: WindowId,
+        current_time: f64,
         focused_widget: Option<WidgetId>,
         focused: bool,
-    ) -> Option<Vec<InvalidationRequest>> {
+    ) -> Option<EventDispatch> {
         self.find_mut(target, &mut |pod| {
-            pod.focus_changed(window_id, focused_widget, focused)
+            pod.focus_changed(window_id, current_time, focused_widget, focused)
         })
     }
 
     fn dispatch_event(
         &mut self,
         window_id: WindowId,
+        current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
         event: &Event,
     ) -> EventDispatch {
-        let mut ctx = EventCtx::new(window_id, self.id, self.bounds, phase, focused_widget);
+        let mut ctx = EventCtx::new(
+            window_id,
+            self.id,
+            self.bounds,
+            current_time,
+            phase,
+            focused_widget,
+        );
         self.widget.event(&mut ctx, event);
         EventDispatch {
             handled: ctx.is_handled(),
             invalidations: ctx.take_invalidations(),
             focus_request: ctx.take_focus_request(),
+            wake_requests: ctx.take_wake_requests(),
+            pointer_capture_requests: ctx.take_pointer_capture_requests(),
         }
     }
 
     fn focus_changed(
         &mut self,
         window_id: WindowId,
+        current_time: f64,
         focused_widget: Option<WidgetId>,
         focused: bool,
-    ) -> Vec<InvalidationRequest> {
+    ) -> EventDispatch {
         let mut ctx = EventCtx::new(
             window_id,
             self.id,
             self.bounds,
+            current_time,
             EventPhase::Target,
             focused_widget,
         );
         self.widget.focus_changed(&mut ctx, focused);
-        ctx.take_invalidations()
+        EventDispatch {
+            handled: ctx.is_handled(),
+            invalidations: ctx.take_invalidations(),
+            focus_request: ctx.take_focus_request(),
+            wake_requests: ctx.take_wake_requests(),
+            pointer_capture_requests: ctx.take_pointer_capture_requests(),
+        }
     }
 
     fn find_mut<R, F>(&mut self, target: WidgetId, f: &mut F) -> Option<R>
@@ -362,11 +384,38 @@ pub(crate) enum FocusRequest {
     Clear,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum WakeRequest {
+    ScheduleTimer {
+        token: TimerToken,
+        deadline: f64,
+        target: WidgetId,
+    },
+    CancelTimer {
+        token: TimerToken,
+    },
+    RegisterAsync {
+        token: AsyncWakeToken,
+        target: WidgetId,
+    },
+    UnregisterAsync {
+        token: AsyncWakeToken,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PointerCaptureRequest {
+    Capture { pointer_id: u64, target: WidgetId },
+    Release { pointer_id: u64 },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct EventDispatch {
     pub handled: bool,
     pub invalidations: Vec<InvalidationRequest>,
     pub focus_request: Option<FocusRequest>,
+    pub wake_requests: Vec<WakeRequest>,
+    pub pointer_capture_requests: Vec<PointerCaptureRequest>,
 }
 
 #[derive(Debug, Clone)]
@@ -374,11 +423,14 @@ pub struct EventCtx {
     window_id: WindowId,
     widget_id: WidgetId,
     bounds: Rect,
+    current_time: f64,
     phase: EventPhase,
     focused_widget_id: Option<WidgetId>,
     handled: bool,
     invalidations: Vec<InvalidationRequest>,
     focus_request: Option<FocusRequest>,
+    wake_requests: Vec<WakeRequest>,
+    pointer_capture_requests: Vec<PointerCaptureRequest>,
 }
 
 impl EventCtx {
@@ -386,6 +438,7 @@ impl EventCtx {
         window_id: WindowId,
         widget_id: WidgetId,
         bounds: Rect,
+        current_time: f64,
         phase: EventPhase,
         focused_widget_id: Option<WidgetId>,
     ) -> Self {
@@ -393,11 +446,14 @@ impl EventCtx {
             window_id,
             widget_id,
             bounds,
+            current_time,
             phase,
             focused_widget_id,
             handled: false,
             invalidations: Vec::new(),
             focus_request: None,
+            wake_requests: Vec::new(),
+            pointer_capture_requests: Vec::new(),
         }
     }
 
@@ -411,6 +467,10 @@ impl EventCtx {
 
     pub const fn bounds(&self) -> Rect {
         self.bounds
+    }
+
+    pub const fn current_time(&self) -> f64 {
+        self.current_time
     }
 
     pub const fn phase(&self) -> EventPhase {
@@ -439,6 +499,51 @@ impl EventCtx {
 
     pub fn clear_focus(&mut self) {
         self.focus_request = Some(FocusRequest::Clear);
+    }
+
+    pub fn schedule_timer_at(&mut self, deadline: f64) -> TimerToken {
+        let token = TimerToken::new(NEXT_TIMER_TOKEN.fetch_add(1, Ordering::Relaxed));
+        self.wake_requests.push(WakeRequest::ScheduleTimer {
+            token,
+            deadline,
+            target: self.widget_id,
+        });
+        token
+    }
+
+    pub fn schedule_timer_after(&mut self, delay: f64) -> TimerToken {
+        self.schedule_timer_at(self.current_time + delay)
+    }
+
+    pub fn cancel_timer(&mut self, token: TimerToken) {
+        self.wake_requests.push(WakeRequest::CancelTimer { token });
+    }
+
+    pub fn register_async_wakeup(&mut self) -> AsyncWakeToken {
+        let token = AsyncWakeToken::new(NEXT_ASYNC_WAKE_TOKEN.fetch_add(1, Ordering::Relaxed));
+        self.wake_requests.push(WakeRequest::RegisterAsync {
+            token,
+            target: self.widget_id,
+        });
+        token
+    }
+
+    pub fn unregister_async_wakeup(&mut self, token: AsyncWakeToken) {
+        self.wake_requests
+            .push(WakeRequest::UnregisterAsync { token });
+    }
+
+    pub fn request_pointer_capture(&mut self, pointer_id: u64) {
+        self.pointer_capture_requests
+            .push(PointerCaptureRequest::Capture {
+                pointer_id,
+                target: self.widget_id,
+            });
+    }
+
+    pub fn release_pointer_capture(&mut self, pointer_id: u64) {
+        self.pointer_capture_requests
+            .push(PointerCaptureRequest::Release { pointer_id });
     }
 
     pub fn request(&mut self, request: InvalidationRequest) {
@@ -489,6 +594,14 @@ impl EventCtx {
 
     pub(crate) fn take_focus_request(&mut self) -> Option<FocusRequest> {
         self.focus_request.take()
+    }
+
+    pub(crate) fn take_wake_requests(&mut self) -> Vec<WakeRequest> {
+        std::mem::take(&mut self.wake_requests)
+    }
+
+    pub(crate) fn take_pointer_capture_requests(&mut self) -> Vec<PointerCaptureRequest> {
+        std::mem::take(&mut self.pointer_capture_requests)
     }
 
     fn request_widget(&mut self, kind: InvalidationKind) {
@@ -791,6 +904,7 @@ mod tests {
             WindowId::new(1),
             WidgetId::new(2),
             Rect::new(8.0, 12.0, 24.0, 36.0),
+            0.0,
             EventPhase::Target,
             None,
         );
