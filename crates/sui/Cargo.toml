@@ -22,3 +22,4 @@ sui-platform = { workspace = true, optional = true }
 sui-render-wgpu = { workspace = true, optional = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
+sui-widgets = { workspace = true }

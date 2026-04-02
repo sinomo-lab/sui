@@ -1699,6 +1699,7 @@ dependencies = [
  "sui-render-wgpu",
  "sui-runtime",
  "sui-scene",
+ "sui-widgets",
 ]
 
 [[package]]
@@ -1763,6 +1764,16 @@ dependencies = [
  "rustybuzz",
  "sui-core",
  "ttf-parser",
+]
+
+[[package]]
+name = "sui-widgets"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+ "sui-layout",
+ "sui-runtime",
+ "sui-scene",
 ]
 
 [[package]]
