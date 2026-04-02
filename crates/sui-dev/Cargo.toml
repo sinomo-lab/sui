@@ -1,0 +1,9 @@
+[package]
+name = "sui-dev"
+version.workspace = true
+description = "Playground and smoke-test binary for the SUI workspace."
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sui = { workspace = true }

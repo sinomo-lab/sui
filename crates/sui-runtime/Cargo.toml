@@ -1,0 +1,11 @@
+[package]
+name = "sui-runtime"
+version.workspace = true
+description = "Retained runtime and widget contracts for SUI."
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sui-core = { workspace = true }
+sui-layout = { workspace = true }
+sui-scene = { workspace = true }

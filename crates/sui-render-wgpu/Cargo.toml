@@ -1,0 +1,10 @@
+[package]
+name = "sui-render-wgpu"
+version.workspace = true
+description = "wgpu renderer boundary for SUI scene frames."
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sui-core = { workspace = true }
+sui-scene = { workspace = true }

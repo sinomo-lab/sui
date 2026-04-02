@@ -5,3 +5,62 @@ version = 4
 [[package]]
 name = "sui"
 version = "0.1.0"
+dependencies = [
+ "sui-core",
+ "sui-layout",
+ "sui-platform",
+ "sui-render-wgpu",
+ "sui-runtime",
+ "sui-scene",
+]
+
+[[package]]
+name = "sui-core"
+version = "0.1.0"
+
+[[package]]
+name = "sui-dev"
+version = "0.1.0"
+dependencies = [
+ "sui",
+]
+
+[[package]]
+name = "sui-layout"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+]
+
+[[package]]
+name = "sui-platform"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+ "sui-render-wgpu",
+ "sui-runtime",
+]
+
+[[package]]
+name = "sui-render-wgpu"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+ "sui-scene",
+]
+
+[[package]]
+name = "sui-runtime"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+ "sui-layout",
+ "sui-scene",
+]
+
+[[package]]
+name = "sui-scene"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+]

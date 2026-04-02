@@ -21,3 +21,11 @@ panic = "abort"
 opt-level = 2
 
 [workspace.dependencies]
+sui = { path = "crates/sui" }
+sui-core = { path = "crates/sui-core" }
+sui-dev = { path = "crates/sui-dev" }
+sui-layout = { path = "crates/sui-layout" }
+sui-platform = { path = "crates/sui-platform" }
+sui-render-wgpu = { path = "crates/sui-render-wgpu" }
+sui-runtime = { path = "crates/sui-runtime" }
+sui-scene = { path = "crates/sui-scene" }

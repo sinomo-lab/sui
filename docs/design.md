@@ -1,5 +1,9 @@
 # SUI Design
 
+## Companion Documents
+
+- [Crate Architecture and API Boundary Plan](./crate-architecture.md)
+
 ## Vision
 
 SUI is an event-driven UI toolkit for building demanding creative and technical applications such as vector editors, image editors, video tools, node graph editors, and scientific visualization software.
