@@ -6,7 +6,5 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-fontdb = { workspace = true }
-rustybuzz = { workspace = true }
 sui-core = { workspace = true }
-ttf-parser = { workspace = true }
+sui-text = { workspace = true }

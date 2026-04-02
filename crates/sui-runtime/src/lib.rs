@@ -13,9 +13,8 @@ use sui_core::{
     SemanticsNode, Size, TimerToken, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{
-    FontRegistry, ImageRegistry, RegisteredFont, RegisteredImage, SceneFrame, TextSystem,
-};
+use sui_scene::{ImageRegistry, RegisteredImage, SceneFrame};
+use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
 pub use widget::{
     EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
@@ -1385,7 +1384,8 @@ mod tests {
         SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent,
     };
     use sui_layout::Constraints;
-    use sui_scene::{RegisteredFont, RegisteredImage, TextLayout, TextStyle};
+    use sui_scene::RegisteredImage;
+    use sui_text::{RegisteredFont, TextLayout, TextStyle};
 
     #[derive(Default)]
     struct Counters {

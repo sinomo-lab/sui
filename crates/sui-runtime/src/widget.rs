@@ -9,8 +9,10 @@ use sui_core::{
 };
 use sui_layout::Constraints;
 use sui_scene::{
-    Brush, FontRegistry, ImageSource, Scene, SceneCommand, ShapedText, StrokeStyle, TextLayout,
-    TextMeasurement, TextRun, TextStyle, TextSystem,
+    Brush, ImageSource, Scene, SceneCommand, StrokeStyle,
+};
+use sui_text::{
+    FontRegistry, ShapedText, TextLayout, TextMeasurement, TextRun, TextStyle, TextSystem,
 };
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
@@ -1012,7 +1014,8 @@ mod tests {
         WindowId,
     };
     use sui_layout::Constraints;
-    use sui_scene::{FontRegistry, SceneCommand, StrokeStyle, TextStyle, TextSystem};
+    use sui_scene::{SceneCommand, StrokeStyle};
+    use sui_text::{FontRegistry, TextStyle, TextSystem};
 
     fn layout_ctx(window_id: WindowId, widget_id: WidgetId) -> LayoutCtx {
         LayoutCtx::new(

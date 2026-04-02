@@ -24,9 +24,12 @@ pub use sui_runtime::{
     WindowBuilder,
 };
 pub use sui_scene::{
-    Brush, FontRegistry, ImageRegistry, ImageSource, RegisteredFont, RegisteredImage,
-    RegisteredImageFormat, ResolvedTextFace, Scene, SceneCommand, SceneFrame, ShapedGlyph,
-    ShapedText, StrokeStyle, TextLayout, TextLine, TextMeasurement, TextRun, TextStyle,
+    Brush, ImageRegistry, ImageSource, RegisteredImage, RegisteredImageFormat, Scene,
+    SceneCommand, SceneFrame, StrokeStyle,
+};
+pub use sui_text::{
+    FontRegistry, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText, TextLayout,
+    TextLine, TextMeasurement, TextRun, TextStyle,
 };
 
 #[derive(Debug, Clone, PartialEq)]

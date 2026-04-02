@@ -13,8 +13,10 @@ use sui_core::{
     Transform, WindowId,
 };
 use sui_scene::{
-    Brush, FontRegistry, RegisteredImage, RegisteredImageFormat, SceneCommand, SceneFrame,
-    ShapedGlyph as SceneShapedGlyph, ShapedText, StrokeStyle, TextLayout, TextRun, TextStyle,
+    Brush, RegisteredImage, RegisteredImageFormat, SceneCommand, SceneFrame, StrokeStyle,
+};
+use sui_text::{
+    FontRegistry, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout, TextRun, TextStyle,
     TextSystem,
 };
 use ttf_parser::GlyphId;
@@ -1948,10 +1950,8 @@ mod tests {
     use super::{DrawOpKind, TextEngine, build_draw_ops, build_vertices, to_ndc};
     use std::sync::Arc;
     use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WindowId};
-    use sui_scene::{
-        FontRegistry, ImageRegistry, ImageSource, RegisteredFont, RegisteredImage, Scene,
-        SceneCommand, SceneFrame, ShapedText, StrokeStyle, TextRun, TextStyle, TextSystem,
-    };
+    use sui_scene::{ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame, StrokeStyle};
+    use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
 
     fn load_test_font() -> RegisteredFont {
         let mut font_db = fontdb::Database::new();

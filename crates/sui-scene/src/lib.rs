@@ -2,16 +2,10 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-mod text;
-
 use sui_core::{
-    Color, DirtyRegion, Error, FontHandle, ImageHandle, Path, Rect, Result, Size, Transform,
-    WindowId,
+    Color, DirtyRegion, Error, ImageHandle, Path, Rect, Result, Size, Transform, WindowId,
 };
-
-pub use text::{
-    ResolvedTextFace, ShapedGlyph, ShapedText, TextLayout, TextLine, TextMeasurement, TextSystem,
-};
+use sui_text::{FontRegistry, ShapedText, TextRun};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Brush {
@@ -39,41 +33,6 @@ impl Default for StrokeStyle {
     fn default() -> Self {
         Self { width: 1.0 }
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TextStyle {
-    pub font: Option<FontHandle>,
-    pub font_size: f32,
-    pub line_height: f32,
-    pub color: Color,
-}
-
-impl TextStyle {
-    pub fn new(color: Color) -> Self {
-        Self {
-            color,
-            ..Self::default()
-        }
-    }
-}
-
-impl Default for TextStyle {
-    fn default() -> Self {
-        Self {
-            font: None,
-            font_size: 14.0,
-            line_height: 18.0,
-            color: Color::WHITE,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TextRun {
-    pub rect: Rect,
-    pub text: String,
-    pub style: TextStyle,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -170,69 +129,6 @@ impl Scene {
 impl From<TextRun> for SceneCommand {
     fn from(value: TextRun) -> Self {
         Self::DrawText(value)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RegisteredFont {
-    data: Arc<[u8]>,
-    face_index: u32,
-}
-
-impl RegisteredFont {
-    pub fn from_bytes(data: impl Into<Vec<u8>>) -> Self {
-        Self {
-            data: Arc::<[u8]>::from(data.into()),
-            face_index: 0,
-        }
-    }
-
-    pub const fn with_face_index(mut self, face_index: u32) -> Self {
-        self.face_index = face_index;
-        self
-    }
-
-    pub fn bytes(&self) -> &[u8] {
-        &self.data
-    }
-
-    pub fn shared_bytes(&self) -> Arc<[u8]> {
-        Arc::clone(&self.data)
-    }
-
-    pub const fn face_index(&self) -> u32 {
-        self.face_index
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct FontRegistry {
-    fonts: HashMap<FontHandle, RegisteredFont>,
-}
-
-impl FontRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn insert(&mut self, handle: FontHandle, font: RegisteredFont) -> Option<RegisteredFont> {
-        self.fonts.insert(handle, font)
-    }
-
-    pub fn get(&self, handle: FontHandle) -> Option<&RegisteredFont> {
-        self.fonts.get(&handle)
-    }
-
-    pub fn contains(&self, handle: FontHandle) -> bool {
-        self.fonts.contains_key(&handle)
-    }
-
-    pub fn len(&self) -> usize {
-        self.fonts.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.fonts.is_empty()
     }
 }
 
@@ -367,11 +263,12 @@ impl SceneFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, FontRegistry, ImageRegistry, ImageSource, RegisteredFont, RegisteredImage,
-        SceneCommand, SceneFrame, ShapedText, StrokeStyle, TextRun, TextStyle, TextSystem,
+        Brush, ImageRegistry, ImageSource, RegisteredImage, SceneCommand, SceneFrame,
+        StrokeStyle,
     };
     use std::sync::Arc;
     use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, WindowId};
+    use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
 
     #[test]
     fn scene_command_variants_store_extended_primitives() {

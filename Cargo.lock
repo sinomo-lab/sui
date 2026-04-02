@@ -1762,6 +1762,7 @@ dependencies = [
  "sui-render-wgpu",
  "sui-runtime",
  "sui-scene",
+ "sui-text",
  "sui-widgets",
 ]
 
@@ -1805,6 +1806,7 @@ dependencies = [
  "rustybuzz",
  "sui-core",
  "sui-scene",
+ "sui-text",
  "ttf-parser",
  "wgpu",
  "winit",
@@ -1817,16 +1819,15 @@ dependencies = [
  "sui-core",
  "sui-layout",
  "sui-scene",
+ "sui-text",
 ]
 
 [[package]]
 name = "sui-scene"
 version = "0.1.0"
 dependencies = [
- "fontdb",
- "rustybuzz",
  "sui-core",
- "ttf-parser",
+ "sui-text",
 ]
 
 [[package]]
@@ -1840,6 +1841,16 @@ dependencies = [
  "sui-render-wgpu",
  "sui-runtime",
  "sui-scene",
+]
+
+[[package]]
+name = "sui-text"
+version = "0.1.0"
+dependencies = [
+ "fontdb",
+ "rustybuzz",
+ "sui-core",
+ "ttf-parser",
 ]
 
 [[package]]

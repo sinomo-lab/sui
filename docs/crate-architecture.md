@@ -21,7 +21,7 @@ The crate layout should preserve the core design constraints:
 
 ## Recommended Workspace Layout
 
-The current `crates/sui` binary should become the public Rust facade library. A demo or playground binary should move to a separate crate so the `sui` name is reserved for the user-facing library.
+The workspace now includes the dedicated `sui-text` crate described below, and `crates/sui` is the public Rust facade library. Additional bindings crates can still be introduced on top of the same core boundaries.
 
 Recommended workspace target:
 

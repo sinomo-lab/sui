@@ -42,6 +42,7 @@ The current workspace already contains the phase-1 skeleton of this design:
 - `sui-layout` owns constraints and sizing primitives
 - `sui-runtime` owns the retained runtime and widget contract
 - `sui-scene` owns render-neutral paint output
+- `sui-text` owns shaping, font registration, and text layout
 - `sui-render-wgpu` owns renderer execution
 - `sui-platform` owns host integration
 - `sui` acts as the public facade
@@ -214,7 +215,7 @@ The current `Scene` and `SceneFrame` types are a minimal version of the right id
 - paint bounds for invalidation and culling
 - optional debug and diagnostic annotations
 
-The workspace now has the first concrete step in that direction: `sui-scene` supports explicit text runs, image draws, stroke rectangles, and clip/transform stack commands in addition to fills and clears. The current `sui-render-wgpu` backend still rasterizes text and images as placeholders, but the scene boundary no longer hardcodes labels as the only non-rectangular visual primitive.
+The workspace now has the first concrete step in that direction: `sui-scene` supports explicit text runs, image draws, stroke rectangles, and clip/transform stack commands in addition to fills and clears, while `sui-text` owns font registration, shaping, and text layout. `sui-render-wgpu` consumes those layouts to rasterize glyph outlines and images without pushing text-system details back into widgets.
 
 `SceneFrame` should remain immutable once produced so render backends can consume it safely and so tooling can inspect a stable snapshot.
 

@@ -14,6 +14,7 @@ pollster = { workspace = true }
 rustybuzz = { workspace = true }
 sui-core = { workspace = true }
 sui-scene = { workspace = true }
+sui-text = { workspace = true }
 ttf-parser = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
