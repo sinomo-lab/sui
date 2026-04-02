@@ -1759,7 +1759,10 @@ dependencies = [
 name = "sui-scene"
 version = "0.1.0"
 dependencies = [
+ "fontdb",
+ "rustybuzz",
  "sui-core",
+ "ttf-parser",
 ]
 
 [[package]]

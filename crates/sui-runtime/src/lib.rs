@@ -13,7 +13,9 @@ use sui_core::{
     Size, TimerToken, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{FontRegistry, ImageRegistry, RegisteredFont, RegisteredImage, SceneFrame};
+use sui_scene::{
+    FontRegistry, ImageRegistry, RegisteredFont, RegisteredImage, SceneFrame, TextSystem,
+};
 
 pub use widget::{
     EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
@@ -163,6 +165,7 @@ pub struct Runtime {
     next_image_id: u64,
     font_registry: Arc<FontRegistry>,
     image_registry: Arc<ImageRegistry>,
+    text_system: Arc<TextSystem>,
     windows: Vec<WindowState>,
 }
 
@@ -188,6 +191,7 @@ impl Runtime {
             next_image_id: next_image_id.max(1),
             font_registry,
             image_registry,
+            text_system: Arc::new(TextSystem::new()),
             windows: Vec::new(),
         }
     }
@@ -216,8 +220,10 @@ impl Runtime {
     }
 
     pub fn handle_event(&mut self, window_id: WindowId, event: Event) -> Result<()> {
+        let text_system = Arc::clone(&self.text_system);
+        let font_registry = Arc::clone(&self.font_registry);
         let window = self.window_mut(window_id)?;
-        window.handle_event(event);
+        window.handle_event(event, text_system, font_registry);
         Ok(())
     }
 
@@ -311,10 +317,11 @@ impl Runtime {
     }
 
     pub fn render(&mut self, window_id: WindowId) -> Result<RenderOutput> {
+        let text_system = Arc::clone(&self.text_system);
         let font_registry = Arc::clone(&self.font_registry);
         let image_registry = Arc::clone(&self.image_registry);
         let window = self.window_mut(window_id)?;
-        Ok(window.render(font_registry, image_registry))
+        Ok(window.render(text_system, font_registry, image_registry))
     }
 
     pub fn semantics(&self, window_id: WindowId) -> Result<&[SemanticsNode]> {
@@ -508,6 +515,7 @@ struct WindowState {
     delivering_timers: HashMap<TimerToken, WidgetId>,
     async_wake_targets: HashMap<AsyncWakeToken, WidgetId>,
     pending_async_wakeups: VecDeque<AsyncWakeToken>,
+    ime_composition_rect: Option<Rect>,
     last_tick_time: f64,
 }
 
@@ -535,6 +543,7 @@ impl WindowState {
             delivering_timers: HashMap::new(),
             async_wake_targets: HashMap::new(),
             pending_async_wakeups: VecDeque::new(),
+            ime_composition_rect: None,
             last_tick_time: 0.0,
         }
     }
@@ -543,9 +552,14 @@ impl WindowState {
         self.last_frame.is_none() || self.schedule.needs_render()
     }
 
-    fn handle_event(&mut self, event: Event) {
+    fn handle_event(
+        &mut self,
+        event: Event,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
+    ) {
         self.preprocess_window_event(&event);
-        self.ensure_graph_for_event(&event);
+        self.ensure_graph_for_event(&event, text_system, font_registry);
 
         let hit_target = match &event {
             Event::Pointer(pointer) => self.graph.hit_test(pointer.position),
@@ -652,9 +666,14 @@ impl WindowState {
         }
     }
 
-    fn ensure_graph_for_event(&mut self, event: &Event) {
+    fn ensure_graph_for_event(
+        &mut self,
+        event: &Event,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
+    ) {
         if self.schedule.layout || self.viewport.is_none() {
-            self.run_layout_pass();
+            let _ = self.run_layout_pass(text_system, font_registry);
             return;
         }
 
@@ -950,6 +969,7 @@ impl WindowState {
 
     fn render(
         &mut self,
+        text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) -> RenderOutput {
@@ -961,7 +981,7 @@ impl WindowState {
         }
 
         if self.schedule.layout || self.viewport.is_none() {
-            invalidations.extend(self.run_layout_pass());
+            invalidations.extend(self.run_layout_pass(text_system, Arc::clone(&font_registry)));
         } else if self.schedule.hit_test || self.graph.is_empty() {
             self.refresh_graph();
         }
@@ -978,8 +998,9 @@ impl WindowState {
                 self.focus.focused_widget,
             );
             self.root.paint(&mut paint_ctx);
-            let (scene, paint_invalidations) = paint_ctx.into_parts();
+            let (scene, paint_invalidations, ime_composition_rect) = paint_ctx.into_parts();
             invalidations.extend(paint_invalidations);
+            self.ime_composition_rect = ime_composition_rect;
             self.last_frame = Some(SceneFrame {
                 window_id: self.id,
                 viewport,
@@ -1024,11 +1045,12 @@ impl WindowState {
             title: self.title.clone(),
             frame,
             semantics: self.last_semantics.clone(),
+            ime_composition_rect: self.ime_composition_rect,
         }
     }
 
-    fn run_layout_pass(&mut self) -> Vec<InvalidationRequest> {
-        let mut layout_ctx = LayoutCtx::new(self.id, self.root.id());
+    fn run_layout_pass(&mut self, text_system: Arc<TextSystem>, font_registry: Arc<FontRegistry>) -> Vec<InvalidationRequest> {
+        let mut layout_ctx = LayoutCtx::new(self.id, self.root.id(), text_system, font_registry);
         let viewport = self.root.layout(&mut layout_ctx, self.layout_constraints());
         self.root
             .set_bounds(Rect::from_origin_size(Point::ZERO, viewport));
@@ -1268,6 +1290,7 @@ pub struct RenderOutput {
     pub title: String,
     pub frame: SceneFrame,
     pub semantics: Vec<SemanticsNode>,
+    pub ime_composition_rect: Option<Rect>,
 }
 
 #[cfg(test)]
@@ -1285,7 +1308,7 @@ mod tests {
         SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent,
     };
     use sui_layout::Constraints;
-    use sui_scene::{RegisteredFont, RegisteredImage};
+    use sui_scene::{RegisteredFont, RegisteredImage, TextLayout, TextStyle};
 
     #[derive(Default)]
     struct Counters {
@@ -1467,6 +1490,33 @@ mod tests {
         }
     }
 
+    struct TextImeLeaf {
+        layout: RefCell<Option<TextLayout>>,
+    }
+
+    impl Widget for TextImeLeaf {
+        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(160.0, 32.0));
+            let layout = ctx
+                .shape_text("compose", size, TextStyle::new(Color::WHITE))
+                .unwrap();
+            *self.layout.borrow_mut() = Some(layout);
+            size
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            let layout = self.layout.borrow();
+            let layout = layout.as_ref().expect("layout pass should shape text first");
+            let origin = ctx.bounds().origin;
+            ctx.draw_text_layout(origin, layout);
+            ctx.set_ime_composition_rect(layout.caret_rect(3).translate(origin.to_vector()));
+        }
+
+        fn accepts_focus(&self) -> bool {
+            true
+        }
+    }
+
     struct ChildRoot<W> {
         child: SingleChild,
         _marker: std::marker::PhantomData<W>,
@@ -1496,6 +1546,50 @@ mod tests {
                 Point::new(32.0, 24.0),
             );
             size
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
+    struct PaintedChildRoot<W> {
+        child: SingleChild,
+        _marker: std::marker::PhantomData<W>,
+    }
+
+    impl<W> PaintedChildRoot<W> {
+        fn new(child: W) -> Self
+        where
+            W: Widget + 'static,
+        {
+            Self {
+                child: SingleChild::new(child),
+                _marker: std::marker::PhantomData,
+            }
+        }
+    }
+
+    impl<W> Widget for PaintedChildRoot<W>
+    where
+        W: Widget + 'static,
+    {
+        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.child.layout_at(
+                ctx,
+                Constraints::tight(Size::new(160.0, 32.0)),
+                Point::new(32.0, 24.0),
+            );
+            size
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.child.paint(ctx);
         }
 
         fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
@@ -1572,6 +1666,22 @@ mod tests {
 
         let window_id = runtime.window_ids()[0];
         (runtime, window_id, state)
+    }
+
+    fn build_text_runtime() -> (Runtime, sui_core::WindowId) {
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Text")
+                    .root(PaintedChildRoot::new(TextImeLeaf {
+                        layout: RefCell::new(None),
+                    })),
+            )
+            .build()
+            .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id)
     }
 
     #[test]
@@ -1780,6 +1890,19 @@ mod tests {
         let (runtime, window_id, _, _) = build_runtime();
 
         assert!(runtime.needs_render(window_id).unwrap());
+    }
+
+    #[test]
+    fn runtime_render_reports_ime_composition_rect_for_shaped_text_widgets() {
+        let (mut runtime, window_id) = build_text_runtime();
+
+        let output = runtime.render(window_id).unwrap();
+
+        assert!(output.ime_composition_rect.is_some());
+        assert!(matches!(
+            output.frame.scene.commands()[0],
+            sui_scene::SceneCommand::DrawShapedText(_)
+        ));
     }
 
     #[test]

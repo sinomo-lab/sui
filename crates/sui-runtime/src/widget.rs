@@ -1,11 +1,17 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use sui_core::{
     AsyncWakeToken, Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Path,
     Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{Brush, ImageSource, Scene, SceneCommand, StrokeStyle, TextRun, TextStyle};
+use sui_scene::{
+    Brush, FontRegistry, ImageSource, Scene, SceneCommand, ShapedText, StrokeStyle,
+    TextLayout, TextMeasurement, TextRun, TextStyle, TextSystem,
+};
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TIMER_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -205,7 +211,12 @@ impl WidgetPod {
     }
 
     pub fn layout(&mut self, parent_ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        let mut child_ctx = LayoutCtx::new(parent_ctx.window_id(), self.id);
+        let mut child_ctx = LayoutCtx::new(
+            parent_ctx.window_id(),
+            self.id,
+            Arc::clone(&parent_ctx.text_system),
+            Arc::clone(&parent_ctx.font_registry),
+        );
         let size = self.widget.layout(&mut child_ctx, constraints);
         self.bounds = Rect::from_origin_size(self.bounds.origin, size);
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
@@ -232,9 +243,10 @@ impl WidgetPod {
         );
         self.widget.paint(&mut child_ctx);
 
-        let (scene, invalidations) = child_ctx.into_parts();
+        let (scene, invalidations, ime_composition_rect) = child_ctx.into_parts();
         parent_ctx.extend_scene(scene);
         parent_ctx.extend_invalidations(invalidations);
+        parent_ctx.extend_ime_composition_rect(ime_composition_rect);
     }
 
     pub fn semantics(&self, parent_ctx: &mut SemanticsCtx) {
@@ -616,14 +628,23 @@ impl EventCtx {
 pub struct LayoutCtx {
     window_id: WindowId,
     widget_id: WidgetId,
+    text_system: Arc<TextSystem>,
+    font_registry: Arc<FontRegistry>,
     invalidations: Vec<InvalidationRequest>,
 }
 
 impl LayoutCtx {
-    pub(crate) fn new(window_id: WindowId, widget_id: WidgetId) -> Self {
+    pub(crate) fn new(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
+    ) -> Self {
         Self {
             window_id,
             widget_id,
+            text_system,
+            font_registry,
             invalidations: Vec::new(),
         }
     }
@@ -650,6 +671,25 @@ impl LayoutCtx {
 
     pub fn request_semantics(&mut self) {
         self.request_widget(InvalidationKind::Semantics);
+    }
+
+    pub fn measure_text(
+        &self,
+        text: impl Into<String>,
+        style: TextStyle,
+    ) -> sui_core::Result<TextMeasurement> {
+        self.text_system
+            .measure_text(text, style, self.font_registry.as_ref())
+    }
+
+    pub fn shape_text(
+        &self,
+        text: impl Into<String>,
+        box_size: Size,
+        style: TextStyle,
+    ) -> sui_core::Result<TextLayout> {
+        self.text_system
+            .shape_text(text, box_size, style, self.font_registry.as_ref())
     }
 
     pub fn invalidations(&self) -> &[InvalidationRequest] {
@@ -680,6 +720,7 @@ pub struct PaintCtx {
     bounds: Rect,
     scene: Scene,
     invalidations: Vec<InvalidationRequest>,
+    ime_composition_rect: Option<Rect>,
 }
 
 impl PaintCtx {
@@ -696,6 +737,7 @@ impl PaintCtx {
             bounds,
             scene: Scene::new(),
             invalidations: Vec::new(),
+            ime_composition_rect: None,
         }
     }
 
@@ -766,6 +808,13 @@ impl PaintCtx {
             rect,
             text: text.into(),
             style,
+        }));
+    }
+
+    pub fn draw_text_layout(&mut self, origin: Point, layout: &TextLayout) {
+        self.scene.push(SceneCommand::DrawShapedText(ShapedText {
+            origin,
+            layout: layout.clone(),
         }));
     }
 
@@ -843,6 +892,18 @@ impl PaintCtx {
         &self.invalidations
     }
 
+    pub fn set_ime_composition_rect(&mut self, rect: Rect) {
+        self.ime_composition_rect = Some(rect);
+    }
+
+    pub fn clear_ime_composition_rect(&mut self) {
+        self.ime_composition_rect = None;
+    }
+
+    pub const fn ime_composition_rect(&self) -> Option<Rect> {
+        self.ime_composition_rect
+    }
+
     pub(crate) fn extend_scene(&mut self, scene: Scene) {
         for command in scene.commands().iter().cloned() {
             self.scene.push(command);
@@ -853,8 +914,14 @@ impl PaintCtx {
         self.invalidations.extend(invalidations);
     }
 
-    pub(crate) fn into_parts(self) -> (Scene, Vec<InvalidationRequest>) {
-        (self.scene, self.invalidations)
+    pub(crate) fn extend_ime_composition_rect(&mut self, ime_composition_rect: Option<Rect>) {
+        if ime_composition_rect.is_some() {
+            self.ime_composition_rect = ime_composition_rect;
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
+        (self.scene, self.invalidations, self.ime_composition_rect)
     }
 
     fn request_widget(&mut self, kind: InvalidationKind) {
@@ -945,7 +1012,16 @@ mod tests {
         WindowId,
     };
     use sui_layout::Constraints;
-    use sui_scene::{SceneCommand, StrokeStyle, TextStyle};
+    use sui_scene::{FontRegistry, SceneCommand, StrokeStyle, TextStyle, TextSystem};
+
+    fn layout_ctx(window_id: WindowId, widget_id: WidgetId) -> LayoutCtx {
+        LayoutCtx::new(
+            window_id,
+            widget_id,
+            std::sync::Arc::new(TextSystem::new()),
+            std::sync::Arc::new(FontRegistry::new()),
+        )
+    }
 
     struct LabelWidget;
 
@@ -998,7 +1074,7 @@ mod tests {
         let mut pod = WidgetPod::new(LabelWidget);
         pod.set_bounds(Rect::new(4.0, 6.0, 0.0, 0.0));
 
-        let mut layout = LayoutCtx::new(WindowId::new(3), WidgetId::new(4));
+        let mut layout = layout_ctx(WindowId::new(3), WidgetId::new(4));
         let size = pod.layout(
             &mut layout,
             Constraints::tight(sui_core::Size::new(64.0, 32.0)),
@@ -1046,7 +1122,7 @@ mod tests {
         }
 
         let mut child = SingleChild::new(LabelWidget);
-        let mut layout = LayoutCtx::new(WindowId::new(7), WidgetId::new(8));
+        let mut layout = layout_ctx(WindowId::new(7), WidgetId::new(8));
         let size = child.layout_at(
             &mut layout,
             Constraints::tight(sui_core::Size::new(80.0, 24.0)),
@@ -1068,7 +1144,7 @@ mod tests {
         children.push(LabelWidget);
         children.push(LabelWidget);
 
-        let mut layout = LayoutCtx::new(WindowId::new(9), WidgetId::new(10));
+        let mut layout = layout_ctx(WindowId::new(9), WidgetId::new(10));
         children.as_mut_slice()[0].layout_at(
             &mut layout,
             Constraints::tight(sui_core::Size::new(40.0, 18.0)),
@@ -1163,5 +1239,33 @@ mod tests {
         ));
         assert!(matches!(paint.scene().commands()[7], SceneCommand::PopClip));
         assert!(matches!(paint.scene().commands()[8], SceneCommand::PopClip));
+    }
+
+    #[test]
+    fn text_layout_shapes_in_layout_and_paints_as_shaped_scene_output() {
+        let layout = layout_ctx(WindowId::new(13), WidgetId::new(14))
+            .shape_text(
+                "hello",
+                sui_core::Size::new(80.0, 20.0),
+                TextStyle::new(Color::BLACK),
+            )
+            .unwrap();
+
+        let mut paint = PaintCtx::new(
+            WindowId::new(13),
+            WidgetId::new(14),
+            Rect::new(0.0, 0.0, 120.0, 60.0),
+            None,
+        );
+        let origin = Point::new(8.0, 10.0);
+        paint.draw_text_layout(origin, &layout);
+        paint.set_ime_composition_rect(layout.caret_rect(3).translate(origin.to_vector()));
+
+        assert!(matches!(
+            paint.scene().commands()[0],
+            SceneCommand::DrawShapedText(_)
+        ));
+        assert!(paint.ime_composition_rect().is_some());
+        assert!(!layout.selection_rects(1..4).is_empty());
     }
 }

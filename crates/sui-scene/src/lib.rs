@@ -2,9 +2,16 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+mod text;
+
 use sui_core::{
     Color, DirtyRegion, Error, FontHandle, ImageHandle, Path, Rect, Result, Size, Transform,
     WindowId,
+};
+
+pub use text::{
+    ResolvedTextFace, ShapedGlyph, ShapedText, TextLayout, TextLine, TextMeasurement,
+    TextSystem,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +126,7 @@ pub enum SceneCommand {
         stroke: StrokeStyle,
     },
     DrawText(TextRun),
+    DrawShapedText(ShapedText),
     DrawImage {
         rect: Rect,
         source: ImageSource,
@@ -187,6 +195,10 @@ impl RegisteredFont {
 
     pub fn bytes(&self) -> &[u8] {
         &self.data
+    }
+
+    pub fn shared_bytes(&self) -> Arc<[u8]> {
+        Arc::clone(&self.data)
     }
 
     pub const fn face_index(&self) -> u32 {
@@ -357,10 +369,10 @@ impl SceneFrame {
 mod tests {
     use super::{
         Brush, FontRegistry, ImageRegistry, ImageSource, RegisteredFont, RegisteredImage,
-        SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle,
+        SceneCommand, SceneFrame, ShapedText, StrokeStyle, TextRun, TextStyle, TextSystem,
     };
     use std::sync::Arc;
-    use sui_core::{Color, FontHandle, ImageHandle, Path, Rect, Transform, WindowId};
+    use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, WindowId};
 
     #[test]
     fn scene_command_variants_store_extended_primitives() {
@@ -368,6 +380,17 @@ mod tests {
             rect: Rect::new(4.0, 8.0, 120.0, 24.0),
             text: "hello".to_string(),
             style: TextStyle::new(Color::WHITE),
+        });
+        let shaped_text = SceneCommand::DrawShapedText(ShapedText {
+            origin: Point::new(4.0, 8.0),
+            layout: TextSystem::new()
+                .shape_text(
+                    "hello",
+                    sui_core::Size::new(120.0, 24.0),
+                    TextStyle::new(Color::WHITE),
+                    &FontRegistry::new(),
+                )
+                .unwrap(),
         });
         let image = SceneCommand::DrawImage {
             rect: Rect::new(0.0, 0.0, 32.0, 32.0),
@@ -391,6 +414,7 @@ mod tests {
         };
 
         assert!(matches!(text, SceneCommand::DrawText(_)));
+    assert!(matches!(shaped_text, SceneCommand::DrawShapedText(_)));
         assert!(matches!(image, SceneCommand::DrawImage { .. }));
         assert!(matches!(stroke, SceneCommand::StrokeRect { .. }));
         assert!(matches!(path_fill, SceneCommand::FillPath { .. }));

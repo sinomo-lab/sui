@@ -13,7 +13,7 @@ use sui_render_wgpu::WgpuRenderer;
 use sui_runtime::Runtime;
 use winit::{
     application::ApplicationHandler,
-    dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
+    dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
     error::{EventLoopError, OsError},
     event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent as WinitWindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
@@ -115,6 +115,7 @@ impl<'a> DesktopApp<'a> {
                     )
                     .map_err(map_os_error)?,
             );
+                    window.set_ime_allowed(false);
 
             let host_id = window.id();
             let size = physical_size_to_size(window.inner_size());
@@ -251,6 +252,8 @@ impl<'a> DesktopApp<'a> {
                         window.title = output.title.clone();
                         window.window.set_title(&output.title);
                     }
+
+                    apply_ime_composition_rect(window.window.as_ref(), output.ime_composition_rect);
                 }
             }
         }
@@ -552,6 +555,17 @@ fn physical_size_to_size(size: PhysicalSize<u32>) -> Size {
 
 fn physical_position_to_point(position: PhysicalPosition<f64>) -> Point {
     Point::new(position.x as f32, position.y as f32)
+}
+
+fn apply_ime_composition_rect(window: &Window, rect: Option<sui_core::Rect>) {
+    window.set_ime_allowed(rect.is_some());
+
+    if let Some(rect) = rect {
+        window.set_ime_cursor_area(
+            LogicalPosition::new(rect.x() as f64, rect.y() as f64),
+            LogicalSize::new(rect.width().max(1.0) as f64, rect.height().max(1.0) as f64),
+        );
+    }
 }
 
 fn modifiers_state_to_modifiers(state: ModifiersState) -> Modifiers {

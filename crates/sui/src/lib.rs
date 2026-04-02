@@ -25,7 +25,8 @@ pub use sui_runtime::{
 };
 pub use sui_scene::{
     Brush, FontRegistry, ImageRegistry, ImageSource, RegisteredFont, RegisteredImage,
-    RegisteredImageFormat, Scene, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle,
+    RegisteredImageFormat, ResolvedTextFace, Scene, SceneCommand, SceneFrame, ShapedGlyph,
+    ShapedText, StrokeStyle, TextLayout, TextLine, TextMeasurement, TextRun, TextStyle,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,8 +123,9 @@ pub mod prelude {
         Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, Color, Constraints,
         Event, EventCtx, FontHandle, ImageHandle, ImeEvent, Insets, KeyboardEvent, LayoutCtx,
         PaintCtx, Path, PathBuilder, Point, PointerEvent, Rect, RegisteredFont, RegisteredImage,
-        Result, SemanticsCtx, SingleChild, Size, SizedBox, Stack, StrokeStyle, Style, TextStyle,
-        Theme, TimerToken, Transform, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
+        Result, SemanticsCtx, ShapedText, SingleChild, Size, SizedBox, Stack, StrokeStyle,
+        Style, TextLayout, TextMeasurement, TextStyle, Theme, TimerToken, Transform, WakeEvent,
+        Widget, WidgetChildren, WidgetPod, WindowBuilder,
         containers::Padding,
     };
 }
