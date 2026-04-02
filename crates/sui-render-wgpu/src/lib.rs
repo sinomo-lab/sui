@@ -46,6 +46,8 @@ pub struct WgpuRenderer {
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
 }
 
+const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+
 impl WgpuRenderer {
     pub fn new() -> Self {
         Self::default()
@@ -292,9 +294,9 @@ impl WgpuRenderer {
         target_format: wgpu::TextureFormat,
         view: &wgpu::TextureView,
     ) -> Result<()> {
-        let vertices = {
+        let draw_ops = {
             let text_engine = self.text_engine()?;
-            build_vertices(frame, text_engine)?
+            build_draw_ops(frame, text_engine)?
         };
         let shared = self
             .shared
@@ -305,24 +307,9 @@ impl WgpuRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("SUI scene encoder"),
             });
-        let vertex_buffer = if vertices.is_empty() {
-            None
-        } else {
-            let buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("SUI scene vertices"),
-                size: std::mem::size_of_val(vertices.as_slice()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            shared
-                .queue
-                .write_buffer(&buffer, 0, bytemuck::cast_slice(vertices.as_slice()));
-            Some(buffer)
-        };
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SUI scene pass"),
+        if draw_ops.is_empty() {
+            let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("SUI scene clear pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
@@ -342,12 +329,117 @@ impl WgpuRenderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
+        } else {
+            let stencil_view = if draw_ops.iter().any(|op| !op.clip_paths.is_empty()) {
+                let size = normalize_viewport(frame.viewport).unwrap_or((1, 1));
+                let stencil_texture = shared.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("SUI scene stencil"),
+                    size: wgpu::Extent3d {
+                        width: size.0,
+                        height: size.1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: STENCIL_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                });
+                Some(stencil_texture.create_view(&wgpu::TextureViewDescriptor::default()))
+            } else {
+                None
+            };
 
-            if let Some(buffer) = vertex_buffer.as_ref() {
-                let pipeline = shared.pipeline(target_format);
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_vertex_buffer(0, buffer.slice(..));
-                render_pass.draw(0..vertices.len() as u32, 0..1);
+            for (index, op) in draw_ops.iter().enumerate() {
+                let load_op = if index == 0 {
+                    wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    })
+                } else {
+                    wgpu::LoadOp::Load
+                };
+
+                let vertex_buffer = create_vertex_buffer(
+                    &shared.device,
+                    &shared.queue,
+                    &op.vertices,
+                    "SUI scene vertices",
+                );
+                let clip_buffers: Vec<Option<wgpu::Buffer>> = op
+                    .clip_paths
+                    .iter()
+                    .enumerate()
+                    .map(|(clip_index, vertices)| {
+                        create_vertex_buffer(
+                            &shared.device,
+                            &shared.queue,
+                            vertices,
+                            &format!("SUI clip vertices {clip_index}"),
+                        )
+                    })
+                    .collect();
+
+                let depth_stencil_attachment = if op.clip_paths.is_empty() {
+                    None
+                } else {
+                    Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: stencil_view
+                            .as_ref()
+                            .expect("stencil view available for clipped draw ops"),
+                        depth_ops: None,
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                    })
+                };
+
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("SUI scene pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: load_op,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                    multiview_mask: None,
+                });
+
+                if !op.clip_paths.is_empty() {
+                    let clip_pipeline = shared.clip_pipeline(target_format);
+                    render_pass.set_pipeline(clip_pipeline);
+                    for (clip_index, clip_buffer) in clip_buffers.iter().enumerate() {
+                        let Some(clip_buffer) = clip_buffer.as_ref() else {
+                            continue;
+                        };
+                        render_pass.set_stencil_reference(clip_index as u32);
+                        render_pass.set_vertex_buffer(0, clip_buffer.slice(..));
+                        render_pass.draw(0..op.clip_paths[clip_index].len() as u32, 0..1);
+                    }
+                }
+
+                if let Some(buffer) = vertex_buffer.as_ref() {
+                    let pipeline = if op.clip_paths.is_empty() {
+                        shared.pipeline(target_format)
+                    } else {
+                        let pipeline = shared.clipped_pipeline(target_format);
+                        render_pass.set_stencil_reference(op.clip_paths.len() as u32);
+                        pipeline
+                    };
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_vertex_buffer(0, buffer.slice(..));
+                    render_pass.draw(0..op.vertices.len() as u32, 0..1);
+                }
             }
         }
 
@@ -410,12 +502,28 @@ struct SharedRenderer {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    pipelines: HashMap<(wgpu::TextureFormat, PipelineKind), wgpu::RenderPipeline>,
 }
 
 impl SharedRenderer {
     fn pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
-        self.pipelines.entry(format).or_insert_with(|| {
+        self.pipeline_for(format, PipelineKind::Solid)
+    }
+
+    fn clipped_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::Clipped)
+    }
+
+    fn clip_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::ClipMask)
+    }
+
+    fn pipeline_for(
+        &mut self,
+        format: wgpu::TextureFormat,
+        kind: PipelineKind,
+    ) -> &wgpu::RenderPipeline {
+        self.pipelines.entry((format, kind)).or_insert_with(|| {
             let shader = self
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -423,9 +531,66 @@ impl SharedRenderer {
                     source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
                 });
 
+            let depth_stencil = match kind {
+                PipelineKind::Solid => None,
+                PipelineKind::Clipped => Some(wgpu::DepthStencilState {
+                    format: STENCIL_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Keep,
+                        },
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Keep,
+                        },
+                        read_mask: u32::MAX,
+                        write_mask: 0,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                PipelineKind::ClipMask => Some(wgpu::DepthStencilState {
+                    format: STENCIL_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::IncrementClamp,
+                        },
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::IncrementClamp,
+                        },
+                        read_mask: u32::MAX,
+                        write_mask: u32::MAX,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+            };
+            let fragment_targets = [Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })];
+
             self.device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("SUI solid scene pipeline"),
+                    label: Some(match kind {
+                        PipelineKind::Solid => "SUI solid scene pipeline",
+                        PipelineKind::Clipped => "SUI clipped scene pipeline",
+                        PipelineKind::ClipMask => "SUI clip mask pipeline",
+                    }),
                     layout: None,
                     vertex: wgpu::VertexState {
                         module: &shader,
@@ -434,23 +599,29 @@ impl SharedRenderer {
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
                     primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
+                    depth_stencil,
                     multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
+                    fragment: match kind {
+                        PipelineKind::ClipMask => None,
+                        PipelineKind::Solid | PipelineKind::Clipped => Some(wgpu::FragmentState {
+                            module: &shader,
+                            entry_point: Some("fs_main"),
+                            targets: &fragment_targets,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        }),
+                    },
                     multiview_mask: None,
                     cache: None,
                 })
         })
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PipelineKind {
+    Solid,
+    Clipped,
+    ClipMask,
 }
 
 struct SurfaceState {
@@ -466,7 +637,7 @@ struct OffscreenTarget {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct Vertex {
     position: [f32; 2],
     color: [f32; 4],
@@ -502,24 +673,44 @@ impl StrokeVertexConstructor<[f32; 2]> for TessellatedPoint {
     }
 }
 
+#[cfg(test)]
 fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<Vertex>> {
-    let viewport = frame.viewport;
+    let draw_ops = build_draw_ops(frame, text_engine)?;
     let mut vertices = Vec::new();
+    for op in draw_ops {
+        vertices.extend(op.vertices);
+    }
+    Ok(vertices)
+}
+
+#[derive(Debug, Clone, Default)]
+struct DrawOp {
+    vertices: Vec<Vertex>,
+    clip_paths: Vec<Vec<Vertex>>,
+}
+
+fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<DrawOp>> {
+    let viewport = frame.viewport;
+    let mut draw_ops = Vec::new();
     let mut state = SceneRasterState::default();
 
     for command in frame.scene.commands() {
         match command {
             SceneCommand::Clear(color) => {
+                let mut vertices = Vec::new();
                 append_rect(
                     &mut vertices,
                     Rect::new(0.0, 0.0, viewport.width, viewport.height),
                     *color,
                     viewport,
                 );
+                push_draw_op(&mut draw_ops, vertices, &state);
             }
             SceneCommand::FillRect { rect, brush } => {
                 let Brush::Solid(color) = brush;
+                let mut vertices = Vec::new();
                 append_painted_rect(&mut vertices, &state, *rect, *color, viewport);
+                push_draw_op(&mut draw_ops, vertices, &state);
             }
             SceneCommand::StrokeRect {
                 rect,
@@ -527,11 +718,15 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                 stroke,
             } => {
                 let Brush::Solid(color) = brush;
+                let mut vertices = Vec::new();
                 append_stroke_rect(&mut vertices, &state, *rect, *color, *stroke, viewport);
+                push_draw_op(&mut draw_ops, vertices, &state);
             }
             SceneCommand::FillPath { path, brush } => {
                 let Brush::Solid(color) = brush;
+                let mut vertices = Vec::new();
                 append_painted_path(&mut vertices, &state, path, *color, viewport)?;
+                push_draw_op(&mut draw_ops, vertices, &state);
             }
             SceneCommand::StrokePath {
                 path,
@@ -539,9 +734,12 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                 stroke,
             } => {
                 let Brush::Solid(color) = brush;
+                let mut vertices = Vec::new();
                 append_stroked_path(&mut vertices, &state, path, *color, *stroke, viewport)?;
+                push_draw_op(&mut draw_ops, vertices, &state);
             }
             SceneCommand::DrawText(text) => {
+                let mut vertices = Vec::new();
                 text_engine.append_text_run(
                     &mut vertices,
                     &state,
@@ -549,12 +747,18 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                     frame.font_registry.as_ref(),
                     viewport,
                 )?;
+                push_draw_op(&mut draw_ops, vertices, &state);
             }
             SceneCommand::DrawImage { rect, source } => {
+                let mut vertices = Vec::new();
                 append_image_placeholder(&mut vertices, &state, *rect, source, viewport);
+                push_draw_op(&mut draw_ops, vertices, &state);
             }
             SceneCommand::PushClip { rect } => {
                 state.push_clip(*rect);
+            }
+            SceneCommand::PushClipPath { path } => {
+                state.push_clip_path(path, viewport)?;
             }
             SceneCommand::PopClip => {
                 state.pop_clip();
@@ -566,6 +770,7 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                 state.pop_transform();
             }
             SceneCommand::Label { rect, text, color } => {
+                let mut vertices = Vec::new();
                 text_engine.append_text_run(
                     &mut vertices,
                     &state,
@@ -577,18 +782,19 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                     frame.font_registry.as_ref(),
                     viewport,
                 )?;
+                push_draw_op(&mut draw_ops, vertices, &state);
             }
         }
     }
 
-    Ok(vertices)
+    Ok(draw_ops)
 }
 
 #[derive(Debug, Clone)]
 struct SceneRasterState {
     current_transform: Transform,
     transform_stack: Vec<Transform>,
-    clip_stack: Vec<Rect>,
+    clip_stack: Vec<ClipPrimitive>,
 }
 
 impl Default for SceneRasterState {
@@ -601,14 +807,38 @@ impl Default for SceneRasterState {
     }
 }
 
+#[derive(Debug, Clone)]
+enum ClipPrimitive {
+    Rect(Rect),
+    Path { bounds: Rect, vertices: Vec<Vertex> },
+}
+
+impl ClipPrimitive {
+    fn bounds(&self) -> Rect {
+        match self {
+            Self::Rect(rect) => *rect,
+            Self::Path { bounds, .. } => *bounds,
+        }
+    }
+}
+
 impl SceneRasterState {
     fn push_clip(&mut self, rect: Rect) {
         let transformed = self.current_transform.transform_rect_bbox(rect);
-        let clip = match self.current_clip() {
-            Some(current) => current.intersection(transformed).unwrap_or(Rect::ZERO),
-            None => transformed,
+        self.clip_stack.push(ClipPrimitive::Rect(transformed));
+    }
+
+    fn push_clip_path(&mut self, path: &ScenePath, viewport: Size) -> Result<()> {
+        let bounds = self.current_transform.transform_rect_bbox(path.bounds());
+        let vertices = if path.is_empty() || viewport.is_empty() {
+            Vec::new()
+        } else {
+            let lyon_path = build_lyon_path(path, self.current_transform);
+            tessellate_filled_lyon_path_vertices(&lyon_path, viewport)?
         };
-        self.clip_stack.push(clip);
+        self.clip_stack
+            .push(ClipPrimitive::Path { bounds, vertices });
+        Ok(())
     }
 
     fn pop_clip(&mut self) {
@@ -624,14 +854,28 @@ impl SceneRasterState {
         self.current_transform = self.transform_stack.pop().unwrap_or(Transform::IDENTITY);
     }
 
-    fn current_clip(&self) -> Option<Rect> {
-        self.clip_stack.last().copied()
+    fn current_clip_bounds(&self) -> Option<Rect> {
+        let mut clips = self.clip_stack.iter().map(ClipPrimitive::bounds);
+        let first = clips.next()?;
+        Some(clips.fold(first, |current, clip| {
+            current.intersection(clip).unwrap_or(Rect::ZERO)
+        }))
+    }
+
+    fn current_path_clips(&self) -> Vec<Vec<Vertex>> {
+        self.clip_stack
+            .iter()
+            .filter_map(|clip| match clip {
+                ClipPrimitive::Rect(_) => None,
+                ClipPrimitive::Path { vertices, .. } => Some(vertices.clone()),
+            })
+            .collect()
     }
 
     fn visible_rect(&self, rect: Rect) -> Option<Rect> {
         let transformed = self.current_transform.transform_rect_bbox(rect);
 
-        match self.current_clip() {
+        match self.current_clip_bounds() {
             Some(clip) => transformed.intersection(clip),
             None => Some(transformed),
         }
@@ -693,7 +937,7 @@ impl TextEngine {
                         continue;
                     }
 
-                    if let Some(clip) = state.current_clip() {
+                    if let Some(clip) = state.current_clip_bounds() {
                         let transformed = state.current_transform.transform_rect_bbox(bounds);
                         if transformed.intersection(clip).is_none() {
                             continue;
@@ -992,6 +1236,17 @@ fn tessellate_filled_lyon_path(
 
     append_indexed_triangles(vertices, &buffers, color, viewport);
     Ok(())
+}
+
+fn tessellate_filled_lyon_path_vertices(path: &LyonPath, viewport: Size) -> Result<Vec<Vertex>> {
+    let mut vertices = Vec::new();
+    tessellate_filled_lyon_path(
+        &mut vertices,
+        path,
+        Color::rgba(0.0, 0.0, 0.0, 0.0),
+        viewport,
+    )?;
+    Ok(vertices)
 }
 
 fn build_lyon_path(path: &ScenePath, transform: Transform) -> LyonPath {
@@ -1293,6 +1548,37 @@ fn append_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, viewport: S
     ]);
 }
 
+fn push_draw_op(draw_ops: &mut Vec<DrawOp>, vertices: Vec<Vertex>, state: &SceneRasterState) {
+    if vertices.is_empty() {
+        return;
+    }
+
+    draw_ops.push(DrawOp {
+        vertices,
+        clip_paths: state.current_path_clips(),
+    });
+}
+
+fn create_vertex_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    vertices: &[Vertex],
+    label: &str,
+) -> Option<wgpu::Buffer> {
+    if vertices.is_empty() {
+        return None;
+    }
+
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: std::mem::size_of_val(vertices) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buffer, 0, bytemuck::cast_slice(vertices));
+    Some(buffer)
+}
+
 fn to_ndc(x: f32, y: f32, viewport: Size) -> [f32; 2] {
     [
         ((x / viewport.width) * 2.0) - 1.0,
@@ -1363,7 +1649,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{TextEngine, build_vertices, to_ndc};
+    use super::{TextEngine, build_draw_ops, build_vertices, to_ndc};
     use std::sync::Arc;
     use sui_core::{Color, FontHandle, Path, Point, Rect, Size, Transform, WindowId};
     use sui_scene::{
@@ -1506,6 +1792,39 @@ mod tests {
 
         assert!(!vertices.is_empty());
         assert!(vertices.len() >= 12);
+    }
+
+    #[test]
+    fn build_draw_ops_carries_active_path_clips() {
+        let mut clip = Path::builder();
+        clip.move_to(Point::new(8.0, 8.0))
+            .line_to(Point::new(32.0, 8.0))
+            .line_to(Point::new(20.0, 28.0))
+            .close();
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::PushClipPath { path: clip.build() });
+        scene.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 40.0, 40.0),
+            brush: Color::WHITE.into(),
+        });
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let ops = build_draw_ops(
+            &SceneFrame {
+                window_id: WindowId::new(6),
+                viewport: Size::new(64.0, 64.0),
+                dirty_regions: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+            },
+            &mut text_engine,
+        )
+        .unwrap();
+
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].clip_paths.len(), 1);
+        assert!(!ops[0].clip_paths[0].is_empty());
     }
 
     #[test]

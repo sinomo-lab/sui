@@ -125,6 +125,9 @@ pub enum SceneCommand {
     PushClip {
         rect: Rect,
     },
+    PushClipPath {
+        path: Path,
+    },
     PopClip,
     PushTransform {
         transform: Transform,
@@ -272,6 +275,9 @@ mod tests {
             path: Path::from(Rect::new(3.0, 4.0, 12.0, 10.0)),
             brush: Brush::Solid(Color::WHITE),
         };
+        let clip_path = SceneCommand::PushClipPath {
+            path: Path::circle(sui_core::Point::new(10.0, 10.0), 4.0),
+        };
         let transform = SceneCommand::PushTransform {
             transform: Transform::translation(3.0, 5.0),
         };
@@ -280,6 +286,7 @@ mod tests {
         assert!(matches!(image, SceneCommand::DrawImage { .. }));
         assert!(matches!(stroke, SceneCommand::StrokeRect { .. }));
         assert!(matches!(path_fill, SceneCommand::FillPath { .. }));
+        assert!(matches!(clip_path, SceneCommand::PushClipPath { .. }));
         assert!(matches!(transform, SceneCommand::PushTransform { .. }));
     }
 

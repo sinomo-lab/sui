@@ -784,6 +784,11 @@ impl PaintCtx {
         self.scene.push(SceneCommand::DrawImage { rect, source });
     }
 
+    pub fn push_clip(&mut self, path: impl Into<Path>) {
+        self.scene
+            .push(SceneCommand::PushClipPath { path: path.into() });
+    }
+
     pub fn push_clip_rect(&mut self, rect: Rect) {
         self.scene.push(SceneCommand::PushClip { rect });
     }
@@ -1121,9 +1126,11 @@ mod tests {
             Rect::new(0.0, 0.0, 16.0, 16.0),
             sui_core::ImageHandle::new(3),
         );
+        paint.push_clip(sui_core::Path::circle(Point::new(12.0, 12.0), 8.0));
         paint.push_clip_rect(Rect::new(0.0, 0.0, 50.0, 50.0));
         paint.translate(Vector::new(3.0, 4.0));
         paint.pop_transform();
+        paint.pop_clip();
         paint.pop_clip();
 
         assert!(matches!(
@@ -1140,16 +1147,21 @@ mod tests {
         ));
         assert!(matches!(
             paint.scene().commands()[3],
-            SceneCommand::PushClip { .. }
+            SceneCommand::PushClipPath { .. }
         ));
         assert!(matches!(
             paint.scene().commands()[4],
-            SceneCommand::PushTransform { .. }
+            SceneCommand::PushClip { .. }
         ));
         assert!(matches!(
             paint.scene().commands()[5],
+            SceneCommand::PushTransform { .. }
+        ));
+        assert!(matches!(
+            paint.scene().commands()[6],
             SceneCommand::PopTransform
         ));
-        assert!(matches!(paint.scene().commands()[6], SceneCommand::PopClip));
+        assert!(matches!(paint.scene().commands()[7], SceneCommand::PopClip));
+        assert!(matches!(paint.scene().commands()[8], SceneCommand::PopClip));
     }
 }
