@@ -23,9 +23,11 @@ SUI is primarily designed for Rust and wgpu, with support for desktop, mobile, a
 - Support first-class language bindings for Python and JavaScript without making Rust the only viable application entry point.
 - Offer a practical default layout system that is simple for common cases and overridable for advanced widgets.
 - Provide first-class support for vector graphics, pixel graphics, text, and large canvas workflows.
+- Provide strong accessibility support for built-in widgets and a clear accessibility interface for custom widgets.
 - Provide debugging and automated UI testing support suitable for interaction-heavy applications.
 - Support multi-threaded rendering where the target platform and runtime model allow it.
 - Make the toolkit extensible enough for specialized tools such as custom brushes, node editors, visualization panels, and embedded external content.
+- Keep collaboration-oriented application designs viable by avoiding core architectural choices that become roadblocks for synchronized multi-user workflows.
 - Keep the core framework focused on reusable building blocks rather than application-specific policy.
 
 ## Non-Goals
@@ -34,6 +36,7 @@ SUI is primarily designed for Rust and wgpu, with support for desktop, mobile, a
 - SUI does not own localization strategy; instead, it must integrate cleanly with user-provided i18n solutions.
 - SUI does not try to ship a complete content creation application. It provides primitives and infrastructure for applications to build on.
 - SUI does not attempt to expose every possible GPU abstraction in the core UI layer. Low-level access should exist where necessary, but the primary goal is smooth integration, not becoming a general-purpose rendering engine.
+- SUI does not provide built-in collaboration protocols, CRDT implementations, shared-state engines, or network communication layers.
 
 ## Design Principles
 
@@ -65,6 +68,14 @@ The framework should be useful early with a minimal subset, while its architectu
 
 The core architecture should assume that some applications will drive SUI from Python or JavaScript. Public APIs, ownership boundaries, error handling, async behavior, and callback models should therefore be designed so they can be exported cleanly rather than relying on Rust-only patterns everywhere.
 
+### 8. Semantics are first-class
+
+Accessibility metadata should not be an afterthought layered onto widgets later. SUI should treat semantic information as part of the widget contract so built-in widgets are accessible by default and custom widgets can participate in the same model.
+
+### 9. Collaboration-aware architecture
+
+SUI does not need to implement collaboration itself, but it should avoid architectural choices that make synchronization unnecessarily difficult. Event flow, state updates, and invalidation behavior should remain explicit and inspectable so applications can integrate collaboration systems without fighting the framework.
+
 ## Primary Use Cases
 
 SUI is intended for applications such as:
@@ -83,6 +94,7 @@ These applications share a set of requirements that heavily influence the design
 - mixed vector, text, image, and overlay content
 - accurate pointer, keyboard, and IME handling
 - custom rendering and custom widgets
+- accessible semantics for both users and automation systems
 - strong control over performance and memory behavior
 
 ## System Overview
@@ -110,6 +122,8 @@ Each widget should be responsible for:
 - participating in layout
 - producing paint output or child composition
 - exposing semantic information such as focusability or text input behavior
+
+Widgets should also be able to expose richer semantic roles, names, descriptions, state, and actions so the same model can serve accessibility tooling, automated testing, and future AI-driven integrations.
 
 Widgets may be lightweight where possible, but the framework should not force every interaction into a stateless redraw loop if persistent state is the more practical model.
 
@@ -260,6 +274,24 @@ Although SUI is graphics-oriented, it still needs a practical set of standard wi
 
 These widgets should feel native to the framework's event, layout, and paint model rather than imported as a separate form toolkit.
 
+Built-in widgets should provide decent accessibility behavior out of the box, including semantic roles, names, states, focus behavior, and actionable metadata where applicable.
+
+## Accessibility and Semantics
+
+Accessibility support should be a core design concern for SUI.
+
+This includes traditional accessibility use cases such as screen readers, keyboard navigation, and platform accessibility services, but it is also valuable as a structured semantic layer for automation and AI integration. A well-defined semantic model makes it easier for tools to understand what the UI contains, what state it is in, and what actions are available.
+
+The framework should provide:
+
+- accessible semantics for built-in widgets by default
+- a clear interface for custom widgets to expose semantic roles, labels, descriptions, values, states, and actions
+- focus and navigation behavior that aligns with semantic structure
+- integration points for platform accessibility APIs where available
+- a stable semantic representation that can also be used by testing and automation tooling
+
+Accessibility support should be practical rather than ornamental. If a widget is interactive, it should have a meaningful semantic representation unless there is a strong reason not to.
+
 ## Input and Interaction
 
 ### Drag and drop
@@ -348,6 +380,21 @@ The testing model should support:
 - validation of drag-and-drop, focus, keyboard navigation, and text input flows
 
 The goal is to make UI unit and integration tests practical for interactive applications rather than treating them as an afterthought.
+
+## Collaboration Considerations
+
+SUI does not directly provide collaboration infrastructure such as CRDTs, distributed state management, presence systems, or transport layers. Those concerns belong to applications or higher-level frameworks.
+
+However, SUI should be designed with collaboration in mind so it does not become a blocker for synchronized multi-user workflows.
+
+This implies several architectural constraints:
+
+- state changes should remain explicit enough to observe, serialize, and replay
+- event and invalidation paths should avoid unnecessary high-frequency feedback loops that are tolerable locally but hostile to synchronization
+- widget and rendering systems should make it practical to separate authoritative state from local presentation details
+- automation, debugging, and semantic inspection tools should help applications reason about synchronized UI state
+
+The goal is not to make every UI state automatically collaborative. The goal is to avoid coupling the framework to assumptions that only work in a single-user, purely local execution model.
 
 ## Theming and Styling
 
@@ -470,6 +517,7 @@ The framework should likely be developed in phases.
 - standard input handling
 - a minimal set of core widgets
 - color management architecture integrated into the renderer from the start
+- semantic and accessibility interfaces integrated into the widget model from the start
 
 ### Phase 2: Graphics foundation
 
@@ -481,6 +529,7 @@ The framework should likely be developed in phases.
 - multi-threaded render preparation
 - basic theming
 - drag-and-drop and keyboard navigation
+- out-of-the-box accessibility behavior for core widgets
 - debugging overlays and automated UI testing infrastructure
 
 ### Phase 3: Editor-oriented capabilities
@@ -502,6 +551,6 @@ The framework should likely be developed in phases.
 
 ## Summary
 
-SUI aims to be a Rust-native, wgpu-based, event-driven UI toolkit for graphics-heavy applications. Its core value is not just rendering widgets, but providing the architectural building blocks needed for serious interactive tools: efficient event routing, practical layout, strong text and graphics support, infinite canvas workflows, clean integration with external systems, and a supported path to Python and JavaScript adoption.
+SUI aims to be a Rust-native, wgpu-based, event-driven UI toolkit for graphics-heavy applications. Its core value is not just rendering widgets, but providing the architectural building blocks needed for serious interactive tools: efficient event routing, practical layout, strong text and graphics support, accessible semantics, infinite canvas workflows, clean integration with external systems, collaboration-friendly architecture, and a supported path to Python and JavaScript adoption.
 
 The framework should start from a compact, coherent core and grow into advanced capabilities without losing clarity or performance discipline.
