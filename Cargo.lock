@@ -1767,6 +1767,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sui-testing"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+ "sui-layout",
+ "sui-platform",
+ "sui-runtime",
+ "sui-scene",
+]
+
+[[package]]
 name = "sui-widgets"
 version = "0.1.0"
 dependencies = [

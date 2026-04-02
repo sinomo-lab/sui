@@ -32,6 +32,7 @@ sui-core = { path = "crates/sui-core" }
 sui-dev = { path = "crates/sui-dev" }
 sui-layout = { path = "crates/sui-layout" }
 sui-platform = { path = "crates/sui-platform" }
+sui-testing = { path = "crates/sui-testing" }
 sui-widgets = { path = "crates/sui-widgets" }
 sui-render-wgpu = { path = "crates/sui-render-wgpu" }
 sui-runtime = { path = "crates/sui-runtime" }

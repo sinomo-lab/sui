@@ -1,0 +1,59 @@
+use std::{cell::RefCell, rc::Rc};
+
+use sui_core::{Result, SemanticsRole, WindowId};
+
+use crate::{harness::Harness, locator::Locator, selector::Selector, snapshot::WindowSnapshot};
+
+#[derive(Clone)]
+pub struct TestWindow {
+    harness: Rc<RefCell<Harness>>,
+    window_id: WindowId,
+}
+
+impl TestWindow {
+    pub(crate) fn new(harness: Rc<RefCell<Harness>>, window_id: WindowId) -> Self {
+        Self { harness, window_id }
+    }
+
+    pub fn id(&self) -> WindowId {
+        self.window_id
+    }
+
+    pub fn snapshot(&self) -> Result<WindowSnapshot> {
+        let mut harness = self.harness.borrow_mut();
+        harness.run_until_idle()?;
+        harness.snapshot(self.window_id)
+    }
+
+    pub fn run_until_idle(&self) -> Result<()> {
+        self.harness.borrow_mut().run_until_idle()
+    }
+
+    pub fn advance_time(&self, delta: f64) -> Result<()> {
+        self.harness.borrow_mut().advance_time(delta)
+    }
+
+    pub fn locator(&self, selector: Selector) -> Locator {
+        Locator::new(Rc::clone(&self.harness), self.window_id, selector)
+    }
+
+    pub fn root(&self) -> Locator {
+        self.locator(Selector::root())
+    }
+
+    pub fn focused(&self) -> Locator {
+        self.locator(Selector::focused())
+    }
+
+    pub fn get_by_role(&self, role: SemanticsRole) -> Locator {
+        self.locator(Selector::by_role(role))
+    }
+
+    pub fn get_by_text(&self, text: impl Into<String>) -> Locator {
+        self.locator(Selector::by_text(text))
+    }
+
+    pub fn get_by_description(&self, text: impl Into<String>) -> Locator {
+        self.locator(Selector::by_description(text))
+    }
+}

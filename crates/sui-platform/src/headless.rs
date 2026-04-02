@@ -69,6 +69,18 @@ impl HeadlessPlatform {
         runtime.wake_async(window_id, token)
     }
 
+    pub fn current_time(&self) -> f64 {
+        self.frame_clock
+    }
+
+    pub fn pending_event_count(&self) -> usize {
+        self.pending_events.len()
+    }
+
+    pub fn has_pending_events(&self) -> bool {
+        !self.pending_events.is_empty()
+    }
+
     pub fn dispatch_event(
         &mut self,
         runtime: &Runtime,

@@ -4,6 +4,7 @@
 
 - [Core Architecture](./architecture.md)
 - [Crate Architecture and API Boundary Plan](./crate-architecture.md)
+- [Testing Architecture](./testing.md)
 
 ## Vision
 
