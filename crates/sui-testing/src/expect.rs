@@ -90,7 +90,7 @@ impl Expectation {
                 });
                 Error::new(format_failure(
                     action,
-                    self.locator.selector(),
+                    &self.locator.describe(),
                     &snapshot,
                     &format!("timed out after {timeout:.3}s"),
                 ))

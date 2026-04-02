@@ -247,7 +247,7 @@ Each action on a locator should:
 1. pump the harness to a stable point
 2. fetch the latest accessibility snapshot
 3. resolve the selector in the current tree
-4. enforce strictness rules
+4. apply any scoped ancestor locators and then enforce strictness rules
 5. perform the action or evaluate the expectation
 
 This avoids stale-element behavior and makes retries natural.
@@ -270,6 +270,7 @@ The selector model should look familiar to Playwright users but be rooted in SUI
 - `get_by_role(role).with_name(name)`
 - `get_by_text(text)`
 - `get_by_description(text)`
+- descendant scoping through locator chaining such as `row.get_by_role(role)`
 - `focused()`
 - `root()`
 - `locator(filter)` for advanced matching
@@ -291,7 +292,6 @@ Selectors should resolve primarily from `SemanticsNode` fields:
 These are valuable, but not required for the first slice:
 
 - `get_by_label()` once semantic label relationships exist
-- scoped descendant locators
 - `nth()` and `first()` helpers
 - regex or predicate-based matching
 - spatial matching such as `below()`, `near()`, or `inside()`

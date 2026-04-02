@@ -2,8 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
-    PointerEvent, PointerEventKind, Result, SemanticsNode, WindowId,
+    PointerEvent, PointerEventKind, Result, SemanticsNode, WidgetId, WindowId,
 };
+use sui_platform::AccessibilitySnapshot;
 
 use crate::{
     diagnostics::format_failure,
@@ -16,6 +17,7 @@ use crate::{
 pub struct Locator {
     harness: Rc<RefCell<Harness>>,
     window_id: WindowId,
+    scopes: Vec<Selector>,
     selector: Selector,
 }
 
@@ -28,8 +30,37 @@ impl Locator {
         Self {
             harness,
             window_id,
+            scopes: Vec::new(),
             selector,
         }
+    }
+
+    pub fn locator(&self, selector: Selector) -> Self {
+        let mut scopes = self.scopes.clone();
+        scopes.push(self.selector.clone());
+
+        Self {
+            harness: Rc::clone(&self.harness),
+            window_id: self.window_id,
+            scopes,
+            selector,
+        }
+    }
+
+    pub fn focused(&self) -> Self {
+        self.locator(Selector::focused())
+    }
+
+    pub fn get_by_role(&self, role: sui_core::SemanticsRole) -> Self {
+        self.locator(Selector::by_role(role))
+    }
+
+    pub fn get_by_text(&self, text: impl Into<String>) -> Self {
+        self.locator(Selector::by_text(text))
+    }
+
+    pub fn get_by_description(&self, text: impl Into<String>) -> Self {
+        self.locator(Selector::by_description(text))
     }
 
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
@@ -108,6 +139,19 @@ impl Locator {
         self.harness.borrow_mut().dispatch_event(self.window_id, event)
     }
 
+    pub fn describe(&self) -> String {
+        if self.scopes.is_empty() {
+            return self.selector.describe();
+        }
+
+        self.scopes
+            .iter()
+            .chain(std::iter::once(&self.selector))
+            .map(Selector::describe)
+            .collect::<Vec<_>>()
+            .join(" >> ")
+    }
+
     pub(crate) fn harness(&self) -> &Rc<RefCell<Harness>> {
         &self.harness
     }
@@ -126,11 +170,15 @@ impl Locator {
 
     pub(crate) fn resolve_all(&self, harness: &Harness) -> Result<Vec<SemanticsNode>> {
         let snapshot = harness.snapshot(self.window_id)?;
+        let scope_ids = self.resolve_scope_ids(&snapshot.accessibility);
         Ok(snapshot
             .accessibility
             .nodes
             .iter()
-            .filter(|node| self.selector.matches(&snapshot.accessibility, node))
+            .filter(|node| {
+                self.selector.matches(&snapshot.accessibility, node)
+                    && self.matches_scope(&snapshot.accessibility, node.id, &scope_ids)
+            })
             .cloned()
             .collect())
     }
@@ -177,7 +225,45 @@ impl Locator {
         let snapshot = harness
             .snapshot(self.window_id)
             .unwrap_or_else(|_| harness.fallback_snapshot(self.window_id));
-        Error::new(format_failure(action, &self.selector, &snapshot, detail))
+        Error::new(format_failure(action, &self.describe(), &snapshot, detail))
+    }
+
+    fn resolve_scope_ids(&self, snapshot: &AccessibilitySnapshot) -> Vec<WidgetId> {
+        let mut current_scope_ids = Vec::new();
+
+        for scope in &self.scopes {
+            let parent_scope_ids = current_scope_ids.clone();
+            current_scope_ids = snapshot
+                .nodes
+                .iter()
+                .filter(|node| {
+                    scope.matches(snapshot, node)
+                        && (parent_scope_ids.is_empty()
+                            || parent_scope_ids
+                                .iter()
+                                .any(|scope_id| is_descendant(snapshot, node.id, *scope_id)))
+                })
+                .map(|node| node.id)
+                .collect();
+
+            if current_scope_ids.is_empty() {
+                break;
+            }
+        }
+
+        current_scope_ids
+    }
+
+    fn matches_scope(
+        &self,
+        snapshot: &AccessibilitySnapshot,
+        node_id: WidgetId,
+        scope_ids: &[WidgetId],
+    ) -> bool {
+        self.scopes.is_empty()
+            || scope_ids
+                .iter()
+                .any(|scope_id| is_descendant(snapshot, node_id, *scope_id))
     }
 }
 
@@ -186,4 +272,26 @@ fn center(bounds: sui_core::Rect) -> Point {
         bounds.x() + (bounds.width() / 2.0),
         bounds.y() + (bounds.height() / 2.0),
     )
+}
+
+fn is_descendant(snapshot: &AccessibilitySnapshot, node_id: WidgetId, ancestor_id: WidgetId) -> bool {
+    let mut current = parent_id(snapshot, node_id);
+
+    while let Some(parent) = current {
+        if parent == ancestor_id {
+            return true;
+        }
+
+        current = parent_id(snapshot, parent);
+    }
+
+    false
+}
+
+fn parent_id(snapshot: &AccessibilitySnapshot, node_id: WidgetId) -> Option<WidgetId> {
+    snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id == node_id)
+        .and_then(|node| node.parent)
 }

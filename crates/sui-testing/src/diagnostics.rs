@@ -2,17 +2,17 @@ use std::fmt::Write;
 
 use sui_core::{SemanticsNode, SemanticsValue};
 
-use crate::{selector::Selector, snapshot::WindowSnapshot};
+use crate::snapshot::WindowSnapshot;
 
 pub(crate) fn format_failure(
     action: &str,
-    selector: &Selector,
+    selector_description: &str,
     snapshot: &WindowSnapshot,
     detail: &str,
 ) -> String {
     let mut message = String::new();
     let _ = writeln!(message, "{action} failed: {detail}");
-    let _ = writeln!(message, "selector: {}", selector.describe());
+    let _ = writeln!(message, "selector: {selector_description}");
     let _ = writeln!(message, "window: {} ({})", snapshot.title, snapshot.window_id.get());
     let _ = writeln!(
         message,
