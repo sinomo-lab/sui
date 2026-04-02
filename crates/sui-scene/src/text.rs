@@ -139,7 +139,12 @@ impl TextLayout {
 
     pub fn caret_rect(&self, utf8_offset: usize) -> Rect {
         let line = self.line_for_offset(utf8_offset);
-        Rect::new(line.x_for_offset(utf8_offset), line.rect.y(), 1.0, line.rect.height())
+        Rect::new(
+            line.x_for_offset(utf8_offset),
+            line.rect.y(),
+            1.0,
+            line.rect.height(),
+        )
     }
 
     pub fn selection_rects(&self, range: Range<usize>) -> Vec<Rect> {
@@ -232,8 +237,17 @@ impl TextSystem {
         self.shape_text_internal(text.into(), style, Some(box_size), font_registry)
     }
 
-    pub fn shape_text_run(&self, run: &TextRun, font_registry: &FontRegistry) -> Result<TextLayout> {
-        self.shape_text(run.text.clone(), run.rect.size, run.style.clone(), font_registry)
+    pub fn shape_text_run(
+        &self,
+        run: &TextRun,
+        font_registry: &FontRegistry,
+    ) -> Result<TextLayout> {
+        self.shape_text(
+            run.text.clone(),
+            run.rect.size,
+            run.style.clone(),
+            font_registry,
+        )
     }
 
     fn shape_text_internal(
@@ -293,15 +307,15 @@ impl TextSystem {
             for glyph in &line.glyphs {
                 let origin_x = pen_x + glyph.x_offset;
                 let origin_y = pen_y - glyph.y_offset;
-                let bounds = rustybuzz_face.glyph_bounding_box(GlyphId(glyph.glyph_id)).map(
-                    |bbox| {
+                let bounds = rustybuzz_face
+                    .glyph_bounding_box(GlyphId(glyph.glyph_id))
+                    .map(|bbox| {
                         let min_x = origin_x + (f32::from(bbox.x_min) * scale);
                         let max_x = origin_x + (f32::from(bbox.x_max) * scale);
                         let min_y = origin_y - (f32::from(bbox.y_max) * scale);
                         let max_y = origin_y - (f32::from(bbox.y_min) * scale);
                         Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
-                    },
-                );
+                    });
 
                 if let Some(bounds) = bounds {
                     measured_bounds = Some(match measured_bounds {
@@ -363,7 +377,12 @@ impl TextSystem {
                 )
             })
             .unwrap_or_else(|| {
-                Rect::new(0.0, block_top, measured_width, block_height.max(ascent + descent))
+                Rect::new(
+                    0.0,
+                    block_top,
+                    measured_width,
+                    block_height.max(ascent + descent),
+                )
             });
 
         Ok(TextLayout {
@@ -533,7 +552,9 @@ fn build_cluster_geometries(line: &LineSpec, line_origin_x: f32) -> Vec<TextClus
     }
 
     for glyph in &line.glyphs {
-        let cluster = glyph.cluster.clamp(line.byte_range.start, line.byte_range.end);
+        let cluster = glyph
+            .cluster
+            .clamp(line.byte_range.start, line.byte_range.end);
         if cluster != current_start {
             clusters.push(TextClusterGeometry {
                 range: current_start..cluster.max(current_start),
@@ -622,7 +643,13 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(layout.face().face_index(), fonts.get(handle).unwrap().face_index());
-        assert_eq!(layout.face().shared_bytes(), fonts.get(handle).unwrap().shared_bytes());
+        assert_eq!(
+            layout.face().face_index(),
+            fonts.get(handle).unwrap().face_index()
+        );
+        assert_eq!(
+            layout.face().shared_bytes(),
+            fonts.get(handle).unwrap().shared_bytes()
+        );
     }
 }

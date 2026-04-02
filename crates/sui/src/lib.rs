@@ -14,7 +14,7 @@ pub use sui_core::{
 pub use sui_layout::Padding as Insets;
 pub use sui_layout::{Alignment, Axis, Constraints, Padding};
 #[cfg(feature = "desktop")]
-pub use sui_platform::{DesktopPlatform, HeadlessPlatform, PlatformWindow};
+pub use sui_platform::{AccessibilitySnapshot, DesktopPlatform, HeadlessPlatform, PlatformWindow};
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{RendererCapabilities, RendererInterop, WgpuRenderer};
 pub use sui_runtime::{
@@ -123,9 +123,8 @@ pub mod prelude {
         Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, Color, Constraints,
         Event, EventCtx, FontHandle, ImageHandle, ImeEvent, Insets, KeyboardEvent, LayoutCtx,
         PaintCtx, Path, PathBuilder, Point, PointerEvent, Rect, RegisteredFont, RegisteredImage,
-        Result, SemanticsCtx, ShapedText, SingleChild, Size, SizedBox, Stack, StrokeStyle,
-        Style, TextLayout, TextMeasurement, TextStyle, Theme, TimerToken, Transform, WakeEvent,
-        Widget, WidgetChildren, WidgetPod, WindowBuilder,
-        containers::Padding,
+        Result, SemanticsCtx, ShapedText, SingleChild, Size, SizedBox, Stack, StrokeStyle, Style,
+        TextLayout, TextMeasurement, TextStyle, Theme, TimerToken, Transform, WakeEvent, Widget,
+        WidgetChildren, WidgetPod, WindowBuilder, containers::Padding,
     };
 }

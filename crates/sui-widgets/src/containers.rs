@@ -538,8 +538,8 @@ mod tests {
     use sui_core::{Color, Rect, SemanticsNode, SemanticsRole, Size};
     use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
     use sui_runtime::{
-        Application, LayoutCtx, PaintCtx, RenderOutput, SemanticsCtx, Widget,
-        WidgetGraphSnapshot, WindowBuilder,
+        Application, LayoutCtx, PaintCtx, RenderOutput, SemanticsCtx, Widget, WidgetGraphSnapshot,
+        WindowBuilder,
     };
     use sui_scene::{Brush, SceneCommand};
 

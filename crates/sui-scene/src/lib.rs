@@ -10,8 +10,7 @@ use sui_core::{
 };
 
 pub use text::{
-    ResolvedTextFace, ShapedGlyph, ShapedText, TextLayout, TextLine, TextMeasurement,
-    TextSystem,
+    ResolvedTextFace, ShapedGlyph, ShapedText, TextLayout, TextLine, TextMeasurement, TextSystem,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -414,7 +413,7 @@ mod tests {
         };
 
         assert!(matches!(text, SceneCommand::DrawText(_)));
-    assert!(matches!(shaped_text, SceneCommand::DrawShapedText(_)));
+        assert!(matches!(shaped_text, SceneCommand::DrawShapedText(_)));
         assert!(matches!(image, SceneCommand::DrawImage { .. }));
         assert!(matches!(stroke, SceneCommand::StrokeRect { .. }));
         assert!(matches!(path_fill, SceneCommand::FillPath { .. }));

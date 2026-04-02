@@ -21,7 +21,7 @@ use winit::{
     window::{Window, WindowAttributes, WindowId as HostWindowId},
 };
 
-use crate::headless::PlatformWindow;
+use crate::{AccessibilityBridge, headless::PlatformWindow};
 
 #[derive(Debug, Default)]
 pub struct DesktopPlatform {
@@ -115,7 +115,7 @@ impl<'a> DesktopApp<'a> {
                     )
                     .map_err(map_os_error)?,
             );
-                    window.set_ime_allowed(false);
+            window.set_ime_allowed(false);
 
             let host_id = window.id();
             let size = physical_size_to_size(window.inner_size());
@@ -129,6 +129,7 @@ impl<'a> DesktopApp<'a> {
                     id: window_id,
                     title,
                     redraw_requested: false,
+                    accessibility: AccessibilityBridge::default(),
                     pointer: PointerState::default(),
                     window,
                 },
@@ -245,6 +246,7 @@ impl<'a> DesktopApp<'a> {
                 self.runtime.tick(self.frame_clock);
 
                 let output = self.runtime.render(window_id)?;
+                let semantics = output.semantics.clone();
                 self.renderer.render(&output.frame)?;
 
                 if let Some(window) = self.windows.get_mut(&window_id) {
@@ -252,6 +254,8 @@ impl<'a> DesktopApp<'a> {
                         window.title = output.title.clone();
                         window.window.set_title(&output.title);
                     }
+
+                    window.accessibility.update(window_id, semantics);
 
                     apply_ime_composition_rect(window.window.as_ref(), output.ime_composition_rect);
                 }
@@ -519,6 +523,7 @@ struct WindowState {
     id: WindowId,
     title: String,
     redraw_requested: bool,
+    accessibility: AccessibilityBridge,
     pointer: PointerState,
     window: Arc<Window>,
 }
@@ -528,6 +533,7 @@ impl WindowState {
         PlatformWindow {
             id: self.id,
             title: self.title.clone(),
+            accessibility: self.accessibility.snapshot().cloned(),
         }
     }
 }

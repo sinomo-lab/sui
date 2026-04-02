@@ -1142,7 +1142,13 @@ impl TextEngine {
         }
 
         let layout = self.shape_text_run(text, font_registry)?;
-        self.append_text_layout(vertices, state, Point::new(text.rect.x(), text.rect.y()), &layout, viewport)
+        self.append_text_layout(
+            vertices,
+            state,
+            Point::new(text.rect.x(), text.rect.y()),
+            &layout,
+            viewport,
+        )
     }
 
     fn append_shaped_text(
@@ -1181,7 +1187,10 @@ impl TextEngine {
         let layout_rect = Rect::from_origin_size(origin, layout.box_size());
 
         for glyph in layout.glyphs() {
-            if let Some(bounds) = glyph.bounds.map(|bounds| bounds.translate(origin.to_vector())) {
+            if let Some(bounds) = glyph
+                .bounds
+                .map(|bounds| bounds.translate(origin.to_vector()))
+            {
                 if bounds.intersection(layout_rect).is_none() {
                     continue;
                 }

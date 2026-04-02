@@ -3,14 +3,14 @@
 mod widget;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
 };
 
 use sui_core::{
     AsyncWakeToken, DirtyRegion, Error, Event, FontHandle, ImageHandle, InvalidationKind,
-    InvalidationRequest, InvalidationTarget, Point, PointerEventKind, Rect, Result, SemanticsNode,
-    Size, TimerToken, WakeEvent, WidgetId, WindowEvent, WindowId,
+    InvalidationRequest, InvalidationTarget, KeyState, Point, PointerEventKind, Rect, Result,
+    SemanticsNode, Size, TimerToken, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -870,6 +870,20 @@ impl WindowState {
         path: &[WidgetId],
     ) -> Option<FocusRequest> {
         match event {
+            Event::Keyboard(keyboard)
+                if keyboard.state == KeyState::Pressed
+                    && keyboard.key == "Tab"
+                    && !keyboard.repeat
+                    && !keyboard.is_composing
+                    && !keyboard.modifiers.control
+                    && !keyboard.modifiers.alt
+                    && !keyboard.modifiers.meta =>
+            {
+                self.graph
+                    .next_focusable(self.focus.focused_widget, keyboard.modifiers.shift)
+                    .map(FocusRequest::Focus)
+                    .or(Some(FocusRequest::Clear))
+            }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Down => {
                 let Some(hit_target) = hit_target else {
                     return Some(FocusRequest::Clear);
@@ -1020,14 +1034,7 @@ impl WindowState {
                 self.focus.focused_widget,
             );
             self.root.semantics(&mut semantics_ctx);
-            self.last_semantics = semantics_ctx
-                .into_nodes()
-                .into_iter()
-                .map(|mut node| {
-                    node.state.focused = Some(node.id) == self.focus.focused_widget;
-                    node
-                })
-                .collect();
+            self.last_semantics = self.assemble_semantics_tree(semantics_ctx.into_nodes());
         }
 
         let dirty_regions = collect_dirty_regions(viewport, &invalidations, repainted);
@@ -1049,7 +1056,11 @@ impl WindowState {
         }
     }
 
-    fn run_layout_pass(&mut self, text_system: Arc<TextSystem>, font_registry: Arc<FontRegistry>) -> Vec<InvalidationRequest> {
+    fn run_layout_pass(
+        &mut self,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
+    ) -> Vec<InvalidationRequest> {
         let mut layout_ctx = LayoutCtx::new(self.id, self.root.id(), text_system, font_registry);
         let viewport = self.root.layout(&mut layout_ctx, self.layout_constraints());
         self.root
@@ -1092,6 +1103,39 @@ impl WindowState {
         self.viewport_hint
             .map(Constraints::tight)
             .unwrap_or(Constraints::UNBOUNDED)
+    }
+
+    fn assemble_semantics_tree(&self, nodes: Vec<SemanticsNode>) -> Vec<SemanticsNode> {
+        let semantic_ids: HashSet<_> = nodes.iter().map(|node| node.id).collect();
+
+        nodes
+            .into_iter()
+            .map(|mut node| {
+                node.parent = self.resolve_semantics_parent(&semantic_ids, node.id, node.parent);
+                node.state.focused = Some(node.id) == self.focus.focused_widget;
+                node
+            })
+            .collect()
+    }
+
+    fn resolve_semantics_parent(
+        &self,
+        semantic_ids: &HashSet<WidgetId>,
+        widget_id: WidgetId,
+        explicit_parent: Option<WidgetId>,
+    ) -> Option<WidgetId> {
+        if let Some(parent) =
+            explicit_parent.filter(|parent| *parent != widget_id && semantic_ids.contains(parent))
+        {
+            return Some(parent);
+        }
+
+        self.graph.path_to(widget_id).and_then(|path| {
+            path.into_iter()
+                .rev()
+                .skip(1)
+                .find(|candidate| semantic_ids.contains(candidate))
+        })
     }
 }
 
@@ -1156,6 +1200,39 @@ impl WidgetGraph {
 
         path.reverse();
         Some(path)
+    }
+
+    fn next_focusable(&self, current: Option<WidgetId>, backwards: bool) -> Option<WidgetId> {
+        let focusable: Vec<_> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|widget_id| self.node(*widget_id).is_some_and(|node| node.accepts_focus))
+            .collect();
+
+        if focusable.is_empty() {
+            return None;
+        }
+
+        let fallback = if backwards {
+            focusable.last().copied()
+        } else {
+            focusable.first().copied()
+        };
+
+        let Some(current) = current else {
+            return fallback;
+        };
+
+        let Some(index) = focusable.iter().position(|widget_id| *widget_id == current) else {
+            return fallback;
+        };
+
+        if backwards {
+            Some(focusable[(index + focusable.len() - 1) % focusable.len()])
+        } else {
+            Some(focusable[(index + 1) % focusable.len()])
+        }
     }
 
     fn collect(
@@ -1299,7 +1376,7 @@ mod tests {
 
     use super::{
         Application, EventCtx, FocusState, FrameSchedule, LayoutCtx, PaintCtx, Runtime,
-        SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot, WidgetNodeSnapshot,
+        SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot,
         WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_core::{
@@ -1406,6 +1483,59 @@ mod tests {
         }
     }
 
+    struct FocusTraversalRoot {
+        children: WidgetChildren,
+    }
+
+    impl FocusTraversalRoot {
+        fn new(first: Rc<RefCell<Counters>>, second: Rc<RefCell<Counters>>) -> Self {
+            let mut children = WidgetChildren::with_capacity(2);
+            children.push(FocusLeaf { counters: first });
+            children.push(FocusLeaf { counters: second });
+            Self { children }
+        }
+    }
+
+    impl Widget for FocusTraversalRoot {
+        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            let children = self.children.as_mut_slice();
+            children[0].layout_at(
+                ctx,
+                Constraints::tight(Size::new(120.0, 40.0)),
+                Point::new(32.0, 24.0),
+            );
+            children[1].layout_at(
+                ctx,
+                Constraints::tight(Size::new(120.0, 40.0)),
+                Point::new(32.0, 80.0),
+            );
+            size
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            self.children.paint(ctx);
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            ctx.push(SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::Window,
+                ctx.bounds(),
+            ));
+            self.children.semantics(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.children.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.children.visit_children_mut(visitor);
+        }
+    }
+
     #[derive(Default)]
     struct PointerCaptureState {
         moves: usize,
@@ -1506,7 +1636,9 @@ mod tests {
 
         fn paint(&self, ctx: &mut PaintCtx) {
             let layout = self.layout.borrow();
-            let layout = layout.as_ref().expect("layout pass should shape text first");
+            let layout = layout
+                .as_ref()
+                .expect("layout pass should shape text first");
             let origin = ctx.bounds().origin;
             ctx.draw_text_layout(origin, layout);
             ctx.set_ime_composition_rect(layout.caret_rect(3).translate(origin.to_vector()));
@@ -1546,6 +1678,10 @@ mod tests {
                 Point::new(32.0, 24.0),
             );
             size
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            self.child.semantics(ctx);
         }
 
         fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
@@ -1622,6 +1758,27 @@ mod tests {
 
         let window_id = runtime.window_ids()[0];
         (runtime, window_id, root_counters, leaf_counters)
+    }
+
+    fn build_focus_traversal_runtime() -> (
+        Runtime,
+        sui_core::WindowId,
+        Rc<RefCell<Counters>>,
+        Rc<RefCell<Counters>>,
+    ) {
+        let first = Rc::new(RefCell::new(Counters::default()));
+        let second = Rc::new(RefCell::new(Counters::default()));
+
+        let runtime =
+            Application::new()
+                .window(WindowBuilder::new().title("Focus Traversal").root(
+                    FocusTraversalRoot::new(Rc::clone(&first), Rc::clone(&second)),
+                ))
+                .build()
+                .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id, first, second)
     }
 
     fn graph_child(graph: &WidgetGraphSnapshot) -> &WidgetNodeSnapshot {
@@ -1757,11 +1914,46 @@ mod tests {
     }
 
     #[test]
-    fn pointer_focus_routes_keyboard_to_focused_widget() {
-        let (mut runtime, window_id, _, leaf_counters) = build_runtime();
+    fn semantics_attach_to_the_nearest_ancestor_node() {
+        let root_counters = Rc::new(RefCell::new(Counters::default()));
+        let leaf_counters = Rc::new(RefCell::new(Counters::default()));
+
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Test").root(TestRoot {
+                counters: Rc::clone(&root_counters),
+                child: SingleChild::new(ChildRoot::new(FocusLeaf {
+                    counters: Rc::clone(&leaf_counters),
+                })),
+            }))
+            .build()
+            .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id).unwrap();
+        let root_id = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Window)
+            .map(|node| node.id)
+            .unwrap();
+        let leaf = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .unwrap();
+
+        assert_eq!(leaf.parent, Some(root_id));
+    }
+
+    #[test]
+    fn tab_traversal_moves_focus_between_focusable_widgets() {
+        let (mut runtime, window_id, first_counters, second_counters) =
+            build_focus_traversal_runtime();
 
         let _ = runtime.render(window_id).unwrap();
-        let child_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let first_id = graph.nodes[1].id;
+        let second_id = graph.nodes[2].id;
 
         let mut pointer = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
         pointer.button = Some(PointerButton::Primary);
@@ -1773,18 +1965,10 @@ mod tests {
         assert_eq!(
             runtime.focus_state(window_id).unwrap(),
             FocusState {
-                focused_widget: Some(child_id),
+                focused_widget: Some(first_id),
                 window_focused: true,
             }
         );
-
-        let output = runtime.render(window_id).unwrap();
-        let focused_node = output
-            .semantics
-            .iter()
-            .find(|node| node.id == child_id)
-            .unwrap();
-        assert!(focused_node.state.focused);
 
         runtime
             .handle_event(
@@ -1793,8 +1977,38 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(leaf_counters.borrow().keyboard, 1);
-        assert!(leaf_counters.borrow().focus_changes >= 1);
+        assert_eq!(first_counters.borrow().keyboard, 1);
+        assert_eq!(
+            runtime.focus_state(window_id).unwrap(),
+            FocusState {
+                focused_widget: Some(second_id),
+                window_focused: true,
+            }
+        );
+
+        let output = runtime.render(window_id).unwrap();
+        assert!(
+            output
+                .semantics
+                .iter()
+                .find(|node| node.id == second_id)
+                .is_some_and(|node| node.state.focused)
+        );
+
+        let mut reverse_tab = KeyboardEvent::new("Tab", KeyState::Pressed);
+        reverse_tab.modifiers.shift = true;
+        runtime
+            .handle_event(window_id, Event::Keyboard(reverse_tab))
+            .unwrap();
+
+        assert_eq!(second_counters.borrow().keyboard, 1);
+        assert_eq!(
+            runtime.focus_state(window_id).unwrap(),
+            FocusState {
+                focused_widget: Some(first_id),
+                window_focused: true,
+            }
+        );
     }
 
     #[test]

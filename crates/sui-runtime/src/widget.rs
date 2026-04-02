@@ -9,8 +9,8 @@ use sui_core::{
 };
 use sui_layout::Constraints;
 use sui_scene::{
-    Brush, FontRegistry, ImageSource, Scene, SceneCommand, ShapedText, StrokeStyle,
-    TextLayout, TextMeasurement, TextRun, TextStyle, TextSystem,
+    Brush, FontRegistry, ImageSource, Scene, SceneCommand, ShapedText, StrokeStyle, TextLayout,
+    TextMeasurement, TextRun, TextStyle, TextSystem,
 };
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);

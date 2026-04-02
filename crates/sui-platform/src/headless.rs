@@ -4,10 +4,13 @@ use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId
 use sui_render_wgpu::WgpuRenderer;
 use sui_runtime::Runtime;
 
+use crate::{AccessibilityBridge, AccessibilitySnapshot};
+
 #[derive(Debug, Clone)]
 pub struct PlatformWindow {
     pub id: WindowId,
     pub title: String,
+    pub accessibility: Option<AccessibilitySnapshot>,
 }
 
 #[derive(Debug, Default)]
@@ -94,6 +97,13 @@ impl HeadlessPlatform {
         &self.renderer
     }
 
+    pub fn accessibility_snapshot(&self, window_id: WindowId) -> Option<&AccessibilitySnapshot> {
+        self.windows
+            .iter()
+            .find(|window| window.id == window_id && window.open)
+            .and_then(|window| window.accessibility.snapshot())
+    }
+
     fn queue_ready_events(&mut self, runtime: &mut Runtime) {
         self.pending_events.extend(
             runtime
@@ -132,6 +142,7 @@ impl HeadlessPlatform {
                 title: runtime.window_title(window_id)?.to_string(),
                 open: true,
                 redraw_requested: false,
+                accessibility: AccessibilityBridge::default(),
             });
             self.pending_events.push_back(QueuedEvent {
                 window_id,
@@ -188,6 +199,9 @@ impl HeadlessPlatform {
 
                 let output = runtime.render(window_id)?;
                 self.windows[window_index].title = output.title;
+                self.windows[window_index]
+                    .accessibility
+                    .update(window_id, output.semantics);
                 self.renderer.render(&output.frame)?;
             }
         }
@@ -210,6 +224,7 @@ struct WindowState {
     title: String,
     open: bool,
     redraw_requested: bool,
+    accessibility: AccessibilityBridge,
 }
 
 impl WindowState {
@@ -217,6 +232,7 @@ impl WindowState {
         PlatformWindow {
             id: self.id,
             title: self.title.clone(),
+            accessibility: self.accessibility.snapshot().cloned(),
         }
     }
 }
@@ -324,9 +340,13 @@ mod tests {
         let mut platform = HeadlessPlatform::new();
 
         let windows = platform.run(&mut runtime)?;
+        let accessibility = platform.accessibility_snapshot(window_id).unwrap();
 
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].title, "Test");
+        assert_eq!(windows[0].accessibility.as_ref(), Some(accessibility));
+        assert_eq!(accessibility.nodes.len(), 1);
+        assert_eq!(accessibility.nodes[0].role, SemanticsRole::Window);
         assert_eq!(platform.renderer().frames_rendered(), 1);
         assert_eq!(counters.borrow().paints, 1);
 
