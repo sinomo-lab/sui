@@ -8,7 +8,7 @@ use lyon_tessellation::{
     BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor, VertexBuffers,
 };
 use sui_core::{Color, Error, Point, Rect, Result, Size, Transform, WindowId};
-use sui_scene::{Brush, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle};
+use sui_scene::{Brush, FontRegistry, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle};
 use ttf_parser::GlyphId;
 use winit::window::Window;
 
@@ -520,7 +520,13 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                 append_stroke_rect(&mut vertices, &state, *rect, *color, *stroke, viewport);
             }
             SceneCommand::DrawText(text) => {
-                text_engine.append_text_run(&mut vertices, &state, text, viewport)?;
+                text_engine.append_text_run(
+                    &mut vertices,
+                    &state,
+                    text,
+                    frame.font_registry.as_ref(),
+                    viewport,
+                )?;
             }
             SceneCommand::DrawImage { rect, source } => {
                 append_image_placeholder(&mut vertices, &state, *rect, source, viewport);
@@ -546,6 +552,7 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                         text: text.clone(),
                         style: TextStyle::new(*color),
                     },
+                    frame.font_registry.as_ref(),
                     viewport,
                 )?;
             }
@@ -642,13 +649,14 @@ impl TextEngine {
         vertices: &mut Vec<Vertex>,
         state: &SceneRasterState,
         text: &TextRun,
+        font_registry: &FontRegistry,
         viewport: Size,
     ) -> Result<()> {
         if text.rect.is_empty() || text.text.is_empty() || viewport.is_empty() {
             return Ok(());
         }
 
-        let shaped = self.shape_text_run(text)?;
+        let shaped = self.shape_text_run(text, font_registry)?;
         if shaped.measurement.width <= 0.0 || shaped.measurement.height <= 0.0 {
             return Ok(());
         }
@@ -656,57 +664,73 @@ impl TextEngine {
             return Ok(());
         }
 
-        let font_id = self.default_font;
-        self.font_db
-            .with_face_data(font_id, |font_data, face_index| -> Result<()> {
-                let face = rustybuzz::Face::from_slice(font_data, face_index)
-                    .ok_or_else(|| Error::new("failed to parse system font for shaping"))?;
-
-                for glyph in &shaped.glyphs {
-                    if let Some(bounds) = glyph.bounds {
-                        if bounds.intersection(text.rect).is_none() {
-                            continue;
-                        }
-
-                        if let Some(clip) = state.current_clip() {
-                            let transformed = state.current_transform.transform_rect_bbox(bounds);
-                            if transformed.intersection(clip).is_none() {
-                                continue;
-                            }
-                        }
+        self.with_text_face(text, font_registry, |face| {
+            for glyph in &shaped.glyphs {
+                if let Some(bounds) = glyph.bounds {
+                    if bounds.intersection(text.rect).is_none() {
+                        continue;
                     }
 
-                    tessellate_glyph(
-                        vertices,
-                        &face,
-                        glyph,
-                        text.style.color,
-                        state.current_transform,
-                        viewport,
-                    )?;
+                    if let Some(clip) = state.current_clip() {
+                        let transformed = state.current_transform.transform_rect_bbox(bounds);
+                        if transformed.intersection(clip).is_none() {
+                            continue;
+                        }
+                    }
                 }
 
-                Ok(())
-            })
-            .transpose()?
-            .ok_or_else(|| Error::new("failed to access font data for text rendering"))?;
+                tessellate_glyph(
+                    vertices,
+                    &face,
+                    glyph,
+                    text.style.color,
+                    state.current_transform,
+                    viewport,
+                )?;
+            }
+
+            Ok(())
+        })?;
 
         Ok(())
     }
 
-    fn shape_text_run(&self, text: &TextRun) -> Result<ShapedTextLayout> {
+    fn shape_text_run(
+        &self,
+        text: &TextRun,
+        font_registry: &FontRegistry,
+    ) -> Result<ShapedTextLayout> {
+        self.with_text_face(text, font_registry, |face| {
+            shape_text_run_with_face(&face, text)
+        })
+    }
+
+    fn with_text_face<T>(
+        &self,
+        text: &TextRun,
+        font_registry: &FontRegistry,
+        callback: impl FnOnce(rustybuzz::Face<'_>) -> Result<T>,
+    ) -> Result<T> {
+        if let Some(handle) = text.style.font {
+            let font = font_registry.get(handle).ok_or_else(|| {
+                Error::new(format!("font handle {} is not registered", handle.get()))
+            })?;
+            let face =
+                rustybuzz::Face::from_slice(font.bytes(), font.face_index()).ok_or_else(|| {
+                    Error::new(format!("failed to parse font handle {}", handle.get()))
+                })?;
+            return callback(face);
+        }
+
         let font_id = self.default_font;
         self.font_db
-            .with_face_data(
-                font_id,
-                |font_data, face_index| -> Result<ShapedTextLayout> {
-                    let face = rustybuzz::Face::from_slice(font_data, face_index)
-                        .ok_or_else(|| Error::new("failed to parse system font for measurement"))?;
-                    shape_text_run_with_face(&face, text)
-                },
-            )
+            .with_face_data(font_id, |font_data, face_index| -> Result<T> {
+                let face = rustybuzz::Face::from_slice(font_data, face_index)
+                    .ok_or_else(|| Error::new("failed to parse fallback system font"))?;
+                callback(face)
+            })
             .transpose()?
-            .ok_or_else(|| Error::new("failed to access font data for text measurement"))
+            .ok_or_else(|| Error::new("failed to access fallback system font data"))
     }
 }
 
@@ -1186,8 +1210,33 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{TextEngine, build_vertices, to_ndc};
-    use sui_core::{Color, Rect, Size, Transform, WindowId};
-    use sui_scene::{Scene, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle};
+    use std::sync::Arc;
+    use sui_core::{Color, FontHandle, Rect, Size, Transform, WindowId};
+    use sui_scene::{
+        FontRegistry, RegisteredFont, Scene, SceneCommand, SceneFrame, StrokeStyle, TextRun,
+        TextStyle,
+    };
+
+    fn load_test_font() -> RegisteredFont {
+        let mut font_db = fontdb::Database::new();
+        font_db.load_system_fonts();
+        let families = [fontdb::Family::SansSerif];
+        let font_id = font_db
+            .query(&fontdb::Query {
+                families: &families,
+                weight: fontdb::Weight::NORMAL,
+                stretch: fontdb::Stretch::Normal,
+                style: fontdb::Style::Normal,
+            })
+            .or_else(|| font_db.faces().next().map(|face| face.id))
+            .expect("system font available for renderer tests");
+
+        font_db
+            .with_face_data(font_id, |font_data, face_index| {
+                RegisteredFont::from_bytes(font_data.to_vec()).with_face_index(face_index)
+            })
+            .expect("font data should be readable from system font database")
+    }
 
     #[test]
     fn build_vertices_applies_clip_and_transform_to_fill_rects() {
@@ -1210,6 +1259,7 @@ mod tests {
                 viewport: Size::new(100.0, 100.0),
                 dirty_regions: Vec::new(),
                 scene,
+                font_registry: Arc::new(FontRegistry::new()),
             },
             &mut text_engine,
         )
@@ -1247,6 +1297,7 @@ mod tests {
                 viewport: Size::new(100.0, 80.0),
                 dirty_regions: Vec::new(),
                 scene,
+                font_registry: Arc::new(FontRegistry::new()),
             },
             &mut text_engine,
         )
@@ -1265,10 +1316,78 @@ mod tests {
         };
 
         let text_engine = TextEngine::new().unwrap();
-        let layout = text_engine.shape_text_run(&text).unwrap();
+        let layout = text_engine
+            .shape_text_run(&text, &FontRegistry::new())
+            .unwrap();
 
         assert!(!layout.glyphs.is_empty());
         assert!(layout.measurement.width > 0.0);
         assert!(layout.measurement.height >= text.style.font_size);
+    }
+
+    #[test]
+    fn build_vertices_uses_registered_font_handle() {
+        let handle = FontHandle::new(17);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(4.0, 6.0, 120.0, 28.0),
+            text: "registered".to_string(),
+            style: TextStyle {
+                font: Some(handle),
+                ..TextStyle::new(Color::WHITE)
+            },
+        }));
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let vertices = build_vertices(
+            &SceneFrame {
+                window_id: WindowId::new(3),
+                viewport: Size::new(160.0, 60.0),
+                dirty_regions: Vec::new(),
+                scene,
+                font_registry: Arc::new(fonts),
+            },
+            &mut text_engine,
+        )
+        .unwrap();
+
+        assert!(!vertices.is_empty());
+    }
+
+    #[test]
+    fn build_vertices_errors_for_unregistered_font_handle() {
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(4.0, 6.0, 120.0, 28.0),
+            text: "missing".to_string(),
+            style: TextStyle {
+                font: Some(FontHandle::new(404)),
+                ..TextStyle::new(Color::WHITE)
+            },
+        }));
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let error = match build_vertices(
+            &SceneFrame {
+                window_id: WindowId::new(4),
+                viewport: Size::new(160.0, 60.0),
+                dirty_regions: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+            },
+            &mut text_engine,
+        ) {
+            Ok(_) => panic!("expected missing font handle to fail during shaping"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("font handle 404 is not registered")
+        );
     }
 }

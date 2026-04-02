@@ -24,7 +24,8 @@ pub use sui_runtime::{
     WindowBuilder,
 };
 pub use sui_scene::{
-    Brush, ImageSource, Scene, SceneCommand, SceneFrame, StrokeStyle, TextRun, TextStyle,
+    Brush, FontRegistry, ImageSource, RegisteredFont, Scene, SceneCommand, SceneFrame, StrokeStyle,
+    TextRun, TextStyle,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,6 +56,14 @@ impl Application {
     pub fn window(mut self, window: WindowBuilder) -> Self {
         self.inner = self.inner.window(window);
         self
+    }
+
+    pub fn register_font(&mut self, handle: FontHandle, font: RegisteredFont) -> Result<()> {
+        self.inner.register_font(handle, font)
+    }
+
+    pub fn register_font_bytes(&mut self, data: impl Into<Vec<u8>>) -> Result<FontHandle> {
+        self.inner.register_font_bytes(data)
     }
 
     pub fn build(self) -> Result<Runtime> {
@@ -98,9 +107,9 @@ impl Default for Style {
 pub mod prelude {
     pub use crate::{
         Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, Color, Constraints,
-        Event, EventCtx, ImeEvent, Insets, KeyboardEvent, LayoutCtx, PaintCtx, Point, PointerEvent,
-        Rect, Result, SemanticsCtx, SingleChild, Size, SizedBox, Stack, StrokeStyle, Style,
-        TextStyle, Theme, TimerToken, Transform, WakeEvent, Widget, WidgetChildren, WidgetPod,
-        WindowBuilder, containers::Padding,
+        Event, EventCtx, FontHandle, ImeEvent, Insets, KeyboardEvent, LayoutCtx, PaintCtx, Point,
+        PointerEvent, Rect, RegisteredFont, Result, SemanticsCtx, SingleChild, Size, SizedBox,
+        Stack, StrokeStyle, Style, TextStyle, Theme, TimerToken, Transform, WakeEvent, Widget,
+        WidgetChildren, WidgetPod, WindowBuilder, containers::Padding,
     };
 }

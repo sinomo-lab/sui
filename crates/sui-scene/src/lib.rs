@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+use std::{collections::HashMap, sync::Arc};
+
 use sui_core::{Color, DirtyRegion, FontHandle, ImageHandle, Rect, Size, Transform, WindowId};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -149,12 +151,72 @@ impl From<TextRun> for SceneCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisteredFont {
+    data: Arc<[u8]>,
+    face_index: u32,
+}
+
+impl RegisteredFont {
+    pub fn from_bytes(data: impl Into<Vec<u8>>) -> Self {
+        Self {
+            data: Arc::<[u8]>::from(data.into()),
+            face_index: 0,
+        }
+    }
+
+    pub const fn with_face_index(mut self, face_index: u32) -> Self {
+        self.face_index = face_index;
+        self
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub const fn face_index(&self) -> u32 {
+        self.face_index
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FontRegistry {
+    fonts: HashMap<FontHandle, RegisteredFont>,
+}
+
+impl FontRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, handle: FontHandle, font: RegisteredFont) -> Option<RegisteredFont> {
+        self.fonts.insert(handle, font)
+    }
+
+    pub fn get(&self, handle: FontHandle) -> Option<&RegisteredFont> {
+        self.fonts.get(&handle)
+    }
+
+    pub fn contains(&self, handle: FontHandle) -> bool {
+        self.fonts.contains_key(&handle)
+    }
+
+    pub fn len(&self) -> usize {
+        self.fonts.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.fonts.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneFrame {
     pub window_id: WindowId,
     pub viewport: Size,
     pub dirty_regions: Vec<DirtyRegion>,
     pub scene: Scene,
+    pub font_registry: Arc<FontRegistry>,
 }
 
 impl SceneFrame {
@@ -164,14 +226,19 @@ impl SceneFrame {
             viewport,
             dirty_regions: Vec::new(),
             scene: Scene::new(),
+            font_registry: Arc::new(FontRegistry::new()),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Brush, ImageSource, SceneCommand, StrokeStyle, TextRun, TextStyle};
-    use sui_core::{Color, ImageHandle, Rect, Transform};
+    use super::{
+        Brush, FontRegistry, ImageSource, RegisteredFont, SceneCommand, SceneFrame, StrokeStyle,
+        TextRun, TextStyle,
+    };
+    use std::sync::Arc;
+    use sui_core::{Color, FontHandle, ImageHandle, Rect, Transform, WindowId};
 
     #[test]
     fn scene_command_variants_store_extended_primitives() {
@@ -198,5 +265,20 @@ mod tests {
         assert!(matches!(image, SceneCommand::DrawImage { .. }));
         assert!(matches!(stroke, SceneCommand::StrokeRect { .. }));
         assert!(matches!(transform, SceneCommand::PushTransform { .. }));
+    }
+
+    #[test]
+    fn scene_frame_can_share_font_registry_snapshots() {
+        let mut registry = FontRegistry::new();
+        registry.insert(
+            FontHandle::new(9),
+            RegisteredFont::from_bytes(vec![1, 2, 3]),
+        );
+
+        let mut frame = SceneFrame::new(WindowId::new(4), sui_core::Size::new(32.0, 24.0));
+        frame.font_registry = Arc::new(registry);
+
+        assert_eq!(frame.font_registry.len(), 1);
+        assert!(frame.font_registry.contains(FontHandle::new(9)));
     }
 }
