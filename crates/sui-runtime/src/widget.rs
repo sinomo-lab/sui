@@ -4,8 +4,9 @@ use std::sync::{
 };
 
 use sui_core::{
-    AsyncWakeToken, Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Path,
-    Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
+    AsyncWakeToken, Color, DpiInfo, Event, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, Path, Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector,
+    WidgetId, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{Brush, ImageSource, Scene, SceneCommand, StrokeStyle};
@@ -217,6 +218,7 @@ impl WidgetPod {
         let mut child_ctx = LayoutCtx::new(
             parent_ctx.window_id(),
             self.id,
+            parent_ctx.dpi(),
             Arc::clone(&parent_ctx.text_system),
             Arc::clone(&parent_ctx.font_registry),
         );
@@ -246,6 +248,7 @@ impl WidgetPod {
             self.id,
             self.bounds,
             parent_ctx.focused_widget_id(),
+            parent_ctx.dpi(),
         );
         self.widget.paint(&mut child_ctx);
 
@@ -662,6 +665,7 @@ impl EventCtx {
 pub struct LayoutCtx {
     window_id: WindowId,
     widget_id: WidgetId,
+    dpi_info: DpiInfo,
     text_system: Arc<TextSystem>,
     font_registry: Arc<FontRegistry>,
     invalidations: Vec<InvalidationRequest>,
@@ -671,12 +675,14 @@ impl LayoutCtx {
     pub(crate) fn new(
         window_id: WindowId,
         widget_id: WidgetId,
+        dpi_info: DpiInfo,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
     ) -> Self {
         Self {
             window_id,
             widget_id,
+            dpi_info,
             text_system,
             font_registry,
             invalidations: Vec::new(),
@@ -689,6 +695,10 @@ impl LayoutCtx {
 
     pub const fn widget_id(&self) -> WidgetId {
         self.widget_id
+    }
+
+    pub const fn dpi(&self) -> DpiInfo {
+        self.dpi_info
     }
 
     pub fn request(&mut self, request: InvalidationRequest) {
@@ -752,6 +762,7 @@ pub struct PaintCtx {
     widget_id: WidgetId,
     focused_widget_id: Option<WidgetId>,
     bounds: Rect,
+    dpi_info: DpiInfo,
     scene: Scene,
     invalidations: Vec<InvalidationRequest>,
     ime_composition_rect: Option<Rect>,
@@ -763,12 +774,14 @@ impl PaintCtx {
         widget_id: WidgetId,
         bounds: Rect,
         focused_widget_id: Option<WidgetId>,
+        dpi_info: DpiInfo,
     ) -> Self {
         Self {
             window_id,
             widget_id,
             focused_widget_id,
             bounds,
+            dpi_info,
             scene: Scene::new(),
             invalidations: Vec::new(),
             ime_composition_rect: None,
@@ -793,6 +806,10 @@ impl PaintCtx {
 
     pub const fn bounds(&self) -> Rect {
         self.bounds
+    }
+
+    pub const fn dpi(&self) -> DpiInfo {
+        self.dpi_info
     }
 
     pub fn clear(&mut self, color: Color) {
@@ -1042,8 +1059,8 @@ mod tests {
         WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
     };
     use sui_core::{
-        Color, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole, Vector, WidgetId,
-        WindowId,
+        Color, DpiInfo, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole, Vector,
+        WidgetId, WindowId,
     };
     use sui_layout::Constraints;
     use sui_scene::{SceneCommand, StrokeStyle};
@@ -1053,9 +1070,38 @@ mod tests {
         LayoutCtx::new(
             window_id,
             widget_id,
+            DpiInfo::default(),
             std::sync::Arc::new(TextSystem::new()),
             std::sync::Arc::new(FontRegistry::new()),
         )
+    }
+
+    #[test]
+    fn layout_and_paint_ctx_expose_dpi_info() {
+        let dpi = DpiInfo::new(
+            2.0,
+            Some(192.0),
+            sui_core::Size::new(320.0, 180.0),
+            sui_core::Size::new(640.0, 360.0),
+        );
+
+        let layout = LayoutCtx::new(
+            WindowId::new(1),
+            WidgetId::new(2),
+            dpi,
+            std::sync::Arc::new(TextSystem::new()),
+            std::sync::Arc::new(FontRegistry::new()),
+        );
+        let paint = PaintCtx::new(
+            WindowId::new(1),
+            WidgetId::new(2),
+            Rect::new(0.0, 0.0, 120.0, 60.0),
+            None,
+            dpi,
+        );
+
+        assert_eq!(layout.dpi(), dpi);
+        assert_eq!(paint.dpi(), dpi);
     }
 
     struct LabelWidget;
@@ -1120,6 +1166,7 @@ mod tests {
             WidgetId::new(4),
             Rect::new(0.0, 0.0, 120.0, 60.0),
             None,
+            DpiInfo::default(),
         );
         pod.paint(&mut paint);
 
@@ -1196,6 +1243,7 @@ mod tests {
             WidgetId::new(10),
             Rect::new(0.0, 0.0, 120.0, 40.0),
             None,
+            DpiInfo::default(),
         );
         children.paint(&mut paint);
 
@@ -1220,6 +1268,7 @@ mod tests {
             WidgetId::new(12),
             Rect::new(0.0, 0.0, 120.0, 60.0),
             None,
+            DpiInfo::default(),
         );
 
         let mut path = sui_core::Path::builder();
@@ -1291,6 +1340,7 @@ mod tests {
             WidgetId::new(14),
             Rect::new(0.0, 0.0, 120.0, 60.0),
             None,
+            DpiInfo::default(),
         );
         let origin = Point::new(8.0, 10.0);
         paint.draw_text_layout(origin, &layout);

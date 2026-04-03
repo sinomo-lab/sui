@@ -145,6 +145,8 @@ All runtime work starts from normalized events. Event sources include:
 
 Platform-specific details must be translated in `sui-platform` before they reach widgets.
 
+Platform adapters should normalize host coordinates into logical units before dispatch. When widgets need device-aware behavior, runtime contexts such as layout and paint should expose DPI metadata including scale factor, effective DPI, optional raw DPI, and the logical versus physical surface sizes. That keeps input and layout deterministic while still letting widgets opt into pixel-sensitive rendering decisions such as hairline borders or caret widths.
+
 ### Routing model
 
 SUI should use a small, explicit routing model inspired by capture and bubble semantics without inheriting browser complexity.

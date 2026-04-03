@@ -1,7 +1,6 @@
 use sui_core::{
-    Color, Event, ImeEvent, KeyState, Path, PathBuilder, Point, PointerButton,
-    PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
-    ToggleState,
+    Color, Event, ImeEvent, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind,
+    Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, Widget};
@@ -397,8 +396,9 @@ impl Widget for Button {
         self.label_measurement = Some(measurement);
 
         let width = (measurement.width + padding.left + padding.right).max(min_size.width);
-        let height = (measurement.height.max(text_style.line_height) + padding.top + padding.bottom)
-            .max(min_size.height);
+        let height =
+            (measurement.height.max(text_style.line_height) + padding.top + padding.bottom)
+                .max(min_size.height);
 
         constraints.clamp(Size::new(width, height))
     }
@@ -642,11 +642,7 @@ impl Widget for Checkbox {
         let measurement = measure_text(ctx, &self.label, &text_style);
         self.label_measurement = Some(measurement);
 
-        let width = padding.left
-            + indicator_size
-            + gap
-            + measurement.width
-            + padding.right;
+        let width = padding.left + indicator_size + gap + measurement.width + padding.right;
         let height = (indicator_size.max(measurement.height.max(text_style.line_height))
             + padding.top
             + padding.bottom)
@@ -726,7 +722,7 @@ impl Widget for Checkbox {
             ctx.stroke(
                 checkmark_path(indicator.inflate(-4.0, -4.0)),
                 palette.accent_text,
-                StrokeStyle::new(2.0),
+                StrokeStyle::new(physical_pixels(ctx, 2.0)),
             );
         }
         ctx.draw_text(label_rect, self.label.clone(), text_style);
@@ -897,7 +893,8 @@ impl TextInput {
     }
 
     fn resolved_padding(&self) -> Insets {
-        self.padding.unwrap_or(self.theme.metrics.text_input_padding)
+        self.padding
+            .unwrap_or(self.theme.metrics.text_input_padding)
     }
 
     fn resolved_min_size(&self) -> Size {
@@ -1000,10 +997,9 @@ impl Widget for TextInput {
         self.input_measurement = Some(input_measurement);
 
         let width = (visible_measurement.width + padding.left + padding.right).max(min_size.width);
-        let height = (visible_measurement.height.max(text_style.line_height)
-            + padding.top
-            + padding.bottom)
-            .max(min_size.height);
+        let height =
+            (visible_measurement.height.max(text_style.line_height) + padding.top + padding.bottom)
+                .max(min_size.height);
 
         constraints.clamp(Size::new(width, height))
     }
@@ -1051,20 +1047,21 @@ impl Widget for TextInput {
         );
 
         if ctx.is_focused() {
+            let caret_width = physical_pixels(ctx, metrics.caret_width);
             let caret_x = content_rect.x()
                 + self
                     .input_measurement
                     .map(|measurement| measurement.width)
                     .unwrap_or(0.0);
             let caret_rect = Rect::new(
-                caret_x.min((content_rect.max_x() - metrics.caret_width).max(content_rect.x())),
+                caret_x.min((content_rect.max_x() - caret_width).max(content_rect.x())),
                 content_rect.y(),
-                metrics.caret_width,
+                caret_width,
                 content_rect.height().max(text_style.line_height),
             );
             ctx.set_ime_composition_rect(caret_rect);
             ctx.fill(
-                rounded_rect_path(caret_rect, metrics.caret_width * 0.5),
+                rounded_rect_path(caret_rect, caret_width * 0.5),
                 palette.accent_text,
             );
         }
@@ -1129,17 +1126,25 @@ fn draw_control_frame(
     focus_ring: Option<Color>,
 ) {
     if let Some(focus_ring) = focus_ring {
+        let focus_ring_outset = physical_pixels(ctx, metrics.focus_ring_outset);
         ctx.stroke(
             rounded_rect_path(
-                bounds.inflate(metrics.focus_ring_outset, metrics.focus_ring_outset),
-                radius + metrics.focus_ring_outset,
+                bounds.inflate(focus_ring_outset, focus_ring_outset),
+                radius + focus_ring_outset,
             ),
             focus_ring,
-            StrokeStyle::new(metrics.focus_ring_width),
+            StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
         );
     }
 
-    draw_control_shape(ctx, bounds, radius, metrics.border_width, background, border);
+    draw_control_shape(
+        ctx,
+        bounds,
+        radius,
+        physical_pixels(ctx, metrics.border_width),
+        background,
+        border,
+    );
 }
 
 fn draw_control_shape(
@@ -1203,6 +1208,14 @@ fn checkbox_label_rect(bounds: Rect, padding: Insets, indicator_size: f32, gap: 
     )
 }
 
+fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
+    if value <= 0.0 {
+        return 0.0;
+    }
+
+    ctx.dpi().physical_pixels_to_logical(value)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
@@ -1211,7 +1224,7 @@ mod tests {
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, SemanticsRole, Size,
-        Vector,
+        Vector, WindowEvent,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
     use sui_scene::SceneCommand;
@@ -1498,5 +1511,64 @@ mod tests {
         assert_eq!(label.style.font_size, 15.0);
         assert_eq!(label.style.line_height, 22.0);
         assert_eq!(label.style.color, theme.palette.text);
+    }
+
+    #[test]
+    fn button_scales_border_width_for_hidpi() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(Button::new("HiDPI"));
+
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::ScaleFactorChanged {
+                scale_factor: 2.0,
+                raw_dpi: Some(192.0),
+                suggested_size: None,
+            }),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let stroke = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::StrokePath { stroke, .. } => Some(*stroke),
+                _ => None,
+            })
+            .expect("button border stroke command present");
+
+        assert_eq!(stroke.width, 0.5);
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_scales_caret_width_for_hidpi() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(TextInput::new("Name").value("Ada"));
+
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::ScaleFactorChanged {
+                scale_factor: 2.0,
+                raw_dpi: Some(192.0),
+                suggested_size: None,
+            }),
+        )?;
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 16.0), true),
+        )?;
+
+        let output = runtime.render(window_id)?;
+
+        assert_eq!(
+            output
+                .ime_composition_rect
+                .expect("focused text input caret")
+                .width(),
+            1.0
+        );
+        Ok(())
     }
 }

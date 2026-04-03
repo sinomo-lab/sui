@@ -323,8 +323,8 @@ mod tests {
         build_widget_book_application, default_widget_book_state,
     };
     use sui::{
-        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        Result, SemanticsRole, SemanticsValue,
+        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Result,
+        SemanticsRole, SemanticsValue,
     };
     use sui_testing::prelude::*;
 
@@ -412,7 +412,9 @@ mod tests {
         fn prepare(self, window: &TestWindow) -> Result<()> {
             match self {
                 Self::ButtonHover => self.target(window).hover(),
-                Self::ButtonPressed => press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL),
+                Self::ButtonPressed => {
+                    press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL)
+                }
                 Self::EmptyInputFocused => self.target(window).focus(),
                 Self::Overview
                 | Self::OverviewConfigured
@@ -503,7 +505,12 @@ mod tests {
         }
 
         for story in StoryCase::ALL {
-            assert!(artifact_root.join(story.id()).join("screenshot.png").exists());
+            assert!(
+                artifact_root
+                    .join(story.id())
+                    .join("screenshot.png")
+                    .exists()
+            );
         }
 
         Ok(())
@@ -632,7 +639,12 @@ mod tests {
 
     fn env_flag(name: &str) -> bool {
         env::var(name)
-            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
             .unwrap_or(false)
     }
 
@@ -674,15 +686,19 @@ mod tests {
             })?;
         }
 
-        fs::rename(&from_path, &to_path)
-            .map_err(|error| Error::new(format!("failed to rename {}: {error}", from_path.display())))
+        fs::rename(&from_path, &to_path).map_err(|error| {
+            Error::new(format!("failed to rename {}: {error}", from_path.display()))
+        })
     }
 
     fn press_target(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<()> {
         let locator = window.get_by_role(role.clone()).with_name(name);
         let point = node_center(window, role, name)?;
 
-        locator.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)))?;
+        locator.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            point,
+        )))?;
 
         let mut down = PointerEvent::new(PointerEventKind::Down, point);
         down.button = Some(PointerButton::Primary);

@@ -12,11 +12,11 @@ pub mod controls;
 
 pub use containers::{Align, Background, SizedBox, Stack};
 pub use controls::{
-    Button, Checkbox, ControlMetrics, ControlPalette, DefaultTheme, ControlTypography, Label,
+    Button, Checkbox, ControlMetrics, ControlPalette, ControlTypography, DefaultTheme, Label,
     TextInput,
 };
 pub use sui_core::{
-    AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, Error, Event, FontHandle,
+    AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, DpiInfo, Error, Event, FontHandle,
     ImageHandle, ImeEvent, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     KeyboardEvent, Modifiers, Path, PathBuilder, PathElement, Point, PointerButton, PointerButtons,
     PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsAction,
@@ -291,13 +291,13 @@ impl Default for Style {
 pub mod prelude {
     pub use crate::{
         Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, Button, Checkbox,
-        Color, Constraints, ControlMetrics, ControlPalette, ControlTypography, DefaultTheme,
-        Event, EventCtx, FontHandle, ImageHandle, ImeEvent, Insets, KeyboardEvent, Label,
-        LayoutCtx, PaintCtx, Path, PathBuilder, Point, PointerEvent, Rect, RegisteredFont,
-        RegisteredImage, Result, SemanticsCtx, ShapedText, SingleChild, Size, SizedBox, Stack,
-        StrokeStyle, Style, TextInput, TextLayout, TextMeasurement, TextStyle, Theme,
-        ThemeExtension, ThemeExtensions, TimerToken, Transform, WakeEvent, Widget,
-        WidgetChildren, WidgetPod, WindowBuilder, containers::Padding,
+        Color, Constraints, ControlMetrics, ControlPalette, ControlTypography, DefaultTheme, Event,
+        EventCtx, FontHandle, ImageHandle, ImeEvent, Insets, KeyboardEvent, Label, LayoutCtx,
+        PaintCtx, Path, PathBuilder, Point, PointerEvent, Rect, RegisteredFont, RegisteredImage,
+        Result, SemanticsCtx, ShapedText, SingleChild, Size, SizedBox, Stack, StrokeStyle, Style,
+        TextInput, TextLayout, TextMeasurement, TextStyle, Theme, ThemeExtension, ThemeExtensions,
+        TimerToken, Transform, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
+        containers::Padding,
     };
 }
 

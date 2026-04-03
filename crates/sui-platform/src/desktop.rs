@@ -135,7 +135,8 @@ impl<'a> DesktopApp<'a> {
             window.set_ime_allowed(false);
 
             let host_id = window.id();
-            let size = physical_size_to_size(window.inner_size());
+            let scale_factor = window.scale_factor();
+            let size = physical_size_to_logical_size(window.inner_size(), scale_factor);
             self.renderer
                 .register_window(window_id, Arc::clone(&window))?;
 
@@ -148,9 +149,20 @@ impl<'a> DesktopApp<'a> {
                     redraw_requested: false,
                     accessibility: AccessibilityBridge::default(),
                     pointer: PointerState::default(),
+                    scale_factor,
                     window,
                 },
             );
+
+            self.process_event(
+                event_loop,
+                window_id,
+                Event::Window(WindowEvent::ScaleFactorChanged {
+                    scale_factor,
+                    raw_dpi: None,
+                    suggested_size: Some(size),
+                }),
+            )?;
 
             self.process_event(
                 event_loop,
@@ -310,18 +322,24 @@ impl<'a> DesktopApp<'a> {
             WinitWindowEvent::Resized(size) => self.process_event(
                 event_loop,
                 window_id,
-                Event::Window(WindowEvent::Resized(physical_size_to_size(size))),
+                Event::Window(WindowEvent::Resized(
+                    self.windows
+                        .get(&window_id)
+                        .map(|window| physical_size_to_logical_size(size, window.scale_factor))
+                        .unwrap_or_else(|| physical_size_to_logical_size(size, 1.0)),
+                )),
             ),
             WinitWindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                let suggested_size = self
-                    .windows
-                    .get(&window_id)
-                    .map(|window| physical_size_to_size(window.window.inner_size()));
+                let suggested_size = self.windows.get_mut(&window_id).map(|window| {
+                    window.scale_factor = scale_factor;
+                    physical_size_to_logical_size(window.window.inner_size(), scale_factor)
+                });
                 self.process_event(
                     event_loop,
                     window_id,
                     Event::Window(WindowEvent::ScaleFactorChanged {
                         scale_factor,
+                        raw_dpi: None,
                         suggested_size,
                     }),
                 )
@@ -349,7 +367,8 @@ impl<'a> DesktopApp<'a> {
             }
             WinitWindowEvent::CursorMoved { position, .. } => {
                 let event = if let Some(window) = self.windows.get_mut(&window_id) {
-                    let next_position = physical_position_to_point(position);
+                    let next_position =
+                        physical_position_to_logical_point(position, window.scale_factor);
                     let delta = Vector::new(
                         next_position.x - window.pointer.position.x,
                         next_position.y - window.pointer.position.y,
@@ -460,7 +479,7 @@ impl<'a> DesktopApp<'a> {
                                 ScrollDelta::Lines(Vector::new(x, y))
                             }
                             MouseScrollDelta::PixelDelta(position) => ScrollDelta::Pixels(
-                                Vector::new(position.x as f32, position.y as f32),
+                                physical_position_to_logical_vector(position, window.scale_factor),
                             ),
                         }),
                         button: None,
@@ -543,6 +562,7 @@ struct WindowState {
     redraw_requested: bool,
     accessibility: AccessibilityBridge,
     pointer: PointerState,
+    scale_factor: f64,
     window: Arc<Window>,
 }
 
@@ -573,12 +593,22 @@ impl Default for PointerState {
     }
 }
 
-fn physical_size_to_size(size: PhysicalSize<u32>) -> Size {
-    Size::new(size.width as f32, size.height as f32)
+fn physical_size_to_logical_size(size: PhysicalSize<u32>, scale_factor: f64) -> Size {
+    let logical = size.to_logical::<f32>(scale_factor);
+    Size::new(logical.width, logical.height)
 }
 
-fn physical_position_to_point(position: PhysicalPosition<f64>) -> Point {
-    Point::new(position.x as f32, position.y as f32)
+fn physical_position_to_logical_point(position: PhysicalPosition<f64>, scale_factor: f64) -> Point {
+    let logical = position.to_logical::<f32>(scale_factor);
+    Point::new(logical.x, logical.y)
+}
+
+fn physical_position_to_logical_vector(
+    position: PhysicalPosition<f64>,
+    scale_factor: f64,
+) -> Vector {
+    let logical = position.to_logical::<f32>(scale_factor);
+    Vector::new(logical.x, logical.y)
 }
 
 fn apply_ime_composition_rect(window: &Window, rect: Option<sui_core::Rect>) {
@@ -674,4 +704,37 @@ fn map_event_loop_error(error: EventLoopError) -> Error {
 
 fn map_os_error(error: OsError) -> Error {
     Error::new(format!("failed to create desktop window: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        physical_position_to_logical_point, physical_position_to_logical_vector,
+        physical_size_to_logical_size,
+    };
+    use winit::dpi::{PhysicalPosition, PhysicalSize};
+
+    #[test]
+    fn converts_physical_size_to_logical_size() {
+        let size = physical_size_to_logical_size(PhysicalSize::new(640, 360), 2.0);
+
+        assert_eq!(size.width, 320.0);
+        assert_eq!(size.height, 180.0);
+    }
+
+    #[test]
+    fn converts_physical_pointer_position_to_logical_point() {
+        let point = physical_position_to_logical_point(PhysicalPosition::new(240.0, 120.0), 1.5);
+
+        assert_eq!(point.x, 160.0);
+        assert_eq!(point.y, 80.0);
+    }
+
+    #[test]
+    fn converts_physical_scroll_delta_to_logical_vector() {
+        let delta = physical_position_to_logical_vector(PhysicalPosition::new(90.0, 45.0), 1.5);
+
+        assert_eq!(delta.x, 60.0);
+        assert_eq!(delta.y, 30.0);
+    }
 }

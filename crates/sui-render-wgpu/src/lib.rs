@@ -8,8 +8,8 @@ use lyon_path::{
     math::point,
 };
 use lyon_tessellation::{
-    BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor,
-    StrokeOptions, StrokeTessellator, StrokeVertex, StrokeVertexConstructor, VertexBuffers,
+    BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor, StrokeOptions,
+    StrokeTessellator, StrokeVertex, StrokeVertexConstructor, VertexBuffers,
 };
 use sui_core::{
     Color, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result, Size,
@@ -140,7 +140,7 @@ impl WgpuRenderer {
     }
 
     pub fn render(&mut self, frame: &SceneFrame) -> Result<()> {
-        let viewport = normalize_viewport(frame.viewport);
+        let viewport = normalize_framebuffer_size(frame.surface_size);
 
         if let Some(size) = viewport {
             if self.surfaces.contains_key(&frame.window_id) {
@@ -527,7 +527,7 @@ impl WgpuRenderer {
             });
         } else {
             let stencil_view = if draw_ops.iter().any(|op| !op.clip_paths.is_empty()) {
-                let size = normalize_viewport(frame.viewport).unwrap_or((1, 1));
+                let size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
                 let shared = self
                     .shared
                     .as_ref()
@@ -1133,7 +1133,14 @@ fn build_draw_ops(
             SceneCommand::FillRect { rect, brush } => {
                 let Brush::Solid(color) = brush;
                 let mut vertices = Vec::new();
-                append_painted_rect(&mut vertices, &state, *rect, *color, viewport, feather_width);
+                append_painted_rect(
+                    &mut vertices,
+                    &state,
+                    *rect,
+                    *color,
+                    viewport,
+                    feather_width,
+                );
                 push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::StrokeRect {
@@ -1394,7 +1401,14 @@ impl TextEngine {
             return Ok(());
         }
 
-        self.append_text_layout(vertices, state, text.origin, &text.layout, viewport, feather_width)
+        self.append_text_layout(
+            vertices,
+            state,
+            text.origin,
+            &text.layout,
+            viewport,
+            feather_width,
+        )
     }
 
     fn append_text_layout(
@@ -1537,7 +1551,14 @@ fn append_stroked_path(
     }
 
     let lyon_path = build_lyon_path(path, state.current_transform);
-    append_feathered_stroke(vertices, &lyon_path, color, line_width, viewport, feather_width);
+    append_feathered_stroke(
+        vertices,
+        &lyon_path,
+        color,
+        line_width,
+        viewport,
+        feather_width,
+    );
     Ok(())
 }
 
@@ -1993,13 +2014,13 @@ fn to_ndc(x: f32, y: f32, viewport: Size) -> [f32; 2] {
     ]
 }
 
-fn normalize_viewport(size: Size) -> Option<(u32, u32)> {
+fn normalize_framebuffer_size(size: Size) -> Option<(u32, u32)> {
     if size.is_empty() {
         None
     } else {
         Some(normalize_surface_size(
-            size.width as u32,
-            size.height as u32,
+            size.width.round() as u32,
+            size.height.round() as u32,
         ))
     }
 }
@@ -2720,6 +2741,8 @@ mod tests {
             &SceneFrame {
                 window_id: WindowId::new(1),
                 viewport: Size::new(100.0, 100.0),
+                surface_size: Size::new(100.0, 100.0),
+                scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
@@ -2765,6 +2788,8 @@ mod tests {
             &SceneFrame {
                 window_id: WindowId::new(2),
                 viewport: Size::new(100.0, 80.0),
+                surface_size: Size::new(100.0, 80.0),
+                scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
@@ -2808,6 +2833,8 @@ mod tests {
             &SceneFrame {
                 window_id: WindowId::new(5),
                 viewport: Size::new(80.0, 60.0),
+                surface_size: Size::new(80.0, 60.0),
+                scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
@@ -2841,6 +2868,8 @@ mod tests {
             &SceneFrame {
                 window_id: WindowId::new(6),
                 viewport: Size::new(64.0, 64.0),
+                surface_size: Size::new(64.0, 64.0),
+                scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
@@ -2896,6 +2925,8 @@ mod tests {
             &SceneFrame {
                 window_id: WindowId::new(11),
                 viewport: Size::new(100.0, 80.0),
+                surface_size: Size::new(100.0, 80.0),
+                scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
@@ -2929,6 +2960,8 @@ mod tests {
             &SceneFrame {
                 window_id: WindowId::new(3),
                 viewport: Size::new(160.0, 60.0),
+                surface_size: Size::new(160.0, 60.0),
+                scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(fonts),
@@ -2958,6 +2991,8 @@ mod tests {
             &SceneFrame {
                 window_id: WindowId::new(4),
                 viewport: Size::new(160.0, 60.0),
+                surface_size: Size::new(160.0, 60.0),
+                scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
@@ -3003,6 +3038,8 @@ mod tests {
             &SceneFrame {
                 window_id: WindowId::new(7),
                 viewport: Size::new(96.0, 64.0),
+                surface_size: Size::new(96.0, 64.0),
+                scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
@@ -3031,6 +3068,8 @@ mod tests {
             &SceneFrame {
                 window_id: WindowId::new(8),
                 viewport: Size::new(96.0, 64.0),
+                surface_size: Size::new(96.0, 64.0),
+                scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),

@@ -213,6 +213,7 @@ pub enum WindowEvent {
     Resized(Size),
     ScaleFactorChanged {
         scale_factor: f64,
+        raw_dpi: Option<f32>,
         suggested_size: Option<Size>,
     },
     Focused(bool),

@@ -16,6 +16,7 @@ use sui_layout::Constraints;
 use sui_scene::{ImageRegistry, RegisteredImage, SceneFrame};
 use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
+pub use sui_core::DpiInfo;
 pub use widget::{
     EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
     WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
@@ -504,6 +505,8 @@ struct WindowState {
     graph: WidgetGraph,
     focus: FocusState,
     schedule: FrameSchedule,
+    scale_factor: f32,
+    raw_dpi: Option<f32>,
     viewport_hint: Option<Size>,
     viewport: Option<Size>,
     last_frame: Option<SceneFrame>,
@@ -532,6 +535,8 @@ impl WindowState {
             root,
             focus,
             schedule: FrameSchedule::bootstrap(),
+            scale_factor: 1.0,
+            raw_dpi: None,
             viewport_hint: None,
             viewport: None,
             last_frame: None,
@@ -646,11 +651,17 @@ impl WindowState {
                 self.viewport_hint = Some(*size);
                 self.schedule.mark(InvalidationKind::Layout);
             }
-            WindowEvent::ScaleFactorChanged { suggested_size, .. } => {
+            WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                raw_dpi,
+                suggested_size,
+            } => {
+                self.scale_factor = *scale_factor as f32;
+                self.raw_dpi = *raw_dpi;
                 if let Some(size) = suggested_size {
                     self.viewport_hint = Some(*size);
-                    self.schedule.mark(InvalidationKind::Layout);
                 }
+                self.schedule.mark(InvalidationKind::Layout);
             }
             WindowEvent::Focused(focused) => {
                 self.focus.window_focused = *focused;
@@ -1000,6 +1011,7 @@ impl WindowState {
         }
 
         let viewport = self.viewport.unwrap_or(Size::ZERO);
+        let dpi_info = self.dpi_info_for_viewport(viewport);
 
         if self.schedule.paint || self.last_frame.is_none() {
             repainted = true;
@@ -1009,6 +1021,7 @@ impl WindowState {
                 self.root.id(),
                 self.root.bounds(),
                 self.focus.focused_widget,
+                dpi_info,
             );
             self.root.paint(&mut paint_ctx);
             let (scene, paint_invalidations, ime_composition_rect) = paint_ctx.into_parts();
@@ -1017,6 +1030,8 @@ impl WindowState {
             self.last_frame = Some(SceneFrame {
                 window_id: self.id,
                 viewport,
+                surface_size: dpi_info.surface_size,
+                scale_factor: dpi_info.scale_factor,
                 dirty_regions: Vec::new(),
                 scene,
                 font_registry: Arc::clone(&font_registry),
@@ -1041,6 +1056,9 @@ impl WindowState {
             .last_frame
             .clone()
             .unwrap_or_else(|| SceneFrame::new(self.id, viewport));
+        frame.viewport = viewport;
+        frame.surface_size = dpi_info.surface_size;
+        frame.scale_factor = dpi_info.scale_factor;
         frame.dirty_regions = dirty_regions;
         frame.font_registry = font_registry;
         frame.image_registry = image_registry;
@@ -1060,7 +1078,13 @@ impl WindowState {
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
     ) -> Vec<InvalidationRequest> {
-        let mut layout_ctx = LayoutCtx::new(self.id, self.root.id(), text_system, font_registry);
+        let mut layout_ctx = LayoutCtx::new(
+            self.id,
+            self.root.id(),
+            self.current_dpi_info(),
+            text_system,
+            font_registry,
+        );
         let viewport = self.root.layout(&mut layout_ctx, self.layout_constraints());
         self.root
             .set_bounds(Rect::from_origin_size(Point::ZERO, viewport));
@@ -1104,6 +1128,42 @@ impl WindowState {
             .unwrap_or(Constraints::UNBOUNDED)
     }
 
+    fn dpi_info_for_viewport(&self, viewport: Size) -> DpiInfo {
+        DpiInfo::new(
+            self.scale_factor,
+            self.raw_dpi,
+            viewport,
+            scale_viewport_to_surface_size(viewport, self.scale_factor),
+        )
+    }
+
+    fn current_dpi_info(&self) -> DpiInfo {
+        let viewport = self.viewport.or(self.viewport_hint).unwrap_or(Size::ZERO);
+        self.dpi_info_for_viewport(viewport)
+    }
+}
+
+fn normalize_scale_factor(scale_factor: f32) -> f32 {
+    if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    }
+}
+
+fn scale_viewport_to_surface_size(viewport: Size, scale_factor: f32) -> Size {
+    if viewport.is_empty() {
+        return Size::ZERO;
+    }
+
+    let scale_factor = normalize_scale_factor(scale_factor);
+    Size::new(
+        (viewport.width * scale_factor).round().max(1.0),
+        (viewport.height * scale_factor).round().max(1.0),
+    )
+}
+
+impl WindowState {
     fn assemble_semantics_tree(&self, nodes: Vec<SemanticsNode>) -> Vec<SemanticsNode> {
         let semantic_ids: HashSet<_> = nodes.iter().map(|node| node.id).collect();
 
@@ -1381,7 +1441,7 @@ mod tests {
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
         KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent,
+        SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent, WindowEvent,
     };
     use sui_layout::Constraints;
     use sui_scene::RegisteredImage;
@@ -1853,6 +1913,30 @@ mod tests {
         assert_eq!(graph_child(&graph).parent, Some(graph.root));
         assert!(graph_child(&graph).accepts_focus);
         assert_eq!(output.frame.viewport, Size::new(320.0, 180.0));
+        assert_eq!(output.frame.surface_size, Size::new(320.0, 180.0));
+        assert_eq!(output.frame.scale_factor, 1.0);
+    }
+
+    #[test]
+    fn runtime_reports_surface_size_and_scale_factor_for_hidpi_windows() {
+        let (mut runtime, window_id, _, _) = build_runtime();
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Window(WindowEvent::ScaleFactorChanged {
+                    scale_factor: 2.0,
+                    raw_dpi: Some(192.0),
+                    suggested_size: Some(Size::new(320.0, 180.0)),
+                }),
+            )
+            .unwrap();
+
+        let output = runtime.render(window_id).unwrap();
+
+        assert_eq!(output.frame.viewport, Size::new(320.0, 180.0));
+        assert_eq!(output.frame.surface_size, Size::new(640.0, 360.0));
+        assert_eq!(output.frame.scale_factor, 2.0);
     }
 
     #[test]

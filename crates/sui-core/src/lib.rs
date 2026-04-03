@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod color;
+mod dpi;
 mod error;
 mod event;
 mod geometry;
@@ -9,6 +10,7 @@ mod invalidation;
 mod semantics;
 
 pub use color::{Color, ColorSpace};
+pub use dpi::DpiInfo;
 pub use error::{Error, Result};
 pub use event::{
     CustomEvent, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, PointerButton,

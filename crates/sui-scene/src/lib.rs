@@ -241,6 +241,8 @@ impl ImageRegistry {
 pub struct SceneFrame {
     pub window_id: WindowId,
     pub viewport: Size,
+    pub surface_size: Size,
+    pub scale_factor: f32,
     pub dirty_regions: Vec<DirtyRegion>,
     pub scene: Scene,
     pub font_registry: Arc<FontRegistry>,
@@ -252,6 +254,8 @@ impl SceneFrame {
         Self {
             window_id,
             viewport,
+            surface_size: viewport,
+            scale_factor: 1.0,
             dirty_regions: Vec::new(),
             scene: Scene::new(),
             font_registry: Arc::new(FontRegistry::new()),
