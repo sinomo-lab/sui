@@ -32,6 +32,7 @@ impl DesktopPlatform {
     const DEFAULT_WINDOW_SIZE: Size = Size::new(1280.0, 720.0);
 
     pub fn new() -> Self {
+        crate::reset_window_performance_store();
         Self::default()
     }
 
@@ -111,6 +112,7 @@ impl<'a> DesktopApp<'a> {
             if let Some(window) = self.windows.remove(&window_id) {
                 self.renderer.remove_window(window_id);
                 self.host_to_runtime.remove(&window.window.id());
+                crate::clear_window_performance(window_id);
             }
         }
 
@@ -147,6 +149,8 @@ impl<'a> DesktopApp<'a> {
                     id: window_id,
                     title,
                     redraw_requested: false,
+                    frame_index: 0,
+                    pending_event_time_ms: 0.0,
                     accessibility: AccessibilityBridge::default(),
                     pointer: PointerState::default(),
                     scale_factor,
@@ -263,7 +267,13 @@ impl<'a> DesktopApp<'a> {
         let is_redraw = matches!(event, Event::Window(WindowEvent::RedrawRequested));
         let is_close = matches!(event, Event::Window(WindowEvent::CloseRequested));
 
+        let event_started = Instant::now();
         self.runtime.handle_event(window_id, event)?;
+        let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
+
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            window.pending_event_time_ms += event_time_ms;
+        }
 
         if is_redraw {
             if let Some(window) = self.windows.get_mut(&window_id) {
@@ -276,9 +286,18 @@ impl<'a> DesktopApp<'a> {
 
                 let output = self.runtime.render(window_id)?;
                 let semantics = output.semantics.clone();
+                let renderer_started = Instant::now();
                 self.renderer.render(&output.frame)?;
+                let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
+
+                let mut frame_index = 0;
+                let mut pending_event_time_ms = 0.0;
 
                 if let Some(window) = self.windows.get_mut(&window_id) {
+                    frame_index = window.frame_index + 1;
+                    pending_event_time_ms = std::mem::take(&mut window.pending_event_time_ms);
+                    window.frame_index = frame_index;
+
                     if window.title != output.title {
                         window.title = output.title.clone();
                         window.window.set_title(&output.title);
@@ -288,11 +307,20 @@ impl<'a> DesktopApp<'a> {
 
                     apply_ime_composition_rect(window.window.as_ref(), output.ime_composition_rect);
                 }
+
+                crate::publish_frame_performance(
+                    window_id,
+                    frame_index,
+                    pending_event_time_ms,
+                    &output,
+                    renderer_time_ms,
+                );
             }
         }
 
         if is_close {
             self.runtime.remove_window(window_id)?;
+            crate::clear_window_performance(window_id);
             self.sync_windows(event_loop)?;
         }
 
@@ -560,6 +588,8 @@ struct WindowState {
     id: WindowId,
     title: String,
     redraw_requested: bool,
+    frame_index: u64,
+    pending_event_time_ms: f64,
     accessibility: AccessibilityBridge,
     pointer: PointerState,
     scale_factor: f64,

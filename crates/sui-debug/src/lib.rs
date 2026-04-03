@@ -5,7 +5,10 @@ use std::collections::HashMap;
 use sui_core::{Color, DirtyRegion, Rect, SemanticsValue, Size, WidgetId, WindowId};
 use sui_layout::Alignment;
 use sui_platform::AccessibilitySnapshot;
-use sui_runtime::{FocusState, FrameSchedule, Widget, WidgetGraphSnapshot, WidgetNodeSnapshot};
+use sui_runtime::{
+    FocusState, FrameSchedule, SceneStatistics, Widget, WidgetGraphSnapshot,
+    WidgetNodeSnapshot, WindowPerformanceSnapshot,
+};
 use sui_scene::{SceneCommand, SceneFrame};
 use sui_widgets::{
     Background, Label, ListItem, ListView, Padding, ScrollView, Separator, SizedBox, Stack,
@@ -90,6 +93,17 @@ impl From<&SceneFrame> for SceneDebugSummary {
             dirty_regions: frame.dirty_regions.clone(),
             command_count: frame.scene.commands().len(),
             command_breakdown,
+        }
+    }
+}
+
+impl From<&SceneStatistics> for SceneDebugSummary {
+    fn from(scene: &SceneStatistics) -> Self {
+        Self {
+            viewport: scene.viewport,
+            dirty_regions: scene.dirty_regions.clone(),
+            command_count: scene.command_count,
+            command_breakdown: scene.command_breakdown.clone(),
         }
     }
 }
@@ -625,4 +639,93 @@ mod tests {
         assert!(summary.command_breakdown.contains(&("Clear".to_string(), 2)));
         assert!(summary.command_breakdown.contains(&("Label".to_string(), 1)));
     }
+}
+
+pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Widget {
+    let slowest_phase = snapshot.slowest_phase();
+    let slowest_label = slowest_phase
+        .map(|sample| sample.phase.label())
+        .unwrap_or("No measured work");
+    let slowest_duration_ms = slowest_phase.map(|sample| sample.duration_ms).unwrap_or(0.0);
+
+    let metrics = debug_metric_grid([
+        DebugMetric::new("Frame", format_duration_ms(snapshot.total_time_ms))
+            .detail("Wall time across event handling, runtime, and renderer")
+            .tone(duration_tone(snapshot.total_time_ms)),
+        DebugMetric::new("Slowest phase", slowest_label)
+            .detail(format_duration_ms(slowest_duration_ms))
+            .tone(duration_tone(slowest_duration_ms)),
+        DebugMetric::new("Commands", snapshot.scene.command_count.to_string())
+            .detail("Renderer-neutral draw commands in the current scene")
+            .tone(DebugTone::Neutral),
+        DebugMetric::new("Dirty coverage", format!("{:.1}%", snapshot.scene.dirty_coverage))
+            .detail(format!("{:.0} px^2 invalidated in this frame", snapshot.scene.dirty_area))
+            .tone(if snapshot.scene.dirty_regions.is_empty() {
+                DebugTone::Success
+            } else {
+                DebugTone::Warning
+            }),
+    ]);
+
+    let phase_rows = snapshot
+        .phase_timings
+        .iter()
+        .map(|sample| {
+            let share = if snapshot.total_time_ms > 0.0 {
+                (sample.duration_ms / snapshot.total_time_ms) * 100.0
+            } else {
+                0.0
+            };
+
+            TableRow::new([
+                sample.phase.label().to_string(),
+                format_duration_ms(sample.duration_ms),
+                format!("{share:.1}%"),
+            ])
+        })
+        .collect::<Vec<_>>();
+
+    Stack::vertical()
+        .spacing(12.0)
+        .alignment(Alignment::Stretch)
+        .with_child(metrics)
+        .with_child(debug_key_values([
+            DebugKeyValue::new("Frame index", snapshot.frame_index.to_string()),
+            DebugKeyValue::new("Dirty regions", snapshot.scene.dirty_regions.len().to_string()),
+            DebugKeyValue::new("Text commands", snapshot.scene.text_command_count.to_string()),
+            DebugKeyValue::new("Image commands", snapshot.scene.image_command_count.to_string()),
+            DebugKeyValue::new("Clip commands", snapshot.scene.clip_command_count.to_string()),
+            DebugKeyValue::new(
+                "Transform commands",
+                snapshot.scene.transform_command_count.to_string(),
+            ),
+        ]))
+        .with_child(
+            SizedBox::new().height(176.0).with_child(
+                Table::new("Frame phase timings")
+                    .columns([
+                        TableColumn::new("Phase").min_width(180.0),
+                        TableColumn::new("Duration").width(110.0),
+                        TableColumn::new("Share").width(90.0),
+                    ])
+                    .rows(phase_rows),
+            ),
+        )
+        .with_child(scene_summary_view(SceneDebugSummary::from(&snapshot.scene)))
+}
+
+fn duration_tone(duration_ms: f64) -> DebugTone {
+    if duration_ms >= 33.0 {
+        DebugTone::Danger
+    } else if duration_ms >= 16.7 {
+        DebugTone::Warning
+    } else if duration_ms > 0.0 {
+        DebugTone::Success
+    } else {
+        DebugTone::Neutral
+    }
+}
+
+fn format_duration_ms(duration_ms: f64) -> String {
+    format!("{duration_ms:.2} ms")
 }

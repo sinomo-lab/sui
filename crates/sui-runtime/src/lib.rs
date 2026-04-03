@@ -1,10 +1,12 @@
 #![forbid(unsafe_code)]
 
 mod widget;
+mod diagnostics;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
+    time::Instant,
 };
 
 use sui_core::{
@@ -17,6 +19,12 @@ use sui_scene::{ImageRegistry, RegisteredImage, SceneFrame};
 use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
 pub use sui_core::DpiInfo;
+pub use diagnostics::{
+    FramePhase, FramePhaseSample, RenderDiagnostics, SceneStatistics,
+    WindowPerformanceSnapshot, clear_window_performance_snapshot,
+    clear_window_performance_snapshots, publish_window_performance_snapshot,
+    window_performance_snapshot,
+};
 pub use widget::{
     EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
     WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
@@ -1000,6 +1008,7 @@ impl WindowState {
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) -> RenderOutput {
+        let mut diagnostics = RenderDiagnostics::default();
         let mut invalidations = std::mem::take(&mut self.pending_invalidations);
         let mut repainted = false;
 
@@ -1008,19 +1017,24 @@ impl WindowState {
         }
 
         if self.schedule.layout || self.viewport.is_none() {
+            let started = Instant::now();
             invalidations.extend(self.run_layout_pass(
                 text_system,
                 Arc::clone(&font_registry),
                 Arc::clone(&image_registry),
             ));
+            diagnostics.push(FramePhase::Layout, started.elapsed());
         } else if self.schedule.hit_test || self.graph.is_empty() {
+            let started = Instant::now();
             self.refresh_graph();
+            diagnostics.push(FramePhase::HitTest, started.elapsed());
         }
 
         let viewport = self.viewport.unwrap_or(Size::ZERO);
         let dpi_info = self.dpi_info_for_viewport(viewport);
 
         if self.schedule.paint || self.last_frame.is_none() {
+            let started = Instant::now();
             repainted = true;
 
             let mut paint_ctx = PaintCtx::new(
@@ -1044,9 +1058,11 @@ impl WindowState {
                 font_registry: Arc::clone(&font_registry),
                 image_registry: Arc::clone(&image_registry),
             });
+            diagnostics.push(FramePhase::Paint, started.elapsed());
         }
 
         if self.schedule.semantics || self.last_semantics.is_empty() {
+            let started = Instant::now();
             let mut semantics_ctx = SemanticsCtx::new(
                 self.id,
                 self.root.id(),
@@ -1056,6 +1072,7 @@ impl WindowState {
             );
             self.root.semantics(&mut semantics_ctx);
             self.last_semantics = self.assemble_semantics_tree(semantics_ctx.into_nodes());
+            diagnostics.push(FramePhase::Semantics, started.elapsed());
         }
 
         let dirty_regions = collect_dirty_regions(viewport, &invalidations, repainted);
@@ -1077,6 +1094,7 @@ impl WindowState {
             frame,
             semantics: self.last_semantics.clone(),
             ime_composition_rect: self.ime_composition_rect,
+            diagnostics,
         }
     }
 
@@ -1436,6 +1454,7 @@ pub struct RenderOutput {
     pub frame: SceneFrame,
     pub semantics: Vec<SemanticsNode>,
     pub ime_composition_rect: Option<Rect>,
+    pub diagnostics: RenderDiagnostics,
 }
 
 #[cfg(test)]

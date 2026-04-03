@@ -36,10 +36,11 @@ pub use sui_platform::{AccessibilitySnapshot, DesktopPlatform, HeadlessPlatform,
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{RendererCapabilities, RendererInterop, WgpuRenderer};
 pub use sui_runtime::{
-    Application as RuntimeApplication, EventCtx, EventPhase, FocusState, FrameSchedule, LayoutCtx,
-    PaintCtx, RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetChildren,
+    Application as RuntimeApplication, EventCtx, EventPhase, FocusState, FramePhase,
+    FramePhaseSample, FrameSchedule, LayoutCtx, PaintCtx, RenderDiagnostics, RenderOutput,
+    Runtime, SceneStatistics, SemanticsCtx, SingleChild, Widget, WidgetChildren,
     WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
-    WindowBuilder,
+    WindowBuilder, WindowPerformanceSnapshot, window_performance_snapshot,
 };
 pub use sui_scene::{
     Brush, ImageRegistry, ImageSource, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand,

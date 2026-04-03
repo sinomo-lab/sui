@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Instant};
 
 use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
 use sui_render_wgpu::{RgbaImage, WgpuRenderer};
@@ -25,6 +25,7 @@ impl HeadlessPlatform {
     const DEFAULT_WINDOW_SIZE: Size = Size::new(1280.0, 720.0);
 
     pub fn new() -> Self {
+        crate::reset_window_performance_store();
         Self::default()
     }
 
@@ -158,6 +159,7 @@ impl HeadlessPlatform {
 
         for window_id in removed_ids {
             self.renderer.remove_window(window_id);
+            crate::clear_window_performance(window_id);
         }
 
         self.windows
@@ -175,6 +177,8 @@ impl HeadlessPlatform {
                 title: runtime.window_title(window_id)?.to_string(),
                 open: true,
                 redraw_requested: false,
+                frame_index: 0,
+                pending_event_time_ms: 0.0,
                 accessibility: AccessibilityBridge::default(),
             });
             self.pending_events.push_back(QueuedEvent {
@@ -221,7 +225,10 @@ impl HeadlessPlatform {
         );
         let window_id = queued_event.window_id;
 
+        let event_started = Instant::now();
         runtime.handle_event(window_id, queued_event.event)?;
+        let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
+        self.windows[window_index].pending_event_time_ms += event_time_ms;
 
         if is_redraw {
             self.windows[window_index].redraw_requested = false;
@@ -231,17 +238,34 @@ impl HeadlessPlatform {
                 runtime.tick(self.frame_clock);
 
                 let output = runtime.render(window_id)?;
+                let renderer_started = Instant::now();
+                self.renderer.render(&output.frame)?;
+                let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
+
+                self.windows[window_index].frame_index += 1;
+                let frame_index = self.windows[window_index].frame_index;
+                let pending_event_time_ms =
+                    std::mem::take(&mut self.windows[window_index].pending_event_time_ms);
+
+                crate::publish_frame_performance(
+                    window_id,
+                    frame_index,
+                    pending_event_time_ms,
+                    &output,
+                    renderer_time_ms,
+                );
+
                 self.windows[window_index].title = output.title;
                 self.windows[window_index]
                     .accessibility
                     .update(window_id, output.semantics);
-                self.renderer.render(&output.frame)?;
             }
         }
 
         if is_close {
             runtime.remove_window(window_id)?;
             self.renderer.remove_window(window_id);
+            crate::clear_window_performance(window_id);
             self.pending_events
                 .retain(|pending_event| pending_event.window_id != window_id);
             self.windows.swap_remove(window_index);
@@ -257,6 +281,8 @@ struct WindowState {
     title: String,
     open: bool,
     redraw_requested: bool,
+    frame_index: u64,
+    pending_event_time_ms: f64,
     accessibility: AccessibilityBridge,
 }
 

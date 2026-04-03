@@ -5,10 +5,13 @@ use std::{cell::RefCell, rc::Rc};
 use sui::prelude::*;
 use sui::{
     AccessibilitySnapshot, DirtyRegion, FocusState, FrameSchedule, InvalidationKind, Rect,
-    SemanticsNode, SemanticsRole, SemanticsValue, WidgetGraphSnapshot, WidgetId,
-    WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor, WindowId,
+    SemanticsNode, SemanticsRole, SemanticsValue, TimerToken, WakeEvent,
+    WidgetGraphSnapshot, WidgetId, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
+    WindowId, WindowPerformanceSnapshot, window_performance_snapshot,
 };
-use sui_debug::{SceneDebugSummary, WindowDebugSnapshot, window_snapshot_view};
+use sui_debug::{
+    SceneDebugSummary, WindowDebugSnapshot, performance_snapshot_view, window_snapshot_view,
+};
 
 pub const WINDOW_TITLE: &str = "SUI Widget Book";
 pub const WINDOW_DESCRIPTION: &str =
@@ -40,6 +43,12 @@ pub const PROGRESS_NAME: &str = "Export progress";
 pub const SPINNER_NAME: &str = "Background work";
 pub const SUMMARY_NAME: &str = "Widget book summary";
 pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
+pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
+pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare light and dark themes";
+pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
+pub const DARK_PREVIEW_ACTION_LABEL: &str = "Dark preview action";
+pub const LIGHT_PREVIEW_INPUT_LABEL: &str = "Light preview query";
+pub const DARK_PREVIEW_INPUT_LABEL: &str = "Dark preview query";
 pub const LIST_VIEW_NAME: &str = "Assets list";
 pub const TREE_VIEW_NAME: &str = "Scene tree";
 pub const TABLE_NAME: &str = "Material table";
@@ -60,6 +69,7 @@ const TAB_PANEL_OPTIONS: [&str; 3] = ["Layout", "Data", "History"];
 pub struct WidgetBookState {
     pub name: String,
     pub subscribed: bool,
+    pub theme_preview_comparison: bool,
     pub button_presses: usize,
     pub icon_button_presses: usize,
     pub switch_on: bool,
@@ -92,6 +102,7 @@ pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
     Rc::new(RefCell::new(WidgetBookState {
         name: "Ada".to_string(),
         subscribed: true,
+        theme_preview_comparison: true,
         button_presses: 0,
         icon_button_presses: 0,
         switch_on: true,
@@ -300,6 +311,183 @@ impl Widget for ProjectSettingsPreview {
     }
 }
 
+struct ThemePreviewShowcase {
+    state: Rc<RefCell<WidgetBookState>>,
+    toggle: SingleChild,
+    light_card: SingleChild,
+    dark_card: SingleChild,
+}
+
+impl ThemePreviewShowcase {
+    fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
+        let comparison_enabled = state.borrow().theme_preview_comparison;
+        let toggle_state = Rc::clone(&state);
+
+        Self {
+            state,
+            toggle: SingleChild::new(
+                Switch::new(THEME_PREVIEW_TOGGLE_LABEL)
+                    .on(comparison_enabled)
+                    .on_toggle(move |checked| {
+                        toggle_state.borrow_mut().theme_preview_comparison = checked;
+                    }),
+            ),
+            light_card: SingleChild::new(theme_preview_card(
+                DefaultTheme::light(),
+                "Light",
+                LIGHT_PREVIEW_ACTION_LABEL,
+                LIGHT_PREVIEW_INPUT_LABEL,
+            )),
+            dark_card: SingleChild::new(theme_preview_card(
+                DefaultTheme::dark(),
+                "Dark",
+                DARK_PREVIEW_ACTION_LABEL,
+                DARK_PREVIEW_INPUT_LABEL,
+            )),
+        }
+    }
+
+    fn card_height() -> f32 {
+        272.0
+    }
+
+    fn comparison_enabled(&self) -> bool {
+        self.state.borrow().theme_preview_comparison
+    }
+}
+
+impl Widget for ThemePreviewShowcase {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if ctx.phase() != sui::EventPhase::Capture {
+            return;
+        }
+
+        match event {
+            Event::Pointer(pointer)
+                if matches!(
+                    pointer.kind,
+                    sui::PointerEventKind::Down | sui::PointerEventKind::Up
+                ) && self.toggle.child().bounds().contains(pointer.position) =>
+            {
+                ctx.request_layout();
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            _ => {}
+        }
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        let comparison_enabled = self.comparison_enabled();
+        let max_width = if constraints.max.width.is_finite() {
+            constraints.max.width.max(320.0)
+        } else {
+            920.0
+        };
+        let toggle_size = self.toggle.layout_at(ctx, constraints.loosen(), Point::ZERO);
+        let top = toggle_size.height + 16.0;
+        let gap = 16.0;
+        let card_height = Self::card_height();
+
+        if comparison_enabled {
+            let stacked = max_width < 760.0;
+            if stacked {
+                let light_size = self.light_card.layout_at(
+                    ctx,
+                    Constraints::tight(Size::new(max_width, card_height)),
+                    Point::new(0.0, top),
+                );
+                let dark_size = self.dark_card.layout_at(
+                    ctx,
+                    Constraints::tight(Size::new(max_width, card_height)),
+                    Point::new(0.0, top + light_size.height + gap),
+                );
+
+                return constraints.clamp(Size::new(
+                    max_width,
+                    top + light_size.height + gap + dark_size.height,
+                ));
+            }
+
+            let card_width = ((max_width - gap) / 2.0).max(280.0);
+            let light_size = self.light_card.layout_at(
+                ctx,
+                Constraints::tight(Size::new(card_width, card_height)),
+                Point::new(0.0, top),
+            );
+            let dark_size = self.dark_card.layout_at(
+                ctx,
+                Constraints::tight(Size::new(card_width, card_height)),
+                Point::new(card_width + gap, top),
+            );
+
+            return constraints.clamp(Size::new(
+                light_size.width + gap + dark_size.width,
+                top + light_size.height.max(dark_size.height),
+            ));
+        }
+
+        let light_width = max_width.min(420.0);
+        let light_size = self.light_card.layout_at(
+            ctx,
+            Constraints::tight(Size::new(light_width, card_height)),
+            Point::new(0.0, top),
+        );
+        self.dark_card
+            .set_bounds(Rect::new(0.0, 0.0, 0.0, 0.0));
+
+        constraints.clamp(Size::new(light_size.width, top + light_size.height))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let comparison_enabled = self.comparison_enabled();
+        self.toggle.paint(ctx);
+        self.light_card.paint(ctx);
+        if comparison_enabled {
+            self.dark_card.paint(ctx);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let comparison_enabled = self.comparison_enabled();
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(THEME_PREVIEW_NAME.to_string());
+        node.description = Some(if comparison_enabled {
+            "Light and dark preview cards are visible side by side.".to_string()
+        } else {
+            "Only the light preview card is visible.".to_string()
+        });
+        ctx.push(node);
+        self.toggle.semantics(ctx);
+        self.light_card.semantics(ctx);
+        if comparison_enabled {
+            self.dark_card.semantics(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        let comparison_enabled = self.comparison_enabled();
+        self.toggle.visit_children(visitor);
+        self.light_card.visit_children(visitor);
+        if comparison_enabled {
+            self.dark_card.visit_children(visitor);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        let comparison_enabled = self.comparison_enabled();
+        self.toggle.visit_children_mut(visitor);
+        self.light_card.visit_children_mut(visitor);
+        if comparison_enabled {
+            self.dark_card.visit_children_mut(visitor);
+        }
+    }
+}
+
 fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
@@ -355,6 +543,11 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                         .color(Color::rgba(0.40, 0.48, 0.58, 1.0)),
                     ),
             )
+            .with_child(panel(
+                "Theme preview",
+                "Flip the compare toggle to inspect the simplified light and dark daisy-style themes with the same control composition.",
+                ThemePreviewShowcase::new(Rc::clone(&state)),
+            ))
             .with_child(panel(
                 "Common controls",
                 "These defaults should feel contemporary and light, while still staying dense enough for inspectors, toolbars, and side panels.",
@@ -741,6 +934,13 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                 "Live state",
                 "This summary reads state produced by reusable controls so screenshot stories can cover both isolated widgets and composed UI.",
                 WidgetBookSummary::new(state),
+            ))
+            .with_child(panel(
+                "Live performance",
+                "This panel polls timing data from the running desktop loop so the slowest frame phase and current scene shape are visible while you use the app.",
+                SizedBox::new()
+                    .height(760.0)
+                    .with_child(LivePerformancePanel::new()),
             ))
             .with_child(panel(
                 "Debugging and inspection",
@@ -1208,6 +1408,98 @@ where
     )
 }
 
+fn theme_preview_card(
+    theme: DefaultTheme,
+    title: &'static str,
+    action_label: &'static str,
+    input_label: &'static str,
+) -> impl Widget {
+    let body = Stack::vertical()
+        .spacing(12.0)
+        .alignment(Alignment::Stretch)
+        .with_child(
+            Label::new(format!("{title} theme"))
+                .font_size(18.0)
+                .line_height(22.0)
+                .color(theme.palette.text),
+        )
+        .with_child(
+            Label::new(format!(
+                "{} base surface with {} accent for primary actions.",
+                theme.colors.name, theme.colors.name
+            ))
+            .font_size(13.0)
+            .line_height(18.0)
+            .color(theme.palette.placeholder),
+        )
+        .with_child(
+            SizedBox::new().width(220.0).with_child(
+                TextInput::new(input_label)
+                    .placeholder("Find layer, panel, or asset")
+                    .theme(theme),
+            ),
+        )
+        .with_child(
+            Stack::horizontal()
+                .spacing(12.0)
+                .alignment(Alignment::Center)
+                .with_child(Button::new(action_label).theme(theme))
+                .with_child(
+                    Label::new("Reusable controls should stay coherent across both theme variants.")
+                        .font_size(13.0)
+                        .line_height(18.0)
+                        .color(theme.palette.placeholder),
+                ),
+        )
+        .with_child(
+            Checkbox::new(format!("{title} preview snap to grid"))
+                .checked(true)
+                .theme(theme),
+        )
+        .with_child(
+            Switch::new(format!("{title} preview live updates"))
+                .on(true)
+                .theme(theme),
+        )
+        .with_child(
+            Stack::horizontal()
+                .spacing(10.0)
+                .alignment(Alignment::Center)
+                .with_child(
+                    ColorSwatch::new(
+                        format!("{title} base swatch"),
+                        theme.colors.base_200,
+                    )
+                    .size(Size::new(58.0, 28.0)),
+                )
+                .with_child(
+                    ColorSwatch::new(
+                        format!("{title} primary swatch"),
+                        theme.colors.primary,
+                    )
+                    .size(Size::new(58.0, 28.0)),
+                )
+                .with_child(
+                    ColorSwatch::new(
+                        format!("{title} secondary swatch"),
+                        theme.colors.secondary,
+                    )
+                    .size(Size::new(58.0, 28.0)),
+                ),
+        );
+
+    Background::new(
+        theme.palette.border,
+        Padding::all(
+            1.0,
+            Background::new(
+                theme.palette.surface,
+                Padding::all(18.0, body),
+            ),
+        ),
+    )
+}
+
 struct WidgetBookSummary {
     state: Rc<RefCell<WidgetBookState>>,
 }
@@ -1215,6 +1507,109 @@ struct WidgetBookSummary {
 impl WidgetBookSummary {
     fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
         Self { state }
+    }
+}
+
+struct LivePerformancePanel {
+    child: SingleChild,
+    poll_timer: Option<TimerToken>,
+    snapshot: Option<WindowPerformanceSnapshot>,
+}
+
+impl LivePerformancePanel {
+    fn new() -> Self {
+        Self {
+            child: SingleChild::new(Self::content(None)),
+            poll_timer: None,
+            snapshot: None,
+        }
+    }
+
+    fn content(snapshot: Option<WindowPerformanceSnapshot>) -> impl Widget {
+        let mut body = Stack::vertical().spacing(12.0).alignment(Alignment::Stretch);
+
+        match snapshot {
+            Some(snapshot) => {
+                body = body.with_child(performance_snapshot_view(snapshot));
+            }
+            None => {
+                body = body.with_child(
+                    Stack::vertical()
+                        .spacing(10.0)
+                        .alignment(Alignment::Stretch)
+                        .with_child(
+                            Label::new("Waiting for the first completed frame")
+                                .font_size(17.0)
+                                .line_height(22.0)
+                                .color(Color::rgba(0.10, 0.15, 0.21, 1.0)),
+                        )
+                        .with_child(
+                            Label::new(
+                                "The platform publishes live timings after a redraw passes through runtime layout, paint, semantics, and renderer submission.",
+                            )
+                            .font_size(13.0)
+                            .line_height(18.0)
+                            .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                        ),
+                );
+            }
+        }
+
+        ScrollView::vertical(body)
+    }
+
+    fn refresh(&mut self, window_id: WindowId) -> bool {
+        let next_snapshot = window_performance_snapshot(window_id);
+        if self.snapshot == next_snapshot {
+            return false;
+        }
+
+        self.snapshot = next_snapshot.clone();
+        self.child = SingleChild::new(Self::content(next_snapshot));
+        true
+    }
+}
+
+impl Widget for LivePerformancePanel {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.poll_timer.is_none() {
+            self.poll_timer = Some(ctx.schedule_timer_after(0.15));
+        }
+
+        let mut changed = self.refresh(ctx.window_id());
+
+        if let Event::Wake(WakeEvent::Timer { token, .. }) = event {
+            if Some(*token) == self.poll_timer {
+                self.poll_timer = Some(ctx.schedule_timer_after(0.25));
+                changed |= self.refresh(ctx.window_id());
+            }
+        }
+
+        if changed {
+            ctx.request_layout();
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        self.child.layout(ctx, constraints)
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
     }
 }
 
@@ -1391,12 +1786,14 @@ mod tests {
 
     use super::{
         BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL,
-        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, ICON_BUTTON_LABEL, ICON_LABEL,
-        LIST_VIEW_NAME, MENU_NAME, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
-        PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME,
-        SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL,
-        TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME, TABS_NAME, TEXT_AREA_LABEL,
-        TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME,
+        DARK_PREVIEW_ACTION_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
+        ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, MENU_NAME, NAME_INPUT_LABEL,
+        NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL, PRIMARY_BUTTON_LABEL, PROGRESS_NAME,
+        RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SPINNER_NAME,
+        SPLIT_VIEW_NAME, SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME,
+        TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME, TABS_NAME, TEXT_AREA_LABEL,
+        THEME_PREVIEW_NAME, THEME_PREVIEW_TOGGLE_LABEL, TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT,
+        TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME,
         WidgetBookState, build_widget_book_application, default_widget_book_state,
     };
     use sui::{
@@ -1444,11 +1841,12 @@ mod tests {
         Breadcrumb,
         ColorSwatch,
         ColorPicker,
+        ThemePreview,
         ImageWidget,
     }
 
     impl StoryCase {
-        const ALL: [Self; 38] = [
+        const ALL: [Self; 39] = [
             Self::Overview,
             Self::OverviewConfigured,
             Self::Button,
@@ -1486,6 +1884,7 @@ mod tests {
             Self::Breadcrumb,
             Self::ColorSwatch,
             Self::ColorPicker,
+            Self::ThemePreview,
             Self::ImageWidget,
         ];
 
@@ -1528,6 +1927,7 @@ mod tests {
                 Self::Breadcrumb => "breadcrumb",
                 Self::ColorSwatch => "color-swatch",
                 Self::ColorPicker => "color-picker",
+                Self::ThemePreview => "theme-preview",
                 Self::ImageWidget => "image-widget",
             }
         }
@@ -1583,6 +1983,9 @@ mod tests {
                 Self::ColorPicker => {
                     "Color picker crop for interactive color adjustment workflows."
                 }
+                Self::ThemePreview => {
+                    "Theme preview panel with the light and dark comparison cards visible."
+                }
                 Self::ImageWidget => {
                     "Image widget crop for previews, thumbnails, and asset panels."
                 }
@@ -1622,6 +2025,7 @@ mod tests {
                 | Self::Breadcrumb
                 | Self::ColorSwatch
                 | Self::ColorPicker
+                | Self::ThemePreview
                 | Self::ImageWidget => default_widget_book_state(),
                 Self::OverviewConfigured
                 | Self::CheckboxUnchecked
@@ -1635,30 +2039,60 @@ mod tests {
         }
 
         fn prepare(self, window: &TestWindow) -> Result<()> {
+            if !matches!(
+                self,
+                Self::Overview | Self::OverviewConfigured | Self::ScrollViewScrolled
+            ) {
+                scroll_to_story_target(window, self, 12)?;
+            }
+
             match self {
-                Self::ButtonHover => self.target(window).hover(),
-                Self::ButtonPressed => {
-                    press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL)
-                }
-                Self::EmptyInputFocused => self.target(window).focus(),
-                Self::RadioButton
+                Self::Button
+                | Self::Checkbox
+                | Self::CheckboxUnchecked
+                | Self::FilledInput
+                | Self::Icon
+                | Self::IconButton
+                | Self::Separator
+                | Self::Switch
+                | Self::RadioButton
                 | Self::RadioGroup
                 | Self::Slider
                 | Self::NumberInput
-                | Self::SelectExpanded => {
-                    scroll_gallery(window, 1)?;
+                | Self::TabBar
+                | Self::Tabs
+                | Self::Menu
+                | Self::ProgressBar
+                | Self::Spinner
+                | Self::Summary
+                | Self::ListView
+                | Self::TreeView
+                | Self::Table
+                | Self::SplitView
+                | Self::Breadcrumb
+                | Self::ColorSwatch
+                | Self::ColorPicker
+                | Self::ThemePreview
+                | Self::ImageWidget => Ok(()),
+                Self::ButtonHover => {
+                    self.target(window).hover()
+                }
+                Self::ButtonPressed => {
+                    press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL)
+                }
+                Self::EmptyInputFocused => {
+                    self.target(window).focus()
+                }
+                Self::SelectExpanded => {
                     if matches!(self, Self::SelectExpanded) {
                         self.target(window).click()?;
                     }
                     Ok(())
                 }
-                Self::TabBar | Self::Tabs => scroll_gallery(window, 2),
-                Self::Menu
-                | Self::ContextMenuOpen
+                Self::ContextMenuOpen
                 | Self::TooltipVisible
                 | Self::PopoverOpen
                 | Self::Dialog => {
-                    scroll_gallery(window, 3)?;
                     match self {
                         Self::ContextMenuOpen => secondary_click_target(
                             window,
@@ -1677,27 +2111,11 @@ mod tests {
                         _ => Ok(()),
                     }
                 }
-                Self::ProgressBar | Self::Spinner | Self::Summary => scroll_gallery(window, 4),
-                Self::ListView
-                | Self::TreeView
-                | Self::Table
-                | Self::SplitView
-                | Self::Breadcrumb
-                | Self::ColorSwatch
-                | Self::ColorPicker
-                | Self::ImageWidget => scroll_to_story_target(window, self, 8),
-                Self::TextArea => scroll_gallery(window, 2),
+                Self::TextArea => Ok(()),
                 Self::ScrollViewScrolled => scroll_gallery(window, 1),
                 Self::Overview
                 | Self::OverviewConfigured
-                | Self::Button
-                | Self::Checkbox
-                | Self::CheckboxUnchecked
-                | Self::FilledInput
-                | Self::Icon
-                | Self::IconButton
-                | Self::Separator
-                | Self::Switch => Ok(()),
+                    => Ok(()),
             }
         }
 
@@ -1793,6 +2211,9 @@ mod tests {
                 Self::ColorPicker => window
                     .get_by_role(SemanticsRole::ColorPicker)
                     .with_name(COLOR_PICKER_NAME),
+                Self::ThemePreview => window
+                    .get_by_role(SemanticsRole::GenericContainer)
+                    .with_name(THEME_PREVIEW_NAME),
                 Self::ImageWidget => window
                     .get_by_role(SemanticsRole::Image)
                     .with_name(DEMO_IMAGE_LABEL),
@@ -1801,6 +2222,41 @@ mod tests {
 
         fn story_node(self) -> Option<(SemanticsRole, Option<&'static str>)> {
             match self {
+                Self::Button | Self::ButtonHover | Self::ButtonPressed => {
+                    Some((SemanticsRole::Button, Some(PRIMARY_BUTTON_LABEL)))
+                }
+                Self::Checkbox | Self::CheckboxUnchecked => {
+                    Some((SemanticsRole::CheckBox, Some(SUBSCRIBE_LABEL)))
+                }
+                Self::FilledInput | Self::EmptyInputFocused => {
+                    Some((SemanticsRole::TextInput, Some(NAME_INPUT_LABEL)))
+                }
+                Self::Icon => Some((SemanticsRole::Image, Some(ICON_LABEL))),
+                Self::IconButton => Some((SemanticsRole::Button, Some(ICON_BUTTON_LABEL))),
+                Self::Separator => {
+                    Some((SemanticsRole::Separator, Some(TOOLBAR_SEPARATOR_NAME)))
+                }
+                Self::Switch => Some((SemanticsRole::Switch, Some(SWITCH_LABEL))),
+                Self::RadioButton => {
+                    Some((SemanticsRole::RadioButton, Some(RADIO_BUTTON_LABEL)))
+                }
+                Self::RadioGroup => Some((SemanticsRole::RadioGroup, Some(RADIO_GROUP_NAME))),
+                Self::Slider => Some((SemanticsRole::Slider, Some(SLIDER_NAME))),
+                Self::NumberInput => Some((SemanticsRole::SpinBox, Some(NUMBER_INPUT_NAME))),
+                Self::TextArea => Some((SemanticsRole::TextInput, Some(TEXT_AREA_LABEL))),
+                Self::SelectExpanded => Some((SemanticsRole::ComboBox, Some(SELECT_NAME))),
+                Self::TabBar => Some((SemanticsRole::TabBar, Some(TAB_BAR_NAME))),
+                Self::Tabs => Some((SemanticsRole::Tabs, Some(TABS_NAME))),
+                Self::Menu => Some((SemanticsRole::Menu, Some(MENU_NAME))),
+                Self::ContextMenuOpen => {
+                    Some((SemanticsRole::ContextMenu, Some(CONTEXT_MENU_NAME)))
+                }
+                Self::TooltipVisible => Some((SemanticsRole::Button, Some(TOOLTIP_TRIGGER_LABEL))),
+                Self::PopoverOpen => Some((SemanticsRole::Button, Some(POPOVER_TRIGGER_LABEL))),
+                Self::Dialog => Some((SemanticsRole::Button, Some(DIALOG_TRIGGER_LABEL))),
+                Self::ProgressBar => Some((SemanticsRole::ProgressBar, Some(PROGRESS_NAME))),
+                Self::Spinner => Some((SemanticsRole::BusyIndicator, Some(SPINNER_NAME))),
+                Self::Summary => Some((SemanticsRole::GenericContainer, Some(SUMMARY_NAME))),
                 Self::ListView => Some((SemanticsRole::List, Some(LIST_VIEW_NAME))),
                 Self::TreeView => Some((SemanticsRole::Tree, Some(TREE_VIEW_NAME))),
                 Self::Table => Some((SemanticsRole::Table, Some(TABLE_NAME))),
@@ -1808,10 +2264,40 @@ mod tests {
                 Self::Breadcrumb => Some((SemanticsRole::Breadcrumb, Some(BREADCRUMB_NAME))),
                 Self::ColorSwatch => Some((SemanticsRole::ColorSwatch, Some(COLOR_SWATCH_NAME))),
                 Self::ColorPicker => Some((SemanticsRole::ColorPicker, Some(COLOR_PICKER_NAME))),
+                Self::ThemePreview => {
+                    Some((SemanticsRole::GenericContainer, Some(THEME_PREVIEW_NAME)))
+                }
                 Self::ImageWidget => Some((SemanticsRole::Image, Some(DEMO_IMAGE_LABEL))),
                 _ => None,
             }
         }
+    }
+
+    #[test]
+    fn widget_book_theme_preview_toggle_hides_dark_card() -> Result<()> {
+        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let window = app.main_window()?;
+
+        scroll_to_story_target(&window, StoryCase::ThemePreview, 2)?;
+
+        let snapshot = window.snapshot()?;
+        assert!(snapshot.accessibility.nodes.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(DARK_PREVIEW_ACTION_LABEL)
+        }));
+
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name(THEME_PREVIEW_TOGGLE_LABEL)
+            .click()?;
+
+        let snapshot = window.snapshot()?;
+        assert!(!snapshot.accessibility.nodes.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(DARK_PREVIEW_ACTION_LABEL)
+        }));
+
+        Ok(())
     }
 
     #[test]
@@ -2029,6 +2515,7 @@ mod tests {
         Rc::new(RefCell::new(WidgetBookState {
             name: "Grace Hopper".to_string(),
             subscribed: false,
+            theme_preview_comparison: true,
             button_presses: 1,
             icon_button_presses: 2,
             switch_on: false,
@@ -2050,6 +2537,7 @@ mod tests {
         Rc::new(RefCell::new(WidgetBookState {
             name: String::new(),
             subscribed: false,
+            theme_preview_comparison: true,
             button_presses: 0,
             icon_button_presses: 0,
             switch_on: false,
