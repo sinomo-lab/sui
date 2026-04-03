@@ -62,7 +62,7 @@ impl MenuItem {
         self
     }
 
-    fn text_color(&self, theme: DefaultTheme) -> Color {
+    fn text_color(&self, theme: &DefaultTheme) -> Color {
         if !self.enabled {
             theme.palette.placeholder
         } else if self.destructive {
@@ -74,7 +74,7 @@ impl MenuItem {
 }
 
 pub struct TabBar {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     tabs: Vec<String>,
     selected: usize,
@@ -88,7 +88,7 @@ pub struct TabBar {
 impl TabBar {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             tabs: Vec::new(),
             selected: 0,
@@ -101,7 +101,7 @@ impl TabBar {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -402,7 +402,7 @@ impl Widget for TabBar {
 }
 
 pub struct Tabs {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     labels: Vec<String>,
     panels: WidgetChildren,
@@ -419,7 +419,7 @@ pub struct Tabs {
 impl Tabs {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             labels: Vec::new(),
             panels: WidgetChildren::new(),
@@ -435,7 +435,7 @@ impl Tabs {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -794,7 +794,7 @@ impl Widget for Tabs {
 }
 
 pub struct Menu {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     items: Vec<MenuItem>,
     highlighted: Option<usize>,
@@ -806,7 +806,7 @@ pub struct Menu {
 impl Menu {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             items: Vec::new(),
             highlighted: None,
@@ -817,7 +817,7 @@ impl Menu {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1043,7 +1043,7 @@ impl Widget for Menu {
                     row.height() - 16.0,
                 ),
                 item.label.clone(),
-                self.theme.text_style(item.text_color(self.theme)),
+                self.theme.text_style(item.text_color(self.theme.as_ref())),
             );
 
             if let Some(shortcut) = &item.shortcut {
@@ -1090,7 +1090,7 @@ impl Widget for Menu {
 }
 
 pub struct Tooltip {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     text: String,
     placement: TooltipPlacement,
     child: SingleChild,
@@ -1104,7 +1104,7 @@ impl Tooltip {
         W: Widget + 'static,
     {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             text: text.into(),
             placement: TooltipPlacement::Above,
             child: SingleChild::new(child),
@@ -1114,7 +1114,7 @@ impl Tooltip {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1230,7 +1230,7 @@ impl Widget for Tooltip {
 }
 
 pub struct Popover {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     trigger: SingleChild,
     content: SingleChild,
@@ -1247,7 +1247,7 @@ impl Popover {
         C: Widget + 'static,
     {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             trigger: SingleChild::new(trigger),
             content: SingleChild::new(content),
@@ -1259,7 +1259,7 @@ impl Popover {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1442,7 +1442,7 @@ impl Widget for Popover {
 }
 
 pub struct ContextMenu {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     trigger: SingleChild,
     items: Vec<MenuItem>,
@@ -1459,7 +1459,7 @@ impl ContextMenu {
         W: Widget + 'static,
     {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             trigger: SingleChild::new(trigger),
             items: Vec::new(),
@@ -1472,7 +1472,7 @@ impl ContextMenu {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1744,7 +1744,7 @@ impl Widget for ContextMenu {
                     row.height() - 16.0,
                 ),
                 item.label.clone(),
-                self.theme.text_style(item.text_color(self.theme)),
+                self.theme.text_style(item.text_color(self.theme.as_ref())),
             );
 
             if let Some(shortcut) = &item.shortcut {
@@ -1805,7 +1805,7 @@ impl Widget for ContextMenu {
 }
 
 pub struct Dialog {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     title: String,
     description: Option<String>,
     shown: bool,
@@ -1827,7 +1827,7 @@ impl Dialog {
         W: Widget + 'static,
     {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             title: title.into(),
             description: None,
             shown: true,
@@ -1845,7 +1845,7 @@ impl Dialog {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -2160,7 +2160,7 @@ impl Widget for Dialog {
 pub type Modal = Dialog;
 
 pub struct ProgressBar {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     min: f64,
     max: f64,
@@ -2171,7 +2171,7 @@ pub struct ProgressBar {
 impl ProgressBar {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             min: 0.0,
             max: 1.0,
@@ -2181,7 +2181,7 @@ impl ProgressBar {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -2262,7 +2262,7 @@ impl Widget for ProgressBar {
 }
 
 pub struct Spinner {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     size: f32,
     label: Option<String>,
@@ -2271,7 +2271,7 @@ pub struct Spinner {
 impl Spinner {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             size: 20.0,
             label: None,
@@ -2279,7 +2279,7 @@ impl Spinner {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 

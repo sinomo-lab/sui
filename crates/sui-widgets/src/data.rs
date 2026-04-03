@@ -47,7 +47,7 @@ impl ListItem {
 }
 
 pub struct ListView {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     items: Vec<ListItem>,
     selected: Option<usize>,
@@ -61,7 +61,7 @@ pub struct ListView {
 impl ListView {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             items: Vec::new(),
             selected: None,
@@ -74,7 +74,7 @@ impl ListView {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -304,7 +304,7 @@ impl Widget for ListView {
 
     fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
         let text_style = self.theme.body_text_style();
-        let detail_style = caption_style(self.theme);
+        let detail_style = caption_style(self.theme.as_ref());
         let content_width = self
             .items
             .iter()
@@ -341,9 +341,9 @@ impl Widget for ListView {
         let viewport = self.viewport_rect(ctx.bounds());
         let row_height = self.resolved_row_height();
         let label_style = self.theme.body_text_style();
-        let detail_style = caption_style(self.theme);
+        let detail_style = caption_style(self.theme.as_ref());
 
-        draw_surface(ctx, ctx.bounds(), self.theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
         ctx.push_clip_rect(viewport);
 
         let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
@@ -493,7 +493,7 @@ impl TreeItem {
 }
 
 pub struct TreeView {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     items: Vec<TreeItem>,
     selected: Option<Vec<usize>>,
@@ -507,7 +507,7 @@ pub struct TreeView {
 impl TreeView {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             items: Vec::new(),
             selected: None,
@@ -520,7 +520,7 @@ impl TreeView {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -796,7 +796,7 @@ impl Widget for TreeView {
 
     fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
         let label_style = self.theme.body_text_style();
-        let detail_style = caption_style(self.theme);
+        let detail_style = caption_style(self.theme.as_ref());
         let row_padding = 42.0;
         let width = self
             .visible_rows()
@@ -835,7 +835,7 @@ impl Widget for TreeView {
         let row_height = self.resolved_row_height();
         let rows = self.visible_rows();
 
-        draw_surface(ctx, ctx.bounds(), self.theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
         ctx.push_clip_rect(viewport);
 
         let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
@@ -901,7 +901,7 @@ impl Widget for TreeView {
                         16.0,
                     ),
                     detail.clone(),
-                    caption_style(self.theme),
+                    caption_style(self.theme.as_ref()),
                 );
             }
         }
@@ -1005,7 +1005,7 @@ impl TableRow {
 pub type DataGrid = Table;
 
 pub struct Table {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     columns: Vec<TableColumn>,
     rows: Vec<TableRow>,
@@ -1022,7 +1022,7 @@ pub struct Table {
 impl Table {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             columns: Vec::new(),
             rows: Vec::new(),
@@ -1038,7 +1038,7 @@ impl Table {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1288,7 +1288,7 @@ impl Widget for Table {
         );
         let row_height = self.resolved_row_height();
 
-        draw_surface(ctx, ctx.bounds(), self.theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
         ctx.fill(
             rounded_rect_path(header, 8.0),
             Color::rgba(0.95, 0.965, 0.985, 1.0),
@@ -1418,7 +1418,7 @@ impl BreadcrumbItem {
 pub type PathBar = Breadcrumb;
 
 pub struct Breadcrumb {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     items: Vec<BreadcrumbItem>,
     current: usize,
@@ -1432,7 +1432,7 @@ pub struct Breadcrumb {
 impl Breadcrumb {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             items: Vec::new(),
             current: 0,
@@ -1445,7 +1445,7 @@ impl Breadcrumb {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1619,7 +1619,7 @@ impl Widget for Breadcrumb {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let palette = self.theme.palette;
-        draw_surface(ctx, ctx.bounds(), self.theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
 
         for (index, item) in self.items.iter().enumerate() {
             let Some(rect) = self.item_rect(ctx.bounds(), index) else {
@@ -1783,7 +1783,7 @@ fn chevron_path(rect: Rect) -> Path {
     builder.build()
 }
 
-fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: DefaultTheme, focused: bool) {
+fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focused: bool) {
     let palette = theme.palette;
     ctx.fill(rounded_rect_path(rect, 10.0), palette.surface);
     ctx.stroke(
@@ -1855,7 +1855,7 @@ fn measure_text(ctx: &mut LayoutCtx, text: &str, style: &TextStyle) -> TextMeasu
         })
 }
 
-fn caption_style(theme: DefaultTheme) -> TextStyle {
+fn caption_style(theme: &DefaultTheme) -> TextStyle {
     TextStyle {
         font_size: (theme.typography.body_font_size - 1.0).max(11.0),
         line_height: (theme.typography.body_line_height - 2.0).max(14.0),

@@ -18,7 +18,7 @@ pub enum ImageFit {
 }
 
 pub struct Image {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     image: ImageHandle,
     label: Option<String>,
     fit: ImageFit,
@@ -35,7 +35,7 @@ pub struct Image {
 impl Image {
     pub fn new(image: ImageHandle) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             image,
             label: None,
             fit: ImageFit::Contain,
@@ -51,7 +51,7 @@ impl Image {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -165,7 +165,7 @@ impl Widget for Image {
 }
 
 pub struct ColorSwatch {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     color: Color,
     width: f32,
@@ -178,7 +178,7 @@ pub struct ColorSwatch {
 impl ColorSwatch {
     pub fn new(name: impl Into<String>, color: Color) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             color,
             width: 56.0,
@@ -190,7 +190,7 @@ impl ColorSwatch {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -333,7 +333,7 @@ enum ActiveChannel {
 }
 
 pub struct ColorPicker {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     hue: f32,
     saturation: f32,
@@ -352,7 +352,7 @@ impl ColorPicker {
     pub fn from_color(name: impl Into<String>, color: Color) -> Self {
         let (hue, saturation, value) = rgb_to_hsv(color);
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             hue,
             saturation,
@@ -365,7 +365,7 @@ impl ColorPicker {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -535,7 +535,7 @@ impl Widget for ColorPicker {
         let sv = self.saturation_value_rect(ctx.bounds());
         let hue = self.hue_rect(ctx.bounds());
 
-        draw_surface(ctx, ctx.bounds(), self.theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
         draw_checkerboard(
             ctx,
             Rect::new(preview.x(), preview.y(), 42.0, preview.height()),
@@ -725,7 +725,7 @@ fn paint_marker(ctx: &mut PaintCtx, center: Point, color: Color) {
     ctx.stroke(Path::circle(center, 5.0), color, StrokeStyle::new(1.5));
 }
 
-fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: DefaultTheme, focused: bool) {
+fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focused: bool) {
     ctx.fill(rounded_rect_path(rect, 10.0), theme.palette.surface);
     ctx.stroke(
         rounded_rect_path(rect, 10.0),

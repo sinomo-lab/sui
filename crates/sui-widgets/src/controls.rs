@@ -24,7 +24,7 @@ pub enum IconGlyph {
 }
 
 pub struct Separator {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     axis: Axis,
     inset: f32,
     thickness: Option<f32>,
@@ -34,7 +34,7 @@ pub struct Separator {
 impl Separator {
     pub fn new(axis: Axis) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             axis,
             inset: 0.0,
             thickness: None,
@@ -51,7 +51,7 @@ impl Separator {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -132,7 +132,7 @@ impl Widget for Separator {
 }
 
 pub struct Icon {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     glyph: IconGlyph,
     size: Option<f32>,
     color: Option<Color>,
@@ -142,7 +142,7 @@ pub struct Icon {
 impl Icon {
     pub fn new(glyph: IconGlyph) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             glyph,
             size: None,
             color: None,
@@ -151,7 +151,7 @@ impl Icon {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -200,7 +200,7 @@ impl Widget for Icon {
 }
 
 pub struct IconButton {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     icon: IconGlyph,
     label: String,
     size: Option<f32>,
@@ -213,7 +213,7 @@ pub struct IconButton {
 impl IconButton {
     pub fn new(icon: IconGlyph, label: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             icon,
             label: label.into(),
             size: None,
@@ -225,7 +225,7 @@ impl IconButton {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -468,7 +468,7 @@ impl Widget for Label {
 }
 
 pub struct Button {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     label: String,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
@@ -483,7 +483,7 @@ pub struct Button {
 impl Button {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             label: label.into(),
             text_style: None,
             padding: None,
@@ -505,7 +505,7 @@ impl Button {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -705,7 +705,7 @@ impl Widget for Button {
 }
 
 pub struct Checkbox {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     label: String,
     checked: bool,
     text_style: Option<TextStyle>,
@@ -721,7 +721,7 @@ pub struct Checkbox {
 impl Checkbox {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             label: label.into(),
             checked: false,
             text_style: None,
@@ -745,7 +745,7 @@ impl Checkbox {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -999,7 +999,7 @@ impl Widget for Checkbox {
 }
 
 pub struct Switch {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     label: String,
     on: bool,
     text_style: Option<TextStyle>,
@@ -1013,7 +1013,7 @@ pub struct Switch {
 impl Switch {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             label: label.into(),
             on: false,
             text_style: None,
@@ -1039,7 +1039,7 @@ impl Switch {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1277,7 +1277,7 @@ impl Widget for Switch {
 }
 
 pub struct RadioButton {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     label: String,
     selected: bool,
     text_style: Option<TextStyle>,
@@ -1292,7 +1292,7 @@ pub struct RadioButton {
 impl RadioButton {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             label: label.into(),
             selected: false,
             text_style: None,
@@ -1319,7 +1319,7 @@ impl RadioButton {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1554,7 +1554,7 @@ impl Widget for RadioButton {
 }
 
 pub struct RadioGroup {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     options: Vec<String>,
     selected: Option<usize>,
@@ -1567,7 +1567,7 @@ pub struct RadioGroup {
 impl RadioGroup {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             options: Vec::new(),
             selected: None,
@@ -1579,7 +1579,7 @@ impl RadioGroup {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1830,7 +1830,7 @@ impl Widget for RadioGroup {
 }
 
 pub struct Slider {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     min: f64,
     max: f64,
@@ -1844,7 +1844,7 @@ pub struct Slider {
 impl Slider {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             min: 0.0,
             max: 1.0,
@@ -1857,7 +1857,7 @@ impl Slider {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -2103,7 +2103,7 @@ impl Widget for Slider {
 }
 
 pub struct NumberInput {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     value: f64,
     min: f64,
@@ -2119,7 +2119,7 @@ impl NumberInput {
     pub fn new(name: impl Into<String>) -> Self {
         let value = 0.0;
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             value,
             min: f64::NEG_INFINITY,
@@ -2133,7 +2133,7 @@ impl NumberInput {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -2382,7 +2382,7 @@ impl Widget for NumberInput {
 }
 
 pub struct TextArea {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     value: String,
     placeholder: String,
@@ -2400,7 +2400,7 @@ pub struct TextArea {
 impl TextArea {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             value: String::new(),
             placeholder: String::new(),
@@ -2417,7 +2417,7 @@ impl TextArea {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -2729,7 +2729,7 @@ impl Widget for TextArea {
 }
 
 pub struct Select {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     options: Vec<String>,
     selected: Option<usize>,
@@ -2744,7 +2744,7 @@ pub struct Select {
 impl Select {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             options: Vec::new(),
             selected: None,
@@ -2758,7 +2758,7 @@ impl Select {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
@@ -3106,7 +3106,7 @@ pub type MultilineTextInput = TextArea;
 pub type ComboBox = Select;
 
 pub struct TextInput {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: String,
     value: String,
     placeholder: String,
@@ -3124,7 +3124,7 @@ pub struct TextInput {
 impl TextInput {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             value: String::new(),
             placeholder: String::new(),
@@ -3145,7 +3145,7 @@ impl TextInput {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 

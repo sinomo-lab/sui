@@ -14,7 +14,7 @@ use crate::DefaultTheme;
 pub type ResizablePane = SplitView;
 
 pub struct SplitView {
-    theme: DefaultTheme,
+    theme: Box<DefaultTheme>,
     name: Option<String>,
     axis: Axis,
     ratio: f32,
@@ -36,7 +36,7 @@ impl SplitView {
         W2: Widget + 'static,
     {
         Self {
-            theme: DefaultTheme::default(),
+            theme: Box::new(DefaultTheme::default()),
             name: None,
             axis,
             ratio: 0.5,
@@ -69,7 +69,7 @@ impl SplitView {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
+        self.theme = Box::new(theme);
         self
     }
 
