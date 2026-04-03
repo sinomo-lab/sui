@@ -52,6 +52,23 @@ pub struct RenderDiagnostics {
     pub text_caches: TextCacheDiagnostics,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RendererSubmissionDiagnostics {
+    pub pass_count: usize,
+    pub draw_count: usize,
+    pub uploaded_vertex_bytes: u64,
+}
+
+impl RendererSubmissionDiagnostics {
+    pub const fn new(pass_count: usize, draw_count: usize, uploaded_vertex_bytes: u64) -> Self {
+        Self {
+            pass_count,
+            draw_count,
+            uploaded_vertex_bytes,
+        }
+    }
+}
+
 impl RenderDiagnostics {
     pub fn push(&mut self, phase: FramePhase, duration: Duration) {
         self.phase_timings
@@ -241,6 +258,7 @@ pub struct WindowPerformanceSnapshot {
     pub frame_index: u64,
     pub total_time_ms: f64,
     pub phase_timings: Vec<FramePhaseSample>,
+    pub renderer_submission: RendererSubmissionDiagnostics,
     pub text_caches: TextCacheDiagnostics,
     pub text_cache_deltas: TextCacheDeltaDiagnostics,
     pub scene: SceneStatistics,
@@ -251,6 +269,7 @@ impl WindowPerformanceSnapshot {
         window_id: WindowId,
         frame_index: u64,
         phase_timings: Vec<FramePhaseSample>,
+        renderer_submission: RendererSubmissionDiagnostics,
         text_caches: TextCacheDiagnostics,
         text_cache_deltas: TextCacheDeltaDiagnostics,
         scene: SceneStatistics,
@@ -262,6 +281,7 @@ impl WindowPerformanceSnapshot {
             frame_index,
             total_time_ms,
             phase_timings,
+            renderer_submission,
             text_caches,
             text_cache_deltas,
             scene,
@@ -331,7 +351,12 @@ fn command_kind(command: &SceneCommand) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{CacheMetrics, TextCacheDiagnostics};
+    use super::{
+        CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics,
+        SceneStatistics, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
+        WindowPerformanceSnapshot,
+    };
+    use sui_core::{Size, WindowId};
 
     #[test]
     fn text_cache_deltas_are_derived_from_prior_counters() {
@@ -357,5 +382,34 @@ mod tests {
         assert_eq!(delta.renderer_glyph.entries_delta, 2);
         assert_eq!(delta.renderer_glyph.hits, 6);
         assert_eq!(delta.renderer_glyph.misses, 2);
+    }
+
+    #[test]
+    fn window_performance_snapshot_preserves_renderer_submission_stats() {
+        let snapshot = WindowPerformanceSnapshot::new(
+            WindowId::new(5),
+            17,
+            vec![FramePhaseSample::new(FramePhase::Renderer, 2.5)],
+            RendererSubmissionDiagnostics::new(3, 9, 4096),
+            TextCacheDiagnostics::default(),
+            TextCacheDeltaDiagnostics::default(),
+            SceneStatistics {
+                viewport: Size::new(640.0, 360.0),
+                dirty_regions: Vec::new(),
+                dirty_area: 0.0,
+                dirty_coverage: 0.0,
+                command_count: 0,
+                command_breakdown: Vec::new(),
+                text_command_count: 0,
+                image_command_count: 0,
+                clip_command_count: 0,
+                transform_command_count: 0,
+            },
+        );
+
+        assert_eq!(snapshot.renderer_submission.pass_count, 3);
+        assert_eq!(snapshot.renderer_submission.draw_count, 9);
+        assert_eq!(snapshot.renderer_submission.uploaded_vertex_bytes, 4096);
+        assert_eq!(snapshot.total_time_ms, 2.5);
     }
 }

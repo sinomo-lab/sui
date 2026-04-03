@@ -8,7 +8,8 @@ use sui_core::WindowId;
 use sui_render_wgpu::WgpuRenderer;
 use sui_runtime::{
 	CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, SceneStatistics,
-	TextCacheDiagnostics, WindowPerformanceSnapshot, window_performance_snapshot,
+	RendererSubmissionDiagnostics, TextCacheDiagnostics, WindowPerformanceSnapshot,
+	window_performance_snapshot,
 	clear_window_performance_snapshot, clear_window_performance_snapshots,
 	publish_window_performance_snapshot,
 };
@@ -52,6 +53,7 @@ pub(crate) fn publish_frame_performance(
 	let text_cache_deltas = window_performance_snapshot(window_id)
 		.map(|previous| text_caches.delta_from(&previous.text_caches))
 		.unwrap_or_else(|| text_caches.delta_from(&TextCacheDiagnostics::default()));
+	let renderer_stats = renderer.last_frame_stats(window_id).unwrap_or_default();
 
 	if event_time_ms > 0.0 {
 		phase_timings.push(FramePhaseSample::new(FramePhase::Event, event_time_ms));
@@ -64,6 +66,11 @@ pub(crate) fn publish_frame_performance(
 		window_id,
 		frame_index,
 		phase_timings,
+		RendererSubmissionDiagnostics::new(
+			renderer_stats.pass_count,
+			renderer_stats.draw_count,
+			renderer_stats.uploaded_vertex_bytes,
+		),
 		text_caches,
 		text_cache_deltas,
 		SceneStatistics::from_frame(&output.frame),

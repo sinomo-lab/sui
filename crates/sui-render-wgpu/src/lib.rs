@@ -73,12 +73,36 @@ pub struct RendererTextCacheSnapshot {
     pub glyph: GlyphCacheSnapshot,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RendererFrameStats {
+    pub pass_count: usize,
+    pub draw_count: usize,
+    pub uploaded_vertex_bytes: u64,
+}
+
+impl RendererFrameStats {
+    fn from_prepared_frame(prepared: &PreparedFrameBatches) -> Self {
+        Self {
+            pass_count: prepared.passes.len().max(1),
+            draw_count: prepared
+                .passes
+                .iter()
+                .map(|pass| pass.clip_paths.len() + pass.draws.len())
+                .sum(),
+            uploaded_vertex_bytes: (prepared.scene_vertices.len() as u64
+                + prepared.clip_vertices.len() as u64)
+                * VERTEX_SIZE,
+        }
+    }
+}
+
 pub struct WgpuRenderer {
     instance: wgpu::Instance,
     feather_width: f32,
     frames_rendered: usize,
     capabilities: RendererCapabilities,
     last_frames: HashMap<WindowId, SceneFrame>,
+    last_frame_stats: HashMap<WindowId, RendererFrameStats>,
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
     image_cache: HashMap<ImageHandle, CachedImageTexture>,
@@ -184,21 +208,24 @@ impl WgpuRenderer {
         self.surfaces.remove(&window_id);
         self.offscreen_targets.remove(&window_id);
         self.last_frames.remove(&window_id);
+        self.last_frame_stats.remove(&window_id);
     }
 
     pub fn render(&mut self, frame: &SceneFrame) -> Result<()> {
         let viewport = normalize_framebuffer_size(frame.surface_size);
+        let mut frame_stats = RendererFrameStats::default();
 
         if let Some(size) = viewport {
             if self.surfaces.contains_key(&frame.window_id) {
-                self.render_surface(frame, size)?;
+                frame_stats = self.render_surface(frame, size)?;
             } else {
-                self.render_offscreen(frame, size)?;
+                frame_stats = self.render_offscreen(frame, size)?;
             }
         }
 
         self.frames_rendered += 1;
         self.last_frames.insert(frame.window_id, frame.clone());
+        self.last_frame_stats.insert(frame.window_id, frame_stats);
         Ok(())
     }
 
@@ -212,6 +239,10 @@ impl WgpuRenderer {
 
     pub fn last_frame(&self, window_id: WindowId) -> Option<&SceneFrame> {
         self.last_frames.get(&window_id)
+    }
+
+    pub fn last_frame_stats(&self, window_id: WindowId) -> Option<RendererFrameStats> {
+        self.last_frame_stats.get(&window_id).copied()
     }
 
     pub fn text_cache_snapshot(&self) -> RendererTextCacheSnapshot {
@@ -383,7 +414,7 @@ impl WgpuRenderer {
         Ok(())
     }
 
-    fn render_surface(&mut self, frame: &SceneFrame, size: (u32, u32)) -> Result<()> {
+    fn render_surface(&mut self, frame: &SceneFrame, size: (u32, u32)) -> Result<RendererFrameStats> {
         self.ensure_shared(None)?;
         self.configure_surface_if_needed(frame.window_id, size)?;
 
@@ -408,7 +439,7 @@ impl WgpuRenderer {
                     self.recreate_surface(frame.window_id, size)?;
                 }
                 wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                    return Ok(());
+                    return Ok(RendererFrameStats::default());
                 }
                 wgpu::CurrentSurfaceTexture::Validation => {
                     return Err(Error::new(
@@ -431,17 +462,17 @@ impl WgpuRenderer {
             surface.config.format
         };
 
-        self.encode_scene(frame, format, &view)?;
+        let frame_stats = self.encode_scene(frame, format, &view)?;
         frame_texture.present();
 
         if suboptimal {
             self.configure_surface(frame.window_id, size)?;
         }
 
-        Ok(())
+        Ok(frame_stats)
     }
 
-    fn render_offscreen(&mut self, frame: &SceneFrame, size: (u32, u32)) -> Result<()> {
+    fn render_offscreen(&mut self, frame: &SceneFrame, size: (u32, u32)) -> Result<RendererFrameStats> {
         self.ensure_shared(None)?;
 
         let format = wgpu::TextureFormat::Bgra8UnormSrgb;
@@ -540,7 +571,7 @@ impl WgpuRenderer {
         frame: &SceneFrame,
         target_format: wgpu::TextureFormat,
         view: &wgpu::TextureView,
-    ) -> Result<()> {
+    ) -> Result<RendererFrameStats> {
         let feather_width = self.feather_width;
         let draw_ops = {
             let text_engine = self.text_engine()?;
@@ -548,6 +579,7 @@ impl WgpuRenderer {
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
         let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
+        let frame_stats = RendererFrameStats::from_prepared_frame(&prepared);
 
         let mut image_bind_groups = HashMap::new();
         for pass in &prepared.passes {
@@ -763,7 +795,7 @@ impl WgpuRenderer {
             .expect("renderer shared state initialized")
             .queue
             .submit([encoder.finish()]);
-        Ok(())
+        Ok(frame_stats)
     }
 
     fn ensure_image_bind_group(
@@ -876,6 +908,7 @@ impl Default for WgpuRenderer {
             frames_rendered: 0,
             capabilities: RendererCapabilities::default(),
             last_frames: HashMap::new(),
+            last_frame_stats: HashMap::new(),
             shared: None,
             text_engine: None,
             image_cache: HashMap::new(),
@@ -893,6 +926,7 @@ impl fmt::Debug for WgpuRenderer {
             .field("frames_rendered", &self.frames_rendered)
             .field("capabilities", &self.capabilities)
             .field("last_frame_count", &self.last_frames.len())
+            .field("last_frame_stats_count", &self.last_frame_stats.len())
             .field("has_device", &self.shared.is_some())
             .field("surface_count", &self.surfaces.len())
             .finish()
@@ -3234,9 +3268,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipState, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedVertices,
-        ScissorRect, TextEngine, Vertex, WgpuRenderer, batch_draw_ops, build_draw_ops,
-        build_vertices, prepare_frame_batches, to_ndc,
+        ClipState, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedClipPath,
+        PreparedDrawBatch, PreparedFrameBatches, PreparedPassBatch, PreparedVertices,
+        RendererFrameStats, ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer,
+        batch_draw_ops, build_draw_ops, build_vertices, prepare_frame_batches, to_ndc,
     };
     use std::sync::Arc;
     use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WindowId};
@@ -3510,6 +3545,61 @@ mod tests {
                 height: 20,
             })
         );
+    }
+
+    #[test]
+    fn renderer_frame_stats_count_passes_draws_and_uploaded_vertices() {
+        let vertex = Vertex {
+            position: [0.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            tex_coords: [0.0, 0.0],
+        };
+        let prepared = PreparedFrameBatches {
+            scene_vertices: vec![vertex; 9],
+            clip_vertices: vec![vertex; 6],
+            passes: vec![
+                PreparedPassBatch {
+                    clip_state_index: 0,
+                    clip_paths: vec![PreparedClipPath {
+                        vertices: PreparedVertices { start: 0, len: 6 },
+                    }],
+                    draws: vec![
+                        PreparedDrawBatch {
+                            kind: DrawOpKind::Solid,
+                            clip_rect: None,
+                            vertices: PreparedVertices { start: 0, len: 3 },
+                        },
+                        PreparedDrawBatch {
+                            kind: DrawOpKind::Solid,
+                            clip_rect: Some(ScissorRect {
+                                x: 0,
+                                y: 0,
+                                width: 10,
+                                height: 10,
+                            }),
+                            vertices: PreparedVertices { start: 3, len: 6 },
+                        },
+                    ],
+                },
+                PreparedPassBatch {
+                    clip_state_index: 1,
+                    clip_paths: Vec::new(),
+                    draws: vec![PreparedDrawBatch {
+                        kind: DrawOpKind::Image {
+                            handle: ImageHandle::new(1),
+                        },
+                        clip_rect: None,
+                        vertices: PreparedVertices { start: 0, len: 3 },
+                    }],
+                },
+            ],
+        };
+
+        let stats = RendererFrameStats::from_prepared_frame(&prepared);
+
+        assert_eq!(stats.pass_count, 2);
+        assert_eq!(stats.draw_count, 4);
+        assert_eq!(stats.uploaded_vertex_bytes, 15 * VERTEX_SIZE);
     }
 
     #[test]

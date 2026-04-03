@@ -159,20 +159,20 @@ where
     Background::new(
         Color::rgba(0.984, 0.989, 0.997, 1.0),
         Padding::all(
-            16.0,
+            14.0,
             Stack::vertical()
-                .spacing(10.0)
+                .spacing(8.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Label::new(title)
-                        .font_size(19.0)
-                        .line_height(23.0)
+                        .font_size(18.0)
+                        .line_height(22.0)
                         .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
                 )
                 .with_child(
                     Label::new(subtitle)
-                        .font_size(13.0)
-                        .line_height(18.0)
+                        .font_size(12.0)
+                        .line_height(16.0)
                         .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
                 )
                 .with_child(Separator::horizontal())
@@ -186,14 +186,14 @@ where
     I: IntoIterator<Item = DebugMetric>,
 {
     let metrics: Vec<_> = metrics.into_iter().collect();
-    let mut column = Stack::vertical().spacing(12.0).alignment(Alignment::Stretch);
+    let mut column = Stack::vertical().spacing(10.0).alignment(Alignment::Stretch);
 
-    for chunk in metrics.chunks(3) {
-        let mut row = Stack::horizontal().spacing(12.0).alignment(Alignment::Stretch);
+    for chunk in metrics.chunks(4) {
+        let mut row = Stack::horizontal().spacing(10.0).alignment(Alignment::Stretch);
         for metric in chunk {
             row = row.with_child(
                 SizedBox::new()
-                    .width(190.0)
+                    .width(156.0)
                     .with_child(metric_card(metric.clone())),
             );
         }
@@ -207,7 +207,7 @@ pub fn debug_key_values<I>(entries: I) -> impl Widget
 where
     I: IntoIterator<Item = DebugKeyValue>,
 {
-    let mut column = Stack::vertical().spacing(8.0).alignment(Alignment::Stretch);
+    let mut column = Stack::vertical().spacing(6.0).alignment(Alignment::Stretch);
 
     for (index, entry) in entries.into_iter().enumerate() {
         let background = if index % 2 == 0 {
@@ -218,22 +218,22 @@ where
         column = column.with_child(Background::new(
             background,
             Padding::all(
-                10.0,
+                8.0,
                 Stack::horizontal()
-                    .spacing(12.0)
+                    .spacing(10.0)
                     .alignment(Alignment::Center)
                     .with_child(
-                        SizedBox::new().width(180.0).with_child(
+                        SizedBox::new().width(160.0).with_child(
                             Label::new(entry.label)
-                                .font_size(12.0)
-                                .line_height(16.0)
+                                .font_size(11.0)
+                                .line_height(15.0)
                                 .color(Color::rgba(0.38, 0.46, 0.55, 1.0)),
                         ),
                     )
                     .with_child(
                         Label::new(entry.value)
-                            .font_size(13.0)
-                            .line_height(17.0)
+                            .font_size(12.0)
+                            .line_height(16.0)
                             .color(Color::rgba(0.12, 0.17, 0.24, 1.0)),
                     ),
             ),
@@ -327,12 +327,12 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
         .collect::<Vec<_>>();
 
     Stack::vertical()
-        .spacing(12.0)
+        .spacing(10.0)
         .alignment(Alignment::Stretch)
         .with_child(metrics)
         .with_child(debug_key_values(dirty_region_entries))
         .with_child(
-            SizedBox::new().height(188.0).with_child(
+            SizedBox::new().height(172.0).with_child(
                 Table::new("Scene command breakdown")
                     .columns([
                         TableColumn::new("Command").min_width(180.0),
@@ -396,7 +396,7 @@ pub fn window_snapshot_view(snapshot: WindowDebugSnapshot) -> impl Widget {
         ]),
     );
 
-    let mut body = Stack::vertical().spacing(14.0).alignment(Alignment::Stretch);
+    let mut body = Stack::vertical().spacing(12.0).alignment(Alignment::Stretch);
     body.push(summary);
     body.push(debug_panel(
         "Focus and scheduling",
@@ -436,29 +436,29 @@ pub fn window_snapshot_view(snapshot: WindowDebugSnapshot) -> impl Widget {
 
 fn metric_card(metric: DebugMetric) -> impl Widget {
     let (background, label_color, value_color) = tone_palette(metric.tone);
-    let mut column = Stack::vertical().spacing(8.0).alignment(Alignment::Stretch);
+    let mut column = Stack::vertical().spacing(6.0).alignment(Alignment::Stretch);
     column.push(
         Label::new(metric.label)
-            .font_size(12.0)
-            .line_height(16.0)
+            .font_size(11.0)
+            .line_height(15.0)
             .color(label_color),
     );
     column.push(
         Label::new(metric.value)
-            .font_size(22.0)
-            .line_height(26.0)
+            .font_size(19.0)
+            .line_height(23.0)
             .color(value_color),
     );
     if let Some(detail) = metric.detail {
         column.push(
             Label::new(detail)
-                .font_size(12.0)
-                .line_height(16.0)
+                .font_size(11.0)
+                .line_height(15.0)
                 .color(Color::rgba(0.40, 0.47, 0.56, 1.0)),
         );
     }
 
-    Background::new(background, Padding::all(12.0, column))
+    Background::new(background, Padding::all(10.0, column))
 }
 
 fn tone_palette(tone: DebugTone) -> (Color, Color, Color) {
@@ -647,6 +647,7 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         .map(|sample| sample.phase.label())
         .unwrap_or("No measured work");
     let slowest_duration_ms = slowest_phase.map(|sample| sample.duration_ms).unwrap_or(0.0);
+    let renderer_submission = snapshot.renderer_submission;
 
     let metrics = debug_metric_grid([
         DebugMetric::new("Frame", format_duration_ms(snapshot.total_time_ms))
@@ -665,6 +666,21 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             } else {
                 DebugTone::Warning
             }),
+        DebugMetric::new("Render passes", renderer_submission.pass_count.to_string())
+            .detail("Render passes submitted for the frame")
+            .tone(DebugTone::Neutral),
+        DebugMetric::new("Draw calls", renderer_submission.draw_count.to_string())
+            .detail("All GPU draw calls, including clip-mask submission")
+            .tone(DebugTone::Neutral),
+        DebugMetric::new(
+            "Vertex upload",
+            format_byte_size(renderer_submission.uploaded_vertex_bytes),
+        )
+        .detail(format!(
+            "{} bytes written into scene and clip vertex buffers",
+            renderer_submission.uploaded_vertex_bytes,
+        ))
+        .tone(upload_tone(renderer_submission.uploaded_vertex_bytes)),
     ]);
 
     let phase_rows = snapshot
@@ -686,7 +702,7 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         .collect::<Vec<_>>();
 
     Stack::vertical()
-        .spacing(12.0)
+        .spacing(10.0)
         .alignment(Alignment::Stretch)
         .with_child(metrics)
         .with_child(debug_key_values([
@@ -729,7 +745,7 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             ),
         ]))
         .with_child(
-            SizedBox::new().height(176.0).with_child(
+            SizedBox::new().height(156.0).with_child(
                 Table::new("Frame phase timings")
                     .columns([
                         TableColumn::new("Phase").min_width(180.0),
@@ -754,8 +770,33 @@ fn duration_tone(duration_ms: f64) -> DebugTone {
     }
 }
 
+fn upload_tone(bytes: u64) -> DebugTone {
+    if bytes >= 1_048_576 {
+        DebugTone::Danger
+    } else if bytes >= 262_144 {
+        DebugTone::Warning
+    } else if bytes > 0 {
+        DebugTone::Info
+    } else {
+        DebugTone::Neutral
+    }
+}
+
 fn format_duration_ms(duration_ms: f64) -> String {
     format!("{duration_ms:.2} ms")
+}
+
+fn format_byte_size(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * 1024;
+
+    if bytes >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn format_cache_metrics(metrics: CacheMetrics) -> String {
