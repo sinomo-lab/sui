@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+palette = { workspace = true }
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
 sui-runtime = { workspace = true }

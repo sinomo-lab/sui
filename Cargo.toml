@@ -25,6 +25,7 @@ bytemuck = { version = "1", features = ["derive"] }
 fontdb = "0.23"
 lyon_path = "1.0"
 lyon_tessellation = "1.0"
+palette = "0.7"
 pollster = "0.4"
 rustybuzz = "0.20"
 sui = { path = "crates/sui" }

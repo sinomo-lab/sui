@@ -17,9 +17,9 @@ pub use composites::{
 };
 pub use containers::{Align, Background, ScrollAxes, ScrollView, SizedBox, Stack};
 pub use controls::{
-    Button, Checkbox, ComboBox, ControlMetrics, ControlPalette, ControlTypography, DefaultTheme,
-    Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput, NumberInput, RadioButton,
-    RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea, TextInput,
+    Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label,
+    MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider,
+    SpinBox, Switch, TextArea, TextInput,
 };
 pub use sui_core::{
     AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, DpiInfo, Error, Event, FontHandle,
@@ -50,9 +50,13 @@ pub use sui_text::{
     TextMeasurement, TextRun, TextStyle,
 };
 pub use sui_widgets::{
-    Breadcrumb, BreadcrumbItem, ColorPicker, ColorSwatch, DataGrid, Image, ImageFit, ListItem,
-    ListView, PathBar, ResizablePane, SplitView, Table, TableColumn, TableColumnAlignment,
-    TableRow, TreeItem, TreeView,
+    Breadcrumb, BreadcrumbItem, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette,
+    ControlTypography, DataGrid, DefaultTheme, Image, ImageFit, ListItem, ListView, PathBar,
+    ResizablePane, SplitView, Table, TableColumn, TableColumnAlignment, TableRow,
+    ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScale, ThemeColors,
+    ThemeContainers, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading,
+    ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
+    TreeItem, TreeView,
 };
 
 pub trait ThemeExtension: Any + Send + Sync {}
@@ -139,10 +143,11 @@ pub struct Theme {
 
 impl Default for Theme {
     fn default() -> Self {
+        let default_widgets = DefaultTheme::default();
         Self {
-            background: Color::rgba(0.96, 0.972, 0.988, 1.0),
-            foreground: Color::rgba(0.12, 0.15, 0.20, 1.0),
-            default_widgets: DefaultTheme::default(),
+            background: default_widgets.palette.surface,
+            foreground: default_widgets.palette.text,
+            default_widgets,
             extensions: ThemeExtensions::default(),
         }
     }
@@ -305,16 +310,19 @@ pub mod prelude {
         BreadcrumbItem, Brush, BusyIndicator, Button, Checkbox, Color, ColorPicker, ColorSwatch,
         ComboBox, Constraints, ContextMenu, ControlMetrics, ControlPalette, ControlTypography,
         DataGrid, DefaultTheme, Dialog, Divider, Event, EventCtx, FontHandle, Icon, IconButton,
-        IconGlyph, Image, ImageFit, ImageHandle, ImeEvent, Insets, KeyboardEvent, Label, LayoutCtx,
-        ListItem, ListView, Menu, MenuItem, Modal, MultilineTextInput, NumberInput, PaintCtx, Path,
-        PathBar, PathBuilder, Point, PointerEvent, Popover, ProgressBar, RadioButton, RadioGroup,
-        Rect, RegisteredFont, RegisteredImage, ResizablePane, Result, ScrollAxes, ScrollView,
-        Select, SemanticsCtx, Separator, ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox,
-        Spinner, SplitView, Stack, StrokeStyle, Style, Switch, TabBar, Table, TableColumn,
-        TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextLayout, TextMeasurement,
-        TextStyle, Theme, ThemeExtension, ThemeExtensions, TimerToken, Tooltip, TooltipPlacement,
-        Transform, TreeItem, TreeView, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
-        containers::Padding,
+        IconGlyph, Image, ImageFit, ImageHandle, ImeEvent, Insets, KeyboardEvent, Label,
+        LayoutCtx, ListItem, ListView, Menu, MenuItem, Modal, MultilineTextInput, NumberInput,
+        PaintCtx, Path, PathBar, PathBuilder, Point, PointerEvent, Popover, ProgressBar,
+        RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage, ResizablePane, Result,
+        ScrollAxes, ScrollView, Select, SemanticsCtx, Separator, ShapedText, SingleChild, Size,
+        SizedBox, Slider, SpinBox, Spinner, SplitView, Stack, StrokeStyle, Style, Switch,
+        TabBar, Table, TableColumn, TableColumnAlignment, TableRow, Tabs, TextArea, TextInput,
+        TextLayout, TextMeasurement, TextStyle, Theme, ThemeAspectRatios, ThemeBlurScale,
+        ThemeBreakpoints, ThemeColorScale, ThemeColors, ThemeContainers, ThemeExtension,
+        ThemeExtensions, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading,
+        ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken,
+        ThemeTracking, TimerToken, Tooltip, TooltipPlacement, Transform, TreeItem, TreeView,
+        WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder, containers::Padding,
     };
 }
 
