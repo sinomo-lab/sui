@@ -32,6 +32,16 @@ pub const DIALOG_TITLE: &str = "Project settings";
 pub const PROGRESS_NAME: &str = "Export progress";
 pub const SPINNER_NAME: &str = "Background work";
 pub const SUMMARY_NAME: &str = "Widget book summary";
+pub const LIST_VIEW_NAME: &str = "Assets list";
+pub const TREE_VIEW_NAME: &str = "Scene tree";
+pub const TABLE_NAME: &str = "Material table";
+pub const SPLIT_VIEW_NAME: &str = "Editor split";
+pub const BREADCRUMB_NAME: &str = "Project path";
+pub const COLOR_SWATCH_NAME: &str = "Primary swatch";
+pub const COLOR_PICKER_NAME: &str = "Accent picker";
+pub const DEMO_IMAGE_LABEL: &str = "Preview image";
+
+const WIDGET_BOOK_IMAGE_HANDLE: ImageHandle = ImageHandle::new(1);
 
 const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
 const BLEND_MODE_OPTIONS: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
@@ -92,7 +102,16 @@ pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
 }
 
 pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
-    Application::new().window(
+    let mut application = Application::new();
+    application
+        .register_image(
+            WIDGET_BOOK_IMAGE_HANDLE,
+            RegisteredImage::from_rgba8(72, 72, widget_book_demo_image_pixels())
+                .expect("widget-book demo image is valid RGBA data"),
+        )
+        .expect("widget-book demo image handle should register exactly once");
+
+    application.window(
         WindowBuilder::new()
             .title(WINDOW_TITLE)
             .root(WidgetBookRoot::new(state)),
@@ -603,8 +622,221 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                 "Live state",
                 "This summary reads state produced by reusable controls so screenshot stories can cover both isolated widgets and composed UI.",
                 WidgetBookSummary::new(state),
+            ))
+            .with_child(panel(
+                "Collections and hierarchy",
+                "Foundational editor widgets need to cover lists, trees, and structured tables without requiring app-specific shells first.",
+                Stack::vertical()
+                    .spacing(16.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        SizedBox::new().width(360.0).height(220.0).with_child(
+                            ListView::new(LIST_VIEW_NAME)
+                                .items([
+                                    ListItem::new("Hero texture").detail("2048 x 2048 RGBA").accent(Color::rgba(0.16, 0.54, 0.88, 1.0)),
+                                    ListItem::new("Normals atlas").detail("Streaming mip chain"),
+                                    ListItem::new("Glass material").detail("Referenced in 3 prefabs"),
+                                    ListItem::new("UI icon sheet").detail("Tagged for export").accent(Color::rgba(0.78, 0.50, 0.17, 1.0)),
+                                    ListItem::new("Archive cache").detail("Read only").disabled(),
+                                ])
+                                .selected(1),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(420.0).height(240.0).with_child(
+                            TreeView::new(TREE_VIEW_NAME)
+                                .items([
+                                    TreeItem::new("Scene")
+                                        .expanded(true)
+                                        .with_child(
+                                            TreeItem::new("Environment")
+                                                .expanded(true)
+                                                .with_child(TreeItem::new("Sky dome").detail("Visible"))
+                                                .with_child(TreeItem::new("Fog volume").detail("Animated")),
+                                        )
+                                        .with_child(
+                                            TreeItem::new("Characters")
+                                                .expanded(true)
+                                                .with_child(TreeItem::new("Pilot").detail("Selected"))
+                                                .with_child(TreeItem::new("Companion drone")),
+                                        )
+                                        .with_child(TreeItem::new("FX").detail("Collapsed group")),
+                                ]),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(720.0).height(250.0).with_child(
+                            Table::new(TABLE_NAME)
+                                .columns([
+                                    TableColumn::new("Material"),
+                                    TableColumn::new("Domain").width(120.0),
+                                    TableColumn::new("Shader").width(180.0),
+                                    TableColumn::new("Passes").width(90.0).alignment(TableColumnAlignment::End),
+                                    TableColumn::new("Last edit").width(130.0),
+                                ])
+                                .rows([
+                                    TableRow::new(["ClearCoat_Glass", "Surface", "pbr.clearcoat", "3", "2 min ago"]),
+                                    TableRow::new(["Terrain_Master", "Surface", "terrain.layered", "5", "11 min ago"]),
+                                    TableRow::new(["UI_Highlight", "Overlay", "ui.gradient", "1", "24 min ago"]),
+                                    TableRow::new(["CloudShadow", "Decal", "fx.projected", "2", "1 hour ago"]),
+                                    TableRow::new(["Water_Foam", "Surface", "water.foam", "4", "yesterday"]),
+                                ])
+                                .selected(2),
+                        ),
+                    ),
+            ))
+            .with_child(panel(
+                "Layout and pathing",
+                "Editor shells need split panes and breadcrumb-style navigation before the rest of the UI can settle into place.",
+                Stack::vertical()
+                    .spacing(16.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        SizedBox::new().width(620.0).with_child(
+                            Breadcrumb::new(BREADCRUMB_NAME)
+                                .items([
+                                    BreadcrumbItem::new("Workspace"),
+                                    BreadcrumbItem::new("Projects"),
+                                    BreadcrumbItem::new("Starfall"),
+                                    BreadcrumbItem::new("Materials"),
+                                    BreadcrumbItem::new("Glass"),
+                                ])
+                                .current(4),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(720.0).height(240.0).with_child(
+                            SplitView::horizontal(
+                                Background::new(
+                                    Color::rgba(0.97, 0.981, 0.992, 1.0),
+                                    Padding::all(
+                                        16.0,
+                                        Stack::vertical()
+                                            .spacing(8.0)
+                                            .alignment(Alignment::Stretch)
+                                            .with_child(
+                                                Label::new("Viewport")
+                                                    .font_size(18.0)
+                                                    .line_height(22.0)
+                                                    .color(Color::rgba(0.12, 0.16, 0.22, 1.0)),
+                                            )
+                                            .with_child(
+                                                Label::new("Resizable panes let editor shells settle into familiar two-up and inspector layouts.")
+                                                    .font_size(14.0)
+                                                    .line_height(19.0)
+                                                    .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                                            ),
+                                    ),
+                                ),
+                                Background::new(
+                                    Color::rgba(0.985, 0.99, 1.0, 1.0),
+                                    Padding::all(
+                                        16.0,
+                                        Stack::vertical()
+                                            .spacing(8.0)
+                                            .alignment(Alignment::Stretch)
+                                            .with_child(
+                                                Label::new("Inspector")
+                                                    .font_size(18.0)
+                                                    .line_height(22.0)
+                                                    .color(Color::rgba(0.12, 0.16, 0.22, 1.0)),
+                                            )
+                                            .with_child(
+                                                Label::new("Drag the divider to rebalance the viewport and detail pane without custom shell code.")
+                                                    .font_size(14.0)
+                                                    .line_height(19.0)
+                                                    .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                                            ),
+                                    ),
+                                ),
+                            )
+                            .name(SPLIT_VIEW_NAME)
+                            .ratio(0.62),
+                        ),
+                    ),
+            ))
+            .with_child(panel(
+                "Color and imagery",
+                "SUI targets visual tooling, so swatches, a usable picker, and image previews need to exist as first-class widgets.",
+                Stack::vertical()
+                    .spacing(16.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Stack::horizontal()
+                            .spacing(12.0)
+                            .alignment(Alignment::Center)
+                            .with_child(ColorSwatch::new(COLOR_SWATCH_NAME, Color::rgba(0.12, 0.55, 0.88, 1.0)).size(Size::new(64.0, 36.0)))
+                            .with_child(ColorSwatch::new("Shadow swatch", Color::rgba(0.08, 0.10, 0.14, 0.84)).size(Size::new(64.0, 36.0)))
+                            .with_child(
+                                Label::new("Use swatches for palettes, material chips, and compact property rows.")
+                                    .font_size(14.0)
+                                    .line_height(18.0)
+                                    .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                            ),
+                    )
+                    .with_child(
+                        Stack::horizontal()
+                            .spacing(16.0)
+                            .alignment(Alignment::Start)
+                            .with_child(
+                                SizedBox::new().width(320.0).height(266.0).with_child(
+                                    ColorPicker::from_color(COLOR_PICKER_NAME, Color::rgba(0.15, 0.62, 0.48, 0.92)),
+                                ),
+                            )
+                            .with_child(
+                                SizedBox::new().width(220.0).height(220.0).with_child(
+                                    Image::new(WIDGET_BOOK_IMAGE_HANDLE)
+                                        .label(DEMO_IMAGE_LABEL)
+                                        .fit(ImageFit::Contain)
+                                        .background(Color::rgba(0.965, 0.975, 0.99, 1.0))
+                                        .corner_radius(12.0),
+                                ),
+                            ),
+                    ),
             )),
     ))
+}
+
+fn widget_book_demo_image_pixels() -> Vec<u8> {
+    let width = 72usize;
+    let height = 72usize;
+    let mut pixels = vec![0u8; width * height * 4];
+
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y * width + x) * 4;
+            let checker = ((x / 8) + (y / 8)) % 2 == 0;
+            let mut red = if checker { 228 } else { 208 };
+            let mut green = if checker { 236 } else { 216 };
+            let mut blue = if checker { 248 } else { 228 };
+            let alpha = 255u8;
+
+            if x > 10 && x < 62 && y > 10 && y < 62 {
+                red = 38 + ((x as f32 / width as f32) * 50.0) as u8;
+                green = 108 + ((y as f32 / height as f32) * 60.0) as u8;
+                blue = 190;
+            }
+
+            if (x > 18 && x < 54) && (y > 18 && y < 54) {
+                red = 245;
+                green = 248;
+                blue = 252;
+            }
+
+            if (x > 28 && x < 44) && (y > 24 && y < 48) {
+                red = 255;
+                green = 168;
+                blue = 60;
+            }
+
+            pixels[index] = red;
+            pixels[index + 1] = green;
+            pixels[index + 2] = blue;
+            pixels[index + 3] = alpha;
+        }
+    }
+
+    pixels
 }
 
 fn panel<W>(title: &str, subtitle: &str, body: W) -> impl Widget
@@ -817,16 +1049,18 @@ mod tests {
     use std::{cell::RefCell, env, fs, path::Path, path::PathBuf, rc::Rc};
 
     use super::{
-        CONTEXT_MENU_NAME, DIALOG_TITLE, ICON_BUTTON_LABEL, ICON_LABEL, MENU_NAME,
-        NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, PRIMARY_BUTTON_LABEL, PROGRESS_NAME,
-        RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SPINNER_NAME,
-        SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME, TAB_BAR_OPTIONS,
-        TAB_PANEL_OPTIONS, TABS_NAME, TEXT_AREA_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
-        WidgetBookState, build_widget_book_application, default_widget_book_state,
+        BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME,
+        DEMO_IMAGE_LABEL, DIALOG_TITLE, ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME,
+        MENU_NAME, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, PRIMARY_BUTTON_LABEL,
+        PROGRESS_NAME, RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME,
+        SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL,
+        TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME, TABS_NAME,
+        TEXT_AREA_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME, WidgetBookState,
+        build_widget_book_application, default_widget_book_state,
     };
     use sui::{
-        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Result,
-        SemanticsRole, SemanticsValue,
+        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
+        Result, SemanticsRole, SemanticsValue,
     };
     use sui_testing::prelude::*;
 
@@ -862,10 +1096,18 @@ mod tests {
         Spinner,
         ScrollViewScrolled,
         Summary,
+        ListView,
+        TreeView,
+        Table,
+        SplitView,
+        Breadcrumb,
+        ColorSwatch,
+        ColorPicker,
+        ImageWidget,
     }
 
     impl StoryCase {
-        const ALL: [Self; 30] = [
+        const ALL: [Self; 38] = [
             Self::Overview,
             Self::OverviewConfigured,
             Self::Button,
@@ -896,6 +1138,14 @@ mod tests {
             Self::Spinner,
             Self::ScrollViewScrolled,
             Self::Summary,
+            Self::ListView,
+            Self::TreeView,
+            Self::Table,
+            Self::SplitView,
+            Self::Breadcrumb,
+            Self::ColorSwatch,
+            Self::ColorPicker,
+            Self::ImageWidget,
         ];
 
         fn id(self) -> &'static str {
@@ -930,6 +1180,14 @@ mod tests {
                 Self::Spinner => "spinner",
                 Self::ScrollViewScrolled => "scroll-view-scrolled",
                 Self::Summary => "summary",
+                Self::ListView => "list-view",
+                Self::TreeView => "tree-view",
+                Self::Table => "table",
+                Self::SplitView => "split-view",
+                Self::Breadcrumb => "breadcrumb",
+                Self::ColorSwatch => "color-swatch",
+                Self::ColorPicker => "color-picker",
+                Self::ImageWidget => "image-widget",
             }
         }
 
@@ -973,6 +1231,14 @@ mod tests {
                     "Outer widget-book scroll view after paging down through the gallery."
                 }
                 Self::Summary => "Composed summary panel showing derived state.",
+                Self::ListView => "List view crop for asset browser and inspector collections.",
+                Self::TreeView => "Tree view crop for layers, files, and scene hierarchies.",
+                Self::Table => "Table crop for structured tool data and data-grid layouts.",
+                Self::SplitView => "Split view crop with the resizable divider in an editor shell.",
+                Self::Breadcrumb => "Breadcrumb crop for path and project navigation surfaces.",
+                Self::ColorSwatch => "Color swatch crop for palette chips and compact property rows.",
+                Self::ColorPicker => "Color picker crop for interactive color adjustment workflows.",
+                Self::ImageWidget => "Image widget crop for previews, thumbnails, and asset panels.",
             }
         }
 
@@ -1001,7 +1267,15 @@ mod tests {
                 | Self::Dialog
                 | Self::ProgressBar
                 | Self::Spinner
-                | Self::ScrollViewScrolled => default_widget_book_state(),
+                | Self::ScrollViewScrolled
+                | Self::ListView
+                | Self::TreeView
+                | Self::Table
+                | Self::SplitView
+                | Self::Breadcrumb
+                | Self::ColorSwatch
+                | Self::ColorPicker
+                | Self::ImageWidget => default_widget_book_state(),
                 Self::OverviewConfigured
                 | Self::CheckboxUnchecked
                 | Self::FilledInput
@@ -1053,6 +1327,14 @@ mod tests {
                     }
                 }
                 Self::ProgressBar | Self::Spinner | Self::Summary => scroll_gallery(window, 4),
+                Self::ListView
+                | Self::TreeView
+                | Self::Table
+                | Self::SplitView
+                | Self::Breadcrumb
+                | Self::ColorSwatch
+                | Self::ColorPicker
+                | Self::ImageWidget => scroll_to_story_target(window, self, 8),
                 Self::TextArea => scroll_gallery(window, 2),
                 Self::ScrollViewScrolled => scroll_gallery(window, 1),
                 Self::Overview
@@ -1135,6 +1417,44 @@ mod tests {
                 Self::Summary => window
                     .get_by_role(SemanticsRole::GenericContainer)
                     .with_name(SUMMARY_NAME),
+                Self::ListView => window
+                    .get_by_role(SemanticsRole::List)
+                    .with_name(LIST_VIEW_NAME),
+                Self::TreeView => window
+                    .get_by_role(SemanticsRole::Tree)
+                    .with_name(TREE_VIEW_NAME),
+                Self::Table => window
+                    .get_by_role(SemanticsRole::Table)
+                    .with_name(TABLE_NAME),
+                Self::SplitView => window
+                    .get_by_role(SemanticsRole::Splitter)
+                    .with_name(SPLIT_VIEW_NAME),
+                Self::Breadcrumb => window
+                    .get_by_role(SemanticsRole::Breadcrumb)
+                    .with_name(BREADCRUMB_NAME),
+                Self::ColorSwatch => window
+                    .get_by_role(SemanticsRole::ColorSwatch)
+                    .with_name(COLOR_SWATCH_NAME),
+                Self::ColorPicker => window
+                    .get_by_role(SemanticsRole::ColorPicker)
+                    .with_name(COLOR_PICKER_NAME),
+                Self::ImageWidget => window
+                    .get_by_role(SemanticsRole::Image)
+                    .with_name(DEMO_IMAGE_LABEL),
+            }
+        }
+
+        fn story_node(self) -> Option<(SemanticsRole, Option<&'static str>)> {
+            match self {
+                Self::ListView => Some((SemanticsRole::List, Some(LIST_VIEW_NAME))),
+                Self::TreeView => Some((SemanticsRole::Tree, Some(TREE_VIEW_NAME))),
+                Self::Table => Some((SemanticsRole::Table, Some(TABLE_NAME))),
+                Self::SplitView => Some((SemanticsRole::Splitter, Some(SPLIT_VIEW_NAME))),
+                Self::Breadcrumb => Some((SemanticsRole::Breadcrumb, Some(BREADCRUMB_NAME))),
+                Self::ColorSwatch => Some((SemanticsRole::ColorSwatch, Some(COLOR_SWATCH_NAME))),
+                Self::ColorPicker => Some((SemanticsRole::ColorPicker, Some(COLOR_PICKER_NAME))),
+                Self::ImageWidget => Some((SemanticsRole::Image, Some(DEMO_IMAGE_LABEL))),
+                _ => None,
             }
         }
     }
@@ -1559,6 +1879,50 @@ mod tests {
             locator.press("PageDown")?;
         }
         Ok(())
+    }
+
+    fn scroll_to_story_target(window: &TestWindow, story: StoryCase, max_pages: usize) -> Result<()> {
+        let Some((role, name)) = story.story_node() else {
+            return Ok(());
+        };
+
+        if story_node_is_visible(window, role.clone(), name)? {
+            return Ok(());
+        }
+
+        let locator = window.get_by_role(SemanticsRole::ScrollView);
+        locator.focus()?;
+        for _ in 0..max_pages {
+            locator.press("PageDown")?;
+            if story_node_is_visible(window, role.clone(), name)? {
+                return Ok(());
+            }
+        }
+
+        Err(Error::new(format!(
+            "failed to scroll story target {:?} {:?} into view",
+            role, name
+        )))
+    }
+
+    fn story_node_is_visible(
+        window: &TestWindow,
+        role: SemanticsRole,
+        name: Option<&str>,
+    ) -> Result<bool> {
+        let snapshot = window.snapshot()?;
+        let viewport = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.role == SemanticsRole::Window)
+            .map(|node| node.bounds)
+            .unwrap_or(Rect::ZERO);
+        Ok(snapshot.accessibility.nodes.iter().any(|node| {
+            node.role == role
+                && node.name.as_deref() == name
+                && node.bounds.intersection(viewport).is_some()
+        }))
     }
 
     fn node_center(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<Point> {

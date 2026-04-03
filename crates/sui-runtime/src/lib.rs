@@ -222,8 +222,9 @@ impl Runtime {
     pub fn handle_event(&mut self, window_id: WindowId, event: Event) -> Result<()> {
         let text_system = Arc::clone(&self.text_system);
         let font_registry = Arc::clone(&self.font_registry);
+        let image_registry = Arc::clone(&self.image_registry);
         let window = self.window_mut(window_id)?;
-        window.handle_event(event, text_system, font_registry);
+        window.handle_event(event, text_system, font_registry, image_registry);
         Ok(())
     }
 
@@ -561,9 +562,10 @@ impl WindowState {
         event: Event,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
     ) {
         self.preprocess_window_event(&event);
-        self.ensure_graph_for_event(&event, text_system, font_registry);
+        self.ensure_graph_for_event(&event, text_system, font_registry, image_registry);
 
         let hit_target = match &event {
             Event::Pointer(pointer) => self.graph.hit_test(pointer.position),
@@ -681,9 +683,10 @@ impl WindowState {
         event: &Event,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
     ) {
         if self.schedule.layout || self.viewport.is_none() {
-            let _ = self.run_layout_pass(text_system, font_registry);
+            let _ = self.run_layout_pass(text_system, font_registry, image_registry);
             return;
         }
 
@@ -1005,7 +1008,11 @@ impl WindowState {
         }
 
         if self.schedule.layout || self.viewport.is_none() {
-            invalidations.extend(self.run_layout_pass(text_system, Arc::clone(&font_registry)));
+            invalidations.extend(self.run_layout_pass(
+                text_system,
+                Arc::clone(&font_registry),
+                Arc::clone(&image_registry),
+            ));
         } else if self.schedule.hit_test || self.graph.is_empty() {
             self.refresh_graph();
         }
@@ -1077,6 +1084,7 @@ impl WindowState {
         &mut self,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
     ) -> Vec<InvalidationRequest> {
         let mut layout_ctx = LayoutCtx::new(
             self.id,
@@ -1084,6 +1092,7 @@ impl WindowState {
             self.current_dpi_info(),
             text_system,
             font_registry,
+            image_registry,
         );
         let viewport = self.root.layout(&mut layout_ctx, self.layout_constraints());
         self.root

@@ -3,6 +3,9 @@
 pub mod composites;
 pub mod containers;
 pub mod controls;
+pub mod data;
+pub mod media;
+pub mod panes;
 
 pub use composites::{
     BusyIndicator, ContextMenu, Dialog, Menu, MenuItem, Modal, Popover, ProgressBar, Spinner,
@@ -14,3 +17,9 @@ pub use controls::{
     Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput, NumberInput, RadioButton,
     RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea, TextInput,
 };
+pub use data::{
+    Breadcrumb, BreadcrumbItem, DataGrid, ListItem, ListView, PathBar, Table, TableColumn,
+    TableColumnAlignment, TableRow, TreeItem, TreeView,
+};
+pub use media::{ColorPicker, ColorSwatch, Image, ImageFit};
+pub use panes::{ResizablePane, SplitView};

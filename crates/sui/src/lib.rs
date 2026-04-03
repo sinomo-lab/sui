@@ -49,6 +49,11 @@ pub use sui_text::{
     FontRegistry, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText, TextLayout, TextLine,
     TextMeasurement, TextRun, TextStyle,
 };
+pub use sui_widgets::{
+    Breadcrumb, BreadcrumbItem, ColorPicker, ColorSwatch, DataGrid, Image, ImageFit, ListItem,
+    ListView, PathBar, ResizablePane, SplitView, Table, TableColumn, TableColumnAlignment,
+    TableRow, TreeItem, TreeView,
+};
 
 pub trait ThemeExtension: Any + Send + Sync {}
 
@@ -296,17 +301,19 @@ impl Default for Style {
 
 pub mod prelude {
     pub use crate::{
-        Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, BusyIndicator,
-        Button, Checkbox, Color, ComboBox, Constraints, ContextMenu, ControlMetrics,
-        ControlPalette, ControlTypography, DefaultTheme, Dialog, Divider, Event, EventCtx,
-        FontHandle, Icon, IconButton, IconGlyph, ImageHandle, ImeEvent, Insets, KeyboardEvent,
-        Label, LayoutCtx, Menu, MenuItem, Modal, MultilineTextInput, NumberInput, PaintCtx, Path,
-        PathBuilder, Point, PointerEvent, Popover, ProgressBar, RadioButton, RadioGroup, Rect,
-        RegisteredFont, RegisteredImage, Result, ScrollAxes, ScrollView, Select, SemanticsCtx,
-        Separator, ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox, Spinner, Stack,
-        StrokeStyle, Style, Switch, TabBar, Tabs, TextArea, TextInput, TextLayout, TextMeasurement,
+        Align, Alignment, Application, AsyncWakeToken, Axis, Background, Breadcrumb,
+        BreadcrumbItem, Brush, BusyIndicator, Button, Checkbox, Color, ColorPicker, ColorSwatch,
+        ComboBox, Constraints, ContextMenu, ControlMetrics, ControlPalette, ControlTypography,
+        DataGrid, DefaultTheme, Dialog, Divider, Event, EventCtx, FontHandle, Icon, IconButton,
+        IconGlyph, Image, ImageFit, ImageHandle, ImeEvent, Insets, KeyboardEvent, Label, LayoutCtx,
+        ListItem, ListView, Menu, MenuItem, Modal, MultilineTextInput, NumberInput, PaintCtx, Path,
+        PathBar, PathBuilder, Point, PointerEvent, Popover, ProgressBar, RadioButton, RadioGroup,
+        Rect, RegisteredFont, RegisteredImage, ResizablePane, Result, ScrollAxes, ScrollView,
+        Select, SemanticsCtx, Separator, ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox,
+        Spinner, SplitView, Stack, StrokeStyle, Style, Switch, TabBar, Table, TableColumn,
+        TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextLayout, TextMeasurement,
         TextStyle, Theme, ThemeExtension, ThemeExtensions, TimerToken, Tooltip, TooltipPlacement,
-        Transform, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
+        Transform, TreeItem, TreeView, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
         containers::Padding,
     };
 }

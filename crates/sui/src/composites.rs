@@ -1,1 +1,1 @@
-pub use sui_widgets::composites::*;
+pub use sui_widgets::{composites::*, data::*};

@@ -9,7 +9,7 @@ use sui_core::{
     WidgetId, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{Brush, ImageSource, Scene, SceneCommand, StrokeStyle};
+use sui_scene::{Brush, ImageRegistry, ImageSource, Scene, SceneCommand, StrokeStyle};
 use sui_text::{
     FontRegistry, ShapedText, TextLayout, TextMeasurement, TextRun, TextStyle, TextSystem,
 };
@@ -221,6 +221,7 @@ impl WidgetPod {
             parent_ctx.dpi(),
             Arc::clone(&parent_ctx.text_system),
             Arc::clone(&parent_ctx.font_registry),
+            Arc::clone(&parent_ctx.image_registry),
         );
         let size = self.widget.layout(&mut child_ctx, constraints);
         self.bounds = Rect::from_origin_size(origin, size);
@@ -668,6 +669,7 @@ pub struct LayoutCtx {
     dpi_info: DpiInfo,
     text_system: Arc<TextSystem>,
     font_registry: Arc<FontRegistry>,
+    image_registry: Arc<ImageRegistry>,
     invalidations: Vec<InvalidationRequest>,
 }
 
@@ -678,6 +680,7 @@ impl LayoutCtx {
         dpi_info: DpiInfo,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
     ) -> Self {
         Self {
             window_id,
@@ -685,6 +688,7 @@ impl LayoutCtx {
             dpi_info,
             text_system,
             font_registry,
+            image_registry,
             invalidations: Vec::new(),
         }
     }
@@ -734,6 +738,12 @@ impl LayoutCtx {
     ) -> sui_core::Result<TextLayout> {
         self.text_system
             .shape_text(text, box_size, style, self.font_registry.as_ref())
+    }
+
+    pub fn image_size(&self, image: sui_core::ImageHandle) -> Option<Size> {
+        self.image_registry
+            .get(image)
+            .map(|image| Size::new(image.width() as f32, image.height() as f32))
     }
 
     pub fn invalidations(&self) -> &[InvalidationRequest] {
@@ -1063,7 +1073,7 @@ mod tests {
         WidgetId, WindowId,
     };
     use sui_layout::Constraints;
-    use sui_scene::{SceneCommand, StrokeStyle};
+    use sui_scene::{ImageRegistry, SceneCommand, StrokeStyle};
     use sui_text::{FontRegistry, TextStyle, TextSystem};
 
     fn layout_ctx(window_id: WindowId, widget_id: WidgetId) -> LayoutCtx {
@@ -1073,6 +1083,7 @@ mod tests {
             DpiInfo::default(),
             std::sync::Arc::new(TextSystem::new()),
             std::sync::Arc::new(FontRegistry::new()),
+            std::sync::Arc::new(ImageRegistry::new()),
         )
     }
 
@@ -1091,6 +1102,7 @@ mod tests {
             dpi,
             std::sync::Arc::new(TextSystem::new()),
             std::sync::Arc::new(FontRegistry::new()),
+            std::sync::Arc::new(ImageRegistry::new()),
         );
         let paint = PaintCtx::new(
             WindowId::new(1),

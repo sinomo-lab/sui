@@ -1,1 +1,1 @@
-pub use sui_widgets::{composites::*, controls::*};
+pub use sui_widgets::{controls::*, media::*};
