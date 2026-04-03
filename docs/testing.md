@@ -518,6 +518,23 @@ That should be the canonical implementation because:
 - it uses the current in-process runtime directly
 - it avoids inventing a remote protocol before the object model is stable
 
+## Widget Book Workflow
+
+The workspace now includes `sui-widget-book`, a dedicated crate for visual widget stories and screenshot-oriented tests.
+
+Recommended usage:
+
+- run `cargo test -p sui-widget-book -- --nocapture` to generate fresh artifacts under `target/ui-artifacts/sui-widget-book`
+- inspect the per-story `story.png` crop alongside the full-window `screenshot.png`, semantics dump, and widget graph dump
+- commit PNG baselines in `crates/sui-widget-book/baselines` only when you want automatic regression checks for a story
+
+Environment flags:
+
+- `SUI_WIDGET_BOOK_UPDATE_BASELINES=1` updates or creates baseline PNGs from the current render output
+- `SUI_WIDGET_BOOK_REQUIRE_BASELINES=1` fails the baseline test if a story does not have a committed baseline yet
+
+This keeps manual investigation and automated screenshot comparison on the same path instead of maintaining separate gallery and regression-test code.
+
 However, the internal command model should be shaped so a later transport can expose it to JavaScript or Python.
 
 ### Future protocol direction

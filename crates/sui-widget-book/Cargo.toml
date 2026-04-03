@@ -1,0 +1,13 @@
+[package]
+name = "sui-widget-book"
+version.workspace = true
+description = "Widget gallery and screenshot-driven visual test stories for SUI."
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+sui = { workspace = true }
+
+[dev-dependencies]
+sui-testing = { workspace = true }

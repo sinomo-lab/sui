@@ -1775,7 +1775,7 @@ name = "sui-dev"
 version = "0.1.0"
 dependencies = [
  "sui",
- "sui-testing",
+ "sui-widget-book",
 ]
 
 [[package]]
@@ -1852,6 +1852,14 @@ dependencies = [
  "rustybuzz",
  "sui-core",
  "ttf-parser",
+]
+
+[[package]]
+name = "sui-widget-book"
+version = "0.1.0"
+dependencies = [
+ "sui",
+ "sui-testing",
 ]
 
 [[package]]
