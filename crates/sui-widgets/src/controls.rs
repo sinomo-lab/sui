@@ -281,7 +281,10 @@ impl Widget for Separator {
                 (ctx.bounds().height() - (self.inset * 2.0)).max(0.0),
             ),
         };
-        ctx.fill(rounded_rect_path(line, thickness * 0.5), self.theme.palette.border);
+        ctx.fill(
+            rounded_rect_path(line, thickness * 0.5),
+            self.theme.palette.border,
+        );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1407,7 +1410,10 @@ impl Widget for Switch {
                 palette.border
             },
         );
-        ctx.fill(Path::circle(rect_center(thumb), thumb.width() * 0.5), palette.accent_text);
+        ctx.fill(
+            Path::circle(rect_center(thumb), thumb.width() * 0.5),
+            palette.accent_text,
+        );
         ctx.draw_text(label_rect, self.label.clone(), text_style);
     }
 
@@ -1692,7 +1698,8 @@ impl Widget for RadioButton {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::RadioButton, ctx.bounds());
+        let mut node =
+            SemanticsNode::new(ctx.widget_id(), SemanticsRole::RadioButton, ctx.bounds());
         node.name = Some(self.label.clone());
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
@@ -1782,10 +1789,11 @@ impl RadioGroup {
     }
 
     fn option_at(&self, bounds: Rect, position: Point) -> Option<usize> {
-        self.options
-            .iter()
-            .enumerate()
-            .find_map(|(index, _)| self.row_rect(bounds, index).contains(position).then_some(index))
+        self.options.iter().enumerate().find_map(|(index, _)| {
+            self.row_rect(bounds, index)
+                .contains(position)
+                .then_some(index)
+        })
     }
 
     fn select(&mut self, index: usize) {
@@ -1826,7 +1834,10 @@ impl Widget for RadioGroup {
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 let hovered = self.option_at(ctx.bounds(), pointer.position);
-                let activate = self.pressed.zip(hovered).filter(|(pressed, hovered)| pressed == hovered);
+                let activate = self
+                    .pressed
+                    .zip(hovered)
+                    .filter(|(pressed, hovered)| pressed == hovered);
                 self.hovered = hovered;
                 self.pressed = None;
                 ctx.release_pointer_capture(pointer.pointer_id);
@@ -1891,7 +1902,10 @@ impl Widget for RadioGroup {
             (count * self.row_height()) + ((count - 1.0) * self.spacing.max(0.0))
         };
 
-        constraints.clamp(Size::new(width.max(self.theme.metrics.button_min_width), height))
+        constraints.clamp(Size::new(
+            width.max(self.theme.metrics.button_min_width),
+            height,
+        ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -2172,7 +2186,12 @@ impl Widget for Slider {
         let palette = self.theme.palette;
         let metrics = self.theme.metrics;
         let track = self.track_rect(ctx.bounds());
-        let active = Rect::new(track.x(), track.y(), track.width() * self.fraction(), track.height());
+        let active = Rect::new(
+            track.x(),
+            track.y(),
+            track.width() * self.fraction(),
+            track.height(),
+        );
         let thumb = self.thumb_rect(ctx.bounds());
 
         draw_control_frame(
@@ -2194,8 +2213,14 @@ impl Widget for Slider {
             },
             ctx.is_focused().then_some(palette.focus_ring),
         );
-        ctx.fill(rounded_rect_path(track, track.height() * 0.5), palette.surface_pressed);
-        ctx.fill(rounded_rect_path(active, track.height() * 0.5), palette.accent);
+        ctx.fill(
+            rounded_rect_path(track, track.height() * 0.5),
+            palette.surface_pressed,
+        );
+        ctx.fill(
+            rounded_rect_path(active, track.height() * 0.5),
+            palette.accent,
+        );
         ctx.fill(
             Path::circle(rect_center(thumb), thumb.width() * 0.5),
             if self.dragging {
@@ -2362,7 +2387,9 @@ impl Widget for NumberInput {
             {
                 self.hovered = true;
                 ctx.request_focus();
-                if number_input_stepper_rect(ctx.bounds(), self.theme.metrics).contains(pointer.position) {
+                if number_input_stepper_rect(ctx.bounds(), self.theme.metrics)
+                    .contains(pointer.position)
+                {
                     if pointer.position.y < ctx.bounds().y() + (ctx.bounds().height() * 0.5) {
                         self.nudge(self.step);
                     } else {
@@ -2453,7 +2480,12 @@ impl Widget for NumberInput {
         draw_icon_glyph(
             ctx,
             IconGlyph::ChevronUp,
-            Rect::new(stepper.x(), stepper.y(), stepper.width(), stepper.height() * 0.5),
+            Rect::new(
+                stepper.x(),
+                stepper.y(),
+                stepper.width(),
+                stepper.height() * 0.5,
+            ),
             palette.text,
         );
         draw_icon_glyph(
@@ -2479,7 +2511,10 @@ impl Widget for NumberInput {
                 content.height(),
             );
             ctx.set_ime_composition_rect(caret);
-            ctx.fill(rounded_rect_path(caret, caret_width * 0.5), palette.accent_text);
+            ctx.fill(
+                rounded_rect_path(caret, caret_width * 0.5),
+                palette.accent_text,
+            );
         }
     }
 
@@ -2766,8 +2801,12 @@ impl Widget for TextArea {
         self.input_layout = input_layout;
 
         constraints.clamp(Size::new(
-            min_size.width.max(content_width + padding.left + padding.right),
-            min_size.height.max(measured_height + padding.top + padding.bottom),
+            min_size
+                .width
+                .max(content_width + padding.left + padding.right),
+            min_size
+                .height
+                .max(measured_height + padding.top + padding.bottom),
         ))
     }
 
@@ -2809,12 +2848,24 @@ impl Widget for TextArea {
             let caret = self
                 .input_layout
                 .as_ref()
-                .map(|layout| layout.caret_rect(self.input_text().len()).translate(content.origin.to_vector()))
-                .unwrap_or(Rect::new(content.x(), content.y(), metrics.caret_width, content.height()));
+                .map(|layout| {
+                    layout
+                        .caret_rect(self.input_text().len())
+                        .translate(content.origin.to_vector())
+                })
+                .unwrap_or(Rect::new(
+                    content.x(),
+                    content.y(),
+                    metrics.caret_width,
+                    content.height(),
+                ));
             let caret_width = physical_pixels(ctx, metrics.caret_width);
             let caret = Rect::new(caret.x(), caret.y(), caret_width, caret.height().max(1.0));
             ctx.set_ime_composition_rect(caret);
-            ctx.fill(rounded_rect_path(caret, caret_width * 0.5), palette.accent_text);
+            ctx.fill(
+                rounded_rect_path(caret, caret_width * 0.5),
+                palette.accent_text,
+            );
         }
     }
 
@@ -3045,7 +3096,11 @@ impl Widget for Select {
                                 .min(self.options.len() - 1);
                             self.hovered_option = Some(next);
                         } else {
-                            let next = self.selected.unwrap_or(0).saturating_add(1).min(self.options.len() - 1);
+                            let next = self
+                                .selected
+                                .unwrap_or(0)
+                                .saturating_add(1)
+                                .min(self.options.len() - 1);
                             self.select_index(next);
                         }
                     }
@@ -3171,7 +3226,11 @@ impl Widget for Select {
                         },
                     );
                 }
-                ctx.draw_text(inset_rect(row, metrics.text_input_padding), option.clone(), self.theme.body_text_style());
+                ctx.draw_text(
+                    inset_rect(row, metrics.text_input_padding),
+                    option.clone(),
+                    self.theme.body_text_style(),
+                );
             }
         }
     }
@@ -3586,7 +3645,10 @@ fn center_square(bounds: Rect, side: f32) -> Rect {
 }
 
 fn rect_center(rect: Rect) -> Point {
-    Point::new(rect.x() + (rect.width() * 0.5), rect.y() + (rect.height() * 0.5))
+    Point::new(
+        rect.x() + (rect.width() * 0.5),
+        rect.y() + (rect.height() * 0.5),
+    )
 }
 
 fn switch_track_rect(bounds: Rect, padding: Insets, metrics: ControlMetrics) -> Rect {
@@ -3622,10 +3684,7 @@ fn number_input_text_rect(bounds: Rect, metrics: ControlMetrics) -> Rect {
     Rect::new(
         bounds.x() + padding.left,
         bounds.y() + padding.top,
-        (bounds.width()
-            - padding.left
-            - padding.right
-            - metrics.number_input_stepper_width)
+        (bounds.width() - padding.left - padding.right - metrics.number_input_stepper_width)
             .max(0.0),
         (bounds.height() - padding.top - padding.bottom).max(0.0),
     )
@@ -3651,11 +3710,7 @@ fn format_number(value: f64, precision: usize) -> String {
             text.pop();
         }
     }
-    if text == "-0" {
-        "0".to_string()
-    } else {
-        text
-    }
+    if text == "-0" { "0".to_string() } else { text }
 }
 
 fn is_numeric_input_char(ch: char) -> bool {
@@ -3716,12 +3771,18 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
         }
         IconGlyph::Close => {
             ctx.stroke(
-                line_path(Point::new(inset.x(), inset.y()), Point::new(inset.max_x(), inset.max_y())),
+                line_path(
+                    Point::new(inset.x(), inset.y()),
+                    Point::new(inset.max_x(), inset.max_y()),
+                ),
                 color,
                 stroke.clone(),
             );
             ctx.stroke(
-                line_path(Point::new(inset.max_x(), inset.y()), Point::new(inset.x(), inset.max_y())),
+                line_path(
+                    Point::new(inset.max_x(), inset.y()),
+                    Point::new(inset.x(), inset.max_y()),
+                ),
                 color,
                 stroke,
             );
@@ -3749,7 +3810,12 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
             }
         }
         IconGlyph::Search => {
-            let lens = Rect::new(inset.x(), inset.y(), inset.width() * 0.62, inset.height() * 0.62);
+            let lens = Rect::new(
+                inset.x(),
+                inset.y(),
+                inset.width() * 0.62,
+                inset.height() * 0.62,
+            );
             ctx.stroke(
                 Path::circle(rect_center(lens), lens.width() * 0.4),
                 color,
@@ -3757,7 +3823,10 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
             );
             ctx.stroke(
                 line_path(
-                    Point::new(lens.max_x() - (lens.width() * 0.05), lens.max_y() - (lens.height() * 0.05)),
+                    Point::new(
+                        lens.max_x() - (lens.width() * 0.05),
+                        lens.max_y() - (lens.height() * 0.05),
+                    ),
                     Point::new(inset.max_x(), inset.max_y()),
                 ),
                 color,
@@ -3773,26 +3842,56 @@ fn chevron_path(bounds: Rect, axis: Axis, direction: f32) -> Path {
         (Axis::Vertical, true) => {
             builder
                 .move_to(Point::new(bounds.x(), bounds.y() + (bounds.height() * 0.3)))
-                .line_to(Point::new(rect_center(bounds).x, bounds.max_y() - (bounds.height() * 0.3)))
-                .line_to(Point::new(bounds.max_x(), bounds.y() + (bounds.height() * 0.3)));
+                .line_to(Point::new(
+                    rect_center(bounds).x,
+                    bounds.max_y() - (bounds.height() * 0.3),
+                ))
+                .line_to(Point::new(
+                    bounds.max_x(),
+                    bounds.y() + (bounds.height() * 0.3),
+                ));
         }
         (Axis::Vertical, false) => {
             builder
-                .move_to(Point::new(bounds.x(), bounds.max_y() - (bounds.height() * 0.3)))
-                .line_to(Point::new(rect_center(bounds).x, bounds.y() + (bounds.height() * 0.3)))
-                .line_to(Point::new(bounds.max_x(), bounds.max_y() - (bounds.height() * 0.3)));
+                .move_to(Point::new(
+                    bounds.x(),
+                    bounds.max_y() - (bounds.height() * 0.3),
+                ))
+                .line_to(Point::new(
+                    rect_center(bounds).x,
+                    bounds.y() + (bounds.height() * 0.3),
+                ))
+                .line_to(Point::new(
+                    bounds.max_x(),
+                    bounds.max_y() - (bounds.height() * 0.3),
+                ));
         }
         (Axis::Horizontal, true) => {
             builder
                 .move_to(Point::new(bounds.x() + (bounds.width() * 0.3), bounds.y()))
-                .line_to(Point::new(bounds.max_x() - (bounds.width() * 0.3), rect_center(bounds).y))
-                .line_to(Point::new(bounds.x() + (bounds.width() * 0.3), bounds.max_y()));
+                .line_to(Point::new(
+                    bounds.max_x() - (bounds.width() * 0.3),
+                    rect_center(bounds).y,
+                ))
+                .line_to(Point::new(
+                    bounds.x() + (bounds.width() * 0.3),
+                    bounds.max_y(),
+                ));
         }
         (Axis::Horizontal, false) => {
             builder
-                .move_to(Point::new(bounds.max_x() - (bounds.width() * 0.3), bounds.y()))
-                .line_to(Point::new(bounds.x() + (bounds.width() * 0.3), rect_center(bounds).y))
-                .line_to(Point::new(bounds.max_x() - (bounds.width() * 0.3), bounds.max_y()));
+                .move_to(Point::new(
+                    bounds.max_x() - (bounds.width() * 0.3),
+                    bounds.y(),
+                ))
+                .line_to(Point::new(
+                    bounds.x() + (bounds.width() * 0.3),
+                    rect_center(bounds).y,
+                ))
+                .line_to(Point::new(
+                    bounds.max_x() - (bounds.width() * 0.3),
+                    bounds.max_y(),
+                ));
         }
     }
     builder.build()
@@ -4267,11 +4366,10 @@ mod tests {
     fn switch_toggles_and_reports_switch_semantics() -> Result<()> {
         let states = Rc::new(RefCell::new(Vec::new()));
         let on_toggle = Rc::clone(&states);
-        let (mut runtime, window_id) = build_runtime(Switch::new("Airplane mode").on_toggle(
-            move |checked| {
+        let (mut runtime, window_id) =
+            build_runtime(Switch::new("Airplane mode").on_toggle(move |checked| {
                 on_toggle.borrow_mut().push(checked);
-            },
-        ));
+            }));
 
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
@@ -4317,7 +4415,12 @@ mod tests {
             Event::Keyboard(KeyboardEvent::new("ArrowRight", KeyState::Pressed)),
         )?;
 
-        assert!(changes.borrow().last().is_some_and(|value| (*value - 0.25).abs() < 1e-6));
+        assert!(
+            changes
+                .borrow()
+                .last()
+                .is_some_and(|value| (*value - 0.25).abs() < 1e-6)
+        );
 
         let output = runtime.render(window_id)?;
         let slider = output

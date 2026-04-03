@@ -20,10 +20,23 @@ pub const RADIO_GROUP_NAME: &str = "Render quality";
 pub const SLIDER_NAME: &str = "Opacity";
 pub const NUMBER_INPUT_NAME: &str = "Brush size";
 pub const SELECT_NAME: &str = "Blend mode";
+pub const TAB_BAR_NAME: &str = "Workspace tabs";
+pub const TABS_NAME: &str = "Inspector tabs";
+pub const MENU_NAME: &str = "Command menu";
+pub const CONTEXT_MENU_NAME: &str = "Layer context menu";
+pub const TOOLTIP_TRIGGER_LABEL: &str = "Hover for shortcuts";
+pub const TOOLTIP_TEXT: &str = "Quick access to common commands";
+pub const POPOVER_NAME: &str = "Inline inspector";
+pub const POPOVER_TRIGGER_LABEL: &str = "Open inspector";
+pub const DIALOG_TITLE: &str = "Project settings";
+pub const PROGRESS_NAME: &str = "Export progress";
+pub const SPINNER_NAME: &str = "Background work";
 pub const SUMMARY_NAME: &str = "Widget book summary";
 
 const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
 const BLEND_MODE_OPTIONS: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
+const TAB_BAR_OPTIONS: [&str; 3] = ["Canvas", "Inspector", "Export"];
+const TAB_PANEL_OPTIONS: [&str; 3] = ["Layout", "Data", "History"];
 
 #[derive(Debug, Clone, Default)]
 pub struct WidgetBookState {
@@ -38,6 +51,11 @@ pub struct WidgetBookState {
     pub number_value: f64,
     pub notes: String,
     pub mode: String,
+    pub tab_bar_choice: String,
+    pub tabs_choice: String,
+    pub last_menu_action: String,
+    pub last_context_action: String,
+    pub dialog_apply_count: usize,
 }
 
 struct WidgetBookRoot {
@@ -65,6 +83,11 @@ pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
         number_value: 12.0,
         notes: "Pinned notes for inspector workflows.\nSupports multiline editing.".to_string(),
         mode: BLEND_MODE_OPTIONS[0].to_string(),
+        tab_bar_choice: TAB_BAR_OPTIONS[0].to_string(),
+        tabs_choice: TAB_PANEL_OPTIONS[0].to_string(),
+        last_menu_action: "New tab".to_string(),
+        last_context_action: "Rename".to_string(),
+        dialog_apply_count: 0,
     }))
 }
 
@@ -121,6 +144,8 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let initial_number_value = snapshot.number_value;
     let initial_radio_choice = snapshot.radio_choice.clone();
     let initial_mode = snapshot.mode.clone();
+    let initial_tab_bar_choice = snapshot.tab_bar_choice.clone();
+    let initial_tabs_choice = snapshot.tabs_choice.clone();
 
     let name_state = Rc::clone(&state);
     let subscribed_state = Rc::clone(&state);
@@ -133,6 +158,11 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let number_state = Rc::clone(&state);
     let notes_state = Rc::clone(&state);
     let select_state = Rc::clone(&state);
+    let tab_bar_state = Rc::clone(&state);
+    let tabs_state = Rc::clone(&state);
+    let menu_state = Rc::clone(&state);
+    let context_menu_state = Rc::clone(&state);
+    let dialog_state = Rc::clone(&state);
 
     ScrollView::vertical(Padding::all(
         24.0,
@@ -357,6 +387,219 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                     ),
             ))
             .with_child(panel(
+                "Navigation surfaces",
+                "Tab bars and tab containers should work for editor chrome and docked inspectors without waiting for a custom application shell.",
+                Stack::vertical()
+                    .spacing(14.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        SizedBox::new().width(520.0).with_child(
+                            TabBar::new(TAB_BAR_NAME)
+                                .tabs(TAB_BAR_OPTIONS)
+                                .selected(option_index(&TAB_BAR_OPTIONS, &initial_tab_bar_choice).unwrap_or(0))
+                                .on_change(move |_, value| {
+                                    tab_bar_state.borrow_mut().tab_bar_choice = value;
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(540.0).height(220.0).with_child(
+                            Tabs::new(TABS_NAME)
+                                .selected(option_index(&TAB_PANEL_OPTIONS, &initial_tabs_choice).unwrap_or(0))
+                                .tab(
+                                    TAB_PANEL_OPTIONS[0],
+                                    Padding::all(
+                                        4.0,
+                                        Stack::vertical()
+                                            .spacing(8.0)
+                                            .alignment(Alignment::Stretch)
+                                            .with_child(
+                                                Label::new("Alignment, spacing, and surface geometry controls belong in a compact inspector tab.")
+                                                    .font_size(14.0)
+                                                    .line_height(19.0)
+                                                    .color(Color::rgba(0.36, 0.44, 0.54, 1.0)),
+                                            )
+                                            .with_child(
+                                                ProgressBar::new("Layout completion")
+                                                    .range(0.0, 100.0)
+                                                    .value(initial_slider_value)
+                                                    .show_value(true),
+                                            ),
+                                    ),
+                                )
+                                .tab(
+                                    TAB_PANEL_OPTIONS[1],
+                                    Padding::all(
+                                        4.0,
+                                        Stack::vertical()
+                                            .spacing(8.0)
+                                            .alignment(Alignment::Stretch)
+                                            .with_child(
+                                                Label::new("Inline data summaries and editable metadata fit naturally in a reusable tabs widget.")
+                                                    .font_size(14.0)
+                                                    .line_height(19.0)
+                                                    .color(Color::rgba(0.36, 0.44, 0.54, 1.0)),
+                                            )
+                                            .with_child(
+                                                Label::new("Selection: 4 layers, 2 masks, 1 smart object")
+                                                    .font_size(13.0)
+                                                    .line_height(18.0)
+                                                    .color(Color::rgba(0.46, 0.54, 0.63, 1.0)),
+                                            ),
+                                    ),
+                                )
+                                .tab(
+                                    TAB_PANEL_OPTIONS[2],
+                                    Padding::all(
+                                        4.0,
+                                        Stack::vertical()
+                                            .spacing(8.0)
+                                            .alignment(Alignment::Stretch)
+                                            .with_child(
+                                                Label::new("Undo groups, import checkpoints, and review markers are another common fit for tabbed panels.")
+                                                    .font_size(14.0)
+                                                    .line_height(19.0)
+                                                    .color(Color::rgba(0.36, 0.44, 0.54, 1.0)),
+                                            )
+                                            .with_child(Spinner::new("History replay").label("Replaying history cache")),
+                                    ),
+                                )
+                                .on_change(move |_, value| {
+                                    tabs_state.borrow_mut().tabs_choice = value;
+                                }),
+                        ),
+                    ),
+            ))
+            .with_child(panel(
+                "Menus and overlays",
+                "App menus, context menus, popovers, tooltips, and dialogs are the small but high-value surfaces that make desktop workflows feel complete.",
+                Stack::vertical()
+                    .spacing(14.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        SizedBox::new().width(300.0).with_child(
+                            Menu::new(MENU_NAME)
+                                .item(MenuItem::new("New tab").shortcut("Ctrl+T"))
+                                .item(MenuItem::new("Duplicate panel").shortcut("Ctrl+D"))
+                                .item(
+                                    MenuItem::new("Delete layer")
+                                        .shortcut("Del")
+                                        .separator_before()
+                                        .destructive(),
+                                )
+                                .on_activate(move |_, item| {
+                                    menu_state.borrow_mut().last_menu_action = item.label().to_string();
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(320.0).with_child(
+                            ContextMenu::new(
+                                CONTEXT_MENU_NAME,
+                                Background::new(
+                                    Color::rgba(0.96, 0.975, 0.995, 1.0),
+                                    Padding::all(
+                                        14.0,
+                                        Label::new("Right-click this layer tile")
+                                            .font_size(14.0)
+                                            .line_height(18.0)
+                                            .color(Color::rgba(0.16, 0.21, 0.29, 1.0)),
+                                    ),
+                                ),
+                            )
+                            .item(MenuItem::new("Rename"))
+                            .item(MenuItem::new("Duplicate"))
+                            .item(MenuItem::new("Delete").separator_before().destructive())
+                            .on_activate(move |_, item| {
+                                context_menu_state.borrow_mut().last_context_action = item.label().to_string();
+                            }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(220.0).with_child(
+                            Tooltip::new(
+                                TOOLTIP_TEXT,
+                                Button::new(TOOLTIP_TRIGGER_LABEL).min_width(180.0),
+                            ),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(360.0).with_child(
+                            Popover::new(
+                                POPOVER_NAME,
+                                Button::new(POPOVER_TRIGGER_LABEL).min_width(190.0),
+                                Stack::vertical()
+                                    .spacing(8.0)
+                                    .alignment(Alignment::Stretch)
+                                    .with_child(
+                                        Label::new("Inline inspector content can stay lightweight instead of forcing a full modal.")
+                                            .font_size(14.0)
+                                            .line_height(19.0)
+                                            .color(Color::rgba(0.34, 0.42, 0.52, 1.0)),
+                                    )
+                                    .with_child(
+                                        Label::new("Blend preview: Screen @ 72%")
+                                            .font_size(13.0)
+                                            .line_height(18.0)
+                                            .color(Color::rgba(0.46, 0.54, 0.63, 1.0)),
+                                    ),
+                            ),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(560.0).height(320.0).with_child(
+                            Dialog::new(
+                                DIALOG_TITLE,
+                                Stack::vertical()
+                                    .spacing(10.0)
+                                    .alignment(Alignment::Stretch)
+                                    .with_child(
+                                        Label::new("Autosave every 90 seconds")
+                                            .font_size(14.0)
+                                            .line_height(18.0)
+                                            .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
+                                    )
+                                    .with_child(
+                                        Label::new("Export color profile: Display P3")
+                                            .font_size(14.0)
+                                            .line_height(18.0)
+                                            .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
+                                    )
+                                    .with_child(
+                                        Label::new("Scratch disk: fast-local-ssd")
+                                            .font_size(14.0)
+                                            .line_height(18.0)
+                                            .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
+                                    ),
+                            )
+                            .description(
+                                "Compact dialog framing for confirmations, settings, and import/export flows.",
+                            )
+                            .modal(false)
+                            .secondary_action("Cancel", || {})
+                            .primary_action("Apply", move || {
+                                dialog_state.borrow_mut().dialog_apply_count += 1;
+                            }),
+                        ),
+                    ),
+            ))
+            .with_child(panel(
+                "Progress and busy",
+                "Progress bars and busy indicators are simple, but they anchor long-running exports, caching, and background processing workflows.",
+                Stack::vertical()
+                    .spacing(14.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        SizedBox::new().width(320.0).with_child(
+                            ProgressBar::new(PROGRESS_NAME)
+                                .range(0.0, 100.0)
+                                .value(initial_slider_value)
+                                .show_value(true),
+                        ),
+                    )
+                    .with_child(Spinner::new(SPINNER_NAME).label("Uploading preview tiles")),
+            ))
+            .with_child(panel(
                 "Live state",
                 "This summary reads state produced by reusable controls so screenshot stories can cover both isolated widgets and composed UI.",
                 WidgetBookSummary::new(state),
@@ -409,7 +652,7 @@ impl Widget for WidgetBookSummary {
         } else {
             320.0
         };
-        constraints.clamp(Size::new(width, 210.0))
+        constraints.clamp(Size::new(width, 270.0))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -452,6 +695,33 @@ impl Widget for WidgetBookSummary {
                     state.mode.as_str()
                 }
             ),
+            format!(
+                "tabs: bar={} panel={}",
+                if state.tab_bar_choice.is_empty() {
+                    "unset"
+                } else {
+                    state.tab_bar_choice.as_str()
+                },
+                if state.tabs_choice.is_empty() {
+                    "unset"
+                } else {
+                    state.tabs_choice.as_str()
+                }
+            ),
+            format!(
+                "menu: {} | context: {} | dialog apply: {}",
+                if state.last_menu_action.is_empty() {
+                    "idle"
+                } else {
+                    state.last_menu_action.as_str()
+                },
+                if state.last_context_action.is_empty() {
+                    "idle"
+                } else {
+                    state.last_context_action.as_str()
+                },
+                state.dialog_apply_count,
+            ),
             format!("notes lines: {}", state.notes.lines().count().max(1)),
         ];
 
@@ -484,7 +754,7 @@ impl Widget for WidgetBookSummary {
         );
         node.name = Some(SUMMARY_NAME.to_string());
         node.description = Some(format!(
-            "name: {}; subscription: {}; button presses: {}; icon actions: {}; switch: {}; standalone radio: {}; radio choice: {}; slider: {:.0}; brush size: {:.0}; mode: {}; notes lines: {}",
+            "name: {}; subscription: {}; button presses: {}; icon actions: {}; switch: {}; standalone radio: {}; radio choice: {}; slider: {:.0}; brush size: {:.0}; mode: {}; tab bar: {}; tabs: {}; menu: {}; context menu: {}; dialog apply: {}; notes lines: {}",
             if state.name.is_empty() {
                 "stranger"
             } else {
@@ -511,6 +781,27 @@ impl Widget for WidgetBookSummary {
             } else {
                 state.mode.as_str()
             },
+            if state.tab_bar_choice.is_empty() {
+                "unset"
+            } else {
+                state.tab_bar_choice.as_str()
+            },
+            if state.tabs_choice.is_empty() {
+                "unset"
+            } else {
+                state.tabs_choice.as_str()
+            },
+            if state.last_menu_action.is_empty() {
+                "idle"
+            } else {
+                state.last_menu_action.as_str()
+            },
+            if state.last_context_action.is_empty() {
+                "idle"
+            } else {
+                state.last_context_action.as_str()
+            },
+            state.dialog_apply_count,
             state.notes.lines().count().max(1),
         ));
         ctx.push(node);
@@ -526,14 +817,16 @@ mod tests {
     use std::{cell::RefCell, env, fs, path::Path, path::PathBuf, rc::Rc};
 
     use super::{
-        ICON_BUTTON_LABEL, ICON_LABEL, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, PRIMARY_BUTTON_LABEL,
-        RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SUBSCRIBE_LABEL,
-        SUMMARY_NAME, SWITCH_LABEL, TEXT_AREA_LABEL, WidgetBookState,
-        build_widget_book_application, default_widget_book_state,
+        CONTEXT_MENU_NAME, DIALOG_TITLE, ICON_BUTTON_LABEL, ICON_LABEL, MENU_NAME,
+        NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, PRIMARY_BUTTON_LABEL, PROGRESS_NAME,
+        RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SPINNER_NAME,
+        SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME, TAB_BAR_OPTIONS,
+        TAB_PANEL_OPTIONS, TABS_NAME, TEXT_AREA_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
+        WidgetBookState, build_widget_book_application, default_widget_book_state,
     };
     use sui::{
-        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        Result, SemanticsRole, SemanticsValue,
+        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Result,
+        SemanticsRole, SemanticsValue,
     };
     use sui_testing::prelude::*;
 
@@ -558,12 +851,21 @@ mod tests {
         NumberInput,
         TextArea,
         SelectExpanded,
+        TabBar,
+        Tabs,
+        Menu,
+        ContextMenuOpen,
+        TooltipVisible,
+        PopoverOpen,
+        Dialog,
+        ProgressBar,
+        Spinner,
         ScrollViewScrolled,
         Summary,
     }
 
     impl StoryCase {
-        const ALL: [Self; 21] = [
+        const ALL: [Self; 30] = [
             Self::Overview,
             Self::OverviewConfigured,
             Self::Button,
@@ -583,6 +885,15 @@ mod tests {
             Self::NumberInput,
             Self::TextArea,
             Self::SelectExpanded,
+            Self::TabBar,
+            Self::Tabs,
+            Self::Menu,
+            Self::ContextMenuOpen,
+            Self::TooltipVisible,
+            Self::PopoverOpen,
+            Self::Dialog,
+            Self::ProgressBar,
+            Self::Spinner,
             Self::ScrollViewScrolled,
             Self::Summary,
         ];
@@ -608,6 +919,15 @@ mod tests {
                 Self::NumberInput => "number-input",
                 Self::TextArea => "text-area",
                 Self::SelectExpanded => "select-expanded",
+                Self::TabBar => "tab-bar",
+                Self::Tabs => "tabs",
+                Self::Menu => "menu",
+                Self::ContextMenuOpen => "context-menu-open",
+                Self::TooltipVisible => "tooltip-visible",
+                Self::PopoverOpen => "popover-open",
+                Self::Dialog => "dialog",
+                Self::ProgressBar => "progress-bar",
+                Self::Spinner => "spinner",
                 Self::ScrollViewScrolled => "scroll-view-scrolled",
                 Self::Summary => "summary",
             }
@@ -640,6 +960,15 @@ mod tests {
                 Self::NumberInput => "Number input crop for spinbox-style editing.",
                 Self::TextArea => "Text area crop with multiline content.",
                 Self::SelectExpanded => "Expanded select crop showing compact option picking.",
+                Self::TabBar => "Standalone tab bar crop for editor-style navigation.",
+                Self::Tabs => "Tabs crop showing selected panel content.",
+                Self::Menu => "Command menu crop for overflow and app menus.",
+                Self::ContextMenuOpen => "Open context menu crop anchored to a layer tile.",
+                Self::TooltipVisible => "Tooltip crop while the trigger is hovered.",
+                Self::PopoverOpen => "Open popover crop for inline inspector content.",
+                Self::Dialog => "Dialog crop for confirmations and settings.",
+                Self::ProgressBar => "Progress bar crop for long-running tasks.",
+                Self::Spinner => "Busy indicator crop for indeterminate work.",
                 Self::ScrollViewScrolled => {
                     "Outer widget-book scroll view after paging down through the gallery."
                 }
@@ -663,6 +992,15 @@ mod tests {
                 | Self::Slider
                 | Self::NumberInput
                 | Self::SelectExpanded
+                | Self::TabBar
+                | Self::Tabs
+                | Self::Menu
+                | Self::ContextMenuOpen
+                | Self::TooltipVisible
+                | Self::PopoverOpen
+                | Self::Dialog
+                | Self::ProgressBar
+                | Self::Spinner
                 | Self::ScrollViewScrolled => default_widget_book_state(),
                 Self::OverviewConfigured
                 | Self::CheckboxUnchecked
@@ -693,10 +1031,30 @@ mod tests {
                     }
                     Ok(())
                 }
-                Self::TextArea | Self::Summary => scroll_gallery(window, 2),
-                Self::ScrollViewScrolled => {
-                    scroll_gallery(window, 1)
+                Self::TabBar | Self::Tabs => scroll_gallery(window, 2),
+                Self::Menu
+                | Self::ContextMenuOpen
+                | Self::TooltipVisible
+                | Self::PopoverOpen
+                | Self::Dialog => {
+                    scroll_gallery(window, 3)?;
+                    match self {
+                        Self::ContextMenuOpen => secondary_click_target(
+                            window,
+                            SemanticsRole::ContextMenu,
+                            CONTEXT_MENU_NAME,
+                        ),
+                        Self::TooltipVisible => window
+                            .get_by_role(SemanticsRole::Button)
+                            .with_name(TOOLTIP_TRIGGER_LABEL)
+                            .hover(),
+                        Self::PopoverOpen => self.target(window).click(),
+                        _ => Ok(()),
+                    }
                 }
+                Self::ProgressBar | Self::Spinner | Self::Summary => scroll_gallery(window, 4),
+                Self::TextArea => scroll_gallery(window, 2),
+                Self::ScrollViewScrolled => scroll_gallery(window, 1),
                 Self::Overview
                 | Self::OverviewConfigured
                 | Self::Button
@@ -750,6 +1108,29 @@ mod tests {
                 Self::SelectExpanded => window
                     .get_by_role(SemanticsRole::ComboBox)
                     .with_name(SELECT_NAME),
+                Self::TabBar => window
+                    .get_by_role(SemanticsRole::TabBar)
+                    .with_name(TAB_BAR_NAME),
+                Self::Tabs => window.get_by_role(SemanticsRole::Tabs).with_name(TABS_NAME),
+                Self::Menu => window.get_by_role(SemanticsRole::Menu).with_name(MENU_NAME),
+                Self::ContextMenuOpen => window
+                    .get_by_role(SemanticsRole::ContextMenu)
+                    .with_name(CONTEXT_MENU_NAME),
+                Self::TooltipVisible => window
+                    .get_by_role(SemanticsRole::Tooltip)
+                    .with_name(TOOLTIP_TEXT),
+                Self::PopoverOpen => window
+                    .get_by_role(SemanticsRole::Popover)
+                    .with_name(POPOVER_NAME),
+                Self::Dialog => window
+                    .get_by_role(SemanticsRole::Dialog)
+                    .with_name(DIALOG_TITLE),
+                Self::ProgressBar => window
+                    .get_by_role(SemanticsRole::ProgressBar)
+                    .with_name(PROGRESS_NAME),
+                Self::Spinner => window
+                    .get_by_role(SemanticsRole::BusyIndicator)
+                    .with_name(SPINNER_NAME),
                 Self::ScrollViewScrolled => window.get_by_role(SemanticsRole::ScrollView),
                 Self::Summary => window
                     .get_by_role(SemanticsRole::GenericContainer)
@@ -812,7 +1193,13 @@ mod tests {
             rename_window_artifacts(&story_dir)?;
 
             let locator = story.target(&window);
-            let screenshot = locator.capture_screenshot()?;
+            let screenshot = locator.capture_screenshot().map_err(|error| {
+                Error::new(format!(
+                    "widget book story {} failed to capture screenshot: {}",
+                    story.id(),
+                    error
+                ))
+            })?;
             screenshot.write_png(story_dir.join("screenshot.png"))?;
             write_text(story_dir.join("story.txt"), story.description())?;
         }
@@ -847,10 +1234,28 @@ mod tests {
             let baseline = baseline_root.join(format!("{}.png", story.id()));
             let candidate = candidate_root.join(format!("{}.png", story.id()));
 
-            locator.capture_screenshot()?.write_png(&candidate)?;
+            locator
+                .capture_screenshot()
+                .map_err(|error| {
+                    Error::new(format!(
+                        "widget book story {} failed to capture baseline candidate: {}",
+                        story.id(),
+                        error
+                    ))
+                })?
+                .write_png(&candidate)?;
 
             if update_baselines {
-                locator.capture_screenshot()?.write_png(&baseline)?;
+                locator
+                    .capture_screenshot()
+                    .map_err(|error| {
+                        Error::new(format!(
+                            "widget book story {} failed to update baseline: {}",
+                            story.id(),
+                            error
+                        ))
+                    })?
+                    .write_png(&baseline)?;
                 continue;
             }
 
@@ -927,6 +1332,24 @@ mod tests {
                 .as_deref()
                 .is_some_and(|description| description.contains("mode: Multiply"))
         );
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("tab bar: Export"))
+        );
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("tabs: History"))
+        );
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("dialog apply: 2"))
+        );
 
         let input = snapshot
             .accessibility
@@ -975,8 +1398,7 @@ mod tests {
             .nodes
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::ComboBox
-                    && node.name.as_deref() == Some(SELECT_NAME)
+                node.role == SemanticsRole::ComboBox && node.name.as_deref() == Some(SELECT_NAME)
             })
             .expect("select semantics node present");
         assert_eq!(
@@ -1000,6 +1422,11 @@ mod tests {
             number_value: 24.0,
             notes: "Line 1\nLine 2".to_string(),
             mode: "Multiply".to_string(),
+            tab_bar_choice: "Export".to_string(),
+            tabs_choice: "History".to_string(),
+            last_menu_action: "Delete layer".to_string(),
+            last_context_action: "Duplicate".to_string(),
+            dialog_apply_count: 2,
         }))
     }
 
@@ -1016,6 +1443,11 @@ mod tests {
             number_value: 8.0,
             notes: String::new(),
             mode: String::new(),
+            tab_bar_choice: TAB_BAR_OPTIONS[0].to_string(),
+            tabs_choice: TAB_PANEL_OPTIONS[0].to_string(),
+            last_menu_action: String::new(),
+            last_context_action: String::new(),
+            dialog_apply_count: 0,
         }))
     }
 
@@ -1099,6 +1531,25 @@ mod tests {
         down.button = Some(PointerButton::Primary);
         down.buttons = PointerButtons::new(1);
         locator.dispatch_event(Event::Pointer(down))
+    }
+
+    fn secondary_click_target(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<()> {
+        let locator = window.get_by_role(role.clone()).with_name(name);
+        let point = node_center(window, role, name)?;
+
+        locator.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            point,
+        )))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, point);
+        down.button = Some(PointerButton::Secondary);
+        down.buttons = PointerButtons::new(2);
+        locator.dispatch_event(Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, point);
+        up.button = Some(PointerButton::Secondary);
+        locator.dispatch_event(Event::Pointer(up))
     }
 
     fn scroll_gallery(window: &TestWindow, pages: usize) -> Result<()> {

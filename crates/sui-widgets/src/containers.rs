@@ -1,11 +1,10 @@
 use sui_core::{
-    Event, Point, Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, Size,
-    Vector,
+    Event, Point, Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, Size, Vector,
 };
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
-    EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
-    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod,
+    WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::Brush;
 
@@ -535,7 +534,9 @@ impl Widget for ScrollView {
                 self.scroll_by(viewport, Vector::new(-delta.x, -delta.y), ctx);
                 ctx.set_handled();
             }
-            Event::Keyboard(key) if ctx.is_focused() && key.state == sui_core::KeyState::Pressed => {
+            Event::Keyboard(key)
+                if ctx.is_focused() && key.state == sui_core::KeyState::Pressed =>
+            {
                 let line = 40.0;
                 let page = (viewport.height * 0.85).max(line);
                 let delta = match key.key.as_str() {
@@ -977,16 +978,20 @@ mod tests {
 
     #[test]
     fn scroll_view_updates_child_bounds_after_scroll_input() {
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(ScrollView::vertical(
-                FixedBox::new(Size::new(80.0, 120.0), Color::rgba(0.2, 0.3, 0.7, 1.0)),
-            )),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(FixedBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                )),
+            ));
 
         let _ = runtime.render(window_id).unwrap();
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
         scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
-        runtime.handle_event(window_id, Event::Pointer(scroll)).unwrap();
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
         let _ = runtime.render(window_id).unwrap();
         let graph = runtime.widget_graph(window_id).unwrap();
 

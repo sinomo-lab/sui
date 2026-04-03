@@ -7,9 +7,14 @@ use std::{
     sync::Arc,
 };
 
+pub mod composites;
 pub mod containers;
 pub mod controls;
 
+pub use composites::{
+    BusyIndicator, ContextMenu, Dialog, Menu, MenuItem, Modal, Popover, ProgressBar, Spinner,
+    TabBar, Tabs, Tooltip, TooltipPlacement,
+};
 pub use containers::{Align, Background, ScrollAxes, ScrollView, SizedBox, Stack};
 pub use controls::{
     Button, Checkbox, ComboBox, ControlMetrics, ControlPalette, ControlTypography, DefaultTheme,
@@ -291,16 +296,17 @@ impl Default for Style {
 
 pub mod prelude {
     pub use crate::{
-        Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, Button, Checkbox,
-        Color, ComboBox, Constraints, ControlMetrics, ControlPalette, ControlTypography,
-        DefaultTheme, Divider, Event, EventCtx, FontHandle, Icon, IconButton, IconGlyph,
-        ImageHandle, ImeEvent, Insets, KeyboardEvent, Label, LayoutCtx, MultilineTextInput,
-        NumberInput, PaintCtx, Path, PathBuilder, Point, PointerEvent, RadioButton, RadioGroup,
-        Rect, RegisteredFont, RegisteredImage, Result, ScrollAxes, ScrollView, Select,
-        SemanticsCtx, Separator, ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox,
-        Stack, StrokeStyle, Style, Switch, TextArea, TextInput, TextLayout, TextMeasurement,
-        TextStyle, Theme, ThemeExtension, ThemeExtensions, TimerToken, Transform, WakeEvent,
-        Widget, WidgetChildren, WidgetPod, WindowBuilder,
+        Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, BusyIndicator,
+        Button, Checkbox, Color, ComboBox, Constraints, ContextMenu, ControlMetrics,
+        ControlPalette, ControlTypography, DefaultTheme, Dialog, Divider, Event, EventCtx,
+        FontHandle, Icon, IconButton, IconGlyph, ImageHandle, ImeEvent, Insets, KeyboardEvent,
+        Label, LayoutCtx, Menu, MenuItem, Modal, MultilineTextInput, NumberInput, PaintCtx, Path,
+        PathBuilder, Point, PointerEvent, Popover, ProgressBar, RadioButton, RadioGroup, Rect,
+        RegisteredFont, RegisteredImage, Result, ScrollAxes, ScrollView, Select, SemanticsCtx,
+        Separator, ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox, Spinner, Stack,
+        StrokeStyle, Style, Switch, TabBar, Tabs, TextArea, TextInput, TextLayout, TextMeasurement,
+        TextStyle, Theme, ThemeExtension, ThemeExtensions, TimerToken, Tooltip, TooltipPlacement,
+        Transform, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
         containers::Padding,
     };
 }
