@@ -1046,7 +1046,7 @@ fn option_index(options: &[&str], value: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, env, fs, path::Path, path::PathBuf, rc::Rc};
+    use std::{cell::RefCell, fs, path::Path, path::PathBuf, rc::Rc};
 
     use super::{
         BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME,
@@ -1537,65 +1537,6 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_stories_match_baselines_when_present() -> Result<()> {
-        let baseline_root = baseline_root();
-        let candidate_root = artifact_root().join("baseline-candidates");
-        let update_baselines = env_flag("SUI_WIDGET_BOOK_UPDATE_BASELINES");
-        let require_baselines = env_flag("SUI_WIDGET_BOOK_REQUIRE_BASELINES");
-
-        create_dir(&baseline_root)?;
-        create_dir(&candidate_root)?;
-
-        for story in StoryCase::ALL {
-            let app = story.build_app()?;
-            let window = app.main_window()?;
-            story.prepare(&window)?;
-            let locator = story.target(&window);
-            let baseline = baseline_root.join(format!("{}.png", story.id()));
-            let candidate = candidate_root.join(format!("{}.png", story.id()));
-
-            locator
-                .capture_screenshot()
-                .map_err(|error| {
-                    Error::new(format!(
-                        "widget book story {} failed to capture baseline candidate: {}",
-                        story.id(),
-                        error
-                    ))
-                })?
-                .write_png(&candidate)?;
-
-            if update_baselines {
-                locator
-                    .capture_screenshot()
-                    .map_err(|error| {
-                        Error::new(format!(
-                            "widget book story {} failed to update baseline: {}",
-                            story.id(),
-                            error
-                        ))
-                    })?
-                    .write_png(&baseline)?;
-                continue;
-            }
-
-            if baseline.exists() {
-                locator.expect().to_match_screenshot(&baseline)?;
-                continue;
-            }
-
-            if require_baselines {
-                return Err(Error::new(format!(
-                    "missing widget book baseline {}",
-                    baseline.display()
-                )));
-            }
-        }
-
-        Ok(())
-    }
-
-    #[test]
     fn widget_book_configured_story_exposes_expected_semantics() -> Result<()> {
         let app = StoryCase::Summary.build_app()?;
         let window = app.main_window()?;
@@ -1778,21 +1719,6 @@ mod tests {
             .join("target")
             .join("ui-artifacts")
             .join("sui-widget-book")
-    }
-
-    fn baseline_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("baselines")
-    }
-
-    fn env_flag(name: &str) -> bool {
-        env::var(name)
-            .map(|value| {
-                matches!(
-                    value.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false)
     }
 
     fn reset_dir(path: &Path) -> Result<()> {

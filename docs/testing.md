@@ -527,14 +527,8 @@ Recommended usage:
 - run `cargo test -p sui-widget-book -- --nocapture` to generate fresh artifacts under `target/ui-artifacts/sui-widget-book`
 - inspect the per-story widget crop in `screenshot.png`, and use `window.png` plus the `window-*.png` overlays when you need full-book context
 - use the expanded story set to review interaction states such as button hover, button pressed, unchecked checkbox, and focused empty text input
-- commit PNG baselines in `crates/sui-widget-book/baselines` only when you want automatic regression checks for a story
 
-Environment flags:
-
-- `SUI_WIDGET_BOOK_UPDATE_BASELINES=1` updates or creates baseline PNGs from the current render output
-- `SUI_WIDGET_BOOK_REQUIRE_BASELINES=1` fails the baseline test if a story does not have a committed baseline yet
-
-This keeps manual investigation and automated screenshot comparison on the same path instead of maintaining separate gallery and regression-test code.
+This keeps widget-book review on the generated artifact path instead of maintaining committed screenshot baselines in git.
 
 However, the internal command model should be shaped so a later transport can expose it to JavaScript or Python.
 
