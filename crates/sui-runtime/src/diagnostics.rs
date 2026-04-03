@@ -93,11 +93,67 @@ impl CacheMetrics {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CacheMetricsDelta {
+    pub entries_delta: isize,
+    pub hits: usize,
+    pub misses: usize,
+}
+
+impl CacheMetricsDelta {
+    pub fn from_counters(current: CacheMetrics, previous: CacheMetrics) -> Self {
+        Self {
+            entries_delta: current.entries as isize - previous.entries as isize,
+            hits: current.hits.saturating_sub(previous.hits),
+            misses: current.misses.saturating_sub(previous.misses),
+        }
+    }
+
+    pub const fn requests(self) -> usize {
+        self.hits + self.misses
+    }
+
+    pub fn hit_rate(self) -> f64 {
+        let requests = self.requests();
+        if requests == 0 {
+            0.0
+        } else {
+            self.hits as f64 / requests as f64
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TextCacheDiagnostics {
     pub runtime_layout: CacheMetrics,
     pub renderer_layout: CacheMetrics,
     pub renderer_glyph: CacheMetrics,
+}
+
+impl TextCacheDiagnostics {
+    pub fn delta_from(&self, previous: &Self) -> TextCacheDeltaDiagnostics {
+        TextCacheDeltaDiagnostics {
+            runtime_layout: CacheMetricsDelta::from_counters(
+                self.runtime_layout,
+                previous.runtime_layout,
+            ),
+            renderer_layout: CacheMetricsDelta::from_counters(
+                self.renderer_layout,
+                previous.renderer_layout,
+            ),
+            renderer_glyph: CacheMetricsDelta::from_counters(
+                self.renderer_glyph,
+                previous.renderer_glyph,
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TextCacheDeltaDiagnostics {
+    pub runtime_layout: CacheMetricsDelta,
+    pub renderer_layout: CacheMetricsDelta,
+    pub renderer_glyph: CacheMetricsDelta,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -186,6 +242,7 @@ pub struct WindowPerformanceSnapshot {
     pub total_time_ms: f64,
     pub phase_timings: Vec<FramePhaseSample>,
     pub text_caches: TextCacheDiagnostics,
+    pub text_cache_deltas: TextCacheDeltaDiagnostics,
     pub scene: SceneStatistics,
 }
 
@@ -195,6 +252,7 @@ impl WindowPerformanceSnapshot {
         frame_index: u64,
         phase_timings: Vec<FramePhaseSample>,
         text_caches: TextCacheDiagnostics,
+        text_cache_deltas: TextCacheDeltaDiagnostics,
         scene: SceneStatistics,
     ) -> Self {
         let total_time_ms = phase_timings.iter().map(|sample| sample.duration_ms).sum();
@@ -205,6 +263,7 @@ impl WindowPerformanceSnapshot {
             total_time_ms,
             phase_timings,
             text_caches,
+            text_cache_deltas,
             scene,
         }
     }
@@ -267,5 +326,36 @@ fn command_kind(command: &SceneCommand) -> &'static str {
         SceneCommand::PushTransform { .. } => "PushTransform",
         SceneCommand::PopTransform => "PopTransform",
         SceneCommand::Label { .. } => "Label",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CacheMetrics, TextCacheDiagnostics};
+
+    #[test]
+    fn text_cache_deltas_are_derived_from_prior_counters() {
+        let previous = TextCacheDiagnostics {
+            runtime_layout: CacheMetrics::new(2, 10, 4),
+            renderer_layout: CacheMetrics::new(3, 6, 2),
+            renderer_glyph: CacheMetrics::new(5, 12, 3),
+        };
+        let current = TextCacheDiagnostics {
+            runtime_layout: CacheMetrics::new(4, 15, 6),
+            renderer_layout: CacheMetrics::new(3, 9, 3),
+            renderer_glyph: CacheMetrics::new(7, 18, 5),
+        };
+
+        let delta = current.delta_from(&previous);
+
+        assert_eq!(delta.runtime_layout.entries_delta, 2);
+        assert_eq!(delta.runtime_layout.hits, 5);
+        assert_eq!(delta.runtime_layout.misses, 2);
+        assert_eq!(delta.renderer_layout.entries_delta, 0);
+        assert_eq!(delta.renderer_layout.hits, 3);
+        assert_eq!(delta.renderer_layout.misses, 1);
+        assert_eq!(delta.renderer_glyph.entries_delta, 2);
+        assert_eq!(delta.renderer_glyph.hits, 6);
+        assert_eq!(delta.renderer_glyph.misses, 2);
     }
 }

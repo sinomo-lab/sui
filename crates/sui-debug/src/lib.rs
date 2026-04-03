@@ -6,8 +6,8 @@ use sui_core::{Color, DirtyRegion, Rect, SemanticsValue, Size, WidgetId, WindowI
 use sui_layout::Alignment;
 use sui_platform::AccessibilitySnapshot;
 use sui_runtime::{
-    CacheMetrics, FocusState, FrameSchedule, SceneStatistics, Widget, WidgetGraphSnapshot,
-    WidgetNodeSnapshot, WindowPerformanceSnapshot,
+    CacheMetrics, CacheMetricsDelta, FocusState, FrameSchedule, SceneStatistics, Widget,
+    WidgetGraphSnapshot, WidgetNodeSnapshot, WindowPerformanceSnapshot,
 };
 use sui_scene::{SceneCommand, SceneFrame};
 use sui_widgets::{
@@ -702,16 +702,30 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         ]))
         .with_child(debug_key_values([
             DebugKeyValue::new(
-                "Runtime text layout cache",
+                "Runtime text layout cache total",
                 format_cache_metrics(snapshot.text_caches.runtime_layout),
             ),
             DebugKeyValue::new(
-                "Renderer text layout cache",
+                "Renderer text layout cache total",
                 format_cache_metrics(snapshot.text_caches.renderer_layout),
             ),
             DebugKeyValue::new(
-                "Renderer glyph cache",
+                "Renderer glyph cache total",
                 format_cache_metrics(snapshot.text_caches.renderer_glyph),
+            ),
+        ]))
+        .with_child(debug_key_values([
+            DebugKeyValue::new(
+                "Runtime text layout cache frame delta",
+                format_cache_delta_metrics(snapshot.text_cache_deltas.runtime_layout),
+            ),
+            DebugKeyValue::new(
+                "Renderer text layout cache frame delta",
+                format_cache_delta_metrics(snapshot.text_cache_deltas.renderer_layout),
+            ),
+            DebugKeyValue::new(
+                "Renderer glyph cache frame delta",
+                format_cache_delta_metrics(snapshot.text_cache_deltas.renderer_glyph),
             ),
         ]))
         .with_child(
@@ -754,6 +768,27 @@ fn format_cache_metrics(metrics: CacheMetrics) -> String {
             metrics.entries,
             metrics.hit_rate() * 100.0,
             metrics.hits,
+            requests,
+        )
+    }
+}
+
+fn format_cache_delta_metrics(delta: CacheMetricsDelta) -> String {
+    let requests = delta.requests();
+    let entry_delta = match delta.entries_delta.cmp(&0) {
+        std::cmp::Ordering::Greater => format!("+{} entries", delta.entries_delta),
+        std::cmp::Ordering::Less => format!("{} entries", delta.entries_delta),
+        std::cmp::Ordering::Equal => "no entry change".to_string(),
+    };
+
+    if requests == 0 {
+        format!("{}, no cache lookups this frame", entry_delta)
+    } else {
+        format!(
+            "{}, {:.1}% hit rate this frame ({} hits / {} lookups)",
+            entry_delta,
+            delta.hit_rate() * 100.0,
+            delta.hits,
             requests,
         )
     }
