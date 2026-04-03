@@ -547,11 +547,7 @@ impl WgpuRenderer {
             build_draw_ops(frame, text_engine, feather_width)?
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
-        let prepared = prepare_frame_batches(
-            batch_draw_ops(draw_ops),
-            frame.viewport,
-            framebuffer_size,
-        );
+        let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
 
         let mut image_bind_groups = HashMap::new();
         for pass in &prepared.passes {
@@ -1305,8 +1301,8 @@ enum FeatheredPathType {
 fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<Vertex>> {
     let draw_ops = build_draw_ops(frame, text_engine, DEFAULT_FEATHER_WIDTH)?;
     let mut vertices = Vec::new();
-    for op in draw_ops {
-        vertices.extend(op.vertices);
+    for op in &draw_ops.draw_ops {
+        vertices.extend_from_slice(draw_ops.scene_vertices(op.vertices));
     }
     Ok(vertices)
 }
@@ -1320,24 +1316,22 @@ enum DrawOpKind {
 #[derive(Debug, Clone)]
 struct DrawOp {
     kind: DrawOpKind,
-    vertices: Vec<Vertex>,
+    vertices: PreparedVertices,
     clip_rect: Option<Rect>,
-    path_clip_state_id: u64,
-    clip_paths: Vec<Vec<Vertex>>,
+    clip_state_index: usize,
+}
+
+#[derive(Debug, Default, Clone)]
+struct DrawOpArena {
+    scene_vertices: Vec<Vertex>,
+    clip_vertices: Vec<Vertex>,
+    clip_states: Vec<ClipState>,
+    draw_ops: Vec<DrawOp>,
 }
 
 #[derive(Debug, Clone)]
-struct DrawPassBatch {
-    path_clip_state_id: u64,
-    clip_paths: Vec<Vec<Vertex>>,
-    draws: Vec<DrawBatch>,
-}
-
-#[derive(Debug, Clone)]
-struct DrawBatch {
-    kind: DrawOpKind,
-    clip_rect: Option<Rect>,
-    vertices: Vec<Vertex>,
+struct ClipState {
+    clip_paths: Vec<PreparedVertices>,
 }
 
 #[derive(Debug, Clone)]
@@ -1349,6 +1343,7 @@ struct PreparedFrameBatches {
 
 #[derive(Debug, Clone)]
 struct PreparedPassBatch {
+    clip_state_index: usize,
     clip_paths: Vec<PreparedClipPath>,
     draws: Vec<PreparedDrawBatch>,
 }
@@ -1365,7 +1360,7 @@ struct PreparedDrawBatch {
     vertices: PreparedVertices,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PreparedVertices {
     start: u32,
     len: u32,
@@ -1379,32 +1374,64 @@ struct ScissorRect {
     height: u32,
 }
 
-fn batch_draw_ops(draw_ops: Vec<DrawOp>) -> Vec<DrawPassBatch> {
+fn prepare_frame_batches(
+    draw_ops: DrawOpArena,
+    viewport: Size,
+    framebuffer_size: (u32, u32),
+) -> PreparedFrameBatches {
+    let passes = batch_draw_ops(&draw_ops, viewport, framebuffer_size);
+    PreparedFrameBatches {
+        scene_vertices: draw_ops.scene_vertices,
+        clip_vertices: draw_ops.clip_vertices,
+        passes,
+    }
+}
+
+fn batch_draw_ops(
+    draw_ops: &DrawOpArena,
+    viewport: Size,
+    framebuffer_size: (u32, u32),
+) -> Vec<PreparedPassBatch> {
     let mut passes = Vec::new();
 
-    for op in draw_ops {
-        let share_pass = passes.last().is_some_and(|pass| can_share_pass(pass, &op));
+    for op in &draw_ops.draw_ops {
+        let share_pass = passes
+            .last()
+            .is_some_and(|pass: &PreparedPassBatch| pass.clip_state_index == op.clip_state_index);
         if !share_pass {
-            passes.push(DrawPassBatch {
-                path_clip_state_id: op.path_clip_state_id,
-                clip_paths: op.clip_paths.clone(),
+            let clip_state = &draw_ops.clip_states[op.clip_state_index];
+            passes.push(PreparedPassBatch {
+                clip_state_index: op.clip_state_index,
+                clip_paths: clip_state
+                    .clip_paths
+                    .iter()
+                    .copied()
+                    .map(|vertices| PreparedClipPath { vertices })
+                    .collect(),
                 draws: Vec::new(),
             });
         }
 
         let pass = passes
             .last_mut()
-            .expect("pass batch created before draw batch insertion");
+            .expect("prepared pass created before draw insertion");
+        let clip_rect = op
+            .clip_rect
+            .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size));
         if let Some(previous) = pass.draws.last_mut() {
-            if previous.kind == op.kind && previous.clip_rect == op.clip_rect {
-                previous.vertices.extend(op.vertices);
+            let previous_end = previous.vertices.start + previous.vertices.len;
+            if previous.kind == op.kind
+                && previous.clip_rect == clip_rect
+                && previous_end == op.vertices.start
+            {
+                previous.vertices.len += op.vertices.len;
                 continue;
             }
         }
 
-        pass.draws.push(DrawBatch {
+        pass.draws.push(PreparedDrawBatch {
             kind: op.kind,
-            clip_rect: op.clip_rect,
+            clip_rect,
             vertices: op.vertices,
         });
     }
@@ -1412,92 +1439,41 @@ fn batch_draw_ops(draw_ops: Vec<DrawOp>) -> Vec<DrawPassBatch> {
     passes
 }
 
-fn can_share_pass(pass: &DrawPassBatch, op: &DrawOp) -> bool {
-    if pass.clip_paths.is_empty() && op.clip_paths.is_empty() {
-        true
-    } else {
-        pass.path_clip_state_id == op.path_clip_state_id
-    }
-}
-
-fn prepare_frame_batches(
-    pass_batches: Vec<DrawPassBatch>,
-    viewport: Size,
-    framebuffer_size: (u32, u32),
-) -> PreparedFrameBatches {
-    let mut prepared = PreparedFrameBatches {
-        scene_vertices: Vec::new(),
-        clip_vertices: Vec::new(),
-        passes: Vec::with_capacity(pass_batches.len()),
-    };
-
-    for pass in pass_batches {
-        let mut prepared_pass = PreparedPassBatch {
-            clip_paths: Vec::with_capacity(pass.clip_paths.len()),
-            draws: Vec::with_capacity(pass.draws.len()),
-        };
-
-        for clip_path in pass.clip_paths {
-            let start = prepared.clip_vertices.len() as u32;
-            let len = clip_path.len() as u32;
-            prepared.clip_vertices.extend(clip_path);
-            prepared_pass.clip_paths.push(PreparedClipPath {
-                vertices: PreparedVertices { start, len },
-            });
-        }
-
-        for draw in pass.draws {
-            let start = prepared.scene_vertices.len() as u32;
-            let len = draw.vertices.len() as u32;
-            prepared.scene_vertices.extend(draw.vertices);
-            prepared_pass.draws.push(PreparedDrawBatch {
-                kind: draw.kind,
-                clip_rect: draw
-                    .clip_rect
-                    .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size)),
-                vertices: PreparedVertices { start, len },
-            });
-        }
-
-        prepared.passes.push(prepared_pass);
-    }
-
-    prepared
-}
-
 fn build_draw_ops(
     frame: &SceneFrame,
     text_engine: &mut TextEngine,
     feather_width: f32,
-) -> Result<Vec<DrawOp>> {
+) -> Result<DrawOpArena> {
     let viewport = frame.viewport;
-    let mut draw_ops = Vec::new();
-    let mut state = SceneRasterState::default();
+    let mut draw_ops = DrawOpArena::default();
+    let mut state = SceneRasterState::new(&mut draw_ops);
+    let mut scratch_vertices = Vec::new();
+    let mut clip_scratch_vertices = Vec::new();
 
     for command in frame.scene.commands() {
         match command {
             SceneCommand::Clear(color) => {
-                let mut vertices = Vec::new();
+                scratch_vertices.clear();
                 append_rect(
-                    &mut vertices,
+                    &mut scratch_vertices,
                     Rect::new(0.0, 0.0, viewport.width, viewport.height),
                     *color,
                     viewport,
                 );
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
             }
             SceneCommand::FillRect { rect, brush } => {
                 let Brush::Solid(color) = brush;
-                let mut vertices = Vec::new();
+                scratch_vertices.clear();
                 append_painted_rect(
-                    &mut vertices,
+                    &mut scratch_vertices,
                     &state,
                     *rect,
                     *color,
                     viewport,
                     feather_width,
                 );
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
             }
             SceneCommand::StrokeRect {
                 rect,
@@ -1505,9 +1481,9 @@ fn build_draw_ops(
                 stroke,
             } => {
                 let Brush::Solid(color) = brush;
-                let mut vertices = Vec::new();
+                scratch_vertices.clear();
                 append_stroke_rect(
-                    &mut vertices,
+                    &mut scratch_vertices,
                     &state,
                     *rect,
                     *color,
@@ -1515,13 +1491,20 @@ fn build_draw_ops(
                     viewport,
                     feather_width,
                 );
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
             }
             SceneCommand::FillPath { path, brush } => {
                 let Brush::Solid(color) = brush;
-                let mut vertices = Vec::new();
-                append_painted_path(&mut vertices, &state, path, *color, viewport, feather_width)?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
+                scratch_vertices.clear();
+                append_painted_path(
+                    &mut scratch_vertices,
+                    &state,
+                    path,
+                    *color,
+                    viewport,
+                    feather_width,
+                )?;
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
             }
             SceneCommand::StrokePath {
                 path,
@@ -1529,9 +1512,9 @@ fn build_draw_ops(
                 stroke,
             } => {
                 let Brush::Solid(color) = brush;
-                let mut vertices = Vec::new();
+                scratch_vertices.clear();
                 append_stroked_path(
-                    &mut vertices,
+                    &mut scratch_vertices,
                     &state,
                     path,
                     *color,
@@ -1539,46 +1522,46 @@ fn build_draw_ops(
                     viewport,
                     feather_width,
                 )?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
             }
             SceneCommand::DrawText(text) => {
-                let mut vertices = Vec::new();
+                scratch_vertices.clear();
                 text_engine.append_text_run(
-                    &mut vertices,
+                    &mut scratch_vertices,
                     &state,
                     text,
                     frame.font_registry.as_ref(),
                     viewport,
                     feather_width,
                 )?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
             }
             SceneCommand::DrawShapedText(text) => {
-                let mut vertices = Vec::new();
+                scratch_vertices.clear();
                 text_engine.append_shaped_text(
-                    &mut vertices,
+                    &mut scratch_vertices,
                     &state,
                     text,
                     viewport,
                     feather_width,
                 )?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
             }
             SceneCommand::DrawImage { rect, source } => {
-                let mut vertices = Vec::new();
+                scratch_vertices.clear();
                 let image = frame.image_registry.get(source.image).ok_or_else(|| {
                     Error::new(format!(
                         "image handle {} is not registered",
                         source.image.get()
                     ))
                 })?;
-                append_image(&mut vertices, &state, *rect, source, image, viewport);
+                append_image(&mut scratch_vertices, &state, *rect, source, image, viewport);
                 push_draw_op(
                     &mut draw_ops,
                     DrawOpKind::Image {
                         handle: source.image,
                     },
-                    vertices,
+                    &scratch_vertices,
                     &state,
                 );
             }
@@ -1586,10 +1569,10 @@ fn build_draw_ops(
                 state.push_clip(*rect);
             }
             SceneCommand::PushClipPath { path } => {
-                state.push_clip_path(path, viewport)?;
+                state.push_clip_path(path, viewport, &mut draw_ops, &mut clip_scratch_vertices)?;
             }
             SceneCommand::PopClip => {
-                state.pop_clip();
+                state.pop_clip(&mut draw_ops);
             }
             SceneCommand::PushTransform { transform } => {
                 state.push_transform(*transform);
@@ -1598,9 +1581,9 @@ fn build_draw_ops(
                 state.pop_transform();
             }
             SceneCommand::Label { rect, text, color } => {
-                let mut vertices = Vec::new();
+                scratch_vertices.clear();
                 text_engine.append_text_run(
-                    &mut vertices,
+                    &mut scratch_vertices,
                     &state,
                     &TextRun {
                         rect: *rect,
@@ -1611,7 +1594,7 @@ fn build_draw_ops(
                     viewport,
                     feather_width,
                 )?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
+                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
             }
         }
     }
@@ -1625,15 +1608,20 @@ struct SceneRasterState {
     transform_stack: Vec<Transform>,
     clip_stack: Vec<ClipPrimitive>,
     path_clip_state_id: u64,
+    active_path_clips: Vec<PreparedVertices>,
+    clip_state_index: usize,
 }
 
-impl Default for SceneRasterState {
-    fn default() -> Self {
+impl SceneRasterState {
+    fn new(draw_ops: &mut DrawOpArena) -> Self {
+        let clip_state_index = draw_ops.push_clip_state(&[]);
         Self {
             current_transform: Transform::IDENTITY,
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
             path_clip_state_id: 0,
+            active_path_clips: Vec::new(),
+            clip_state_index,
         }
     }
 }
@@ -1641,7 +1629,7 @@ impl Default for SceneRasterState {
 #[derive(Debug, Clone)]
 enum ClipPrimitive {
     Rect(Rect),
-    Path { bounds: Rect, vertices: Vec<Vertex> },
+    Path { bounds: Rect },
 }
 
 impl ClipPrimitive {
@@ -1659,23 +1647,32 @@ impl SceneRasterState {
         self.clip_stack.push(ClipPrimitive::Rect(transformed));
     }
 
-    fn push_clip_path(&mut self, path: &ScenePath, viewport: Size) -> Result<()> {
+    fn push_clip_path(
+        &mut self,
+        path: &ScenePath,
+        viewport: Size,
+        draw_ops: &mut DrawOpArena,
+        scratch_vertices: &mut Vec<Vertex>,
+    ) -> Result<()> {
         let bounds = self.current_transform.transform_rect_bbox(path.bounds());
-        let vertices = if path.is_empty() || viewport.is_empty() {
-            Vec::new()
-        } else {
+        scratch_vertices.clear();
+        if !path.is_empty() && !viewport.is_empty() {
             let lyon_path = build_lyon_path(path, self.current_transform);
-            tessellate_filled_lyon_path_vertices(&lyon_path, viewport)?
-        };
-        self.clip_stack
-            .push(ClipPrimitive::Path { bounds, vertices });
+            append_tessellated_filled_lyon_path_vertices(scratch_vertices, &lyon_path, viewport)?;
+        }
+        let vertices = draw_ops.push_clip_vertices(scratch_vertices);
+        self.clip_stack.push(ClipPrimitive::Path { bounds });
+        self.active_path_clips.push(vertices);
         self.path_clip_state_id = self.path_clip_state_id.wrapping_add(1);
+        self.clip_state_index = draw_ops.push_clip_state(&self.active_path_clips);
         Ok(())
     }
 
-    fn pop_clip(&mut self) {
+    fn pop_clip(&mut self, draw_ops: &mut DrawOpArena) {
         if matches!(self.clip_stack.pop(), Some(ClipPrimitive::Path { .. })) {
+            let _ = self.active_path_clips.pop();
             self.path_clip_state_id = self.path_clip_state_id.wrapping_add(1);
+            self.clip_state_index = draw_ops.push_clip_state(&self.active_path_clips);
         }
     }
 
@@ -1694,16 +1691,6 @@ impl SceneRasterState {
         Some(clips.fold(first, |current, clip| {
             current.intersection(clip).unwrap_or(Rect::ZERO)
         }))
-    }
-
-    fn current_path_clips(&self) -> Vec<Vec<Vertex>> {
-        self.clip_stack
-            .iter()
-            .filter_map(|clip| match clip {
-                ClipPrimitive::Rect(_) => None,
-                ClipPrimitive::Path { vertices, .. } => Some(vertices.clone()),
-            })
-            .collect()
     }
 
     fn visible_rect(&self, rect: Rect) -> Option<Rect> {
@@ -2083,15 +2070,12 @@ fn tessellate_filled_lyon_path(
     Ok(())
 }
 
-fn tessellate_filled_lyon_path_vertices(path: &LyonPath, viewport: Size) -> Result<Vec<Vertex>> {
-    let mut vertices = Vec::new();
-    tessellate_filled_lyon_path(
-        &mut vertices,
-        path,
-        Color::rgba(0.0, 0.0, 0.0, 0.0),
-        viewport,
-    )?;
-    Ok(vertices)
+fn append_tessellated_filled_lyon_path_vertices(
+    vertices: &mut Vec<Vertex>,
+    path: &LyonPath,
+    viewport: Size,
+) -> Result<()> {
+    tessellate_filled_lyon_path(vertices, path, Color::rgba(0.0, 0.0, 0.0, 0.0), viewport)
 }
 
 fn build_lyon_path(path: &ScenePath, transform: Transform) -> LyonPath {
@@ -2457,22 +2441,54 @@ fn append_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, viewport: S
 }
 
 fn push_draw_op(
-    draw_ops: &mut Vec<DrawOp>,
+    draw_ops: &mut DrawOpArena,
     kind: DrawOpKind,
-    vertices: Vec<Vertex>,
+    vertices: &[Vertex],
     state: &SceneRasterState,
 ) {
     if vertices.is_empty() {
         return;
     }
 
-    draw_ops.push(DrawOp {
+    let vertex_span = draw_ops.push_scene_vertices(vertices);
+    draw_ops.draw_ops.push(DrawOp {
         kind,
-        vertices,
+        vertices: vertex_span,
         clip_rect: state.current_clip_bounds(),
-        path_clip_state_id: state.path_clip_state_id,
-        clip_paths: state.current_path_clips(),
+        clip_state_index: state.clip_state_index,
     });
+}
+
+impl DrawOpArena {
+    fn push_scene_vertices(&mut self, vertices: &[Vertex]) -> PreparedVertices {
+        let start = self.scene_vertices.len() as u32;
+        self.scene_vertices.extend_from_slice(vertices);
+        PreparedVertices {
+            start,
+            len: vertices.len() as u32,
+        }
+    }
+
+    fn push_clip_vertices(&mut self, vertices: &[Vertex]) -> PreparedVertices {
+        let start = self.clip_vertices.len() as u32;
+        self.clip_vertices.extend_from_slice(vertices);
+        PreparedVertices {
+            start,
+            len: vertices.len() as u32,
+        }
+    }
+
+    fn push_clip_state(&mut self, clip_paths: &[PreparedVertices]) -> usize {
+        self.clip_states.push(ClipState {
+            clip_paths: clip_paths.to_vec(),
+        });
+        self.clip_states.len() - 1
+    }
+
+    #[cfg(test)]
+    fn scene_vertices(&self, span: PreparedVertices) -> &[Vertex] {
+        &self.scene_vertices[span.start as usize..(span.start + span.len) as usize]
+    }
 }
 
 const VERTEX_SIZE: u64 = std::mem::size_of::<Vertex>() as u64;
@@ -3218,9 +3234,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_FEATHER_WIDTH, DrawBatch, DrawOp, DrawOpKind, DrawPassBatch, ScissorRect,
-        TextEngine, Vertex, WgpuRenderer, batch_draw_ops, build_draw_ops, build_vertices,
-        prepare_frame_batches, to_ndc,
+        ClipState, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedVertices,
+        ScissorRect, TextEngine, Vertex, WgpuRenderer, batch_draw_ops, build_draw_ops,
+        build_vertices, prepare_frame_batches, to_ndc,
     };
     use std::sync::Arc;
     use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WindowId};
@@ -3408,65 +3424,78 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ops.len(), 1);
-        assert_eq!(ops[0].path_clip_state_id, 1);
-        assert_eq!(ops[0].clip_paths.len(), 1);
-        assert!(!ops[0].clip_paths[0].is_empty());
-        assert_eq!(ops[0].clip_rect, Some(Rect::new(8.0, 8.0, 24.0, 20.0)));
+        assert_eq!(ops.draw_ops.len(), 1);
+        let op = &ops.draw_ops[0];
+        let clip_state = &ops.clip_states[op.clip_state_index];
+        assert_eq!(op.clip_state_index, 1);
+        assert_eq!(clip_state.clip_paths.len(), 1);
+        assert!(clip_state.clip_paths[0].len > 0);
+        assert_eq!(op.clip_rect, Some(Rect::new(8.0, 8.0, 24.0, 20.0)));
     }
 
     #[test]
     fn batch_draw_ops_merges_consecutive_matching_state() {
-        let vertices = vec![
-            Vertex {
-                position: [0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-                tex_coords: [0.0, 0.0],
-            };
-            3
-        ];
-
-        let passes = batch_draw_ops(vec![
-            DrawOp {
-                kind: DrawOpKind::Solid,
-                vertices: vertices.clone(),
-                clip_rect: Some(Rect::new(2.0, 4.0, 20.0, 10.0)),
-                path_clip_state_id: 0,
-                clip_paths: Vec::new(),
+        let passes = batch_draw_ops(
+            &DrawOpArena {
+                scene_vertices: vec![
+                    Vertex {
+                        position: [0.0, 0.0],
+                        color: [1.0, 1.0, 1.0, 1.0],
+                        tex_coords: [0.0, 0.0],
+                    };
+                    6
+                ],
+                clip_vertices: Vec::new(),
+                clip_states: vec![ClipState {
+                    clip_paths: Vec::new(),
+                }],
+                draw_ops: vec![
+                    DrawOp {
+                        kind: DrawOpKind::Solid,
+                        vertices: PreparedVertices { start: 0, len: 3 },
+                        clip_rect: Some(Rect::new(2.0, 4.0, 20.0, 10.0)),
+                        clip_state_index: 0,
+                    },
+                    DrawOp {
+                        kind: DrawOpKind::Solid,
+                        vertices: PreparedVertices { start: 3, len: 3 },
+                        clip_rect: Some(Rect::new(2.0, 4.0, 20.0, 10.0)),
+                        clip_state_index: 0,
+                    },
+                ],
             },
-            DrawOp {
-                kind: DrawOpKind::Solid,
-                vertices,
-                clip_rect: Some(Rect::new(2.0, 4.0, 20.0, 10.0)),
-                path_clip_state_id: 0,
-                clip_paths: Vec::new(),
-            },
-        ]);
+            Size::new(50.0, 40.0),
+            (100, 80),
+        );
 
         assert_eq!(passes.len(), 1);
         assert_eq!(passes[0].draws.len(), 1);
-        assert_eq!(passes[0].draws[0].vertices.len(), 6);
+        assert_eq!(passes[0].draws[0].vertices.len, 6);
     }
 
     #[test]
     fn prepare_frame_batches_converts_clip_rects_to_scissors() {
         let prepared = prepare_frame_batches(
-            vec![DrawPassBatch {
-                path_clip_state_id: 0,
-                clip_paths: Vec::new(),
-                draws: vec![DrawBatch {
+            DrawOpArena {
+                scene_vertices: vec![
+                    Vertex {
+                        position: [0.0, 0.0],
+                        color: [1.0, 1.0, 1.0, 1.0],
+                        tex_coords: [0.0, 0.0],
+                    };
+                    6
+                ],
+                clip_vertices: Vec::new(),
+                clip_states: vec![ClipState {
+                    clip_paths: Vec::new(),
+                }],
+                draw_ops: vec![DrawOp {
                     kind: DrawOpKind::Solid,
                     clip_rect: Some(Rect::new(5.0, 8.0, 20.0, 10.0)),
-                    vertices: vec![
-                        Vertex {
-                            position: [0.0, 0.0],
-                            color: [1.0, 1.0, 1.0, 1.0],
-                            tex_coords: [0.0, 0.0],
-                        };
-                        6
-                    ],
+                    vertices: PreparedVertices { start: 0, len: 6 },
+                    clip_state_index: 0,
                 }],
-            }],
+            },
             Size::new(50.0, 40.0),
             (100, 80),
         );
@@ -3683,9 +3712,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ops.len(), 1);
-        assert!(matches!(ops[0].kind, DrawOpKind::Image { handle: value } if value == handle));
-        assert_eq!(ops[0].vertices.len(), 6);
+        assert_eq!(ops.draw_ops.len(), 1);
+        let op = &ops.draw_ops[0];
+        assert!(matches!(op.kind, DrawOpKind::Image { handle: value } if value == handle));
+        assert_eq!(op.vertices.len, 6);
     }
 
     #[test]
