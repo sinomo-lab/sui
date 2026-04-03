@@ -9,15 +9,35 @@ pub const WINDOW_TITLE: &str = "SUI Widget Book";
 pub const WINDOW_DESCRIPTION: &str =
     "Development gallery for common built-in widgets in sui-widgets";
 pub const NAME_INPUT_LABEL: &str = "Name";
+pub const TEXT_AREA_LABEL: &str = "Notes";
 pub const SUBSCRIBE_LABEL: &str = "Subscribe to product updates";
 pub const PRIMARY_BUTTON_LABEL: &str = "Trigger action";
+pub const ICON_LABEL: &str = "Search icon";
+pub const ICON_BUTTON_LABEL: &str = "More actions";
+pub const SWITCH_LABEL: &str = "Enable snapping";
+pub const RADIO_BUTTON_LABEL: &str = "Standalone radio sample";
+pub const RADIO_GROUP_NAME: &str = "Render quality";
+pub const SLIDER_NAME: &str = "Opacity";
+pub const NUMBER_INPUT_NAME: &str = "Brush size";
+pub const SELECT_NAME: &str = "Blend mode";
 pub const SUMMARY_NAME: &str = "Widget book summary";
+
+const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
+const BLEND_MODE_OPTIONS: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
 
 #[derive(Debug, Clone, Default)]
 pub struct WidgetBookState {
     pub name: String,
     pub subscribed: bool,
     pub button_presses: usize,
+    pub icon_button_presses: usize,
+    pub switch_on: bool,
+    pub standalone_radio_selected: bool,
+    pub radio_choice: String,
+    pub slider_value: f64,
+    pub number_value: f64,
+    pub notes: String,
+    pub mode: String,
 }
 
 struct WidgetBookRoot {
@@ -37,6 +57,14 @@ pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
         name: "Ada".to_string(),
         subscribed: true,
         button_presses: 0,
+        icon_button_presses: 0,
+        switch_on: true,
+        standalone_radio_selected: false,
+        radio_choice: RADIO_OPTIONS[0].to_string(),
+        slider_value: 72.0,
+        number_value: 12.0,
+        notes: "Pinned notes for inspector workflows.\nSupports multiline editing.".to_string(),
+        mode: BLEND_MODE_OPTIONS[0].to_string(),
     }))
 }
 
@@ -83,14 +111,30 @@ impl Widget for WidgetBookRoot {
 }
 
 fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
-    let initial_name = state.borrow().name.clone();
-    let initial_subscribed = state.borrow().subscribed;
+    let snapshot = state.borrow().clone();
+    let initial_name = snapshot.name.clone();
+    let initial_notes = snapshot.notes.clone();
+    let initial_subscribed = snapshot.subscribed;
+    let initial_switch_on = snapshot.switch_on;
+    let initial_standalone_radio = snapshot.standalone_radio_selected;
+    let initial_slider_value = snapshot.slider_value;
+    let initial_number_value = snapshot.number_value;
+    let initial_radio_choice = snapshot.radio_choice.clone();
+    let initial_mode = snapshot.mode.clone();
 
     let name_state = Rc::clone(&state);
     let subscribed_state = Rc::clone(&state);
     let action_state = Rc::clone(&state);
+    let icon_action_state = Rc::clone(&state);
+    let switch_state = Rc::clone(&state);
+    let radio_button_state = Rc::clone(&state);
+    let radio_group_state = Rc::clone(&state);
+    let slider_state = Rc::clone(&state);
+    let number_state = Rc::clone(&state);
+    let notes_state = Rc::clone(&state);
+    let select_state = Rc::clone(&state);
 
-    Padding::all(
+    ScrollView::vertical(Padding::all(
         24.0,
         Stack::vertical()
             .spacing(18.0)
@@ -121,12 +165,14 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                     .spacing(14.0)
                     .alignment(Alignment::Stretch)
                     .with_child(
-                        TextInput::new(NAME_INPUT_LABEL)
-                            .value(initial_name)
-                            .placeholder("Type your name")
-                            .on_change(move |value| {
-                                name_state.borrow_mut().name = value;
-                            }),
+                        SizedBox::new().width(320.0).with_child(
+                            TextInput::new(NAME_INPUT_LABEL)
+                                .value(initial_name)
+                                .placeholder("Type your name")
+                                .on_change(move |value| {
+                                    name_state.borrow_mut().name = value;
+                                }),
+                        ),
                     )
                     .with_child(
                         Checkbox::new(SUBSCRIBE_LABEL)
@@ -165,6 +211,127 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                     ),
             ))
             .with_child(panel(
+                "Toolbar pieces",
+                "Compact controls, separators, and icons need to feel intentional before any themed application shell exists.",
+                Stack::vertical()
+                    .spacing(14.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Stack::horizontal()
+                            .spacing(14.0)
+                            .alignment(Alignment::Center)
+                            .with_child(Icon::new(IconGlyph::Search).label(ICON_LABEL).size(24.0))
+                            .with_child(
+                                IconButton::new(IconGlyph::MoreHorizontal, ICON_BUTTON_LABEL)
+                                    .on_press(move || {
+                                        icon_action_state.borrow_mut().icon_button_presses += 1;
+                                    }),
+                            )
+                            .with_child(
+                                Label::new(
+                                    "Icons and icon buttons round out dense toolbar layouts.",
+                                )
+                                .font_size(14.0)
+                                .line_height(18.0)
+                                .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                            ),
+                    )
+                    .with_child(SizedBox::new().width(260.0).with_child(
+                        Separator::horizontal().inset(12.0),
+                    )),
+            ))
+            .with_child(panel(
+                "Choices and ranges",
+                "Desktop-style inspectors rely on switches, radio groups, sliders, numeric inputs, and selects more than oversized form controls.",
+                Stack::vertical()
+                    .spacing(14.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Switch::new(SWITCH_LABEL)
+                            .on(initial_switch_on)
+                            .on_toggle(move |checked| {
+                                switch_state.borrow_mut().switch_on = checked;
+                            }),
+                    )
+                    .with_child(
+                        RadioButton::new(RADIO_BUTTON_LABEL)
+                            .selected(initial_standalone_radio)
+                            .on_select(move || {
+                                radio_button_state.borrow_mut().standalone_radio_selected = true;
+                            }),
+                    )
+                    .with_child(
+                        SizedBox::new().width(280.0).with_child(
+                            RadioGroup::new(RADIO_GROUP_NAME)
+                                .options(RADIO_OPTIONS)
+                                .selected(option_index(&RADIO_OPTIONS, &initial_radio_choice).unwrap_or(0))
+                                .on_change(move |_, value| {
+                                    radio_group_state.borrow_mut().radio_choice = value;
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(320.0).with_child(
+                            Slider::new(SLIDER_NAME)
+                                .range(0.0, 100.0)
+                                .step(1.0)
+                                .value(initial_slider_value)
+                                .on_change(move |value| {
+                                    slider_state.borrow_mut().slider_value = value;
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(220.0).with_child(
+                            NumberInput::new(NUMBER_INPUT_NAME)
+                                .range(1.0, 256.0)
+                                .step(1.0)
+                                .precision(0)
+                                .value(initial_number_value)
+                                .on_change(move |value| {
+                                    number_state.borrow_mut().number_value = value;
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(260.0).with_child(
+                            Select::new(SELECT_NAME)
+                                .placeholder("Choose blend mode")
+                                .options(BLEND_MODE_OPTIONS)
+                                .selected(option_index(&BLEND_MODE_OPTIONS, &initial_mode).unwrap_or(0))
+                                .on_change(move |_, value| {
+                                    select_state.borrow_mut().mode = value;
+                                }),
+                        ),
+                    ),
+            ))
+            .with_child(panel(
+                "Multiline and scroll",
+                "The widget book itself now scrolls, and the multiline editor fills the long-form text entry gap for notes, JSON, and small scripting panes.",
+                Stack::vertical()
+                    .spacing(14.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        SizedBox::new().width(420.0).with_child(
+                            TextArea::new(TEXT_AREA_LABEL)
+                                .min_height(150.0)
+                                .value(initial_notes)
+                                .placeholder("Write notes")
+                                .on_change(move |value| {
+                                    notes_state.borrow_mut().notes = value;
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        Label::new(
+                            "Use PageDown on the outer scroll view story to capture the lower panels and prove the gallery exceeds the viewport.",
+                        )
+                        .font_size(13.0)
+                        .line_height(18.0)
+                        .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
+                    ),
+            ))
+            .with_child(panel(
                 "Typography",
                 "Static text is now a real widget too, so the dev host no longer needs to hand-paint every heading and caption.",
                 Stack::vertical()
@@ -194,7 +361,7 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                 "This summary reads state produced by reusable controls so screenshot stories can cover both isolated widgets and composed UI.",
                 WidgetBookSummary::new(state),
             )),
-    )
+    ))
 }
 
 fn panel<W>(title: &str, subtitle: &str, body: W) -> impl Widget
@@ -242,54 +409,70 @@ impl Widget for WidgetBookSummary {
         } else {
             320.0
         };
-        constraints.clamp(Size::new(width, 116.0))
+        constraints.clamp(Size::new(width, 210.0))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let state = self.state.borrow();
-        let greeting = if state.name.trim().is_empty() {
-            "Hello, stranger".to_string()
-        } else {
-            format!("Hello, {}", state.name)
-        };
-        let subscription = if state.subscribed {
-            "Subscribed"
-        } else {
-            "Not subscribed"
-        };
+        let lines = [
+            if state.name.trim().is_empty() {
+                "Hello, stranger".to_string()
+            } else {
+                format!("Hello, {}", state.name)
+            },
+            format!(
+                "buttons: primary={} icon={}",
+                state.button_presses, state.icon_button_presses
+            ),
+            format!(
+                "subscription: {} | snapping: {}",
+                if state.subscribed { "on" } else { "off" },
+                if state.switch_on { "on" } else { "off" }
+            ),
+            format!(
+                "radio: standalone={} group={}",
+                if state.standalone_radio_selected {
+                    "selected"
+                } else {
+                    "idle"
+                },
+                if state.radio_choice.is_empty() {
+                    "unset"
+                } else {
+                    state.radio_choice.as_str()
+                }
+            ),
+            format!(
+                "opacity: {:.0} | brush size: {:.0} | mode: {}",
+                state.slider_value,
+                state.number_value,
+                if state.mode.is_empty() {
+                    "unset"
+                } else {
+                    state.mode.as_str()
+                }
+            ),
+            format!("notes lines: {}", state.notes.lines().count().max(1)),
+        ];
 
         ctx.fill_bounds(Color::rgba(0.985, 0.99, 1.0, 1.0));
         ctx.stroke_bounds(Color::rgba(0.80, 0.85, 0.91, 1.0), StrokeStyle::new(1.0));
-        ctx.label(
-            Rect::new(
-                ctx.bounds().x() + 14.0,
-                ctx.bounds().y() + 14.0,
-                ctx.bounds().width() - 28.0,
-                24.0,
-            ),
-            greeting,
-            Color::rgba(0.11, 0.15, 0.21, 1.0),
-        );
-        ctx.label(
-            Rect::new(
-                ctx.bounds().x() + 14.0,
-                ctx.bounds().y() + 48.0,
-                ctx.bounds().width() - 28.0,
-                20.0,
-            ),
-            format!("button presses: {}", state.button_presses),
-            Color::rgba(0.41, 0.49, 0.58, 1.0),
-        );
-        ctx.label(
-            Rect::new(
-                ctx.bounds().x() + 14.0,
-                ctx.bounds().y() + 74.0,
-                ctx.bounds().width() - 28.0,
-                20.0,
-            ),
-            format!("subscription: {}", subscription),
-            Color::rgba(0.41, 0.49, 0.58, 1.0),
-        );
+        for (index, line) in lines.into_iter().enumerate() {
+            ctx.label(
+                Rect::new(
+                    ctx.bounds().x() + 14.0,
+                    ctx.bounds().y() + 14.0 + (index as f32 * 28.0),
+                    ctx.bounds().width() - 28.0,
+                    22.0,
+                ),
+                line,
+                if index == 0 {
+                    Color::rgba(0.11, 0.15, 0.21, 1.0)
+                } else {
+                    Color::rgba(0.41, 0.49, 0.58, 1.0)
+                },
+            );
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -301,7 +484,7 @@ impl Widget for WidgetBookSummary {
         );
         node.name = Some(SUMMARY_NAME.to_string());
         node.description = Some(format!(
-            "name: {}; subscription: {}; button presses: {}",
+            "name: {}; subscription: {}; button presses: {}; icon actions: {}; switch: {}; standalone radio: {}; radio choice: {}; slider: {:.0}; brush size: {:.0}; mode: {}; notes lines: {}",
             if state.name.is_empty() {
                 "stranger"
             } else {
@@ -309,9 +492,33 @@ impl Widget for WidgetBookSummary {
             },
             if state.subscribed { "on" } else { "off" },
             state.button_presses,
+            state.icon_button_presses,
+            if state.switch_on { "on" } else { "off" },
+            if state.standalone_radio_selected {
+                "selected"
+            } else {
+                "off"
+            },
+            if state.radio_choice.is_empty() {
+                "unset"
+            } else {
+                state.radio_choice.as_str()
+            },
+            state.slider_value,
+            state.number_value,
+            if state.mode.is_empty() {
+                "unset"
+            } else {
+                state.mode.as_str()
+            },
+            state.notes.lines().count().max(1),
         ));
         ctx.push(node);
     }
+}
+
+fn option_index(options: &[&str], value: &str) -> Option<usize> {
+    options.iter().position(|option| *option == value)
 }
 
 #[cfg(test)]
@@ -319,12 +526,14 @@ mod tests {
     use std::{cell::RefCell, env, fs, path::Path, path::PathBuf, rc::Rc};
 
     use super::{
-        NAME_INPUT_LABEL, PRIMARY_BUTTON_LABEL, SUBSCRIBE_LABEL, SUMMARY_NAME, WidgetBookState,
+        ICON_BUTTON_LABEL, ICON_LABEL, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, PRIMARY_BUTTON_LABEL,
+        RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SUBSCRIBE_LABEL,
+        SUMMARY_NAME, SWITCH_LABEL, TEXT_AREA_LABEL, WidgetBookState,
         build_widget_book_application, default_widget_book_state,
     };
     use sui::{
-        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Result,
-        SemanticsRole, SemanticsValue,
+        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        Result, SemanticsRole, SemanticsValue,
     };
     use sui_testing::prelude::*;
 
@@ -339,11 +548,22 @@ mod tests {
         CheckboxUnchecked,
         FilledInput,
         EmptyInputFocused,
+        Icon,
+        IconButton,
+        Separator,
+        Switch,
+        RadioButton,
+        RadioGroup,
+        Slider,
+        NumberInput,
+        TextArea,
+        SelectExpanded,
+        ScrollViewScrolled,
         Summary,
     }
 
     impl StoryCase {
-        const ALL: [Self; 10] = [
+        const ALL: [Self; 21] = [
             Self::Overview,
             Self::OverviewConfigured,
             Self::Button,
@@ -353,6 +573,17 @@ mod tests {
             Self::CheckboxUnchecked,
             Self::FilledInput,
             Self::EmptyInputFocused,
+            Self::Icon,
+            Self::IconButton,
+            Self::Separator,
+            Self::Switch,
+            Self::RadioButton,
+            Self::RadioGroup,
+            Self::Slider,
+            Self::NumberInput,
+            Self::TextArea,
+            Self::SelectExpanded,
+            Self::ScrollViewScrolled,
             Self::Summary,
         ];
 
@@ -367,6 +598,17 @@ mod tests {
                 Self::CheckboxUnchecked => "checkbox-unchecked",
                 Self::FilledInput => "filled-input",
                 Self::EmptyInputFocused => "empty-input-focused",
+                Self::Icon => "icon",
+                Self::IconButton => "icon-button",
+                Self::Separator => "separator",
+                Self::Switch => "switch",
+                Self::RadioButton => "radio-button",
+                Self::RadioGroup => "radio-group",
+                Self::Slider => "slider",
+                Self::NumberInput => "number-input",
+                Self::TextArea => "text-area",
+                Self::SelectExpanded => "select-expanded",
+                Self::ScrollViewScrolled => "scroll-view-scrolled",
                 Self::Summary => "summary",
             }
         }
@@ -388,6 +630,19 @@ mod tests {
                 Self::EmptyInputFocused => {
                     "Empty text input crop with focus ring and placeholder visible."
                 }
+                Self::Icon => "Standalone icon crop for compact toolbar glyph review.",
+                Self::IconButton => "Icon button crop for titlebar-style actions.",
+                Self::Separator => "Separator crop for toolbar and inspector dividers.",
+                Self::Switch => "Switch crop for boolean controls distinct from checkbox rows.",
+                Self::RadioButton => "Standalone radio button crop.",
+                Self::RadioGroup => "Radio group crop for mutually exclusive choices.",
+                Self::Slider => "Slider crop for numeric tuning controls.",
+                Self::NumberInput => "Number input crop for spinbox-style editing.",
+                Self::TextArea => "Text area crop with multiline content.",
+                Self::SelectExpanded => "Expanded select crop showing compact option picking.",
+                Self::ScrollViewScrolled => {
+                    "Outer widget-book scroll view after paging down through the gallery."
+                }
                 Self::Summary => "Composed summary panel showing derived state.",
             }
         }
@@ -398,10 +653,21 @@ mod tests {
                 | Self::Button
                 | Self::ButtonHover
                 | Self::ButtonPressed
-                | Self::Checkbox => default_widget_book_state(),
+                | Self::Checkbox
+                | Self::Icon
+                | Self::IconButton
+                | Self::Separator
+                | Self::Switch
+                | Self::RadioButton
+                | Self::RadioGroup
+                | Self::Slider
+                | Self::NumberInput
+                | Self::SelectExpanded
+                | Self::ScrollViewScrolled => default_widget_book_state(),
                 Self::OverviewConfigured
                 | Self::CheckboxUnchecked
                 | Self::FilledInput
+                | Self::TextArea
                 | Self::Summary => configured_widget_book_state(),
                 Self::EmptyInputFocused => blank_widget_book_state(),
             };
@@ -416,13 +682,31 @@ mod tests {
                     press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL)
                 }
                 Self::EmptyInputFocused => self.target(window).focus(),
+                Self::RadioButton
+                | Self::RadioGroup
+                | Self::Slider
+                | Self::NumberInput
+                | Self::SelectExpanded => {
+                    scroll_gallery(window, 1)?;
+                    if matches!(self, Self::SelectExpanded) {
+                        self.target(window).click()?;
+                    }
+                    Ok(())
+                }
+                Self::TextArea | Self::Summary => scroll_gallery(window, 2),
+                Self::ScrollViewScrolled => {
+                    scroll_gallery(window, 1)
+                }
                 Self::Overview
                 | Self::OverviewConfigured
                 | Self::Button
                 | Self::Checkbox
                 | Self::CheckboxUnchecked
                 | Self::FilledInput
-                | Self::Summary => Ok(()),
+                | Self::Icon
+                | Self::IconButton
+                | Self::Separator
+                | Self::Switch => Ok(()),
             }
         }
 
@@ -438,6 +722,35 @@ mod tests {
                 Self::FilledInput | Self::EmptyInputFocused => window
                     .get_by_role(SemanticsRole::TextInput)
                     .with_name(NAME_INPUT_LABEL),
+                Self::Icon => window
+                    .get_by_role(SemanticsRole::Image)
+                    .with_name(ICON_LABEL),
+                Self::IconButton => window
+                    .get_by_role(SemanticsRole::Button)
+                    .with_name(ICON_BUTTON_LABEL),
+                Self::Separator => window.get_by_role(SemanticsRole::Separator),
+                Self::Switch => window
+                    .get_by_role(SemanticsRole::Switch)
+                    .with_name(SWITCH_LABEL),
+                Self::RadioButton => window
+                    .get_by_role(SemanticsRole::RadioButton)
+                    .with_name(RADIO_BUTTON_LABEL),
+                Self::RadioGroup => window
+                    .get_by_role(SemanticsRole::RadioGroup)
+                    .with_name(RADIO_GROUP_NAME),
+                Self::Slider => window
+                    .get_by_role(SemanticsRole::Slider)
+                    .with_name(SLIDER_NAME),
+                Self::NumberInput => window
+                    .get_by_role(SemanticsRole::SpinBox)
+                    .with_name(NUMBER_INPUT_NAME),
+                Self::TextArea => window
+                    .get_by_role(SemanticsRole::TextInput)
+                    .with_name(TEXT_AREA_LABEL),
+                Self::SelectExpanded => window
+                    .get_by_role(SemanticsRole::ComboBox)
+                    .with_name(SELECT_NAME),
+                Self::ScrollViewScrolled => window.get_by_role(SemanticsRole::ScrollView),
                 Self::Summary => window
                     .get_by_role(SemanticsRole::GenericContainer)
                     .with_name(SUMMARY_NAME),
@@ -582,13 +895,37 @@ mod tests {
             summary
                 .description
                 .as_deref()
-                .is_some_and(|description| description.contains("off"))
+                .is_some_and(|description| description.contains("subscription: off"))
         );
         assert!(
             summary
                 .description
                 .as_deref()
-                .is_some_and(|description| description.contains("1"))
+                .is_some_and(|description| description.contains("button presses: 1"))
+        );
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("icon actions: 2"))
+        );
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("switch: off"))
+        );
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("radio choice: High"))
+        );
+        assert!(
+            summary
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("mode: Multiply"))
         );
 
         let input = snapshot
@@ -605,6 +942,48 @@ mod tests {
             Some(SemanticsValue::Text("Grace Hopper".to_string()))
         );
 
+        let slider = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider && node.name.as_deref() == Some(SLIDER_NAME)
+            })
+            .expect("slider semantics node present");
+        assert_eq!(
+            slider.value,
+            Some(SemanticsValue::Range {
+                value: 35.0,
+                min: 0.0,
+                max: 100.0,
+            })
+        );
+
+        let number = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::SpinBox
+                    && node.name.as_deref() == Some(NUMBER_INPUT_NAME)
+            })
+            .expect("number input semantics node present");
+        assert_eq!(number.value, Some(SemanticsValue::Number(24.0)));
+
+        let select = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(SELECT_NAME)
+            })
+            .expect("select semantics node present");
+        assert_eq!(
+            select.value,
+            Some(SemanticsValue::Text("Multiply".to_string()))
+        );
+
         Ok(())
     }
 
@@ -613,6 +992,14 @@ mod tests {
             name: "Grace Hopper".to_string(),
             subscribed: false,
             button_presses: 1,
+            icon_button_presses: 2,
+            switch_on: false,
+            standalone_radio_selected: true,
+            radio_choice: "High".to_string(),
+            slider_value: 35.0,
+            number_value: 24.0,
+            notes: "Line 1\nLine 2".to_string(),
+            mode: "Multiply".to_string(),
         }))
     }
 
@@ -621,6 +1008,14 @@ mod tests {
             name: String::new(),
             subscribed: false,
             button_presses: 0,
+            icon_button_presses: 0,
+            switch_on: false,
+            standalone_radio_selected: false,
+            radio_choice: "Balanced".to_string(),
+            slider_value: 50.0,
+            number_value: 8.0,
+            notes: String::new(),
+            mode: String::new(),
         }))
     }
 
@@ -704,6 +1099,15 @@ mod tests {
         down.button = Some(PointerButton::Primary);
         down.buttons = PointerButtons::new(1);
         locator.dispatch_event(Event::Pointer(down))
+    }
+
+    fn scroll_gallery(window: &TestWindow, pages: usize) -> Result<()> {
+        let locator = window.get_by_role(SemanticsRole::ScrollView);
+        locator.focus()?;
+        for _ in 0..pages {
+            locator.press("PageDown")?;
+        }
+        Ok(())
     }
 
     fn node_center(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<Point> {

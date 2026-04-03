@@ -5,14 +5,20 @@ pub enum SemanticsRole {
     Window,
     Root,
     GenericContainer,
+    Separator,
     Button,
     CheckBox,
+    Switch,
     RadioButton,
+    RadioGroup,
     Slider,
     Text,
     TextInput,
+    SpinBox,
+    ComboBox,
     Image,
     Canvas,
+    ScrollView,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

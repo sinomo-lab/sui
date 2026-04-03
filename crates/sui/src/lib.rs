@@ -10,10 +10,11 @@ use std::{
 pub mod containers;
 pub mod controls;
 
-pub use containers::{Align, Background, SizedBox, Stack};
+pub use containers::{Align, Background, ScrollAxes, ScrollView, SizedBox, Stack};
 pub use controls::{
-    Button, Checkbox, ControlMetrics, ControlPalette, ControlTypography, DefaultTheme, Label,
-    TextInput,
+    Button, Checkbox, ComboBox, ControlMetrics, ControlPalette, ControlTypography, DefaultTheme,
+    Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput, NumberInput, RadioButton,
+    RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea, TextInput,
 };
 pub use sui_core::{
     AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, DpiInfo, Error, Event, FontHandle,
@@ -291,12 +292,15 @@ impl Default for Style {
 pub mod prelude {
     pub use crate::{
         Align, Alignment, Application, AsyncWakeToken, Axis, Background, Brush, Button, Checkbox,
-        Color, Constraints, ControlMetrics, ControlPalette, ControlTypography, DefaultTheme, Event,
-        EventCtx, FontHandle, ImageHandle, ImeEvent, Insets, KeyboardEvent, Label, LayoutCtx,
-        PaintCtx, Path, PathBuilder, Point, PointerEvent, Rect, RegisteredFont, RegisteredImage,
-        Result, SemanticsCtx, ShapedText, SingleChild, Size, SizedBox, Stack, StrokeStyle, Style,
-        TextInput, TextLayout, TextMeasurement, TextStyle, Theme, ThemeExtension, ThemeExtensions,
-        TimerToken, Transform, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
+        Color, ComboBox, Constraints, ControlMetrics, ControlPalette, ControlTypography,
+        DefaultTheme, Divider, Event, EventCtx, FontHandle, Icon, IconButton, IconGlyph,
+        ImageHandle, ImeEvent, Insets, KeyboardEvent, Label, LayoutCtx, MultilineTextInput,
+        NumberInput, PaintCtx, Path, PathBuilder, Point, PointerEvent, RadioButton, RadioGroup,
+        Rect, RegisteredFont, RegisteredImage, Result, ScrollAxes, ScrollView, Select,
+        SemanticsCtx, Separator, ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox,
+        Stack, StrokeStyle, Style, Switch, TextArea, TextInput, TextLayout, TextMeasurement,
+        TextStyle, Theme, ThemeExtension, ThemeExtensions, TimerToken, Transform, WakeEvent,
+        Widget, WidgetChildren, WidgetPod, WindowBuilder,
         containers::Padding,
     };
 }

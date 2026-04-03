@@ -1,8 +1,11 @@
-use sui_core::{Point, Rect, Size};
+use sui_core::{
+    Event, Point, Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, Size,
+    Vector,
+};
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
-    LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
+    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::Brush;
 
@@ -408,6 +411,241 @@ impl Widget for Stack {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollAxes {
+    Vertical,
+    Horizontal,
+    Both,
+}
+
+impl ScrollAxes {
+    const fn allows_horizontal(self) -> bool {
+        matches!(self, Self::Horizontal | Self::Both)
+    }
+
+    const fn allows_vertical(self) -> bool {
+        matches!(self, Self::Vertical | Self::Both)
+    }
+}
+
+pub struct ScrollView {
+    axes: ScrollAxes,
+    offset: Vector,
+    content_size: Size,
+    child: SingleChild,
+}
+
+impl ScrollView {
+    pub fn new<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            axes: ScrollAxes::Vertical,
+            offset: Vector::ZERO,
+            content_size: Size::ZERO,
+            child: SingleChild::new(child),
+        }
+    }
+
+    pub fn vertical<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::new(child)
+    }
+
+    pub fn horizontal<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::new(child).axes(ScrollAxes::Horizontal)
+    }
+
+    pub fn both<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::new(child).axes(ScrollAxes::Both)
+    }
+
+    pub fn axes(mut self, axes: ScrollAxes) -> Self {
+        self.axes = axes;
+        self
+    }
+
+    pub const fn current_offset(&self) -> Vector {
+        self.offset
+    }
+
+    pub fn set_offset(&mut self, offset: Vector) {
+        self.offset = offset;
+    }
+
+    pub fn child(&self) -> &WidgetPod {
+        self.child.child()
+    }
+
+    pub fn child_mut(&mut self) -> &mut WidgetPod {
+        self.child.child_mut()
+    }
+
+    fn clamp_offset(&self, viewport: Size, offset: Vector) -> Vector {
+        let max_x = (self.content_size.width - viewport.width).max(0.0);
+        let max_y = (self.content_size.height - viewport.height).max(0.0);
+
+        Vector::new(
+            if self.axes.allows_horizontal() {
+                offset.x.clamp(0.0, max_x)
+            } else {
+                0.0
+            },
+            if self.axes.allows_vertical() {
+                offset.y.clamp(0.0, max_y)
+            } else {
+                0.0
+            },
+        )
+    }
+
+    fn scroll_by(&mut self, viewport: Size, delta: Vector, ctx: &mut EventCtx) {
+        let next = self.clamp_offset(viewport, self.offset + delta);
+        if next != self.offset {
+            self.offset = next;
+            ctx.request_layout();
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+}
+
+impl Widget for ScrollView {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        let viewport = ctx.bounds().size;
+
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == sui_core::PointerEventKind::Scroll
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                let delta = pointer
+                    .scroll_delta
+                    .map(scroll_delta_to_offset)
+                    .unwrap_or(pointer.delta);
+                self.scroll_by(viewport, Vector::new(-delta.x, -delta.y), ctx);
+                ctx.set_handled();
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == sui_core::KeyState::Pressed => {
+                let line = 40.0;
+                let page = (viewport.height * 0.85).max(line);
+                let delta = match key.key.as_str() {
+                    "ArrowUp" => Some(Vector::new(0.0, -line)),
+                    "ArrowDown" => Some(Vector::new(0.0, line)),
+                    "ArrowLeft" => Some(Vector::new(-line, 0.0)),
+                    "ArrowRight" => Some(Vector::new(line, 0.0)),
+                    "PageUp" => Some(Vector::new(0.0, -page)),
+                    "PageDown" => Some(Vector::new(0.0, page)),
+                    "Home" => Some(Vector::new(-self.offset.x, -self.offset.y)),
+                    "End" => Some(Vector::new(
+                        self.content_size.width - viewport.width - self.offset.x,
+                        self.content_size.height - viewport.height - self.offset.y,
+                    )),
+                    _ => None,
+                };
+
+                if let Some(delta) = delta {
+                    self.scroll_by(viewport, delta, ctx);
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == sui_core::PointerEventKind::Down
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                ctx.request_focus();
+            }
+            _ => {}
+        }
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        let mut child_constraints = constraints.loosen();
+        if self.axes.allows_horizontal() {
+            child_constraints.max.width = f32::INFINITY;
+        } else if constraints.max.width.is_finite() {
+            child_constraints.min.width = constraints.max.width;
+            child_constraints.max.width = constraints.max.width;
+        }
+
+        if self.axes.allows_vertical() {
+            child_constraints.max.height = f32::INFINITY;
+        } else if constraints.max.height.is_finite() {
+            child_constraints.min.height = constraints.max.height;
+            child_constraints.max.height = constraints.max.height;
+        }
+
+        let child_size = self.child.layout(ctx, child_constraints);
+        self.content_size = child_size;
+
+        let viewport = constraints.clamp(Size::new(
+            if constraints.max.width.is_finite() {
+                constraints.max.width
+            } else {
+                child_size.width
+            },
+            if constraints.max.height.is_finite() {
+                constraints.max.height
+            } else {
+                child_size.height
+            },
+        ));
+        self.offset = self.clamp_offset(viewport, self.offset);
+        self.child.set_bounds(Rect::from_origin_size(
+            Point::new(-self.offset.x, -self.offset.y),
+            child_size,
+        ));
+
+        viewport
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.push_clip_rect(ctx.bounds());
+        self.child.paint(ctx);
+        ctx.pop_clip();
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
+        node.actions = vec![SemanticsAction::Focus];
+        node.state.focused = ctx.is_focused();
+        ctx.push(node);
+        self.child.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_semantics();
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {
+    match delta {
+        ScrollDelta::Lines(delta) => Vector::new(delta.x * 40.0, delta.y * 40.0),
+        ScrollDelta::Pixels(delta) => delta,
+    }
+}
+
 fn inset_constraints(constraints: Constraints, insets: Insets) -> Constraints {
     let horizontal = insets.left + insets.right;
     let vertical = insets.top + insets.bottom;
@@ -534,12 +772,15 @@ fn stack_child_constraints(
 
 #[cfg(test)]
 mod tests {
-    use super::{Align, Background, Padding, SizedBox, Stack};
-    use sui_core::{Color, Rect, SemanticsNode, SemanticsRole, Size};
+    use super::{Align, Background, Padding, ScrollView, SizedBox, Stack};
+    use sui_core::{
+        Color, Event, Point, PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode,
+        SemanticsRole, Size, Vector,
+    };
     use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
     use sui_runtime::{
-        Application, LayoutCtx, PaintCtx, RenderOutput, SemanticsCtx, Widget, WidgetGraphSnapshot,
-        WindowBuilder,
+        Application, LayoutCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
+        WidgetGraphSnapshot, WindowBuilder,
     };
     use sui_scene::{Brush, SceneCommand};
 
@@ -584,6 +825,18 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
         let graph = runtime.widget_graph(window_id).unwrap();
         (output, graph)
+    }
+
+    fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
+    where
+        W: Widget + 'static,
+    {
+        let runtime = Application::new()
+            .window(WindowBuilder::new().title("Containers").root(root))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id)
     }
 
     #[test]
@@ -720,5 +973,24 @@ mod tests {
         assert_eq!(graph.nodes[3].bounds, Rect::new(42.0, 42.0, 50.0, 30.0));
         assert_eq!(graph.nodes[4].bounds, Rect::new(42.0, 42.0, 50.0, 12.0));
         assert_eq!(graph.nodes[5].bounds, Rect::new(42.0, 64.0, 30.0, 8.0));
+    }
+
+    #[test]
+    fn scroll_view_updates_child_bounds_after_scroll_input() {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(ScrollView::vertical(
+                FixedBox::new(Size::new(80.0, 120.0), Color::rgba(0.2, 0.3, 0.7, 1.0)),
+            )),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
+        runtime.handle_event(window_id, Event::Pointer(scroll)).unwrap();
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+
+        assert_eq!(graph.nodes[1].bounds, Rect::new(0.0, 0.0, 80.0, 40.0));
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
     }
 }
