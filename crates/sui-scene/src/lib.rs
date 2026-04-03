@@ -3,7 +3,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use sui_core::{
-    Color, DirtyRegion, Error, ImageHandle, Path, Rect, Result, Size, Transform, WindowId,
+    Color, DirtyRegion, Error, ImageHandle, Path, Rect, Result, Size, Transform, WidgetId,
+    WindowId,
 };
 use sui_text::{FontRegistry, ShapedText, TextRun};
 
@@ -63,6 +64,23 @@ impl ImageSource {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SceneLayer {
+    pub widget_id: WidgetId,
+    pub bounds: Rect,
+    pub scene: Box<Scene>,
+}
+
+impl SceneLayer {
+    pub fn new(widget_id: WidgetId, bounds: Rect, scene: Scene) -> Self {
+        Self {
+            widget_id,
+            bounds,
+            scene: Box::new(scene),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum SceneCommand {
     Clear(Color),
     FillRect {
@@ -100,6 +118,7 @@ pub enum SceneCommand {
         transform: Transform,
     },
     PopTransform,
+    Layer(SceneLayer),
     Label {
         rect: Rect,
         text: String,
@@ -123,6 +142,34 @@ impl Scene {
 
     pub fn commands(&self) -> &[SceneCommand] {
         &self.commands
+    }
+
+    pub fn visit_commands(&self, visitor: &mut dyn FnMut(&SceneCommand)) {
+        for command in &self.commands {
+            visitor(command);
+            if let SceneCommand::Layer(layer) = command {
+                layer.scene.visit_commands(visitor);
+            }
+        }
+    }
+
+    pub fn replace_layer(&mut self, widget_id: WidgetId, replacement: SceneLayer) -> bool {
+        for command in &mut self.commands {
+            match command {
+                SceneCommand::Layer(layer) if layer.widget_id == widget_id => {
+                    *command = SceneCommand::Layer(replacement);
+                    return true;
+                }
+                SceneCommand::Layer(layer) => {
+                    if layer.scene.replace_layer(widget_id, replacement.clone()) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
     }
 }
 
@@ -244,6 +291,7 @@ pub struct SceneFrame {
     pub surface_size: Size,
     pub scale_factor: f32,
     pub dirty_regions: Vec<DirtyRegion>,
+    pub dirty_layers: Vec<WidgetId>,
     pub scene: Scene,
     pub font_registry: Arc<FontRegistry>,
     pub image_registry: Arc<ImageRegistry>,
@@ -257,6 +305,7 @@ impl SceneFrame {
             surface_size: viewport,
             scale_factor: 1.0,
             dirty_regions: Vec::new(),
+            dirty_layers: Vec::new(),
             scene: Scene::new(),
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
@@ -267,10 +316,13 @@ impl SceneFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, ImageRegistry, ImageSource, RegisteredImage, SceneCommand, SceneFrame, StrokeStyle,
+        Brush, ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame,
+        SceneLayer, StrokeStyle,
     };
     use std::sync::Arc;
-    use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, WindowId};
+    use sui_core::{
+        Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, WidgetId, WindowId,
+    };
     use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
 
     #[test]
@@ -311,6 +363,11 @@ mod tests {
         let transform = SceneCommand::PushTransform {
             transform: Transform::translation(3.0, 5.0),
         };
+        let layer = SceneCommand::Layer(SceneLayer::new(
+            WidgetId::new(9),
+            Rect::new(1.0, 2.0, 30.0, 12.0),
+            Scene::new(),
+        ));
 
         assert!(matches!(text, SceneCommand::DrawText(_)));
         assert!(matches!(shaped_text, SceneCommand::DrawShapedText(_)));
@@ -319,6 +376,7 @@ mod tests {
         assert!(matches!(path_fill, SceneCommand::FillPath { .. }));
         assert!(matches!(clip_path, SceneCommand::PushClipPath { .. }));
         assert!(matches!(transform, SceneCommand::PushTransform { .. }));
+        assert!(matches!(layer, SceneCommand::Layer(_)));
     }
 
     #[test]
@@ -334,6 +392,7 @@ mod tests {
 
         assert_eq!(frame.font_registry.len(), 1);
         assert!(frame.font_registry.contains(FontHandle::new(9)));
+        assert!(frame.dirty_layers.is_empty());
     }
 
     #[test]
@@ -349,6 +408,7 @@ mod tests {
 
         assert_eq!(frame.image_registry.len(), 1);
         assert!(frame.image_registry.contains(ImageHandle::new(5)));
+        assert!(frame.dirty_layers.is_empty());
     }
 
     #[test]
@@ -360,5 +420,50 @@ mod tests {
                 .to_string()
                 .contains("image data length 3 does not match")
         );
+    }
+
+    #[test]
+    fn scene_replace_layer_updates_nested_widget_scene() {
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(2.0, 2.0, 6.0, 6.0),
+            brush: Brush::Solid(Color::WHITE),
+        });
+
+        let mut root = Scene::new();
+        root.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 20.0, 20.0),
+            brush: Brush::Solid(Color::BLACK),
+        });
+        root.push(SceneCommand::Layer(SceneLayer::new(
+            WidgetId::new(2),
+            Rect::new(1.0, 1.0, 10.0, 10.0),
+            child_scene,
+        )));
+
+        let mut replacement = Scene::new();
+        replacement.push(SceneCommand::FillRect {
+            rect: Rect::new(4.0, 4.0, 8.0, 8.0),
+            brush: Brush::Solid(Color::rgba(0.0, 1.0, 0.0, 1.0)),
+        });
+
+        assert!(root.replace_layer(
+            WidgetId::new(2),
+            SceneLayer::new(WidgetId::new(2), Rect::new(1.0, 1.0, 10.0, 10.0), replacement),
+        ));
+
+        let mut command_count = 0usize;
+        let mut saw_nested_fill = false;
+        root.visit_commands(&mut |command| {
+            command_count += 1;
+            if let SceneCommand::FillRect { rect, .. } = command
+                && *rect == Rect::new(4.0, 4.0, 8.0, 8.0)
+            {
+                saw_nested_fill = true;
+            }
+        });
+
+        assert_eq!(command_count, 3);
+        assert!(saw_nested_fill);
     }
 }

@@ -1,6 +1,11 @@
 #![forbid(unsafe_code)]
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::Arc,
+};
 
 use bytemuck::{Pod, Zeroable};
 use lyon_path::{
@@ -13,10 +18,11 @@ use lyon_tessellation::{
 };
 use sui_core::{
     Color, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result, Size,
-    Transform, Vector, WindowId,
+    Transform, Vector, WidgetId, WindowId,
 };
 use sui_scene::{
-    Brush, RegisteredImage, RegisteredImageFormat, SceneCommand, SceneFrame, StrokeStyle,
+    Brush, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame,
+    SceneLayer, StrokeStyle,
 };
 use sui_text::{
     FontRegistry, ResolvedTextFace, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout,
@@ -106,9 +112,125 @@ pub struct WgpuRenderer {
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
     image_cache: HashMap<ImageHandle, CachedImageTexture>,
+    layer_caches: HashMap<WindowId, RetainedLayerCache>,
     surfaces: HashMap<WindowId, SurfaceState>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
     frame_resources: FrameResources,
+}
+
+const MAX_RETAINED_LAYER_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_DIRTY_LAYERS_FOR_CACHE_REUSE: usize = 64;
+
+#[derive(Default)]
+struct RetainedLayerCache {
+    fragments: HashMap<LayerCacheKey, DrawOpArena>,
+    estimated_bytes: usize,
+}
+
+impl RetainedLayerCache {
+    fn invalidate(&mut self, scene: &Scene, dirty_layers: &[WidgetId]) {
+        let active_layers = collect_active_layers(scene);
+        self.fragments
+            .retain(|key, _| active_layers.contains(&key.widget_id));
+        self.recalculate_estimated_bytes();
+
+        if dirty_layers.is_empty() {
+            return;
+        }
+
+        let mut invalidated = dirty_layers.iter().copied().collect::<Vec<_>>();
+        collect_layer_ancestors(scene, dirty_layers, &mut invalidated, &mut Vec::new());
+
+        self.fragments
+            .retain(|key, _| !invalidated.iter().any(|widget_id| *widget_id == key.widget_id));
+        self.recalculate_estimated_bytes();
+    }
+
+    fn can_cache(&self, dirty_layers: &[WidgetId]) -> bool {
+        dirty_layers.len() <= MAX_DIRTY_LAYERS_FOR_CACHE_REUSE
+    }
+
+    fn insert_fragment(&mut self, key: LayerCacheKey, fragment: DrawOpArena) {
+        let fragment_bytes = fragment.estimated_bytes();
+        if fragment_bytes > MAX_RETAINED_LAYER_CACHE_BYTES {
+            return;
+        }
+
+        if self.estimated_bytes + fragment_bytes > MAX_RETAINED_LAYER_CACHE_BYTES {
+            return;
+        }
+
+        if let Some(previous) = self.fragments.insert(key, fragment) {
+            self.estimated_bytes = self
+                .estimated_bytes
+                .saturating_sub(previous.estimated_bytes());
+        }
+        self.estimated_bytes += fragment_bytes;
+    }
+
+    fn recalculate_estimated_bytes(&mut self) {
+        self.estimated_bytes = self
+            .fragments
+            .values()
+            .map(DrawOpArena::estimated_bytes)
+            .sum();
+    }
+}
+
+fn collect_active_layers(scene: &Scene) -> HashSet<WidgetId> {
+    let mut active_layers = HashSet::new();
+    scene.visit_commands(&mut |command| {
+        if let SceneCommand::Layer(layer) = command {
+            active_layers.insert(layer.widget_id);
+        }
+    });
+    active_layers
+}
+
+fn collect_layer_ancestors(
+    scene: &Scene,
+    dirty_layers: &[WidgetId],
+    invalidated: &mut Vec<WidgetId>,
+    ancestors: &mut Vec<WidgetId>,
+) {
+    for command in scene.commands() {
+        let SceneCommand::Layer(layer) = command else {
+            continue;
+        };
+
+        if dirty_layers.iter().any(|widget_id| *widget_id == layer.widget_id) {
+            for ancestor in ancestors.iter().copied() {
+                if !invalidated.contains(&ancestor) {
+                    invalidated.push(ancestor);
+                }
+            }
+        }
+
+        ancestors.push(layer.widget_id);
+        collect_layer_ancestors(&layer.scene, dirty_layers, invalidated, ancestors);
+        ancestors.pop();
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct LayerCacheKey {
+    widget_id: WidgetId,
+    state_signature: u64,
+    viewport_width_bits: u32,
+    viewport_height_bits: u32,
+    feather_width_bits: u32,
+}
+
+impl LayerCacheKey {
+    fn new(widget_id: WidgetId, state_signature: u64, viewport: Size, feather_width: f32) -> Self {
+        Self {
+            widget_id,
+            state_signature,
+            viewport_width_bits: viewport.width.to_bits(),
+            viewport_height_bits: viewport.height.to_bits(),
+            feather_width_bits: feather_width.to_bits(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -209,6 +331,7 @@ impl WgpuRenderer {
         self.offscreen_targets.remove(&window_id);
         self.last_frames.remove(&window_id);
         self.last_frame_stats.remove(&window_id);
+        self.layer_caches.remove(&window_id);
     }
 
     pub fn render(&mut self, frame: &SceneFrame) -> Result<()> {
@@ -340,17 +463,6 @@ impl WgpuRenderer {
         buffer.unmap();
 
         RgbaImage::new(target.size.0, target.size.1, pixels)
-    }
-
-    fn text_engine(&mut self) -> Result<&mut TextEngine> {
-        if self.text_engine.is_none() {
-            self.text_engine = Some(TextEngine::new()?);
-        }
-
-        Ok(self
-            .text_engine
-            .as_mut()
-            .expect("text engine initialized before returning mutable reference"))
     }
 
     fn ensure_shared(&mut self, compatible_surface: Option<&wgpu::Surface<'_>>) -> Result<()> {
@@ -574,8 +686,23 @@ impl WgpuRenderer {
     ) -> Result<RendererFrameStats> {
         let feather_width = self.feather_width;
         let draw_ops = {
-            let text_engine = self.text_engine()?;
-            build_draw_ops(frame, text_engine, feather_width)?
+            if self.text_engine.is_none() {
+                self.text_engine = Some(TextEngine::new()?);
+            }
+            let text_engine = self
+                .text_engine
+                .as_mut()
+                .expect("text engine initialized before draw-op construction");
+            let layer_cache = self.layer_caches.entry(frame.window_id).or_default();
+            layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+            let enable_layer_cache = layer_cache.can_cache(&frame.dirty_layers);
+            build_draw_ops(
+                frame,
+                text_engine,
+                feather_width,
+                layer_cache,
+                enable_layer_cache,
+            )?
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
         let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
@@ -912,6 +1039,7 @@ impl Default for WgpuRenderer {
             shared: None,
             text_engine: None,
             image_cache: HashMap::new(),
+            layer_caches: HashMap::new(),
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
             frame_resources: FrameResources::default(),
@@ -1193,7 +1321,7 @@ struct OffscreenTarget {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 struct Vertex {
     position: [f32; 2],
     color: [f32; 4],
@@ -1333,7 +1461,13 @@ enum FeatheredPathType {
 
 #[cfg(test)]
 fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<Vertex>> {
-    let draw_ops = build_draw_ops(frame, text_engine, DEFAULT_FEATHER_WIDTH)?;
+    let draw_ops = build_draw_ops(
+        frame,
+        text_engine,
+        DEFAULT_FEATHER_WIDTH,
+        &mut RetainedLayerCache::default(),
+        true,
+    )?;
     let mut vertices = Vec::new();
     for op in &draw_ops.draw_ops {
         vertices.extend_from_slice(draw_ops.scene_vertices(op.vertices));
@@ -1398,6 +1532,15 @@ struct PreparedDrawBatch {
 struct PreparedVertices {
     start: u32,
     len: u32,
+}
+
+impl PreparedVertices {
+    fn offset(self, delta: u32) -> Self {
+        Self {
+            start: self.start + delta,
+            len: self.len,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1477,37 +1620,79 @@ fn build_draw_ops(
     frame: &SceneFrame,
     text_engine: &mut TextEngine,
     feather_width: f32,
+    layer_cache: &mut RetainedLayerCache,
+    enable_layer_cache: bool,
 ) -> Result<DrawOpArena> {
-    let viewport = frame.viewport;
     let mut draw_ops = DrawOpArena::default();
     let mut state = SceneRasterState::new(&mut draw_ops);
-    let mut scratch_vertices = Vec::new();
-    let mut clip_scratch_vertices = Vec::new();
+    let mut builder = SceneDrawOpBuilder {
+        frame,
+        text_engine,
+        feather_width,
+        layer_cache,
+        enable_layer_cache,
+        scratch_vertices: Vec::new(),
+        clip_scratch_vertices: Vec::new(),
+    };
+    builder.build_scene(&frame.scene, &mut draw_ops, &mut state)?;
+    Ok(draw_ops)
+}
 
-    for command in frame.scene.commands() {
+struct SceneDrawOpBuilder<'a> {
+    frame: &'a SceneFrame,
+    text_engine: &'a mut TextEngine,
+    feather_width: f32,
+    layer_cache: &'a mut RetainedLayerCache,
+    enable_layer_cache: bool,
+    scratch_vertices: Vec<Vertex>,
+    clip_scratch_vertices: Vec<Vertex>,
+}
+
+impl SceneDrawOpBuilder<'_> {
+    fn build_scene(
+        &mut self,
+        scene: &Scene,
+        draw_ops: &mut DrawOpArena,
+        state: &mut SceneRasterState,
+    ) -> Result<()> {
+        for command in scene.commands() {
+            self.build_command(command, draw_ops, state)?;
+        }
+
+        Ok(())
+    }
+
+    fn build_command(
+        &mut self,
+        command: &SceneCommand,
+        draw_ops: &mut DrawOpArena,
+        state: &mut SceneRasterState,
+    ) -> Result<()> {
+        let viewport = self.frame.viewport;
+
         match command {
             SceneCommand::Clear(color) => {
-                scratch_vertices.clear();
+                self.scratch_vertices.clear();
                 append_rect(
-                    &mut scratch_vertices,
+                    &mut self.scratch_vertices,
                     Rect::new(0.0, 0.0, viewport.width, viewport.height),
                     *color,
                     viewport,
                 );
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
+                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
             }
             SceneCommand::FillRect { rect, brush } => {
                 let Brush::Solid(color) = brush;
-                scratch_vertices.clear();
+                self.scratch_vertices.clear();
                 append_painted_rect(
-                    &mut scratch_vertices,
-                    &state,
+                    &mut self.scratch_vertices,
+                    state,
                     *rect,
                     *color,
                     viewport,
-                    feather_width,
+                    self.feather_width,
                 );
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
+                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
             }
             SceneCommand::StrokeRect {
                 rect,
@@ -1515,30 +1700,30 @@ fn build_draw_ops(
                 stroke,
             } => {
                 let Brush::Solid(color) = brush;
-                scratch_vertices.clear();
+                self.scratch_vertices.clear();
                 append_stroke_rect(
-                    &mut scratch_vertices,
-                    &state,
+                    &mut self.scratch_vertices,
+                    state,
                     *rect,
                     *color,
                     *stroke,
                     viewport,
-                    feather_width,
+                    self.feather_width,
                 );
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
+                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
             }
             SceneCommand::FillPath { path, brush } => {
                 let Brush::Solid(color) = brush;
-                scratch_vertices.clear();
+                self.scratch_vertices.clear();
                 append_painted_path(
-                    &mut scratch_vertices,
-                    &state,
+                    &mut self.scratch_vertices,
+                    state,
                     path,
                     *color,
                     viewport,
-                    feather_width,
+                    self.feather_width,
                 )?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
+                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
             }
             SceneCommand::StrokePath {
                 path,
@@ -1546,67 +1731,67 @@ fn build_draw_ops(
                 stroke,
             } => {
                 let Brush::Solid(color) = brush;
-                scratch_vertices.clear();
+                self.scratch_vertices.clear();
                 append_stroked_path(
-                    &mut scratch_vertices,
-                    &state,
+                    &mut self.scratch_vertices,
+                    state,
                     path,
                     *color,
                     *stroke,
                     viewport,
-                    feather_width,
+                    self.feather_width,
                 )?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
+                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
             }
             SceneCommand::DrawText(text) => {
-                scratch_vertices.clear();
-                text_engine.append_text_run(
-                    &mut scratch_vertices,
-                    &state,
+                self.scratch_vertices.clear();
+                self.text_engine.append_text_run(
+                    &mut self.scratch_vertices,
+                    state,
                     text,
-                    frame.font_registry.as_ref(),
+                    self.frame.font_registry.as_ref(),
                     viewport,
-                    feather_width,
+                    self.feather_width,
                 )?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
+                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
             }
             SceneCommand::DrawShapedText(text) => {
-                scratch_vertices.clear();
-                text_engine.append_shaped_text(
-                    &mut scratch_vertices,
-                    &state,
+                self.scratch_vertices.clear();
+                self.text_engine.append_shaped_text(
+                    &mut self.scratch_vertices,
+                    state,
                     text,
                     viewport,
-                    feather_width,
+                    self.feather_width,
                 )?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
+                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
             }
             SceneCommand::DrawImage { rect, source } => {
-                scratch_vertices.clear();
-                let image = frame.image_registry.get(source.image).ok_or_else(|| {
+                self.scratch_vertices.clear();
+                let image = self.frame.image_registry.get(source.image).ok_or_else(|| {
                     Error::new(format!(
                         "image handle {} is not registered",
                         source.image.get()
                     ))
                 })?;
-                append_image(&mut scratch_vertices, &state, *rect, source, image, viewport);
+                append_image(&mut self.scratch_vertices, state, *rect, source, image, viewport);
                 push_draw_op(
-                    &mut draw_ops,
+                    draw_ops,
                     DrawOpKind::Image {
                         handle: source.image,
                     },
-                    &scratch_vertices,
-                    &state,
+                    &self.scratch_vertices,
+                    state,
                 );
             }
             SceneCommand::PushClip { rect } => {
                 state.push_clip(*rect);
             }
             SceneCommand::PushClipPath { path } => {
-                state.push_clip_path(path, viewport, &mut draw_ops, &mut clip_scratch_vertices)?;
+                state.push_clip_path(path, viewport, draw_ops, &mut self.clip_scratch_vertices)?;
             }
             SceneCommand::PopClip => {
-                state.pop_clip(&mut draw_ops);
+                state.pop_clip(draw_ops);
             }
             SceneCommand::PushTransform { transform } => {
                 state.push_transform(*transform);
@@ -1614,26 +1799,60 @@ fn build_draw_ops(
             SceneCommand::PopTransform => {
                 state.pop_transform();
             }
+            SceneCommand::Layer(layer) => {
+                self.build_layer(layer, draw_ops, state)?;
+            }
             SceneCommand::Label { rect, text, color } => {
-                scratch_vertices.clear();
-                text_engine.append_text_run(
-                    &mut scratch_vertices,
-                    &state,
+                self.scratch_vertices.clear();
+                self.text_engine.append_text_run(
+                    &mut self.scratch_vertices,
+                    state,
                     &TextRun {
                         rect: *rect,
                         text: text.clone(),
                         style: TextStyle::new(*color),
                     },
-                    frame.font_registry.as_ref(),
+                    self.frame.font_registry.as_ref(),
                     viewport,
-                    feather_width,
+                    self.feather_width,
                 )?;
-                push_draw_op(&mut draw_ops, DrawOpKind::Solid, &scratch_vertices, &state);
+                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
             }
         }
+
+        Ok(())
     }
 
-    Ok(draw_ops)
+    fn build_layer(
+        &mut self,
+        layer: &SceneLayer,
+        draw_ops: &mut DrawOpArena,
+        state: &SceneRasterState,
+    ) -> Result<()> {
+        if !self.enable_layer_cache {
+            let mut inline_state = SceneRasterState::inherit_inline(state, draw_ops);
+            return self.build_scene(&layer.scene, draw_ops, &mut inline_state);
+        }
+
+        let key = LayerCacheKey::new(
+            layer.widget_id,
+            state.cache_signature(),
+            self.frame.viewport,
+            self.feather_width,
+        );
+
+        if let Some(fragment) = self.layer_cache.fragments.get(&key) {
+            draw_ops.append_fragment(fragment);
+            return Ok(());
+        }
+
+        let mut fragment = DrawOpArena::default();
+        let mut fragment_state = SceneRasterState::inherit(state, draw_ops, &mut fragment);
+        self.build_scene(&layer.scene, &mut fragment, &mut fragment_state)?;
+        self.layer_cache.insert_fragment(key, fragment.clone());
+        draw_ops.append_fragment(&fragment);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1658,12 +1877,67 @@ impl SceneRasterState {
             clip_state_index,
         }
     }
+
+    fn inherit(parent: &Self, source_draw_ops: &DrawOpArena, draw_ops: &mut DrawOpArena) -> Self {
+        let active_path_clips = parent
+            .active_path_clips
+            .iter()
+            .copied()
+            .map(|vertices| {
+                let start = vertices.start as usize;
+                let end = (vertices.start + vertices.len) as usize;
+                draw_ops.push_clip_vertices(&source_draw_ops.clip_vertices[start..end])
+            })
+            .collect::<Vec<_>>();
+        let clip_state_index = draw_ops.push_clip_state(&active_path_clips);
+
+        Self {
+            current_transform: parent.current_transform,
+            transform_stack: parent.transform_stack.clone(),
+            clip_stack: parent.clip_stack.clone(),
+            path_clip_state_id: parent.path_clip_state_id,
+            active_path_clips,
+            clip_state_index,
+        }
+    }
+
+    fn inherit_inline(parent: &Self, draw_ops: &mut DrawOpArena) -> Self {
+        let clip_state_index = draw_ops.push_clip_state(&parent.active_path_clips);
+
+        Self {
+            current_transform: parent.current_transform,
+            transform_stack: parent.transform_stack.clone(),
+            clip_stack: parent.clip_stack.clone(),
+            path_clip_state_id: parent.path_clip_state_id,
+            active_path_clips: parent.active_path_clips.clone(),
+            clip_state_index,
+        }
+    }
+
+    fn cache_signature(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        hash_transform(&mut hasher, self.current_transform);
+        for clip in &self.clip_stack {
+            match clip {
+                ClipPrimitive::Rect(rect) => {
+                    0u8.hash(&mut hasher);
+                    hash_rect(&mut hasher, *rect);
+                }
+                ClipPrimitive::Path { signature, .. } => {
+                    1u8.hash(&mut hasher);
+                    signature.hash(&mut hasher);
+                }
+            }
+        }
+
+        hasher.finish()
+    }
 }
 
 #[derive(Debug, Clone)]
 enum ClipPrimitive {
     Rect(Rect),
-    Path { bounds: Rect },
+    Path { bounds: Rect, signature: u64 },
 }
 
 impl ClipPrimitive {
@@ -1689,13 +1963,14 @@ impl SceneRasterState {
         scratch_vertices: &mut Vec<Vertex>,
     ) -> Result<()> {
         let bounds = self.current_transform.transform_rect_bbox(path.bounds());
+        let signature = hash_path(path, self.current_transform);
         scratch_vertices.clear();
         if !path.is_empty() && !viewport.is_empty() {
             let lyon_path = build_lyon_path(path, self.current_transform);
             append_tessellated_filled_lyon_path_vertices(scratch_vertices, &lyon_path, viewport)?;
         }
         let vertices = draw_ops.push_clip_vertices(scratch_vertices);
-        self.clip_stack.push(ClipPrimitive::Path { bounds });
+        self.clip_stack.push(ClipPrimitive::Path { bounds, signature });
         self.active_path_clips.push(vertices);
         self.path_clip_state_id = self.path_clip_state_id.wrapping_add(1);
         self.clip_state_index = draw_ops.push_clip_state(&self.active_path_clips);
@@ -1735,6 +2010,61 @@ impl SceneRasterState {
             None => Some(transformed),
         }
     }
+}
+
+fn hash_transform(hasher: &mut DefaultHasher, transform: Transform) {
+    transform.xx.to_bits().hash(hasher);
+    transform.yx.to_bits().hash(hasher);
+    transform.xy.to_bits().hash(hasher);
+    transform.yy.to_bits().hash(hasher);
+    transform.dx.to_bits().hash(hasher);
+    transform.dy.to_bits().hash(hasher);
+}
+
+fn hash_rect(hasher: &mut DefaultHasher, rect: Rect) {
+    rect.origin.x.to_bits().hash(hasher);
+    rect.origin.y.to_bits().hash(hasher);
+    rect.size.width.to_bits().hash(hasher);
+    rect.size.height.to_bits().hash(hasher);
+}
+
+fn hash_point(hasher: &mut DefaultHasher, point: Point) {
+    point.x.to_bits().hash(hasher);
+    point.y.to_bits().hash(hasher);
+}
+
+fn hash_path(path: &ScenePath, transform: Transform) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    hash_transform(&mut hasher, transform);
+    hash_rect(&mut hasher, path.bounds());
+    for element in path.elements() {
+        match element {
+            PathElement::MoveTo(point) => {
+                0u8.hash(&mut hasher);
+                hash_point(&mut hasher, *point);
+            }
+            PathElement::LineTo(point) => {
+                1u8.hash(&mut hasher);
+                hash_point(&mut hasher, *point);
+            }
+            PathElement::QuadTo { ctrl, to } => {
+                2u8.hash(&mut hasher);
+                hash_point(&mut hasher, *ctrl);
+                hash_point(&mut hasher, *to);
+            }
+            PathElement::CubicTo { ctrl1, ctrl2, to } => {
+                3u8.hash(&mut hasher);
+                hash_point(&mut hasher, *ctrl1);
+                hash_point(&mut hasher, *ctrl2);
+                hash_point(&mut hasher, *to);
+            }
+            PathElement::Close => {
+                4u8.hash(&mut hasher);
+            }
+        }
+    }
+
+    hasher.finish()
 }
 
 #[derive(Debug, Default)]
@@ -2494,6 +2824,40 @@ fn push_draw_op(
 }
 
 impl DrawOpArena {
+    fn estimated_bytes(&self) -> usize {
+        self.scene_vertices.len() * std::mem::size_of::<Vertex>()
+            + self.clip_vertices.len() * std::mem::size_of::<Vertex>()
+            + self.draw_ops.len() * std::mem::size_of::<DrawOp>()
+            + self.clip_states.len() * std::mem::size_of::<ClipState>()
+            + self
+                .clip_states
+                .iter()
+                .map(|state| state.clip_paths.len() * std::mem::size_of::<PreparedVertices>())
+                .sum::<usize>()
+    }
+
+    fn append_fragment(&mut self, fragment: &DrawOpArena) {
+        let scene_delta = self.scene_vertices.len() as u32;
+        let clip_delta = self.clip_vertices.len() as u32;
+        let clip_state_delta = self.clip_states.len();
+
+        self.scene_vertices.extend_from_slice(&fragment.scene_vertices);
+        self.clip_vertices.extend_from_slice(&fragment.clip_vertices);
+        self.clip_states.extend(fragment.clip_states.iter().map(|clip_state| ClipState {
+            clip_paths: clip_state
+                .clip_paths
+                .iter()
+                .copied()
+                .map(|vertices| vertices.offset(clip_delta))
+                .collect(),
+        }));
+        self.draw_ops.extend(fragment.draw_ops.iter().cloned().map(|mut draw_op| {
+            draw_op.vertices = draw_op.vertices.offset(scene_delta);
+            draw_op.clip_state_index += clip_state_delta;
+            draw_op
+        }));
+    }
+
     fn push_scene_vertices(&mut self, vertices: &[Vertex]) -> PreparedVertices {
         let start = self.scene_vertices.len() as u32;
         self.scene_vertices.extend_from_slice(vertices);
@@ -3268,15 +3632,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipState, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedClipPath,
-        PreparedDrawBatch, PreparedFrameBatches, PreparedPassBatch, PreparedVertices,
-        RendererFrameStats, ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer,
+        ClipState, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind,
+        MAX_DIRTY_LAYERS_FOR_CACHE_REUSE, PreparedClipPath, PreparedDrawBatch,
+        PreparedFrameBatches, PreparedPassBatch, PreparedVertices, RendererFrameStats,
+        RetainedLayerCache, ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer,
         batch_draw_ops, build_draw_ops, build_vertices, prepare_frame_batches, to_ndc,
     };
     use std::sync::Arc;
-    use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WindowId};
+    use sui_core::{
+        Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WidgetId, WindowId,
+    };
     use sui_scene::{
-        ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame, StrokeStyle,
+        ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame, SceneLayer,
+        StrokeStyle,
     };
     use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
 
@@ -3323,6 +3691,7 @@ mod tests {
                 surface_size: Size::new(100.0, 100.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
+                dirty_layers: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -3370,6 +3739,7 @@ mod tests {
                 surface_size: Size::new(100.0, 80.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
+                dirty_layers: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -3415,6 +3785,7 @@ mod tests {
                 surface_size: Size::new(80.0, 60.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
+                dirty_layers: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -3450,12 +3821,15 @@ mod tests {
                 surface_size: Size::new(64.0, 64.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
+                dirty_layers: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
             DEFAULT_FEATHER_WIDTH,
+            &mut RetainedLayerCache::default(),
+            true,
         )
         .unwrap();
 
@@ -3645,6 +4019,7 @@ mod tests {
                 surface_size: Size::new(100.0, 80.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
+                dirty_layers: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -3671,6 +4046,7 @@ mod tests {
             surface_size: Size::new(160.0, 60.0),
             scale_factor: 1.0,
             dirty_regions: Vec::new(),
+            dirty_layers: Vec::new(),
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
@@ -3689,6 +4065,214 @@ mod tests {
                 && left.tex_coords == right.tex_coords
         }));
         assert_eq!(text_engine.glyph_cache_stats(), (3, 3, 3));
+    }
+
+    #[test]
+    fn build_draw_ops_reuses_retained_layer_fragments_until_invalidated() {
+        let layer_id = WidgetId::new(41);
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(4.0, 6.0, 32.0, 24.0),
+            brush: Color::rgba(1.0, 0.0, 0.0, 1.0).into(),
+        });
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Clear(Color::BLACK));
+        scene.push(SceneCommand::Layer(SceneLayer::new(
+            layer_id,
+            Rect::new(4.0, 6.0, 32.0, 24.0),
+            child_scene,
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(21),
+            viewport: Size::new(96.0, 64.0),
+            surface_size: Size::new(96.0, 64.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            dirty_layers: vec![layer_id],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut layer_cache = RetainedLayerCache::default();
+        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        let first = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
+            .unwrap();
+        assert_eq!(layer_cache.fragments.len(), 1);
+
+        frame.dirty_layers.clear();
+        let second = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
+            .unwrap();
+        assert_eq!(layer_cache.fragments.len(), 1);
+        assert_eq!(first.scene_vertices, second.scene_vertices);
+
+        frame.dirty_layers = vec![layer_id];
+        let mut updated_child_scene = Scene::new();
+        updated_child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(4.0, 6.0, 32.0, 24.0),
+            brush: Color::rgba(1.0, 0.0, 0.0, 1.0).into(),
+        });
+        updated_child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(12.0, 10.0, 8.0, 8.0),
+            brush: Color::rgba(0.0, 1.0, 0.0, 1.0).into(),
+        });
+        assert!(frame.scene.replace_layer(
+            layer_id,
+            SceneLayer::new(layer_id, Rect::new(4.0, 6.0, 32.0, 24.0), updated_child_scene),
+        ));
+        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        let third = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
+            .unwrap();
+        assert_eq!(layer_cache.fragments.len(), 1);
+        assert_ne!(first.scene_vertices, third.scene_vertices);
+    }
+
+    #[test]
+    fn retained_layer_invalidation_evicts_cached_ancestor_fragments() {
+        let parent_id = WidgetId::new(51);
+        let child_id = WidgetId::new(52);
+
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(8.0, 8.0, 10.0, 10.0),
+            brush: Color::rgba(1.0, 0.0, 0.0, 1.0).into(),
+        });
+
+        let mut parent_scene = Scene::new();
+        parent_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(4.0, 4.0, 24.0, 24.0),
+            brush: Color::rgba(0.1, 0.1, 0.1, 1.0).into(),
+        });
+        parent_scene.push(SceneCommand::Layer(SceneLayer::new(
+            child_id,
+            Rect::new(8.0, 8.0, 10.0, 10.0),
+            child_scene,
+        )));
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::new(
+            parent_id,
+            Rect::new(4.0, 4.0, 24.0, 24.0),
+            parent_scene,
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(22),
+            viewport: Size::new(64.0, 64.0),
+            surface_size: Size::new(64.0, 64.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            dirty_layers: vec![parent_id, child_id],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut layer_cache = RetainedLayerCache::default();
+        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        let first = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
+            .unwrap();
+        assert_eq!(layer_cache.fragments.len(), 2);
+
+        frame.dirty_layers.clear();
+        let second = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
+            .unwrap();
+        assert_eq!(first.scene_vertices, second.scene_vertices);
+
+        let mut updated_child_scene = Scene::new();
+        updated_child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(8.0, 8.0, 10.0, 10.0),
+            brush: Color::rgba(0.0, 1.0, 0.0, 1.0).into(),
+        });
+
+        let mut updated_parent_scene = Scene::new();
+        updated_parent_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(4.0, 4.0, 24.0, 24.0),
+            brush: Color::rgba(0.1, 0.1, 0.1, 1.0).into(),
+        });
+        updated_parent_scene.push(SceneCommand::Layer(SceneLayer::new(
+            child_id,
+            Rect::new(8.0, 8.0, 10.0, 10.0),
+            updated_child_scene,
+        )));
+        assert!(frame.scene.replace_layer(
+            parent_id,
+            SceneLayer::new(parent_id, Rect::new(4.0, 4.0, 24.0, 24.0), updated_parent_scene),
+        ));
+
+        frame.dirty_layers = vec![child_id];
+        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        let third = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
+            .unwrap();
+
+        assert_eq!(layer_cache.fragments.len(), 2);
+        assert_ne!(first.scene_vertices, third.scene_vertices);
+    }
+
+    #[test]
+    fn retained_layer_cache_prunes_removed_widget_layers() {
+        let removed_id = WidgetId::new(61);
+        let replacement_id = WidgetId::new(62);
+
+        let mut first_scene = Scene::new();
+        first_scene.push(SceneCommand::Layer(SceneLayer::new(
+            removed_id,
+            Rect::new(0.0, 0.0, 24.0, 24.0),
+            {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 24.0, 24.0),
+                    brush: Color::rgba(1.0, 0.0, 0.0, 1.0).into(),
+                });
+                scene
+            },
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(23),
+            viewport: Size::new(64.0, 64.0),
+            surface_size: Size::new(64.0, 64.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            dirty_layers: vec![removed_id],
+            scene: first_scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut layer_cache = RetainedLayerCache::default();
+        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        let _ = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
+            .unwrap();
+        assert_eq!(layer_cache.fragments.len(), 1);
+
+        let mut second_scene = Scene::new();
+        second_scene.push(SceneCommand::Layer(SceneLayer::new(
+            replacement_id,
+            Rect::new(8.0, 8.0, 24.0, 24.0),
+            {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(8.0, 8.0, 24.0, 24.0),
+                    brush: Color::rgba(0.0, 1.0, 0.0, 1.0).into(),
+                });
+                scene
+            },
+        )));
+        frame.scene = second_scene;
+        frame.dirty_layers = vec![replacement_id];
+
+        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        let _ = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
+            .unwrap();
+
+        assert_eq!(layer_cache.fragments.len(), 1);
+        assert!(layer_cache.fragments.keys().all(|key| key.widget_id == replacement_id));
     }
 
     #[test]
@@ -3715,6 +4299,7 @@ mod tests {
                 surface_size: Size::new(160.0, 60.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
+                dirty_layers: Vec::new(),
                 scene,
                 font_registry: Arc::new(fonts),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -3746,6 +4331,7 @@ mod tests {
                 surface_size: Size::new(160.0, 60.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
+                dirty_layers: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -3793,12 +4379,15 @@ mod tests {
                 surface_size: Size::new(96.0, 64.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
+                dirty_layers: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(images),
             },
             &mut text_engine,
             DEFAULT_FEATHER_WIDTH,
+            &mut RetainedLayerCache::default(),
+            true,
         )
         .unwrap();
 
@@ -3824,12 +4413,15 @@ mod tests {
                 surface_size: Size::new(96.0, 64.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
+                dirty_layers: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
             DEFAULT_FEATHER_WIDTH,
+            &mut RetainedLayerCache::default(),
+            true,
         )
         .unwrap_err();
 
@@ -3838,6 +4430,52 @@ mod tests {
                 .to_string()
                 .contains("image handle 88 is not registered")
         );
+    }
+
+    #[test]
+    fn build_draw_ops_bypasses_retained_cache_for_large_dirty_sets() {
+        let layer_id = WidgetId::new(71);
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(2.0, 2.0, 20.0, 20.0),
+            brush: Color::rgba(0.3, 0.6, 0.9, 1.0).into(),
+        });
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::new(
+            layer_id,
+            Rect::new(2.0, 2.0, 20.0, 20.0),
+            child_scene,
+        )));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(24),
+            viewport: Size::new(48.0, 48.0),
+            surface_size: Size::new(48.0, 48.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            dirty_layers: (0..=MAX_DIRTY_LAYERS_FOR_CACHE_REUSE)
+                .map(|index| WidgetId::new(71 + index as u64))
+                .collect(),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut layer_cache = RetainedLayerCache::default();
+        let enable_layer_cache = layer_cache.can_cache(&frame.dirty_layers);
+        let ops = build_draw_ops(
+            &frame,
+            &mut text_engine,
+            DEFAULT_FEATHER_WIDTH,
+            &mut layer_cache,
+            enable_layer_cache,
+        )
+        .unwrap();
+
+        assert!(!ops.draw_ops.is_empty());
+        assert!(layer_cache.fragments.is_empty());
     }
 
     #[test]

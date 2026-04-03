@@ -806,7 +806,7 @@ mod tests {
         Application, LayoutCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
         WidgetGraphSnapshot, WindowBuilder,
     };
-    use sui_scene::{Brush, SceneCommand};
+    use sui_scene::{Brush, Scene, SceneCommand, SceneLayer};
 
     struct FixedBox {
         size: Size,
@@ -927,7 +927,7 @@ mod tests {
 
     #[test]
     fn background_paints_before_child_content() {
-        let (output, _graph) = render_root(Background::new(
+        let (output, graph) = render_root(Background::new(
             Brush::Solid(Color::rgba(0.1, 0.1, 0.1, 1.0)),
             FixedBox::new(Size::new(16.0, 12.0), Color::rgba(0.9, 0.2, 0.1, 1.0)),
         ));
@@ -942,10 +942,18 @@ mod tests {
         );
         assert_eq!(
             output.frame.scene.commands()[1],
-            SceneCommand::FillRect {
-                rect: Rect::new(0.0, 0.0, 16.0, 12.0),
-                brush: Brush::Solid(Color::rgba(0.9, 0.2, 0.1, 1.0)),
-            }
+            SceneCommand::Layer(SceneLayer::new(
+                graph.nodes[1].id,
+                Rect::new(0.0, 0.0, 16.0, 12.0),
+                {
+                    let mut scene = Scene::new();
+                    scene.push(SceneCommand::FillRect {
+                        rect: Rect::new(0.0, 0.0, 16.0, 12.0),
+                        brush: Brush::Solid(Color::rgba(0.9, 0.2, 0.1, 1.0)),
+                    });
+                    scene
+                },
+            ))
         );
     }
 
@@ -1055,7 +1063,7 @@ mod tests {
         runtime
             .handle_event(window_id, Event::Pointer(scroll))
             .unwrap();
-        let _ = runtime.render(window_id).unwrap();
+        let output = runtime.render(window_id).unwrap();
         let graph = runtime.widget_graph(window_id).unwrap();
 
         let outer_content = graph
@@ -1071,6 +1079,7 @@ mod tests {
 
         assert_eq!(outer_content.bounds.y(), 0.0);
         assert_eq!(inner_content.bounds.y(), 16.0);
+        assert!(output.frame.dirty_layers.contains(&inner_content.id));
     }
 
     #[test]

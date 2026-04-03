@@ -37,13 +37,13 @@ mod tests {
 
     use crate::TestApp;
     use sui_core::{
-        Color, Event, ImeEvent, KeyState, PointerEventKind, Result, SemanticsAction, SemanticsNode,
-        SemanticsRole, SemanticsValue, Size, TimerToken, WakeEvent,
+        Color, Event, ImeEvent, KeyState, Point, PointerEventKind, Result, SemanticsAction,
+        SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken, Vector, WakeEvent,
     };
     use sui_layout::Constraints;
     use sui_runtime::{
-        Application, EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, Widget, WidgetChildren,
-        WidgetPodVisitor, WindowBuilder,
+        Application, EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+        WidgetChildren, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::StrokeStyle;
 
@@ -521,6 +521,125 @@ mod tests {
         })
     }
 
+    struct ScrollHarness {
+        offset_y: f32,
+        child: SingleChild,
+    }
+
+    impl ScrollHarness {
+        fn new() -> Self {
+            Self {
+                offset_y: 0.0,
+                child: SingleChild::new(ScrollContent),
+            }
+        }
+    }
+
+    impl Widget for ScrollHarness {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Pointer(pointer)
+                    if pointer.kind == PointerEventKind::Scroll
+                        && ctx.bounds().contains(pointer.position) =>
+                {
+                    let delta = pointer
+                        .scroll_delta
+                        .map(|delta| match delta {
+                            sui_core::ScrollDelta::Lines(delta) => Vector::new(delta.x * 40.0, delta.y * 40.0),
+                            sui_core::ScrollDelta::Pixels(delta) => delta,
+                        })
+                        .unwrap_or(pointer.delta);
+                    let next = (self.offset_y - delta.y).clamp(0.0, 120.0);
+                    if (next - self.offset_y).abs() > f32::EPSILON {
+                        self.offset_y = next;
+                        ctx.request_layout();
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                        ctx.set_handled();
+                    }
+                }
+                Event::Pointer(pointer) if pointer.kind == PointerEventKind::Down => {
+                    ctx.request_focus();
+                    ctx.request_semantics();
+                }
+                _ => {}
+            }
+        }
+
+        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+            let viewport = constraints.clamp(Size::new(160.0, 80.0));
+            self.child.layout_at(
+                ctx,
+                Constraints::tight(Size::new(160.0, 200.0)),
+                Point::new(0.0, -self.offset_y),
+            );
+            viewport
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.clear(Color::rgba(0.05, 0.06, 0.08, 1.0));
+            ctx.push_clip_rect(ctx.bounds());
+            self.child.paint(ctx);
+            ctx.pop_clip();
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
+            node.name = Some("Scroll Harness".to_string());
+            node.actions = vec![SemanticsAction::Focus];
+            node.state.focused = ctx.is_focused();
+            ctx.push(node);
+            self.child.semantics(ctx);
+        }
+
+        fn accepts_focus(&self) -> bool {
+            true
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn sui_runtime::WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
+    struct ScrollContent;
+
+    impl Widget for ScrollContent {
+        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(160.0, 200.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_rect(
+                sui_core::Rect::new(ctx.bounds().x(), ctx.bounds().y(), 160.0, 100.0),
+                Color::rgba(0.18, 0.32, 0.68, 1.0),
+            );
+            ctx.fill_rect(
+                sui_core::Rect::new(ctx.bounds().x(), ctx.bounds().y() + 100.0, 160.0, 100.0),
+                Color::rgba(0.78, 0.32, 0.18, 1.0),
+            );
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::GenericContainer, ctx.bounds());
+            node.name = Some("Scroll Content".to_string());
+            ctx.push(node);
+        }
+    }
+
+    fn build_scroll_app() -> Result<TestApp> {
+        TestApp::new(|| {
+            Application::new().window(
+                WindowBuilder::new()
+                    .title("Scroll Harness")
+                    .root(ScrollHarness::new()),
+            )
+        })
+    }
+
     #[test]
     fn locators_actions_and_focus_work_end_to_end() -> Result<()> {
         let app = build_app()?;
@@ -560,6 +679,38 @@ mod tests {
             .with_name("Save")
             .click()?;
         window.get_by_text("Saved").expect().to_be_visible()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn locator_scroll_updates_child_layout_and_screenshot() -> Result<()> {
+        let app = build_scroll_app()?;
+        let window = app.main_window()?;
+        let scroll = window.get_by_role(SemanticsRole::ScrollView).with_name("Scroll Harness");
+
+        let before = scroll.capture_screenshot()?;
+        let before_snapshot = window.snapshot()?;
+        let before_child = before_snapshot
+            .widget_graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 160.0 && node.bounds.height() == 200.0)
+            .expect("scroll content node present");
+
+        scroll.scroll_pixels(Vector::new(0.0, -80.0))?;
+
+        let after = scroll.capture_screenshot()?;
+        let after_snapshot = window.snapshot()?;
+        let after_child = after_snapshot
+            .widget_graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 160.0 && node.bounds.height() == 200.0)
+            .expect("scroll content node present after scroll");
+
+        assert_ne!(before, after);
+        assert!(after_child.bounds.y() < before_child.bounds.y());
 
         Ok(())
     }

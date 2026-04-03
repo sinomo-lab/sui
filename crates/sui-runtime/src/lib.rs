@@ -15,7 +15,7 @@ use sui_core::{
     SemanticsNode, Size, TimerToken, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{ImageRegistry, RegisteredImage, SceneFrame};
+use sui_scene::{ImageRegistry, RegisteredImage, Scene, SceneFrame, SceneLayer};
 use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
 pub use sui_core::DpiInfo;
@@ -1013,6 +1013,14 @@ impl WindowState {
         let mut diagnostics = RenderDiagnostics::default();
         let mut invalidations = std::mem::take(&mut self.pending_invalidations);
         let mut repainted = false;
+        let mut repaint_layers = Vec::new();
+        let mut dirty_layers = Vec::new();
+        let previous_graph = if self.schedule.layout && !self.graph.is_empty() {
+            Some(self.graph.snapshot())
+        } else {
+            None
+        };
+        let mut graph_dirty_widgets = Vec::new();
 
         if self.last_frame.is_none() {
             self.schedule = FrameSchedule::bootstrap();
@@ -1025,6 +1033,7 @@ impl WindowState {
                 Arc::clone(&font_registry),
                 Arc::clone(&image_registry),
             ));
+            graph_dirty_widgets = collect_graph_dirty_widgets(previous_graph.as_ref(), &self.graph);
             diagnostics.push(FramePhase::Layout, started.elapsed());
         } else if self.schedule.hit_test || self.graph.is_empty() {
             let started = Instant::now();
@@ -1036,18 +1045,52 @@ impl WindowState {
         let dpi_info = self.dpi_info_for_viewport(viewport);
 
         if self.schedule.paint || self.last_frame.is_none() {
+            repaint_layers = self.collect_dirty_layers(&invalidations, &graph_dirty_widgets);
+            dirty_layers = repaint_layers.clone();
+            for widget_id in graph_dirty_widgets.iter().copied() {
+                if self.graph.contains(widget_id) && !dirty_layers.contains(&widget_id) {
+                    dirty_layers.push(widget_id);
+                }
+            }
+            dirty_layers.sort_by_key(|widget_id| {
+                (
+                    self.graph
+                        .path_to(*widget_id)
+                        .map_or(usize::MAX, |path| path.len()),
+                    widget_id.get(),
+                )
+            });
+        }
+
+        if self.last_frame.is_none() || !repaint_layers.is_empty() {
             let started = Instant::now();
             repainted = true;
 
-            let mut paint_ctx = PaintCtx::new(
-                self.id,
-                self.root.id(),
-                self.root.bounds(),
-                self.focus.focused_widget,
-                dpi_info,
-            );
-            self.root.paint(&mut paint_ctx);
-            let (scene, paint_invalidations, ime_composition_rect) = paint_ctx.into_parts();
+            let focused_path = self
+                .focus
+                .focused_widget
+                .and_then(|widget_id| self.graph.path_to(widget_id));
+            let preserve_ime = focused_path.as_ref().is_none_or(|path| {
+                !repaint_layers
+                    .iter()
+                    .any(|widget_id| path.iter().any(|candidate| candidate == widget_id))
+            });
+            let baseline_ime_composition_rect = if preserve_ime {
+                self.ime_composition_rect
+            } else {
+                None
+            };
+
+            let (scene, paint_invalidations, ime_composition_rect) =
+                if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
+                    self.paint_full_scene(dpi_info)
+                } else {
+                    self.repaint_dirty_layers(
+                        dpi_info,
+                        &repaint_layers,
+                        baseline_ime_composition_rect,
+                    )
+                };
             invalidations.extend(paint_invalidations);
             self.ime_composition_rect = ime_composition_rect;
             self.last_frame = Some(SceneFrame {
@@ -1056,6 +1099,7 @@ impl WindowState {
                 surface_size: dpi_info.surface_size,
                 scale_factor: dpi_info.scale_factor,
                 dirty_regions: Vec::new(),
+                dirty_layers: dirty_layers.clone(),
                 scene,
                 font_registry: Arc::clone(&font_registry),
                 image_registry: Arc::clone(&image_registry),
@@ -1086,6 +1130,7 @@ impl WindowState {
         frame.surface_size = dpi_info.surface_size;
         frame.scale_factor = dpi_info.scale_factor;
         frame.dirty_regions = dirty_regions;
+        frame.dirty_layers = if repainted { dirty_layers } else { Vec::new() };
         frame.font_registry = font_registry;
         frame.image_registry = image_registry;
 
@@ -1105,6 +1150,127 @@ impl WindowState {
             ime_composition_rect: self.ime_composition_rect,
             diagnostics,
         }
+    }
+
+    fn paint_full_scene(&mut self, dpi_info: DpiInfo) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
+        let mut paint_ctx = PaintCtx::new(
+            self.id,
+            self.root.id(),
+            self.root.bounds(),
+            self.focus.focused_widget,
+            dpi_info,
+        );
+        let _ = self.root.paint_layer_contents_for(self.root.id(), &mut paint_ctx);
+        paint_ctx.into_parts()
+    }
+
+    fn repaint_dirty_layers(
+        &mut self,
+        dpi_info: DpiInfo,
+        dirty_layers: &[WidgetId],
+        baseline_ime_composition_rect: Option<Rect>,
+    ) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
+        let mut scene = self
+            .last_frame
+            .as_ref()
+            .map(|frame| frame.scene.clone())
+            .unwrap_or_default();
+        let mut invalidations = Vec::new();
+        let mut ime_composition_rect = baseline_ime_composition_rect;
+
+        for &widget_id in dirty_layers {
+            let Some(bounds) = self.graph.node(widget_id).map(|node| node.bounds) else {
+                return self.paint_full_scene(dpi_info);
+            };
+
+            let mut paint_ctx = PaintCtx::new(
+                self.id,
+                widget_id,
+                bounds,
+                self.focus.focused_widget,
+                dpi_info,
+            );
+            if !self.root.paint_layer_contents_for(widget_id, &mut paint_ctx) {
+                return self.paint_full_scene(dpi_info);
+            }
+
+            let (layer_scene, layer_invalidations, layer_ime_composition_rect) = paint_ctx.into_parts();
+            if widget_id == self.root.id()
+                || !scene.replace_layer(widget_id, SceneLayer::new(widget_id, bounds, layer_scene))
+            {
+                return self.paint_full_scene(dpi_info);
+            }
+
+            invalidations.extend(layer_invalidations);
+            if layer_ime_composition_rect.is_some() {
+                ime_composition_rect = layer_ime_composition_rect;
+            }
+        }
+
+        (scene, invalidations, ime_composition_rect)
+    }
+
+    fn collect_dirty_layers(
+        &self,
+        invalidations: &[InvalidationRequest],
+        graph_dirty_widgets: &[WidgetId],
+    ) -> Vec<WidgetId> {
+        let mut candidates: HashSet<WidgetId> = invalidations
+            .iter()
+            .filter(|request| {
+                matches!(
+                    request.kind,
+                    InvalidationKind::Layout
+                        | InvalidationKind::Paint
+                        | InvalidationKind::Text
+                        | InvalidationKind::Resources
+                )
+            })
+            .map(|request| match request.target {
+                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => widget_id,
+                InvalidationTarget::Widget(_) => self.root.id(),
+                InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
+            })
+            .collect();
+
+        candidates.extend(graph_dirty_widgets.iter().copied());
+
+        if self.last_frame.is_none() || candidates.contains(&self.root.id()) {
+            return self
+                .graph
+                .snapshot()
+                .nodes
+                .into_iter()
+                .map(|node| node.id)
+                .collect();
+        }
+
+        let mut candidates: Vec<_> = candidates
+            .into_iter()
+            .filter(|widget_id| self.graph.contains(*widget_id))
+            .collect();
+        candidates.sort_by_key(|widget_id| self.graph.path_to(*widget_id).map_or(usize::MAX, |path| path.len()));
+
+        let mut minimized = Vec::new();
+        for widget_id in candidates {
+            if minimized
+                .iter()
+                .any(|ancestor| self.widget_is_ancestor_of(*ancestor, widget_id))
+            {
+                continue;
+            }
+            minimized.push(widget_id);
+        }
+
+        minimized
+    }
+
+    fn widget_is_ancestor_of(&self, ancestor: WidgetId, widget_id: WidgetId) -> bool {
+        self.graph.path_to(widget_id).is_some_and(|path| {
+            path.iter()
+                .take(path.len().saturating_sub(1))
+                .any(|candidate| *candidate == ancestor)
+        })
     }
 
     fn run_layout_pass(
@@ -1440,7 +1606,6 @@ fn collect_dirty_regions(
             Vec::new()
         };
     }
-
     let mut dirty_regions: Vec<_> = invalidations
         .iter()
         .map(|request| DirtyRegion::new(request.region.unwrap_or(viewport_rect), request.kind))
@@ -1455,6 +1620,50 @@ fn collect_dirty_regions(
     }
 
     dirty_regions
+}
+
+fn collect_graph_dirty_widgets(
+    previous: Option<&WidgetGraphSnapshot>,
+    current: &WidgetGraph,
+) -> Vec<WidgetId> {
+    let Some(previous) = previous else {
+        return vec![current.root];
+    };
+
+    let current_snapshot = current.snapshot();
+    let previous_nodes: HashMap<_, _> = previous.nodes.iter().map(|node| (node.id, node)).collect();
+    let current_nodes: HashMap<_, _> = current_snapshot
+        .nodes
+        .iter()
+        .map(|node| (node.id, node))
+        .collect();
+    let mut dirty = HashSet::new();
+
+    for widget_id in previous_nodes.keys().chain(current_nodes.keys()) {
+        match (previous_nodes.get(widget_id), current_nodes.get(widget_id)) {
+            (Some(previous_node), Some(current_node)) => {
+                if previous_node.bounds != current_node.bounds
+                    || previous_node.parent != current_node.parent
+                    || previous_node.children != current_node.children
+                {
+                    dirty.insert(current_node.id);
+                }
+            }
+            (None, Some(current_node)) => {
+                dirty.insert(current_node.parent.unwrap_or(current_snapshot.root));
+            }
+            (Some(previous_node), None) => {
+                dirty.insert(previous_node.parent.unwrap_or(previous.root));
+            }
+            (None, None) => {}
+        }
+    }
+
+    if dirty.is_empty() {
+        Vec::new()
+    } else {
+        dirty.into_iter().collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2035,6 +2244,29 @@ mod tests {
     }
 
     #[test]
+    fn paint_invalidation_repaints_only_dirty_widget_layer() {
+        let (mut runtime, window_id, root_counters, leaf_counters) = build_runtime();
+
+        let _ = runtime.render(window_id).unwrap();
+        let leaf_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+        let root_paint_before = root_counters.borrow().paint;
+        let leaf_paint_before = leaf_counters.borrow().paint;
+
+        let mut pointer = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        pointer.button = Some(PointerButton::Primary);
+        pointer.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(pointer))
+            .unwrap();
+
+        let output = runtime.render(window_id).unwrap();
+
+        assert_eq!(root_counters.borrow().paint, root_paint_before);
+        assert_eq!(leaf_counters.borrow().paint, leaf_paint_before + 1);
+        assert_eq!(output.frame.dirty_layers, vec![leaf_id]);
+    }
+
+    #[test]
     fn semantics_attach_to_the_nearest_ancestor_node() {
         let root_counters = Rc::new(RefCell::new(Counters::default()));
         let leaf_counters = Rc::new(RefCell::new(Counters::default()));
@@ -2237,8 +2469,15 @@ mod tests {
         assert!(output.diagnostics.text_caches.runtime_layout.misses > 0);
         assert!(matches!(
             output.frame.scene.commands()[0],
-            sui_scene::SceneCommand::DrawShapedText(_)
+            sui_scene::SceneCommand::Layer(_)
         ));
+        let mut saw_shaped_text = false;
+        output.frame.scene.visit_commands(&mut |command| {
+            if matches!(command, sui_scene::SceneCommand::DrawShapedText(_)) {
+                saw_shaped_text = true;
+            }
+        });
+        assert!(saw_shaped_text);
     }
 
     #[test]

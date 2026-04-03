@@ -2,7 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
-    PointerEvent, PointerEventKind, Result, SemanticsNode, WidgetId, WindowId,
+    PointerEvent, PointerEventKind, Result, ScrollDelta, SemanticsNode, Vector, WidgetId,
+    WindowId,
 };
 use sui_platform::AccessibilitySnapshot;
 
@@ -104,6 +105,14 @@ impl Locator {
         let mut up = PointerEvent::new(PointerEventKind::Up, point);
         up.button = Some(PointerButton::Primary);
         self.dispatch_event(Event::Pointer(up))
+    }
+
+    pub fn scroll_pixels(&self, delta: Vector) -> Result<()> {
+        self.scroll_with_delta(ScrollDelta::Pixels(delta))
+    }
+
+    pub fn scroll_lines(&self, delta: Vector) -> Result<()> {
+        self.scroll_with_delta(ScrollDelta::Lines(delta))
     }
 
     pub fn focus(&self) -> Result<()> {
@@ -231,6 +240,18 @@ impl Locator {
         });
         drop(harness);
         result.map_err(|_| self.failure(action, "locator never became uniquely actionable"))
+    }
+
+    fn scroll_with_delta(&self, scroll_delta: ScrollDelta) -> Result<()> {
+        let point = self.action_point("scroll")?;
+        self.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            point,
+        )))?;
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, point);
+        scroll.scroll_delta = Some(scroll_delta);
+        self.dispatch_event(Event::Pointer(scroll))
     }
 
     fn is_focused(&self) -> Result<bool> {

@@ -9,7 +9,7 @@ use sui_core::{
     WidgetId, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{Brush, ImageRegistry, ImageSource, Scene, SceneCommand, StrokeStyle};
+use sui_scene::{Brush, ImageRegistry, ImageSource, Scene, SceneCommand, SceneLayer, StrokeStyle};
 use sui_text::{
     FontRegistry, ShapedText, TextLayout, TextMeasurement, TextRun, TextStyle, TextSystem,
 };
@@ -254,9 +254,18 @@ impl WidgetPod {
         self.widget.paint(&mut child_ctx);
 
         let (scene, invalidations, ime_composition_rect) = child_ctx.into_parts();
-        parent_ctx.extend_scene(scene);
+        parent_ctx.push_layer(self.id, self.bounds, scene);
         parent_ctx.extend_invalidations(invalidations);
         parent_ctx.extend_ime_composition_rect(ime_composition_rect);
+    }
+
+    pub(crate) fn paint_layer_contents_for(
+        &mut self,
+        target: WidgetId,
+        parent_ctx: &mut PaintCtx,
+    ) -> bool {
+        self.find_mut(target, &mut |pod| pod.widget.paint(parent_ctx))
+            .is_some()
     }
 
     pub fn semantics(&self, parent_ctx: &mut SemanticsCtx) {
@@ -965,10 +974,9 @@ impl PaintCtx {
         self.ime_composition_rect
     }
 
-    pub(crate) fn extend_scene(&mut self, scene: Scene) {
-        for command in scene.commands().iter().cloned() {
-            self.scene.push(command);
-        }
+    pub(crate) fn push_layer(&mut self, widget_id: WidgetId, bounds: Rect, scene: Scene) {
+        self.scene
+            .push(SceneCommand::Layer(SceneLayer::new(widget_id, bounds, scene)));
     }
 
     pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {

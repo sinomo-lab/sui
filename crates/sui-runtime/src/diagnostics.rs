@@ -194,8 +194,10 @@ impl SceneStatistics {
         let mut image_command_count = 0usize;
         let mut clip_command_count = 0usize;
         let mut transform_command_count = 0usize;
+        let mut command_count = 0usize;
 
-        for command in frame.scene.commands() {
+        frame.scene.visit_commands(&mut |command| {
+            command_count += 1;
             *command_breakdown
                 .entry(command_kind(command).to_string())
                 .or_default() += 1;
@@ -217,13 +219,14 @@ impl SceneStatistics {
                 SceneCommand::PushTransform { .. } | SceneCommand::PopTransform => {
                     transform_command_count += 1;
                 }
+                SceneCommand::Layer(_) => {}
                 SceneCommand::Clear(_)
                 | SceneCommand::FillRect { .. }
                 | SceneCommand::StrokeRect { .. }
                 | SceneCommand::FillPath { .. }
                 | SceneCommand::StrokePath { .. } => {}
             }
-        }
+        });
 
         let dirty_area: f32 = frame
             .dirty_regions
@@ -242,7 +245,7 @@ impl SceneStatistics {
             dirty_regions: frame.dirty_regions.clone(),
             dirty_area,
             dirty_coverage,
-            command_count: frame.scene.commands().len(),
+            command_count,
             command_breakdown: command_breakdown.into_iter().collect(),
             text_command_count,
             image_command_count,
@@ -345,6 +348,7 @@ fn command_kind(command: &SceneCommand) -> &'static str {
         SceneCommand::PopClip => "PopClip",
         SceneCommand::PushTransform { .. } => "PushTransform",
         SceneCommand::PopTransform => "PopTransform",
+        SceneCommand::Layer(_) => "Layer",
         SceneCommand::Label { .. } => "Label",
     }
 }

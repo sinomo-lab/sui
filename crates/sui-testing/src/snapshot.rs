@@ -16,16 +16,18 @@ pub struct SceneSummary {
 impl SceneSummary {
     pub(crate) fn from_frame(frame: &SceneFrame) -> Self {
         let mut command_breakdown = BTreeMap::<String, usize>::new();
-        for command in frame.scene.commands() {
+        let mut command_count = 0usize;
+        frame.scene.visit_commands(&mut |command| {
+            command_count += 1;
             *command_breakdown
                 .entry(command_kind(command).to_string())
                 .or_default() += 1;
-        }
+        });
 
         Self {
             viewport: frame.viewport,
             dirty_regions: frame.dirty_regions.clone(),
-            command_count: frame.scene.commands().len(),
+            command_count,
             command_breakdown: command_breakdown.into_iter().collect(),
         }
     }
@@ -56,6 +58,7 @@ fn command_kind(command: &SceneCommand) -> &'static str {
         SceneCommand::PopClip => "PopClip",
         SceneCommand::PushTransform { .. } => "PushTransform",
         SceneCommand::PopTransform => "PopTransform",
+        SceneCommand::Layer(_) => "Layer",
         SceneCommand::Label { .. } => "Label",
     }
 }
