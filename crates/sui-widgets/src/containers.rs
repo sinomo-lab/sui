@@ -3,8 +3,8 @@ use sui_core::{
 };
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
-    EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::Brush;
 
@@ -496,6 +496,13 @@ impl ScrollView {
         self.child.child_mut()
     }
 
+    pub fn replace_child<W>(&mut self, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.child = SingleChild::new(child);
+    }
+
     fn clamp_offset(&self, viewport: Size, offset: Vector) -> Vector {
         let max_x = (self.content_size.width - viewport.width).max(0.0);
         let max_y = (self.content_size.height - viewport.height).max(0.0);
@@ -514,13 +521,16 @@ impl ScrollView {
         )
     }
 
-    fn scroll_by(&mut self, viewport: Size, delta: Vector, ctx: &mut EventCtx) {
+    fn scroll_by(&mut self, viewport: Size, delta: Vector, ctx: &mut EventCtx) -> bool {
         let next = self.clamp_offset(viewport, self.offset + delta);
         if next != self.offset {
             self.offset = next;
             ctx.request_layout();
             ctx.request_paint();
             ctx.request_semantics();
+            true
+        } else {
+            false
         }
     }
 }
@@ -532,17 +542,21 @@ impl Widget for ScrollView {
         match event {
             Event::Pointer(pointer)
                 if pointer.kind == sui_core::PointerEventKind::Scroll
+                    && ctx.phase() != EventPhase::Capture
                     && ctx.bounds().contains(pointer.position) =>
             {
                 let delta = pointer
                     .scroll_delta
                     .map(scroll_delta_to_offset)
                     .unwrap_or(pointer.delta);
-                self.scroll_by(viewport, Vector::new(-delta.x, -delta.y), ctx);
-                ctx.set_handled();
+                if self.scroll_by(viewport, Vector::new(-delta.x, -delta.y), ctx) {
+                    ctx.set_handled();
+                }
             }
             Event::Keyboard(key)
-                if ctx.is_focused() && key.state == sui_core::KeyState::Pressed =>
+                if ctx.phase() != EventPhase::Capture
+                    && ctx.is_focused()
+                    && key.state == sui_core::KeyState::Pressed =>
             {
                 let line = 40.0;
                 let page = (viewport.height * 0.85).max(line);
@@ -562,8 +576,9 @@ impl Widget for ScrollView {
                 };
 
                 if let Some(delta) = delta {
-                    self.scroll_by(viewport, delta, ctx);
-                    ctx.set_handled();
+                    if self.scroll_by(viewport, delta, ctx) {
+                        ctx.set_handled();
+                    }
                 }
             }
             Event::Pointer(pointer)
@@ -1005,5 +1020,115 @@ mod tests {
 
         assert_eq!(graph.nodes[1].bounds, Rect::new(0.0, 0.0, 80.0, 40.0));
         assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
+    }
+
+    #[test]
+    fn nested_scroll_views_scroll_the_inner_region_first() {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
+                ScrollView::vertical(
+                    Stack::vertical()
+                        .spacing(8.0)
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 32.0),
+                            Color::rgba(0.8, 0.2, 0.2, 1.0),
+                        ))
+                        .with_child(
+                            SizedBox::new().height(40.0).with_child(ScrollView::vertical(
+                                FixedBox::new(
+                                    Size::new(80.0, 120.0),
+                                    Color::rgba(0.2, 0.7, 0.3, 1.0),
+                                ),
+                            )),
+                        )
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 140.0),
+                            Color::rgba(0.2, 0.3, 0.8, 1.0),
+                        )),
+                ),
+            ),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 52.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -24.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+
+        let outer_content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 228.0)
+            .expect("outer scroll content present");
+        let inner_content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
+            .expect("inner scroll content present");
+
+        assert_eq!(outer_content.bounds.y(), 0.0);
+        assert_eq!(inner_content.bounds.y(), 16.0);
+    }
+
+    #[test]
+    fn nested_scroll_views_fall_back_to_parent_at_inner_limit() {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
+                ScrollView::vertical(
+                    Stack::vertical()
+                        .spacing(8.0)
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 32.0),
+                            Color::rgba(0.8, 0.2, 0.2, 1.0),
+                        ))
+                        .with_child(
+                            SizedBox::new().height(40.0).with_child(ScrollView::vertical(
+                                FixedBox::new(
+                                    Size::new(80.0, 120.0),
+                                    Color::rgba(0.2, 0.7, 0.3, 1.0),
+                                ),
+                            )),
+                        )
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 140.0),
+                            Color::rgba(0.2, 0.3, 0.8, 1.0),
+                        )),
+                ),
+            ),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut first = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 52.0));
+        first.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -200.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(first))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut second = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 52.0));
+        second.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -24.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(second))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+
+        let outer_content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 228.0)
+            .expect("outer scroll content present");
+        let inner_content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
+            .expect("inner scroll content present");
+
+        assert_eq!(inner_content.bounds.y(), -64.0);
+        assert_eq!(outer_content.bounds.y(), -24.0);
     }
 }

@@ -1511,7 +1511,7 @@ impl WidgetBookSummary {
 }
 
 struct LivePerformancePanel {
-    child: SingleChild,
+    scroll: ScrollView,
     poll_timer: Option<TimerToken>,
     snapshot: Option<WindowPerformanceSnapshot>,
 }
@@ -1519,10 +1519,26 @@ struct LivePerformancePanel {
 impl LivePerformancePanel {
     fn new() -> Self {
         Self {
-            child: SingleChild::new(Self::content(None)),
+            scroll: ScrollView::vertical(Self::content(None)),
             poll_timer: None,
             snapshot: None,
         }
+    }
+
+    fn set_snapshot(&mut self, next_snapshot: Option<WindowPerformanceSnapshot>) -> bool {
+        if self.snapshot == next_snapshot {
+            return false;
+        }
+
+        self.snapshot = next_snapshot.clone();
+        let offset = self.scroll.current_offset();
+        self.scroll.replace_child(Self::content(next_snapshot));
+        self.scroll.set_offset(offset);
+        true
+    }
+
+    fn refresh(&mut self, window_id: WindowId) -> bool {
+        self.set_snapshot(window_performance_snapshot(window_id))
     }
 
     fn content(snapshot: Option<WindowPerformanceSnapshot>) -> impl Widget {
@@ -1555,18 +1571,7 @@ impl LivePerformancePanel {
             }
         }
 
-        ScrollView::vertical(body)
-    }
-
-    fn refresh(&mut self, window_id: WindowId) -> bool {
-        let next_snapshot = window_performance_snapshot(window_id);
-        if self.snapshot == next_snapshot {
-            return false;
-        }
-
-        self.snapshot = next_snapshot.clone();
-        self.child = SingleChild::new(Self::content(next_snapshot));
-        true
+        body
     }
 }
 
@@ -1593,23 +1598,23 @@ impl Widget for LivePerformancePanel {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        self.child.layout(ctx, constraints)
+        self.scroll.layout(ctx, constraints)
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        self.child.paint(ctx);
+        self.scroll.paint(ctx);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.child.semantics(ctx);
+        self.scroll.semantics(ctx);
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.child.visit_children(visitor);
+        self.scroll.visit_children(visitor);
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.child.visit_children_mut(visitor);
+        self.scroll.visit_children_mut(visitor);
     }
 }
 
@@ -1787,18 +1792,21 @@ mod tests {
     use super::{
         BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL,
         DARK_PREVIEW_ACTION_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
-        ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, MENU_NAME, NAME_INPUT_LABEL,
-        NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL, PRIMARY_BUTTON_LABEL, PROGRESS_NAME,
-        RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SPINNER_NAME,
-        SPLIT_VIEW_NAME, SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME,
-        TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME, TABS_NAME, TEXT_AREA_LABEL,
-        THEME_PREVIEW_NAME, THEME_PREVIEW_TOGGLE_LABEL, TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT,
+        ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, LivePerformancePanel, MENU_NAME,
+        NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL,
+        PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL, RADIO_GROUP_NAME,
+        SELECT_NAME, SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL,
+        SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS,
+        TABLE_NAME, TABS_NAME, TEXT_AREA_LABEL, THEME_PREVIEW_NAME,
+        THEME_PREVIEW_TOGGLE_LABEL, TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT,
         TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME,
         WidgetBookState, build_widget_book_application, default_widget_book_state,
     };
     use sui::{
-        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        Result, SemanticsRole, SemanticsValue,
+        Error, Event, FramePhase, FramePhaseSample, Point, PointerButton, PointerButtons,
+        PointerEvent, PointerEventKind, Rect, RendererSubmissionDiagnostics, Result,
+        SceneStatistics, SemanticsRole, SemanticsValue, Size, TextCacheDeltaDiagnostics,
+        TextCacheDiagnostics, Vector, WindowId, WindowPerformanceSnapshot,
     };
     use sui_testing::prelude::*;
 
@@ -2511,6 +2519,17 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn live_performance_panel_preserves_scroll_offset_when_snapshot_updates() {
+        let mut panel = LivePerformancePanel::new();
+        panel.scroll.set_offset(Vector::new(0.0, 128.0));
+
+        assert!(panel.set_snapshot(Some(sample_window_performance_snapshot())));
+        assert_eq!(panel.scroll.current_offset(), Vector::new(0.0, 128.0));
+        assert!(!panel.set_snapshot(panel.snapshot.clone()));
+        assert_eq!(panel.scroll.current_offset(), Vector::new(0.0, 128.0));
+    }
+
     fn configured_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
         Rc::new(RefCell::new(WidgetBookState {
             name: "Grace Hopper".to_string(),
@@ -2531,6 +2550,29 @@ mod tests {
             last_context_action: "Duplicate".to_string(),
             dialog_apply_count: 2,
         }))
+    }
+
+    fn sample_window_performance_snapshot() -> WindowPerformanceSnapshot {
+        WindowPerformanceSnapshot::new(
+            WindowId::new(11),
+            7,
+            vec![FramePhaseSample::new(FramePhase::Renderer, 1.5)],
+            RendererSubmissionDiagnostics::new(2, 6, 2048),
+            TextCacheDiagnostics::default(),
+            TextCacheDeltaDiagnostics::default(),
+            SceneStatistics {
+                viewport: Size::new(640.0, 360.0),
+                dirty_regions: Vec::new(),
+                dirty_area: 0.0,
+                dirty_coverage: 0.0,
+                command_count: 0,
+                command_breakdown: Vec::new(),
+                text_command_count: 0,
+                image_command_count: 0,
+                clip_command_count: 0,
+                transform_command_count: 0,
+            },
+        )
     }
 
     fn blank_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
