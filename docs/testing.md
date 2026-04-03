@@ -525,7 +525,8 @@ The workspace now includes `sui-widget-book`, a dedicated crate for visual widge
 Recommended usage:
 
 - run `cargo test -p sui-widget-book -- --nocapture` to generate fresh artifacts under `target/ui-artifacts/sui-widget-book`
-- inspect the per-story `story.png` crop alongside the full-window `screenshot.png`, semantics dump, and widget graph dump
+- inspect the per-story widget crop in `screenshot.png`, and use `window.png` plus the `window-*.png` overlays when you need full-book context
+- use the expanded story set to review interaction states such as button hover, button pressed, unchecked checkbox, and focused empty text input
 - commit PNG baselines in `crates/sui-widget-book/baselines` only when you want automatic regression checks for a story
 
 Environment flags:

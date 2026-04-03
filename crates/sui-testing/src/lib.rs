@@ -307,12 +307,12 @@ mod tests {
             children.push(StatusLabel::new(Rc::clone(&state)));
             children.push(ContactRow::new(
                 "Ada",
-                sui_core::Point::new(320.0, 78.0),
+                sui_core::Point::new(320.0, 6.0),
                 Rc::clone(&state),
             ));
             children.push(ContactRow::new(
                 "Grace",
-                sui_core::Point::new(320.0, 134.0),
+                sui_core::Point::new(320.0, 6.0),
                 Rc::clone(&state),
             ));
             Self { state, children }

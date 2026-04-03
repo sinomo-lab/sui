@@ -322,33 +322,51 @@ mod tests {
         NAME_INPUT_LABEL, PRIMARY_BUTTON_LABEL, SUBSCRIBE_LABEL, SUMMARY_NAME, WidgetBookState,
         build_widget_book_application, default_widget_book_state,
     };
-    use sui::{Error, Result, SemanticsRole, SemanticsValue};
+    use sui::{
+        Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        Result, SemanticsRole, SemanticsValue,
+    };
     use sui_testing::prelude::*;
 
     #[derive(Clone, Copy)]
     enum StoryCase {
         Overview,
+        OverviewConfigured,
         Button,
+        ButtonHover,
+        ButtonPressed,
         Checkbox,
+        CheckboxUnchecked,
         FilledInput,
+        EmptyInputFocused,
         Summary,
     }
 
     impl StoryCase {
-        const ALL: [Self; 5] = [
+        const ALL: [Self; 10] = [
             Self::Overview,
+            Self::OverviewConfigured,
             Self::Button,
+            Self::ButtonHover,
+            Self::ButtonPressed,
             Self::Checkbox,
+            Self::CheckboxUnchecked,
             Self::FilledInput,
+            Self::EmptyInputFocused,
             Self::Summary,
         ];
 
         fn id(self) -> &'static str {
             match self {
                 Self::Overview => "overview",
+                Self::OverviewConfigured => "overview-configured",
                 Self::Button => "button",
+                Self::ButtonHover => "button-hover",
+                Self::ButtonPressed => "button-pressed",
                 Self::Checkbox => "checkbox",
+                Self::CheckboxUnchecked => "checkbox-unchecked",
                 Self::FilledInput => "filled-input",
+                Self::EmptyInputFocused => "empty-input-focused",
                 Self::Summary => "summary",
             }
         }
@@ -356,32 +374,66 @@ mod tests {
         fn description(self) -> &'static str {
             match self {
                 Self::Overview => "Whole-window widget book overview screenshot.",
+                Self::OverviewConfigured => {
+                    "Whole-window widget book overview with configured state changes."
+                }
                 Self::Button => "Primary button crop for direct visual regression review.",
+                Self::ButtonHover => "Primary button crop in the hovered state.",
+                Self::ButtonPressed => "Primary button crop while the pointer is held down.",
                 Self::Checkbox => "Checkbox crop in the checked default state.",
-                Self::FilledInput => "Text input crop with a configured value for text rendering checks.",
+                Self::CheckboxUnchecked => "Checkbox crop in the unchecked configured state.",
+                Self::FilledInput => {
+                    "Text input crop with a configured value for text rendering checks."
+                }
+                Self::EmptyInputFocused => {
+                    "Empty text input crop with focus ring and placeholder visible."
+                }
                 Self::Summary => "Composed summary panel showing derived state.",
             }
         }
 
         fn build_app(self) -> Result<TestApp> {
             let state = match self {
-                Self::Overview | Self::Button | Self::Checkbox => default_widget_book_state(),
-                Self::FilledInput | Self::Summary => configured_widget_book_state(),
+                Self::Overview
+                | Self::Button
+                | Self::ButtonHover
+                | Self::ButtonPressed
+                | Self::Checkbox => default_widget_book_state(),
+                Self::OverviewConfigured
+                | Self::CheckboxUnchecked
+                | Self::FilledInput
+                | Self::Summary => configured_widget_book_state(),
+                Self::EmptyInputFocused => blank_widget_book_state(),
             };
 
             TestApp::from_runtime(build_widget_book_application(state).build()?)
         }
 
+        fn prepare(self, window: &TestWindow) -> Result<()> {
+            match self {
+                Self::ButtonHover => self.target(window).hover(),
+                Self::ButtonPressed => press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL),
+                Self::EmptyInputFocused => self.target(window).focus(),
+                Self::Overview
+                | Self::OverviewConfigured
+                | Self::Button
+                | Self::Checkbox
+                | Self::CheckboxUnchecked
+                | Self::FilledInput
+                | Self::Summary => Ok(()),
+            }
+        }
+
         fn target(self, window: &TestWindow) -> Locator {
             match self {
-                Self::Overview => window.root(),
-                Self::Button => window
+                Self::Overview | Self::OverviewConfigured => window.root(),
+                Self::Button | Self::ButtonHover | Self::ButtonPressed => window
                     .get_by_role(SemanticsRole::Button)
                     .with_name(PRIMARY_BUTTON_LABEL),
-                Self::Checkbox => window
+                Self::Checkbox | Self::CheckboxUnchecked => window
                     .get_by_role(SemanticsRole::CheckBox)
                     .with_name(SUBSCRIBE_LABEL),
-                Self::FilledInput => window
+                Self::FilledInput | Self::EmptyInputFocused => window
                     .get_by_role(SemanticsRole::TextInput)
                     .with_name(NAME_INPUT_LABEL),
                 Self::Summary => window
@@ -439,19 +491,20 @@ mod tests {
 
             let app = story.build_app()?;
             let window = app.main_window()?;
+            story.prepare(&window)?;
             let artifacts = window.capture_artifacts()?;
             artifacts.write_to_dir(&story_dir)?;
+            rename_window_artifacts(&story_dir)?;
 
             let locator = story.target(&window);
-            locator.capture_screenshot()?.write_png(story_dir.join("story.png"))?;
+            let screenshot = locator.capture_screenshot()?;
+            screenshot.write_png(story_dir.join("screenshot.png"))?;
             write_text(story_dir.join("story.txt"), story.description())?;
         }
 
-        assert!(artifact_root.join("overview").join("story.png").exists());
-        assert!(artifact_root.join("button").join("story.png").exists());
-        assert!(artifact_root.join("checkbox").join("story.png").exists());
-        assert!(artifact_root.join("filled-input").join("story.png").exists());
-        assert!(artifact_root.join("summary").join("story.png").exists());
+        for story in StoryCase::ALL {
+            assert!(artifact_root.join(story.id()).join("screenshot.png").exists());
+        }
 
         Ok(())
     }
@@ -469,6 +522,7 @@ mod tests {
         for story in StoryCase::ALL {
             let app = story.build_app()?;
             let window = app.main_window()?;
+            story.prepare(&window)?;
             let locator = story.target(&window);
             let baseline = baseline_root.join(format!("{}.png", story.id()));
             let candidate = candidate_root.join(format!("{}.png", story.id()));
@@ -555,6 +609,14 @@ mod tests {
         }))
     }
 
+    fn blank_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
+        Rc::new(RefCell::new(WidgetBookState {
+            name: String::new(),
+            subscribed: false,
+            button_presses: 0,
+        }))
+    }
+
     fn artifact_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -591,5 +653,55 @@ mod tests {
     fn write_text(path: PathBuf, contents: &str) -> Result<()> {
         fs::write(&path, contents)
             .map_err(|error| Error::new(format!("failed to write {}: {error}", path.display())))
+    }
+
+    fn rename_window_artifacts(dir: &Path) -> Result<()> {
+        rename_if_exists(dir, "screenshot.png", "window.png")?;
+        rename_if_exists(dir, "semantics-overlay.png", "window-semantics-overlay.png")?;
+        rename_if_exists(dir, "widget-overlay.png", "window-widget-overlay.png")
+    }
+
+    fn rename_if_exists(dir: &Path, from: &str, to: &str) -> Result<()> {
+        let from_path = dir.join(from);
+        if !from_path.exists() {
+            return Ok(());
+        }
+
+        let to_path = dir.join(to);
+        if to_path.exists() {
+            fs::remove_file(&to_path).map_err(|error| {
+                Error::new(format!("failed to remove {}: {error}", to_path.display()))
+            })?;
+        }
+
+        fs::rename(&from_path, &to_path)
+            .map_err(|error| Error::new(format!("failed to rename {}: {error}", from_path.display())))
+    }
+
+    fn press_target(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<()> {
+        let locator = window.get_by_role(role.clone()).with_name(name);
+        let point = node_center(window, role, name)?;
+
+        locator.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, point);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        locator.dispatch_event(Event::Pointer(down))
+    }
+
+    fn node_center(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<Point> {
+        let snapshot = window.snapshot()?;
+        let node = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.role == role && node.name.as_deref() == Some(name))
+            .ok_or_else(|| Error::new(format!("missing story node {:?} {name}", role)))?;
+
+        Ok(Point::new(
+            node.bounds.x() + (node.bounds.width() / 2.0),
+            node.bounds.y() + (node.bounds.height() / 2.0),
+        ))
     }
 }
