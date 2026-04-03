@@ -1,3 +1,4 @@
+use crate::{ControlMetrics, DefaultTheme};
 use sui_core::{
     Color, Event, ImeEvent, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind,
     Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState,
@@ -6,7 +7,6 @@ use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::StrokeStyle;
 use sui_text::{TextLayout, TextMeasurement, TextStyle};
-use crate::{ControlMetrics, DefaultTheme};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconGlyph {
@@ -26,6 +26,7 @@ pub enum IconGlyph {
 pub struct Separator {
     theme: Box<DefaultTheme>,
     axis: Axis,
+    name: Option<String>,
     inset: f32,
     thickness: Option<f32>,
     length: Option<f32>,
@@ -36,6 +37,7 @@ impl Separator {
         Self {
             theme: Box::new(DefaultTheme::default()),
             axis,
+            name: None,
             inset: 0.0,
             thickness: None,
             length: None,
@@ -52,6 +54,11 @@ impl Separator {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
         self
     }
 
@@ -123,11 +130,9 @@ impl Widget for Separator {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        ctx.push(SemanticsNode::new(
-            ctx.widget_id(),
-            SemanticsRole::Separator,
-            ctx.bounds(),
-        ));
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Separator, ctx.bounds());
+        node.name = self.name.clone();
+        ctx.push(node);
     }
 }
 

@@ -1896,8 +1896,7 @@ mod tests {
     };
     use sui_core::{
         Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, PointerKind, Result, SemanticsRole, SemanticsValue,
-        Vector,
+        PointerEvent, PointerEventKind, PointerKind, Result, SemanticsRole, SemanticsValue, Vector,
     };
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
 
@@ -2009,7 +2008,10 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::Tree)
             .expect("tree semantics present");
-        assert_eq!(tree.value, Some(SemanticsValue::Text("Child A".to_string())));
+        assert_eq!(
+            tree.value,
+            Some(SemanticsValue::Text("Child A".to_string()))
+        );
         Ok(())
     }
 
@@ -2020,10 +2022,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             Table::new("Materials")
                 .columns([TableColumn::new("Name"), TableColumn::new("Passes")])
-                .rows([
-                    TableRow::new(["Glass", "3"]),
-                    TableRow::new(["Water", "4"]),
-                ])
+                .rows([TableRow::new(["Glass", "3"]), TableRow::new(["Water", "4"])])
                 .on_change(move |index| on_change.borrow_mut().push(index)),
         );
 

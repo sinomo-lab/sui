@@ -839,7 +839,7 @@ fn inset_rect(rect: Rect, padding: Insets) -> Rect {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use super::{format_color, hsv_to_rgb, rgb_to_hsv, ColorPicker, ColorSwatch, Image};
+    use super::{ColorPicker, ColorSwatch, Image, format_color, hsv_to_rgb, rgb_to_hsv};
     use sui_core::{
         Color, Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Result, SemanticsRole, SemanticsValue, Size, Vector,
@@ -947,7 +947,10 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::ColorSwatch)
             .expect("color swatch semantics present");
-        assert_eq!(swatch.value, Some(SemanticsValue::Text("#3366CCFF".to_string())));
+        assert_eq!(
+            swatch.value,
+            Some(SemanticsValue::Text("#3366CCFF".to_string()))
+        );
         Ok(())
     }
 
@@ -974,7 +977,10 @@ mod tests {
             primary_pointer(PointerEventKind::Up, Point::new(208.0, 102.0), false),
         )?;
 
-        let changed_color = *changes.borrow().last().expect("color picker emitted change");
+        let changed_color = *changes
+            .borrow()
+            .last()
+            .expect("color picker emitted change");
         let output = runtime.render(window_id)?;
         let picker = output
             .semantics

@@ -429,6 +429,7 @@ impl ScrollAxes {
 
 pub struct ScrollView {
     axes: ScrollAxes,
+    name: Option<String>,
     offset: Vector,
     content_size: Size,
     child: SingleChild,
@@ -441,6 +442,7 @@ impl ScrollView {
     {
         Self {
             axes: ScrollAxes::Vertical,
+            name: None,
             offset: Vector::ZERO,
             content_size: Size::ZERO,
             child: SingleChild::new(child),
@@ -470,6 +472,11 @@ impl ScrollView {
 
     pub fn axes(mut self, axes: ScrollAxes) -> Self {
         self.axes = axes;
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
         self
     }
 
@@ -617,6 +624,7 @@ impl Widget for ScrollView {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
+        node.name = self.name.clone();
         node.actions = vec![SemanticsAction::Focus];
         node.state.focused = ctx.is_focused();
         ctx.push(node);

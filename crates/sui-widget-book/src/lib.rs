@@ -3,7 +3,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui::prelude::*;
-use sui::{Rect, SemanticsNode, SemanticsRole, WidgetPodMutVisitor, WidgetPodVisitor};
+use sui::{
+    AccessibilitySnapshot, DirtyRegion, FocusState, FrameSchedule, InvalidationKind, Rect,
+    SemanticsNode, SemanticsRole, SemanticsValue, WidgetGraphSnapshot, WidgetId,
+    WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor, WindowId,
+};
+use sui_debug::{SceneDebugSummary, WindowDebugSnapshot, window_snapshot_view};
 
 pub const WINDOW_TITLE: &str = "SUI Widget Book";
 pub const WINDOW_DESCRIPTION: &str =
@@ -12,6 +17,7 @@ pub const NAME_INPUT_LABEL: &str = "Name";
 pub const TEXT_AREA_LABEL: &str = "Notes";
 pub const SUBSCRIBE_LABEL: &str = "Subscribe to product updates";
 pub const PRIMARY_BUTTON_LABEL: &str = "Trigger action";
+pub const TOOLBAR_SEPARATOR_NAME: &str = "Toolbar divider";
 pub const ICON_LABEL: &str = "Search icon";
 pub const ICON_BUTTON_LABEL: &str = "More actions";
 pub const SWITCH_LABEL: &str = "Enable snapping";
@@ -29,9 +35,11 @@ pub const TOOLTIP_TEXT: &str = "Quick access to common commands";
 pub const POPOVER_NAME: &str = "Inline inspector";
 pub const POPOVER_TRIGGER_LABEL: &str = "Open inspector";
 pub const DIALOG_TITLE: &str = "Project settings";
+pub const DIALOG_TRIGGER_LABEL: &str = "Toggle project settings";
 pub const PROGRESS_NAME: &str = "Export progress";
 pub const SPINNER_NAME: &str = "Background work";
 pub const SUMMARY_NAME: &str = "Widget book summary";
+pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
 pub const LIST_VIEW_NAME: &str = "Assets list";
 pub const TREE_VIEW_NAME: &str = "Scene tree";
 pub const TABLE_NAME: &str = "Material table";
@@ -149,6 +157,146 @@ impl Widget for WidgetBookRoot {
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.child.visit_children_mut(visitor);
+    }
+}
+
+struct ProjectSettingsPreview {
+    trigger: SingleChild,
+    dialog: SingleChild,
+    dialog_open: bool,
+    trigger_pressed: bool,
+}
+
+impl ProjectSettingsPreview {
+    fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
+        Self {
+            trigger: SingleChild::new(Button::new(DIALOG_TRIGGER_LABEL).min_width(220.0)),
+            dialog: SingleChild::new(
+                Dialog::new(
+                    DIALOG_TITLE,
+                    Stack::vertical()
+                        .spacing(10.0)
+                        .alignment(Alignment::Stretch)
+                        .with_child(
+                            Label::new("Autosave every 90 seconds")
+                                .font_size(14.0)
+                                .line_height(18.0)
+                                .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
+                        )
+                        .with_child(
+                            Label::new("Export color profile: Display P3")
+                                .font_size(14.0)
+                                .line_height(18.0)
+                                .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
+                        )
+                        .with_child(
+                            Label::new("Scratch disk: fast-local-ssd")
+                                .font_size(14.0)
+                                .line_height(18.0)
+                                .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
+                        ),
+                )
+                .description(
+                    "Compact dialog framing for confirmations, settings, and import/export flows.",
+                )
+                .modal(false)
+                .secondary_action("Cancel", || {})
+                .primary_action("Apply", move || {
+                    state.borrow_mut().dialog_apply_count += 1;
+                }),
+            ),
+            dialog_open: false,
+            trigger_pressed: false,
+        }
+    }
+
+    fn trigger_bounds(&self) -> Rect {
+        self.trigger.child().bounds()
+    }
+}
+
+impl Widget for ProjectSettingsPreview {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if ctx.phase() != sui::EventPhase::Capture {
+            return;
+        }
+
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == sui::PointerEventKind::Down
+                    && pointer.button == Some(sui::PointerButton::Primary) =>
+            {
+                self.trigger_pressed = self.trigger_bounds().contains(pointer.position);
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == sui::PointerEventKind::Up
+                    && pointer.button == Some(sui::PointerButton::Primary) =>
+            {
+                let activate =
+                    self.trigger_pressed && self.trigger_bounds().contains(pointer.position);
+                self.trigger_pressed = false;
+                if activate {
+                    self.dialog_open = !self.dialog_open;
+                    ctx.request_layout();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == sui::PointerEventKind::Cancel => {
+                self.trigger_pressed = false;
+            }
+            _ => {}
+        }
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        let trigger_size = self
+            .trigger
+            .layout_at(ctx, constraints.loosen(), Point::ZERO);
+
+        if !self.dialog_open {
+            return constraints.clamp(trigger_size);
+        }
+
+        let dialog_origin = Point::new(0.0, trigger_size.height + 12.0);
+        let dialog_size = self.dialog.layout_at(
+            ctx,
+            Constraints::tight(Size::new(560.0, 320.0)),
+            dialog_origin,
+        );
+
+        constraints.clamp(Size::new(
+            trigger_size.width.max(dialog_size.width),
+            trigger_size.height + 12.0 + dialog_size.height,
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.trigger.paint(ctx);
+        if self.dialog_open {
+            self.dialog.paint(ctx);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.trigger.semantics(ctx);
+        if self.dialog_open {
+            self.dialog.semantics(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.trigger.visit_children(visitor);
+        if self.dialog_open {
+            self.dialog.visit_children(visitor);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.trigger.visit_children_mut(visitor);
+        if self.dialog_open {
+            self.dialog.visit_children_mut(visitor);
+        }
     }
 }
 
@@ -286,7 +434,9 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                             ),
                     )
                     .with_child(SizedBox::new().width(260.0).with_child(
-                        Separator::horizontal().inset(12.0),
+                        Separator::horizontal()
+                            .name(TOOLBAR_SEPARATOR_NAME)
+                            .inset(12.0),
                     )),
             ))
             .with_child(panel(
@@ -566,39 +716,8 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                         ),
                     )
                     .with_child(
-                        SizedBox::new().width(560.0).height(320.0).with_child(
-                            Dialog::new(
-                                DIALOG_TITLE,
-                                Stack::vertical()
-                                    .spacing(10.0)
-                                    .alignment(Alignment::Stretch)
-                                    .with_child(
-                                        Label::new("Autosave every 90 seconds")
-                                            .font_size(14.0)
-                                            .line_height(18.0)
-                                            .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
-                                    )
-                                    .with_child(
-                                        Label::new("Export color profile: Display P3")
-                                            .font_size(14.0)
-                                            .line_height(18.0)
-                                            .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
-                                    )
-                                    .with_child(
-                                        Label::new("Scratch disk: fast-local-ssd")
-                                            .font_size(14.0)
-                                            .line_height(18.0)
-                                            .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
-                                    ),
-                            )
-                            .description(
-                                "Compact dialog framing for confirmations, settings, and import/export flows.",
-                            )
-                            .modal(false)
-                            .secondary_action("Cancel", || {})
-                            .primary_action("Apply", move || {
-                                dialog_state.borrow_mut().dialog_apply_count += 1;
-                            }),
+                        SizedBox::new().width(560.0).with_child(
+                            ProjectSettingsPreview::new(dialog_state),
                         ),
                     ),
             ))
@@ -622,6 +741,13 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                 "Live state",
                 "This summary reads state produced by reusable controls so screenshot stories can cover both isolated widgets and composed UI.",
                 WidgetBookSummary::new(state),
+            ))
+            .with_child(panel(
+                "Debugging and inspection",
+                "The new sui-debug crate composes reusable diagnostics chrome with SUI-specific views over focus, semantics, widget graph, and scene summaries.",
+                SizedBox::new()
+                    .height(980.0)
+                    .with_child(window_snapshot_view(widget_book_debug_snapshot(&snapshot))),
             ))
             .with_child(panel(
                 "Collections and hierarchy",
@@ -795,6 +921,221 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                     ),
             )),
     ))
+    .name(GALLERY_SCROLL_NAME)
+}
+
+fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
+    let window_id = WindowId::new(17);
+
+    let window_widget = WidgetId::new(1000);
+    let scroll_widget = WidgetId::new(1001);
+    let controls_widget = WidgetId::new(1002);
+    let input_widget = WidgetId::new(1003);
+    let button_widget = WidgetId::new(1004);
+    let slider_widget = WidgetId::new(1005);
+    let tabs_widget = WidgetId::new(1006);
+
+    let focused_widget = if state.button_presses >= state.icon_button_presses {
+        button_widget
+    } else {
+        slider_widget
+    };
+
+    let mut window_node = SemanticsNode::new(
+        window_widget,
+        SemanticsRole::Window,
+        Rect::new(0.0, 0.0, 1280.0, 720.0),
+    );
+    window_node.name = Some(WINDOW_TITLE.to_string());
+    window_node.description = Some(WINDOW_DESCRIPTION.to_string());
+
+    let mut scroll_node = SemanticsNode::new(
+        scroll_widget,
+        SemanticsRole::ScrollView,
+        Rect::new(0.0, 0.0, 1280.0, 720.0),
+    );
+    scroll_node.parent = Some(window_widget);
+    scroll_node.name = Some("Widget book gallery".to_string());
+
+    let mut controls_node = SemanticsNode::new(
+        controls_widget,
+        SemanticsRole::GenericContainer,
+        Rect::new(24.0, 104.0, 680.0, 220.0),
+    );
+    controls_node.parent = Some(scroll_widget);
+    controls_node.name = Some("Common controls panel".to_string());
+
+    let mut input_node = SemanticsNode::new(
+        input_widget,
+        SemanticsRole::TextInput,
+        Rect::new(48.0, 176.0, 320.0, 42.0),
+    );
+    input_node.parent = Some(controls_widget);
+    input_node.name = Some(NAME_INPUT_LABEL.to_string());
+    input_node.value = Some(SemanticsValue::Text(state.name.clone()));
+
+    let mut button_node = SemanticsNode::new(
+        button_widget,
+        SemanticsRole::Button,
+        Rect::new(48.0, 238.0, 180.0, 40.0),
+    );
+    button_node.parent = Some(controls_widget);
+    button_node.name = Some(PRIMARY_BUTTON_LABEL.to_string());
+    button_node.description = Some(format!("pressed {} times", state.button_presses));
+    button_node.state.focused = focused_widget == button_widget;
+
+    let mut slider_node = SemanticsNode::new(
+        slider_widget,
+        SemanticsRole::Slider,
+        Rect::new(48.0, 346.0, 320.0, 38.0),
+    );
+    slider_node.parent = Some(scroll_widget);
+    slider_node.name = Some(SLIDER_NAME.to_string());
+    slider_node.value = Some(SemanticsValue::Range {
+        value: state.slider_value,
+        min: 0.0,
+        max: 100.0,
+    });
+    slider_node.state.focused = focused_widget == slider_widget;
+
+    let mut tabs_node = SemanticsNode::new(
+        tabs_widget,
+        SemanticsRole::Tabs,
+        Rect::new(48.0, 428.0, 420.0, 172.0),
+    );
+    tabs_node.parent = Some(scroll_widget);
+    tabs_node.name = Some(TABS_NAME.to_string());
+    tabs_node.value = Some(SemanticsValue::Text(state.tabs_choice.clone()));
+
+    let accessibility = AccessibilitySnapshot::new(
+        window_id,
+        vec![
+            window_node,
+            scroll_node,
+            controls_node,
+            input_node,
+            button_node,
+            slider_node,
+            tabs_node,
+        ],
+    );
+
+    let widget_graph = WidgetGraphSnapshot {
+        root: window_widget,
+        nodes: vec![
+            WidgetNodeSnapshot {
+                id: window_widget,
+                parent: None,
+                children: vec![scroll_widget],
+                bounds: Rect::new(0.0, 0.0, 1280.0, 720.0),
+                accepts_focus: false,
+                focused: false,
+            },
+            WidgetNodeSnapshot {
+                id: scroll_widget,
+                parent: Some(window_widget),
+                children: vec![controls_widget, slider_widget, tabs_widget],
+                bounds: Rect::new(0.0, 0.0, 1280.0, 720.0),
+                accepts_focus: false,
+                focused: false,
+            },
+            WidgetNodeSnapshot {
+                id: controls_widget,
+                parent: Some(scroll_widget),
+                children: vec![input_widget, button_widget],
+                bounds: Rect::new(24.0, 104.0, 680.0, 220.0),
+                accepts_focus: false,
+                focused: false,
+            },
+            WidgetNodeSnapshot {
+                id: input_widget,
+                parent: Some(controls_widget),
+                children: Vec::new(),
+                bounds: Rect::new(48.0, 176.0, 320.0, 42.0),
+                accepts_focus: true,
+                focused: false,
+            },
+            WidgetNodeSnapshot {
+                id: button_widget,
+                parent: Some(controls_widget),
+                children: Vec::new(),
+                bounds: Rect::new(48.0, 238.0, 180.0, 40.0),
+                accepts_focus: true,
+                focused: focused_widget == button_widget,
+            },
+            WidgetNodeSnapshot {
+                id: slider_widget,
+                parent: Some(scroll_widget),
+                children: Vec::new(),
+                bounds: Rect::new(48.0, 346.0, 320.0, 38.0),
+                accepts_focus: true,
+                focused: focused_widget == slider_widget,
+            },
+            WidgetNodeSnapshot {
+                id: tabs_widget,
+                parent: Some(scroll_widget),
+                children: Vec::new(),
+                bounds: Rect::new(48.0, 428.0, 420.0, 172.0),
+                accepts_focus: true,
+                focused: false,
+            },
+        ],
+    };
+
+    let mut dirty_regions = vec![DirtyRegion::new(
+        Rect::new(44.0, 164.0, 336.0, 132.0),
+        InvalidationKind::Paint,
+    )];
+    if state.switch_on {
+        dirty_regions.push(DirtyRegion::new(
+            Rect::new(44.0, 334.0, 340.0, 58.0),
+            InvalidationKind::Semantics,
+        ));
+    }
+    if !state.notes.trim().is_empty() {
+        dirty_regions.push(DirtyRegion::new(
+            Rect::new(40.0, 616.0, 620.0, 88.0),
+            InvalidationKind::Text,
+        ));
+    }
+
+    let scene_summary = SceneDebugSummary {
+        viewport: Size::new(1280.0, 720.0),
+        dirty_regions,
+        command_count: 28 + state.name.len() + state.button_presses + state.icon_button_presses,
+        command_breakdown: vec![
+            ("Clear".to_string(), 1),
+            ("FillRect".to_string(), 8),
+            ("DrawText".to_string(), 11 + state.name.len()),
+            ("PushClip".to_string(), 2),
+            ("PopClip".to_string(), 2),
+            ("DrawImage".to_string(), 1),
+            (
+                "Label".to_string(),
+                4 + state.button_presses + state.icon_button_presses,
+            ),
+        ],
+    };
+
+    WindowDebugSnapshot::new(
+        WINDOW_TITLE,
+        window_id,
+        FocusState {
+            focused_widget: Some(focused_widget),
+            window_focused: true,
+        },
+        accessibility,
+        widget_graph,
+    )
+    .with_schedule(FrameSchedule {
+        layout: false,
+        paint: true,
+        semantics: state.switch_on,
+        hit_test: false,
+        text: !state.notes.trim().is_empty(),
+        resources: state.dialog_apply_count > 0,
+    })
+    .with_scene_summary(scene_summary)
 }
 
 fn widget_book_demo_image_pixels() -> Vec<u8> {
@@ -1049,14 +1390,14 @@ mod tests {
     use std::{cell::RefCell, fs, path::Path, path::PathBuf, rc::Rc};
 
     use super::{
-        BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME,
-        DEMO_IMAGE_LABEL, DIALOG_TITLE, ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME,
-        MENU_NAME, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, PRIMARY_BUTTON_LABEL,
-        PROGRESS_NAME, RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME,
-        SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL,
-        TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME, TABS_NAME,
-        TEXT_AREA_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME, WidgetBookState,
-        build_widget_book_application, default_widget_book_state,
+        BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL,
+        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, ICON_BUTTON_LABEL, ICON_LABEL,
+        LIST_VIEW_NAME, MENU_NAME, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
+        PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME,
+        SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL,
+        TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME, TABS_NAME, TEXT_AREA_LABEL,
+        TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME,
+        WidgetBookState, build_widget_book_application, default_widget_book_state,
     };
     use sui::{
         Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
@@ -1236,9 +1577,15 @@ mod tests {
                 Self::Table => "Table crop for structured tool data and data-grid layouts.",
                 Self::SplitView => "Split view crop with the resizable divider in an editor shell.",
                 Self::Breadcrumb => "Breadcrumb crop for path and project navigation surfaces.",
-                Self::ColorSwatch => "Color swatch crop for palette chips and compact property rows.",
-                Self::ColorPicker => "Color picker crop for interactive color adjustment workflows.",
-                Self::ImageWidget => "Image widget crop for previews, thumbnails, and asset panels.",
+                Self::ColorSwatch => {
+                    "Color swatch crop for palette chips and compact property rows."
+                }
+                Self::ColorPicker => {
+                    "Color picker crop for interactive color adjustment workflows."
+                }
+                Self::ImageWidget => {
+                    "Image widget crop for previews, thumbnails, and asset panels."
+                }
             }
         }
 
@@ -1323,6 +1670,10 @@ mod tests {
                             .with_name(TOOLTIP_TRIGGER_LABEL)
                             .hover(),
                         Self::PopoverOpen => self.target(window).click(),
+                        Self::Dialog => window
+                            .get_by_role(SemanticsRole::Button)
+                            .with_name(DIALOG_TRIGGER_LABEL)
+                            .click(),
                         _ => Ok(()),
                     }
                 }
@@ -1368,7 +1719,9 @@ mod tests {
                 Self::IconButton => window
                     .get_by_role(SemanticsRole::Button)
                     .with_name(ICON_BUTTON_LABEL),
-                Self::Separator => window.get_by_role(SemanticsRole::Separator),
+                Self::Separator => window
+                    .get_by_role(SemanticsRole::Separator)
+                    .with_name(TOOLBAR_SEPARATOR_NAME),
                 Self::Switch => window
                     .get_by_role(SemanticsRole::Switch)
                     .with_name(SWITCH_LABEL),
@@ -1413,7 +1766,9 @@ mod tests {
                 Self::Spinner => window
                     .get_by_role(SemanticsRole::BusyIndicator)
                     .with_name(SPINNER_NAME),
-                Self::ScrollViewScrolled => window.get_by_role(SemanticsRole::ScrollView),
+                Self::ScrollViewScrolled => window
+                    .get_by_role(SemanticsRole::ScrollView)
+                    .with_name(GALLERY_SCROLL_NAME),
                 Self::Summary => window
                     .get_by_role(SemanticsRole::GenericContainer)
                     .with_name(SUMMARY_NAME),
@@ -1799,7 +2154,9 @@ mod tests {
     }
 
     fn scroll_gallery(window: &TestWindow, pages: usize) -> Result<()> {
-        let locator = window.get_by_role(SemanticsRole::ScrollView);
+        let locator = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(GALLERY_SCROLL_NAME);
         locator.focus()?;
         for _ in 0..pages {
             locator.press("PageDown")?;
@@ -1807,7 +2164,11 @@ mod tests {
         Ok(())
     }
 
-    fn scroll_to_story_target(window: &TestWindow, story: StoryCase, max_pages: usize) -> Result<()> {
+    fn scroll_to_story_target(
+        window: &TestWindow,
+        story: StoryCase,
+        max_pages: usize,
+    ) -> Result<()> {
         let Some((role, name)) = story.story_node() else {
             return Ok(());
         };
@@ -1816,7 +2177,9 @@ mod tests {
             return Ok(());
         }
 
-        let locator = window.get_by_role(SemanticsRole::ScrollView);
+        let locator = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(GALLERY_SCROLL_NAME);
         locator.focus()?;
         for _ in 0..max_pages {
             locator.press("PageDown")?;

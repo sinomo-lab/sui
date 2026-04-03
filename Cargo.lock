@@ -1879,6 +1879,18 @@ name = "sui-core"
 version = "0.1.0"
 
 [[package]]
+name = "sui-debug"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+ "sui-layout",
+ "sui-platform",
+ "sui-runtime",
+ "sui-scene",
+ "sui-widgets",
+]
+
+[[package]]
 name = "sui-dev"
 version = "0.1.0"
 dependencies = [
@@ -1967,6 +1979,7 @@ name = "sui-widget-book"
 version = "0.1.0"
 dependencies = [
  "sui",
+ "sui-debug",
  "sui-testing",
 ]
 

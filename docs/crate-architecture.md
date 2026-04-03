@@ -37,6 +37,7 @@ crates/
   sui-platform/         # native/web shell adapters, event normalization, IME, DnD
   sui-widgets/          # standard controls built on the runtime contracts
   sui-testing/          # deterministic UI harness, event injection, semantics queries
+  sui-debug/            # reusable debug chrome and SUI-specific inspection widgets
   sui-bindings-core/    # FFI-safe command/event/data boundary
   sui-python/           # Python binding crate
   sui-js/               # JavaScript/WASM binding crate
@@ -222,6 +223,22 @@ Rules:
 - depends on `sui-core`, `sui-runtime`, `sui-scene`, and selected platform shims
 - tests should target semantics and observable state before internal widget details
 
+### `sui-debug`
+
+Role: reusable diagnostics and inspection surface.
+
+Owns:
+
+- generic debug-oriented widgets such as panels, metric cards, key/value inspectors, and structured views
+- SUI-specific inspectors for focus state, semantics snapshots, widget-graph snapshots, and scene summaries
+- development-facing presentation helpers that turn runtime and scene data into readable UI without depending on the test harness
+
+Rules:
+
+- depends on public SUI snapshot and widget-facing types rather than private runtime internals
+- should not become the only path for diagnostics data collection; it renders debug data, it does not own the runtime itself
+- may depend on existing widget crates for composition, but should stay optional from the main application facade
+
 ### `sui-bindings-core`
 
 Role: stable cross-language boundary.
@@ -315,6 +332,13 @@ sui-text
 sui-testing
   -> sui-runtime
   -> sui-scene
+  -> sui-core
+
+sui-debug
+  -> sui-platform
+  -> sui-runtime
+  -> sui-scene
+  -> sui-layout
   -> sui-core
 
 sui-bindings-core
@@ -572,11 +596,11 @@ Exit criteria:
 
 Extend existing crates before adding many new ones. Only split new crates when the seam is already real in code.
 
-Likely additions:
+Likely additions and expansions:
 
 - `sui-canvas` for infinite-canvas and tiled-surface helpers
 - `sui-media` for media widgets and timing adapters
-- `sui-debug` for overlays, tracing, and diagnostics
+- expand `sui-debug` with overlays, tracing, and richer diagnostics surfaces
 
 ### Phase 4: Bindings and advanced integration
 

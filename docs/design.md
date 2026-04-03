@@ -105,7 +105,7 @@ That leads to the following baseline rules for first-party widgets:
 
 These defaults are not meant to replace a future inherited theming system. They are the baseline that makes SUI usable before global theme propagation exists, and they should therefore live in first-party widgets rather than in example code alone.
 
-The current public API for this is `DefaultTheme` in `sui-widgets` and the top-level `sui` facade. Applications can clone `DefaultTheme::default()`, adjust palette, metrics, or typography tokens, and apply the result to built-in widgets explicitly.
+The current public API for this is `DefaultTheme` in `sui-widgets` and the top-level `sui` facade. Applications can clone `DefaultTheme::default()` or start from `DefaultTheme::dark()`, adjust semantic color tokens, palette, metrics, or typography tokens, and apply the result to built-in widgets explicitly.
 
 The broader theme container should also remain extensible. The top-level `Theme` type should support typed theme extensions so applications and third-party widget libraries can attach additional schema for their own widgets without needing SUI to predefine every possible theme field.
 

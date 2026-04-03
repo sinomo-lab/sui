@@ -29,6 +29,7 @@ palette = "0.7"
 pollster = "0.4"
 rustybuzz = "0.20"
 sui = { path = "crates/sui" }
+sui-debug = { path = "crates/sui-debug" }
 sui-core = { path = "crates/sui-core" }
 sui-dev = { path = "crates/sui-dev" }
 sui-layout = { path = "crates/sui-layout" }

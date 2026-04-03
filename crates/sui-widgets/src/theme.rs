@@ -32,13 +32,7 @@ impl Default for ThemeFontFamilies {
             },
             serif: ThemeFontStack {
                 primary: "ui-serif",
-                fallbacks: &[
-                    "Georgia",
-                    "Cambria",
-                    "Times New Roman",
-                    "Times",
-                    "serif",
-                ],
+                fallbacks: &["Georgia", "Cambria", "Times New Roman", "Times", "serif"],
             },
             mono: ThemeFontStack {
                 primary: "ui-monospace",
@@ -56,405 +50,105 @@ impl Default for ThemeFontFamilies {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ThemeColorScale {
-    pub _50: Color,
-    pub _100: Color,
-    pub _200: Color,
-    pub _300: Color,
-    pub _400: Color,
-    pub _500: Color,
-    pub _600: Color,
-    pub _700: Color,
-    pub _800: Color,
-    pub _900: Color,
-    pub _950: Color,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeColorScheme {
+    #[default]
+    Light,
+    Dark,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeColors {
-    pub red: ThemeColorScale,
-    pub orange: ThemeColorScale,
-    pub amber: ThemeColorScale,
-    pub yellow: ThemeColorScale,
-    pub lime: ThemeColorScale,
-    pub green: ThemeColorScale,
-    pub emerald: ThemeColorScale,
-    pub teal: ThemeColorScale,
-    pub cyan: ThemeColorScale,
-    pub sky: ThemeColorScale,
-    pub blue: ThemeColorScale,
-    pub indigo: ThemeColorScale,
-    pub violet: ThemeColorScale,
-    pub purple: ThemeColorScale,
-    pub fuchsia: ThemeColorScale,
-    pub pink: ThemeColorScale,
-    pub rose: ThemeColorScale,
-    pub slate: ThemeColorScale,
-    pub gray: ThemeColorScale,
-    pub zinc: ThemeColorScale,
-    pub neutral: ThemeColorScale,
-    pub stone: ThemeColorScale,
-    pub mauve: ThemeColorScale,
-    pub olive: ThemeColorScale,
-    pub mist: ThemeColorScale,
-    pub taupe: ThemeColorScale,
-    pub black: Color,
-    pub white: Color,
+    pub name: &'static str,
+    pub scheme: ThemeColorScheme,
+    pub base_100: Color,
+    pub base_200: Color,
+    pub base_300: Color,
+    pub base_content: Color,
+    pub primary: Color,
+    pub primary_content: Color,
+    pub secondary: Color,
+    pub secondary_content: Color,
+    pub accent: Color,
+    pub accent_content: Color,
+    pub neutral: Color,
+    pub neutral_content: Color,
+    pub info: Color,
+    pub info_content: Color,
+    pub success: Color,
+    pub success_content: Color,
+    pub warning: Color,
+    pub warning_content: Color,
+    pub error: Color,
+    pub error_content: Color,
 }
 
-macro_rules! scale {
-    ($($shade:ident => ($l:expr, $c:expr, $h:expr)),+ $(,)?) => {
-        ThemeColorScale {
-            $($shade: oklch($l, $c, $h)),+
+impl ThemeColors {
+    pub fn light() -> Self {
+        Self {
+            name: "light",
+            scheme: ThemeColorScheme::Light,
+            base_100: oklch(100.0, 0.0, 0.0),
+            base_200: oklch(98.0, 0.0, 0.0),
+            base_300: oklch(95.0, 0.0, 0.0),
+            base_content: oklch(21.0, 0.006, 285.885),
+            primary: oklch(45.0, 0.24, 277.023),
+            primary_content: oklch(93.0, 0.034, 272.788),
+            secondary: oklch(65.0, 0.241, 354.308),
+            secondary_content: oklch(94.0, 0.028, 342.258),
+            accent: oklch(77.0, 0.152, 181.912),
+            accent_content: oklch(38.0, 0.063, 188.416),
+            neutral: oklch(14.0, 0.005, 285.823),
+            neutral_content: oklch(92.0, 0.004, 286.32),
+            info: oklch(74.0, 0.16, 232.661),
+            info_content: oklch(29.0, 0.066, 243.157),
+            success: oklch(76.0, 0.177, 163.223),
+            success_content: oklch(37.0, 0.077, 168.94),
+            warning: oklch(82.0, 0.189, 84.429),
+            warning_content: oklch(41.0, 0.112, 45.904),
+            error: oklch(71.0, 0.194, 13.428),
+            error_content: oklch(27.0, 0.105, 12.094),
         }
-    };
+    }
+
+    pub fn dark() -> Self {
+        Self {
+            name: "dark",
+            scheme: ThemeColorScheme::Dark,
+            base_100: oklch(25.33, 0.016, 252.42),
+            base_200: oklch(23.26, 0.014, 253.1),
+            base_300: oklch(21.15, 0.012, 254.09),
+            base_content: oklch(97.807, 0.029, 256.847),
+            primary: oklch(58.0, 0.233, 277.117),
+            primary_content: oklch(96.0, 0.018, 272.314),
+            secondary: oklch(65.0, 0.241, 354.308),
+            secondary_content: oklch(94.0, 0.028, 342.258),
+            accent: oklch(77.0, 0.152, 181.912),
+            accent_content: oklch(38.0, 0.063, 188.416),
+            neutral: oklch(14.0, 0.005, 285.823),
+            neutral_content: oklch(92.0, 0.004, 286.32),
+            info: oklch(74.0, 0.16, 232.661),
+            info_content: oklch(29.0, 0.066, 243.157),
+            success: oklch(76.0, 0.177, 163.223),
+            success_content: oklch(37.0, 0.077, 168.94),
+            warning: oklch(82.0, 0.189, 84.429),
+            warning_content: oklch(41.0, 0.112, 45.904),
+            error: oklch(71.0, 0.194, 13.428),
+            error_content: oklch(27.0, 0.105, 12.094),
+        }
+    }
+
+    pub fn with_scheme(scheme: ThemeColorScheme) -> Self {
+        match scheme {
+            ThemeColorScheme::Light => Self::light(),
+            ThemeColorScheme::Dark => Self::dark(),
+        }
+    }
 }
 
 impl Default for ThemeColors {
     fn default() -> Self {
-        Self {
-            red: scale!(
-                _50 => (97.1, 0.013, 17.38),
-                _100 => (93.6, 0.032, 17.717),
-                _200 => (88.5, 0.062, 18.334),
-                _300 => (80.8, 0.114, 19.571),
-                _400 => (70.4, 0.191, 22.216),
-                _500 => (63.7, 0.237, 25.331),
-                _600 => (57.7, 0.245, 27.325),
-                _700 => (50.5, 0.213, 27.518),
-                _800 => (44.4, 0.177, 26.899),
-                _900 => (39.6, 0.141, 25.723),
-                _950 => (25.8, 0.092, 26.042)
-            ),
-            orange: scale!(
-                _50 => (98.0, 0.016, 73.684),
-                _100 => (95.4, 0.038, 75.164),
-                _200 => (90.1, 0.076, 70.697),
-                _300 => (83.7, 0.128, 66.29),
-                _400 => (75.0, 0.183, 55.934),
-                _500 => (70.5, 0.213, 47.604),
-                _600 => (64.6, 0.222, 41.116),
-                _700 => (55.3, 0.195, 38.402),
-                _800 => (47.0, 0.157, 37.304),
-                _900 => (40.8, 0.123, 38.172),
-                _950 => (26.6, 0.079, 36.259)
-            ),
-            amber: scale!(
-                _50 => (98.7, 0.022, 95.277),
-                _100 => (96.2, 0.059, 95.617),
-                _200 => (92.4, 0.12, 95.746),
-                _300 => (87.9, 0.169, 91.605),
-                _400 => (82.8, 0.189, 84.429),
-                _500 => (76.9, 0.188, 70.08),
-                _600 => (66.6, 0.179, 58.318),
-                _700 => (55.5, 0.163, 48.998),
-                _800 => (47.3, 0.137, 46.201),
-                _900 => (41.4, 0.112, 45.904),
-                _950 => (27.9, 0.077, 45.635)
-            ),
-            yellow: scale!(
-                _50 => (98.7, 0.026, 102.212),
-                _100 => (97.3, 0.071, 103.193),
-                _200 => (94.5, 0.129, 101.54),
-                _300 => (90.5, 0.182, 98.111),
-                _400 => (85.2, 0.199, 91.936),
-                _500 => (79.5, 0.184, 86.047),
-                _600 => (68.1, 0.162, 75.834),
-                _700 => (55.4, 0.135, 66.442),
-                _800 => (47.6, 0.114, 61.907),
-                _900 => (42.1, 0.095, 57.708),
-                _950 => (28.6, 0.066, 53.813)
-            ),
-            lime: scale!(
-                _50 => (98.6, 0.031, 120.757),
-                _100 => (96.7, 0.067, 122.328),
-                _200 => (93.8, 0.127, 124.321),
-                _300 => (89.7, 0.196, 126.665),
-                _400 => (84.1, 0.238, 128.85),
-                _500 => (76.8, 0.233, 130.85),
-                _600 => (64.8, 0.2, 131.684),
-                _700 => (53.2, 0.157, 131.589),
-                _800 => (45.3, 0.124, 130.933),
-                _900 => (40.5, 0.101, 131.063),
-                _950 => (27.4, 0.072, 132.109)
-            ),
-            green: scale!(
-                _50 => (98.2, 0.018, 155.826),
-                _100 => (96.2, 0.044, 156.743),
-                _200 => (92.5, 0.084, 155.995),
-                _300 => (87.1, 0.15, 154.449),
-                _400 => (79.2, 0.209, 151.711),
-                _500 => (72.3, 0.219, 149.579),
-                _600 => (62.7, 0.194, 149.214),
-                _700 => (52.7, 0.154, 150.069),
-                _800 => (44.8, 0.119, 151.328),
-                _900 => (39.3, 0.095, 152.535),
-                _950 => (26.6, 0.065, 152.934)
-            ),
-            emerald: scale!(
-                _50 => (97.9, 0.021, 166.113),
-                _100 => (95.0, 0.052, 163.051),
-                _200 => (90.5, 0.093, 164.15),
-                _300 => (84.5, 0.143, 164.978),
-                _400 => (76.5, 0.177, 163.223),
-                _500 => (69.6, 0.17, 162.48),
-                _600 => (59.6, 0.145, 163.225),
-                _700 => (50.8, 0.118, 165.612),
-                _800 => (43.2, 0.095, 166.913),
-                _900 => (37.8, 0.077, 168.94),
-                _950 => (26.2, 0.051, 172.552)
-            ),
-            teal: scale!(
-                _50 => (98.4, 0.014, 180.72),
-                _100 => (95.3, 0.051, 180.801),
-                _200 => (91.0, 0.096, 180.426),
-                _300 => (85.5, 0.138, 181.071),
-                _400 => (77.7, 0.152, 181.912),
-                _500 => (70.4, 0.14, 182.503),
-                _600 => (60.0, 0.118, 184.704),
-                _700 => (51.1, 0.096, 186.391),
-                _800 => (43.7, 0.078, 188.216),
-                _900 => (38.6, 0.063, 188.416),
-                _950 => (27.7, 0.046, 192.524)
-            ),
-            cyan: scale!(
-                _50 => (98.4, 0.019, 200.873),
-                _100 => (95.6, 0.045, 203.388),
-                _200 => (91.7, 0.08, 205.041),
-                _300 => (86.5, 0.127, 207.078),
-                _400 => (78.9, 0.154, 211.53),
-                _500 => (71.5, 0.143, 215.221),
-                _600 => (60.9, 0.126, 221.723),
-                _700 => (52.0, 0.105, 223.128),
-                _800 => (45.0, 0.085, 224.283),
-                _900 => (39.8, 0.07, 227.392),
-                _950 => (30.2, 0.056, 229.695)
-            ),
-            sky: scale!(
-                _50 => (97.7, 0.013, 236.62),
-                _100 => (95.1, 0.026, 236.824),
-                _200 => (90.1, 0.058, 230.902),
-                _300 => (82.8, 0.111, 230.318),
-                _400 => (74.6, 0.16, 232.661),
-                _500 => (68.5, 0.169, 237.323),
-                _600 => (58.8, 0.158, 241.966),
-                _700 => (50.0, 0.134, 242.749),
-                _800 => (44.3, 0.11, 240.79),
-                _900 => (39.1, 0.09, 240.876),
-                _950 => (29.3, 0.066, 243.157)
-            ),
-            blue: scale!(
-                _50 => (97.0, 0.014, 254.604),
-                _100 => (93.2, 0.032, 255.585),
-                _200 => (88.2, 0.059, 254.128),
-                _300 => (80.9, 0.105, 251.813),
-                _400 => (70.7, 0.165, 254.624),
-                _500 => (62.3, 0.214, 259.815),
-                _600 => (54.6, 0.245, 262.881),
-                _700 => (48.8, 0.243, 264.376),
-                _800 => (42.4, 0.199, 265.638),
-                _900 => (37.9, 0.146, 265.522),
-                _950 => (28.2, 0.091, 267.935)
-            ),
-            indigo: scale!(
-                _50 => (96.2, 0.018, 272.314),
-                _100 => (93.0, 0.034, 272.788),
-                _200 => (87.0, 0.065, 274.039),
-                _300 => (78.5, 0.115, 274.713),
-                _400 => (67.3, 0.182, 276.935),
-                _500 => (58.5, 0.233, 277.117),
-                _600 => (51.1, 0.262, 276.966),
-                _700 => (45.7, 0.24, 277.023),
-                _800 => (39.8, 0.195, 277.366),
-                _900 => (35.9, 0.144, 278.697),
-                _950 => (25.7, 0.09, 281.288)
-            ),
-            violet: scale!(
-                _50 => (96.9, 0.016, 293.756),
-                _100 => (94.3, 0.029, 294.588),
-                _200 => (89.4, 0.057, 293.283),
-                _300 => (81.1, 0.111, 293.571),
-                _400 => (70.2, 0.183, 293.541),
-                _500 => (60.6, 0.25, 292.717),
-                _600 => (54.1, 0.281, 293.009),
-                _700 => (49.1, 0.27, 292.581),
-                _800 => (43.2, 0.232, 292.759),
-                _900 => (38.0, 0.189, 293.745),
-                _950 => (28.3, 0.141, 291.089)
-            ),
-            purple: scale!(
-                _50 => (97.7, 0.014, 308.299),
-                _100 => (94.6, 0.033, 307.174),
-                _200 => (90.2, 0.063, 306.703),
-                _300 => (82.7, 0.119, 306.383),
-                _400 => (71.4, 0.203, 305.504),
-                _500 => (62.7, 0.265, 303.9),
-                _600 => (55.8, 0.288, 302.321),
-                _700 => (49.6, 0.265, 301.924),
-                _800 => (43.8, 0.218, 303.724),
-                _900 => (38.1, 0.176, 304.987),
-                _950 => (29.1, 0.149, 302.717)
-            ),
-            fuchsia: scale!(
-                _50 => (97.7, 0.017, 320.058),
-                _100 => (95.2, 0.037, 318.852),
-                _200 => (90.3, 0.076, 319.62),
-                _300 => (83.3, 0.145, 321.434),
-                _400 => (74.0, 0.238, 322.16),
-                _500 => (66.7, 0.295, 322.15),
-                _600 => (59.1, 0.293, 322.896),
-                _700 => (51.8, 0.253, 323.949),
-                _800 => (45.2, 0.211, 324.591),
-                _900 => (40.1, 0.17, 325.612),
-                _950 => (29.3, 0.136, 325.661)
-            ),
-            pink: scale!(
-                _50 => (97.1, 0.014, 343.198),
-                _100 => (94.8, 0.028, 342.258),
-                _200 => (89.9, 0.061, 343.231),
-                _300 => (82.3, 0.12, 346.018),
-                _400 => (71.8, 0.202, 349.761),
-                _500 => (65.6, 0.241, 354.308),
-                _600 => (59.2, 0.249, 0.584),
-                _700 => (52.5, 0.223, 3.958),
-                _800 => (45.9, 0.187, 3.815),
-                _900 => (40.8, 0.153, 2.432),
-                _950 => (28.4, 0.109, 3.907)
-            ),
-            rose: scale!(
-                _50 => (96.9, 0.015, 12.422),
-                _100 => (94.1, 0.03, 12.58),
-                _200 => (89.2, 0.058, 10.001),
-                _300 => (81.0, 0.117, 11.638),
-                _400 => (71.2, 0.194, 13.428),
-                _500 => (64.5, 0.246, 16.439),
-                _600 => (58.6, 0.253, 17.585),
-                _700 => (51.4, 0.222, 16.935),
-                _800 => (45.5, 0.188, 13.697),
-                _900 => (41.0, 0.159, 10.272),
-                _950 => (27.1, 0.105, 12.094)
-            ),
-            slate: scale!(
-                _50 => (98.4, 0.003, 247.858),
-                _100 => (96.8, 0.007, 247.896),
-                _200 => (92.9, 0.013, 255.508),
-                _300 => (86.9, 0.022, 252.894),
-                _400 => (70.4, 0.04, 256.788),
-                _500 => (55.4, 0.046, 257.417),
-                _600 => (44.6, 0.043, 257.281),
-                _700 => (37.2, 0.044, 257.287),
-                _800 => (27.9, 0.041, 260.031),
-                _900 => (20.8, 0.042, 265.755),
-                _950 => (12.9, 0.042, 264.695)
-            ),
-            gray: scale!(
-                _50 => (98.5, 0.002, 247.839),
-                _100 => (96.7, 0.003, 264.542),
-                _200 => (92.8, 0.006, 264.531),
-                _300 => (87.2, 0.01, 258.338),
-                _400 => (70.7, 0.022, 261.325),
-                _500 => (55.1, 0.027, 264.364),
-                _600 => (44.6, 0.03, 256.802),
-                _700 => (37.3, 0.034, 259.733),
-                _800 => (27.8, 0.033, 256.848),
-                _900 => (21.0, 0.034, 264.665),
-                _950 => (13.0, 0.028, 261.692)
-            ),
-            zinc: scale!(
-                _50 => (98.5, 0.0, 0.0),
-                _100 => (96.7, 0.001, 286.375),
-                _200 => (92.0, 0.004, 286.32),
-                _300 => (87.1, 0.006, 286.286),
-                _400 => (70.5, 0.015, 286.067),
-                _500 => (55.2, 0.016, 285.938),
-                _600 => (44.2, 0.017, 285.786),
-                _700 => (37.0, 0.013, 285.805),
-                _800 => (27.4, 0.006, 286.033),
-                _900 => (21.0, 0.006, 285.885),
-                _950 => (14.1, 0.005, 285.823)
-            ),
-            neutral: scale!(
-                _50 => (98.5, 0.0, 0.0),
-                _100 => (97.0, 0.0, 0.0),
-                _200 => (92.2, 0.0, 0.0),
-                _300 => (87.0, 0.0, 0.0),
-                _400 => (70.8, 0.0, 0.0),
-                _500 => (55.6, 0.0, 0.0),
-                _600 => (43.9, 0.0, 0.0),
-                _700 => (37.1, 0.0, 0.0),
-                _800 => (26.9, 0.0, 0.0),
-                _900 => (20.5, 0.0, 0.0),
-                _950 => (14.5, 0.0, 0.0)
-            ),
-            stone: scale!(
-                _50 => (98.5, 0.001, 106.423),
-                _100 => (97.0, 0.001, 106.424),
-                _200 => (92.3, 0.003, 48.717),
-                _300 => (86.9, 0.005, 56.366),
-                _400 => (70.9, 0.01, 56.259),
-                _500 => (55.3, 0.013, 58.071),
-                _600 => (44.4, 0.011, 73.639),
-                _700 => (37.4, 0.01, 67.558),
-                _800 => (26.8, 0.007, 34.298),
-                _900 => (21.6, 0.006, 56.043),
-                _950 => (14.7, 0.004, 49.25)
-            ),
-            mauve: scale!(
-                _50 => (98.5, 0.0, 0.0),
-                _100 => (96.0, 0.003, 325.6),
-                _200 => (92.2, 0.005, 325.62),
-                _300 => (86.5, 0.012, 325.68),
-                _400 => (71.1, 0.019, 323.02),
-                _500 => (54.2, 0.034, 322.5),
-                _600 => (43.5, 0.029, 321.78),
-                _700 => (36.4, 0.029, 323.89),
-                _800 => (26.3, 0.024, 320.12),
-                _900 => (21.2, 0.019, 322.12),
-                _950 => (14.5, 0.008, 326.0)
-            ),
-            olive: scale!(
-                _50 => (98.8, 0.003, 106.5),
-                _100 => (96.6, 0.005, 106.5),
-                _200 => (93.0, 0.007, 106.5),
-                _300 => (88.0, 0.011, 106.6),
-                _400 => (73.7, 0.021, 106.9),
-                _500 => (58.0, 0.031, 107.3),
-                _600 => (46.6, 0.025, 107.3),
-                _700 => (39.4, 0.023, 107.4),
-                _800 => (28.6, 0.016, 107.4),
-                _900 => (22.8, 0.013, 107.4),
-                _950 => (15.3, 0.006, 107.1)
-            ),
-            mist: scale!(
-                _50 => (98.7, 0.002, 197.1),
-                _100 => (96.3, 0.002, 197.1),
-                _200 => (92.5, 0.005, 214.3),
-                _300 => (87.2, 0.007, 219.6),
-                _400 => (72.3, 0.014, 214.4),
-                _500 => (56.0, 0.021, 213.5),
-                _600 => (45.0, 0.017, 213.2),
-                _700 => (37.8, 0.015, 216.0),
-                _800 => (27.5, 0.011, 216.9),
-                _900 => (21.8, 0.008, 223.9),
-                _950 => (14.8, 0.004, 228.8)
-            ),
-            taupe: scale!(
-                _50 => (98.6, 0.002, 67.8),
-                _100 => (96.0, 0.002, 17.2),
-                _200 => (92.2, 0.005, 34.3),
-                _300 => (86.8, 0.007, 39.5),
-                _400 => (71.4, 0.014, 41.2),
-                _500 => (54.7, 0.021, 43.1),
-                _600 => (43.8, 0.017, 39.3),
-                _700 => (36.7, 0.016, 35.7),
-                _800 => (26.8, 0.011, 36.5),
-                _900 => (21.4, 0.009, 43.1),
-                _950 => (14.7, 0.004, 49.3)
-            ),
-            black: Color::BLACK,
-            white: Color::WHITE,
-        }
+        Self::light()
     }
 }
 
@@ -927,24 +621,27 @@ pub struct ControlPalette {
 
 impl ControlPalette {
     pub fn from_colors(colors: &ThemeColors) -> Self {
+        let border = mix(colors.base_300, colors.base_content, 0.12);
+        let border_hover = mix(colors.base_300, colors.base_content, 0.24);
+
         Self {
-            text: colors.slate._900,
-            placeholder: colors.slate._500,
-            surface: colors.white,
-            surface_hover: colors.sky._50,
-            surface_pressed: colors.sky._100,
-            surface_focus: colors.blue._50,
-            border: colors.slate._300,
-            border_hover: colors.slate._400,
-            border_focus: colors.blue._600,
-            focus_ring: colors.blue._600.with_alpha(0.28),
-            accent: colors.blue._600,
-            accent_hover: colors.blue._700,
-            accent_pressed: colors.blue._800,
-            accent_border: colors.blue._700,
-            accent_border_hover: colors.blue._800,
-            accent_border_focus: colors.blue._500,
-            accent_text: colors.white,
+            text: colors.base_content,
+            placeholder: colors.base_content.with_alpha(0.6),
+            surface: colors.base_100,
+            surface_hover: colors.base_200,
+            surface_pressed: colors.base_300,
+            surface_focus: mix(colors.base_200, colors.primary, 0.08),
+            border,
+            border_hover,
+            border_focus: colors.primary,
+            focus_ring: colors.primary.with_alpha(0.28),
+            accent: colors.primary,
+            accent_hover: interactive_variant(colors.primary, colors.scheme, 0.08),
+            accent_pressed: interactive_variant(colors.primary, colors.scheme, 0.16),
+            accent_border: interactive_variant(colors.primary, colors.scheme, 0.12),
+            accent_border_hover: interactive_variant(colors.primary, colors.scheme, 0.2),
+            accent_border_focus: colors.primary,
+            accent_text: colors.primary_content,
         }
     }
 }
@@ -1085,6 +782,40 @@ impl DefaultTheme {
         Self::default()
     }
 
+    pub fn light() -> Self {
+        Self::from_colors(ThemeColors::light())
+    }
+
+    pub fn dark() -> Self {
+        Self::from_colors(ThemeColors::dark())
+    }
+
+    pub fn from_colors(colors: ThemeColors) -> Self {
+        let text = ThemeTextScale::default();
+        let radius = ThemeRadii::default();
+        let spacing = 4.0;
+
+        Self {
+            fonts: ThemeFontFamilies::default(),
+            colors,
+            spacing,
+            breakpoints: ThemeBreakpoints::default(),
+            containers: ThemeContainers::default(),
+            text,
+            font_weights: ThemeFontWeights::default(),
+            tracking: ThemeTracking::default(),
+            leading: ThemeLeading::default(),
+            radius,
+            shadows: ThemeShadows::default(),
+            blur: ThemeBlurScale::default(),
+            perspective: ThemePerspective::default(),
+            aspect: ThemeAspectRatios::default(),
+            palette: ControlPalette::from_colors(&colors),
+            typography: ControlTypography::from_text_scale(&text),
+            metrics: ControlMetrics::from_tokens(spacing, radius),
+        }
+    }
+
     pub fn sync_derived_fields(&mut self) {
         self.palette = ControlPalette::from_colors(&self.colors);
         self.typography = ControlTypography::from_text_scale(&self.text);
@@ -1115,30 +846,27 @@ impl DefaultTheme {
 
 impl Default for DefaultTheme {
     fn default() -> Self {
-        let colors = ThemeColors::default();
-        let text = ThemeTextScale::default();
-        let radius = ThemeRadii::default();
-        let spacing = 4.0;
+        Self::light()
+    }
+}
 
-        Self {
-            fonts: ThemeFontFamilies::default(),
-            colors,
-            spacing,
-            breakpoints: ThemeBreakpoints::default(),
-            containers: ThemeContainers::default(),
-            text,
-            font_weights: ThemeFontWeights::default(),
-            tracking: ThemeTracking::default(),
-            leading: ThemeLeading::default(),
-            radius,
-            shadows: ThemeShadows::default(),
-            blur: ThemeBlurScale::default(),
-            perspective: ThemePerspective::default(),
-            aspect: ThemeAspectRatios::default(),
-            palette: ControlPalette::from_colors(&colors),
-            typography: ControlTypography::from_text_scale(&text),
-            metrics: ControlMetrics::from_tokens(spacing, radius),
-        }
+fn mix(from: Color, to: Color, amount: f32) -> Color {
+    let amount = amount.clamp(0.0, 1.0);
+
+    Color::new(
+        from.space,
+        from.red + (to.red - from.red) * amount,
+        from.green + (to.green - from.green) * amount,
+        from.blue + (to.blue - from.blue) * amount,
+        from.alpha + (to.alpha - from.alpha) * amount,
+    )
+    .clamped()
+}
+
+fn interactive_variant(color: Color, scheme: ThemeColorScheme, amount: f32) -> Color {
+    match scheme {
+        ThemeColorScheme::Light => mix(color, Color::BLACK, amount),
+        ThemeColorScheme::Dark => mix(color, Color::WHITE, amount),
     }
 }
 
@@ -1172,10 +900,10 @@ fn oklch(lightness_percent: f32, chroma: f32, hue: f32) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use super::{Color, DefaultTheme};
+    use super::{Color, DefaultTheme, ThemeColorScheme};
 
     #[test]
-    fn default_theme_uses_tailwind_text_scale_for_body_typography() {
+    fn default_theme_uses_body_text_scale_for_typography() {
         let theme = DefaultTheme::default();
 
         assert_eq!(theme.typography.body_font_size, theme.text.sm.size);
@@ -1185,7 +913,7 @@ mod tests {
     #[test]
     fn sync_derived_fields_updates_semantic_palette_and_typography() {
         let mut theme = DefaultTheme::default();
-        theme.colors.blue._600 = Color::rgba(0.2, 0.3, 0.4, 1.0);
+        theme.colors.primary = Color::rgba(0.2, 0.3, 0.4, 1.0);
         theme.text.sm.size = 15.0;
         theme.text.sm.line_height = 22.0;
         theme.sync_derived_fields();
@@ -1193,5 +921,17 @@ mod tests {
         assert_eq!(theme.palette.accent, Color::rgba(0.2, 0.3, 0.4, 1.0));
         assert_eq!(theme.typography.body_font_size, 15.0);
         assert_eq!(theme.typography.body_line_height, 22.0);
+    }
+
+    #[test]
+    fn dark_theme_uses_dark_daisy_tokens() {
+        let theme = DefaultTheme::dark();
+
+        assert_eq!(theme.colors.scheme, ThemeColorScheme::Dark);
+        assert_eq!(theme.colors.name, "dark");
+        assert_eq!(theme.palette.surface, theme.colors.base_100);
+        assert_eq!(theme.palette.text, theme.colors.base_content);
+        assert_eq!(theme.palette.accent, theme.colors.primary);
+        assert_eq!(theme.palette.accent_text, theme.colors.primary_content);
     }
 }

@@ -1,0 +1,14 @@
+[package]
+name = "sui-debug"
+version.workspace = true
+description = "Debugging and inspection widgets for SUI applications."
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sui-core = { workspace = true }
+sui-layout = { workspace = true }
+sui-platform = { workspace = true }
+sui-runtime = { workspace = true }
+sui-scene = { workspace = true }
+sui-widgets = { workspace = true }
