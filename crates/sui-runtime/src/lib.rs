@@ -20,7 +20,8 @@ use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
 pub use sui_core::DpiInfo;
 pub use diagnostics::{
-    FramePhase, FramePhaseSample, RenderDiagnostics, SceneStatistics,
+    CacheMetrics, FramePhase, FramePhaseSample, RenderDiagnostics, SceneStatistics,
+    TextCacheDiagnostics,
     WindowPerformanceSnapshot, clear_window_performance_snapshot,
     clear_window_performance_snapshots, publish_window_performance_snapshot,
     window_performance_snapshot,
@@ -1019,7 +1020,7 @@ impl WindowState {
         if self.schedule.layout || self.viewport.is_none() {
             let started = Instant::now();
             invalidations.extend(self.run_layout_pass(
-                text_system,
+                Arc::clone(&text_system),
                 Arc::clone(&font_registry),
                 Arc::clone(&image_registry),
             ));
@@ -1086,6 +1087,13 @@ impl WindowState {
         frame.dirty_regions = dirty_regions;
         frame.font_registry = font_registry;
         frame.image_registry = image_registry;
+
+        let layout_cache = text_system.layout_cache_snapshot();
+        diagnostics.text_caches.runtime_layout = CacheMetrics::new(
+            layout_cache.entries,
+            layout_cache.hits,
+            layout_cache.misses,
+        );
 
         self.schedule.clear();
 
@@ -2225,6 +2233,7 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
 
         assert!(output.ime_composition_rect.is_some());
+        assert!(output.diagnostics.text_caches.runtime_layout.misses > 0);
         assert!(matches!(
             output.frame.scene.commands()[0],
             sui_scene::SceneCommand::DrawShapedText(_)

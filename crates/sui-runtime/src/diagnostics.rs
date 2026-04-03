@@ -49,6 +49,7 @@ impl FramePhaseSample {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RenderDiagnostics {
     pub phase_timings: Vec<FramePhaseSample>,
+    pub text_caches: TextCacheDiagnostics,
 }
 
 impl RenderDiagnostics {
@@ -60,6 +61,43 @@ impl RenderDiagnostics {
     pub fn total_time_ms(&self) -> f64 {
         self.phase_timings.iter().map(|sample| sample.duration_ms).sum()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CacheMetrics {
+    pub entries: usize,
+    pub hits: usize,
+    pub misses: usize,
+}
+
+impl CacheMetrics {
+    pub const fn new(entries: usize, hits: usize, misses: usize) -> Self {
+        Self {
+            entries,
+            hits,
+            misses,
+        }
+    }
+
+    pub const fn requests(self) -> usize {
+        self.hits + self.misses
+    }
+
+    pub fn hit_rate(self) -> f64 {
+        let requests = self.requests();
+        if requests == 0 {
+            0.0
+        } else {
+            self.hits as f64 / requests as f64
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TextCacheDiagnostics {
+    pub runtime_layout: CacheMetrics,
+    pub renderer_layout: CacheMetrics,
+    pub renderer_glyph: CacheMetrics,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -147,6 +185,7 @@ pub struct WindowPerformanceSnapshot {
     pub frame_index: u64,
     pub total_time_ms: f64,
     pub phase_timings: Vec<FramePhaseSample>,
+    pub text_caches: TextCacheDiagnostics,
     pub scene: SceneStatistics,
 }
 
@@ -155,6 +194,7 @@ impl WindowPerformanceSnapshot {
         window_id: WindowId,
         frame_index: u64,
         phase_timings: Vec<FramePhaseSample>,
+        text_caches: TextCacheDiagnostics,
         scene: SceneStatistics,
     ) -> Self {
         let total_time_ms = phase_timings.iter().map(|sample| sample.duration_ms).sum();
@@ -164,6 +204,7 @@ impl WindowPerformanceSnapshot {
             frame_index,
             total_time_ms,
             phase_timings,
+            text_caches,
             scene,
         }
     }

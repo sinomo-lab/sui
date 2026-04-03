@@ -19,8 +19,8 @@ use sui_scene::{
     Brush, RegisteredImage, RegisteredImageFormat, SceneCommand, SceneFrame, StrokeStyle,
 };
 use sui_text::{
-    FontRegistry, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout, TextRun, TextStyle,
-    TextSystem,
+    FontRegistry, ResolvedTextFace, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout,
+    TextLayoutCacheSnapshot, TextRun, TextStyle, TextSystem,
 };
 use ttf_parser::GlyphId;
 use winit::window::Window;
@@ -43,6 +43,34 @@ impl Default for RendererCapabilities {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RendererInterop {
     pub raw_wgpu_enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GlyphCacheSnapshot {
+    pub entries: usize,
+    pub hits: usize,
+    pub misses: usize,
+}
+
+impl GlyphCacheSnapshot {
+    pub const fn requests(self) -> usize {
+        self.hits + self.misses
+    }
+
+    pub fn hit_rate(self) -> f64 {
+        let requests = self.requests();
+        if requests == 0 {
+            0.0
+        } else {
+            self.hits as f64 / requests as f64
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RendererTextCacheSnapshot {
+    pub layout: TextLayoutCacheSnapshot,
+    pub glyph: GlyphCacheSnapshot,
 }
 
 pub struct WgpuRenderer {
@@ -165,6 +193,13 @@ impl WgpuRenderer {
 
     pub fn last_frame(&self, window_id: WindowId) -> Option<&SceneFrame> {
         self.last_frames.get(&window_id)
+    }
+
+    pub fn text_cache_snapshot(&self) -> RendererTextCacheSnapshot {
+        self.text_engine
+            .as_ref()
+            .map(TextEngine::cache_snapshot)
+            .unwrap_or_default()
     }
 
     pub fn capture_rgba(&self, window_id: WindowId) -> Result<RgbaImage> {
@@ -1050,6 +1085,65 @@ struct MeshVertex {
     color: Color,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct GlyphFaceCacheKey {
+    data_ptr: usize,
+    data_len: usize,
+    face_index: u32,
+}
+
+impl GlyphFaceCacheKey {
+    fn new(face: &ResolvedTextFace) -> Self {
+        let data = face.shared_bytes();
+        Self {
+            data_ptr: data.as_ptr() as usize,
+            data_len: data.len(),
+            face_index: face.face_index(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct GlyphCacheKey {
+    face: GlyphFaceCacheKey,
+    glyph_id: u16,
+    feather_width_bits: u32,
+}
+
+impl GlyphCacheKey {
+    fn new(face: GlyphFaceCacheKey, glyph_id: u16, feather_width: f32) -> Self {
+        Self {
+            face,
+            glyph_id,
+            feather_width_bits: feather_width.to_bits(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CachedGlyphVertex {
+    position: Point,
+    coverage: f32,
+}
+
+#[derive(Debug, Default, Clone)]
+struct CachedGlyphMesh {
+    vertices: Vec<CachedGlyphVertex>,
+    indices: Vec<u32>,
+}
+
+impl CachedGlyphMesh {
+    fn push_vertex(&mut self, position: Point, coverage: f32) -> u32 {
+        let index = self.vertices.len() as u32;
+        self.vertices.push(CachedGlyphVertex { position, coverage });
+        index
+    }
+
+    fn add_triangle(&mut self, a: u32, b: u32, c: u32) {
+        self.indices.extend_from_slice(&[a, b, c]);
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 struct SceneMesh {
     vertices: Vec<MeshVertex>,
@@ -1358,6 +1452,9 @@ impl SceneRasterState {
 #[derive(Debug, Default)]
 struct TextEngine {
     system: TextSystem,
+    glyph_cache: HashMap<GlyphCacheKey, CachedGlyphMesh>,
+    glyph_cache_hits: usize,
+    glyph_cache_misses: usize,
 }
 
 impl TextEngine {
@@ -1432,6 +1529,7 @@ impl TextEngine {
         let face = rustybuzz::Face::from_slice(layout.face().bytes(), layout.face().face_index())
             .ok_or_else(|| Error::new("failed to parse shaped text face data"))?;
         let layout_rect = Rect::from_origin_size(origin, layout.box_size());
+        let face_key = GlyphFaceCacheKey::new(layout.face());
 
         for glyph in layout.glyphs() {
             if let Some(bounds) = glyph
@@ -1457,15 +1555,16 @@ impl TextEngine {
                 translated_glyph.bounds = Some(bounds.translate(origin.to_vector()));
             }
 
-            tessellate_glyph(
-                vertices,
-                &face,
-                &translated_glyph,
-                layout.style().color,
-                state.current_transform,
-                viewport,
-                feather_width,
-            )?;
+            if let Some(mesh) = self.cached_glyph_mesh(face_key, &face, glyph.glyph_id, feather_width)? {
+                append_cached_glyph_mesh(
+                    vertices,
+                    mesh,
+                    &translated_glyph,
+                    layout.style().color,
+                    state.current_transform,
+                    viewport,
+                );
+            }
         }
 
         Ok(())
@@ -1474,36 +1573,162 @@ impl TextEngine {
     fn shape_text_run(&self, text: &TextRun, font_registry: &FontRegistry) -> Result<TextLayout> {
         self.system.shape_text_run(text, font_registry)
     }
+
+    fn cached_glyph_mesh(
+        &mut self,
+        face_key: GlyphFaceCacheKey,
+        face: &rustybuzz::Face<'_>,
+        glyph_id: u16,
+        feather_width: f32,
+    ) -> Result<Option<&CachedGlyphMesh>> {
+        let key = GlyphCacheKey::new(face_key, glyph_id, feather_width);
+        if self.glyph_cache.contains_key(&key) {
+            self.glyph_cache_hits += 1;
+            return Ok(self.glyph_cache.get(&key));
+        }
+
+        self.glyph_cache_misses += 1;
+        let Some(mesh) = build_cached_glyph_mesh(face, glyph_id, feather_width)? else {
+            return Ok(None);
+        };
+
+        self.glyph_cache.insert(key.clone(), mesh);
+        Ok(self.glyph_cache.get(&key))
+    }
+
+    #[cfg(test)]
+    fn glyph_cache_stats(&self) -> (usize, usize, usize) {
+        (
+            self.glyph_cache.len(),
+            self.glyph_cache_hits,
+            self.glyph_cache_misses,
+        )
+    }
+
+    fn cache_snapshot(&self) -> RendererTextCacheSnapshot {
+        RendererTextCacheSnapshot {
+            layout: self.system.layout_cache_snapshot(),
+            glyph: GlyphCacheSnapshot {
+                entries: self.glyph_cache.len(),
+                hits: self.glyph_cache_hits,
+                misses: self.glyph_cache_misses,
+            },
+        }
+    }
 }
 
-fn tessellate_glyph(
-    vertices: &mut Vec<Vertex>,
+fn build_cached_glyph_mesh(
     face: &rustybuzz::Face<'_>,
-    glyph: &SceneShapedGlyph,
-    color: Color,
-    transform: Transform,
-    viewport: Size,
+    glyph_id: u16,
     feather_width: f32,
-) -> Result<()> {
+) -> Result<Option<CachedGlyphMesh>> {
     let mut path_builder = LyonPath::builder();
     {
-        let mut outline = GlyphOutlineBuilder {
+        let mut outline = CachedGlyphOutlineBuilder {
             builder: &mut path_builder,
-            transform,
-            glyph: glyph.clone(),
             contour_open: false,
         };
-        if face
-            .outline_glyph(GlyphId(glyph.glyph_id), &mut outline)
-            .is_none()
-        {
-            return Ok(());
+        if face.outline_glyph(GlyphId(glyph_id), &mut outline).is_none() {
+            return Ok(None);
         }
         outline.finish();
     }
 
     let path = path_builder.build();
-    append_filled_aa_lyon_path(vertices, &path, color, viewport, feather_width)
+    Ok(Some(build_local_glyph_mesh(&path, feather_width)?))
+}
+
+fn build_local_glyph_mesh(path: &LyonPath, feather_width: f32) -> Result<CachedGlyphMesh> {
+    let mut mesh = CachedGlyphMesh::default();
+    let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
+    let mut builder = BuffersBuilder::new(&mut buffers, TessellatedPoint);
+    let mut tessellator = FillTessellator::new();
+    tessellator
+        .tessellate_path(path, &FillOptions::default(), &mut builder)
+        .map_err(|error| Error::new(format!("failed to tessellate filled path: {error}")))?;
+
+    for position in &buffers.vertices {
+        mesh.push_vertex(Point::new(position[0], position[1]), 1.0);
+    }
+    mesh.indices.extend(buffers.indices.iter().copied());
+
+    if feather_width > 0.0 {
+        let contours = flatten_path_contours(path);
+        for contour in &contours {
+            if !contour.closed || contour.points.len() < 3 {
+                continue;
+            }
+
+            let mut aa_points = build_closed_aa_points(&contour.points);
+            if !normals_point_to_transparent_side(contour, &contours, feather_width) {
+                for point in &mut aa_points {
+                    point.normal = negate_vector(point.normal);
+                }
+            }
+
+            append_local_fill_fringe_for_contour(&mut mesh, &aa_points, feather_width);
+        }
+    }
+
+    Ok(mesh)
+}
+
+fn append_local_fill_fringe_for_contour(
+    mesh: &mut CachedGlyphMesh,
+    contour: &[AaPathPoint],
+    feather_width: f32,
+) {
+    if contour.len() < 3 || feather_width <= 0.0 {
+        return;
+    }
+
+    let base_index = mesh.vertices.len() as u32;
+    let mut previous_inner = 0;
+    let mut previous_outer = 0;
+
+    for (index, point) in contour.iter().enumerate() {
+        let delta = scale_vector(point.normal, 0.5 * feather_width);
+        let inner = mesh.push_vertex(offset_point(point.position, negate_vector(delta)), 1.0);
+        let outer = mesh.push_vertex(offset_point(point.position, delta), 0.0);
+
+        if index > 0 {
+            mesh.add_triangle(inner, previous_inner, previous_outer);
+            mesh.add_triangle(previous_outer, outer, inner);
+        }
+
+        previous_inner = inner;
+        previous_outer = outer;
+    }
+
+    let first_inner = base_index;
+    let first_outer = base_index + 1;
+    mesh.add_triangle(first_inner, previous_inner, previous_outer);
+    mesh.add_triangle(previous_outer, first_outer, first_inner);
+}
+
+fn append_cached_glyph_mesh(
+    vertices: &mut Vec<Vertex>,
+    mesh: &CachedGlyphMesh,
+    glyph: &SceneShapedGlyph,
+    color: Color,
+    transform: Transform,
+    viewport: Size,
+) {
+    let color = color.clamped();
+    for index in &mesh.indices {
+        let vertex = mesh.vertices[*index as usize];
+        let positioned = Point::new(
+            glyph.origin_x + (vertex.position.x * glyph.scale),
+            glyph.origin_y + (vertex.position.y * glyph.scale),
+        );
+        let transformed = transform.transform_point(positioned);
+        let ndc = to_ndc(transformed.x, transformed.y, viewport);
+        vertices.push(Vertex {
+            position: ndc,
+            color: color.with_alpha(color.alpha * vertex.coverage).to_array(),
+            tex_coords: [0.0, 0.0],
+        });
+    }
 }
 
 fn append_painted_path(
@@ -1692,26 +1917,20 @@ fn append_indexed_triangles(
     }
 }
 
-struct GlyphOutlineBuilder<'a, B>
+struct CachedGlyphOutlineBuilder<'a, B>
 where
     B: LyonPathBuilder,
 {
     builder: &'a mut B,
-    transform: Transform,
-    glyph: SceneShapedGlyph,
     contour_open: bool,
 }
 
-impl<'a, B> GlyphOutlineBuilder<'a, B>
+impl<'a, B> CachedGlyphOutlineBuilder<'a, B>
 where
     B: LyonPathBuilder,
 {
     fn point(&self, x: f32, y: f32) -> lyon_path::math::Point {
-        let scene = self.transform.transform_point(Point::new(
-            self.glyph.origin_x + (x * self.glyph.scale),
-            self.glyph.origin_y - (y * self.glyph.scale),
-        ));
-        point(scene.x, scene.y)
+        point(x, -y)
     }
 
     fn finish(&mut self) {
@@ -1722,7 +1941,7 @@ where
     }
 }
 
-impl<B> ttf_parser::OutlineBuilder for GlyphOutlineBuilder<'_, B>
+impl<B> ttf_parser::OutlineBuilder for CachedGlyphOutlineBuilder<'_, B>
 where
     B: LyonPathBuilder,
 {
@@ -2937,6 +3156,41 @@ mod tests {
         .unwrap();
 
         assert!(!vertices.is_empty());
+    }
+
+    #[test]
+    fn text_engine_reuses_cached_glyph_meshes_across_repeated_builds() {
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(4.0, 6.0, 120.0, 28.0),
+            text: "abc".to_string(),
+            style: TextStyle::new(Color::WHITE),
+        }));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(12),
+            viewport: Size::new(160.0, 60.0),
+            surface_size: Size::new(160.0, 60.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let first = build_vertices(&frame, &mut text_engine).unwrap();
+        assert!(!first.is_empty());
+        assert_eq!(text_engine.glyph_cache_stats(), (3, 0, 3));
+
+        let second = build_vertices(&frame, &mut text_engine).unwrap();
+        assert_eq!(first.len(), second.len());
+        assert!(first.iter().zip(&second).all(|(left, right)| {
+            left.position == right.position
+                && left.color == right.color
+                && left.tex_coords == right.tex_coords
+        }));
+        assert_eq!(text_engine.glyph_cache_stats(), (3, 3, 3));
     }
 
     #[test]

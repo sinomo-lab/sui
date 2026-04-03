@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     ops::Range,
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use sui_core::{Color, Error, FontHandle, Point, Rect, Result, Size, Vector};
@@ -305,9 +305,93 @@ pub struct ShapedText {
     pub layout: TextLayout,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FaceCacheKey {
+    data_ptr: usize,
+    data_len: usize,
+    face_index: u32,
+}
+
+impl FaceCacheKey {
+    fn new(face: &ResolvedTextFace) -> Self {
+        let data = face.shared_bytes();
+        Self {
+            data_ptr: data.as_ptr() as usize,
+            data_len: data.len(),
+            face_index: face.face_index(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SizeCacheKey {
+    width_bits: u32,
+    height_bits: u32,
+}
+
+impl From<Size> for SizeCacheKey {
+    fn from(value: Size) -> Self {
+        Self {
+            width_bits: value.width.to_bits(),
+            height_bits: value.height.to_bits(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TextLayoutCacheKey {
+    text: String,
+    face: FaceCacheKey,
+    box_size: Option<SizeCacheKey>,
+    font_size_bits: u32,
+    line_height_bits: u32,
+}
+
+impl TextLayoutCacheKey {
+    fn new(text: &str, style: &TextStyle, box_size: Option<Size>, face: &ResolvedTextFace) -> Self {
+        Self {
+            text: text.to_string(),
+            face: FaceCacheKey::new(face),
+            box_size: box_size.map(SizeCacheKey::from),
+            font_size_bits: style.font_size.to_bits(),
+            line_height_bits: style.line_height.to_bits(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct TextLayoutCache {
+    entries: HashMap<TextLayoutCacheKey, TextLayout>,
+    hits: usize,
+    misses: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TextLayoutCacheSnapshot {
+    pub entries: usize,
+    pub hits: usize,
+    pub misses: usize,
+}
+
+impl TextLayoutCacheSnapshot {
+    pub const fn requests(self) -> usize {
+        self.hits + self.misses
+    }
+
+    pub fn hit_rate(self) -> f64 {
+        let requests = self.requests();
+        if requests == 0 {
+            0.0
+        } else {
+            self.hits as f64 / requests as f64
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct TextSystem {
     state: OnceLock<std::result::Result<TextSystemState, String>>,
+    layout_cache: Mutex<TextLayoutCache>,
 }
 
 impl TextSystem {
@@ -349,6 +433,18 @@ impl TextSystem {
         )
     }
 
+    pub fn layout_cache_snapshot(&self) -> TextLayoutCacheSnapshot {
+        self.layout_cache
+            .lock()
+            .ok()
+            .map(|cache| TextLayoutCacheSnapshot {
+                entries: cache.entries.len(),
+                hits: cache.hits,
+                misses: cache.misses,
+            })
+            .unwrap_or_default()
+    }
+
     fn shape_text_internal(
         &self,
         text: String,
@@ -357,6 +453,26 @@ impl TextSystem {
         font_registry: &FontRegistry,
     ) -> Result<TextLayout> {
         let face = self.resolve_face(style.font, font_registry)?;
+        let cache_key = TextLayoutCacheKey::new(&text, &style, box_size, &face);
+
+        if let Some(mut cached) = self.cached_layout(&cache_key)? {
+            cached.style = style;
+            return Ok(cached);
+        }
+
+        let mut layout = self.shape_text_uncached(text, style.clone(), box_size, face)?;
+        layout.style = style;
+        self.store_layout(cache_key, layout.clone())?;
+        Ok(layout)
+    }
+
+    fn shape_text_uncached(
+        &self,
+        text: String,
+        style: TextStyle,
+        box_size: Option<Size>,
+        face: ResolvedTextFace,
+    ) -> Result<TextLayout> {
         let rustybuzz_face = rustybuzz::Face::from_slice(face.bytes(), face.face_index())
             .ok_or_else(|| Error::new("failed to parse text face data"))?;
 
@@ -497,6 +613,30 @@ impl TextSystem {
             glyphs,
             lines,
         })
+    }
+
+    fn cached_layout(&self, key: &TextLayoutCacheKey) -> Result<Option<TextLayout>> {
+        let mut cache = self
+            .layout_cache
+            .lock()
+            .map_err(|_| Error::new("text layout cache lock was poisoned"))?;
+        let cached = cache.entries.get(key).cloned();
+        if let Some(layout) = cached {
+            cache.hits += 1;
+            return Ok(Some(layout));
+        }
+
+        cache.misses += 1;
+        Ok(None)
+    }
+
+    fn store_layout(&self, key: TextLayoutCacheKey, layout: TextLayout) -> Result<()> {
+        let mut cache = self
+            .layout_cache
+            .lock()
+            .map_err(|_| Error::new("text layout cache lock was poisoned"))?;
+        cache.entries.insert(key, layout);
+        Ok(())
     }
 
     fn resolve_face(
@@ -676,7 +816,7 @@ fn build_cluster_geometries(line: &LineSpec, line_origin_x: f32) -> Vec<TextClus
 
 #[cfg(test)]
 mod tests {
-    use super::{FontRegistry, RegisteredFont, TextStyle, TextSystem};
+    use super::{FontRegistry, RegisteredFont, TextLayoutCacheSnapshot, TextStyle, TextSystem};
     use sui_core::{Color, FontHandle, Size};
 
     fn load_test_font() -> RegisteredFont {
@@ -749,5 +889,42 @@ mod tests {
             layout.face().shared_bytes(),
             fonts.get(handle).unwrap().shared_bytes()
         );
+    }
+
+    #[test]
+    fn text_system_reuses_cached_layouts_across_color_changes() {
+        let system = TextSystem::new();
+        let layout = system
+            .shape_text(
+                "cached",
+                Size::new(120.0, 24.0),
+                TextStyle::new(Color::WHITE),
+                &FontRegistry::new(),
+            )
+            .unwrap();
+
+        assert_eq!(system.layout_cache_snapshot(), TextLayoutCacheSnapshot {
+            entries: 1,
+            hits: 0,
+            misses: 1,
+        });
+        assert_eq!(layout.style().color, Color::WHITE);
+
+        let second = system
+            .shape_text(
+                "cached",
+                Size::new(120.0, 24.0),
+                TextStyle::new(Color::rgba(0.2, 0.7, 0.9, 1.0)),
+                &FontRegistry::new(),
+            )
+            .unwrap();
+
+        assert_eq!(system.layout_cache_snapshot(), TextLayoutCacheSnapshot {
+            entries: 1,
+            hits: 1,
+            misses: 1,
+        });
+        assert_eq!(second.style().color, Color::rgba(0.2, 0.7, 0.9, 1.0));
+        assert_eq!(second.glyphs(), layout.glyphs());
     }
 }

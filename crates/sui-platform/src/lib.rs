@@ -5,8 +5,10 @@ mod desktop;
 mod headless;
 
 use sui_core::WindowId;
+use sui_render_wgpu::WgpuRenderer;
 use sui_runtime::{
-	FramePhase, FramePhaseSample, RenderOutput, SceneStatistics, WindowPerformanceSnapshot,
+	CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, SceneStatistics,
+	TextCacheDiagnostics, WindowPerformanceSnapshot,
 	clear_window_performance_snapshot, clear_window_performance_snapshots,
 	publish_window_performance_snapshot,
 };
@@ -29,9 +31,11 @@ pub(crate) fn publish_frame_performance(
 	frame_index: u64,
 	event_time_ms: f64,
 	output: &RenderOutput,
+	renderer: &WgpuRenderer,
 	renderer_time_ms: f64,
 ) {
 	let mut phase_timings = Vec::new();
+	let renderer_text_cache = renderer.text_cache_snapshot();
 
 	if event_time_ms > 0.0 {
 		phase_timings.push(FramePhaseSample::new(FramePhase::Event, event_time_ms));
@@ -44,6 +48,19 @@ pub(crate) fn publish_frame_performance(
 		window_id,
 		frame_index,
 		phase_timings,
+		TextCacheDiagnostics {
+			runtime_layout: output.diagnostics.text_caches.runtime_layout,
+			renderer_layout: CacheMetrics::new(
+				renderer_text_cache.layout.entries,
+				renderer_text_cache.layout.hits,
+				renderer_text_cache.layout.misses,
+			),
+			renderer_glyph: CacheMetrics::new(
+				renderer_text_cache.glyph.entries,
+				renderer_text_cache.glyph.hits,
+				renderer_text_cache.glyph.misses,
+			),
+		},
 		SceneStatistics::from_frame(&output.frame),
 	));
 }

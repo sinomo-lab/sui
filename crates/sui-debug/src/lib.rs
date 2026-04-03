@@ -6,7 +6,7 @@ use sui_core::{Color, DirtyRegion, Rect, SemanticsValue, Size, WidgetId, WindowI
 use sui_layout::Alignment;
 use sui_platform::AccessibilitySnapshot;
 use sui_runtime::{
-    FocusState, FrameSchedule, SceneStatistics, Widget, WidgetGraphSnapshot,
+    CacheMetrics, FocusState, FrameSchedule, SceneStatistics, Widget, WidgetGraphSnapshot,
     WidgetNodeSnapshot, WindowPerformanceSnapshot,
 };
 use sui_scene::{SceneCommand, SceneFrame};
@@ -700,6 +700,20 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
                 snapshot.scene.transform_command_count.to_string(),
             ),
         ]))
+        .with_child(debug_key_values([
+            DebugKeyValue::new(
+                "Runtime text layout cache",
+                format_cache_metrics(snapshot.text_caches.runtime_layout),
+            ),
+            DebugKeyValue::new(
+                "Renderer text layout cache",
+                format_cache_metrics(snapshot.text_caches.renderer_layout),
+            ),
+            DebugKeyValue::new(
+                "Renderer glyph cache",
+                format_cache_metrics(snapshot.text_caches.renderer_glyph),
+            ),
+        ]))
         .with_child(
             SizedBox::new().height(176.0).with_child(
                 Table::new("Frame phase timings")
@@ -728,4 +742,19 @@ fn duration_tone(duration_ms: f64) -> DebugTone {
 
 fn format_duration_ms(duration_ms: f64) -> String {
     format!("{duration_ms:.2} ms")
+}
+
+fn format_cache_metrics(metrics: CacheMetrics) -> String {
+    let requests = metrics.requests();
+    if requests == 0 {
+        format!("{} entries, no lookups yet", metrics.entries)
+    } else {
+        format!(
+            "{} entries, {:.1}% hit rate ({} hits / {} lookups)",
+            metrics.entries,
+            metrics.hit_rate() * 100.0,
+            metrics.hits,
+            requests,
+        )
+    }
 }

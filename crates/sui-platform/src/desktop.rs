@@ -313,6 +313,7 @@ impl<'a> DesktopApp<'a> {
                     frame_index,
                     pending_event_time_ms,
                     &output,
+                    self.renderer,
                     renderer_time_ms,
                 );
             }
