@@ -35,8 +35,25 @@ impl DesktopPlatform {
         Self::default()
     }
 
+    pub fn with_feather_width(mut self, feather_width: f32) -> Self {
+        self.set_feather_width(feather_width);
+        self
+    }
+
     pub fn renderer(&self) -> &WgpuRenderer {
         &self.renderer
+    }
+
+    pub fn feather_width(&self) -> f32 {
+        self.renderer.feather_width()
+    }
+
+    pub fn set_feather_width(&mut self, feather_width: f32) {
+        self.renderer.set_feather_width(feather_width);
+    }
+
+    pub fn renderer_mut(&mut self) -> &mut WgpuRenderer {
+        &mut self.renderer
     }
 
     pub fn run(&mut self, runtime: &mut Runtime) -> Result<Vec<PlatformWindow>> {

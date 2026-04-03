@@ -191,9 +191,20 @@ impl Theme {
     }
 }
 
-#[derive(Default)]
 pub struct Application {
     inner: RuntimeApplication,
+    #[cfg(feature = "wgpu")]
+    feather_width: f32,
+}
+
+impl Default for Application {
+    fn default() -> Self {
+        Self {
+            inner: RuntimeApplication::default(),
+            #[cfg(feature = "wgpu")]
+            feather_width: WgpuRenderer::new().feather_width(),
+        }
+    }
 }
 
 impl Application {
@@ -204,6 +215,17 @@ impl Application {
     pub fn window(mut self, window: WindowBuilder) -> Self {
         self.inner = self.inner.window(window);
         self
+    }
+
+    #[cfg(feature = "wgpu")]
+    pub fn with_feather_width(mut self, feather_width: f32) -> Self {
+        self.feather_width = feather_width.max(0.0);
+        self
+    }
+
+    #[cfg(feature = "wgpu")]
+    pub fn feather_width(&self) -> f32 {
+        self.feather_width
     }
 
     pub fn register_font(&mut self, handle: FontHandle, font: RegisteredFont) -> Result<()> {
@@ -233,8 +255,9 @@ impl Application {
 
     #[cfg(feature = "desktop")]
     pub fn run(self) -> Result<()> {
+        let feather_width = self.feather_width;
         let mut runtime = self.build()?;
-        let mut platform = DesktopPlatform::new();
+        let mut platform = DesktopPlatform::new().with_feather_width(feather_width);
         let _ = platform.run(&mut runtime)?;
         Ok(())
     }
@@ -283,6 +306,8 @@ mod tests {
     use std::sync::Arc;
 
     use super::{DefaultTheme, Theme};
+    #[cfg(feature = "wgpu")]
+    use crate::Application;
 
     #[derive(Debug, PartialEq)]
     struct CustomWidgetTheme {
@@ -343,5 +368,15 @@ mod tests {
             }
         );
         assert!(!theme.has_extension::<CustomWidgetTheme>());
+    }
+
+    #[cfg(feature = "wgpu")]
+    #[test]
+    fn application_feather_width_is_configurable() {
+        let app = Application::new().with_feather_width(2.25);
+        let clamped = Application::new().with_feather_width(-1.0);
+
+        assert_eq!(app.feather_width(), 2.25);
+        assert_eq!(clamped.feather_width(), 0.0);
     }
 }

@@ -8,7 +8,8 @@ use lyon_path::{
     math::point,
 };
 use lyon_tessellation::{
-    BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor, VertexBuffers,
+    BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor,
+    StrokeOptions, StrokeTessellator, StrokeVertex, StrokeVertexConstructor, VertexBuffers,
 };
 use sui_core::{
     Color, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result, Size,
@@ -46,6 +47,7 @@ pub struct RendererInterop {
 
 pub struct WgpuRenderer {
     instance: wgpu::Instance,
+    feather_width: f32,
     frames_rendered: usize,
     capabilities: RendererCapabilities,
     last_frames: HashMap<WindowId, SceneFrame>,
@@ -100,12 +102,25 @@ impl RgbaImage {
 }
 
 const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
-const AA_FEATHERING: f32 = 1.0;
+const DEFAULT_FEATHER_WIDTH: f32 = 1.0;
 const AA_FLATTEN_TOLERANCE: f32 = 0.1;
 
 impl WgpuRenderer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_feather_width(mut self, feather_width: f32) -> Self {
+        self.set_feather_width(feather_width);
+        self
+    }
+
+    pub fn feather_width(&self) -> f32 {
+        self.feather_width
+    }
+
+    pub fn set_feather_width(&mut self, feather_width: f32) {
+        self.feather_width = feather_width.max(0.0);
     }
 
     pub fn register_window(&mut self, window_id: WindowId, window: Arc<Window>) -> Result<()> {
@@ -472,9 +487,10 @@ impl WgpuRenderer {
         target_format: wgpu::TextureFormat,
         view: &wgpu::TextureView,
     ) -> Result<()> {
+        let feather_width = self.feather_width;
         let draw_ops = {
             let text_engine = self.text_engine()?;
-            build_draw_ops(frame, text_engine)?
+            build_draw_ops(frame, text_engine, feather_width)?
         };
         let mut encoder = {
             let shared = self
@@ -776,6 +792,7 @@ impl Default for WgpuRenderer {
     fn default() -> Self {
         Self {
             instance: wgpu::Instance::default(),
+            feather_width: DEFAULT_FEATHER_WIDTH,
             frames_rendered: 0,
             capabilities: RendererCapabilities::default(),
             last_frames: HashMap::new(),
@@ -791,6 +808,7 @@ impl Default for WgpuRenderer {
 impl fmt::Debug for WgpuRenderer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WgpuRenderer")
+            .field("feather_width", &self.feather_width)
             .field("frames_rendered", &self.frames_rendered)
             .field("capabilities", &self.capabilities)
             .field("last_frame_count", &self.last_frames.len())
@@ -1019,6 +1037,13 @@ impl FillVertexConstructor<[f32; 2]> for TessellatedPoint {
     }
 }
 
+impl StrokeVertexConstructor<[f32; 2]> for TessellatedPoint {
+    fn new_vertex(&mut self, vertex: StrokeVertex<'_, '_>) -> [f32; 2] {
+        let position = vertex.position();
+        [position.x, position.y]
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct MeshVertex {
     position: Point,
@@ -1063,7 +1088,7 @@ enum FeatheredPathType {
 
 #[cfg(test)]
 fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<Vertex>> {
-    let draw_ops = build_draw_ops(frame, text_engine)?;
+    let draw_ops = build_draw_ops(frame, text_engine, DEFAULT_FEATHER_WIDTH)?;
     let mut vertices = Vec::new();
     for op in draw_ops {
         vertices.extend(op.vertices);
@@ -1084,7 +1109,11 @@ struct DrawOp {
     clip_paths: Vec<Vec<Vertex>>,
 }
 
-fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<DrawOp>> {
+fn build_draw_ops(
+    frame: &SceneFrame,
+    text_engine: &mut TextEngine,
+    feather_width: f32,
+) -> Result<Vec<DrawOp>> {
     let viewport = frame.viewport;
     let mut draw_ops = Vec::new();
     let mut state = SceneRasterState::default();
@@ -1104,7 +1133,7 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
             SceneCommand::FillRect { rect, brush } => {
                 let Brush::Solid(color) = brush;
                 let mut vertices = Vec::new();
-                append_painted_rect(&mut vertices, &state, *rect, *color, viewport);
+                append_painted_rect(&mut vertices, &state, *rect, *color, viewport, feather_width);
                 push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::StrokeRect {
@@ -1114,13 +1143,21 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
             } => {
                 let Brush::Solid(color) = brush;
                 let mut vertices = Vec::new();
-                append_stroke_rect(&mut vertices, &state, *rect, *color, *stroke, viewport);
+                append_stroke_rect(
+                    &mut vertices,
+                    &state,
+                    *rect,
+                    *color,
+                    *stroke,
+                    viewport,
+                    feather_width,
+                );
                 push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::FillPath { path, brush } => {
                 let Brush::Solid(color) = brush;
                 let mut vertices = Vec::new();
-                append_painted_path(&mut vertices, &state, path, *color, viewport)?;
+                append_painted_path(&mut vertices, &state, path, *color, viewport, feather_width)?;
                 push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::StrokePath {
@@ -1130,7 +1167,15 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
             } => {
                 let Brush::Solid(color) = brush;
                 let mut vertices = Vec::new();
-                append_stroked_path(&mut vertices, &state, path, *color, *stroke, viewport)?;
+                append_stroked_path(
+                    &mut vertices,
+                    &state,
+                    path,
+                    *color,
+                    *stroke,
+                    viewport,
+                    feather_width,
+                )?;
                 push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::DrawText(text) => {
@@ -1141,12 +1186,19 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                     text,
                     frame.font_registry.as_ref(),
                     viewport,
+                    feather_width,
                 )?;
                 push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::DrawShapedText(text) => {
                 let mut vertices = Vec::new();
-                text_engine.append_shaped_text(&mut vertices, &state, text, viewport)?;
+                text_engine.append_shaped_text(
+                    &mut vertices,
+                    &state,
+                    text,
+                    viewport,
+                    feather_width,
+                )?;
                 push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
             SceneCommand::DrawImage { rect, source } => {
@@ -1194,6 +1246,7 @@ fn build_draw_ops(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
                     },
                     frame.font_registry.as_ref(),
                     viewport,
+                    feather_width,
                 )?;
                 push_draw_op(&mut draw_ops, DrawOpKind::Solid, vertices, &state);
             }
@@ -1312,6 +1365,7 @@ impl TextEngine {
         text: &TextRun,
         font_registry: &FontRegistry,
         viewport: Size,
+        feather_width: f32,
     ) -> Result<()> {
         if text.rect.is_empty() || text.text.is_empty() || viewport.is_empty() {
             return Ok(());
@@ -1324,6 +1378,7 @@ impl TextEngine {
             Point::new(text.rect.x(), text.rect.y()),
             &layout,
             viewport,
+            feather_width,
         )
     }
 
@@ -1333,12 +1388,13 @@ impl TextEngine {
         state: &SceneRasterState,
         text: &ShapedText,
         viewport: Size,
+        feather_width: f32,
     ) -> Result<()> {
         if viewport.is_empty() {
             return Ok(());
         }
 
-        self.append_text_layout(vertices, state, text.origin, &text.layout, viewport)
+        self.append_text_layout(vertices, state, text.origin, &text.layout, viewport, feather_width)
     }
 
     fn append_text_layout(
@@ -1348,6 +1404,7 @@ impl TextEngine {
         origin: Point,
         layout: &TextLayout,
         viewport: Size,
+        feather_width: f32,
     ) -> Result<()> {
         if layout.measurement().width <= 0.0 || layout.measurement().height <= 0.0 {
             return Ok(());
@@ -1393,6 +1450,7 @@ impl TextEngine {
                 layout.style().color,
                 state.current_transform,
                 viewport,
+                feather_width,
             )?;
         }
 
@@ -1411,6 +1469,7 @@ fn tessellate_glyph(
     color: Color,
     transform: Transform,
     viewport: Size,
+    feather_width: f32,
 ) -> Result<()> {
     let mut path_builder = LyonPath::builder();
     {
@@ -1430,7 +1489,7 @@ fn tessellate_glyph(
     }
 
     let path = path_builder.build();
-    append_filled_aa_lyon_path(vertices, &path, color, viewport)
+    append_filled_aa_lyon_path(vertices, &path, color, viewport, feather_width)
 }
 
 fn append_painted_path(
@@ -1439,6 +1498,7 @@ fn append_painted_path(
     path: &ScenePath,
     color: Color,
     viewport: Size,
+    feather_width: f32,
 ) -> Result<()> {
     if path.is_empty() || viewport.is_empty() {
         return Ok(());
@@ -1449,7 +1509,7 @@ fn append_painted_path(
     }
 
     let lyon_path = build_lyon_path(path, state.current_transform);
-    append_filled_aa_lyon_path(vertices, &lyon_path, color, viewport)
+    append_filled_aa_lyon_path(vertices, &lyon_path, color, viewport, feather_width)
 }
 
 fn append_stroked_path(
@@ -1459,6 +1519,7 @@ fn append_stroked_path(
     color: Color,
     stroke: StrokeStyle,
     viewport: Size,
+    feather_width: f32,
 ) -> Result<()> {
     if path.is_empty() || viewport.is_empty() {
         return Ok(());
@@ -1467,8 +1528,8 @@ fn append_stroked_path(
     let line_width = stroke.width.max(1.0);
     if state
         .visible_rect(path.bounds().inflate(
-            (line_width + AA_FEATHERING) * 0.5,
-            (line_width + AA_FEATHERING) * 0.5,
+            (line_width + feather_width) * 0.5,
+            (line_width + feather_width) * 0.5,
         ))
         .is_none()
     {
@@ -1476,7 +1537,7 @@ fn append_stroked_path(
     }
 
     let lyon_path = build_lyon_path(path, state.current_transform);
-    append_feathered_stroke(vertices, &lyon_path, color, line_width, viewport);
+    append_feathered_stroke(vertices, &lyon_path, color, line_width, viewport, feather_width);
     Ok(())
 }
 
@@ -1485,9 +1546,10 @@ fn append_filled_aa_lyon_path(
     path: &LyonPath,
     color: Color,
     viewport: Size,
+    feather_width: f32,
 ) -> Result<()> {
     tessellate_filled_lyon_path(vertices, path, color, viewport)?;
-    append_fill_fringe(vertices, path, color, viewport);
+    append_fill_fringe(vertices, path, color, viewport, feather_width);
     Ok(())
 }
 
@@ -1775,6 +1837,7 @@ fn append_stroke_rect(
     color: Color,
     stroke: StrokeStyle,
     viewport: Size,
+    feather_width: f32,
 ) {
     if rect.is_empty() {
         return;
@@ -1801,10 +1864,10 @@ fn append_stroke_rect(
         (rect.height() - (thickness * 2.0)).max(0.0),
     );
 
-    append_painted_rect(vertices, state, top, color, viewport);
-    append_painted_rect(vertices, state, bottom, color, viewport);
-    append_painted_rect(vertices, state, left, color, viewport);
-    append_painted_rect(vertices, state, right, color, viewport);
+    append_painted_rect(vertices, state, top, color, viewport, feather_width);
+    append_painted_rect(vertices, state, bottom, color, viewport, feather_width);
+    append_painted_rect(vertices, state, left, color, viewport, feather_width);
+    append_painted_rect(vertices, state, right, color, viewport, feather_width);
 }
 
 fn append_painted_rect(
@@ -1813,14 +1876,25 @@ fn append_painted_rect(
     rect: Rect,
     color: Color,
     viewport: Size,
+    feather_width: f32,
 ) {
     if let Some(visible) = state.visible_rect(rect) {
-        append_feathered_rect(vertices, visible, color, viewport);
+        append_feathered_rect(vertices, visible, color, viewport, feather_width);
     }
 }
 
-fn append_feathered_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, viewport: Size) {
+fn append_feathered_rect(
+    vertices: &mut Vec<Vertex>,
+    rect: Rect,
+    color: Color,
+    viewport: Size,
+    feather_width: f32,
+) {
     append_rect(vertices, rect, color, viewport);
+
+    if feather_width <= 0.0 {
+        return;
+    }
 
     let points = [
         Point::new(rect.x(), rect.y()),
@@ -1829,7 +1903,7 @@ fn append_feathered_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, v
         Point::new(rect.x(), rect.max_y()),
     ];
     let aa_points = build_closed_aa_points(&points);
-    append_fill_fringe_for_contour(vertices, &aa_points, color, viewport);
+    append_fill_fringe_for_contour(vertices, &aa_points, color, viewport, feather_width);
 }
 
 fn append_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, viewport: Size) {
@@ -1934,7 +2008,17 @@ fn normalize_surface_size(width: u32, height: u32) -> (u32, u32) {
     (width.max(1), height.max(1))
 }
 
-fn append_fill_fringe(vertices: &mut Vec<Vertex>, path: &LyonPath, color: Color, viewport: Size) {
+fn append_fill_fringe(
+    vertices: &mut Vec<Vertex>,
+    path: &LyonPath,
+    color: Color,
+    viewport: Size,
+    feather_width: f32,
+) {
+    if feather_width <= 0.0 {
+        return;
+    }
+
     let contours = flatten_path_contours(path);
 
     for contour in &contours {
@@ -1943,13 +2027,13 @@ fn append_fill_fringe(vertices: &mut Vec<Vertex>, path: &LyonPath, color: Color,
         }
 
         let mut aa_points = build_closed_aa_points(&contour.points);
-        if !normals_point_to_transparent_side(contour, &contours) {
+        if !normals_point_to_transparent_side(contour, &contours, feather_width) {
             for point in &mut aa_points {
                 point.normal = negate_vector(point.normal);
             }
         }
 
-        append_fill_fringe_for_contour(vertices, &aa_points, color, viewport);
+        append_fill_fringe_for_contour(vertices, &aa_points, color, viewport, feather_width);
     }
 }
 
@@ -1958,8 +2042,9 @@ fn append_fill_fringe_for_contour(
     contour: &[AaPathPoint],
     color: Color,
     viewport: Size,
+    feather_width: f32,
 ) {
-    if contour.len() < 3 || viewport.is_empty() {
+    if contour.len() < 3 || viewport.is_empty() || feather_width <= 0.0 {
         return;
     }
 
@@ -1969,7 +2054,7 @@ fn append_fill_fringe_for_contour(
     let mut previous_outer = 0;
 
     for (index, point) in contour.iter().enumerate() {
-        let delta = scale_vector(point.normal, 0.5 * AA_FEATHERING);
+        let delta = scale_vector(point.normal, 0.5 * feather_width);
         let inner = mesh.colored_vertex(offset_point(point.position, negate_vector(delta)), color);
         let outer = mesh.colored_vertex(offset_point(point.position, delta), transparent);
 
@@ -1996,7 +2081,13 @@ fn append_feathered_stroke(
     color: Color,
     line_width: f32,
     viewport: Size,
+    feather_width: f32,
 ) {
+    if feather_width <= 0.0 {
+        append_hard_stroked_lyon_path(vertices, path, color, line_width, viewport);
+        return;
+    }
+
     let contours = flatten_path_contours(path);
 
     for contour in contours {
@@ -2012,7 +2103,37 @@ fn append_feathered_stroke(
             build_open_aa_points(&contour.points)
         };
 
-        append_stroke_contour(vertices, &aa_points, path_type, color, line_width, viewport);
+        append_stroke_contour(
+            vertices,
+            &aa_points,
+            path_type,
+            color,
+            line_width,
+            viewport,
+            feather_width,
+        );
+    }
+}
+
+fn append_hard_stroked_lyon_path(
+    vertices: &mut Vec<Vertex>,
+    path: &LyonPath,
+    color: Color,
+    line_width: f32,
+    viewport: Size,
+) {
+    let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
+    let mut builder = BuffersBuilder::new(&mut buffers, TessellatedPoint);
+    let mut tessellator = StrokeTessellator::new();
+    if tessellator
+        .tessellate_path(
+            path,
+            &StrokeOptions::default().with_line_width(line_width),
+            &mut builder,
+        )
+        .is_ok()
+    {
+        append_indexed_triangles(vertices, &buffers, color, viewport);
     }
 }
 
@@ -2023,7 +2144,12 @@ fn append_stroke_contour(
     color: Color,
     line_width: f32,
     viewport: Size,
+    feather_width: f32,
 ) {
+    if feather_width <= 0.0 {
+        return;
+    }
+
     let n = path.len() as u32;
     if n < 2 || viewport.is_empty() || line_width <= 0.0 {
         return;
@@ -2032,20 +2158,20 @@ fn append_stroke_contour(
     let transparent = Color::TRANSPARENT;
     let mut mesh = SceneMesh::default();
 
-    let thin_line = line_width <= 0.9 * AA_FEATHERING;
+    let thin_line = line_width <= 0.9 * feather_width;
     if thin_line {
-        let opacity = (line_width / AA_FEATHERING).clamp(0.0, 1.0);
+        let opacity = (line_width / feather_width).clamp(0.0, 1.0);
         let mid_color = multiply_color_alpha(color, opacity);
         let mut previous_base = 0;
 
         for (index, point) in path.iter().enumerate() {
             let outer = mesh.colored_vertex(
-                offset_point(point.position, scale_vector(point.normal, AA_FEATHERING)),
+                offset_point(point.position, scale_vector(point.normal, feather_width)),
                 transparent,
             );
             let middle = mesh.colored_vertex(point.position, mid_color);
             let inner = mesh.colored_vertex(
-                offset_point(point.position, scale_vector(point.normal, -AA_FEATHERING)),
+                offset_point(point.position, scale_vector(point.normal, -feather_width)),
                 transparent,
             );
 
@@ -2066,8 +2192,8 @@ fn append_stroke_contour(
             mesh.add_triangle(previous_base + 2, 1, 2);
         }
     } else {
-        let inner_radius = 0.5 * (line_width - AA_FEATHERING);
-        let outer_radius = 0.5 * (line_width + AA_FEATHERING);
+        let inner_radius = 0.5 * (line_width - feather_width);
+        let outer_radius = 0.5 * (line_width + feather_width);
 
         match path_type {
             FeatheredPathType::Closed => {
@@ -2112,7 +2238,7 @@ fn append_stroke_contour(
             }
             FeatheredPathType::Open => {
                 let first = path[0];
-                let first_extrude = scale_vector(vector_rot90(first.normal), AA_FEATHERING);
+                let first_extrude = scale_vector(vector_rot90(first.normal), feather_width);
                 let first_base = mesh.colored_vertex(
                     offset_point(
                         offset_point(first.position, scale_vector(first.normal, outer_radius)),
@@ -2168,7 +2294,7 @@ fn append_stroke_contour(
                 }
 
                 let last = path[path.len() - 1];
-                let last_extrude = scale_vector(vector_rot90(last.normal), -AA_FEATHERING);
+                let last_extrude = scale_vector(vector_rot90(last.normal), -feather_width);
                 let last_base = mesh.colored_vertex(
                     offset_point(
                         offset_point(last.position, scale_vector(last.normal, outer_radius)),
@@ -2370,6 +2496,7 @@ fn build_closed_aa_points(points: &[Point]) -> Vec<AaPathPoint> {
 fn normals_point_to_transparent_side(
     contour: &FlattenedContour,
     contours: &[FlattenedContour],
+    feather_width: f32,
 ) -> bool {
     for window in contour.points.windows(2) {
         let edge = window[1] - window[0];
@@ -2383,7 +2510,7 @@ fn normals_point_to_transparent_side(
             (window[0].y + window[1].y) * 0.5,
         );
         let normal = vector_rot90(vector_normalize(edge));
-        let sample = offset_point(midpoint, scale_vector(normal, -0.25 * AA_FEATHERING));
+        let sample = offset_point(midpoint, scale_vector(normal, -0.25 * feather_width));
         return point_in_filled_path(sample, contours);
     }
 
@@ -2542,7 +2669,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DrawOpKind, TextEngine, build_draw_ops, build_vertices, to_ndc};
+    use super::{
+        DEFAULT_FEATHER_WIDTH, DrawOpKind, TextEngine, WgpuRenderer, build_draw_ops,
+        build_vertices, to_ndc,
+    };
     use std::sync::Arc;
     use sui_core::{Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WindowId};
     use sui_scene::{
@@ -2717,6 +2847,7 @@ mod tests {
                 image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
+            DEFAULT_FEATHER_WIDTH,
         )
         .unwrap();
 
@@ -2878,6 +3009,7 @@ mod tests {
                 image_registry: Arc::new(images),
             },
             &mut text_engine,
+            DEFAULT_FEATHER_WIDTH,
         )
         .unwrap();
 
@@ -2905,6 +3037,7 @@ mod tests {
                 image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
+            DEFAULT_FEATHER_WIDTH,
         )
         .unwrap_err();
 
@@ -2913,5 +3046,16 @@ mod tests {
                 .to_string()
                 .contains("image handle 88 is not registered")
         );
+    }
+
+    #[test]
+    fn renderer_feather_width_is_configurable() {
+        let mut renderer = WgpuRenderer::new().with_feather_width(2.5);
+
+        assert_eq!(renderer.feather_width(), 2.5);
+
+        renderer.set_feather_width(-3.0);
+
+        assert_eq!(renderer.feather_width(), 0.0);
     }
 }

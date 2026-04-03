@@ -28,6 +28,11 @@ impl HeadlessPlatform {
         Self::default()
     }
 
+    pub fn with_feather_width(mut self, feather_width: f32) -> Self {
+        self.set_feather_width(feather_width);
+        self
+    }
+
     pub fn run(&mut self, runtime: &mut Runtime) -> Result<Vec<PlatformWindow>> {
         while self.pump(runtime)? {}
 
@@ -107,6 +112,18 @@ impl HeadlessPlatform {
 
     pub fn renderer(&self) -> &WgpuRenderer {
         &self.renderer
+    }
+
+    pub fn feather_width(&self) -> f32 {
+        self.renderer.feather_width()
+    }
+
+    pub fn set_feather_width(&mut self, feather_width: f32) {
+        self.renderer.set_feather_width(feather_width);
+    }
+
+    pub fn renderer_mut(&mut self) -> &mut WgpuRenderer {
+        &mut self.renderer
     }
 
     pub fn capture_rgba(&self, window_id: WindowId) -> Result<RgbaImage> {
@@ -434,5 +451,16 @@ mod tests {
         assert_eq!(counters.borrow().paints, 3);
 
         Ok(())
+    }
+
+    #[test]
+    fn feather_width_is_configurable_without_renderer_access() {
+        let mut platform = HeadlessPlatform::new().with_feather_width(2.5);
+
+        assert_eq!(platform.feather_width(), 2.5);
+
+        platform.set_feather_width(-4.0);
+
+        assert_eq!(platform.feather_width(), 0.0);
     }
 }
