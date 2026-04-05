@@ -71,9 +71,11 @@ impl DebugKeyValue {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneDebugSummary {
     pub viewport: Size,
+    pub dirty_region_count: usize,
     pub dirty_regions: Vec<DirtyRegion>,
     pub command_count: usize,
     pub command_breakdown: Vec<(String, usize)>,
+    pub detail_collected: bool,
 }
 
 impl From<&SceneFrame> for SceneDebugSummary {
@@ -92,9 +94,11 @@ impl From<&SceneFrame> for SceneDebugSummary {
 
         Self {
             viewport: frame.viewport,
+            dirty_region_count: frame.dirty_regions.len(),
             dirty_regions: frame.dirty_regions.clone(),
             command_count,
             command_breakdown,
+            detail_collected: true,
         }
     }
 }
@@ -103,9 +107,11 @@ impl From<&SceneStatistics> for SceneDebugSummary {
     fn from(scene: &SceneStatistics) -> Self {
         Self {
             viewport: scene.viewport,
+            dirty_region_count: scene.dirty_region_count,
             dirty_regions: scene.dirty_regions.clone(),
             command_count: scene.command_count,
             command_breakdown: scene.command_breakdown.clone(),
+            detail_collected: scene.detail_mode.is_detailed(),
         }
     }
 }
@@ -291,9 +297,9 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
         DebugMetric::new("Viewport", format_size(scene.viewport))
             .detail("Logical render target size")
             .tone(DebugTone::Info),
-        DebugMetric::new("Dirty regions", scene.dirty_regions.len().to_string())
+        DebugMetric::new("Dirty regions", scene.dirty_region_count.to_string())
             .detail("Invalidated rectangles queued into the scene")
-            .tone(if scene.dirty_regions.is_empty() {
+            .tone(if scene.dirty_region_count == 0 {
                 DebugTone::Success
             } else {
                 DebugTone::Warning
@@ -303,7 +309,12 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
             .tone(DebugTone::Neutral),
     ]);
 
-    let dirty_region_entries = if scene.dirty_regions.is_empty() {
+    let dirty_region_entries = if !scene.detail_collected {
+        vec![DebugKeyValue::new(
+            "Region state",
+            "Detailed dirty-region rectangles were not collected for this frame",
+        )]
+    } else if scene.dirty_regions.is_empty() {
         vec![DebugKeyValue::new(
             "Region state",
             "No dirty regions in the captured frame",
@@ -327,6 +338,11 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
         .iter()
         .map(|(kind, count)| TableRow::new([kind.clone(), count.to_string()]))
         .collect::<Vec<_>>();
+    let rows = if rows.is_empty() && !scene.detail_collected {
+        vec![TableRow::new(["detail disabled".to_string(), "n/a".to_string()])]
+    } else {
+        rows
+    };
 
     Stack::vertical()
         .spacing(10.0)
@@ -713,7 +729,8 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         .with_child(metrics)
         .with_child(debug_key_values([
             DebugKeyValue::new("Frame index", snapshot.frame_index.to_string()),
-            DebugKeyValue::new("Dirty regions", snapshot.scene.dirty_regions.len().to_string()),
+            DebugKeyValue::new("Dirty regions", snapshot.scene.dirty_region_count.to_string()),
+            DebugKeyValue::new("Scene detail", snapshot.scene.detail_mode.label()),
             DebugKeyValue::new("Text commands", snapshot.scene.text_command_count.to_string()),
             DebugKeyValue::new("Image commands", snapshot.scene.image_command_count.to_string()),
             DebugKeyValue::new("Clip commands", snapshot.scene.clip_command_count.to_string()),

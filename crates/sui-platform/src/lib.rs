@@ -4,12 +4,14 @@ mod accessibility;
 mod desktop;
 mod headless;
 
+use std::time::Instant;
+
 use sui_core::WindowId;
 use sui_render_wgpu::WgpuRenderer;
 use sui_runtime::{
 	CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, SceneStatistics,
 	RendererSubmissionDiagnostics, TextCacheDiagnostics, WindowPerformanceSnapshot,
-	window_performance_snapshot,
+	window_performance_text_caches, window_scene_statistics_detail_mode,
 	clear_window_performance_snapshot, clear_window_performance_snapshots,
 	publish_window_performance_snapshot,
 };
@@ -35,7 +37,8 @@ pub(crate) fn publish_frame_performance(
 	renderer: &WgpuRenderer,
 	renderer_time_ms: f64,
 ) {
-	let mut phase_timings = Vec::new();
+	let diagnostics_started = Instant::now();
+	let mut phase_timings = Vec::with_capacity(output.diagnostics.phase_timings.len() + 2);
 	let renderer_text_cache = renderer.text_cache_snapshot();
 	let text_caches = TextCacheDiagnostics {
 		runtime_layout: output.diagnostics.text_caches.runtime_layout,
@@ -50,8 +53,8 @@ pub(crate) fn publish_frame_performance(
 			renderer_text_cache.glyph.misses,
 		),
 	};
-	let text_cache_deltas = window_performance_snapshot(window_id)
-		.map(|previous| text_caches.delta_from(&previous.text_caches))
+	let text_cache_deltas = window_performance_text_caches(window_id)
+		.map(|previous| text_caches.delta_from(&previous))
 		.unwrap_or_else(|| text_caches.delta_from(&TextCacheDiagnostics::default()));
 	let renderer_stats = renderer.last_frame_stats(window_id).unwrap_or_default();
 
@@ -61,6 +64,10 @@ pub(crate) fn publish_frame_performance(
 
 	phase_timings.extend(output.diagnostics.phase_timings.iter().copied());
 	phase_timings.push(FramePhaseSample::new(FramePhase::Renderer, renderer_time_ms));
+	phase_timings.push(FramePhaseSample::new(
+		FramePhase::Diagnostics,
+		diagnostics_started.elapsed().as_secs_f64() * 1000.0,
+	));
 
 	publish_window_performance_snapshot(WindowPerformanceSnapshot::new(
 		window_id,
@@ -73,6 +80,9 @@ pub(crate) fn publish_frame_performance(
 		),
 		text_caches,
 		text_cache_deltas,
-		SceneStatistics::from_frame(&output.frame),
+		SceneStatistics::from_frame_with_mode(
+			&output.frame,
+			window_scene_statistics_detail_mode(window_id),
+		),
 	));
 }

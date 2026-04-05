@@ -15,6 +15,7 @@ pub enum FramePhase {
     Paint,
     Semantics,
     Renderer,
+    Diagnostics,
 }
 
 impl FramePhase {
@@ -26,6 +27,7 @@ impl FramePhase {
             Self::Paint => "Paint",
             Self::Semantics => "Semantics",
             Self::Renderer => "Renderer",
+            Self::Diagnostics => "Diagnostics",
         }
     }
 }
@@ -140,7 +142,7 @@ impl CacheMetricsDelta {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TextCacheDiagnostics {
     pub runtime_layout: CacheMetrics,
     pub renderer_layout: CacheMetrics,
@@ -166,16 +168,51 @@ impl TextCacheDiagnostics {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TextCacheDeltaDiagnostics {
     pub runtime_layout: CacheMetricsDelta,
     pub renderer_layout: CacheMetricsDelta,
     pub renderer_glyph: CacheMetricsDelta,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SceneStatisticsDetailMode {
+    #[default]
+    Lightweight,
+    Detailed,
+}
+
+impl SceneStatisticsDetailMode {
+    pub const fn is_detailed(self) -> bool {
+        matches!(self, Self::Detailed)
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Lightweight => "lightweight",
+            Self::Detailed => "detailed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct WindowPerformanceSummary {
+    pub window_id: WindowId,
+    pub frame_index: u64,
+    pub total_time_ms: f64,
+    pub slowest_phase: Option<FramePhaseSample>,
+    pub renderer_submission: RendererSubmissionDiagnostics,
+    pub text_caches: TextCacheDiagnostics,
+    pub dirty_region_count: usize,
+    pub dirty_coverage: f32,
+    pub command_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneStatistics {
+    pub detail_mode: SceneStatisticsDetailMode,
     pub viewport: Size,
+    pub dirty_region_count: usize,
     pub dirty_regions: Vec<DirtyRegion>,
     pub dirty_area: f32,
     pub dirty_coverage: f32,
@@ -192,7 +229,15 @@ pub struct SceneStatistics {
 
 impl SceneStatistics {
     pub fn from_frame(frame: &SceneFrame) -> Self {
-        let mut command_breakdown = BTreeMap::<String, usize>::new();
+        Self::from_frame_with_mode(frame, SceneStatisticsDetailMode::Lightweight)
+    }
+
+    pub fn from_frame_with_mode(
+        frame: &SceneFrame,
+        detail_mode: SceneStatisticsDetailMode,
+    ) -> Self {
+        let detailed = detail_mode.is_detailed();
+        let mut command_breakdown = detailed.then(BTreeMap::<String, usize>::new);
         let mut text_command_count = 0usize;
         let mut image_command_count = 0usize;
         let mut clip_command_count = 0usize;
@@ -202,9 +247,9 @@ impl SceneStatistics {
 
         frame.scene.visit_commands(&mut |command| {
             command_count += 1;
-            *command_breakdown
-                .entry(command_kind(command).to_string())
-                .or_default() += 1;
+            if let Some(breakdown) = &mut command_breakdown {
+                *breakdown.entry(command_kind(command).to_string()).or_default() += 1;
+            }
 
             match command {
                 SceneCommand::DrawText(_)
@@ -234,11 +279,13 @@ impl SceneStatistics {
             }
         });
 
-        let mut layer_update_breakdown = BTreeMap::<String, usize>::new();
-        for update in &frame.layer_updates {
-            *layer_update_breakdown
-                .entry(layer_update_kind(update.kind).to_string())
-                .or_default() += 1;
+        let mut layer_update_breakdown = detailed.then(BTreeMap::<String, usize>::new);
+        if let Some(breakdown) = &mut layer_update_breakdown {
+            for update in &frame.layer_updates {
+                *breakdown
+                    .entry(layer_update_kind(update.kind).to_string())
+                    .or_default() += 1;
+            }
         }
 
         let dirty_area: f32 = frame
@@ -252,17 +299,28 @@ impl SceneStatistics {
         } else {
             0.0
         };
+        let dirty_region_count = frame.dirty_regions.len();
 
         Self {
+            detail_mode,
             viewport: frame.viewport,
-            dirty_regions: frame.dirty_regions.clone(),
+            dirty_region_count,
+            dirty_regions: if detailed {
+                frame.dirty_regions.clone()
+            } else {
+                Vec::new()
+            },
             dirty_area,
             dirty_coverage,
             command_count,
-            command_breakdown: command_breakdown.into_iter().collect(),
+            command_breakdown: command_breakdown
+                .map(|breakdown| breakdown.into_iter().collect())
+                .unwrap_or_default(),
             layer_count,
             layer_update_count: frame.layer_updates.len(),
-            layer_update_breakdown: layer_update_breakdown.into_iter().collect(),
+            layer_update_breakdown: layer_update_breakdown
+                .map(|breakdown| breakdown.into_iter().collect())
+                .unwrap_or_default(),
             text_command_count,
             image_command_count,
             clip_command_count,
@@ -312,10 +370,27 @@ impl WindowPerformanceSnapshot {
             left.duration_ms.total_cmp(&right.duration_ms)
         })
     }
+
+    pub fn summary(&self) -> WindowPerformanceSummary {
+        WindowPerformanceSummary {
+            window_id: self.window_id,
+            frame_index: self.frame_index,
+            total_time_ms: self.total_time_ms,
+            slowest_phase: self.slowest_phase(),
+            renderer_submission: self.renderer_submission,
+            text_caches: self.text_caches,
+            dirty_region_count: self.scene.dirty_region_count,
+            dirty_coverage: self.scene.dirty_coverage,
+            command_count: self.scene.command_count,
+        }
+    }
 }
 
 static WINDOW_PERFORMANCE_SNAPSHOTS: OnceLock<RwLock<HashMap<WindowId, WindowPerformanceSnapshot>>> =
     OnceLock::new();
+static WINDOW_SCENE_STATISTICS_DETAIL_MODES: OnceLock<
+    RwLock<HashMap<WindowId, SceneStatisticsDetailMode>>,
+> = OnceLock::new();
 
 pub fn publish_window_performance_snapshot(snapshot: WindowPerformanceSnapshot) {
     let mut store = window_performance_store()
@@ -331,11 +406,51 @@ pub fn window_performance_snapshot(window_id: WindowId) -> Option<WindowPerforma
     store.get(&window_id).cloned()
 }
 
+pub fn window_performance_summary(window_id: WindowId) -> Option<WindowPerformanceSummary> {
+    let store = window_performance_store()
+        .read()
+        .expect("window performance snapshot store lock should not be poisoned");
+    store.get(&window_id).map(WindowPerformanceSnapshot::summary)
+}
+
+pub fn window_performance_text_caches(window_id: WindowId) -> Option<TextCacheDiagnostics> {
+    let store = window_performance_store()
+        .read()
+        .expect("window performance snapshot store lock should not be poisoned");
+    store.get(&window_id).map(|snapshot| snapshot.text_caches)
+}
+
+pub fn set_window_scene_statistics_detail_mode(
+    window_id: WindowId,
+    detail_mode: SceneStatisticsDetailMode,
+) {
+    let mut store = window_scene_statistics_detail_mode_store()
+        .write()
+        .expect("scene statistics detail mode store lock should not be poisoned");
+    if detail_mode == SceneStatisticsDetailMode::Lightweight {
+        store.remove(&window_id);
+    } else {
+        store.insert(window_id, detail_mode);
+    }
+}
+
+pub fn window_scene_statistics_detail_mode(window_id: WindowId) -> SceneStatisticsDetailMode {
+    let store = window_scene_statistics_detail_mode_store()
+        .read()
+        .expect("scene statistics detail mode store lock should not be poisoned");
+    store.get(&window_id).copied().unwrap_or_default()
+}
+
 pub fn clear_window_performance_snapshot(window_id: WindowId) {
     let mut store = window_performance_store()
         .write()
         .expect("window performance snapshot store lock should not be poisoned");
     store.remove(&window_id);
+
+    let mut detail_modes = window_scene_statistics_detail_mode_store()
+        .write()
+        .expect("scene statistics detail mode store lock should not be poisoned");
+    detail_modes.remove(&window_id);
 }
 
 pub fn clear_window_performance_snapshots() {
@@ -343,10 +458,20 @@ pub fn clear_window_performance_snapshots() {
         .write()
         .expect("window performance snapshot store lock should not be poisoned");
     store.clear();
+
+    let mut detail_modes = window_scene_statistics_detail_mode_store()
+        .write()
+        .expect("scene statistics detail mode store lock should not be poisoned");
+    detail_modes.clear();
 }
 
 fn window_performance_store() -> &'static RwLock<HashMap<WindowId, WindowPerformanceSnapshot>> {
     WINDOW_PERFORMANCE_SNAPSHOTS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn window_scene_statistics_detail_mode_store(
+) -> &'static RwLock<HashMap<WindowId, SceneStatisticsDetailMode>> {
+    WINDOW_SCENE_STATISTICS_DETAIL_MODES.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 fn command_kind(command: &SceneCommand) -> &'static str {
@@ -384,10 +509,12 @@ fn layer_update_kind(kind: SceneLayerUpdateKind) -> &'static str {
 mod tests {
     use super::{
         CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics,
-        SceneStatistics, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
-        WindowPerformanceSnapshot,
+        SceneStatistics, SceneStatisticsDetailMode, TextCacheDeltaDiagnostics,
+        TextCacheDiagnostics, WindowPerformanceSnapshot, clear_window_performance_snapshot,
+        set_window_scene_statistics_detail_mode, window_scene_statistics_detail_mode,
     };
-    use sui_core::{Size, WindowId};
+    use sui_core::{Color, DirtyRegion, InvalidationKind, Rect, Size, WindowId};
+    use sui_scene::{SceneCommand, SceneFrame};
 
     #[test]
     fn text_cache_deltas_are_derived_from_prior_counters() {
@@ -425,7 +552,9 @@ mod tests {
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
             SceneStatistics {
+                detail_mode: SceneStatisticsDetailMode::Lightweight,
                 viewport: Size::new(640.0, 360.0),
+                dirty_region_count: 0,
                 dirty_regions: Vec::new(),
                 dirty_area: 0.0,
                 dirty_coverage: 0.0,
@@ -445,5 +574,59 @@ mod tests {
         assert_eq!(snapshot.renderer_submission.draw_count, 9);
         assert_eq!(snapshot.renderer_submission.uploaded_vertex_bytes, 4096);
         assert_eq!(snapshot.total_time_ms, 2.5);
+    }
+
+    #[test]
+    fn scene_statistics_skip_expensive_breakdowns_in_lightweight_mode() {
+        let mut frame = SceneFrame::new(WindowId::new(8), Size::new(320.0, 180.0));
+        frame.dirty_regions.push(DirtyRegion::new(
+            Rect::new(0.0, 0.0, 64.0, 48.0),
+            InvalidationKind::Paint,
+        ));
+        frame.scene.push(SceneCommand::Clear(Color::BLACK));
+        frame.scene.push(SceneCommand::Label {
+            rect: Rect::new(12.0, 12.0, 96.0, 24.0),
+            text: "frame".to_string(),
+            color: Color::WHITE,
+        });
+
+        let lightweight = SceneStatistics::from_frame(&frame);
+        assert_eq!(
+            lightweight.detail_mode,
+            SceneStatisticsDetailMode::Lightweight
+        );
+        assert_eq!(lightweight.dirty_region_count, 1);
+        assert_eq!(lightweight.command_count, 2);
+        assert!(lightweight.dirty_regions.is_empty());
+        assert!(lightweight.command_breakdown.is_empty());
+
+        let detailed =
+            SceneStatistics::from_frame_with_mode(&frame, SceneStatisticsDetailMode::Detailed);
+        assert_eq!(detailed.detail_mode, SceneStatisticsDetailMode::Detailed);
+        assert_eq!(detailed.dirty_region_count, 1);
+        assert_eq!(detailed.dirty_regions.len(), 1);
+        assert!(detailed.command_breakdown.contains(&("Clear".to_string(), 1)));
+        assert!(detailed.command_breakdown.contains(&("Label".to_string(), 1)));
+    }
+
+    #[test]
+    fn scene_statistics_detail_mode_defaults_to_lightweight() {
+        let window_id = WindowId::new(77);
+        assert_eq!(
+            window_scene_statistics_detail_mode(window_id),
+            SceneStatisticsDetailMode::Lightweight
+        );
+
+        set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+        assert_eq!(
+            window_scene_statistics_detail_mode(window_id),
+            SceneStatisticsDetailMode::Detailed
+        );
+
+        clear_window_performance_snapshot(window_id);
+        assert_eq!(
+            window_scene_statistics_detail_mode(window_id),
+            SceneStatisticsDetailMode::Lightweight
+        );
     }
 }

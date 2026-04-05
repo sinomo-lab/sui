@@ -39,10 +39,13 @@ pub use sui_runtime::{
     Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta, EventCtx,
     EventPhase, FocusState, FramePhase, FramePhaseSample, FrameSchedule, MeasureCtx,
     PaintCtx, RenderDiagnostics, RenderOutput, RendererSubmissionDiagnostics, Runtime,
-    SceneStatistics, SemanticsCtx, SingleChild, TextCacheDeltaDiagnostics,
+    SceneStatistics, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
+    TextCacheDeltaDiagnostics,
     TextCacheDiagnostics, Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot,
     WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
-    WindowPerformanceSnapshot, window_performance_snapshot,
+    WindowPerformanceSnapshot, WindowPerformanceSummary,
+    set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    window_performance_summary, window_scene_statistics_detail_mode,
 };
 pub use sui_scene::{
     Brush, ImageRegistry, ImageSource, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand,

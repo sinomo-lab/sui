@@ -24,11 +24,13 @@ use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 pub use sui_core::DpiInfo;
 pub use diagnostics::{
     CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, RenderDiagnostics,
-    RendererSubmissionDiagnostics, SceneStatistics, TextCacheDeltaDiagnostics,
-    TextCacheDiagnostics,
+    RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
+    TextCacheDeltaDiagnostics, TextCacheDiagnostics,
     WindowPerformanceSnapshot, clear_window_performance_snapshot,
     clear_window_performance_snapshots, publish_window_performance_snapshot,
-    window_performance_snapshot,
+    set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    window_performance_summary, window_performance_text_caches,
+    window_scene_statistics_detail_mode, WindowPerformanceSummary,
 };
 pub use widget::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx,
