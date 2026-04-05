@@ -20,6 +20,9 @@ pub use visual_artifacts::write_visual_artifacts;
 pub const WINDOW_TITLE: &str = "SUI Widget Book";
 pub const WINDOW_DESCRIPTION: &str =
     "Development gallery for common built-in widgets in sui-widgets";
+pub const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
+pub const BUTTON_GRID_ROWS: usize = 8;
+pub const BUTTON_GRID_COLUMNS: usize = 8;
 pub const NAME_INPUT_LABEL: &str = "Name";
 pub const TEXT_AREA_LABEL: &str = "Notes";
 pub const SUBSCRIBE_LABEL: &str = "Subscribe to product updates";
@@ -90,13 +93,15 @@ pub struct WidgetBookState {
     pub dialog_apply_count: usize,
 }
 
-struct WidgetBookRoot {
-    gallery: SingleChild,
+pub struct LivePerformanceRoot {
+    content: SingleChild,
     performance_overlay: SingleChild,
     performance_display: Rc<RefCell<LivePerformanceDisplay>>,
+    window_title: String,
+    window_description: String,
 }
 
-impl WidgetBookRoot {
+impl LivePerformanceRoot {
     const OVERLAY_MARGIN: Insets = Insets {
         left: 0.0,
         top: 18.0,
@@ -104,14 +109,23 @@ impl WidgetBookRoot {
         bottom: 0.0,
     };
 
-    fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
+    pub fn new<Content>(
+        window_title: impl Into<String>,
+        window_description: impl Into<String>,
+        content: Content,
+    ) -> Self
+    where
+        Content: Widget + 'static,
+    {
         let performance_display = Rc::new(RefCell::new(LivePerformanceDisplay::default()));
         Self {
-            gallery: SingleChild::new(build_widget_book(state)),
+            content: SingleChild::new(content),
             performance_overlay: SingleChild::new(LivePerformancePanel::with_display(
                 Rc::clone(&performance_display),
             )),
             performance_display,
+            window_title: window_title.into(),
+            window_description: window_description.into(),
         }
     }
 
@@ -172,7 +186,11 @@ pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> App
     application.window(
         WindowBuilder::new()
             .title(WINDOW_TITLE)
-            .root(WidgetBookRoot::new(state)),
+            .root(LivePerformanceRoot::new(
+                WINDOW_TITLE,
+                WINDOW_DESCRIPTION,
+                build_widget_book_gallery(state),
+            )),
     )
 }
 
@@ -180,7 +198,7 @@ pub fn run_desktop_widget_book() -> Result<()> {
     build_widget_book_application(default_widget_book_state()).run()
 }
 
-impl Widget for WidgetBookRoot {
+impl Widget for LivePerformanceRoot {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
             if let Some(summary) = window_performance_summary(ctx.window_id()) {
@@ -193,14 +211,14 @@ impl Widget for WidgetBookRoot {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let viewport = constraints.clamp(Size::new(1280.0, 720.0));
-        self.gallery.measure(ctx, Constraints::tight(viewport));
+        self.content.measure(ctx, Constraints::tight(viewport));
         self.performance_overlay
             .measure(ctx, Constraints::new(Size::ZERO, viewport));
         viewport
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        self.gallery
+        self.content
             .arrange(ctx, Rect::from_origin_size(bounds.origin, bounds.size));
 
         let overlay_size = self.performance_overlay.child().measured_size();
@@ -215,26 +233,26 @@ impl Widget for WidgetBookRoot {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         ctx.clear(Color::rgba(0.95, 0.968, 0.985, 1.0));
-        self.gallery.paint(ctx);
+        self.content.paint(ctx);
         self.performance_overlay.paint(ctx);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut root = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Window, ctx.bounds());
-        root.name = Some(WINDOW_TITLE.to_string());
-        root.description = Some(WINDOW_DESCRIPTION.to_string());
+        root.name = Some(self.window_title.clone());
+        root.description = Some(self.window_description.clone());
         ctx.push(root);
-        self.gallery.semantics(ctx);
+        self.content.semantics(ctx);
         self.performance_overlay.semantics(ctx);
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.gallery.visit_children(visitor);
+        self.content.visit_children(visitor);
         self.performance_overlay.visit_children(visitor);
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.gallery.visit_children_mut(visitor);
+        self.content.visit_children_mut(visitor);
         self.performance_overlay.visit_children_mut(visitor);
     }
 }
@@ -615,7 +633,7 @@ impl Widget for ThemePreviewShowcase {
     }
 }
 
-fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
+pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
     let initial_notes = snapshot.notes.clone();
@@ -1249,6 +1267,36 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                             ),
                     ),
             ))
+}
+
+pub fn build_button_grid_benchmark() -> impl Widget {
+    let mut grid = Stack::vertical().spacing(12.0).alignment(Alignment::Stretch);
+
+    for row in 0..BUTTON_GRID_ROWS {
+        let mut line = Stack::horizontal().spacing(12.0).alignment(Alignment::Start);
+        for column in 0..BUTTON_GRID_COLUMNS {
+            line = line.with_child(
+                Button::new(format!("Button {row}:{column}"))
+                    .min_width(112.0)
+                    .min_height(44.0),
+            );
+        }
+        grid = grid.with_child(line);
+    }
+
+    grid
+}
+
+pub fn build_button_grid_benchmark_application() -> Application {
+    Application::new().window(
+        WindowBuilder::new()
+            .title(BUTTON_GRID_BENCHMARK_TITLE)
+            .root(LivePerformanceRoot::new(
+                BUTTON_GRID_BENCHMARK_TITLE,
+                "Focused benchmark surface for measuring the initial frame cost of a 64-button grid.",
+                build_button_grid_benchmark(),
+            )),
+    )
 }
 
 fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
@@ -2188,8 +2236,8 @@ mod tests {
     use super::{
         DARK_PREVIEW_ACTION_LABEL, GALLERY_SCROLL_NAME, LivePerformanceDisplay,
         LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, PRIMARY_BUTTON_LABEL,
-        SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, THEME_PREVIEW_TOGGLE_LABEL, WidgetBookRoot,
-        WidgetBookState, build_widget_book_application, default_widget_book_state,
+        SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, THEME_PREVIEW_TOGGLE_LABEL, WidgetBookState,
+        build_widget_book_application, default_widget_book_state,
     };
     use super::visual_artifacts::{StoryCase, scroll_to_story_target};
     use sui::{
@@ -2538,12 +2586,7 @@ mod tests {
 
     #[test]
     fn widget_book_root_requests_paint_when_a_published_snapshot_arrives() {
-        let mut runtime = Application::new()
-            .window(
-                WindowBuilder::new()
-                    .title("Widget Book")
-                    .root(WidgetBookRoot::new(default_widget_book_state())),
-            )
+        let mut runtime = build_widget_book_application(default_widget_book_state())
             .build()
             .expect("runtime should build");
         let window_id = runtime.window_ids()[0];

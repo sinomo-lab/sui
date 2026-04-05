@@ -2573,9 +2573,20 @@ fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
     use super::{Dialog, Popover, ProgressBar, Spinner, TabBar};
-    use sui_core::{SemanticsRole, SemanticsValue, Size, WidgetId};
-    use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
+    use super::Tabs;
+    use sui_core::{
+        Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
+        PointerEvent, PointerEventKind, SemanticsNode, SemanticsRole, SemanticsValue, Size,
+        WidgetId,
+    };
+    use sui_layout::Constraints;
+    use sui_runtime::{
+        Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx,
+        Widget, WindowBuilder,
+    };
     use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneLayerDescriptor};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -2608,6 +2619,48 @@ mod tests {
         descriptor
     }
 
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+    struct PanelCounters {
+        measure: usize,
+        arrange: usize,
+        paint: usize,
+        semantics: usize,
+    }
+
+    struct SpyPanel {
+        name: &'static str,
+        counters: Rc<RefCell<PanelCounters>>,
+    }
+
+    impl SpyPanel {
+        fn new(name: &'static str, counters: Rc<RefCell<PanelCounters>>) -> Self {
+            Self { name, counters }
+        }
+    }
+
+    impl Widget for SpyPanel {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.counters.borrow_mut().measure += 1;
+            constraints.clamp(Size::new(180.0, 72.0))
+        }
+
+        fn arrange(&mut self, _ctx: &mut ArrangeCtx, _bounds: sui_core::Rect) {
+            self.counters.borrow_mut().arrange += 1;
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.counters.borrow_mut().paint += 1;
+            ctx.fill_bounds(Color::rgba(0.20, 0.28, 0.38, 1.0));
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            self.counters.borrow_mut().semantics += 1;
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::GenericContainer, ctx.bounds());
+            node.name = Some(self.name.to_string());
+            ctx.push(node);
+        }
+    }
+
     #[test]
     fn tab_bar_exposes_selected_value() {
         let output = render(
@@ -2625,6 +2678,52 @@ mod tests {
             tabs.value,
             Some(SemanticsValue::Text("Inspect".to_string()))
         );
+    }
+
+    #[test]
+    fn tabs_render_only_the_active_panel_after_switching() {
+        let first = Rc::new(RefCell::new(PanelCounters::default()));
+        let second = Rc::new(RefCell::new(PanelCounters::default()));
+        let (mut runtime, window_id) = build_runtime(
+            Tabs::new("Main tabs")
+                .tab("First", SpyPanel::new("first-panel", Rc::clone(&first)))
+                .tab("Second", SpyPanel::new("second-panel", Rc::clone(&second))),
+        );
+
+        let initial = runtime.render(window_id).unwrap();
+        assert_eq!(*first.borrow(), PanelCounters { measure: 1, arrange: 1, paint: 1, semantics: 1 });
+        assert_eq!(*second.borrow(), PanelCounters::default());
+        assert!(initial.semantics.iter().any(|node| node.name.as_deref() == Some("first-panel")));
+        assert!(!initial.semantics.iter().any(|node| node.name.as_deref() == Some("second-panel")));
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 20.0));
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down)).unwrap();
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, Point::new(48.0, 20.0));
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up)).unwrap();
+
+        let first_before_switch = *first.borrow();
+        let second_before_switch = *second.borrow();
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("ArrowRight", KeyState::Pressed)),
+            )
+            .unwrap();
+
+        let after_switch = runtime.render(window_id).unwrap();
+        assert_eq!(first.borrow().paint, first_before_switch.paint);
+        assert_eq!(first.borrow().semantics, first_before_switch.semantics);
+        assert_eq!(second.borrow().paint, second_before_switch.paint + 1);
+        assert_eq!(second.borrow().semantics, second_before_switch.semantics + 1);
+        assert!(!after_switch.semantics.iter().any(|node| node.name.as_deref() == Some("first-panel")));
+        assert!(after_switch.semantics.iter().any(|node| node.name.as_deref() == Some("second-panel")));
     }
 
     #[test]

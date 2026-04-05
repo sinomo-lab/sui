@@ -13,10 +13,10 @@ use std::{
 };
 
 use sui::{
-    Alignment, Application, Button, Error, Event, ImeEvent, Modifiers, Point,
+    Error, Event, ImeEvent, Modifiers, Point,
     PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result,
-    ScrollDelta, SemanticsNode, SemanticsRole, SemanticsValue, Size, Stack, Vector,
-    WindowBuilder, WindowEvent, WindowId, window_performance_snapshot, WgpuRenderer,
+    ScrollDelta, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WindowEvent,
+    WindowId, window_performance_snapshot, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, RendererSubmissionDiagnostics,
@@ -24,7 +24,10 @@ use sui_runtime::{
     clear_window_performance_snapshots, publish_window_performance_snapshot,
     window_performance_text_caches, window_scene_statistics_detail_mode,
 };
-use sui_widget_book::{WidgetBookState, build_widget_book_application};
+use sui_widget_book::{
+    BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, BUTTON_GRID_BENCHMARK_TITLE, WidgetBookState,
+    build_button_grid_benchmark_application, build_widget_book_application,
+};
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
@@ -39,9 +42,6 @@ use winit::{
 
 const DEFAULT_WINDOW_SIZE: Size = Size::new(1280.0, 720.0);
 const REDRAW_FLUSH_LIMIT: usize = 256;
-const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
-const BUTTON_GRID_ROWS: usize = 8;
-const BUTTON_GRID_COLUMNS: usize = 8;
 
 static DESKTOP_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1090,28 +1090,6 @@ fn text_input_value(snapshot: &DesktopWindowSnapshot, name: &str) -> String {
     }
 }
 
-fn build_button_grid_benchmark_application() -> Application {
-    let mut grid = Stack::vertical().spacing(12.0).alignment(Alignment::Stretch);
-
-    for row in 0..BUTTON_GRID_ROWS {
-        let mut line = Stack::horizontal().spacing(12.0).alignment(Alignment::Stretch);
-        for column in 0..BUTTON_GRID_COLUMNS {
-            line = line.with_child(
-                Button::new(format!("Button {row}:{column}"))
-                    .min_width(112.0)
-                    .min_height(44.0),
-            );
-        }
-        grid = grid.with_child(line);
-    }
-
-    Application::new().window(
-        WindowBuilder::new()
-            .title(BUTTON_GRID_BENCHMARK_TITLE)
-            .root(grid),
-    )
-}
-
 fn phase_duration_ms(snapshot: &WindowPerformanceSnapshot, phase: FramePhase) -> f64 {
     let total: f64 = snapshot
         .phase_timings
@@ -1255,10 +1233,19 @@ fn desktop_button_grid_64_reports_initial_render_time() -> Result<()> {
         .iter()
         .filter(|node| node.role == SemanticsRole::Button)
         .count();
+    let mut row_positions: Vec<i32> = snapshot
+        .semantics
+        .iter()
+        .filter(|node| node.role == SemanticsRole::Button)
+        .map(|node| node.bounds.y().round() as i32)
+        .collect();
+    row_positions.sort_unstable();
+    row_positions.dedup();
     let slowest_phase = performance.slowest_phase();
 
     assert_eq!(snapshot.title, BUTTON_GRID_BENCHMARK_TITLE);
     assert_eq!(button_count, BUTTON_GRID_ROWS * BUTTON_GRID_COLUMNS);
+    assert_eq!(row_positions.len(), BUTTON_GRID_ROWS);
     assert!(performance.frame_index > 0);
     assert!(performance.total_time_ms >= 0.0);
     assert!(performance.renderer_submission.draw_count > 0);
