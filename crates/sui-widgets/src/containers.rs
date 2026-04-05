@@ -3,10 +3,10 @@ use sui_core::{
 };
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx,
+    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx,
     SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::Brush;
+use sui_scene::{Brush, LayerCachePolicy, LayerCompositionMode};
 
 pub struct Padding {
     insets: Insets,
@@ -664,6 +664,13 @@ impl Widget for ScrollView {
         ctx.pop_clip();
     }
 
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            cache_policy: LayerCachePolicy::Cached,
+            composition_mode: LayerCompositionMode::Scroll,
+        }
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
         node.name = self.name.clone();
@@ -826,14 +833,17 @@ mod tests {
     use super::{Align, Background, Padding, ScrollView, SizedBox, Stack};
     use sui_core::{
         Color, Event, Point, PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode,
-        SemanticsRole, Size, Vector,
+        SemanticsRole, Size, Vector, WidgetId,
     };
     use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
     use sui_runtime::{
         Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
         WidgetGraphSnapshot, WindowBuilder,
     };
-    use sui_scene::{Brush, Scene, SceneCommand, SceneLayer};
+    use sui_scene::{
+        Brush, LayerCachePolicy, LayerCompositionMode, Scene, SceneCommand, SceneLayer,
+        SceneLayerDescriptor,
+    };
 
     struct FixedBox {
         size: Size,
@@ -876,6 +886,16 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
         let graph = runtime.widget_graph(window_id).unwrap();
         (output, graph)
+    }
+
+    fn layer_descriptor_for(output: &RenderOutput, owner: WidgetId) -> Option<SceneLayerDescriptor> {
+        let mut descriptor = None;
+        output.frame.scene.visit_layers(&mut |layer| {
+            if layer.widget_id() == owner {
+                descriptor = Some(layer.descriptor.clone());
+            }
+        });
+        descriptor
     }
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -1055,6 +1075,26 @@ mod tests {
 
         assert_eq!(graph.nodes[1].bounds, Rect::new(0.0, 0.0, 80.0, 40.0));
         assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
+    }
+
+    #[test]
+    fn scroll_view_uses_cached_scroll_layer_metadata() {
+        let (output, _) = render_root(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(ScrollView::vertical(
+                FixedBox::new(Size::new(80.0, 120.0), Color::rgba(0.2, 0.3, 0.7, 1.0)),
+            )),
+        );
+
+        let scroll_id = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ScrollView)
+            .expect("scroll view semantics present")
+            .id;
+        let descriptor = layer_descriptor_for(&output, scroll_id).expect("scroll view layer present");
+
+        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Cached);
+        assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
     }
 
     #[test]

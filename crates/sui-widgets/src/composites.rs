@@ -4,10 +4,10 @@ use sui_core::{
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
     WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::StrokeStyle;
+use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
 use sui_text::{TextMeasurement, TextStyle};
 
 use crate::{Button, ControlMetrics, DefaultTheme};
@@ -1231,6 +1231,17 @@ impl Widget for Tooltip {
         );
     }
 
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            cache_policy: LayerCachePolicy::Direct,
+            composition_mode: if self.hovered {
+                LayerCompositionMode::Overlay
+            } else {
+                LayerCompositionMode::Normal
+            },
+        }
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.child.semantics(ctx);
         if self.hovered {
@@ -1430,6 +1441,17 @@ impl Widget for Popover {
             Some(self.theme.palette.focus_ring),
         );
         self.content.paint(ctx);
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            cache_policy: LayerCachePolicy::Direct,
+            composition_mode: if self.open {
+                LayerCompositionMode::Overlay
+            } else {
+                LayerCompositionMode::Normal
+            },
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1805,6 +1827,17 @@ impl Widget for ContextMenu {
         }
     }
 
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            cache_policy: LayerCachePolicy::Direct,
+            composition_mode: if self.open {
+                LayerCompositionMode::Overlay
+            } else {
+                LayerCompositionMode::Normal
+            },
+        }
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node =
             SemanticsNode::new(ctx.widget_id(), SemanticsRole::ContextMenu, ctx.bounds());
@@ -2175,6 +2208,21 @@ impl Widget for Dialog {
         }
     }
 
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            cache_policy: LayerCachePolicy::Direct,
+            composition_mode: if self.shown {
+                if self.modal {
+                    LayerCompositionMode::Effect
+                } else {
+                    LayerCompositionMode::Overlay
+                }
+            } else {
+                LayerCompositionMode::Normal
+            },
+        }
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         if !self.shown {
             return;
@@ -2525,9 +2573,10 @@ fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProgressBar, Spinner, TabBar};
-    use sui_core::{SemanticsRole, SemanticsValue};
+    use super::{Dialog, Popover, ProgressBar, Spinner, TabBar};
+    use sui_core::{SemanticsRole, SemanticsValue, Size, WidgetId};
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
+    use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneLayerDescriptor};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -2547,6 +2596,16 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).unwrap()
+    }
+
+    fn layer_descriptor_for(output: &RenderOutput, owner: WidgetId) -> Option<SceneLayerDescriptor> {
+        let mut descriptor = None;
+        output.frame.scene.visit_layers(&mut |layer| {
+            if layer.widget_id() == owner {
+                descriptor = Some(layer.descriptor.clone());
+            }
+        });
+        descriptor
     }
 
     #[test]
@@ -2596,6 +2655,50 @@ mod tests {
             .find(|node| node.role == SemanticsRole::BusyIndicator)
             .expect("spinner node present");
         assert!(spinner.state.busy);
+    }
+
+    #[test]
+    fn open_popover_uses_direct_overlay_layer_metadata() {
+        let output = render(crate::Padding::all(
+            16.0,
+            Popover::new(
+                "Options",
+                crate::Button::new("Open"),
+                crate::Label::new("Popover body"),
+            )
+            .open(true),
+        ));
+
+        let popover = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Popover)
+            .expect("popover semantics present");
+        let descriptor =
+            layer_descriptor_for(&output, popover.id).expect("popover layer descriptor present");
+
+        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Direct);
+        assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
+    }
+
+    #[test]
+    fn modal_dialog_uses_direct_effect_layer_metadata() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(640.0, 420.0))
+                .with_child(Dialog::new("Confirm", crate::Label::new("Apply the change?"))),
+        );
+
+        let dialog = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("dialog semantics present");
+        let descriptor =
+            layer_descriptor_for(&output, dialog.id).expect("dialog layer descriptor present");
+
+        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Direct);
+        assert_eq!(descriptor.composition_mode, LayerCompositionMode::Effect);
     }
 
     fn sui_widgets_fixture<A, B>(top: A, bottom: B) -> impl Widget

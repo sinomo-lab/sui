@@ -4,8 +4,8 @@ use sui_core::{
     Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
-use sui_scene::StrokeStyle;
+use sui_runtime::{EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
 use sui_text::{TextLayout, TextMeasurement, TextStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3075,6 +3075,17 @@ impl Widget for Select {
         }
     }
 
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            cache_policy: LayerCachePolicy::Direct,
+            composition_mode: if self.expanded {
+                LayerCompositionMode::Overlay
+            } else {
+                LayerCompositionMode::Normal
+            },
+        }
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ComboBox, ctx.bounds());
         node.name = Some(self.name.clone());
@@ -3854,10 +3865,10 @@ mod tests {
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, SemanticsRole,
-        SemanticsValue, Size, Vector, WindowEvent,
+        SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
-    use sui_scene::SceneCommand;
+    use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -3877,6 +3888,16 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).unwrap()
+    }
+
+    fn layer_descriptor_for(output: &RenderOutput, owner: WidgetId) -> Option<SceneLayerDescriptor> {
+        let mut descriptor = None;
+        output.frame.scene.visit_layers(&mut |layer| {
+            if layer.widget_id() == owner {
+                descriptor = Some(layer.descriptor.clone());
+            }
+        });
+        descriptor
     }
 
     fn primary_pointer(kind: PointerEventKind, position: Point, pressed: bool) -> Event {
@@ -4402,6 +4423,42 @@ mod tests {
             select.value,
             Some(SemanticsValue::Text("Final".to_string()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn expanded_select_uses_direct_overlay_layer_metadata() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            crate::Padding::all(
+                12.0,
+                Select::new("Mode")
+                    .placeholder("Choose mode")
+                    .options(["Draft", "Final", "Review"]),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(20.0, 20.0), false),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present");
+        let descriptor =
+            layer_descriptor_for(&output, select.id).expect("select layer descriptor present");
+
+        assert_eq!(select.state.expanded, Some(true));
+        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Direct);
+        assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
         Ok(())
     }
 }
