@@ -89,12 +89,18 @@ pub struct WidgetBookState {
 struct WidgetBookRoot {
     gallery: SingleChild,
     performance_overlay: SingleChild,
+    performance_display: Rc<RefCell<LivePerformanceDisplay>>,
     performance_bootstrap_timer: Option<TimerToken>,
+    performance_idle_timer: Option<TimerToken>,
     skip_next_performance_probe: bool,
     last_overlay_frame_index: Option<u64>,
+    last_overlay_frame_time: Option<f64>,
 }
 
 impl WidgetBookRoot {
+    const IDLE_REFRESH_INTERVAL: f64 = 0.25;
+    const IDLE_THRESHOLD: f64 = 0.5;
+
     const OVERLAY_MARGIN: Insets = Insets {
         left: 0.0,
         top: 18.0,
@@ -103,14 +109,47 @@ impl WidgetBookRoot {
     };
 
     fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
+        let performance_display = Rc::new(RefCell::new(LivePerformanceDisplay::default()));
         Self {
             gallery: SingleChild::new(build_widget_book(state)),
-            performance_overlay: SingleChild::new(LivePerformancePanel::new()),
+            performance_overlay: SingleChild::new(LivePerformancePanel::with_display(
+                Rc::clone(&performance_display),
+            )),
+            performance_display,
             performance_bootstrap_timer: None,
+            performance_idle_timer: None,
             skip_next_performance_probe: false,
             last_overlay_frame_index: None,
+            last_overlay_frame_time: None,
         }
     }
+
+    fn set_performance_display(
+        &mut self,
+        snapshot: Option<WindowPerformanceSummary>,
+        idle: bool,
+    ) -> bool {
+        let next = LivePerformanceDisplay { snapshot, idle };
+        let mut display = self.performance_display.borrow_mut();
+        if *display == next {
+            return false;
+        }
+
+        *display = next;
+        true
+    }
+
+    fn request_performance_refresh(ctx: &mut EventCtx) {
+        ctx.request_measure();
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct LivePerformanceDisplay {
+    snapshot: Option<WindowPerformanceSummary>,
+    idle: bool,
 }
 
 pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
@@ -164,6 +203,13 @@ impl Widget for WidgetBookRoot {
             self.performance_bootstrap_timer = Some(ctx.schedule_timer_after(0.1));
         }
 
+        if self.performance_idle_timer.is_none()
+            && window_performance_summary(ctx.window_id()).is_some()
+        {
+            self.performance_idle_timer =
+                Some(ctx.schedule_timer_after(Self::IDLE_REFRESH_INTERVAL));
+        }
+
         if matches!(event, Event::Window(WindowEvent::RedrawRequested))
             && window_performance_summary(ctx.window_id()).is_some()
             && self.performance_bootstrap_timer.is_none()
@@ -176,6 +222,21 @@ impl Widget for WidgetBookRoot {
         }
 
         if let Event::Wake(WakeEvent::Timer { token, .. }) = event {
+            if Some(*token) == self.performance_idle_timer {
+                self.performance_idle_timer =
+                    Some(ctx.schedule_timer_after(Self::IDLE_REFRESH_INTERVAL));
+
+                if let Some(last_frame_time) = self.last_overlay_frame_time {
+                    if ctx.current_time() - last_frame_time >= Self::IDLE_THRESHOLD {
+                        let snapshot = self.performance_display.borrow().snapshot;
+                        if self.set_performance_display(snapshot, true) {
+                            self.skip_next_performance_probe = true;
+                            Self::request_performance_refresh(ctx);
+                        }
+                    }
+                }
+            }
+
             if Some(*token) == self.performance_bootstrap_timer {
                 self.performance_bootstrap_timer = None;
 
@@ -185,11 +246,10 @@ impl Widget for WidgetBookRoot {
                     }
 
                     self.last_overlay_frame_index = Some(summary.frame_index);
+                    self.last_overlay_frame_time = Some(ctx.current_time());
+                    self.set_performance_display(Some(summary), false);
                     self.skip_next_performance_probe = true;
-                    self.performance_bootstrap_timer = None;
-                    ctx.request_measure();
-                    ctx.request_paint();
-                    ctx.request_semantics();
+                    Self::request_performance_refresh(ctx);
                 } else {
                     self.performance_bootstrap_timer = Some(ctx.schedule_timer_after(0.1));
                 }
@@ -1652,8 +1712,10 @@ impl WidgetBookSummary {
 }
 
 struct LivePerformancePanel {
+    display: Rc<RefCell<LivePerformanceDisplay>>,
     lines: Vec<LivePerformanceLine>,
     snapshot: Option<WindowPerformanceSummary>,
+    idle: bool,
     detail_mode: SceneStatisticsDetailMode,
     toggle_pressed: bool,
 }
@@ -1680,10 +1742,17 @@ impl LivePerformancePanel {
     const TOGGLE_WIDTH: f32 = 76.0;
     const TOGGLE_HEIGHT: f32 = 18.0;
 
+    #[cfg(test)]
     fn new() -> Self {
+        Self::with_display(Rc::new(RefCell::new(LivePerformanceDisplay::default())))
+    }
+
+    fn with_display(display: Rc<RefCell<LivePerformanceDisplay>>) -> Self {
         Self {
+            display,
             lines: Vec::new(),
             snapshot: None,
+            idle: false,
             detail_mode: SceneStatisticsDetailMode::Lightweight,
             toggle_pressed: false,
         }
@@ -1707,8 +1776,19 @@ impl LivePerformancePanel {
         true
     }
 
+    fn set_idle(&mut self, next_idle: bool) -> bool {
+        if self.idle == next_idle {
+            return false;
+        }
+
+        self.idle = next_idle;
+        true
+    }
+
     fn refresh(&mut self, window_id: WindowId) -> bool {
-        let mut changed = self.set_snapshot(window_performance_summary(window_id));
+        let display = *self.display.borrow();
+        let mut changed = self.set_snapshot(display.snapshot);
+        changed |= self.set_idle(display.idle);
         changed |= self.set_detail_mode(window_scene_statistics_detail_mode(window_id));
         changed
     }
@@ -1764,13 +1844,28 @@ impl LivePerformancePanel {
                     LivePerformanceLineSpec::title("live performance".to_string()),
                     LivePerformanceLineSpec::headline(format!(
                         "{}  |  {}",
-                        format_fps(snapshot.total_time_ms),
-                        format_duration_ms(snapshot.total_time_ms),
+                        if self.idle {
+                            "0 fps".to_string()
+                        } else {
+                            format_fps(snapshot.total_time_ms)
+                        },
+                        if self.idle {
+                            "idle".to_string()
+                        } else {
+                            format_duration_ms(snapshot.total_time_ms)
+                        },
                     )),
-                    LivePerformanceLineSpec::metric(format!(
-                        "frame {}  |  slowest {} {}",
-                        snapshot.frame_index, slowest_label, slowest_duration,
-                    )),
+                    LivePerformanceLineSpec::metric(if self.idle {
+                        format!(
+                            "frame {}  |  last active {} {}",
+                            snapshot.frame_index, slowest_label, slowest_duration,
+                        )
+                    } else {
+                        format!(
+                            "frame {}  |  slowest {} {}",
+                            snapshot.frame_index, slowest_label, slowest_duration,
+                        )
+                    }),
                     LivePerformanceLineSpec::metric(format!(
                         "gpu {} passes  |  {} draws  |  {}",
                         snapshot.renderer_submission.pass_count,
@@ -2180,8 +2275,8 @@ mod tests {
     use super::{
         BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL,
         DARK_PREVIEW_ACTION_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
-        ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, LivePerformancePanel, MENU_NAME,
-        NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL,
+        ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, LivePerformanceDisplay,
+        LivePerformancePanel, MENU_NAME, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL,
         PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL, RADIO_GROUP_NAME,
         SELECT_NAME, SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL,
         SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS,
@@ -2999,6 +3094,21 @@ mod tests {
 
         assert!(root.bounds.width() <= 252.0);
         assert!(root.bounds.height() > 0.0);
+    }
+
+    #[test]
+    fn live_performance_panel_reports_zero_fps_when_idle() {
+        let display = Rc::new(RefCell::new(LivePerformanceDisplay {
+            snapshot: Some(sample_window_performance_snapshot()),
+            idle: true,
+        }));
+        let mut panel = LivePerformancePanel::with_display(display);
+
+        assert!(panel.refresh(WindowId::new(11)));
+
+        let lines = panel.content_specs();
+        assert_eq!(lines[1].text, "0 fps  |  idle");
+        assert!(lines[2].text.contains("last active"));
     }
 
     #[test]
