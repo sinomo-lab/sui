@@ -37,13 +37,13 @@ mod tests {
 
     use crate::TestApp;
     use sui_core::{
-        Color, Event, ImeEvent, KeyState, Point, PointerEventKind, Result, SemanticsAction,
+        Color, Event, ImeEvent, KeyState, PointerEventKind, Result, SemanticsAction,
         SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken, Vector, WakeEvent,
     };
     use sui_layout::Constraints;
     use sui_runtime::{
-        Application, EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
-        WidgetChildren, WidgetPodVisitor, WindowBuilder,
+        Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
+        Widget, WidgetChildren, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::StrokeStyle;
 
@@ -70,20 +70,25 @@ mod tests {
     }
 
     impl Widget for HarnessRoot {
-        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let viewport = constraints.clamp(Size::new(480.0, 240.0));
             let child_constraints = Constraints::tight(Size::new(180.0, 44.0));
-            self.children.as_mut_slice()[0].layout_at(
-                ctx,
-                child_constraints,
-                sui_core::Point::new(24.0, 24.0),
-            );
-            self.children.as_mut_slice()[1].layout_at(
-                ctx,
-                child_constraints,
-                sui_core::Point::new(24.0, 92.0),
-            );
+            self.children.measure_child(0, ctx, child_constraints);
+            self.children.measure_child(1, ctx, child_constraints);
             viewport
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: sui_core::Rect) {
+            self.children.arrange_child(
+                0,
+                ctx,
+                sui_core::Rect::new(bounds.x() + 24.0, bounds.y() + 24.0, 180.0, 44.0),
+            );
+            self.children.arrange_child(
+                1,
+                ctx,
+                sui_core::Rect::new(bounds.x() + 24.0, bounds.y() + 92.0, 180.0, 44.0),
+            );
         }
 
         fn paint(&self, ctx: &mut PaintCtx) {
@@ -165,7 +170,7 @@ mod tests {
             }
         }
 
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(180.0, 44.0))
         }
 
@@ -240,7 +245,7 @@ mod tests {
             }
         }
 
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(180.0, 44.0))
         }
 
@@ -320,27 +325,37 @@ mod tests {
     }
 
     impl Widget for ListRoot {
-        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let viewport = constraints.clamp(Size::new(480.0, 260.0));
             let width = viewport.width - 48.0;
 
-            self.children.as_mut_slice()[0].layout_at(
-                ctx,
-                Constraints::tight(Size::new(width, 32.0)),
-                sui_core::Point::new(24.0, 20.0),
-            );
-            self.children.as_mut_slice()[1].layout_at(
-                ctx,
-                Constraints::tight(Size::new(width, 44.0)),
-                sui_core::Point::new(24.0, 72.0),
-            );
-            self.children.as_mut_slice()[2].layout_at(
-                ctx,
-                Constraints::tight(Size::new(width, 44.0)),
-                sui_core::Point::new(24.0, 128.0),
-            );
+            self.children
+                .measure_child(0, ctx, Constraints::tight(Size::new(width, 32.0)));
+            self.children
+                .measure_child(1, ctx, Constraints::tight(Size::new(width, 44.0)));
+            self.children
+                .measure_child(2, ctx, Constraints::tight(Size::new(width, 44.0)));
 
             viewport
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: sui_core::Rect) {
+            let width = bounds.width() - 48.0;
+            self.children.arrange_child(
+                0,
+                ctx,
+                sui_core::Rect::new(bounds.x() + 24.0, bounds.y() + 20.0, width, 32.0),
+            );
+            self.children.arrange_child(
+                1,
+                ctx,
+                sui_core::Rect::new(bounds.x() + 24.0, bounds.y() + 72.0, width, 44.0),
+            );
+            self.children.arrange_child(
+                2,
+                ctx,
+                sui_core::Rect::new(bounds.x() + 24.0, bounds.y() + 128.0, width, 44.0),
+            );
         }
 
         fn paint(&self, ctx: &mut PaintCtx) {
@@ -376,7 +391,7 @@ mod tests {
     }
 
     impl Widget for StatusLabel {
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(320.0, 32.0))
         }
 
@@ -414,14 +429,24 @@ mod tests {
     }
 
     impl Widget for ContactRow {
-        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(360.0, 44.0));
-            self.children.as_mut_slice()[0].layout_at(
-                ctx,
-                Constraints::tight(Size::new(120.0, 32.0)),
-                self.button_origin,
-            );
+            self.children
+                .measure_child(0, ctx, Constraints::tight(Size::new(120.0, 32.0)));
             size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: sui_core::Rect) {
+            self.children.arrange_child(
+                0,
+                ctx,
+                sui_core::Rect::new(
+                    bounds.x() + self.button_origin.x,
+                    bounds.y() + self.button_origin.y,
+                    120.0,
+                    32.0,
+                ),
+            );
         }
 
         fn paint(&self, ctx: &mut PaintCtx) {
@@ -479,7 +504,7 @@ mod tests {
             }
         }
 
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(120.0, 32.0))
         }
 
@@ -552,7 +577,7 @@ mod tests {
                     let next = (self.offset_y - delta.y).clamp(0.0, 120.0);
                     if (next - self.offset_y).abs() > f32::EPSILON {
                         self.offset_y = next;
-                        ctx.request_layout();
+                        ctx.request_arrange();
                         ctx.request_paint();
                         ctx.request_semantics();
                         ctx.set_handled();
@@ -566,14 +591,23 @@ mod tests {
             }
         }
 
-        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let viewport = constraints.clamp(Size::new(160.0, 80.0));
-            self.child.layout_at(
-                ctx,
-                Constraints::tight(Size::new(160.0, 200.0)),
-                Point::new(0.0, -self.offset_y),
-            );
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(160.0, 200.0)));
             viewport
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: sui_core::Rect) {
+            self.child.arrange(
+                ctx,
+                sui_core::Rect::new(
+                    bounds.x(),
+                    bounds.y() - self.offset_y,
+                    160.0,
+                    200.0,
+                ),
+            );
         }
 
         fn paint(&self, ctx: &mut PaintCtx) {
@@ -608,7 +642,7 @@ mod tests {
     struct ScrollContent;
 
     impl Widget for ScrollContent {
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(160.0, 200.0))
         }
 

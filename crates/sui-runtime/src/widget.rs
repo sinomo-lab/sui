@@ -36,15 +36,11 @@ pub trait WidgetPodMutVisitor {
 pub trait Widget {
     fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
 
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.layout(ctx, constraints)
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.max
     }
 
     fn arrange(&mut self, _ctx: &mut ArrangeCtx, _bounds: Rect) {}
-
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        constraints.max
-    }
 
     fn paint(&self, _ctx: &mut PaintCtx) {}
 
@@ -91,19 +87,6 @@ impl SingleChild {
 
     pub fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.child.arrange(ctx, bounds);
-    }
-
-    pub fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        self.child.layout(ctx, constraints)
-    }
-
-    pub fn layout_at(
-        &mut self,
-        ctx: &mut LayoutCtx,
-        constraints: Constraints,
-        origin: Point,
-    ) -> Size {
-        self.child.layout_at(ctx, constraints, origin)
     }
 
     pub fn set_bounds(&mut self, bounds: Rect) {
@@ -298,29 +281,6 @@ impl WidgetPod {
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
     }
 
-    pub fn layout(&mut self, parent_ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        let size = self.measure(parent_ctx, constraints);
-        self.arrange_with_measure_ctx(
-            parent_ctx,
-            Rect::from_origin_size(self.layout_state.arranged_bounds.origin, size),
-        );
-        size
-    }
-
-    pub fn layout_at(
-        &mut self,
-        parent_ctx: &mut LayoutCtx,
-        constraints: Constraints,
-        origin: Point,
-    ) -> Size {
-        let size = self.measure(parent_ctx, constraints);
-        self.arrange_with_measure_ctx(
-            parent_ctx,
-            Rect::from_origin_size(parent_ctx.bounds().origin + origin.to_vector(), size),
-        );
-        size
-    }
-
     pub fn paint(&self, parent_ctx: &mut PaintCtx) {
         let mut child_ctx = PaintCtx::new(
             parent_ctx.window_id(),
@@ -482,12 +442,6 @@ impl WidgetPod {
 
         self.layout_state.arranged_bounds = self.layout_state.arranged_bounds.translate(delta);
         self.translate_descendants(delta);
-    }
-
-    fn arrange_with_measure_ctx(&mut self, parent_ctx: &mut MeasureCtx, bounds: Rect) {
-        let mut arrange_ctx = ArrangeCtx::new(parent_ctx.window_id(), parent_ctx.widget_id(), parent_ctx.dpi());
-        self.arrange(&mut arrange_ctx, bounds);
-        parent_ctx.extend_invalidations(arrange_ctx.take_invalidations());
     }
 }
 
@@ -701,10 +655,6 @@ impl EventCtx {
         self.request_widget(InvalidationKind::Arrange);
     }
 
-    pub fn request_layout(&mut self) {
-        self.request_measure();
-    }
-
     pub fn request_paint(&mut self) {
         self.request_widget(InvalidationKind::Paint);
     }
@@ -825,10 +775,6 @@ impl MeasureCtx {
         self.request_widget(InvalidationKind::Arrange);
     }
 
-    pub fn request_layout(&mut self) {
-        self.request_measure();
-    }
-
     pub fn request_paint(&mut self) {
         self.request_widget(InvalidationKind::Paint);
     }
@@ -881,8 +827,6 @@ impl MeasureCtx {
         ));
     }
 }
-
-pub type LayoutCtx = MeasureCtx;
 
 #[derive(Debug, Clone)]
 pub struct ArrangeCtx {
@@ -1248,8 +1192,8 @@ impl SemanticsCtx {
 #[cfg(test)]
 mod tests {
     use super::{
-        EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
-        WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+        ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
+        Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
     };
     use sui_core::{
         Color, DpiInfo, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole, Vector,
@@ -1259,8 +1203,8 @@ mod tests {
     use sui_scene::{ImageRegistry, SceneCommand, StrokeStyle};
     use sui_text::{FontRegistry, TextStyle, TextSystem};
 
-    fn layout_ctx(window_id: WindowId, widget_id: WidgetId) -> LayoutCtx {
-        LayoutCtx::new(
+    fn measure_ctx(window_id: WindowId, widget_id: WidgetId) -> MeasureCtx {
+        MeasureCtx::new(
             window_id,
             widget_id,
             Rect::ZERO,
@@ -1272,7 +1216,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_and_paint_ctx_expose_dpi_info() {
+    fn measure_and_paint_ctx_expose_dpi_info() {
         let dpi = DpiInfo::new(
             2.0,
             Some(192.0),
@@ -1280,7 +1224,7 @@ mod tests {
             sui_core::Size::new(640.0, 360.0),
         );
 
-        let layout = LayoutCtx::new(
+        let measure = MeasureCtx::new(
             WindowId::new(1),
             WidgetId::new(2),
             Rect::ZERO,
@@ -1297,14 +1241,14 @@ mod tests {
             dpi,
         );
 
-        assert_eq!(layout.dpi(), dpi);
+        assert_eq!(measure.dpi(), dpi);
         assert_eq!(paint.dpi(), dpi);
     }
 
     struct LabelWidget;
 
     impl Widget for LabelWidget {
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> sui_core::Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> sui_core::Size {
             constraints.clamp(sui_core::Size::new(48.0, 20.0))
         }
 
@@ -1332,7 +1276,7 @@ mod tests {
             None,
         );
 
-        ctx.request_layout();
+        ctx.request_measure();
         ctx.request_paint_rect(Rect::new(8.0, 12.0, 24.0, 36.0));
         ctx.request_focus();
         ctx.set_handled();
@@ -1348,15 +1292,14 @@ mod tests {
     }
 
     #[test]
-    fn widget_pod_merges_child_layout_paint_and_semantics() {
+    fn widget_pod_merges_child_measure_arrange_paint_and_semantics() {
         let mut pod = WidgetPod::new(LabelWidget);
         pod.set_bounds(Rect::new(4.0, 6.0, 0.0, 0.0));
 
-        let mut layout = layout_ctx(WindowId::new(3), WidgetId::new(4));
-        let size = pod.layout(
-            &mut layout,
-            Constraints::tight(sui_core::Size::new(64.0, 32.0)),
-        );
+        let mut measure = measure_ctx(WindowId::new(3), WidgetId::new(4));
+        let size = pod.measure(&mut measure, Constraints::tight(sui_core::Size::new(64.0, 32.0)));
+        let mut arrange = ArrangeCtx::new(WindowId::new(3), WidgetId::new(4), DpiInfo::default());
+        pod.arrange(&mut arrange, Rect::new(4.0, 6.0, 64.0, 32.0));
 
         let mut paint = PaintCtx::new(
             WindowId::new(3),
@@ -1383,7 +1326,7 @@ mod tests {
     }
 
     #[test]
-    fn single_child_wraps_layout_and_visitation() {
+    fn single_child_wraps_measure_arrange_and_visitation() {
         struct CaptureVisitor {
             ids: Vec<WidgetId>,
         }
@@ -1401,12 +1344,10 @@ mod tests {
         }
 
         let mut child = SingleChild::new(LabelWidget);
-        let mut layout = layout_ctx(WindowId::new(7), WidgetId::new(8));
-        let size = child.layout_at(
-            &mut layout,
-            Constraints::tight(sui_core::Size::new(80.0, 24.0)),
-            Point::new(12.0, 18.0),
-        );
+        let mut measure = measure_ctx(WindowId::new(7), WidgetId::new(8));
+        let size = child.measure(&mut measure, Constraints::tight(sui_core::Size::new(80.0, 24.0)));
+        let mut arrange = ArrangeCtx::new(WindowId::new(7), WidgetId::new(8), DpiInfo::default());
+        child.arrange(&mut arrange, Rect::new(12.0, 18.0, 80.0, 24.0));
 
         let mut visitor = CaptureVisitor { ids: Vec::new() };
         child.visit_children(&mut visitor);
@@ -1423,17 +1364,12 @@ mod tests {
         children.push(LabelWidget);
         children.push(LabelWidget);
 
-        let mut layout = layout_ctx(WindowId::new(9), WidgetId::new(10));
-        children.as_mut_slice()[0].layout_at(
-            &mut layout,
-            Constraints::tight(sui_core::Size::new(40.0, 18.0)),
-            Point::new(0.0, 0.0),
-        );
-        children.as_mut_slice()[1].layout_at(
-            &mut layout,
-            Constraints::tight(sui_core::Size::new(60.0, 18.0)),
-            Point::new(44.0, 0.0),
-        );
+        let mut measure = measure_ctx(WindowId::new(9), WidgetId::new(10));
+        children.measure_child(0, &mut measure, Constraints::tight(sui_core::Size::new(40.0, 18.0)));
+        children.measure_child(1, &mut measure, Constraints::tight(sui_core::Size::new(60.0, 18.0)));
+        let mut arrange = ArrangeCtx::new(WindowId::new(9), WidgetId::new(10), DpiInfo::default());
+        children.arrange_child(0, &mut arrange, Rect::new(0.0, 0.0, 40.0, 18.0));
+        children.arrange_child(1, &mut arrange, Rect::new(44.0, 0.0, 60.0, 18.0));
 
         let mut paint = PaintCtx::new(
             WindowId::new(9),
@@ -1523,8 +1459,8 @@ mod tests {
     }
 
     #[test]
-    fn text_layout_shapes_in_layout_and_paints_as_shaped_scene_output() {
-        let layout = layout_ctx(WindowId::new(13), WidgetId::new(14))
+    fn text_layout_shapes_in_measure_and_paints_as_shaped_scene_output() {
+        let layout = measure_ctx(WindowId::new(13), WidgetId::new(14))
             .shape_text(
                 "hello",
                 sui_core::Size::new(80.0, 20.0),

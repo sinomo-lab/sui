@@ -28,7 +28,7 @@ pub use diagnostics::{
     window_performance_snapshot,
 };
 pub use widget::{
-    ArrangeCtx, EventCtx, EventPhase, LayoutCtx, MeasureCtx, PaintCtx, SemanticsCtx,
+    ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx,
     SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
@@ -478,13 +478,6 @@ impl FrameSchedule {
             InvalidationKind::Effect => {
                 self.paint = true;
             }
-            InvalidationKind::Layout => {
-                self.measure = true;
-                self.arrange = true;
-                self.paint = true;
-                self.hit_test = true;
-                self.semantics = true;
-            }
             InvalidationKind::Paint => {
                 self.paint = true;
             }
@@ -726,7 +719,7 @@ impl WindowState {
         image_registry: Arc<ImageRegistry>,
     ) {
         if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
-            let _ = self.run_layout_pass(text_system, font_registry, image_registry);
+            let _ = self.run_measure_arrange_pass(text_system, font_registry, image_registry);
             return;
         }
 
@@ -1058,13 +1051,13 @@ impl WindowState {
 
         if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
             let started = Instant::now();
-            invalidations.extend(self.run_layout_pass(
+            invalidations.extend(self.run_measure_arrange_pass(
                 Arc::clone(&text_system),
                 Arc::clone(&font_registry),
                 Arc::clone(&image_registry),
             ));
             graph_dirty_widgets = collect_graph_dirty_widgets(previous_graph.as_ref(), &self.graph);
-            diagnostics.push(FramePhase::Layout, started.elapsed());
+            diagnostics.push(FramePhase::MeasureArrange, started.elapsed());
         } else if self.schedule.hit_test || self.graph.is_empty() {
             let started = Instant::now();
             self.refresh_graph();
@@ -1256,7 +1249,6 @@ impl WindowState {
                         | InvalidationKind::Clip
                         | InvalidationKind::Effect
                         | InvalidationKind::Visibility
-                        | InvalidationKind::Layout
                         | InvalidationKind::Paint
                         | InvalidationKind::Text
                         | InvalidationKind::Resources
@@ -1309,13 +1301,13 @@ impl WindowState {
         })
     }
 
-    fn run_layout_pass(
+    fn run_measure_arrange_pass(
         &mut self,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) -> Vec<InvalidationRequest> {
-        let constraints = self.layout_constraints();
+        let constraints = self.measure_constraints();
         let mut measure_ctx = MeasureCtx::new(
             self.id,
             self.root.id(),
@@ -1373,7 +1365,7 @@ impl WindowState {
         }
     }
 
-    fn layout_constraints(&self) -> Constraints {
+    fn measure_constraints(&self) -> Constraints {
         self.viewport_hint
             .map(Constraints::tight)
             .unwrap_or(Constraints::UNBOUNDED)
@@ -1731,14 +1723,15 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Application, EventCtx, FocusState, FrameSchedule, LayoutCtx, PaintCtx, Runtime,
-        SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot,
-        WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
+        Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, MeasureCtx,
+        PaintCtx, Runtime, SemanticsCtx, SingleChild, Widget, WidgetChildren,
+        WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
+        WindowBuilder,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
         KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent, WindowEvent,
+        Rect, SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent, WindowEvent,
     };
     use sui_layout::Constraints;
     use sui_scene::RegisteredImage;
@@ -1764,7 +1757,7 @@ mod tests {
             }
         }
 
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(120.0, 40.0))
         }
 
@@ -1805,14 +1798,20 @@ mod tests {
             }
         }
 
-        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            self.child.layout_at(
+            self.child.measure(
                 ctx,
                 Constraints::tight(Size::new(120.0, 40.0)),
-                Point::new(32.0, 24.0),
             );
             size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
         }
 
         fn paint(&self, ctx: &mut PaintCtx) {
@@ -1854,20 +1853,32 @@ mod tests {
     }
 
     impl Widget for FocusTraversalRoot {
-        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            let children = self.children.as_mut_slice();
-            children[0].layout_at(
+            self.children.measure_child(
+                0,
                 ctx,
                 Constraints::tight(Size::new(120.0, 40.0)),
-                Point::new(32.0, 24.0),
             );
-            children[1].layout_at(
+            self.children.measure_child(
+                1,
                 ctx,
                 Constraints::tight(Size::new(120.0, 40.0)),
-                Point::new(32.0, 80.0),
             );
             size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.children.arrange_child(
+                0,
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
+            self.children.arrange_child(
+                1,
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 80.0, 120.0, 40.0),
+            );
         }
 
         fn paint(&self, ctx: &mut PaintCtx) {
@@ -1926,7 +1937,7 @@ mod tests {
             }
         }
 
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(120.0, 40.0))
         }
     }
@@ -1972,7 +1983,7 @@ mod tests {
             }
         }
 
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(120.0, 40.0))
         }
     }
@@ -1982,7 +1993,7 @@ mod tests {
     }
 
     impl Widget for TextImeLeaf {
-        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(160.0, 32.0));
             let layout = ctx
                 .shape_text("compose", size, TextStyle::new(Color::WHITE))
@@ -1995,7 +2006,7 @@ mod tests {
             let layout = self.layout.borrow();
             let layout = layout
                 .as_ref()
-                .expect("layout pass should shape text first");
+                .expect("measure pass should shape text first");
             let origin = ctx.bounds().origin;
             ctx.draw_text_layout(origin, layout);
             ctx.set_ime_composition_rect(layout.caret_rect(3).translate(origin.to_vector()));
@@ -2027,14 +2038,20 @@ mod tests {
     where
         W: Widget + 'static,
     {
-        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            self.child.layout_at(
+            self.child.measure(
                 ctx,
                 Constraints::tight(Size::new(120.0, 40.0)),
-                Point::new(32.0, 24.0),
             );
             size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
         }
 
         fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2071,14 +2088,20 @@ mod tests {
     where
         W: Widget + 'static,
     {
-        fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            self.child.layout_at(
+            self.child.measure(
                 ctx,
                 Constraints::tight(Size::new(160.0, 32.0)),
-                Point::new(32.0, 24.0),
             );
             size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 160.0, 32.0),
+            );
         }
 
         fn paint(&self, ctx: &mut PaintCtx) {

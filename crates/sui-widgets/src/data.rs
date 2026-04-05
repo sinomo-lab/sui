@@ -3,7 +3,7 @@ use sui_core::{
     SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector,
 };
 use sui_layout::{Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_text::{TextMeasurement, TextStyle};
 
 use crate::DefaultTheme;
@@ -302,7 +302,7 @@ impl Widget for ListView {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.theme.body_text_style();
         let detail_style = caption_style(self.theme.as_ref());
         let content_width = self
@@ -697,7 +697,7 @@ impl Widget for TreeView {
                     );
                     if disclosure_rect(row_rect, row.depth).contains(pointer.position) {
                         if self.toggle_path(&row.path) {
-                            ctx.request_layout();
+                            ctx.request_measure();
                         }
                     } else {
                         self.select_path(&row.path);
@@ -752,7 +752,7 @@ impl Widget for TreeView {
                         let row = &rows[current];
                         if row.has_children && !row.expanded {
                             if self.toggle_path(&row.path) {
-                                ctx.request_layout();
+                                ctx.request_measure();
                             }
                         } else if row.has_children {
                             let mut child = row.path.clone();
@@ -765,7 +765,7 @@ impl Widget for TreeView {
                         let row = &rows[current];
                         if row.has_children && row.expanded {
                             if self.toggle_path(&row.path) {
-                                ctx.request_layout();
+                                ctx.request_measure();
                             }
                         } else if !row.path.is_empty() {
                             let mut parent = row.path.clone();
@@ -794,7 +794,7 @@ impl Widget for TreeView {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let label_style = self.theme.body_text_style();
         let detail_style = caption_style(self.theme.as_ref());
         let row_padding = 42.0;
@@ -1117,7 +1117,7 @@ impl Table {
         (index < self.rows.len()).then_some(index)
     }
 
-    fn resolve_column_widths(&mut self, ctx: &mut LayoutCtx, available_width: f32) {
+    fn resolve_column_widths(&mut self, ctx: &mut MeasureCtx, available_width: f32) {
         let header_style = self.theme.text_style(self.theme.palette.placeholder);
         self.column_widths = self
             .columns
@@ -1259,7 +1259,7 @@ impl Widget for Table {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let desired_width = if constraints.max.width.is_finite() {
             constraints.max.width
         } else {
@@ -1601,7 +1601,7 @@ impl Widget for Breadcrumb {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.theme.body_text_style();
         self.measured_widths = self
             .items
@@ -1846,7 +1846,7 @@ fn estimate_text_width(text: &str, style: &TextStyle) -> f32 {
     text.chars().count() as f32 * style.font_size * 0.56
 }
 
-fn measure_text(ctx: &mut LayoutCtx, text: &str, style: &TextStyle) -> TextMeasurement {
+fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
     ctx.measure_text(text.to_string(), style.clone())
         .unwrap_or(TextMeasurement {
             width: estimate_text_width(text, style),

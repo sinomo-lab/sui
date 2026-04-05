@@ -6,7 +6,8 @@ use sui_core::{
 };
 use sui_layout::Constraints;
 use sui_runtime::{
-    Application, EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, Widget, WidgetChildren,
+    Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget,
+    WidgetChildren,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
 };
 use sui_testing::prelude::*;
@@ -64,14 +65,27 @@ impl FormRoot {
 }
 
 impl Widget for FormRoot {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let viewport = constraints.clamp(Size::new(420.0, 220.0));
         let control = Constraints::tight(Size::new(200.0, 44.0));
 
-        self.children.as_mut_slice()[0].layout_at(ctx, control, sui_core::Point::new(24.0, 24.0));
-        self.children.as_mut_slice()[1].layout_at(ctx, control, sui_core::Point::new(24.0, 92.0));
+        self.children.measure_child(0, ctx, control);
+        self.children.measure_child(1, ctx, control);
 
         viewport
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: sui_core::Rect) {
+        self.children.arrange_child(
+            0,
+            ctx,
+            sui_core::Rect::new(bounds.x() + 24.0, bounds.y() + 24.0, 200.0, 44.0),
+        );
+        self.children.arrange_child(
+            1,
+            ctx,
+            sui_core::Rect::new(bounds.x() + 24.0, bounds.y() + 92.0, 200.0, 44.0),
+        );
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -124,7 +138,7 @@ impl Widget for NameInput {
         }
     }
 
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.clamp(Size::new(200.0, 44.0))
     }
 
@@ -197,7 +211,7 @@ impl Widget for SaveButton {
         }
     }
 
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.clamp(Size::new(200.0, 44.0))
     }
 

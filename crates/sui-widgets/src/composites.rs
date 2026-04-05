@@ -4,8 +4,8 @@ use sui_core::{
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
-    EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+    WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::StrokeStyle;
 use sui_text::{TextMeasurement, TextStyle};
@@ -298,7 +298,7 @@ impl Widget for TabBar {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let style = self.theme.body_text_style();
         self.widths = self
             .tabs
@@ -599,7 +599,7 @@ impl Widget for Tabs {
                         .map(|(index, _)| index)
                     {
                         self.select(index);
-                        ctx.request_layout();
+                        ctx.request_measure();
                     }
                     self.hovered = hovered;
                     self.pressed = None;
@@ -626,7 +626,7 @@ impl Widget for Tabs {
                     "End" if !self.labels.is_empty() => self.select(self.labels.len() - 1),
                     _ => return,
                 }
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -635,7 +635,7 @@ impl Widget for Tabs {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.theme.body_text_style();
         self.widths = self
             .labels
@@ -670,9 +670,8 @@ impl Widget for Tabs {
             ),
         );
 
-        let panel_origin = Point::new(padding.left, header_height + self.panel_gap + padding.top);
         let panel_size = if let Some(panel) = self.selected_panel_mut() {
-            panel.layout_at(ctx, panel_constraints, panel_origin)
+            panel.measure(ctx, panel_constraints)
         } else {
             Size::new(0.0, self.theme.metrics.min_height)
         };
@@ -690,6 +689,24 @@ impl Widget for Tabs {
             content_width,
             header_height + self.panel_gap + content_height,
         ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let header_height = self.header_height();
+        let padding = Insets::all(16.0);
+        let panel_gap = self.panel_gap;
+        if let Some(panel) = self.selected_panel_mut() {
+            let panel_size = panel.measured_size();
+            panel.arrange(
+                ctx,
+                Rect::new(
+                    bounds.x() + padding.left,
+                    bounds.y() + header_height + panel_gap + padding.top,
+                    panel_size.width,
+                    panel_size.height,
+                ),
+            );
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -977,7 +994,7 @@ impl Widget for Menu {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let label_style = self.theme.body_text_style();
         let shortcut_style = self.theme.placeholder_text_style();
         let mut width: f32 = 0.0;
@@ -1172,13 +1189,20 @@ impl Widget for Tooltip {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.measurement = Some(measure_text(
             ctx,
             &self.text,
             &self.theme.placeholder_text_style(),
         ));
-        self.child.layout_at(ctx, constraints, Point::ZERO)
+        self.child.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(
+            ctx,
+            Rect::from_origin_size(bounds.origin, self.child.child().measured_size()),
+        );
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -1292,7 +1316,7 @@ impl Widget for Popover {
             {
                 self.open = !self.open;
                 ctx.request_focus();
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -1304,7 +1328,7 @@ impl Widget for Popover {
                     && !self.is_inside_open_regions(pointer.position) =>
             {
                 self.open = false;
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
             }
@@ -1315,7 +1339,7 @@ impl Widget for Popover {
                     && self.open =>
             {
                 self.open = false;
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -1324,10 +1348,10 @@ impl Widget for Popover {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let trigger_size = self
             .trigger
-            .layout_at(ctx, constraints.loosen(), Point::ZERO);
+            .measure(ctx, constraints.loosen());
         let mut size = trigger_size;
         if self.open {
             let content_constraints = Constraints::new(
@@ -1350,13 +1374,7 @@ impl Widget for Popover {
                     },
                 ),
             );
-            let content_origin = Point::new(
-                self.padding.left,
-                trigger_size.height + self.gap + self.padding.top,
-            );
-            let content_size = self
-                .content
-                .layout_at(ctx, content_constraints, content_origin);
+            let content_size = self.content.measure(ctx, content_constraints);
             self.frame_rect = Rect::new(
                 0.0,
                 trigger_size.height + self.gap,
@@ -1372,6 +1390,24 @@ impl Widget for Popover {
             self.frame_rect = Rect::ZERO;
         }
         constraints.clamp(size)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let trigger_size = self.trigger.child().measured_size();
+        self.trigger
+            .arrange(ctx, Rect::from_origin_size(bounds.origin, trigger_size));
+        if self.open {
+            let content_size = self.content.child().measured_size();
+            self.content.arrange(
+                ctx,
+                Rect::new(
+                    bounds.x() + self.padding.left,
+                    bounds.y() + trigger_size.height + self.gap + self.padding.top,
+                    content_size.width,
+                    content_size.height,
+                ),
+            );
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -1420,7 +1456,7 @@ impl Widget for Popover {
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if !focused && self.open {
             self.open = false;
-            ctx.request_layout();
+            ctx.request_measure();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -1501,7 +1537,7 @@ impl ContextMenu {
         (self.theme.metrics.min_height - 4.0).max(32.0)
     }
 
-    fn measured_menu_width(&self, ctx: &mut LayoutCtx) -> f32 {
+    fn measured_menu_width(&self, ctx: &mut MeasureCtx) -> f32 {
         let label_style = self.theme.body_text_style();
         let shortcut_style = self.theme.placeholder_text_style();
         let mut width: f32 = 220.0;
@@ -1577,7 +1613,7 @@ impl Widget for ContextMenu {
                 self.highlighted = self.items.iter().position(|item| item.enabled);
                 self.pressed = None;
                 ctx.request_focus();
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -1601,7 +1637,7 @@ impl Widget for ContextMenu {
                 } else if !self.trigger_rect().contains(pointer.position) {
                     self.open = false;
                     self.highlighted = None;
-                    ctx.request_layout();
+                    ctx.request_measure();
                     ctx.request_paint();
                     ctx.request_semantics();
                 }
@@ -1621,7 +1657,7 @@ impl Widget for ContextMenu {
                     self.activate(index);
                     self.open = false;
                     self.highlighted = None;
-                    ctx.request_layout();
+                    ctx.request_measure();
                 }
                 self.pressed = None;
                 ctx.release_pointer_capture(pointer.pointer_id);
@@ -1657,13 +1693,13 @@ impl Widget for ContextMenu {
                         if let Some(index) = self.highlighted {
                             self.activate(index);
                             self.open = false;
-                            ctx.request_layout();
+                            ctx.request_measure();
                         }
                     }
                     "Escape" => {
                         self.open = false;
                         self.highlighted = None;
-                        ctx.request_layout();
+                        ctx.request_measure();
                     }
                     _ => return,
                 }
@@ -1675,10 +1711,10 @@ impl Widget for ContextMenu {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let trigger_size = self
             .trigger
-            .layout_at(ctx, constraints.loosen(), Point::ZERO);
+            .measure(ctx, constraints.loosen());
         let mut size = trigger_size;
         if self.open {
             let width = self.measured_menu_width(ctx).max(trigger_size.width);
@@ -1692,6 +1728,13 @@ impl Widget for ContextMenu {
             self.frame_rect = Rect::ZERO;
         }
         constraints.clamp(size)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.trigger.arrange(
+            ctx,
+            Rect::from_origin_size(bounds.origin, self.trigger.child().measured_size()),
+        );
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -1789,7 +1832,7 @@ impl Widget for ContextMenu {
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if !focused && self.open {
             self.open = false;
-            ctx.request_layout();
+            ctx.request_measure();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -1949,7 +1992,7 @@ impl Widget for Dialog {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         if !self.shown {
             self.dialog_frame = Rect::ZERO;
             self.body_frame = Rect::ZERO;
@@ -1987,22 +2030,15 @@ impl Widget for Dialog {
             .min(self.max_width)
             .max(280.0);
         let mut footer_height: f32 = 0.0;
-        let mut footer_width: f32 = 0.0;
-        let button_y = 0.0;
         for button in self.actions.as_mut_slice().iter_mut() {
-            let button_size = button.layout_at(
+            let button_size = button.measure(
                 ctx,
                 Constraints::new(
                     Size::ZERO,
                     Size::new(dialog_width, self.theme.metrics.min_height + 8.0),
                 ),
-                Point::new(0.0, button_y),
             );
             footer_height = footer_height.max(button_size.height);
-            footer_width += button_size.width;
-        }
-        if !self.actions.is_empty() {
-            footer_width += 10.0 * self.actions.len().saturating_sub(1) as f32;
         }
 
         let title_height = self
@@ -2029,9 +2065,7 @@ impl Widget for Dialog {
                     .max(0.0),
             ),
         );
-        let body_size =
-            self.body
-                .layout_at(ctx, body_constraints, Point::new(padding.left, body_top));
+        let body_size = self.body.measure(ctx, body_constraints);
 
         let dialog_height =
             body_top + body_size.height + footer_gap + footer_height + padding.bottom;
@@ -2039,35 +2073,62 @@ impl Widget for Dialog {
         let dialog_y = ((viewport.height - dialog_height) * 0.5).max(outer_margin);
         self.dialog_frame = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
         self.body_frame = Rect::new(
-            dialog_x + padding.left,
-            dialog_y + body_top,
+            padding.left,
+            body_top,
             body_size.width,
             body_size.height,
         );
-        self.body.child_mut().set_bounds(self.body_frame);
-
-        if !self.actions.is_empty() {
-            let mut x = dialog_x + dialog_width - padding.right - footer_width;
-            let y = dialog_y + dialog_height - padding.bottom - footer_height;
-            for button in self.actions.as_mut_slice().iter_mut() {
-                let button_bounds = button.bounds();
-                button.set_bounds(Rect::new(
-                    x,
-                    y,
-                    button_bounds.width(),
-                    button_bounds.height(),
-                ));
-                x += button_bounds.width() + 10.0;
-            }
-        }
 
         viewport
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        if !self.shown {
+            return;
+        }
+
+        let dialog = self.dialog_frame.translate(bounds.origin.to_vector());
+        self.body.arrange(
+            ctx,
+            Rect::new(
+                dialog.x() + self.body_frame.x(),
+                dialog.y() + self.body_frame.y(),
+                self.body_frame.width(),
+                self.body_frame.height(),
+            ),
+        );
+
+        if !self.actions.is_empty() {
+            let padding = Insets::all(18.0);
+            let footer_width = self
+                .actions
+                .as_slice()
+                .iter()
+                .map(|button| button.measured_size().width)
+                .sum::<f32>()
+                + (10.0 * self.actions.len().saturating_sub(1) as f32);
+            let footer_height = self
+                .actions
+                .as_slice()
+                .iter()
+                .map(|button| button.measured_size().height)
+                .fold(0.0, f32::max);
+            let mut x = dialog.x() + dialog.width() - padding.right - footer_width;
+            let y = dialog.y() + dialog.height() - padding.bottom - footer_height;
+            for button in self.actions.as_mut_slice().iter_mut() {
+                let size = button.measured_size();
+                button.arrange(ctx, Rect::new(x, y, size.width, size.height));
+                x += size.width + 10.0;
+            }
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         if !self.shown {
             return;
         }
+
+        let dialog = self.dialog_frame.translate(ctx.bounds().origin.to_vector());
 
         if self.modal {
             ctx.fill_bounds(Color::rgba(0.06, 0.08, 0.12, 0.24));
@@ -2077,7 +2138,7 @@ impl Widget for Dialog {
         let palette = self.theme.palette;
         draw_control_frame(
             ctx,
-            self.dialog_frame,
+            dialog,
             metrics.corner_radius + 3.0,
             metrics,
             palette.surface,
@@ -2092,17 +2153,17 @@ impl Widget for Dialog {
             ..TextStyle::default()
         };
         let description_style = self.theme.placeholder_text_style();
-        let text_x = self.dialog_frame.x() + 18.0;
-        let mut text_y = self.dialog_frame.y() + 18.0;
+        let text_x = dialog.x() + 18.0;
+        let mut text_y = dialog.y() + 18.0;
         ctx.draw_text(
-            Rect::new(text_x, text_y, self.dialog_frame.width() - 36.0, 28.0),
+            Rect::new(text_x, text_y, dialog.width() - 36.0, 28.0),
             self.title.clone(),
             title_style,
         );
         text_y += 24.0;
         if let Some(description) = &self.description {
             ctx.draw_text(
-                Rect::new(text_x, text_y + 8.0, self.dialog_frame.width() - 36.0, 22.0),
+                Rect::new(text_x, text_y + 8.0, dialog.width() - 36.0, 22.0),
                 description.clone(),
                 description_style,
             );
@@ -2119,8 +2180,8 @@ impl Widget for Dialog {
             return;
         }
 
-        let mut node =
-            SemanticsNode::new(ctx.widget_id(), SemanticsRole::Dialog, self.dialog_frame);
+        let dialog = self.dialog_frame.translate(ctx.bounds().origin.to_vector());
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Dialog, dialog);
         node.name = Some(self.title.clone());
         node.description = self.description.clone();
         node.state.focused = ctx.is_focused();
@@ -2212,7 +2273,7 @@ impl ProgressBar {
 }
 
 impl Widget for ProgressBar {
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.clamp(Size::new(240.0, 22.0))
     }
 
@@ -2304,7 +2365,7 @@ impl Spinner {
 }
 
 impl Widget for Spinner {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let label_width = self
             .label
             .as_ref()
@@ -2360,7 +2421,7 @@ impl Widget for Spinner {
 
 pub type BusyIndicator = Spinner;
 
-fn measure_text(ctx: &mut LayoutCtx, text: &str, style: &TextStyle) -> TextMeasurement {
+fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
     ctx.measure_text(text.to_string(), style.clone())
         .unwrap_or(TextMeasurement {
             width: 0.0,

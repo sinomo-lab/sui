@@ -4,7 +4,7 @@ use sui_core::{
     Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::StrokeStyle;
 use sui_text::{TextLayout, TextMeasurement, TextStyle};
 
@@ -85,7 +85,7 @@ impl Separator {
 }
 
 impl Widget for Separator {
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let thickness = self.resolved_thickness();
         let length = self.length.unwrap_or(64.0);
         let size = match self.axis {
@@ -181,7 +181,7 @@ impl Icon {
 }
 
 impl Widget for Icon {
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let side = self.resolved_size();
         constraints.clamp(Size::new(side, side))
     }
@@ -341,7 +341,7 @@ impl Widget for IconButton {
         }
     }
 
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let side = self.resolved_size();
         constraints.clamp(Size::new(side, side))
     }
@@ -452,7 +452,7 @@ impl Label {
 }
 
 impl Widget for Label {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let measurement = measure_text(ctx, &self.text, &self.style);
         self.measurement = Some(measurement);
         constraints.clamp(Size::new(
@@ -639,7 +639,7 @@ impl Widget for Button {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
@@ -885,7 +885,7 @@ impl Widget for Checkbox {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
@@ -1165,7 +1165,7 @@ impl Widget for Switch {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let gap = self.resolved_gap();
@@ -1455,7 +1455,7 @@ impl Widget for RadioButton {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
@@ -1723,7 +1723,7 @@ impl Widget for RadioGroup {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.theme.body_text_style();
         let padding = self.theme.metrics.checkbox_padding;
         let indicator = self.theme.metrics.checkbox_indicator_size;
@@ -2015,7 +2015,7 @@ impl Widget for Slider {
         }
     }
 
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.clamp(Size::new(
             self.theme.metrics.slider_min_width,
             self.theme.metrics.min_height,
@@ -2258,7 +2258,7 @@ impl Widget for NumberInput {
                     }
                 }
                 self.commit_buffer();
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2267,7 +2267,7 @@ impl Widget for NumberInput {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let measurement = measure_text(ctx, &self.buffer, &self.text_style());
         let padding = self.theme.metrics.text_input_padding;
         constraints.clamp(Size::new(
@@ -2522,7 +2522,7 @@ impl TextArea {
         self.value.push_str(text);
         self.composition.clear();
         self.commit_text_change();
-        ctx.request_layout();
+        ctx.request_measure();
         ctx.request_paint();
         ctx.request_semantics();
         ctx.set_handled();
@@ -2552,14 +2552,14 @@ impl Widget for TextArea {
             }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
                 self.composition.clear();
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Ime(ImeEvent::CompositionUpdate { text }) if ctx.is_focused() => {
                 self.composition = text.clone();
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2569,7 +2569,7 @@ impl Widget for TextArea {
             }
             Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() => {
                 self.composition.clear();
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2582,7 +2582,7 @@ impl Widget for TextArea {
                 } else if self.value.pop().is_some() {
                     self.commit_text_change();
                 }
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2601,7 +2601,7 @@ impl Widget for TextArea {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
@@ -2726,7 +2726,7 @@ impl Widget for TextArea {
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if !focused && !self.composition.is_empty() {
             self.composition.clear();
-            ctx.request_layout();
+            ctx.request_measure();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -2904,7 +2904,7 @@ impl Widget for Select {
                 }
 
                 self.pressed_header = false;
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2961,7 +2961,7 @@ impl Widget for Select {
                     _ => {}
                 }
 
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2970,7 +2970,7 @@ impl Widget for Select {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let padding = self.theme.metrics.text_input_padding;
         let text_style = self.theme.body_text_style();
         let widest = self
@@ -3098,7 +3098,7 @@ impl Widget for Select {
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if !focused && self.expanded {
             self.expanded = false;
-            ctx.request_layout();
+            ctx.request_measure();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -3230,7 +3230,7 @@ impl TextInput {
         self.value.push_str(text);
         self.composition.clear();
         self.commit_text_change();
-        ctx.request_layout();
+        ctx.request_measure();
         ctx.request_paint();
         ctx.request_semantics();
         ctx.set_handled();
@@ -3288,14 +3288,14 @@ impl Widget for TextInput {
             }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
                 self.composition.clear();
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Ime(ImeEvent::CompositionUpdate { text }) if ctx.is_focused() => {
                 self.composition = text.clone();
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -3306,7 +3306,7 @@ impl Widget for TextInput {
             Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() => {
                 if !self.composition.is_empty() {
                     self.composition.clear();
-                    ctx.request_layout();
+                    ctx.request_measure();
                     ctx.request_paint();
                     ctx.request_semantics();
                 }
@@ -3320,7 +3320,7 @@ impl Widget for TextInput {
                 } else if self.value.pop().is_some() {
                     self.commit_text_change();
                 }
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -3334,7 +3334,7 @@ impl Widget for TextInput {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
@@ -3442,14 +3442,14 @@ impl Widget for TextInput {
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if !focused && !self.composition.is_empty() {
             self.composition.clear();
-            ctx.request_layout();
+            ctx.request_measure();
         }
         ctx.request_paint();
         ctx.request_semantics();
     }
 }
 
-fn measure_text(ctx: &mut LayoutCtx, text: &str, style: &TextStyle) -> TextMeasurement {
+fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
     ctx.measure_text(text.to_string(), style.clone())
         .unwrap_or(TextMeasurement {
             width: 0.0,

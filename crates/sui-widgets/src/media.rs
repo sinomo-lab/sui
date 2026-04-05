@@ -3,7 +3,7 @@ use sui_core::{
     Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
 };
 use sui_layout::{Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::{ImageSource, StrokeStyle};
 use sui_text::TextStyle;
 
@@ -106,7 +106,7 @@ impl Image {
         self
     }
 
-    fn effective_source_size(&self, ctx: &LayoutCtx) -> Size {
+    fn effective_source_size(&self, ctx: &MeasureCtx) -> Size {
         self.source_rect
             .map(|rect| rect.size)
             .or_else(|| ctx.image_size(self.image))
@@ -127,7 +127,7 @@ impl Image {
 }
 
 impl Widget for Image {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.resolved_source_size = self.effective_source_size(ctx);
         constraints.clamp(self.resolved_size())
     }
@@ -284,7 +284,7 @@ impl Widget for ColorSwatch {
         }
     }
 
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.clamp(Size::new(self.width, self.height))
     }
 
@@ -516,7 +516,7 @@ impl Widget for ColorPicker {
         }
     }
 
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let desired = Size::new(260.0, if self.show_alpha { 256.0 } else { 232.0 });
         constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {

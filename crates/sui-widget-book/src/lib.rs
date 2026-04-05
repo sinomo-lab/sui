@@ -252,7 +252,7 @@ impl Widget for ProjectSettingsPreview {
                 self.trigger_pressed = false;
                 if activate {
                     self.dialog_open = !self.dialog_open;
-                    ctx.request_layout();
+                    ctx.request_measure();
                     ctx.request_paint();
                     ctx.request_semantics();
                 }
@@ -264,26 +264,41 @@ impl Widget for ProjectSettingsPreview {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let trigger_size = self
             .trigger
-            .layout_at(ctx, constraints.loosen(), Point::ZERO);
+            .measure(ctx, constraints.loosen());
 
         if !self.dialog_open {
             return constraints.clamp(trigger_size);
         }
 
-        let dialog_origin = Point::new(0.0, trigger_size.height + 12.0);
-        let dialog_size = self.dialog.layout_at(
-            ctx,
-            Constraints::tight(Size::new(560.0, 320.0)),
-            dialog_origin,
-        );
+        let dialog_size = self
+            .dialog
+            .measure(ctx, Constraints::tight(Size::new(560.0, 320.0)));
 
         constraints.clamp(Size::new(
             trigger_size.width.max(dialog_size.width),
             trigger_size.height + 12.0 + dialog_size.height,
         ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let trigger_size = self.trigger.child().measured_size();
+        self.trigger
+            .arrange(ctx, Rect::from_origin_size(bounds.origin, trigger_size));
+        if self.dialog_open {
+            let dialog_size = self.dialog.child().measured_size();
+            self.dialog.arrange(
+                ctx,
+                Rect::new(
+                    bounds.x(),
+                    bounds.y() + trigger_size.height + 12.0,
+                    dialog_size.width,
+                    dialog_size.height,
+                ),
+            );
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -373,7 +388,7 @@ impl Widget for ThemePreviewShowcase {
                     sui::PointerEventKind::Down | sui::PointerEventKind::Up
                 ) && self.toggle.child().bounds().contains(pointer.position) =>
             {
-                ctx.request_layout();
+                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
             }
@@ -381,14 +396,14 @@ impl Widget for ThemePreviewShowcase {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let comparison_enabled = self.comparison_enabled();
         let max_width = if constraints.max.width.is_finite() {
             constraints.max.width.max(320.0)
         } else {
             920.0
         };
-        let toggle_size = self.toggle.layout_at(ctx, constraints.loosen(), Point::ZERO);
+        let toggle_size = self.toggle.measure(ctx, constraints.loosen());
         let top = toggle_size.height + 16.0;
         let gap = 16.0;
         let card_height = Self::card_height();
@@ -396,16 +411,12 @@ impl Widget for ThemePreviewShowcase {
         if comparison_enabled {
             let stacked = max_width < 760.0;
             if stacked {
-                let light_size = self.light_card.layout_at(
-                    ctx,
-                    Constraints::tight(Size::new(max_width, card_height)),
-                    Point::new(0.0, top),
-                );
-                let dark_size = self.dark_card.layout_at(
-                    ctx,
-                    Constraints::tight(Size::new(max_width, card_height)),
-                    Point::new(0.0, top + light_size.height + gap),
-                );
+                let light_size = self
+                    .light_card
+                    .measure(ctx, Constraints::tight(Size::new(max_width, card_height)));
+                let dark_size = self
+                    .dark_card
+                    .measure(ctx, Constraints::tight(Size::new(max_width, card_height)));
 
                 return constraints.clamp(Size::new(
                     max_width,
@@ -414,16 +425,12 @@ impl Widget for ThemePreviewShowcase {
             }
 
             let card_width = ((max_width - gap) / 2.0).max(280.0);
-            let light_size = self.light_card.layout_at(
-                ctx,
-                Constraints::tight(Size::new(card_width, card_height)),
-                Point::new(0.0, top),
-            );
-            let dark_size = self.dark_card.layout_at(
-                ctx,
-                Constraints::tight(Size::new(card_width, card_height)),
-                Point::new(card_width + gap, top),
-            );
+            let light_size = self
+                .light_card
+                .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
+            let dark_size = self
+                .dark_card
+                .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
 
             return constraints.clamp(Size::new(
                 light_size.width + gap + dark_size.width,
@@ -432,15 +439,62 @@ impl Widget for ThemePreviewShowcase {
         }
 
         let light_width = max_width.min(420.0);
-        let light_size = self.light_card.layout_at(
-            ctx,
-            Constraints::tight(Size::new(light_width, card_height)),
-            Point::new(0.0, top),
-        );
-        self.dark_card
-            .set_bounds(Rect::new(0.0, 0.0, 0.0, 0.0));
+        let light_size = self
+            .light_card
+            .measure(ctx, Constraints::tight(Size::new(light_width, card_height)));
 
         constraints.clamp(Size::new(light_size.width, top + light_size.height))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let comparison_enabled = self.comparison_enabled();
+        let toggle_size = self.toggle.child().measured_size();
+        self.toggle
+            .arrange(ctx, Rect::from_origin_size(bounds.origin, toggle_size));
+
+        let top = bounds.y() + toggle_size.height + 16.0;
+        let gap = 16.0;
+        if comparison_enabled {
+            if bounds.width() < 760.0 {
+                let light_size = self.light_card.child().measured_size();
+                let dark_size = self.dark_card.child().measured_size();
+                self.light_card.arrange(
+                    ctx,
+                    Rect::new(bounds.x(), top, light_size.width, light_size.height),
+                );
+                self.dark_card.arrange(
+                    ctx,
+                    Rect::new(
+                        bounds.x(),
+                        top + light_size.height + gap,
+                        dark_size.width,
+                        dark_size.height,
+                    ),
+                );
+            } else {
+                let light_size = self.light_card.child().measured_size();
+                let dark_size = self.dark_card.child().measured_size();
+                self.light_card.arrange(
+                    ctx,
+                    Rect::new(bounds.x(), top, light_size.width, light_size.height),
+                );
+                self.dark_card.arrange(
+                    ctx,
+                    Rect::new(
+                        bounds.x() + light_size.width + gap,
+                        top,
+                        dark_size.width,
+                        dark_size.height,
+                    ),
+                );
+            }
+        } else {
+            let light_size = self.light_card.child().measured_size();
+            self.light_card.arrange(
+                ctx,
+                Rect::new(bounds.x(), top, light_size.width, light_size.height),
+            );
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -1599,7 +1653,7 @@ impl LivePerformancePanel {
         }
     }
 
-    fn rebuild_lines(&mut self, ctx: &LayoutCtx, viewport: Size) {
+    fn rebuild_lines(&mut self, ctx: &MeasureCtx, viewport: Size) {
         let text_width = (viewport.width - Self::PADDING_X * 2.0).max(1.0);
         let mut y = Self::PADDING_Y;
         let mut lines = Vec::new();
@@ -1756,7 +1810,7 @@ impl Widget for LivePerformancePanel {
         }
 
         if changed {
-            ctx.request_layout();
+            ctx.request_measure();
             ctx.request_paint();
             ctx.request_semantics();
         }
@@ -1813,7 +1867,7 @@ impl Widget for LivePerformancePanel {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let width = if constraints.max.width.is_finite() {
             constraints.max.width
         } else {
@@ -1915,7 +1969,7 @@ fn format_cache_metrics(metrics: CacheMetrics) -> String {
 }
 
 impl Widget for WidgetBookSummary {
-    fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let width = if constraints.max.width.is_finite() {
             constraints.max.width
         } else {

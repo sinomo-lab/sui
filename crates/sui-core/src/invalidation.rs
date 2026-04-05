@@ -8,7 +8,6 @@ pub enum InvalidationKind {
     Clip,
     Effect,
     Visibility,
-    Layout,
     Paint,
     HitTest,
     Text,

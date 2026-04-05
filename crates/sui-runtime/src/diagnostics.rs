@@ -10,7 +10,7 @@ use sui_scene::{SceneCommand, SceneFrame};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FramePhase {
     Event,
-    Layout,
+    MeasureArrange,
     HitTest,
     Paint,
     Semantics,
@@ -21,7 +21,7 @@ impl FramePhase {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Event => "Event handling",
-            Self::Layout => "Layout",
+            Self::MeasureArrange => "Measure and arrange",
             Self::HitTest => "Graph and hit test",
             Self::Paint => "Paint",
             Self::Semantics => "Semantics",

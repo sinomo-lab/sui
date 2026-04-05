@@ -830,7 +830,7 @@ mod tests {
     };
     use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
     use sui_runtime::{
-        Application, LayoutCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
+        Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
         WidgetGraphSnapshot, WindowBuilder,
     };
     use sui_scene::{Brush, Scene, SceneCommand, SceneLayer};
@@ -847,7 +847,7 @@ mod tests {
     }
 
     impl Widget for FixedBox {
-        fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(self.size)
         }
 
