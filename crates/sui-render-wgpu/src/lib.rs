@@ -17,8 +17,8 @@ use lyon_tessellation::{
     StrokeTessellator, StrokeVertex, StrokeVertexConstructor, VertexBuffers,
 };
 use sui_core::{
-    Color, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result, Size,
-    Transform, Vector, WindowId,
+    Color, ColorSpace, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result,
+    Size, Transform, Vector, WindowId,
 };
 use sui_scene::{
     Brush, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame, SceneLayer,
@@ -3072,6 +3072,7 @@ fn append_cached_glyph_mesh(
     viewport: Size,
 ) {
     let color = color.clamped();
+    let rgba = shader_color(color);
     for index in &mesh.indices {
         let vertex = mesh.vertices[*index as usize];
         let positioned = Point::new(
@@ -3082,7 +3083,7 @@ fn append_cached_glyph_mesh(
         let ndc = to_ndc(transformed.x, transformed.y, viewport);
         vertices.push(Vertex {
             position: ndc,
-            color: color.with_alpha(color.alpha * vertex.coverage).to_array(),
+            color: [rgba[0], rgba[1], rgba[2], color.alpha * vertex.coverage],
             tex_coords: [0.0, 0.0],
         });
     }
@@ -3259,7 +3260,7 @@ fn append_indexed_triangles(
         return;
     }
 
-    let rgba = color.clamped().to_array();
+    let rgba = shader_color(color);
     for index in &buffers.indices {
         let position = buffers.vertices[*index as usize];
         let ndc = to_ndc(position[0], position[1], viewport);
@@ -3507,7 +3508,7 @@ fn append_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, viewport: S
 
     let min = to_ndc(rect.x(), rect.y(), viewport);
     let max = to_ndc(rect.max_x(), rect.max_y(), viewport);
-    let rgba = color.clamped().to_array();
+    let rgba = shader_color(color);
 
     vertices.extend_from_slice(&[
         Vertex {
@@ -4028,9 +4029,32 @@ fn append_scene_mesh(vertices: &mut Vec<Vertex>, mesh: &SceneMesh, viewport: Siz
         let ndc = to_ndc(vertex.position.x, vertex.position.y, viewport);
         vertices.push(Vertex {
             position: ndc,
-            color: vertex.color.clamped().to_array(),
+            color: shader_color(vertex.color),
             tex_coords: [0.0, 0.0],
         });
+    }
+}
+
+fn shader_color(color: Color) -> [f32; 4] {
+    let color = color.clamped();
+    let to_linear = match color.space {
+        ColorSpace::LinearSrgb => |channel: f32| channel,
+        ColorSpace::Srgb | ColorSpace::DisplayP3 => srgb_transfer_to_linear,
+    };
+
+    [
+        to_linear(color.red),
+        to_linear(color.green),
+        to_linear(color.blue),
+        color.alpha,
+    ]
+}
+
+fn srgb_transfer_to_linear(channel: f32) -> f32 {
+    if channel <= 0.04045 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
     }
 }
 
@@ -4363,7 +4387,7 @@ mod tests {
         DrawOpKind, PreparedClipPath, PreparedDrawBatch, PreparedFrameBatches,
         PreparedPassBatch, PreparedVertices, RendererFrameStats, RetainedCompositorState,
         RetainedPacketId, ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer,
-        batch_draw_ops, build_vertices, prepare_frame_batches, to_ndc,
+        batch_draw_ops, build_vertices, prepare_frame_batches, shader_color, to_ndc,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -4555,6 +4579,16 @@ mod tests {
 
         assert!(!vertices.is_empty());
         assert!(vertices.len() >= 12);
+    }
+
+    #[test]
+    fn shader_color_linearizes_srgb_inputs() {
+        let rgba = shader_color(Color::srgba(66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0, 1.0));
+
+        assert!((rgba[0] - 0.05448).abs() < 0.0001);
+        assert!((rgba[1] - 0.02315).abs() < 0.0001);
+        assert!((rgba[2] - 0.66539).abs() < 0.0001);
+        assert_eq!(rgba[3], 1.0);
     }
 
     #[test]
