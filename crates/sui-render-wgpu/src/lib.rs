@@ -21,8 +21,8 @@ use sui_core::{
     Transform, Vector, WindowId,
 };
 use sui_scene::{
-    Brush, LayerCachePolicy, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand,
-    SceneFrame, SceneLayer, SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
+    Brush, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame, SceneLayer,
+    SceneLayerId, SceneLayerUpdateKind, StrokeStyle,
 };
 use sui_text::{
     FontRegistry, ResolvedTextFace, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout,
@@ -117,10 +117,6 @@ pub struct WgpuRenderer {
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
     frame_resources: FrameResources,
 }
-
-const MAX_RETAINED_LAYER_CACHE_BYTES: usize = 64 * 1024 * 1024;
-#[cfg_attr(not(test), allow(dead_code))]
-const MAX_DIRTY_LAYERS_FOR_CACHE_REUSE: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum CompositionContainerId {
@@ -367,73 +363,6 @@ struct RetainedCompositorState {
     next_effect_node: u64,
     viewport: Size,
     feather_width_bits: u32,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Default)]
-struct RetainedLayerCache {
-    fragments: HashMap<LayerCacheKey, DrawOpArena>,
-    estimated_bytes: usize,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-impl RetainedLayerCache {
-    fn invalidate(&mut self, scene: &Scene, layer_updates: &[SceneLayerUpdate]) {
-        let active_layers = collect_active_layers(scene);
-        self.fragments
-            .retain(|key, _| active_layers.contains(&key.layer_id));
-        self.recalculate_estimated_bytes();
-
-        if layer_updates.is_empty() {
-            return;
-        }
-
-        let invalidating_layers = layer_updates
-            .iter()
-            .filter(|update| layer_update_invalidates_fragments(update.kind))
-            .map(|update| update.layer_id)
-            .collect::<Vec<_>>();
-        if invalidating_layers.is_empty() {
-            return;
-        }
-
-        let mut invalidated = invalidating_layers.clone();
-        collect_layer_ancestors(scene, &invalidating_layers, &mut invalidated, &mut Vec::new());
-
-        self.fragments
-            .retain(|key, _| !invalidated.iter().any(|layer_id| *layer_id == key.layer_id));
-        self.recalculate_estimated_bytes();
-    }
-
-    fn can_cache(&self, layer_updates: &[SceneLayerUpdate]) -> bool {
-        layer_updates.len() <= MAX_DIRTY_LAYERS_FOR_CACHE_REUSE
-    }
-
-    fn insert_fragment(&mut self, key: LayerCacheKey, fragment: DrawOpArena) {
-        let fragment_bytes = fragment.estimated_bytes();
-        if fragment_bytes > MAX_RETAINED_LAYER_CACHE_BYTES {
-            return;
-        }
-
-        if self.estimated_bytes + fragment_bytes > MAX_RETAINED_LAYER_CACHE_BYTES {
-            return;
-        }
-
-        if let Some(previous) = self.fragments.insert(key, fragment) {
-            self.estimated_bytes = self
-                .estimated_bytes
-                .saturating_sub(previous.estimated_bytes());
-        }
-        self.estimated_bytes += fragment_bytes;
-    }
-
-    fn recalculate_estimated_bytes(&mut self) {
-        self.estimated_bytes = self
-            .fragments
-            .values()
-            .map(DrawOpArena::estimated_bytes)
-            .sum();
-    }
 }
 
 impl RetainedCompositorState {
@@ -1070,69 +999,6 @@ fn hash_text_style(style: &TextStyle, hasher: &mut DefaultHasher) {
     style.font_size.to_bits().hash(hasher);
     style.line_height.to_bits().hash(hasher);
     hash_color(style.color, hasher);
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn collect_active_layers(scene: &Scene) -> HashSet<SceneLayerId> {
-    let mut active_layers = HashSet::new();
-    scene.visit_commands(&mut |command| {
-        if let SceneCommand::Layer(layer) = command {
-            active_layers.insert(layer.layer_id());
-        }
-    });
-    active_layers
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn collect_layer_ancestors(
-    scene: &Scene,
-    dirty_layers: &[SceneLayerId],
-    invalidated: &mut Vec<SceneLayerId>,
-    ancestors: &mut Vec<SceneLayerId>,
-) {
-    for command in scene.commands() {
-        let SceneCommand::Layer(layer) = command else {
-            continue;
-        };
-
-        if dirty_layers.iter().any(|layer_id| *layer_id == layer.layer_id()) {
-            for ancestor in ancestors.iter().copied() {
-                if !invalidated.contains(&ancestor) {
-                    invalidated.push(ancestor);
-                }
-            }
-        }
-
-        ancestors.push(layer.layer_id());
-        collect_layer_ancestors(&layer.scene, dirty_layers, invalidated, ancestors);
-        ancestors.pop();
-    }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn layer_update_invalidates_fragments(kind: SceneLayerUpdateKind) -> bool {
-    !matches!(kind, SceneLayerUpdateKind::Visibility)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct LayerCacheKey {
-    layer_id: SceneLayerId,
-    state_signature: u64,
-    viewport_width_bits: u32,
-    viewport_height_bits: u32,
-    feather_width_bits: u32,
-}
-
-impl LayerCacheKey {
-    fn new(layer_id: SceneLayerId, state_signature: u64, viewport: Size, feather_width: f32) -> Self {
-        Self {
-            layer_id,
-            state_signature,
-            viewport_width_bits: viewport.width.to_bits(),
-            viewport_height_bits: viewport.height.to_bits(),
-            feather_width_bits: feather_width.to_bits(),
-        }
-    }
 }
 
 #[derive(Default)]
@@ -2355,13 +2221,8 @@ enum FeatheredPathType {
 
 #[cfg(test)]
 fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<Vertex>> {
-    let draw_ops = build_draw_ops(
-        frame,
-        text_engine,
-        DEFAULT_FEATHER_WIDTH,
-        &mut RetainedLayerCache::default(),
-        true,
-    )?;
+    let mut compositor = RetainedCompositorState::default();
+    let draw_ops = compositor.prepare_frame(frame, text_engine, DEFAULT_FEATHER_WIDTH)?;
     let mut vertices = Vec::new();
     for op in &draw_ops.draw_ops {
         vertices.extend_from_slice(draw_ops.scene_vertices(op.vertices));
@@ -2510,29 +2371,6 @@ fn batch_draw_ops(
     passes
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-fn build_draw_ops(
-    frame: &SceneFrame,
-    text_engine: &mut TextEngine,
-    feather_width: f32,
-    layer_cache: &mut RetainedLayerCache,
-    enable_layer_cache: bool,
-) -> Result<DrawOpArena> {
-    let mut draw_ops = DrawOpArena::default();
-    let mut state = SceneRasterState::new(&mut draw_ops);
-    let mut builder = SceneDrawOpBuilder {
-        frame,
-        text_engine,
-        feather_width,
-        layer_cache,
-        enable_layer_cache,
-        scratch_vertices: Vec::new(),
-        clip_scratch_vertices: Vec::new(),
-    };
-    builder.build_scene(&frame.scene, &mut draw_ops, &mut state)?;
-    Ok(draw_ops)
-}
-
 fn build_direct_packet(
     frame: &SceneFrame,
     scene: &Scene,
@@ -2542,13 +2380,10 @@ fn build_direct_packet(
 ) -> Result<DrawOpArena> {
     let mut draw_ops = DrawOpArena::default();
     let mut state = SceneRasterState::from_resolved(initial_state, &mut draw_ops, frame.viewport)?;
-    let mut no_cache = RetainedLayerCache::default();
     let mut builder = SceneDrawOpBuilder {
         frame,
         text_engine,
         feather_width,
-        layer_cache: &mut no_cache,
-        enable_layer_cache: false,
         scratch_vertices: Vec::new(),
         clip_scratch_vertices: Vec::new(),
     };
@@ -2560,8 +2395,6 @@ struct SceneDrawOpBuilder<'a> {
     frame: &'a SceneFrame,
     text_engine: &'a mut TextEngine,
     feather_width: f32,
-    layer_cache: &'a mut RetainedLayerCache,
-    enable_layer_cache: bool,
     scratch_vertices: Vec<Vertex>,
     clip_scratch_vertices: Vec<Vertex>,
 }
@@ -2718,7 +2551,10 @@ impl SceneDrawOpBuilder<'_> {
                 state.pop_transform();
             }
             SceneCommand::Layer(layer) => {
-                self.build_layer(layer, draw_ops, state)?;
+                return Err(Error::new(format!(
+                    "retained direct packet compiler encountered nested layer {}",
+                    layer.layer_id().get()
+                )));
             }
             SceneCommand::Label { rect, text, color } => {
                 self.scratch_vertices.clear();
@@ -2738,37 +2574,6 @@ impl SceneDrawOpBuilder<'_> {
             }
         }
 
-        Ok(())
-    }
-
-    fn build_layer(
-        &mut self,
-        layer: &SceneLayer,
-        draw_ops: &mut DrawOpArena,
-        state: &SceneRasterState,
-    ) -> Result<()> {
-        if !self.enable_layer_cache || matches!(layer.descriptor.cache_policy, LayerCachePolicy::Direct) {
-            let mut inline_state = SceneRasterState::inherit_inline(state, draw_ops);
-            return self.build_scene(&layer.scene, draw_ops, &mut inline_state);
-        }
-
-        let key = LayerCacheKey::new(
-            layer.layer_id(),
-            state.cache_signature(),
-            self.frame.viewport,
-            self.feather_width,
-        );
-
-        if let Some(fragment) = self.layer_cache.fragments.get(&key) {
-            draw_ops.append_fragment(fragment);
-            return Ok(());
-        }
-
-        let mut fragment = DrawOpArena::default();
-        let mut fragment_state = SceneRasterState::inherit(state, draw_ops, &mut fragment);
-        self.build_scene(&layer.scene, &mut fragment, &mut fragment_state)?;
-        self.layer_cache.insert_fragment(key, fragment.clone());
-        draw_ops.append_fragment(&fragment);
         Ok(())
     }
 }
@@ -2816,7 +2621,7 @@ impl SceneRasterState {
                 ResolvedClipPrimitive::Path {
                     path,
                     bounds,
-                    signature,
+                    ..
                 } => {
                     let mut scratch = Vec::new();
                     if !path.is_empty() && !viewport.is_empty() {
@@ -2829,10 +2634,9 @@ impl SceneRasterState {
                     }
                     let vertices = draw_ops.push_clip_vertices(&scratch);
                     state.active_path_clips.push(vertices);
-                    state.clip_stack.push(ClipPrimitive::Path {
-                        bounds: *bounds,
-                        signature: *signature,
-                    });
+                    state
+                        .clip_stack
+                        .push(ClipPrimitive::Path { bounds: *bounds });
                 }
             }
         }
@@ -2840,67 +2644,12 @@ impl SceneRasterState {
         state.clip_state_index = draw_ops.push_clip_state(&state.active_path_clips);
         Ok(state)
     }
-
-    fn inherit(parent: &Self, source_draw_ops: &DrawOpArena, draw_ops: &mut DrawOpArena) -> Self {
-        let active_path_clips = parent
-            .active_path_clips
-            .iter()
-            .copied()
-            .map(|vertices| {
-                let start = vertices.start as usize;
-                let end = (vertices.start + vertices.len) as usize;
-                draw_ops.push_clip_vertices(&source_draw_ops.clip_vertices[start..end])
-            })
-            .collect::<Vec<_>>();
-        let clip_state_index = draw_ops.push_clip_state(&active_path_clips);
-
-        Self {
-            current_transform: parent.current_transform,
-            transform_stack: parent.transform_stack.clone(),
-            clip_stack: parent.clip_stack.clone(),
-            path_clip_state_id: parent.path_clip_state_id,
-            active_path_clips,
-            clip_state_index,
-        }
-    }
-
-    fn inherit_inline(parent: &Self, draw_ops: &mut DrawOpArena) -> Self {
-        let clip_state_index = draw_ops.push_clip_state(&parent.active_path_clips);
-
-        Self {
-            current_transform: parent.current_transform,
-            transform_stack: parent.transform_stack.clone(),
-            clip_stack: parent.clip_stack.clone(),
-            path_clip_state_id: parent.path_clip_state_id,
-            active_path_clips: parent.active_path_clips.clone(),
-            clip_state_index,
-        }
-    }
-
-    fn cache_signature(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        hash_transform(&mut hasher, self.current_transform);
-        for clip in &self.clip_stack {
-            match clip {
-                ClipPrimitive::Rect(rect) => {
-                    0u8.hash(&mut hasher);
-                    hash_rect(&mut hasher, *rect);
-                }
-                ClipPrimitive::Path { signature, .. } => {
-                    1u8.hash(&mut hasher);
-                    signature.hash(&mut hasher);
-                }
-            }
-        }
-
-        hasher.finish()
-    }
 }
 
 #[derive(Debug, Clone)]
 enum ClipPrimitive {
     Rect(Rect),
-    Path { bounds: Rect, signature: u64 },
+    Path { bounds: Rect },
 }
 
 impl ClipPrimitive {
@@ -2926,14 +2675,13 @@ impl SceneRasterState {
         scratch_vertices: &mut Vec<Vertex>,
     ) -> Result<()> {
         let bounds = self.current_transform.transform_rect_bbox(path.bounds());
-        let signature = hash_path(path, self.current_transform);
         scratch_vertices.clear();
         if !path.is_empty() && !viewport.is_empty() {
             let lyon_path = build_lyon_path(path, self.current_transform);
             append_tessellated_filled_lyon_path_vertices(scratch_vertices, &lyon_path, viewport)?;
         }
         let vertices = draw_ops.push_clip_vertices(scratch_vertices);
-        self.clip_stack.push(ClipPrimitive::Path { bounds, signature });
+        self.clip_stack.push(ClipPrimitive::Path { bounds });
         self.active_path_clips.push(vertices);
         self.path_clip_state_id = self.path_clip_state_id.wrapping_add(1);
         self.clip_state_index = draw_ops.push_clip_state(&self.active_path_clips);
@@ -3815,18 +3563,6 @@ fn push_draw_op(
 }
 
 impl DrawOpArena {
-    fn estimated_bytes(&self) -> usize {
-        self.scene_vertices.len() * std::mem::size_of::<Vertex>()
-            + self.clip_vertices.len() * std::mem::size_of::<Vertex>()
-            + self.draw_ops.len() * std::mem::size_of::<DrawOp>()
-            + self.clip_states.len() * std::mem::size_of::<ClipState>()
-            + self
-                .clip_states
-                .iter()
-                .map(|state| state.clip_paths.len() * std::mem::size_of::<PreparedVertices>())
-                .sum::<usize>()
-    }
-
     fn append_fragment(&mut self, fragment: &DrawOpArena) {
         let scene_delta = self.scene_vertices.len() as u32;
         let clip_delta = self.clip_vertices.len() as u32;
@@ -4623,11 +4359,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipState, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind,
-        MAX_DIRTY_LAYERS_FOR_CACHE_REUSE, PreparedClipPath, PreparedDrawBatch,
-        PreparedFrameBatches, PreparedPassBatch, PreparedVertices, RendererFrameStats,
-        RetainedLayerCache, ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer,
-        batch_draw_ops, build_draw_ops, build_vertices, prepare_frame_batches, to_ndc,
+        ClipState, CompositionContainerId, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena,
+        DrawOpKind, PreparedClipPath, PreparedDrawBatch, PreparedFrameBatches,
+        PreparedPassBatch, PreparedVertices, RendererFrameStats, RetainedCompositorState,
+        RetainedPacketId, ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer,
+        batch_draw_ops, build_vertices, prepare_frame_batches, to_ndc,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -4671,6 +4407,25 @@ mod tests {
 
     fn content_updates<const N: usize>(widget_ids: [WidgetId; N]) -> Vec<SceneLayerUpdate> {
         widget_ids.into_iter().map(content_update).collect()
+    }
+
+    fn prepare_with_compositor(
+        frame: &SceneFrame,
+        text_engine: &mut TextEngine,
+        compositor: &mut RetainedCompositorState,
+    ) -> sui_core::Result<DrawOpArena> {
+        compositor.prepare_frame(frame, text_engine, DEFAULT_FEATHER_WIDTH)
+    }
+
+    fn packet_signature(
+        compositor: &RetainedCompositorState,
+        container: CompositionContainerId,
+    ) -> u64 {
+        compositor.packets[&RetainedPacketId {
+            container,
+            segment_index: 0,
+        }]
+            .signature
     }
 
     #[test]
@@ -4803,7 +4558,7 @@ mod tests {
     }
 
     #[test]
-    fn build_draw_ops_carries_active_path_clips() {
+    fn retained_compositor_carries_active_path_clips() {
         let mut clip = Path::builder();
         clip.move_to(Point::new(8.0, 8.0))
             .line_to(Point::new(32.0, 8.0))
@@ -4818,7 +4573,8 @@ mod tests {
         });
 
         let mut text_engine = TextEngine::new().unwrap();
-        let ops = build_draw_ops(
+        let mut compositor = RetainedCompositorState::default();
+        let ops = prepare_with_compositor(
             &SceneFrame {
                 window_id: WindowId::new(6),
                 viewport: Size::new(64.0, 64.0),
@@ -4831,16 +4587,14 @@ mod tests {
                 image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
-            DEFAULT_FEATHER_WIDTH,
-            &mut RetainedLayerCache::default(),
-            true,
+            &mut compositor,
         )
         .unwrap();
 
         assert_eq!(ops.draw_ops.len(), 1);
         let op = &ops.draw_ops[0];
         let clip_state = &ops.clip_states[op.clip_state_index];
-        assert_eq!(op.clip_state_index, 1);
+        assert!(op.clip_state_index > 0);
         assert_eq!(clip_state.clip_paths.len(), 1);
         assert!(clip_state.clip_paths[0].len > 0);
         assert_eq!(op.clip_rect, Some(Rect::new(8.0, 8.0, 24.0, 20.0)));
@@ -5072,7 +4826,7 @@ mod tests {
     }
 
     #[test]
-    fn build_draw_ops_reuses_retained_layer_fragments_until_invalidated() {
+    fn retained_compositor_reuses_layer_packets_until_content_changes() {
         let layer_id = WidgetId::new(41);
         let mut child_scene = Scene::new();
         child_scene.push(SceneCommand::FillRect {
@@ -5101,17 +4855,16 @@ mod tests {
         };
 
         let mut text_engine = TextEngine::new().unwrap();
-        let mut layer_cache = RetainedLayerCache::default();
-        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
-        let first = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
-            .unwrap();
-        assert_eq!(layer_cache.fragments.len(), 1);
+        let mut compositor = RetainedCompositorState::default();
+        let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let layer_container = CompositionContainerId::Layer(SceneLayerId::from_widget(layer_id));
+        let first_signature = packet_signature(&compositor, layer_container);
+        let first_content_version = compositor.layers[&SceneLayerId::from_widget(layer_id)].content_version;
 
         frame.layer_updates.clear();
-        let second = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
-            .unwrap();
-        assert_eq!(layer_cache.fragments.len(), 1);
+        let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
         assert_eq!(first.scene_vertices, second.scene_vertices);
+        assert_eq!(first_signature, packet_signature(&compositor, layer_container));
 
         frame.layer_updates = content_updates([layer_id]);
         let mut updated_child_scene = Scene::new();
@@ -5127,15 +4880,17 @@ mod tests {
             layer_id,
             SceneLayer::new(layer_id, Rect::new(4.0, 6.0, 32.0, 24.0), updated_child_scene),
         ));
-        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
-        let third = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
-            .unwrap();
-        assert_eq!(layer_cache.fragments.len(), 1);
+        let third = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let third_signature = packet_signature(&compositor, layer_container);
+        let third_content_version = compositor.layers[&SceneLayerId::from_widget(layer_id)].content_version;
+
+        assert!(third_content_version > first_content_version);
+        assert_ne!(first_signature, third_signature);
         assert_ne!(first.scene_vertices, third.scene_vertices);
     }
 
     #[test]
-    fn retained_layer_invalidation_evicts_cached_ancestor_fragments() {
+    fn retained_compositor_reuses_parent_packets_when_only_child_content_changes() {
         let parent_id = WidgetId::new(51);
         let child_id = WidgetId::new(52);
 
@@ -5176,16 +4931,18 @@ mod tests {
         };
 
         let mut text_engine = TextEngine::new().unwrap();
-        let mut layer_cache = RetainedLayerCache::default();
-        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
-        let first = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
-            .unwrap();
-        assert_eq!(layer_cache.fragments.len(), 2);
+        let mut compositor = RetainedCompositorState::default();
+        let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let parent_container = CompositionContainerId::Layer(SceneLayerId::from_widget(parent_id));
+        let child_container = CompositionContainerId::Layer(SceneLayerId::from_widget(child_id));
+        let parent_signature = packet_signature(&compositor, parent_container);
+        let child_signature = packet_signature(&compositor, child_container);
 
         frame.layer_updates.clear();
-        let second = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
-            .unwrap();
+        let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
         assert_eq!(first.scene_vertices, second.scene_vertices);
+        assert_eq!(parent_signature, packet_signature(&compositor, parent_container));
+        assert_eq!(child_signature, packet_signature(&compositor, child_container));
 
         let mut updated_child_scene = Scene::new();
         updated_child_scene.push(SceneCommand::FillRect {
@@ -5209,16 +4966,15 @@ mod tests {
         ));
 
         frame.layer_updates = content_updates([child_id]);
-        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
-        let third = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
-            .unwrap();
+        let third = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
-        assert_eq!(layer_cache.fragments.len(), 2);
+        assert_eq!(parent_signature, packet_signature(&compositor, parent_container));
+        assert_ne!(child_signature, packet_signature(&compositor, child_container));
         assert_ne!(first.scene_vertices, third.scene_vertices);
     }
 
     #[test]
-    fn retained_layer_cache_prunes_removed_widget_layers() {
+    fn retained_compositor_prunes_removed_layers_and_packets() {
         let removed_id = WidgetId::new(61);
         let replacement_id = WidgetId::new(62);
 
@@ -5249,11 +5005,16 @@ mod tests {
         };
 
         let mut text_engine = TextEngine::new().unwrap();
-        let mut layer_cache = RetainedLayerCache::default();
-        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
-        let _ = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
-            .unwrap();
-        assert_eq!(layer_cache.fragments.len(), 1);
+        let mut compositor = RetainedCompositorState::default();
+        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let removed_layer_id = SceneLayerId::from_widget(removed_id);
+        let replacement_layer_id = SceneLayerId::from_widget(replacement_id);
+        let removed_packet_id = RetainedPacketId {
+            container: CompositionContainerId::Layer(removed_layer_id),
+            segment_index: 0,
+        };
+        assert!(compositor.layers.contains_key(&removed_layer_id));
+        assert!(compositor.packets.contains_key(&removed_packet_id));
 
         let mut second_scene = Scene::new();
         second_scene.push(SceneCommand::Layer(SceneLayer::new(
@@ -5271,12 +5032,15 @@ mod tests {
         frame.scene = second_scene;
         frame.layer_updates = content_updates([replacement_id]);
 
-        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
-        let _ = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
-            .unwrap();
+        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
-        assert_eq!(layer_cache.fragments.len(), 1);
-        assert!(layer_cache.fragments.keys().all(|key| key.layer_id == SceneLayerId::from_widget(replacement_id)));
+        assert!(!compositor.layers.contains_key(&removed_layer_id));
+        assert!(!compositor.packets.contains_key(&removed_packet_id));
+        assert!(compositor.layers.contains_key(&replacement_layer_id));
+        assert!(compositor.packets.contains_key(&RetainedPacketId {
+            container: CompositionContainerId::Layer(replacement_layer_id),
+            segment_index: 0,
+        }));
     }
 
     #[test]
@@ -5354,7 +5118,7 @@ mod tests {
     }
 
     #[test]
-    fn build_draw_ops_uses_registered_image_handle() {
+    fn retained_compositor_uses_registered_image_handle() {
         let handle = ImageHandle::new(23);
         let mut images = ImageRegistry::new();
         images.insert(
@@ -5376,7 +5140,8 @@ mod tests {
         });
 
         let mut text_engine = TextEngine::new().unwrap();
-        let ops = build_draw_ops(
+        let mut compositor = RetainedCompositorState::default();
+        let ops = prepare_with_compositor(
             &SceneFrame {
                 window_id: WindowId::new(7),
                 viewport: Size::new(96.0, 64.0),
@@ -5389,9 +5154,7 @@ mod tests {
                 image_registry: Arc::new(images),
             },
             &mut text_engine,
-            DEFAULT_FEATHER_WIDTH,
-            &mut RetainedLayerCache::default(),
-            true,
+            &mut compositor,
         )
         .unwrap();
 
@@ -5402,7 +5165,7 @@ mod tests {
     }
 
     #[test]
-    fn build_draw_ops_errors_for_unregistered_image_handle() {
+    fn retained_compositor_errors_for_unregistered_image_handle() {
         let mut scene = Scene::new();
         scene.push(SceneCommand::DrawImage {
             rect: Rect::new(4.0, 6.0, 32.0, 24.0),
@@ -5410,7 +5173,8 @@ mod tests {
         });
 
         let mut text_engine = TextEngine::new().unwrap();
-        let error = build_draw_ops(
+        let mut compositor = RetainedCompositorState::default();
+        let error = prepare_with_compositor(
             &SceneFrame {
                 window_id: WindowId::new(8),
                 viewport: Size::new(96.0, 64.0),
@@ -5423,9 +5187,7 @@ mod tests {
                 image_registry: Arc::new(ImageRegistry::new()),
             },
             &mut text_engine,
-            DEFAULT_FEATHER_WIDTH,
-            &mut RetainedLayerCache::default(),
-            true,
+            &mut compositor,
         )
         .unwrap_err();
 
@@ -5434,50 +5196,6 @@ mod tests {
                 .to_string()
                 .contains("image handle 88 is not registered")
         );
-    }
-
-    #[test]
-    fn build_draw_ops_bypasses_retained_cache_for_large_dirty_sets() {
-        let layer_id = WidgetId::new(71);
-        let mut child_scene = Scene::new();
-        child_scene.push(SceneCommand::FillRect {
-            rect: Rect::new(2.0, 2.0, 20.0, 20.0),
-            brush: Color::rgba(0.3, 0.6, 0.9, 1.0).into(),
-        });
-
-        let mut scene = Scene::new();
-        scene.push(SceneCommand::Layer(SceneLayer::new(
-            layer_id,
-            Rect::new(2.0, 2.0, 20.0, 20.0),
-            child_scene,
-        )));
-
-        let frame = SceneFrame {
-            window_id: WindowId::new(24),
-            viewport: Size::new(48.0, 48.0),
-            surface_size: Size::new(48.0, 48.0),
-            scale_factor: 1.0,
-            dirty_regions: Vec::new(),
-            layer_updates: (0..=MAX_DIRTY_LAYERS_FOR_CACHE_REUSE).map(|index| content_update(WidgetId::new(71 + index as u64))).collect(),
-            scene,
-            font_registry: Arc::new(FontRegistry::new()),
-            image_registry: Arc::new(ImageRegistry::new()),
-        };
-
-        let mut text_engine = TextEngine::new().unwrap();
-        let mut layer_cache = RetainedLayerCache::default();
-        let enable_layer_cache = layer_cache.can_cache(&frame.layer_updates);
-        let ops = build_draw_ops(
-            &frame,
-            &mut text_engine,
-            DEFAULT_FEATHER_WIDTH,
-            &mut layer_cache,
-            enable_layer_cache,
-        )
-        .unwrap();
-
-        assert!(!ops.draw_ops.is_empty());
-        assert!(layer_cache.fragments.is_empty());
     }
 
     #[test]

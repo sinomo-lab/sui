@@ -33,7 +33,7 @@ crates/
   sui-scene/            # paint graph, draw primitives, composition data
   sui-text/             # fonts, shaping, text layout, editing primitives
   sui-runtime/          # widget tree, event routing, focus, invalidation, scheduling
-  sui-render-wgpu/      # scene-to-wgpu renderer, caches, color pipeline, surfaces
+  sui-render-wgpu/      # retained compositor backend, GPU caches, color pipeline, surfaces
   sui-platform/         # native/web shell adapters, event normalization, IME, DnD
   sui-widgets/          # standard controls built on the runtime contracts
   sui-testing/          # deterministic UI harness, event injection, semantics queries
@@ -161,8 +161,9 @@ Role: concrete renderer backend.
 
 Owns:
 
-- scene compilation into GPU work
-- batch generation and sort keys
+- retained compositor state, property trees, and per-window composition data
+- direct-packet generation today, with tile and offscreen-surface generation layered on top
+- composition pass preparation, batch generation, and sort keys
 - texture, atlas, glyph, tile, and offscreen-surface caches
 - color-management execution path and presentation transforms
 - render-to-texture and custom pass interop points

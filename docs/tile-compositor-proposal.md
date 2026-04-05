@@ -14,16 +14,16 @@ The current architecture already has useful foundations:
 
 - widgets emit render-neutral scene commands rather than raw GPU commands
 - the runtime tracks explicit invalidation kinds
-- the runtime can patch dirty widget layers into the last frame
-- the renderer has prototype retained layer fragment caches
+- the runtime can emit incremental layer updates rather than only full-frame paint results
+- the renderer has a retained compositor scaffold with per-window state, property trees, and direct packets
 
 That is not enough for a high-refresh, highly dynamic UI.
 
 The current model still leaves too much work on the hot frame path:
 
 - runtime-side paint still produces fresh scene content for dirty layers
-- renderer-side scene traversal still rebuilds draw operations for the frame
-- batch preparation and vertex upload are still fundamentally frame-scoped
+- renderer-side direct packet rebuild still regenerates draw operations for content changes because tile reuse does not exist yet
+- final batch preparation and vertex upload are still fundamentally frame-scoped
 - scrolling, panning, transforms, and similar moves are not yet treated as first-class composition-only updates
 - layout graph and hit-test graph maintenance are still more rebuild-oriented than incrementally retained
 
@@ -536,6 +536,8 @@ Exit criteria:
 
 ### Phase 3: Install the retained compositor scaffold and retire the old frame compiler
 
+Status: complete. Live rendering now goes through per-window retained compositor state in `sui-render-wgpu`, and the old frame-global scene-to-draw-op compiler has been deleted rather than kept as fallback scaffolding.
+
 The first compositor milestone should not start with tiles. It should start by replacing frame-global renderer compilation with retained layer and property state while still rendering layers directly.
 
 - add a per-window retained compositor state in `sui-render-wgpu`
@@ -543,13 +545,13 @@ The first compositor milestone should not start with tiles. It should start by r
 - teach the renderer to update retained compositor state incrementally from scene updates
 - implement `Direct` layer mode first, backed by retained render packets or equivalent persistent draw data
 - keep the final composition path explicit even if it initially composes only direct layers
-- remove the old frame-global scene-to-draw-op path as the primary renderer implementation once the retained direct path can render core workloads
+- delete the old frame-global scene-to-draw-op path instead of keeping it as compatibility scaffolding once the retained direct path can render core workloads
 
 Exit criteria:
 
 - the renderer no longer treats each frame as a fresh global scene compilation problem
 - transform, clip, and effect changes can update retained compositor state without forcing full content rebuild of unaffected layers
-- the old renderer path is either deleted or reduced to a narrow bring-up tool, not a supported architecture
+- the old renderer path is deleted; there is no supported frame-global fallback architecture
 
 ### Phase 4: Tile cache infrastructure
 
