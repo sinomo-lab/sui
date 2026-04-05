@@ -13,10 +13,10 @@ use std::{
 };
 
 use sui::{
-    Error, Event, ImeEvent, Modifiers, Point, PointerButton, PointerButtons, PointerEvent,
-    PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsNode, SemanticsRole,
-    SemanticsValue, Size, Vector, WindowEvent, WindowId, window_performance_snapshot,
-    WgpuRenderer,
+    Alignment, Application, Button, Error, Event, ImeEvent, Modifiers, Point,
+    PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result,
+    ScrollDelta, SemanticsNode, SemanticsRole, SemanticsValue, Size, Stack, Vector,
+    WindowBuilder, WindowEvent, WindowId, window_performance_snapshot, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, RendererSubmissionDiagnostics,
@@ -39,6 +39,9 @@ use winit::{
 
 const DEFAULT_WINDOW_SIZE: Size = Size::new(1280.0, 720.0);
 const REDRAW_FLUSH_LIMIT: usize = 256;
+const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
+const BUTTON_GRID_ROWS: usize = 8;
+const BUTTON_GRID_COLUMNS: usize = 8;
 
 static DESKTOP_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1087,6 +1090,43 @@ fn text_input_value(snapshot: &DesktopWindowSnapshot, name: &str) -> String {
     }
 }
 
+fn build_button_grid_benchmark_application() -> Application {
+    let mut grid = Stack::vertical().spacing(12.0).alignment(Alignment::Stretch);
+
+    for row in 0..BUTTON_GRID_ROWS {
+        let mut line = Stack::horizontal().spacing(12.0).alignment(Alignment::Stretch);
+        for column in 0..BUTTON_GRID_COLUMNS {
+            line = line.with_child(
+                Button::new(format!("Button {row}:{column}"))
+                    .min_width(112.0)
+                    .min_height(44.0),
+            );
+        }
+        grid = grid.with_child(line);
+    }
+
+    Application::new().window(
+        WindowBuilder::new()
+            .title(BUTTON_GRID_BENCHMARK_TITLE)
+            .root(grid),
+    )
+}
+
+fn phase_duration_ms(snapshot: &WindowPerformanceSnapshot, phase: FramePhase) -> f64 {
+    let total: f64 = snapshot
+        .phase_timings
+        .iter()
+        .filter(|sample| sample.phase == phase)
+        .map(|sample| sample.duration_ms)
+        .sum();
+
+    if total == 0.0 {
+        0.0
+    } else {
+        total
+    }
+}
+
 #[test]
 fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Result<()> {
     let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1196,6 +1236,45 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     assert!(after_button.bounds.y() < before_button.bounds.y());
     assert!(after_metrics.frame_index > before_metrics.frame_index);
     assert!(after_metrics.total_time_ms >= 0.0);
+
+    Ok(())
+}
+
+#[test]
+fn desktop_button_grid_64_reports_initial_render_time() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let harness = DesktopHarness::launch(|| build_button_grid_benchmark_application().build())?;
+    let snapshot = harness.snapshot(harness.main_window_id())?;
+    let performance = snapshot
+        .performance
+        .clone()
+        .expect("64-button grid should publish a performance snapshot after the first paint");
+    let button_count = snapshot
+        .semantics
+        .iter()
+        .filter(|node| node.role == SemanticsRole::Button)
+        .count();
+    let slowest_phase = performance.slowest_phase();
+
+    assert_eq!(snapshot.title, BUTTON_GRID_BENCHMARK_TITLE);
+    assert_eq!(button_count, BUTTON_GRID_ROWS * BUTTON_GRID_COLUMNS);
+    assert!(performance.frame_index > 0);
+    assert!(performance.total_time_ms >= 0.0);
+    assert!(performance.renderer_submission.draw_count > 0);
+
+    println!(
+        "64-button grid first frame: total={:.3} ms, paint={:.3} ms, renderer={:.3} ms, draws={}, commands={}, slowest={} ({:.3} ms)",
+        performance.total_time_ms,
+        phase_duration_ms(&performance, FramePhase::Paint),
+        phase_duration_ms(&performance, FramePhase::Renderer),
+        performance.renderer_submission.draw_count,
+        performance.scene.command_count,
+        slowest_phase
+            .map(|sample| sample.phase.label())
+            .unwrap_or("none"),
+        slowest_phase.map(|sample| sample.duration_ms).unwrap_or(0.0),
+    );
 
     Ok(())
 }

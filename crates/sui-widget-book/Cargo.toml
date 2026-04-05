@@ -9,8 +9,8 @@ publish = false
 [dependencies]
 sui = { workspace = true }
 sui-debug = { workspace = true }
+sui-testing = { workspace = true }
 
 [dev-dependencies]
 sui-runtime = { workspace = true }
-sui-testing = { workspace = true }
 winit = { workspace = true }
