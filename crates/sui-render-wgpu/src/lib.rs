@@ -785,9 +785,30 @@ impl RetainedCompositorState {
         let mut tiled_damage = HashMap::<SceneLayerId, Option<Rect>>::new();
         let current_layers = snapshot.layers.keys().copied().collect::<HashSet<_>>();
         let mut root_dirty = global_rebuild;
+        let mut has_content_updates = false;
 
         for update in &frame.layer_updates {
+            if matches!(
+                update.kind,
+                SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
+            ) {
+                has_content_updates = true;
+            }
+
             if !current_layers.contains(&update.layer_id) {
+                if matches!(
+                    update.kind,
+                    SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
+                ) {
+                    if let Some(cached_root) = fallback_cached_root_for_update(
+                        update,
+                        &snapshot.layers,
+                        &cached_roots,
+                    ) {
+                        let damage_rect = update.damage.unwrap_or(update.content_bounds);
+                        merge_damage_rect(&mut tiled_damage, cached_root, Some(damage_rect));
+                    }
+                }
                 root_dirty = true;
                 continue;
             }
@@ -816,6 +837,12 @@ impl RetainedCompositorState {
                 | SceneLayerUpdateKind::Clip
                 | SceneLayerUpdateKind::Effect
                 | SceneLayerUpdateKind::Visibility => {}
+            }
+        }
+
+        if has_content_updates {
+            for &cached_root in &cached_roots {
+                merge_damage_rect(&mut tiled_damage, cached_root, None);
             }
         }
 
@@ -1299,6 +1326,33 @@ fn nearest_cached_root(
         current = layers.get(&layer_id).and_then(|layer| layer.parent);
     }
     None
+}
+
+fn fallback_cached_root_for_update(
+    update: &sui_scene::SceneLayerUpdate,
+    layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    cached_roots: &HashSet<SceneLayerId>,
+) -> Option<SceneLayerId> {
+    let damage = update.damage.unwrap_or(update.content_bounds);
+
+    cached_roots
+        .iter()
+        .copied()
+        .filter_map(|layer_id| {
+            let descriptor = &layers.get(&layer_id)?.descriptor;
+            let intersects = descriptor.content_bounds.intersection(damage).is_some()
+                || descriptor.paint_bounds.intersection(damage).is_some();
+            if !intersects {
+                return None;
+            }
+
+            Some((
+                layer_id,
+                descriptor.content_bounds.width() * descriptor.content_bounds.height(),
+            ))
+        })
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(layer_id, _)| layer_id)
 }
 
 fn rect_to_layer_local(rect: Rect, descriptor: &sui_scene::SceneLayerDescriptor) -> Rect {
@@ -2014,6 +2068,25 @@ impl WgpuRenderer {
             .as_ref()
             .map(TextEngine::cache_snapshot)
             .unwrap_or_default()
+    }
+
+    pub fn capture_last_frame_rgba(&mut self, window_id: WindowId) -> Result<RgbaImage> {
+        let frame = self.last_frames.get(&window_id).cloned().ok_or_else(|| {
+            Error::new(format!(
+                "window {} does not have a previously rendered frame available for capture",
+                window_id.get()
+            ))
+        })?;
+
+        let size = normalize_framebuffer_size(frame.surface_size).ok_or_else(|| {
+            Error::new(format!(
+                "window {} last rendered frame has an invalid framebuffer size",
+                window_id.get()
+            ))
+        })?;
+
+        self.render_offscreen(&frame, size)?;
+        self.capture_rgba(window_id)
     }
 
     pub fn capture_rgba(&self, window_id: WindowId) -> Result<RgbaImage> {
@@ -6481,8 +6554,8 @@ mod tests {
         let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
     }
 
     #[test]

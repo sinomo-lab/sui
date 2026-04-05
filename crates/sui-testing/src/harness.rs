@@ -1,6 +1,9 @@
 use sui_core::{Error, Event, Result, WindowId};
 use sui_platform::{AccessibilitySnapshot, HeadlessPlatform};
-use sui_runtime::{FocusState, Runtime, WidgetGraphSnapshot};
+use sui_runtime::{
+    FocusState, Runtime, WidgetGraphSnapshot, WindowPerformanceSnapshot,
+    window_performance_snapshot,
+};
 
 use crate::{
     screenshot::{ArtifactBundle, Screenshot, semantics_overlay, widget_overlay},
@@ -147,6 +150,18 @@ impl Harness {
             screenshot,
             semantics_overlay,
             widget_overlay,
+        })
+    }
+
+    pub(crate) fn performance_snapshot(
+        &self,
+        window_id: WindowId,
+    ) -> Result<WindowPerformanceSnapshot> {
+        window_performance_snapshot(window_id).ok_or_else(|| {
+            Error::new(format!(
+                "window {} does not have a performance snapshot yet",
+                window_id.get()
+            ))
         })
     }
 

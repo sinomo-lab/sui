@@ -549,7 +549,6 @@ impl ScrollView {
         if next != self.offset {
             self.offset = next;
             ctx.request_arrange();
-            ctx.request_paint();
             ctx.request_semantics();
             true
         } else {
@@ -635,7 +634,6 @@ impl VirtualScrollView {
         if (next - self.offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
             ctx.request_arrange();
-            ctx.request_paint();
             ctx.request_semantics();
             true
         } else {
@@ -936,7 +934,11 @@ impl Widget for VirtualScrollView {
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let viewport = self.viewport_rect(bounds);
         self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
+        let previous_visible_range = self.visible_range.clone();
         self.update_visible_range(viewport.height());
+        if self.visible_range != previous_visible_range {
+            ctx.request_paint();
+        }
         let viewport_width = viewport.width();
         let visible_range = self.visible_range.clone();
         let offset_y = self.offset_y;
@@ -1520,6 +1522,79 @@ mod tests {
         let _ = runtime.render(window_id).unwrap();
 
         assert_eq!(*counts.borrow(), vec![1, 2, 1, 0]);
+    }
+
+    #[test]
+    fn scroll_view_does_not_repaint_child_for_translation_only_scroll() {
+        let counts = Rc::new(RefCell::new(vec![0usize; 1]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(ScrollView::vertical(
+                PaintCounterBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    Rc::clone(&counts),
+                    0,
+                ),
+            )),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        assert_eq!(*counts.borrow(), vec![1]);
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+
+        assert_eq!(*counts.borrow(), vec![1]);
+    }
+
+    #[test]
+    fn virtual_scroll_view_skips_repaint_while_visible_range_is_unchanged() {
+        let counts = Rc::new(RefCell::new(vec![0usize; 4]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                VirtualScrollView::new()
+                    .with_child(PaintCounterBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.8, 0.2, 0.2, 1.0),
+                        Rc::clone(&counts),
+                        0,
+                    ))
+                    .with_child(PaintCounterBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.2, 0.8, 0.2, 1.0),
+                        Rc::clone(&counts),
+                        1,
+                    ))
+                    .with_child(PaintCounterBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.2, 0.2, 0.8, 1.0),
+                        Rc::clone(&counts),
+                        2,
+                    ))
+                    .with_child(PaintCounterBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.8, 0.8, 0.2, 1.0),
+                        Rc::clone(&counts),
+                        3,
+                    )),
+            ),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        assert_eq!(*counts.borrow(), vec![1, 1, 0, 0]);
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -8.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+
+        assert_eq!(*counts.borrow(), vec![1, 1, 0, 0]);
     }
 
     #[test]

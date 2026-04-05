@@ -1,6 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{Result, SemanticsRole, WindowId};
+use sui_runtime::WindowPerformanceSnapshot;
 
 use crate::{
     harness::Harness,
@@ -49,6 +50,12 @@ impl TestWindow {
         let mut harness = self.harness.borrow_mut();
         harness.run_until_idle()?;
         harness.capture_artifacts(self.window_id)
+    }
+
+    pub fn performance_snapshot(&self) -> Result<WindowPerformanceSnapshot> {
+        let mut harness = self.harness.borrow_mut();
+        harness.run_until_idle()?;
+        harness.performance_snapshot(self.window_id)
     }
 
     pub fn locator(&self, selector: Selector) -> Locator {

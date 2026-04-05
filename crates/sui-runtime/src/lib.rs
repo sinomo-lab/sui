@@ -736,7 +736,10 @@ impl WindowState {
         image_registry: Arc<ImageRegistry>,
     ) {
         if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
-            let _ = self.run_measure_arrange_pass(text_system, font_registry, image_registry);
+            let invalidations =
+                self.run_measure_arrange_pass(text_system, font_registry, image_registry);
+            self.schedule.extend(&invalidations);
+            self.pending_invalidations.extend(invalidations);
             return;
         }
 
@@ -1069,11 +1072,13 @@ impl WindowState {
 
         if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
             let started = Instant::now();
-            invalidations.extend(self.run_measure_arrange_pass(
+            let pass_invalidations = self.run_measure_arrange_pass(
                 Arc::clone(&text_system),
                 Arc::clone(&font_registry),
                 Arc::clone(&image_registry),
-            ));
+            );
+            self.schedule.extend(&pass_invalidations);
+            invalidations.extend(pass_invalidations);
             graph_changes = self.collect_graph_changes(previous_graph.as_ref());
             diagnostics.push(FramePhase::MeasureArrange, started.elapsed());
         } else if self.schedule.hit_test || self.graph.is_empty() {

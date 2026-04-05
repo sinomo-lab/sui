@@ -11,4 +11,6 @@ sui = { workspace = true }
 sui-debug = { workspace = true }
 
 [dev-dependencies]
+sui-runtime = { workspace = true }
 sui-testing = { workspace = true }
+winit = { workspace = true }

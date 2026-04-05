@@ -6,7 +6,7 @@ use sui::prelude::*;
 use sui::{
     AccessibilitySnapshot, DirtyRegion, FocusState, FrameSchedule, InvalidationKind, Rect,
     SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, SemanticsValue,
-    TextStyle, TimerToken, Vector, WakeEvent, WidgetGraphSnapshot, WidgetId,
+    TextStyle, Vector, WidgetGraphSnapshot, WidgetId,
     WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
     WindowPerformanceSummary, set_window_scene_statistics_detail_mode,
     window_performance_summary, window_scene_statistics_detail_mode,
@@ -90,17 +90,9 @@ struct WidgetBookRoot {
     gallery: SingleChild,
     performance_overlay: SingleChild,
     performance_display: Rc<RefCell<LivePerformanceDisplay>>,
-    performance_bootstrap_timer: Option<TimerToken>,
-    performance_idle_timer: Option<TimerToken>,
-    skip_next_performance_probe: bool,
-    last_overlay_frame_index: Option<u64>,
-    last_overlay_frame_time: Option<f64>,
 }
 
 impl WidgetBookRoot {
-    const IDLE_REFRESH_INTERVAL: f64 = 0.25;
-    const IDLE_THRESHOLD: f64 = 0.5;
-
     const OVERLAY_MARGIN: Insets = Insets {
         left: 0.0,
         top: 18.0,
@@ -116,11 +108,6 @@ impl WidgetBookRoot {
                 Rc::clone(&performance_display),
             )),
             performance_display,
-            performance_bootstrap_timer: None,
-            performance_idle_timer: None,
-            skip_next_performance_probe: false,
-            last_overlay_frame_index: None,
-            last_overlay_frame_time: None,
         }
     }
 
@@ -137,12 +124,6 @@ impl WidgetBookRoot {
 
         *display = next;
         true
-    }
-
-    fn request_performance_refresh(ctx: &mut EventCtx) {
-        ctx.request_measure();
-        ctx.request_paint();
-        ctx.request_semantics();
     }
 }
 
@@ -197,62 +178,9 @@ pub fn run_desktop_widget_book() -> Result<()> {
 
 impl Widget for WidgetBookRoot {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if self.performance_bootstrap_timer.is_none()
-            && window_performance_summary(ctx.window_id()).is_none()
-        {
-            self.performance_bootstrap_timer = Some(ctx.schedule_timer_after(0.1));
-        }
-
-        if self.performance_idle_timer.is_none()
-            && window_performance_summary(ctx.window_id()).is_some()
-        {
-            self.performance_idle_timer =
-                Some(ctx.schedule_timer_after(Self::IDLE_REFRESH_INTERVAL));
-        }
-
-        if matches!(event, Event::Window(WindowEvent::RedrawRequested))
-            && window_performance_summary(ctx.window_id()).is_some()
-            && self.performance_bootstrap_timer.is_none()
-        {
-            if self.skip_next_performance_probe {
-                self.skip_next_performance_probe = false;
-            } else {
-                self.performance_bootstrap_timer = Some(ctx.schedule_timer_after(0.0));
-            }
-        }
-
-        if let Event::Wake(WakeEvent::Timer { token, .. }) = event {
-            if Some(*token) == self.performance_idle_timer {
-                self.performance_idle_timer =
-                    Some(ctx.schedule_timer_after(Self::IDLE_REFRESH_INTERVAL));
-
-                if let Some(last_frame_time) = self.last_overlay_frame_time {
-                    if ctx.current_time() - last_frame_time >= Self::IDLE_THRESHOLD {
-                        let snapshot = self.performance_display.borrow().snapshot;
-                        if self.set_performance_display(snapshot, true) {
-                            self.skip_next_performance_probe = true;
-                            Self::request_performance_refresh(ctx);
-                        }
-                    }
-                }
-            }
-
-            if Some(*token) == self.performance_bootstrap_timer {
-                self.performance_bootstrap_timer = None;
-
-                if let Some(summary) = window_performance_summary(ctx.window_id()) {
-                    if self.last_overlay_frame_index == Some(summary.frame_index) {
-                        return;
-                    }
-
-                    self.last_overlay_frame_index = Some(summary.frame_index);
-                    self.last_overlay_frame_time = Some(ctx.current_time());
-                    self.set_performance_display(Some(summary), false);
-                    self.skip_next_performance_probe = true;
-                    Self::request_performance_refresh(ctx);
-                } else {
-                    self.performance_bootstrap_timer = Some(ctx.schedule_timer_after(0.1));
-                }
+        if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
+            if let Some(summary) = window_performance_summary(ctx.window_id()) {
+                let _ = self.set_performance_display(Some(summary), false);
             }
         }
     }
@@ -367,6 +295,11 @@ impl Widget for ProjectSettingsPreview {
         }
 
         match event {
+            Event::Window(WindowEvent::RedrawRequested) => {
+                // Keep the floating overlay visually in sync with already-scheduled frames
+                // without reintroducing its old self-driven redraw loop.
+                ctx.request_paint();
+            }
             Event::Pointer(pointer)
                 if pointer.kind == sui::PointerEventKind::Down
                     && pointer.button == Some(sui::PointerButton::Primary) =>
@@ -1710,10 +1643,6 @@ impl WidgetBookSummary {
 
 struct LivePerformancePanel {
     display: Rc<RefCell<LivePerformanceDisplay>>,
-    lines: Vec<LivePerformanceLine>,
-    snapshot: Option<WindowPerformanceSummary>,
-    idle: bool,
-    detail_mode: SceneStatisticsDetailMode,
     toggle_pressed: bool,
 }
 
@@ -1733,6 +1662,7 @@ struct LivePerformanceLineSpec {
 
 impl LivePerformancePanel {
     const WIDTH: f32 = 252.0;
+    const HEIGHT: f32 = 204.0;
     const PADDING_X: f32 = 12.0;
     const PADDING_Y: f32 = 10.0;
     const CORNER_RADIUS: f32 = 12.0;
@@ -1747,47 +1677,8 @@ impl LivePerformancePanel {
     fn with_display(display: Rc<RefCell<LivePerformanceDisplay>>) -> Self {
         Self {
             display,
-            lines: Vec::new(),
-            snapshot: None,
-            idle: false,
-            detail_mode: SceneStatisticsDetailMode::Lightweight,
             toggle_pressed: false,
         }
-    }
-
-    fn set_snapshot(&mut self, next_snapshot: Option<WindowPerformanceSummary>) -> bool {
-        if self.snapshot == next_snapshot {
-            return false;
-        }
-
-        self.snapshot = next_snapshot;
-        true
-    }
-
-    fn set_detail_mode(&mut self, next_detail_mode: SceneStatisticsDetailMode) -> bool {
-        if self.detail_mode == next_detail_mode {
-            return false;
-        }
-
-        self.detail_mode = next_detail_mode;
-        true
-    }
-
-    fn set_idle(&mut self, next_idle: bool) -> bool {
-        if self.idle == next_idle {
-            return false;
-        }
-
-        self.idle = next_idle;
-        true
-    }
-
-    fn refresh(&mut self, window_id: WindowId) -> bool {
-        let display = *self.display.borrow();
-        let mut changed = self.set_snapshot(display.snapshot);
-        changed |= self.set_idle(display.idle);
-        changed |= self.set_detail_mode(window_scene_statistics_detail_mode(window_id));
-        changed
     }
 
     fn toggle_bounds(&self, bounds: Rect) -> Rect {
@@ -1799,35 +1690,36 @@ impl LivePerformancePanel {
         )
     }
 
-    fn toggle_label(&self) -> &'static str {
-        if self.detail_mode.is_detailed() {
+    fn toggle_label(detail_mode: SceneStatisticsDetailMode) -> &'static str {
+        if detail_mode.is_detailed() {
             "detail on"
         } else {
             "detail off"
         }
     }
 
-    fn rebuild_lines(&mut self, _ctx: &MeasureCtx, width: f32) -> f32 {
+    fn rebuild_lines(&self, width: f32, specs: &[LivePerformanceLineSpec]) -> Vec<LivePerformanceLine> {
         let _text_width = (width - Self::PADDING_X * 2.0).max(1.0);
         let mut y = Self::PADDING_Y;
         let mut lines = Vec::new();
 
-        for spec in self.content_specs() {
+        for spec in specs {
             let line_height = spec.style.line_height.max(spec.style.font_size);
             lines.push(LivePerformanceLine {
                 y,
-                text: spec.text,
-                style: spec.style,
+                text: spec.text.clone(),
+                style: spec.style.clone(),
             });
             y += line_height + spec.spacing_after;
         }
 
-        self.lines = lines;
-        y + Self::PADDING_Y
+        lines
     }
 
-    fn content_specs(&self) -> Vec<LivePerformanceLineSpec> {
-        match &self.snapshot {
+    fn content_specs(&self, _window_id: WindowId) -> Vec<LivePerformanceLineSpec> {
+        let display = *self.display.borrow();
+
+        match display.snapshot {
             Some(snapshot) => {
                 let slowest_phase = snapshot.slowest_phase;
                 let slowest_label = slowest_phase
@@ -1841,18 +1733,18 @@ impl LivePerformancePanel {
                     LivePerformanceLineSpec::title("live performance".to_string()),
                     LivePerformanceLineSpec::headline(format!(
                         "{}  |  {}",
-                        if self.idle {
+                        if display.idle {
                             "0 fps".to_string()
                         } else {
                             format_fps(snapshot.total_time_ms)
                         },
-                        if self.idle {
+                        if display.idle {
                             "idle".to_string()
                         } else {
                             format_duration_ms(snapshot.total_time_ms)
                         },
                     )),
-                    LivePerformanceLineSpec::metric(if self.idle {
+                    LivePerformanceLineSpec::metric(if display.idle {
                         format!(
                             "frame {}  |  last active {} {}",
                             snapshot.frame_index, slowest_label, slowest_duration,
@@ -1970,14 +1862,13 @@ impl Widget for LivePerformancePanel {
                 self.toggle_pressed = false;
 
                 if activate {
-                    let next_mode = if self.detail_mode.is_detailed() {
+                    let current_mode = window_scene_statistics_detail_mode(ctx.window_id());
+                    let next_mode = if current_mode.is_detailed() {
                         SceneStatisticsDetailMode::Lightweight
                     } else {
                         SceneStatisticsDetailMode::Detailed
                     };
                     set_window_scene_statistics_detail_mode(ctx.window_id(), next_mode);
-                    self.detail_mode = next_mode;
-                    ctx.request_measure();
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
@@ -1995,18 +1886,18 @@ impl Widget for LivePerformancePanel {
         }
     }
 
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.refresh(ctx.window_id());
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let width = if constraints.max.width.is_finite() {
             constraints.max.width.min(Self::WIDTH)
         } else {
             Self::WIDTH
         };
-        let height = self.rebuild_lines(ctx, width);
-        constraints.clamp(Size::new(width, height))
+        constraints.clamp(Size::new(width, Self::HEIGHT))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let detail_mode = window_scene_statistics_detail_mode(ctx.window_id());
+        let lines = self.rebuild_lines(ctx.bounds().width(), &self.content_specs(ctx.window_id()));
         let shadow = ctx.bounds().translate(Vector::new(0.0, 4.0));
         ctx.fill(
             rounded_rect_path(shadow, Self::CORNER_RADIUS),
@@ -2023,7 +1914,7 @@ impl Widget for LivePerformancePanel {
 
         let toggle_bounds = self.toggle_bounds(ctx.bounds());
         let toggle_shape = rounded_rect_path(toggle_bounds, toggle_bounds.height() * 0.5);
-        let toggle_fill = if self.detail_mode.is_detailed() {
+        let toggle_fill = if detail_mode.is_detailed() {
             if self.toggle_pressed {
                 Color::rgba(0.07, 0.34, 0.52, 0.92)
             } else {
@@ -2034,7 +1925,7 @@ impl Widget for LivePerformancePanel {
         } else {
             Color::rgba(0.94, 0.96, 0.98, 1.0)
         };
-        let toggle_stroke = if self.detail_mode.is_detailed() {
+        let toggle_stroke = if detail_mode.is_detailed() {
             Color::rgba(0.05, 0.28, 0.44, 1.0)
         } else {
             Color::rgba(0.76, 0.82, 0.88, 1.0)
@@ -2043,9 +1934,9 @@ impl Widget for LivePerformancePanel {
         ctx.stroke(toggle_shape, toggle_stroke, StrokeStyle::new(1.0));
         ctx.draw_text(
             toggle_bounds,
-            self.toggle_label().to_string(),
+            Self::toggle_label(detail_mode).to_string(),
             text_style(
-                if self.detail_mode.is_detailed() {
+                if detail_mode.is_detailed() {
                     Color::rgba(0.98, 0.995, 1.0, 1.0)
                 } else {
                     Color::rgba(0.33, 0.40, 0.48, 1.0)
@@ -2056,7 +1947,7 @@ impl Widget for LivePerformancePanel {
         );
 
         ctx.push_clip_rect(ctx.bounds());
-        for line in &self.lines {
+        for line in &lines {
             let line_rect = Rect::new(
                 ctx.bounds().x() + Self::PADDING_X,
                 ctx.bounds().y() + line.y,
@@ -2074,7 +1965,9 @@ impl Widget for LivePerformancePanel {
         node.name = Some("Live performance overlay".to_string());
         node.description =
             Some("Compact floating renderer and scene performance statistics with a scene detail toggle.".to_string());
-        node.value = Some(SemanticsValue::Text(self.toggle_label().to_string()));
+        node.value = Some(SemanticsValue::Text(
+            Self::toggle_label(window_scene_statistics_detail_mode(ctx.window_id())).to_string(),
+        ));
         ctx.push(node);
     }
 }
@@ -3068,10 +2961,14 @@ mod tests {
 
     #[test]
     fn live_performance_panel_replaces_snapshot_without_creating_children() {
-        let mut panel = LivePerformancePanel::new();
+        let display = Rc::new(RefCell::new(LivePerformanceDisplay::default()));
+        let panel = LivePerformancePanel::with_display(Rc::clone(&display));
 
-        assert!(panel.set_snapshot(Some(sample_window_performance_snapshot())));
-        assert!(!panel.set_snapshot(panel.snapshot.clone()));
+        assert_eq!(panel.content_specs(WindowId::new(11)).len(), 3);
+
+        display.borrow_mut().snapshot = Some(sample_window_performance_snapshot());
+
+        assert_eq!(panel.content_specs(WindowId::new(11)).len(), 9);
     }
 
     #[test]
@@ -3086,12 +2983,13 @@ mod tests {
             }
         }
 
-        let mut panel = LivePerformancePanel::new();
+        let display = Rc::new(RefCell::new(LivePerformanceDisplay::default()));
+        let panel = LivePerformancePanel::with_display(Rc::clone(&display));
         let mut visitor = CountingVisitor { count: 0 };
         Widget::visit_children(&panel, &mut visitor);
         assert_eq!(visitor.count, 0);
 
-        assert!(panel.set_snapshot(Some(sample_window_performance_snapshot())));
+        display.borrow_mut().snapshot = Some(sample_window_performance_snapshot());
 
         let mut visitor = CountingVisitor { count: 0 };
         Widget::visit_children(&panel, &mut visitor);
@@ -3123,13 +3021,46 @@ mod tests {
             snapshot: Some(sample_window_performance_snapshot()),
             idle: true,
         }));
-        let mut panel = LivePerformancePanel::with_display(display);
+        let panel = LivePerformancePanel::with_display(display);
 
-        assert!(panel.refresh(WindowId::new(11)));
-
-        let lines = panel.content_specs();
+        let lines = panel.content_specs(WindowId::new(11));
         assert_eq!(lines[1].text, "0 fps  |  idle");
         assert!(lines[2].text.contains("last active"));
+    }
+
+    #[test]
+    fn widget_book_scroll_updates_performance_overlay_without_extra_frame() -> Result<()> {
+        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let window = app.main_window()?;
+        let gallery = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(GALLERY_SCROLL_NAME);
+        let before = window.performance_snapshot()?;
+        gallery.scroll_pixels(Vector::new(0.0, -360.0))?;
+        let after = window.performance_snapshot()?;
+        assert_eq!(after.frame_index, before.frame_index + 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_scroll_updates_performance_overlay_visuals() -> Result<()> {
+        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let window = app.main_window()?;
+        let gallery = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(GALLERY_SCROLL_NAME);
+        let overlay = window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name("Live performance overlay");
+
+        let before = overlay.capture_screenshot()?;
+        gallery.scroll_pixels(Vector::new(0.0, -360.0))?;
+        let after = overlay.capture_screenshot()?;
+
+        assert_ne!(before, after);
+
+        Ok(())
     }
 
     #[test]
