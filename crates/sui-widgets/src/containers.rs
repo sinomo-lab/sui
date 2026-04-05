@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use sui_core::{
     Event, Point, Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, Size, Vector,
 };
@@ -556,6 +558,132 @@ impl ScrollView {
     }
 }
 
+pub struct VirtualScrollView {
+    name: Option<String>,
+    padding: Insets,
+    spacing: f32,
+    offset_y: f32,
+    content_height: f32,
+    item_offsets: Vec<f32>,
+    visible_range: Range<usize>,
+    children: WidgetChildren,
+}
+
+impl VirtualScrollView {
+    pub fn new() -> Self {
+        Self {
+            name: None,
+            padding: Insets::ZERO,
+            spacing: 0.0,
+            offset_y: 0.0,
+            content_height: 0.0,
+            item_offsets: Vec::new(),
+            visible_range: 0..0,
+            children: WidgetChildren::new(),
+        }
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing.max(0.0);
+        self
+    }
+
+    pub fn with_child<W>(mut self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self
+    }
+
+    pub fn push<W>(&mut self, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+    }
+
+    pub const fn current_offset(&self) -> Vector {
+        Vector::new(0.0, self.offset_y)
+    }
+
+    pub fn set_offset(&mut self, offset: Vector) {
+        self.offset_y = offset.y.max(0.0);
+    }
+
+    fn viewport_rect(&self, bounds: Rect) -> Rect {
+        inset_rect(bounds, self.padding)
+    }
+
+    fn clamp_offset(&self, viewport_height: f32, offset_y: f32) -> f32 {
+        let max_scroll = (self.content_height - viewport_height).max(0.0);
+        offset_y.clamp(0.0, max_scroll)
+    }
+
+    fn scroll_by(&mut self, viewport_height: f32, delta_y: f32, ctx: &mut EventCtx) -> bool {
+        let next = self.clamp_offset(viewport_height, self.offset_y + delta_y);
+        if (next - self.offset_y).abs() > f32::EPSILON {
+            self.offset_y = next;
+            ctx.request_arrange();
+            ctx.request_paint();
+            ctx.request_semantics();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn update_visible_range(&mut self, viewport_height: f32) {
+        let visible_top = self.offset_y;
+        let visible_bottom = self.offset_y + viewport_height;
+        let child_count = self.children.len();
+        let mut start = 0;
+        while start < child_count {
+            let row_top = self.item_offsets[start];
+            let row_bottom = row_top + self.children.as_slice()[start].measured_size().height;
+            if row_bottom >= visible_top {
+                break;
+            }
+            start += 1;
+        }
+
+        let mut end = start;
+        while end < child_count {
+            if self.item_offsets[end] > visible_bottom {
+                break;
+            }
+            end += 1;
+        }
+
+        self.visible_range = start..end;
+    }
+
+    fn visible_children(&self) -> &[WidgetPod] {
+        &self.children.as_slice()[self.visible_range.clone()]
+    }
+
+    fn visible_children_mut(&mut self) -> &mut [WidgetPod] {
+        let range = self.visible_range.clone();
+        &mut self.children.as_mut_slice()[range]
+    }
+}
+
+impl Default for VirtualScrollView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Widget for ScrollView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         let viewport = ctx.bounds().size;
@@ -697,6 +825,188 @@ impl Widget for ScrollView {
     }
 }
 
+impl Widget for VirtualScrollView {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        let viewport = self.viewport_rect(ctx.bounds());
+
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == sui_core::PointerEventKind::Scroll
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                let delta = pointer
+                    .scroll_delta
+                    .map(scroll_delta_to_offset)
+                    .unwrap_or(pointer.delta);
+                if self.scroll_by(viewport.height(), -delta.y, ctx) {
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key)
+                if ctx.phase() != EventPhase::Capture
+                    && ctx.is_focused()
+                    && key.state == sui_core::KeyState::Pressed =>
+            {
+                let line = 40.0;
+                let page = (viewport.height() * 0.85).max(line);
+                let delta = match key.key.as_str() {
+                    "ArrowUp" => Some(-line),
+                    "ArrowDown" => Some(line),
+                    "PageUp" => Some(-page),
+                    "PageDown" => Some(page),
+                    "Home" => Some(-self.offset_y),
+                    "End" => Some(self.content_height - viewport.height() - self.offset_y),
+                    _ => None,
+                };
+
+                if let Some(delta) = delta {
+                    if self.scroll_by(viewport.height(), delta, ctx) {
+                        ctx.set_handled();
+                    }
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == sui_core::PointerEventKind::Down
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                ctx.request_focus();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let available_width = if constraints.max.width.is_finite() {
+            (constraints.max.width - (self.padding.left + self.padding.right)).max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        let child_constraints = Constraints::new(
+            Size::new(
+                if available_width.is_finite() {
+                    available_width
+                } else {
+                    0.0
+                },
+                0.0,
+            ),
+            Size::new(available_width, f32::INFINITY),
+        );
+
+        self.item_offsets.clear();
+        self.item_offsets.reserve(self.children.len());
+        let mut content_width: f32 = 0.0;
+        let mut content_height = 0.0;
+        for child in self.children.as_mut_slice() {
+            let child_size = child.measure(ctx, child_constraints);
+            self.item_offsets.push(content_height);
+            content_width = content_width.max(child_size.width);
+            content_height += child_size.height;
+            content_height += self.spacing;
+        }
+        if !self.item_offsets.is_empty() {
+            content_height -= self.spacing;
+        }
+        self.content_height = content_height;
+
+        let desired = Size::new(
+            content_width + self.padding.left + self.padding.right,
+            content_height + self.padding.top + self.padding.bottom,
+        );
+        let size = constraints.clamp(Size::new(
+            if constraints.max.width.is_finite() {
+                constraints.max.width
+            } else {
+                desired.width
+            },
+            if constraints.max.height.is_finite() {
+                constraints.max.height
+            } else {
+                desired.height
+            },
+        ));
+
+        let viewport = self.viewport_rect(Rect::from_origin_size(Point::ZERO, size));
+        self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
+        self.update_visible_range(viewport.height());
+        size
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let viewport = self.viewport_rect(bounds);
+        self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
+        self.update_visible_range(viewport.height());
+        let viewport_width = viewport.width();
+        let visible_range = self.visible_range.clone();
+        let offset_y = self.offset_y;
+        let item_offsets = self.item_offsets[visible_range.clone()].to_vec();
+        for (relative_index, child) in self.children.as_mut_slice()[visible_range].iter_mut().enumerate() {
+            let child_size = child.measured_size();
+            child.arrange(
+                ctx,
+                Rect::from_origin_size(
+                    Point::new(viewport.x(), viewport.y() + item_offsets[relative_index] - offset_y),
+                    Size::new(
+                        if viewport_width.is_finite() {
+                            viewport_width
+                        } else {
+                            child_size.width
+                        },
+                        child_size.height,
+                    ),
+                ),
+            );
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.push_clip_rect(ctx.bounds());
+        for child in self.visible_children() {
+            child.paint(ctx);
+        }
+        ctx.pop_clip();
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            cache_policy: LayerCachePolicy::Cached,
+            composition_mode: LayerCompositionMode::Scroll,
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
+        node.name = self.name.clone();
+        node.actions = vec![SemanticsAction::Focus];
+        node.state.focused = ctx.is_focused();
+        ctx.push(node);
+        for child in self.visible_children() {
+            child.semantics(ctx);
+        }
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_semantics();
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        for child in self.visible_children() {
+            visitor.visit(child);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        for child in self.visible_children_mut() {
+            visitor.visit(child);
+        }
+    }
+}
+
 fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {
     match delta {
         ScrollDelta::Lines(delta) => Vector::new(delta.x * 40.0, delta.y * 40.0),
@@ -724,6 +1034,15 @@ fn expand_size(size: Size, insets: Insets) -> Size {
     Size::new(
         size.width + insets.left + insets.right,
         size.height + insets.top + insets.bottom,
+    )
+}
+
+fn inset_rect(rect: Rect, insets: Insets) -> Rect {
+    Rect::new(
+        rect.x() + insets.left,
+        rect.y() + insets.top,
+        (rect.width() - (insets.left + insets.right)).max(0.0),
+        (rect.height() - (insets.top + insets.bottom)).max(0.0),
     )
 }
 
@@ -830,7 +1149,9 @@ fn stack_child_constraints(
 
 #[cfg(test)]
 mod tests {
-    use super::{Align, Background, Padding, ScrollView, SizedBox, Stack};
+    use std::{cell::RefCell, rc::Rc};
+
+    use super::{Align, Background, Padding, ScrollView, SizedBox, Stack, VirtualScrollView};
     use sui_core::{
         Color, Event, Point, PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode,
         SemanticsRole, Size, Vector, WidgetId,
@@ -871,6 +1192,35 @@ mod tests {
                 SemanticsRole::GenericContainer,
                 ctx.bounds(),
             ));
+        }
+    }
+
+    struct PaintCounterBox {
+        size: Size,
+        color: Color,
+        counts: Rc<RefCell<Vec<usize>>>,
+        index: usize,
+    }
+
+    impl PaintCounterBox {
+        fn new(size: Size, color: Color, counts: Rc<RefCell<Vec<usize>>>, index: usize) -> Self {
+            Self {
+                size,
+                color,
+                counts,
+                index,
+            }
+        }
+    }
+
+    impl Widget for PaintCounterBox {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(self.size)
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.counts.borrow_mut()[self.index] += 1;
+            ctx.fill_bounds(self.color);
         }
     }
 
@@ -1095,6 +1445,81 @@ mod tests {
 
         assert_eq!(descriptor.cache_policy, LayerCachePolicy::Cached);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
+    }
+
+    #[test]
+    fn virtual_scroll_view_uses_cached_scroll_layer_metadata() {
+        let (output, _) = render_root(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                VirtualScrollView::new()
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.7, 0.3, 0.2, 1.0),
+                    )),
+            ),
+        );
+
+        let scroll_id = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ScrollView)
+            .expect("virtual scroll view semantics present")
+            .id;
+        let descriptor = layer_descriptor_for(&output, scroll_id)
+            .expect("virtual scroll view layer present");
+
+        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Cached);
+        assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
+    }
+
+    #[test]
+    fn virtual_scroll_view_paints_only_visible_children() {
+        let counts = Rc::new(RefCell::new(vec![0usize; 4]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                VirtualScrollView::new()
+                    .with_child(PaintCounterBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.8, 0.2, 0.2, 1.0),
+                        Rc::clone(&counts),
+                        0,
+                    ))
+                    .with_child(PaintCounterBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.2, 0.8, 0.2, 1.0),
+                        Rc::clone(&counts),
+                        1,
+                    ))
+                    .with_child(PaintCounterBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.2, 0.2, 0.8, 1.0),
+                        Rc::clone(&counts),
+                        2,
+                    ))
+                    .with_child(PaintCounterBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.8, 0.8, 0.2, 1.0),
+                        Rc::clone(&counts),
+                        3,
+                    )),
+            ),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        assert_eq!(*counts.borrow(), vec![1, 1, 0, 0]);
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+
+        assert_eq!(*counts.borrow(), vec![1, 2, 1, 0]);
     }
 
     #[test]

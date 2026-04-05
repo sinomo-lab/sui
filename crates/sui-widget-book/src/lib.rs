@@ -707,12 +707,11 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let context_menu_state = Rc::clone(&state);
     let dialog_state = Rc::clone(&state);
 
-    ScrollView::vertical(Padding::all(
-        24.0,
-        Stack::vertical()
-            .spacing(18.0)
-            .alignment(Alignment::Stretch)
-            .with_child(
+    VirtualScrollView::new()
+        .name(GALLERY_SCROLL_NAME)
+        .padding(Insets::all(24.0))
+        .spacing(18.0)
+        .with_child(
                 Stack::vertical()
                     .spacing(6.0)
                     .alignment(Alignment::Stretch)
@@ -1310,9 +1309,7 @@ fn build_widget_book(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
                                 ),
                             ),
                     ),
-            )),
-    ))
-    .name(GALLERY_SCROLL_NAME)
+            ))
 }
 
 fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
@@ -2826,6 +2823,7 @@ mod tests {
 
         assert_eq!(state.borrow().name, "Ada");
 
+        scroll_to_story_target(&window, StoryCase::Summary, 12)?;
         let snapshot = window.snapshot()?;
         let summary = snapshot
             .accessibility
@@ -2932,9 +2930,46 @@ mod tests {
     fn widget_book_configured_story_exposes_expected_semantics() -> Result<()> {
         let app = StoryCase::Summary.build_app()?;
         let window = app.main_window()?;
-        let snapshot = window.snapshot()?;
+        let top_snapshot = window.snapshot()?;
 
-        let summary = snapshot
+        let input = top_snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput
+                    && node.name.as_deref() == Some(NAME_INPUT_LABEL)
+            })
+            .expect("name input semantics node present");
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Text("Grace Hopper".to_string()))
+        );
+
+        scroll_to_story_target(&window, StoryCase::Slider, 12)?;
+        let controls_snapshot = window.snapshot()?;
+
+        let slider = controls_snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider && node.name.as_deref() == Some(SLIDER_NAME)
+            })
+            .expect("slider semantics node present");
+        assert_eq!(
+            slider.value,
+            Some(SemanticsValue::Range {
+                value: 35.0,
+                min: 0.0,
+                max: 100.0,
+            })
+        );
+
+        scroll_to_story_target(&window, StoryCase::Summary, 12)?;
+        let summary_snapshot = window.snapshot()?;
+
+        let summary = summary_snapshot
             .accessibility
             .nodes
             .iter()
@@ -3004,38 +3039,7 @@ mod tests {
                 .is_some_and(|description| description.contains("dialog apply: 2"))
         );
 
-        let input = snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::TextInput
-                    && node.name.as_deref() == Some(NAME_INPUT_LABEL)
-            })
-            .expect("name input semantics node present");
-        assert_eq!(
-            input.value,
-            Some(SemanticsValue::Text("Grace Hopper".to_string()))
-        );
-
-        let slider = snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Slider && node.name.as_deref() == Some(SLIDER_NAME)
-            })
-            .expect("slider semantics node present");
-        assert_eq!(
-            slider.value,
-            Some(SemanticsValue::Range {
-                value: 35.0,
-                min: 0.0,
-                max: 100.0,
-            })
-        );
-
-        let number = snapshot
+        let number = controls_snapshot
             .accessibility
             .nodes
             .iter()
@@ -3046,7 +3050,7 @@ mod tests {
             .expect("number input semantics node present");
         assert_eq!(number.value, Some(SemanticsValue::Number(24.0)));
 
-        let select = snapshot
+        let select = controls_snapshot
             .accessibility
             .nodes
             .iter()

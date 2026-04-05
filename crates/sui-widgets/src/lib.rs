@@ -12,7 +12,9 @@ pub use composites::{
     BusyIndicator, ContextMenu, Dialog, Menu, MenuItem, Modal, Popover, ProgressBar, Spinner,
     TabBar, Tabs, Tooltip, TooltipPlacement,
 };
-pub use containers::{Align, Background, Padding, ScrollAxes, ScrollView, SizedBox, Stack};
+pub use containers::{
+    Align, Background, Padding, ScrollAxes, ScrollView, SizedBox, Stack, VirtualScrollView,
+};
 pub use controls::{
     Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput,
     NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea,
