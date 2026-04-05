@@ -85,6 +85,14 @@ pub struct RendererFrameStats {
     pub pass_count: usize,
     pub draw_count: usize,
     pub uploaded_vertex_bytes: u64,
+    pub visible_layer_count: usize,
+    pub visible_tile_count: usize,
+    pub reused_tile_count: usize,
+    pub regenerated_tile_count: usize,
+    pub direct_packet_count: usize,
+    pub tile_memory_bytes: u64,
+    pub tile_generation_time_us: u64,
+    pub composition_time_us: u64,
 }
 
 impl RendererFrameStats {
@@ -99,7 +107,27 @@ impl RendererFrameStats {
             uploaded_vertex_bytes: (prepared.scene_vertices.len() as u64
                 + prepared.clip_vertices.len() as u64)
                 * VERTEX_SIZE,
+            visible_layer_count: 0,
+            visible_tile_count: 0,
+            reused_tile_count: 0,
+            regenerated_tile_count: 0,
+            direct_packet_count: 0,
+            tile_memory_bytes: 0,
+            tile_generation_time_us: 0,
+            composition_time_us: 0,
         }
+    }
+
+    fn with_compositor_stats(mut self, stats: RetainedCompositorFrameStats) -> Self {
+        self.visible_layer_count = stats.visible_layers;
+        self.visible_tile_count = stats.visible_tiles;
+        self.reused_tile_count = stats.reused_tiles;
+        self.regenerated_tile_count = stats.regenerated_tiles;
+        self.direct_packet_count = stats.direct_packets;
+        self.tile_memory_bytes = stats.tile_memory_bytes as u64;
+        self.tile_generation_time_us = (stats.tile_generation_time_ms * 1000.0).round() as u64;
+        self.composition_time_us = (stats.composition_time_ms * 1000.0).round() as u64;
+        self
     }
 }
 
@@ -2113,7 +2141,7 @@ impl WgpuRenderer {
         view: &wgpu::TextureView,
     ) -> Result<RendererFrameStats> {
         let feather_width = self.feather_width;
-        let draw_ops = {
+        let (draw_ops, compositor_stats) = {
             if self.text_engine.is_none() {
                 self.text_engine = Some(TextEngine::new()?);
             }
@@ -2122,11 +2150,13 @@ impl WgpuRenderer {
                 .as_mut()
                 .expect("text engine initialized before draw-op construction");
             let compositor = self.compositors.entry(frame.window_id).or_default();
-            compositor.prepare_frame(frame, text_engine, feather_width)?
+            let draw_ops = compositor.prepare_frame(frame, text_engine, feather_width)?;
+            (draw_ops, compositor.last_frame_stats)
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
         let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
-        let frame_stats = RendererFrameStats::from_prepared_frame(&prepared);
+        let frame_stats = RendererFrameStats::from_prepared_frame(&prepared)
+            .with_compositor_stats(compositor_stats);
 
         let mut image_bind_groups = HashMap::new();
         for pass in &prepared.passes {
@@ -5434,6 +5464,8 @@ mod tests {
         assert_eq!(stats.pass_count, 2);
         assert_eq!(stats.draw_count, 4);
         assert_eq!(stats.uploaded_vertex_bytes, 15 * VERTEX_SIZE);
+        assert_eq!(stats.visible_tile_count, 0);
+        assert_eq!(stats.tile_memory_bytes, 0);
     }
 
     #[test]

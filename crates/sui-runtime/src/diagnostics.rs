@@ -59,14 +59,42 @@ pub struct RendererSubmissionDiagnostics {
     pub pass_count: usize,
     pub draw_count: usize,
     pub uploaded_vertex_bytes: u64,
+    pub visible_layer_count: usize,
+    pub visible_tile_count: usize,
+    pub reused_tile_count: usize,
+    pub regenerated_tile_count: usize,
+    pub direct_packet_count: usize,
+    pub tile_memory_bytes: u64,
+    pub tile_generation_time_us: u64,
+    pub composition_time_us: u64,
 }
 
 impl RendererSubmissionDiagnostics {
-    pub const fn new(pass_count: usize, draw_count: usize, uploaded_vertex_bytes: u64) -> Self {
+    pub const fn new(
+        pass_count: usize,
+        draw_count: usize,
+        uploaded_vertex_bytes: u64,
+        visible_layer_count: usize,
+        visible_tile_count: usize,
+        reused_tile_count: usize,
+        regenerated_tile_count: usize,
+        direct_packet_count: usize,
+        tile_memory_bytes: u64,
+        tile_generation_time_us: u64,
+        composition_time_us: u64,
+    ) -> Self {
         Self {
             pass_count,
             draw_count,
             uploaded_vertex_bytes,
+            visible_layer_count,
+            visible_tile_count,
+            reused_tile_count,
+            regenerated_tile_count,
+            direct_packet_count,
+            tile_memory_bytes,
+            tile_generation_time_us,
+            composition_time_us,
         }
     }
 }
@@ -548,7 +576,7 @@ mod tests {
             WindowId::new(5),
             17,
             vec![FramePhaseSample::new(FramePhase::Renderer, 2.5)],
-            RendererSubmissionDiagnostics::new(3, 9, 4096),
+            RendererSubmissionDiagnostics::new(3, 9, 4096, 4, 12, 10, 2, 7, 16384, 230, 90),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
             SceneStatistics {
@@ -573,6 +601,10 @@ mod tests {
         assert_eq!(snapshot.renderer_submission.pass_count, 3);
         assert_eq!(snapshot.renderer_submission.draw_count, 9);
         assert_eq!(snapshot.renderer_submission.uploaded_vertex_bytes, 4096);
+        assert_eq!(snapshot.renderer_submission.visible_tile_count, 12);
+        assert_eq!(snapshot.renderer_submission.reused_tile_count, 10);
+        assert_eq!(snapshot.renderer_submission.regenerated_tile_count, 2);
+        assert_eq!(snapshot.renderer_submission.tile_memory_bytes, 16384);
         assert_eq!(snapshot.total_time_ms, 2.5);
     }
 
