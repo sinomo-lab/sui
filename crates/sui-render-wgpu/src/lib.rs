@@ -5,6 +5,7 @@ use std::{
     fmt,
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
+    time::Instant,
 };
 
 use bytemuck::{Pod, Zeroable};
@@ -154,6 +155,103 @@ impl EffectNodeId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RetainedLayerRenderMode {
     Direct,
+    CachedTiles,
+}
+
+const DEFAULT_TILE_SIZE_PX: u32 = 256;
+const TILE_CACHE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TileGrid {
+    local_content_bounds: Rect,
+    tile_size_logical: f32,
+    tile_size_device_px: u32,
+    scale_bucket: u32,
+}
+
+impl TileGrid {
+    fn new(descriptor: &sui_scene::SceneLayerDescriptor, scale_factor: f32) -> Self {
+        let scale_factor = scale_factor.max(0.001);
+        Self {
+            local_content_bounds: rect_to_layer_local(descriptor.content_bounds, descriptor),
+            tile_size_logical: DEFAULT_TILE_SIZE_PX as f32 / scale_factor,
+            tile_size_device_px: DEFAULT_TILE_SIZE_PX,
+            scale_bucket: scale_bucket(scale_factor),
+        }
+    }
+
+    fn is_empty(self) -> bool {
+        self.local_content_bounds.is_empty() || self.tile_size_logical <= 0.0
+    }
+
+    fn contains_tile(self, tile_x: i32, tile_y: i32) -> bool {
+        self.tile_rect(tile_x, tile_y)
+            .intersection(self.local_content_bounds)
+            .is_some()
+    }
+
+    fn tile_rect(self, tile_x: i32, tile_y: i32) -> Rect {
+        Rect::new(
+            tile_x as f32 * self.tile_size_logical,
+            tile_y as f32 * self.tile_size_logical,
+            self.tile_size_logical,
+            self.tile_size_logical,
+        )
+    }
+
+    fn tile_range_for_rect(self, rect: Rect) -> Option<((i32, i32), (i32, i32))> {
+        let clipped = rect.intersection(self.local_content_bounds)?;
+        let min_x = (clipped.x() / self.tile_size_logical).floor() as i32;
+        let min_y = (clipped.y() / self.tile_size_logical).floor() as i32;
+        let max_x = ((clipped.max_x() / self.tile_size_logical).ceil() as i32).saturating_sub(1);
+        let max_y = ((clipped.max_y() / self.tile_size_logical).ceil() as i32).saturating_sub(1);
+        Some(((min_x, min_y), (max_x, max_y)))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TileAddress {
+    layer: SceneLayerId,
+    tile_x: i32,
+    tile_y: i32,
+    scale_bucket: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TileKey {
+    layer: SceneLayerId,
+    tile_x: i32,
+    tile_y: i32,
+    scale_bucket: u32,
+    content_version: u64,
+}
+
+#[derive(Debug, Clone)]
+enum TilePayload {
+    DirectPacket(DrawOpArena),
+}
+
+#[derive(Debug, Clone)]
+struct TileEntry {
+    key: TileKey,
+    rect: Rect,
+    dirty: bool,
+    visible: bool,
+    last_used_frame: u64,
+    memory_cost: usize,
+    payload: TilePayload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct RetainedCompositorFrameStats {
+    visible_layers: usize,
+    visible_tiles: usize,
+    reused_tiles: usize,
+    regenerated_tiles: usize,
+    direct_packets: usize,
+    tile_memory_bytes: usize,
+    tile_generation_time_ms: f64,
+    composition_time_ms: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,6 +372,8 @@ struct RetainedLayer {
     render_mode: RetainedLayerRenderMode,
     content_version: u64,
     structure_version: u64,
+    tile_grid: Option<TileGrid>,
+    visible_tiles: Vec<TileAddress>,
 }
 
 #[derive(Debug, Clone)]
@@ -350,11 +450,12 @@ impl CompositionTraversalState {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RetainedCompositorState {
     root: RetainedRootNode,
     layers: HashMap<SceneLayerId, RetainedLayer>,
     packets: HashMap<RetainedPacketId, RetainedDirectPacket>,
+    tiles: HashMap<TileAddress, TileEntry>,
     transforms: HashMap<TransformNodeId, TransformNode>,
     clips: HashMap<ClipNodeId, ClipNode>,
     effects: HashMap<EffectNodeId, EffectNode>,
@@ -363,6 +464,31 @@ struct RetainedCompositorState {
     next_effect_node: u64,
     viewport: Size,
     feather_width_bits: u32,
+    frame_index: u64,
+    tile_budget_bytes: usize,
+    last_frame_stats: RetainedCompositorFrameStats,
+}
+
+impl Default for RetainedCompositorState {
+    fn default() -> Self {
+        Self {
+            root: RetainedRootNode::default(),
+            layers: HashMap::new(),
+            packets: HashMap::new(),
+            tiles: HashMap::new(),
+            transforms: HashMap::new(),
+            clips: HashMap::new(),
+            effects: HashMap::new(),
+            next_transform_node: 0,
+            next_clip_node: 0,
+            next_effect_node: 0,
+            viewport: Size::ZERO,
+            feather_width_bits: 0,
+            frame_index: 0,
+            tile_budget_bytes: TILE_CACHE_BUDGET_BYTES,
+            last_frame_stats: RetainedCompositorFrameStats::default(),
+        }
+    }
 }
 
 impl RetainedCompositorState {
@@ -374,11 +500,27 @@ impl RetainedCompositorState {
     ) -> Result<DrawOpArena> {
         let viewport_changed = self.viewport != frame.viewport;
         let feather_changed = self.feather_width_bits != feather_width.to_bits();
+        self.frame_index = self.frame_index.wrapping_add(1);
         let snapshot = self.build_snapshot(&frame.scene)?;
-        self.apply_snapshot(frame, snapshot, text_engine, feather_width, viewport_changed || feather_changed)?;
+        let mut frame_stats = RetainedCompositorFrameStats::default();
+        let tile_generation_started = Instant::now();
+        self.apply_snapshot(
+            frame,
+            snapshot,
+            text_engine,
+            feather_width,
+            viewport_changed || feather_changed,
+            &mut frame_stats,
+        )?;
+        frame_stats.tile_generation_time_ms = tile_generation_started.elapsed().as_secs_f64() * 1000.0;
+        let composition_started = Instant::now();
+        let draw_ops = self.compose_draw_ops(&mut frame_stats);
+        frame_stats.composition_time_ms = composition_started.elapsed().as_secs_f64() * 1000.0;
+        frame_stats.tile_memory_bytes = self.total_tile_memory_bytes();
+        self.last_frame_stats = frame_stats;
         self.viewport = frame.viewport;
         self.feather_width_bits = feather_width.to_bits();
-        Ok(self.compose_draw_ops())
+        Ok(draw_ops)
     }
 
     fn build_snapshot(&mut self, scene: &Scene) -> Result<CompositorSnapshot> {
@@ -571,8 +713,40 @@ impl RetainedCompositorState {
         text_engine: &mut TextEngine,
         feather_width: f32,
         global_rebuild: bool,
+        frame_stats: &mut RetainedCompositorFrameStats,
     ) -> Result<()> {
-        let mut dirty_layers = HashSet::new();
+        let render_modes = snapshot
+            .layers
+            .iter()
+            .map(|(layer_id, layer)| (*layer_id, resolve_layer_render_mode(&layer.descriptor, frame.scale_factor)))
+            .collect::<HashMap<_, _>>();
+        let cached_roots = snapshot
+            .layers
+            .keys()
+            .copied()
+            .filter(|layer_id| {
+                render_modes.get(layer_id) == Some(&RetainedLayerRenderMode::CachedTiles)
+                    && nearest_cached_root(
+                        snapshot.layers.get(layer_id).and_then(|layer| layer.parent),
+                        &snapshot.layers,
+                        &render_modes,
+                    )
+                    .is_none()
+            })
+            .collect::<HashSet<_>>();
+        let cached_coverage = snapshot
+            .layers
+            .keys()
+            .copied()
+            .map(|layer_id| {
+                (
+                    layer_id,
+                    nearest_cached_root(Some(layer_id), &snapshot.layers, &render_modes),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let mut packet_dirty_layers = HashSet::new();
+        let mut tiled_damage = HashMap::<SceneLayerId, Option<Rect>>::new();
         let current_layers = snapshot.layers.keys().copied().collect::<HashSet<_>>();
         let mut root_dirty = global_rebuild;
 
@@ -582,23 +756,44 @@ impl RetainedCompositorState {
                 continue;
             }
 
+            if let Some(cached_root) = cached_coverage.get(&update.layer_id).copied().flatten() {
+                let full_dirty = matches!(
+                        update.kind,
+                        SceneLayerUpdateKind::Transform
+                            | SceneLayerUpdateKind::Clip
+                            | SceneLayerUpdateKind::Effect
+                            | SceneLayerUpdateKind::Visibility
+                    );
+                let damage = if full_dirty {
+                    None
+                } else {
+                    update.damage.or(Some(update.content_bounds))
+                };
+                merge_damage_rect(&mut tiled_damage, cached_root, damage);
+                if cached_root == update.layer_id {
+                    continue;
+                }
+            }
+
             match update.kind {
                 SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources => {
-                    dirty_layers.insert(update.layer_id);
+                    packet_dirty_layers.insert(update.layer_id);
                 }
                 SceneLayerUpdateKind::Transform
                 | SceneLayerUpdateKind::Clip
                 | SceneLayerUpdateKind::Effect
                 | SceneLayerUpdateKind::Visibility => {
-                    mark_layer_subtree_dirty(update.layer_id, &snapshot.layers, &mut dirty_layers);
+                    mark_layer_subtree_dirty(update.layer_id, &snapshot.layers, &mut packet_dirty_layers);
                 }
             }
         }
 
         let mut valid_packets = HashSet::new();
         valid_packets.extend(snapshot.root.packet_ids.iter().copied());
-        for layer in snapshot.layers.values() {
-            valid_packets.extend(layer.packet_ids.iter().copied());
+        for (layer_id, layer) in &snapshot.layers {
+            if cached_coverage.get(layer_id).copied().flatten().is_none() {
+                valid_packets.extend(layer.packet_ids.iter().copied());
+            }
         }
 
         if self.root.items != snapshot.root.items || self.root.packet_ids != snapshot.root.packet_ids {
@@ -611,8 +806,11 @@ impl RetainedCompositorState {
             self.upsert_packet(frame, packet, root_dirty, text_engine, feather_width)?;
         }
 
+        let snapshot_layers = snapshot.layers.clone();
         let previous_layers = self.layers.clone();
         self.layers.retain(|layer_id, _| current_layers.contains(layer_id));
+
+        let mut structure_dirty_layers = HashSet::new();
 
         for (layer_id, layer_snapshot) in snapshot.layers {
             let structure_changed = previous_layers.get(&layer_id).is_none_or(|previous| {
@@ -626,7 +824,7 @@ impl RetainedCompositorState {
                     || previous.descriptor != layer_snapshot.descriptor
             });
 
-            let content_changed = dirty_layers.contains(&layer_id)
+            let content_changed = packet_dirty_layers.contains(&layer_id)
                 || previous_layers
                     .get(&layer_id)
                     .is_none_or(|previous| previous.descriptor.bounds != layer_snapshot.descriptor.bounds);
@@ -641,14 +839,17 @@ impl RetainedCompositorState {
                 transform_node: layer_snapshot.transform_node,
                 clip_node: layer_snapshot.clip_node,
                 effect_node: layer_snapshot.effect_node,
-                render_mode: RetainedLayerRenderMode::Direct,
+                render_mode: render_modes[&layer_id],
                 content_version: 0,
                 structure_version: 0,
+                tile_grid: None,
+                visible_tiles: Vec::new(),
             });
 
             if structure_changed {
                 retained.structure_version = previous
                     .map_or(retained.structure_version + 1, |old| old.structure_version.wrapping_add(1));
+                structure_dirty_layers.insert(layer_id);
             }
             if content_changed {
                 retained.content_version = previous
@@ -663,15 +864,32 @@ impl RetainedCompositorState {
             retained.transform_node = layer_snapshot.transform_node;
             retained.clip_node = layer_snapshot.clip_node;
             retained.effect_node = layer_snapshot.effect_node;
-            retained.render_mode = RetainedLayerRenderMode::Direct;
+            retained.render_mode = render_modes[&layer_id];
+            if retained.render_mode != RetainedLayerRenderMode::CachedTiles {
+                retained.tile_grid = None;
+                retained.visible_tiles.clear();
+            }
 
-            let packet_dirty = global_rebuild || structure_changed || dirty_layers.contains(&layer_id);
-            for packet in layer_snapshot.packets {
-                self.upsert_packet(frame, packet, packet_dirty, text_engine, feather_width)?;
+            if cached_coverage.get(&layer_id).copied().flatten().is_none() {
+                let packet_dirty = global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
+                for packet in layer_snapshot.packets {
+                    self.upsert_packet(frame, packet, packet_dirty, text_engine, feather_width)?;
+                }
             }
         }
 
         self.packets.retain(|packet_id, _| valid_packets.contains(packet_id));
+        self.update_tile_cache(
+            frame,
+            &snapshot_layers,
+            &cached_roots,
+            &tiled_damage,
+            &structure_dirty_layers,
+            global_rebuild,
+            text_engine,
+            feather_width,
+            frame_stats,
+        )?;
         Ok(())
     }
 
@@ -717,29 +935,471 @@ impl RetainedCompositorState {
         Ok(())
     }
 
-    fn compose_draw_ops(&self) -> DrawOpArena {
+    fn compose_draw_ops(&self, stats: &mut RetainedCompositorFrameStats) -> DrawOpArena {
         let mut draw_ops = DrawOpArena::default();
-        self.append_items(&self.root.items, &mut draw_ops);
+        self.append_items(&self.root.items, &mut draw_ops, stats);
         draw_ops
     }
 
-    fn append_items(&self, items: &[CompositionItem], draw_ops: &mut DrawOpArena) {
+    fn append_items(
+        &self,
+        items: &[CompositionItem],
+        draw_ops: &mut DrawOpArena,
+        stats: &mut RetainedCompositorFrameStats,
+    ) {
         for item in items {
             match item {
                 CompositionItem::Packet(packet_id) => {
                     if let Some(packet) = self.packets.get(packet_id) {
                         draw_ops.append_fragment(&packet.draw_ops);
+                        stats.direct_packets += 1;
                     }
                 }
                 CompositionItem::Layer(layer_id) => {
                     if let Some(layer) = self.layers.get(layer_id) {
-                        self.append_items(&layer.items, draw_ops);
+                        match layer.render_mode {
+                            RetainedLayerRenderMode::Direct => {
+                                stats.visible_layers += 1;
+                                self.append_items(&layer.items, draw_ops, stats);
+                            }
+                            RetainedLayerRenderMode::CachedTiles => {
+                                if !layer.visible_tiles.is_empty() {
+                                    stats.visible_layers += 1;
+                                }
+                                for tile in &layer.visible_tiles {
+                                    if let Some(entry) = self.tiles.get(tile) {
+                                        let TilePayload::DirectPacket(fragment) = &entry.payload;
+                                        draw_ops.append_fragment(fragment);
+                                        stats.visible_tiles += 1;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
+    fn update_tile_cache(
+        &mut self,
+        frame: &SceneFrame,
+        snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
+        cached_roots: &HashSet<SceneLayerId>,
+        tiled_damage: &HashMap<SceneLayerId, Option<Rect>>,
+        structure_dirty_layers: &HashSet<SceneLayerId>,
+        global_rebuild: bool,
+        text_engine: &mut TextEngine,
+        feather_width: f32,
+        frame_stats: &mut RetainedCompositorFrameStats,
+    ) -> Result<()> {
+        self.tiles.retain(|address, _| cached_roots.contains(&address.layer));
+
+        for layer in self.layers.values_mut() {
+            if !cached_roots.contains(&layer.descriptor.id) {
+                layer.visible_tiles.clear();
+            }
+        }
+
+        let cached_root_ids = cached_roots.iter().copied().collect::<Vec<_>>();
+        for layer_id in cached_root_ids {
+            let Some(layer_snapshot) = snapshot_layers.get(&layer_id) else {
+                continue;
+            };
+
+            let Some(layer) = self.layers.get(&layer_id) else {
+                continue;
+            };
+
+            let descriptor = layer.descriptor.clone();
+            let content_version = layer.content_version;
+            let transform_node = layer.transform_node;
+            let clip_node = layer.clip_node;
+
+            let tile_grid = TileGrid::new(&descriptor, frame.scale_factor);
+            let grid_changed = layer.tile_grid != Some(tile_grid);
+
+            for (address, entry) in self.tiles.iter_mut() {
+                if address.layer == layer_id {
+                    entry.visible = false;
+                    if address.scale_bucket == tile_grid.scale_bucket
+                        && (!tile_grid.contains_tile(address.tile_x, address.tile_y)
+                            || grid_changed
+                            || structure_dirty_layers.contains(&layer_id)
+                            || global_rebuild)
+                    {
+                        entry.dirty = true;
+                    }
+                }
+            }
+
+            if tile_grid.is_empty() {
+                if let Some(layer) = self.layers.get_mut(&layer_id) {
+                    layer.tile_grid = Some(tile_grid);
+                    layer.visible_tiles.clear();
+                }
+                continue;
+            }
+
+            if let Some(damage) = tiled_damage.get(&layer_id) {
+                mark_cached_layer_tiles_dirty(
+                    &mut self.tiles,
+                    layer_id,
+                    tile_grid,
+                    damage.map(|rect| rect_to_layer_local(rect, &descriptor)),
+                );
+            }
+
+            let visible_tiles = visible_tiles_for_layer(
+                &descriptor,
+                tile_grid,
+                transform_node,
+                clip_node,
+                &self.transforms,
+                &self.clips,
+                frame.viewport,
+            );
+
+            for address in &visible_tiles {
+                let entry = self.tiles.remove(address);
+                let mut entry = if let Some(mut existing) = entry {
+                    existing.visible = true;
+                    existing.last_used_frame = self.frame_index;
+                    if existing.dirty {
+                        frame_stats.regenerated_tiles += 1;
+                        build_tile_entry(
+                            &descriptor,
+                            content_version,
+                            tile_grid,
+                            *address,
+                            frame,
+                            layer_snapshot,
+                            snapshot_layers,
+                            text_engine,
+                            feather_width,
+                            self.frame_index,
+                        )?
+                    } else {
+                        frame_stats.reused_tiles += 1;
+                        existing
+                    }
+                } else {
+                    frame_stats.regenerated_tiles += 1;
+                    build_tile_entry(
+                        &descriptor,
+                        content_version,
+                        tile_grid,
+                        *address,
+                        frame,
+                        layer_snapshot,
+                        snapshot_layers,
+                        text_engine,
+                        feather_width,
+                        self.frame_index,
+                    )?
+                };
+                entry.visible = true;
+                entry.last_used_frame = self.frame_index;
+                self.tiles.insert(*address, entry);
+            }
+
+            if let Some(layer) = self.layers.get_mut(&layer_id) {
+                layer.tile_grid = Some(tile_grid);
+                layer.visible_tiles = visible_tiles;
+            }
+        }
+
+        self.evict_tiles(scale_bucket(frame.scale_factor));
+        Ok(())
+    }
+
+    fn total_tile_memory_bytes(&self) -> usize {
+        self.tiles.values().map(|entry| entry.memory_cost).sum()
+    }
+
+    fn evict_tiles(&mut self, current_scale_bucket: u32) {
+        let mut total_bytes = self.total_tile_memory_bytes();
+        if total_bytes <= self.tile_budget_bytes {
+            return;
+        }
+
+        let mut eviction_candidates = self
+            .tiles
+            .iter()
+            .filter(|(_, entry)| !entry.visible)
+            .map(|(address, entry)| (*address, entry.key.scale_bucket != current_scale_bucket, entry.last_used_frame))
+            .collect::<Vec<_>>();
+        eviction_candidates.sort_by_key(|(_, non_current_scale, last_used_frame)| (*non_current_scale, *last_used_frame));
+
+        while total_bytes > self.tile_budget_bytes {
+            let Some((address, _, _)) = eviction_candidates.first().copied() else {
+                break;
+            };
+            eviction_candidates.remove(0);
+            if let Some(entry) = self.tiles.remove(&address) {
+                total_bytes = total_bytes.saturating_sub(entry.memory_cost);
+            }
+        }
+    }
+}
+
+
+fn scale_bucket(scale_factor: f32) -> u32 {
+    (scale_factor.max(0.001) * 100.0).round() as u32
+}
+
+fn resolve_layer_render_mode(
+    descriptor: &sui_scene::SceneLayerDescriptor,
+    scale_factor: f32,
+) -> RetainedLayerRenderMode {
+    match descriptor.cache_policy {
+        sui_scene::LayerCachePolicy::Direct => RetainedLayerRenderMode::Direct,
+        sui_scene::LayerCachePolicy::Cached => RetainedLayerRenderMode::CachedTiles,
+        sui_scene::LayerCachePolicy::Auto => {
+            let max_dimension_px = descriptor
+                .content_bounds
+                .width()
+                .max(descriptor.content_bounds.height())
+                * scale_factor.max(1.0);
+            if descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
+                || max_dimension_px > DEFAULT_TILE_SIZE_PX as f32
+            {
+                RetainedLayerRenderMode::CachedTiles
+            } else {
+                RetainedLayerRenderMode::Direct
+            }
+        }
+    }
+}
+
+fn nearest_cached_root(
+    mut current: Option<SceneLayerId>,
+    layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    render_modes: &HashMap<SceneLayerId, RetainedLayerRenderMode>,
+) -> Option<SceneLayerId> {
+    while let Some(layer_id) = current {
+        if render_modes.get(&layer_id) == Some(&RetainedLayerRenderMode::CachedTiles) {
+            return Some(layer_id);
+        }
+        current = layers.get(&layer_id).and_then(|layer| layer.parent);
+    }
+    None
+}
+
+fn rect_to_layer_local(rect: Rect, descriptor: &sui_scene::SceneLayerDescriptor) -> Rect {
+    rect.translate(Vector::new(-descriptor.bounds.x(), -descriptor.bounds.y()))
+}
+
+fn layer_local_to_scene(rect: Rect, descriptor: &sui_scene::SceneLayerDescriptor) -> Rect {
+    rect.translate(descriptor.bounds.origin.to_vector())
+}
+
+fn merge_damage_rect(
+    damage: &mut HashMap<SceneLayerId, Option<Rect>>,
+    layer_id: SceneLayerId,
+    next: Option<Rect>,
+) {
+    match damage.entry(layer_id) {
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(next);
+        }
+        std::collections::hash_map::Entry::Occupied(mut entry) => match (*entry.get(), next) {
+            (None, _) | (_, None) => {
+                entry.insert(None);
+            }
+            (Some(current), Some(next_rect)) => {
+                entry.insert(Some(current.union(next_rect)));
+            }
+        },
+    }
+}
+
+fn mark_cached_layer_tiles_dirty(
+    tiles: &mut HashMap<TileAddress, TileEntry>,
+    layer_id: SceneLayerId,
+    tile_grid: TileGrid,
+    damage_local: Option<Rect>,
+) {
+    for (address, entry) in tiles.iter_mut() {
+        if address.layer != layer_id || address.scale_bucket != tile_grid.scale_bucket {
+            continue;
+        }
+
+        let intersects_damage = damage_local.is_none_or(|damage| entry.rect.intersection(damage).is_some());
+        if intersects_damage {
+            entry.dirty = true;
+        }
+    }
+}
+
+fn visible_tiles_for_layer(
+    descriptor: &sui_scene::SceneLayerDescriptor,
+    tile_grid: TileGrid,
+    transform_node: TransformNodeId,
+    clip_node: ClipNodeId,
+    transforms: &HashMap<TransformNodeId, TransformNode>,
+    clips: &HashMap<ClipNodeId, ClipNode>,
+    viewport: Size,
+) -> Vec<TileAddress> {
+    let mut visible_tiles = Vec::new();
+    let local_visible = rect_to_layer_local(descriptor.paint_bounds, descriptor);
+    let Some(((min_x, min_y), (max_x, max_y))) = tile_grid.tile_range_for_rect(local_visible) else {
+        return visible_tiles;
+    };
+
+    let world_transform = transforms
+        .get(&transform_node)
+        .map(|node| node.world)
+        .unwrap_or(Transform::IDENTITY);
+    let world_clip = resolved_clip_bounds(clip_node, clips);
+    let viewport_rect = Rect::from_origin_size(Point::ZERO, viewport);
+
+    for tile_y in min_y..=max_y {
+        for tile_x in min_x..=max_x {
+            let tile_local = tile_grid.tile_rect(tile_x, tile_y);
+            let tile_scene = layer_local_to_scene(tile_local, descriptor);
+            let tile_world = world_transform.transform_rect_bbox(tile_scene);
+            if tile_world.intersection(viewport_rect).is_none() {
+                continue;
+            }
+            if world_clip.is_some_and(|clip| tile_world.intersection(clip).is_none()) {
+                continue;
+            }
+
+            visible_tiles.push(TileAddress {
+                layer: descriptor.id,
+                tile_x,
+                tile_y,
+                scale_bucket: tile_grid.scale_bucket,
+            });
+        }
+    }
+
+    visible_tiles
+}
+
+fn resolved_clip_bounds(
+    mut clip_node: ClipNodeId,
+    clips: &HashMap<ClipNodeId, ClipNode>,
+) -> Option<Rect> {
+    let mut bounds: Option<Rect> = None;
+    while clip_node != ClipNodeId::ROOT {
+        let Some(node) = clips.get(&clip_node) else {
+            break;
+        };
+        if let Some(primitive) = &node.primitive {
+            bounds = Some(match bounds {
+                Some(current) => current.intersection(primitive.bounds()).unwrap_or(Rect::ZERO),
+                None => primitive.bounds(),
+            });
+        }
+        clip_node = node.parent.unwrap_or(ClipNodeId::ROOT);
+    }
+    bounds
+}
+
+fn build_tile_entry(
+    descriptor: &sui_scene::SceneLayerDescriptor,
+    content_version: u64,
+    tile_grid: TileGrid,
+    address: TileAddress,
+    frame: &SceneFrame,
+    layer_snapshot: &LayerSnapshot,
+    snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    text_engine: &mut TextEngine,
+    feather_width: f32,
+    frame_index: u64,
+) -> Result<TileEntry> {
+    let tile_local = tile_grid.tile_rect(address.tile_x, address.tile_y);
+    let tile_scene = layer_local_to_scene(tile_local, descriptor);
+    let payload = TilePayload::DirectPacket(build_cached_tile_fragment(
+        frame,
+        tile_scene,
+        layer_snapshot,
+        snapshot_layers,
+        text_engine,
+        feather_width,
+    )?);
+    let memory_cost = match &payload {
+        TilePayload::DirectPacket(packet) => packet.byte_size(),
+    };
+
+    Ok(TileEntry {
+        key: TileKey {
+            layer: descriptor.id,
+            tile_x: address.tile_x,
+            tile_y: address.tile_y,
+            scale_bucket: address.scale_bucket,
+            content_version,
+        },
+        rect: tile_local,
+        dirty: false,
+        visible: true,
+        last_used_frame: frame_index,
+        memory_cost,
+        payload,
+    })
+}
+
+fn build_cached_tile_fragment(
+    frame: &SceneFrame,
+    tile_scene_rect: Rect,
+    layer_snapshot: &LayerSnapshot,
+    snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    text_engine: &mut TextEngine,
+    feather_width: f32,
+) -> Result<DrawOpArena> {
+    let mut draw_ops = DrawOpArena::default();
+
+    for item in &layer_snapshot.items {
+        match item {
+            CompositionItem::Packet(packet_id) => {
+                let Some(packet_snapshot) = layer_snapshot.packets.iter().find(|packet| packet.id == *packet_id) else {
+                    continue;
+                };
+                let mut tile_state = packet_snapshot.initial_state.clone();
+                tile_state
+                    .clip_stack
+                    .push(ResolvedClipPrimitive::Rect(tile_scene_rect));
+                let fragment = build_direct_packet(
+                    frame,
+                    &packet_snapshot.scene,
+                    &tile_state,
+                    text_engine,
+                    feather_width,
+                )?;
+                draw_ops.append_fragment(&fragment);
+            }
+            CompositionItem::Layer(child_id) => {
+                let Some(child_snapshot) = snapshot_layers.get(child_id) else {
+                    continue;
+                };
+                if tile_scene_rect
+                    .intersection(child_snapshot.descriptor.content_bounds)
+                    .is_none()
+                    && tile_scene_rect
+                        .intersection(child_snapshot.descriptor.paint_bounds)
+                        .is_none()
+                {
+                    continue;
+                }
+                let child_fragment = build_cached_tile_fragment(
+                    frame,
+                    tile_scene_rect,
+                    child_snapshot,
+                    snapshot_layers,
+                    text_engine,
+                    feather_width,
+                )?;
+                draw_ops.append_fragment(&child_fragment);
+            }
+        }
+    }
+
+    Ok(draw_ops)
+}
+
+impl RetainedCompositorState {
     fn reset_property_trees(&mut self) {
         self.transforms.clear();
         self.clips.clear();
@@ -3586,6 +4246,13 @@ impl DrawOpArena {
         }));
     }
 
+    fn byte_size(&self) -> usize {
+        self.scene_vertices.len() * std::mem::size_of::<Vertex>()
+            + self.clip_vertices.len() * std::mem::size_of::<Vertex>()
+            + self.clip_states.iter().map(|clip| clip.clip_paths.len() * std::mem::size_of::<PreparedVertices>()).sum::<usize>()
+            + self.draw_ops.len() * std::mem::size_of::<DrawOp>()
+    }
+
     fn push_scene_vertices(&mut self, vertices: &[Vertex]) -> PreparedVertices {
         let start = self.scene_vertices.len() as u32;
         self.scene_vertices.extend_from_slice(vertices);
@@ -4386,6 +5053,7 @@ mod tests {
         ClipState, CompositionContainerId, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena,
         DrawOpKind, PreparedClipPath, PreparedDrawBatch, PreparedFrameBatches,
         PreparedPassBatch, PreparedVertices, RendererFrameStats, RetainedCompositorState,
+        RetainedLayerRenderMode,
         RetainedPacketId, ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer,
         batch_draw_ops, build_vertices, prepare_frame_batches, shader_color, to_ndc,
     };
@@ -4394,9 +5062,9 @@ mod tests {
         Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WidgetId, WindowId,
     };
     use sui_scene::{
-        ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame,
-        SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind,
-        StrokeStyle,
+        ImageRegistry, ImageSource, LayerCachePolicy, RegisteredImage, Scene, SceneCommand,
+        SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
+        SceneLayerUpdateKind, StrokeStyle,
     };
     use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
 
@@ -5075,6 +5743,237 @@ mod tests {
             container: CompositionContainerId::Layer(replacement_layer_id),
             segment_index: 0,
         }));
+    }
+
+    #[test]
+    fn retained_compositor_reuses_cached_tiles_until_damage_intersects_them() {
+        let layer_id = WidgetId::new(71);
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached);
+
+        let mut layer_scene = Scene::new();
+        layer_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 512.0, 128.0),
+            brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
+        });
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            descriptor.clone(),
+            layer_scene,
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(31),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor.clone())
+                    .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert!(!first.draw_ops.is_empty());
+        assert_eq!(
+            compositor.layers[&SceneLayerId::from_widget(layer_id)].render_mode,
+            RetainedLayerRenderMode::CachedTiles
+        );
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
+
+        frame.layer_updates.clear();
+        let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(first.scene_vertices, second.scene_vertices);
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
+
+        let mut updated_layer_scene = Scene::new();
+        updated_layer_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 512.0, 128.0),
+            brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
+        });
+        updated_layer_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(24.0, 24.0, 48.0, 48.0),
+            brush: Color::rgba(0.0, 1.0, 0.0, 1.0).into(),
+        });
+        assert!(frame.scene.replace_layer(
+            layer_id,
+            SceneLayer::from_descriptor(descriptor.clone(), updated_layer_scene),
+        ));
+        frame.layer_updates = vec![
+            SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor.clone())
+                .with_damage(Rect::new(0.0, 0.0, 128.0, 128.0)),
+        ];
+
+        let third = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_ne!(second.scene_vertices, third.scene_vertices);
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
+    }
+
+    #[test]
+    fn retained_compositor_routes_descendant_damage_into_cached_parent_tiles() {
+        let parent_id = WidgetId::new(81);
+        let child_id = WidgetId::new(82);
+
+        let parent_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(parent_id),
+            parent_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached);
+        let child_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(child_id),
+            child_id,
+            Rect::new(300.0, 24.0, 48.0, 48.0),
+        );
+
+        let build_parent_scene = |child_brush: Color| {
+            let mut child_scene = Scene::new();
+            child_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(300.0, 24.0, 48.0, 48.0),
+                brush: child_brush.into(),
+            });
+
+            let mut parent_scene = Scene::new();
+            parent_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 512.0, 128.0),
+                brush: Color::rgba(0.1, 0.1, 0.1, 1.0).into(),
+            });
+            parent_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                child_descriptor.clone(),
+                child_scene,
+            )));
+            parent_scene
+        };
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            parent_descriptor.clone(),
+            build_parent_scene(Color::rgba(1.0, 0.0, 0.0, 1.0)),
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(32),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, parent_descriptor.clone())
+                    .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, child_descriptor.clone())
+                    .with_damage(Rect::new(300.0, 24.0, 48.0, 48.0)),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
+
+        assert!(frame.scene.replace_layer(
+            parent_id,
+            SceneLayer::from_descriptor(
+                parent_descriptor.clone(),
+                build_parent_scene(Color::rgba(0.0, 1.0, 0.0, 1.0)),
+            ),
+        ));
+        frame.layer_updates = vec![
+            SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, child_descriptor.clone())
+                .with_damage(Rect::new(300.0, 24.0, 48.0, 48.0)),
+        ];
+
+        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
+    }
+
+    #[test]
+    fn retained_compositor_prunes_removed_cached_layer_tiles() {
+        let removed_id = WidgetId::new(91);
+        let removed_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(removed_id),
+            removed_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached);
+
+        let mut first_scene = Scene::new();
+        first_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            removed_descriptor.clone(),
+            {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 512.0, 128.0),
+                    brush: Color::rgba(0.8, 0.2, 0.2, 1.0).into(),
+                });
+                scene
+            },
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(33),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, removed_descriptor.clone())
+                    .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
+            ],
+            scene: first_scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        assert!(compositor
+            .tiles
+            .keys()
+            .any(|address| address.layer == SceneLayerId::from_widget(removed_id)));
+
+        frame.scene = Scene::new();
+        frame.layer_updates.clear();
+
+        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert!(compositor
+            .tiles
+            .keys()
+            .all(|address| address.layer != SceneLayerId::from_widget(removed_id)));
     }
 
     #[test]
