@@ -550,7 +550,7 @@ impl RetainedCompositorState {
         )?;
         frame_stats.tile_generation_time_ms = tile_generation_started.elapsed().as_secs_f64() * 1000.0;
         let composition_started = Instant::now();
-        let draw_ops = self.compose_draw_ops(&mut frame_stats);
+        let draw_ops = self.compose_draw_ops(frame.viewport, &mut frame_stats)?;
         frame_stats.composition_time_ms = composition_started.elapsed().as_secs_f64() * 1000.0;
         frame_stats.tile_memory_bytes = self.total_tile_memory_bytes();
         self.last_frame_stats = frame_stats;
@@ -861,7 +861,8 @@ impl RetainedCompositorState {
                     || previous.items != layer_snapshot.items
                     || previous.packet_ids != layer_snapshot.packet_ids
                     || previous.transform_node != layer_snapshot.transform_node
-                    || previous.clip_node != layer_snapshot.clip_node
+                    || (render_modes[&layer_id] != RetainedLayerRenderMode::Direct
+                        && previous.clip_node != layer_snapshot.clip_node)
                     || previous.effect_node != layer_snapshot.effect_node
                     || (!translated_only && previous.descriptor != layer_snapshot.descriptor)
             });
@@ -998,18 +999,23 @@ impl RetainedCompositorState {
         Ok(())
     }
 
-    fn compose_draw_ops(&self, stats: &mut RetainedCompositorFrameStats) -> DrawOpArena {
+    fn compose_draw_ops(
+        &self,
+        viewport: Size,
+        stats: &mut RetainedCompositorFrameStats,
+    ) -> Result<DrawOpArena> {
         let mut draw_ops = DrawOpArena::default();
-        self.append_items(&self.root.items, &mut draw_ops, stats);
-        draw_ops
+        self.append_items(&self.root.items, &mut draw_ops, viewport, stats)?;
+        Ok(draw_ops)
     }
 
     fn append_items(
         &self,
         items: &[CompositionItem],
         draw_ops: &mut DrawOpArena,
+        viewport: Size,
         stats: &mut RetainedCompositorFrameStats,
-    ) {
+    ) -> Result<()> {
         for item in items {
             match item {
                 CompositionItem::Packet(packet_id) => {
@@ -1019,18 +1025,25 @@ impl RetainedCompositorState {
                                 draw_ops.append_fragment(&packet.draw_ops);
                             }
                             PacketCoordinateSpace::LayerLocal => {
-                                let origin = match packet.id.container {
-                                    CompositionContainerId::Root => Vector::ZERO,
+                                let (origin, clip_stack) = match packet.id.container {
+                                    CompositionContainerId::Root => (Vector::ZERO, Vec::new()),
                                     CompositionContainerId::Layer(layer_id) => self
                                         .layers
                                         .get(&layer_id)
-                                        .map(|layer| layer.descriptor.bounds.origin.to_vector())
-                                        .unwrap_or(Vector::ZERO),
+                                        .map(|layer| {
+                                            (
+                                                layer.descriptor.bounds.origin.to_vector(),
+                                                resolved_clip_primitives(layer.clip_node, &self.clips),
+                                            )
+                                        })
+                                        .unwrap_or((Vector::ZERO, Vec::new())),
                                 };
-                                draw_ops.append_transformed_fragment(
+                                draw_ops.append_composed_fragment(
                                     &packet.draw_ops,
-                                    Transform::translation_vector(origin),
-                                );
+                                    origin,
+                                    &clip_stack,
+                                    viewport,
+                                )?;
                             }
                         }
                         stats.direct_packets += 1;
@@ -1041,7 +1054,7 @@ impl RetainedCompositorState {
                         match layer.render_mode {
                             RetainedLayerRenderMode::Direct => {
                                 stats.visible_layers += 1;
-                                self.append_items(&layer.items, draw_ops, stats);
+                                self.append_items(&layer.items, draw_ops, viewport, stats)?;
                             }
                             RetainedLayerRenderMode::CachedTiles => {
                                 if !layer.visible_tiles.is_empty() {
@@ -1051,13 +1064,15 @@ impl RetainedCompositorState {
                                     if let Some(entry) = self.tiles.get(tile) {
                                         let TilePayload::DirectPacket(fragment) = &entry.payload;
                                         if entry.layer_local {
-                                            draw_ops.append_transformed_fragment(
+                                            draw_ops.append_composed_fragment(
                                                 fragment,
-                                                Transform::translation(
+                                                Vector::new(
                                                     layer.descriptor.bounds.x(),
                                                     layer.descriptor.bounds.y(),
                                                 ),
-                                            );
+                                                &[],
+                                                viewport,
+                                            )?;
                                         } else {
                                             draw_ops.append_fragment(fragment);
                                         }
@@ -1070,6 +1085,8 @@ impl RetainedCompositorState {
                 }
             }
         }
+
+        Ok(())
     }
 
     fn update_tile_cache(
@@ -1396,6 +1413,24 @@ fn resolved_clip_bounds(
     bounds
 }
 
+fn resolved_clip_primitives(
+    mut clip_node: ClipNodeId,
+    clips: &HashMap<ClipNodeId, ClipNode>,
+) -> Vec<ResolvedClipPrimitive> {
+    let mut primitives = Vec::new();
+    while clip_node != ClipNodeId::ROOT {
+        let Some(node) = clips.get(&clip_node) else {
+            break;
+        };
+        if let Some(primitive) = &node.primitive {
+            primitives.push(primitive.clone());
+        }
+        clip_node = node.parent.unwrap_or(ClipNodeId::ROOT);
+    }
+    primitives.reverse();
+    primitives
+}
+
 fn build_tile_entry(
     descriptor: &sui_scene::SceneLayerDescriptor,
     content_version: u64,
@@ -1420,10 +1455,10 @@ fn build_tile_entry(
         feather_width,
     )?;
     if layer_local {
-        fragment.transform_in_place(Transform::translation(
-            -descriptor.bounds.x(),
-            -descriptor.bounds.y(),
-        ));
+        fragment.translate_in_place(
+            Vector::new(-descriptor.bounds.x(), -descriptor.bounds.y()),
+            frame.viewport,
+        );
     }
     let payload = TilePayload::DirectPacket(fragment);
     let memory_cost = match &payload {
@@ -1624,6 +1659,10 @@ fn normalize_packet_snapshot(
         let delta = Vector::new(-normalization_origin.x, -normalization_origin.y);
         snapshot.scene.translate(delta);
         snapshot.initial_state = translate_resolved_raster_state(&snapshot.initial_state, delta);
+    }
+    if coordinate_space == PacketCoordinateSpace::LayerLocal {
+        snapshot.initial_state.clip_stack.clear();
+        snapshot.initial_state.clip_node = ClipNodeId::ROOT;
     }
     snapshot
 }
@@ -4400,35 +4439,110 @@ fn push_draw_op(
 }
 
 impl DrawOpArena {
-    fn transform_in_place(&mut self, transform: Transform) {
-        if transform.is_identity() {
+    fn translate_in_place(&mut self, translation: Vector, viewport: Size) {
+        if translation == Vector::ZERO || viewport.is_empty() {
             return;
         }
 
+        let delta_x = (translation.x / viewport.width) * 2.0;
+        let delta_y = -((translation.y / viewport.height) * 2.0);
+
         for vertex in &mut self.scene_vertices {
-            let point = transform.transform_point(Point::new(vertex.position[0], vertex.position[1]));
-            vertex.position = [point.x, point.y];
+            vertex.position[0] += delta_x;
+            vertex.position[1] += delta_y;
         }
         for vertex in &mut self.clip_vertices {
-            let point = transform.transform_point(Point::new(vertex.position[0], vertex.position[1]));
-            vertex.position = [point.x, point.y];
+            vertex.position[0] += delta_x;
+            vertex.position[1] += delta_y;
         }
         for draw_op in &mut self.draw_ops {
             draw_op.clip_rect = draw_op
                 .clip_rect
-                .map(|rect| transform.transform_rect_bbox(rect));
+                .map(|rect| rect.translate(translation));
         }
     }
 
-    fn append_transformed_fragment(&mut self, fragment: &DrawOpArena, transform: Transform) {
-        if transform.is_identity() {
+    fn append_composed_fragment(
+        &mut self,
+        fragment: &DrawOpArena,
+        translation: Vector,
+        external_clips: &[ResolvedClipPrimitive],
+        viewport: Size,
+    ) -> Result<()> {
+        if translation == Vector::ZERO && external_clips.is_empty() {
             self.append_fragment(fragment);
-            return;
+            return Ok(());
         }
 
         let mut transformed = fragment.clone();
-        transformed.transform_in_place(transform);
-        self.append_fragment(&transformed);
+        transformed.translate_in_place(translation, viewport);
+
+        let scene_delta = self.scene_vertices.len() as u32;
+        let clip_delta = self.clip_vertices.len() as u32;
+        self.scene_vertices.extend_from_slice(&transformed.scene_vertices);
+        self.clip_vertices.extend_from_slice(&transformed.clip_vertices);
+
+        let external_clip_rect = external_clips.iter().fold(None::<Rect>, |current, clip| {
+            let bounds = clip.bounds();
+            Some(match current {
+                Some(existing) => existing.intersection(bounds).unwrap_or(Rect::ZERO),
+                None => bounds,
+            })
+        });
+
+        let mut external_path_clips = Vec::new();
+        for clip in external_clips {
+            if let ResolvedClipPrimitive::Path { path, .. } = clip {
+                let mut vertices = Vec::new();
+                if !path.is_empty() && !viewport.is_empty() {
+                    let lyon_path = build_lyon_path(path, Transform::IDENTITY);
+                    append_tessellated_filled_lyon_path_vertices(&mut vertices, &lyon_path, viewport)?;
+                }
+                external_path_clips.push(self.push_clip_vertices(&vertices));
+            }
+        }
+
+        let clip_state_base = self.clip_states.len();
+        if external_path_clips.is_empty() {
+            self.clip_states.extend(transformed.clip_states.iter().map(|clip_state| ClipState {
+                clip_paths: clip_state
+                    .clip_paths
+                    .iter()
+                    .copied()
+                    .map(|vertices| vertices.offset(clip_delta))
+                    .collect(),
+            }));
+            self.draw_ops.extend(transformed.draw_ops.iter().cloned().map(|mut draw_op| {
+                draw_op.vertices = draw_op.vertices.offset(scene_delta);
+                draw_op.clip_state_index += clip_state_base;
+                draw_op.clip_rect = intersect_optional_rect(draw_op.clip_rect, external_clip_rect);
+                draw_op
+            }));
+            return Ok(());
+        }
+
+        let mut clip_state_map = HashMap::new();
+        for draw_op in transformed.draw_ops.iter().cloned() {
+            let merged_clip_state = *clip_state_map.entry(draw_op.clip_state_index).or_insert_with(|| {
+                let mut clip_paths = transformed.clip_states[draw_op.clip_state_index]
+                    .clip_paths
+                    .iter()
+                    .copied()
+                    .map(|vertices| vertices.offset(clip_delta))
+                    .collect::<Vec<_>>();
+                clip_paths.extend(external_path_clips.iter().copied());
+                self.push_clip_state(&clip_paths)
+            });
+
+            self.draw_ops.push(DrawOp {
+                kind: draw_op.kind,
+                vertices: draw_op.vertices.offset(scene_delta),
+                clip_rect: intersect_optional_rect(draw_op.clip_rect, external_clip_rect),
+                clip_state_index: merged_clip_state,
+            });
+        }
+
+        Ok(())
     }
 
     fn append_fragment(&mut self, fragment: &DrawOpArena) {
@@ -4488,6 +4602,15 @@ impl DrawOpArena {
     #[cfg(test)]
     fn scene_vertices(&self, span: PreparedVertices) -> &[Vertex] {
         &self.scene_vertices[span.start as usize..(span.start + span.len) as usize]
+    }
+}
+
+fn intersect_optional_rect(current: Option<Rect>, next: Option<Rect>) -> Option<Rect> {
+    match (current, next) {
+        (Some(current), Some(next)) => current.intersection(next),
+        (Some(current), None) => Some(current),
+        (None, Some(next)) => Some(next),
+        (None, None) => None,
     }
 }
 
@@ -5954,6 +6077,81 @@ mod tests {
         assert_eq!(first_content_version, second_content_version);
         assert_eq!(compositor.last_frame_stats.direct_packets, 1);
         assert_ne!(first.scene_vertices, second.scene_vertices);
+    }
+
+    #[test]
+    fn retained_compositor_reuses_direct_packets_across_clip_only_updates() {
+        let layer_id = WidgetId::new(54);
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(8.0, 8.0, 96.0, 48.0),
+        )
+        .with_content_bounds(Rect::new(8.0, 8.0, 96.0, 48.0))
+        .with_paint_bounds(Rect::new(8.0, 8.0, 96.0, 48.0))
+        .with_cache_policy(LayerCachePolicy::Direct);
+
+        let build_layer = || {
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(8.0, 8.0, 96.0, 48.0),
+                brush: Color::rgba(0.16, 0.52, 0.84, 1.0).into(),
+            });
+            SceneLayer::from_descriptor(descriptor.clone(), layer_scene)
+        };
+
+        let build_scene = |clip: Rect| {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::PushClip { rect: clip });
+            scene.push(SceneCommand::Layer(build_layer()));
+            scene.push(SceneCommand::PopClip);
+            scene
+        };
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(25),
+            viewport: Size::new(160.0, 96.0),
+            surface_size: Size::new(160.0, 96.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: content_updates([layer_id]),
+            scene: build_scene(Rect::new(0.0, 0.0, 160.0, 96.0)),
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let layer_container = CompositionContainerId::Layer(SceneLayerId::from_widget(layer_id));
+        let first_signature = packet_signature(&compositor, layer_container);
+        let first_content_version = compositor.layers[&SceneLayerId::from_widget(layer_id)].content_version;
+        let first_clip_rects = first
+            .draw_ops
+            .iter()
+            .map(|draw_op| draw_op.clip_rect)
+            .collect::<Vec<_>>();
+
+        frame.scene = build_scene(Rect::new(24.0, 8.0, 64.0, 48.0));
+        frame.layer_updates = vec![SceneLayerUpdate::from_descriptor(
+            SceneLayerUpdateKind::Clip,
+            descriptor.clone(),
+        )];
+
+        let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let second_signature = packet_signature(&compositor, layer_container);
+        let second_content_version = compositor.layers[&SceneLayerId::from_widget(layer_id)].content_version;
+        let second_clip_rects = second
+            .draw_ops
+            .iter()
+            .map(|draw_op| draw_op.clip_rect)
+            .collect::<Vec<_>>();
+
+        assert_eq!(first_signature, second_signature);
+        assert_eq!(first_content_version, second_content_version);
+        assert_eq!(compositor.last_frame_stats.direct_packets, 1);
+        assert_eq!(first.scene_vertices, second.scene_vertices);
+        assert_ne!(first_clip_rects, second_clip_rects);
     }
 
     #[test]
