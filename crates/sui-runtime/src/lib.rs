@@ -15,7 +15,10 @@ use sui_core::{
     SemanticsNode, Size, TimerToken, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{ImageRegistry, RegisteredImage, Scene, SceneFrame, SceneLayer};
+use sui_scene::{
+    ImageRegistry, RegisteredImage, Scene, SceneFrame, SceneLayer, SceneLayerDescriptor,
+    SceneLayerUpdate, SceneLayerUpdateKind,
+};
 use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
 pub use sui_core::DpiInfo;
@@ -28,7 +31,7 @@ pub use diagnostics::{
     window_performance_snapshot,
 };
 pub use widget::{
-    ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx,
+    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx,
     SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
@@ -1038,6 +1041,7 @@ impl WindowState {
         let mut repainted = false;
         let mut repaint_layers = Vec::new();
         let mut dirty_layers = Vec::new();
+        let mut layer_updates = Vec::new();
         let previous_graph = if (self.schedule.measure || self.schedule.arrange) && !self.graph.is_empty() {
             Some(self.graph.snapshot())
         } else {
@@ -1116,13 +1120,21 @@ impl WindowState {
                 };
             invalidations.extend(paint_invalidations);
             self.ime_composition_rect = ime_composition_rect;
+            let previous_scene = self.last_frame.as_ref().map(|frame| &frame.scene);
+            layer_updates = self.collect_layer_updates(
+                previous_scene,
+                &scene,
+                &invalidations,
+                &dirty_layers,
+                &graph_dirty_widgets,
+            );
             self.last_frame = Some(SceneFrame {
                 window_id: self.id,
                 viewport,
                 surface_size: dpi_info.surface_size,
                 scale_factor: dpi_info.scale_factor,
                 dirty_regions: Vec::new(),
-                dirty_layers: dirty_layers.clone(),
+                layer_updates: layer_updates.clone(),
                 scene,
                 font_registry: Arc::clone(&font_registry),
                 image_registry: Arc::clone(&image_registry),
@@ -1153,7 +1165,17 @@ impl WindowState {
         frame.surface_size = dpi_info.surface_size;
         frame.scale_factor = dpi_info.scale_factor;
         frame.dirty_regions = dirty_regions;
-        frame.dirty_layers = if repainted { dirty_layers } else { Vec::new() };
+        frame.layer_updates = if repainted {
+            layer_updates
+        } else {
+            self.collect_layer_updates(
+                self.last_frame.as_ref().map(|stored| &stored.scene),
+                &frame.scene,
+                &invalidations,
+                &[],
+                &graph_dirty_widgets,
+            )
+        };
         frame.font_registry = font_registry;
         frame.image_registry = image_registry;
 
@@ -1218,8 +1240,14 @@ impl WindowState {
             }
 
             let (layer_scene, layer_invalidations, layer_ime_composition_rect) = paint_ctx.into_parts();
+            let Some(descriptor) = self.root.layer_descriptor_for(widget_id, &layer_scene) else {
+                return self.paint_full_scene(dpi_info);
+            };
             if widget_id == self.root.id()
-                || !scene.replace_layer(widget_id, SceneLayer::new(widget_id, bounds, layer_scene))
+                || !scene.replace_layer(
+                    widget_id,
+                    SceneLayer::from_descriptor(descriptor, layer_scene),
+                )
             {
                 return self.paint_full_scene(dpi_info);
             }
@@ -1277,7 +1305,11 @@ impl WindowState {
             .into_iter()
             .filter(|widget_id| self.graph.contains(*widget_id))
             .collect();
-        candidates.sort_by_key(|widget_id| self.graph.path_to(*widget_id).map_or(usize::MAX, |path| path.len()));
+        candidates.sort_by_key(|widget_id| {
+            self.graph
+                .path_to(*widget_id)
+                .map_or(usize::MAX, |path| path.len())
+        });
 
         let mut minimized = Vec::new();
         for widget_id in candidates {
@@ -1291,6 +1323,59 @@ impl WindowState {
         }
 
         minimized
+    }
+
+    fn collect_layer_updates(
+        &self,
+        previous_scene: Option<&Scene>,
+        scene: &Scene,
+        invalidations: &[InvalidationRequest],
+        dirty_layers: &[WidgetId],
+        graph_dirty_widgets: &[WidgetId],
+    ) -> Vec<SceneLayerUpdate> {
+        let current_layers = collect_scene_layers(scene);
+        if current_layers.is_empty() {
+            return Vec::new();
+        }
+
+        let previous_layers = previous_scene.map(collect_scene_layers).unwrap_or_default();
+        let mut updates = HashMap::<WidgetId, SceneLayerUpdateKind>::new();
+
+        for request in invalidations {
+            let Some(kind) = invalidation_to_layer_update_kind(request.kind) else {
+                continue;
+            };
+            let widget_id = match request.target {
+                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => widget_id,
+                InvalidationTarget::Widget(_) => self.root.id(),
+                InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
+            };
+            merge_layer_update_kind(&mut updates, widget_id, kind);
+        }
+
+        for widget_id in graph_dirty_widgets.iter().copied() {
+            merge_layer_update_kind(&mut updates, widget_id, SceneLayerUpdateKind::Transform);
+        }
+
+        for widget_id in dirty_layers.iter().copied() {
+            merge_layer_update_kind(&mut updates, widget_id, SceneLayerUpdateKind::Content);
+        }
+
+        let mut resolved_updates = Vec::new();
+        for (widget_id, kind) in updates {
+            let Some(descriptor) = current_layers.get(&widget_id).cloned() else {
+                continue;
+            };
+            let damage = previous_layers
+                .get(&widget_id)
+                .map(|previous| previous.paint_bounds.union(descriptor.paint_bounds))
+                .unwrap_or(descriptor.paint_bounds);
+            resolved_updates
+                .push(SceneLayerUpdate::from_descriptor(kind, descriptor).with_damage(damage));
+        }
+
+        resolved_updates.sort_by_key(|update| update.owner.get());
+        resolved_updates
     }
 
     fn widget_is_ancestor_of(&self, ancestor: WidgetId, widget_id: WidgetId) -> bool {
@@ -1706,6 +1791,56 @@ fn collect_graph_dirty_widgets(
         Vec::new()
     } else {
         dirty.into_iter().collect()
+    }
+}
+
+fn collect_scene_layers(scene: &Scene) -> HashMap<WidgetId, SceneLayerDescriptor> {
+    let mut layers = HashMap::new();
+    scene.visit_layers(&mut |layer| {
+        layers.insert(layer.widget_id(), layer.descriptor.clone());
+    });
+    layers
+}
+
+fn invalidation_to_layer_update_kind(
+    kind: InvalidationKind,
+) -> Option<SceneLayerUpdateKind> {
+    match kind {
+        InvalidationKind::Measure
+        | InvalidationKind::Arrange
+        | InvalidationKind::Transform => Some(SceneLayerUpdateKind::Transform),
+        InvalidationKind::Clip => Some(SceneLayerUpdateKind::Clip),
+        InvalidationKind::Effect => Some(SceneLayerUpdateKind::Effect),
+        InvalidationKind::Visibility => Some(SceneLayerUpdateKind::Visibility),
+        InvalidationKind::Paint | InvalidationKind::Text => Some(SceneLayerUpdateKind::Content),
+        InvalidationKind::Resources => Some(SceneLayerUpdateKind::Resources),
+        InvalidationKind::HitTest | InvalidationKind::Semantics => None,
+    }
+}
+
+fn merge_layer_update_kind(
+    updates: &mut HashMap<WidgetId, SceneLayerUpdateKind>,
+    widget_id: WidgetId,
+    kind: SceneLayerUpdateKind,
+) {
+    updates
+        .entry(widget_id)
+        .and_modify(|current| {
+            if layer_update_priority(kind) > layer_update_priority(*current) {
+                *current = kind;
+            }
+        })
+        .or_insert(kind);
+}
+
+fn layer_update_priority(kind: SceneLayerUpdateKind) -> u8 {
+    match kind {
+        SceneLayerUpdateKind::Visibility => 0,
+        SceneLayerUpdateKind::Transform => 1,
+        SceneLayerUpdateKind::Clip => 2,
+        SceneLayerUpdateKind::Content => 3,
+        SceneLayerUpdateKind::Effect => 4,
+        SceneLayerUpdateKind::Resources => 5,
     }
 }
 
@@ -2337,7 +2472,8 @@ mod tests {
 
         assert_eq!(root_counters.borrow().paint, root_paint_before);
         assert_eq!(leaf_counters.borrow().paint, leaf_paint_before + 1);
-        assert_eq!(output.frame.dirty_layers, vec![leaf_id]);
+        assert_eq!(output.frame.layer_updates.len(), 1);
+        assert_eq!(output.frame.layer_updates[0].owner, leaf_id);
     }
 
     #[test]

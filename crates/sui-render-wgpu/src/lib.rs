@@ -18,11 +18,11 @@ use lyon_tessellation::{
 };
 use sui_core::{
     Color, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result, Size,
-    Transform, Vector, WidgetId, WindowId,
+    Transform, Vector, WindowId,
 };
 use sui_scene::{
-    Brush, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame,
-    SceneLayer, StrokeStyle,
+    Brush, LayerCachePolicy, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand,
+    SceneFrame, SceneLayer, SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
 };
 use sui_text::{
     FontRegistry, ResolvedTextFace, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout,
@@ -128,26 +128,35 @@ struct RetainedLayerCache {
 }
 
 impl RetainedLayerCache {
-    fn invalidate(&mut self, scene: &Scene, dirty_layers: &[WidgetId]) {
+    fn invalidate(&mut self, scene: &Scene, layer_updates: &[SceneLayerUpdate]) {
         let active_layers = collect_active_layers(scene);
         self.fragments
-            .retain(|key, _| active_layers.contains(&key.widget_id));
+            .retain(|key, _| active_layers.contains(&key.layer_id));
         self.recalculate_estimated_bytes();
 
-        if dirty_layers.is_empty() {
+        if layer_updates.is_empty() {
             return;
         }
 
-        let mut invalidated = dirty_layers.iter().copied().collect::<Vec<_>>();
-        collect_layer_ancestors(scene, dirty_layers, &mut invalidated, &mut Vec::new());
+        let invalidating_layers = layer_updates
+            .iter()
+            .filter(|update| layer_update_invalidates_fragments(update.kind))
+            .map(|update| update.layer_id)
+            .collect::<Vec<_>>();
+        if invalidating_layers.is_empty() {
+            return;
+        }
+
+        let mut invalidated = invalidating_layers.clone();
+        collect_layer_ancestors(scene, &invalidating_layers, &mut invalidated, &mut Vec::new());
 
         self.fragments
-            .retain(|key, _| !invalidated.iter().any(|widget_id| *widget_id == key.widget_id));
+            .retain(|key, _| !invalidated.iter().any(|layer_id| *layer_id == key.layer_id));
         self.recalculate_estimated_bytes();
     }
 
-    fn can_cache(&self, dirty_layers: &[WidgetId]) -> bool {
-        dirty_layers.len() <= MAX_DIRTY_LAYERS_FOR_CACHE_REUSE
+    fn can_cache(&self, layer_updates: &[SceneLayerUpdate]) -> bool {
+        layer_updates.len() <= MAX_DIRTY_LAYERS_FOR_CACHE_REUSE
     }
 
     fn insert_fragment(&mut self, key: LayerCacheKey, fragment: DrawOpArena) {
@@ -177,11 +186,11 @@ impl RetainedLayerCache {
     }
 }
 
-fn collect_active_layers(scene: &Scene) -> HashSet<WidgetId> {
+fn collect_active_layers(scene: &Scene) -> HashSet<SceneLayerId> {
     let mut active_layers = HashSet::new();
     scene.visit_commands(&mut |command| {
         if let SceneCommand::Layer(layer) = command {
-            active_layers.insert(layer.widget_id);
+            active_layers.insert(layer.layer_id());
         }
     });
     active_layers
@@ -189,16 +198,16 @@ fn collect_active_layers(scene: &Scene) -> HashSet<WidgetId> {
 
 fn collect_layer_ancestors(
     scene: &Scene,
-    dirty_layers: &[WidgetId],
-    invalidated: &mut Vec<WidgetId>,
-    ancestors: &mut Vec<WidgetId>,
+    dirty_layers: &[SceneLayerId],
+    invalidated: &mut Vec<SceneLayerId>,
+    ancestors: &mut Vec<SceneLayerId>,
 ) {
     for command in scene.commands() {
         let SceneCommand::Layer(layer) = command else {
             continue;
         };
 
-        if dirty_layers.iter().any(|widget_id| *widget_id == layer.widget_id) {
+        if dirty_layers.iter().any(|layer_id| *layer_id == layer.layer_id()) {
             for ancestor in ancestors.iter().copied() {
                 if !invalidated.contains(&ancestor) {
                     invalidated.push(ancestor);
@@ -206,15 +215,19 @@ fn collect_layer_ancestors(
             }
         }
 
-        ancestors.push(layer.widget_id);
+        ancestors.push(layer.layer_id());
         collect_layer_ancestors(&layer.scene, dirty_layers, invalidated, ancestors);
         ancestors.pop();
     }
 }
 
+fn layer_update_invalidates_fragments(kind: SceneLayerUpdateKind) -> bool {
+    !matches!(kind, SceneLayerUpdateKind::Visibility)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct LayerCacheKey {
-    widget_id: WidgetId,
+    layer_id: SceneLayerId,
     state_signature: u64,
     viewport_width_bits: u32,
     viewport_height_bits: u32,
@@ -222,9 +235,9 @@ struct LayerCacheKey {
 }
 
 impl LayerCacheKey {
-    fn new(widget_id: WidgetId, state_signature: u64, viewport: Size, feather_width: f32) -> Self {
+    fn new(layer_id: SceneLayerId, state_signature: u64, viewport: Size, feather_width: f32) -> Self {
         Self {
-            widget_id,
+            layer_id,
             state_signature,
             viewport_width_bits: viewport.width.to_bits(),
             viewport_height_bits: viewport.height.to_bits(),
@@ -694,8 +707,8 @@ impl WgpuRenderer {
                 .as_mut()
                 .expect("text engine initialized before draw-op construction");
             let layer_cache = self.layer_caches.entry(frame.window_id).or_default();
-            layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
-            let enable_layer_cache = layer_cache.can_cache(&frame.dirty_layers);
+            layer_cache.invalidate(&frame.scene, &frame.layer_updates);
+            let enable_layer_cache = layer_cache.can_cache(&frame.layer_updates);
             build_draw_ops(
                 frame,
                 text_engine,
@@ -1829,13 +1842,13 @@ impl SceneDrawOpBuilder<'_> {
         draw_ops: &mut DrawOpArena,
         state: &SceneRasterState,
     ) -> Result<()> {
-        if !self.enable_layer_cache {
+        if !self.enable_layer_cache || matches!(layer.descriptor.cache_policy, LayerCachePolicy::Direct) {
             let mut inline_state = SceneRasterState::inherit_inline(state, draw_ops);
             return self.build_scene(&layer.scene, draw_ops, &mut inline_state);
         }
 
         let key = LayerCacheKey::new(
-            layer.widget_id,
+            layer.layer_id(),
             state.cache_signature(),
             self.frame.viewport,
             self.feather_width,
@@ -3643,7 +3656,8 @@ mod tests {
         Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WidgetId, WindowId,
     };
     use sui_scene::{
-        ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame, SceneLayer,
+        ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame,
+        SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind,
         StrokeStyle,
     };
     use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
@@ -3669,6 +3683,18 @@ mod tests {
             .expect("font data should be readable from system font database")
     }
 
+    fn content_update(widget_id: WidgetId) -> SceneLayerUpdate {
+        SceneLayerUpdate::from_descriptor(
+            SceneLayerUpdateKind::Content,
+            SceneLayerDescriptor::new(SceneLayerId::from_widget(widget_id), widget_id, Rect::ZERO),
+        )
+        .with_damage(Rect::ZERO)
+    }
+
+    fn content_updates<const N: usize>(widget_ids: [WidgetId; N]) -> Vec<SceneLayerUpdate> {
+        widget_ids.into_iter().map(content_update).collect()
+    }
+
     #[test]
     fn build_vertices_applies_clip_and_transform_to_fill_rects() {
         let mut scene = Scene::new();
@@ -3691,7 +3717,7 @@ mod tests {
                 surface_size: Size::new(100.0, 100.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
-                dirty_layers: Vec::new(),
+                layer_updates: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -3739,7 +3765,7 @@ mod tests {
                 surface_size: Size::new(100.0, 80.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
-                dirty_layers: Vec::new(),
+                layer_updates: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -3785,7 +3811,7 @@ mod tests {
                 surface_size: Size::new(80.0, 60.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
-                dirty_layers: Vec::new(),
+                layer_updates: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -3821,7 +3847,7 @@ mod tests {
                 surface_size: Size::new(64.0, 64.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
-                dirty_layers: Vec::new(),
+                layer_updates: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -4019,7 +4045,7 @@ mod tests {
                 surface_size: Size::new(100.0, 80.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
-                dirty_layers: Vec::new(),
+                layer_updates: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -4046,7 +4072,7 @@ mod tests {
             surface_size: Size::new(160.0, 60.0),
             scale_factor: 1.0,
             dirty_regions: Vec::new(),
-            dirty_layers: Vec::new(),
+            layer_updates: Vec::new(),
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
@@ -4090,7 +4116,7 @@ mod tests {
             surface_size: Size::new(96.0, 64.0),
             scale_factor: 1.0,
             dirty_regions: Vec::new(),
-            dirty_layers: vec![layer_id],
+            layer_updates: content_updates([layer_id]),
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
@@ -4098,18 +4124,18 @@ mod tests {
 
         let mut text_engine = TextEngine::new().unwrap();
         let mut layer_cache = RetainedLayerCache::default();
-        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
         let first = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
             .unwrap();
         assert_eq!(layer_cache.fragments.len(), 1);
 
-        frame.dirty_layers.clear();
+        frame.layer_updates.clear();
         let second = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
             .unwrap();
         assert_eq!(layer_cache.fragments.len(), 1);
         assert_eq!(first.scene_vertices, second.scene_vertices);
 
-        frame.dirty_layers = vec![layer_id];
+        frame.layer_updates = content_updates([layer_id]);
         let mut updated_child_scene = Scene::new();
         updated_child_scene.push(SceneCommand::FillRect {
             rect: Rect::new(4.0, 6.0, 32.0, 24.0),
@@ -4123,7 +4149,7 @@ mod tests {
             layer_id,
             SceneLayer::new(layer_id, Rect::new(4.0, 6.0, 32.0, 24.0), updated_child_scene),
         ));
-        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
         let third = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
             .unwrap();
         assert_eq!(layer_cache.fragments.len(), 1);
@@ -4165,7 +4191,7 @@ mod tests {
             surface_size: Size::new(64.0, 64.0),
             scale_factor: 1.0,
             dirty_regions: Vec::new(),
-            dirty_layers: vec![parent_id, child_id],
+            layer_updates: content_updates([parent_id, child_id]),
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
@@ -4173,12 +4199,12 @@ mod tests {
 
         let mut text_engine = TextEngine::new().unwrap();
         let mut layer_cache = RetainedLayerCache::default();
-        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
         let first = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
             .unwrap();
         assert_eq!(layer_cache.fragments.len(), 2);
 
-        frame.dirty_layers.clear();
+        frame.layer_updates.clear();
         let second = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
             .unwrap();
         assert_eq!(first.scene_vertices, second.scene_vertices);
@@ -4204,8 +4230,8 @@ mod tests {
             SceneLayer::new(parent_id, Rect::new(4.0, 4.0, 24.0, 24.0), updated_parent_scene),
         ));
 
-        frame.dirty_layers = vec![child_id];
-        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        frame.layer_updates = content_updates([child_id]);
+        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
         let third = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
             .unwrap();
 
@@ -4238,7 +4264,7 @@ mod tests {
             surface_size: Size::new(64.0, 64.0),
             scale_factor: 1.0,
             dirty_regions: Vec::new(),
-            dirty_layers: vec![removed_id],
+            layer_updates: content_updates([removed_id]),
             scene: first_scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
@@ -4246,7 +4272,7 @@ mod tests {
 
         let mut text_engine = TextEngine::new().unwrap();
         let mut layer_cache = RetainedLayerCache::default();
-        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
         let _ = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
             .unwrap();
         assert_eq!(layer_cache.fragments.len(), 1);
@@ -4265,14 +4291,14 @@ mod tests {
             },
         )));
         frame.scene = second_scene;
-        frame.dirty_layers = vec![replacement_id];
+        frame.layer_updates = content_updates([replacement_id]);
 
-        layer_cache.invalidate(&frame.scene, &frame.dirty_layers);
+        layer_cache.invalidate(&frame.scene, &frame.layer_updates);
         let _ = build_draw_ops(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH, &mut layer_cache, true)
             .unwrap();
 
         assert_eq!(layer_cache.fragments.len(), 1);
-        assert!(layer_cache.fragments.keys().all(|key| key.widget_id == replacement_id));
+        assert!(layer_cache.fragments.keys().all(|key| key.layer_id == SceneLayerId::from_widget(replacement_id)));
     }
 
     #[test]
@@ -4299,7 +4325,7 @@ mod tests {
                 surface_size: Size::new(160.0, 60.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
-                dirty_layers: Vec::new(),
+                layer_updates: Vec::new(),
                 scene,
                 font_registry: Arc::new(fonts),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -4331,7 +4357,7 @@ mod tests {
                 surface_size: Size::new(160.0, 60.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
-                dirty_layers: Vec::new(),
+                layer_updates: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -4379,7 +4405,7 @@ mod tests {
                 surface_size: Size::new(96.0, 64.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
-                dirty_layers: Vec::new(),
+                layer_updates: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(images),
@@ -4413,7 +4439,7 @@ mod tests {
                 surface_size: Size::new(96.0, 64.0),
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
-                dirty_layers: Vec::new(),
+                layer_updates: Vec::new(),
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
@@ -4454,9 +4480,7 @@ mod tests {
             surface_size: Size::new(48.0, 48.0),
             scale_factor: 1.0,
             dirty_regions: Vec::new(),
-            dirty_layers: (0..=MAX_DIRTY_LAYERS_FOR_CACHE_REUSE)
-                .map(|index| WidgetId::new(71 + index as u64))
-                .collect(),
+            layer_updates: (0..=MAX_DIRTY_LAYERS_FOR_CACHE_REUSE).map(|index| content_update(WidgetId::new(71 + index as u64))).collect(),
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
@@ -4464,7 +4488,7 @@ mod tests {
 
         let mut text_engine = TextEngine::new().unwrap();
         let mut layer_cache = RetainedLayerCache::default();
-        let enable_layer_cache = layer_cache.can_cache(&frame.dirty_layers);
+        let enable_layer_cache = layer_cache.can_cache(&frame.layer_updates);
         let ops = build_draw_ops(
             &frame,
             &mut text_engine,

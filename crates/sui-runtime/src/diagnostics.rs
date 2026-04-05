@@ -5,7 +5,7 @@ use std::{
 };
 
 use sui_core::{DirtyRegion, Size, WindowId};
-use sui_scene::{SceneCommand, SceneFrame};
+use sui_scene::{SceneCommand, SceneFrame, SceneLayerUpdateKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FramePhase {
@@ -181,6 +181,9 @@ pub struct SceneStatistics {
     pub dirty_coverage: f32,
     pub command_count: usize,
     pub command_breakdown: Vec<(String, usize)>,
+    pub layer_count: usize,
+    pub layer_update_count: usize,
+    pub layer_update_breakdown: Vec<(String, usize)>,
     pub text_command_count: usize,
     pub image_command_count: usize,
     pub clip_command_count: usize,
@@ -195,6 +198,7 @@ impl SceneStatistics {
         let mut clip_command_count = 0usize;
         let mut transform_command_count = 0usize;
         let mut command_count = 0usize;
+        let mut layer_count = 0usize;
 
         frame.scene.visit_commands(&mut |command| {
             command_count += 1;
@@ -219,7 +223,9 @@ impl SceneStatistics {
                 SceneCommand::PushTransform { .. } | SceneCommand::PopTransform => {
                     transform_command_count += 1;
                 }
-                SceneCommand::Layer(_) => {}
+                SceneCommand::Layer(_) => {
+                    layer_count += 1;
+                }
                 SceneCommand::Clear(_)
                 | SceneCommand::FillRect { .. }
                 | SceneCommand::StrokeRect { .. }
@@ -227,6 +233,13 @@ impl SceneStatistics {
                 | SceneCommand::StrokePath { .. } => {}
             }
         });
+
+        let mut layer_update_breakdown = BTreeMap::<String, usize>::new();
+        for update in &frame.layer_updates {
+            *layer_update_breakdown
+                .entry(layer_update_kind(update.kind).to_string())
+                .or_default() += 1;
+        }
 
         let dirty_area: f32 = frame
             .dirty_regions
@@ -247,6 +260,9 @@ impl SceneStatistics {
             dirty_coverage,
             command_count,
             command_breakdown: command_breakdown.into_iter().collect(),
+            layer_count,
+            layer_update_count: frame.layer_updates.len(),
+            layer_update_breakdown: layer_update_breakdown.into_iter().collect(),
             text_command_count,
             image_command_count,
             clip_command_count,
@@ -353,6 +369,17 @@ fn command_kind(command: &SceneCommand) -> &'static str {
     }
 }
 
+fn layer_update_kind(kind: SceneLayerUpdateKind) -> &'static str {
+    match kind {
+        SceneLayerUpdateKind::Content => "Content",
+        SceneLayerUpdateKind::Transform => "Transform",
+        SceneLayerUpdateKind::Clip => "Clip",
+        SceneLayerUpdateKind::Effect => "Effect",
+        SceneLayerUpdateKind::Visibility => "Visibility",
+        SceneLayerUpdateKind::Resources => "Resources",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -404,6 +431,9 @@ mod tests {
                 dirty_coverage: 0.0,
                 command_count: 0,
                 command_breakdown: Vec::new(),
+                layer_count: 0,
+                layer_update_count: 0,
+                layer_update_breakdown: Vec::new(),
                 text_command_count: 0,
                 image_command_count: 0,
                 clip_command_count: 0,

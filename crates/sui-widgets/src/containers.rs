@@ -1106,7 +1106,11 @@ mod tests {
 
         assert_eq!(outer_content.bounds.y(), 0.0);
         assert_eq!(inner_content.bounds.y(), 16.0);
-        assert!(output.frame.dirty_layers.contains(&inner_content.id));
+        assert!(output
+            .frame
+            .layer_updates
+            .iter()
+            .any(|update| update.owner == inner_content.id));
     }
 
     #[test]

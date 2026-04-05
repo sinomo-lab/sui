@@ -9,7 +9,10 @@ use sui_core::{
     WidgetId, WindowId,
 };
 use sui_layout::Constraints;
-use sui_scene::{Brush, ImageRegistry, ImageSource, Scene, SceneCommand, SceneLayer, StrokeStyle};
+use sui_scene::{
+    Brush, ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, Scene,
+    SceneCommand, SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle,
+};
 use sui_text::{
     FontRegistry, ShapedText, TextLayout, TextMeasurement, TextRun, TextStyle, TextSystem,
 };
@@ -44,6 +47,10 @@ pub trait Widget {
 
     fn paint(&self, _ctx: &mut PaintCtx) {}
 
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions::default()
+    }
+
     fn semantics(&self, _ctx: &mut SemanticsCtx) {}
 
     fn accepts_focus(&self) -> bool {
@@ -55,6 +62,21 @@ pub trait Widget {
     fn visit_children(&self, _visitor: &mut dyn WidgetPodVisitor) {}
 
     fn visit_children_mut(&mut self, _visitor: &mut dyn WidgetPodMutVisitor) {}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerOptions {
+    pub cache_policy: LayerCachePolicy,
+    pub composition_mode: LayerCompositionMode,
+}
+
+impl Default for LayerOptions {
+    fn default() -> Self {
+        Self {
+            cache_policy: LayerCachePolicy::Auto,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
 }
 
 pub struct SingleChild {
@@ -292,7 +314,7 @@ impl WidgetPod {
         self.widget.paint(&mut child_ctx);
 
         let (scene, invalidations, ime_composition_rect) = child_ctx.into_parts();
-        parent_ctx.push_layer(self.id, self.layout_state.arranged_bounds, scene);
+        parent_ctx.push_layer(self.build_layer_descriptor(&scene), scene);
         parent_ctx.extend_invalidations(invalidations);
         parent_ctx.extend_ime_composition_rect(ime_composition_rect);
     }
@@ -304,6 +326,14 @@ impl WidgetPod {
     ) -> bool {
         self.find_mut(target, &mut |pod| pod.widget.paint(parent_ctx))
             .is_some()
+    }
+
+    pub(crate) fn layer_descriptor_for(
+        &mut self,
+        target: WidgetId,
+        scene: &Scene,
+    ) -> Option<SceneLayerDescriptor> {
+        self.find_mut(target, &mut |pod| pod.build_layer_descriptor(scene))
     }
 
     pub fn semantics(&self, parent_ctx: &mut SemanticsCtx) {
@@ -442,6 +472,19 @@ impl WidgetPod {
 
         self.layout_state.arranged_bounds = self.layout_state.arranged_bounds.translate(delta);
         self.translate_descendants(delta);
+    }
+
+    pub(crate) fn build_layer_descriptor(&self, scene: &Scene) -> SceneLayerDescriptor {
+        let options = self.widget.layer_options();
+        SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(self.id),
+            self.id,
+            self.layout_state.arranged_bounds,
+        )
+        .with_content_bounds(scene.content_bounds().unwrap_or(self.layout_state.arranged_bounds))
+        .with_paint_bounds(scene.paint_bounds().unwrap_or(self.layout_state.arranged_bounds))
+        .with_cache_policy(options.cache_policy)
+        .with_composition_mode(options.composition_mode)
     }
 }
 
@@ -1093,9 +1136,9 @@ impl PaintCtx {
         self.ime_composition_rect
     }
 
-    pub(crate) fn push_layer(&mut self, widget_id: WidgetId, bounds: Rect, scene: Scene) {
+    pub(crate) fn push_layer(&mut self, descriptor: SceneLayerDescriptor, scene: Scene) {
         self.scene
-            .push(SceneCommand::Layer(SceneLayer::new(widget_id, bounds, scene)));
+            .push(SceneCommand::Layer(SceneLayer::from_descriptor(descriptor, scene)));
     }
 
     pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {

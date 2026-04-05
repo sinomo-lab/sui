@@ -64,19 +64,163 @@ impl ImageSource {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SceneLayer {
-    pub widget_id: WidgetId,
+pub struct SceneLayerDescriptor {
+    pub id: SceneLayerId,
+    pub owner: WidgetId,
     pub bounds: Rect,
+    pub content_bounds: Rect,
+    pub paint_bounds: Rect,
+    pub cache_policy: LayerCachePolicy,
+    pub composition_mode: LayerCompositionMode,
+}
+
+impl SceneLayerDescriptor {
+    pub fn new(id: SceneLayerId, owner: WidgetId, bounds: Rect) -> Self {
+        Self {
+            id,
+            owner,
+            bounds,
+            content_bounds: bounds,
+            paint_bounds: bounds,
+            cache_policy: LayerCachePolicy::Auto,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    pub const fn with_content_bounds(mut self, content_bounds: Rect) -> Self {
+        self.content_bounds = content_bounds;
+        self
+    }
+
+    pub const fn with_paint_bounds(mut self, paint_bounds: Rect) -> Self {
+        self.paint_bounds = paint_bounds;
+        self
+    }
+
+    pub const fn with_cache_policy(mut self, cache_policy: LayerCachePolicy) -> Self {
+        self.cache_policy = cache_policy;
+        self
+    }
+
+    pub const fn with_composition_mode(mut self, composition_mode: LayerCompositionMode) -> Self {
+        self.composition_mode = composition_mode;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SceneLayerId(u64);
+
+impl SceneLayerId {
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    pub const fn from_widget(widget_id: WidgetId) -> Self {
+        Self(widget_id.get())
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<WidgetId> for SceneLayerId {
+    fn from(value: WidgetId) -> Self {
+        Self::from_widget(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerCachePolicy {
+    Auto,
+    Direct,
+    Cached,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerCompositionMode {
+    Normal,
+    Scroll,
+    Overlay,
+    Effect,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneLayer {
+    pub descriptor: SceneLayerDescriptor,
     pub scene: Box<Scene>,
 }
 
 impl SceneLayer {
     pub fn new(widget_id: WidgetId, bounds: Rect, scene: Scene) -> Self {
+        let content_bounds = scene.content_bounds().unwrap_or(bounds);
+        let paint_bounds = scene.paint_bounds().unwrap_or(bounds);
         Self {
-            widget_id,
-            bounds,
+            descriptor: SceneLayerDescriptor::new(SceneLayerId::from_widget(widget_id), widget_id, bounds)
+                .with_content_bounds(content_bounds)
+                .with_paint_bounds(paint_bounds),
             scene: Box::new(scene),
         }
+    }
+
+    pub fn from_descriptor(descriptor: SceneLayerDescriptor, scene: Scene) -> Self {
+        Self {
+            descriptor,
+            scene: Box::new(scene),
+        }
+    }
+
+    pub const fn layer_id(&self) -> SceneLayerId {
+        self.descriptor.id
+    }
+
+    pub const fn widget_id(&self) -> WidgetId {
+        self.descriptor.owner
+    }
+
+    pub const fn bounds(&self) -> Rect {
+        self.descriptor.bounds
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneLayerUpdateKind {
+    Content,
+    Transform,
+    Clip,
+    Effect,
+    Visibility,
+    Resources,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneLayerUpdate {
+    pub layer_id: SceneLayerId,
+    pub owner: WidgetId,
+    pub kind: SceneLayerUpdateKind,
+    pub bounds: Rect,
+    pub content_bounds: Rect,
+    pub paint_bounds: Rect,
+    pub damage: Option<Rect>,
+}
+
+impl SceneLayerUpdate {
+    pub fn from_descriptor(kind: SceneLayerUpdateKind, descriptor: SceneLayerDescriptor) -> Self {
+        Self {
+            layer_id: descriptor.id,
+            owner: descriptor.owner,
+            kind,
+            bounds: descriptor.bounds,
+            content_bounds: descriptor.content_bounds,
+            paint_bounds: descriptor.paint_bounds,
+            damage: None,
+        }
+    }
+
+    pub const fn with_damage(mut self, damage: Rect) -> Self {
+        self.damage = Some(damage);
+        self
     }
 }
 
@@ -153,10 +297,27 @@ impl Scene {
         }
     }
 
+    pub fn visit_layers(&self, visitor: &mut dyn FnMut(&SceneLayer)) {
+        for command in &self.commands {
+            if let SceneCommand::Layer(layer) = command {
+                visitor(layer);
+                layer.scene.visit_layers(visitor);
+            }
+        }
+    }
+
+    pub fn content_bounds(&self) -> Option<Rect> {
+        self.compute_bounds(false)
+    }
+
+    pub fn paint_bounds(&self) -> Option<Rect> {
+        self.compute_bounds(true)
+    }
+
     pub fn replace_layer(&mut self, widget_id: WidgetId, replacement: SceneLayer) -> bool {
         for command in &mut self.commands {
             match command {
-                SceneCommand::Layer(layer) if layer.widget_id == widget_id => {
+                SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
                     *command = SceneCommand::Layer(replacement);
                     return true;
                 }
@@ -170,6 +331,107 @@ impl Scene {
         }
 
         false
+    }
+
+    fn compute_bounds(&self, clipped: bool) -> Option<Rect> {
+        let mut state = SceneBoundsState::default();
+        let mut bounds: Option<Rect> = None;
+
+        for command in &self.commands {
+            if let Some(command_bounds) = state.command_bounds(command, clipped) {
+                bounds = Some(match bounds {
+                    Some(existing) => existing.union(command_bounds),
+                    None => command_bounds,
+                });
+            }
+        }
+
+        bounds
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SceneBoundsState {
+    transform: Transform,
+    transform_stack: Vec<Transform>,
+    clip_stack: Vec<Rect>,
+}
+
+impl SceneBoundsState {
+    fn command_bounds(&mut self, command: &SceneCommand, clipped: bool) -> Option<Rect> {
+        match command {
+            SceneCommand::Clear(_) => self.current_clip(),
+            SceneCommand::FillRect { rect, .. } => self.apply_rect(*rect, clipped),
+            SceneCommand::StrokeRect { rect, stroke, .. } => {
+                self.apply_rect(rect.inflate(stroke.width * 0.5, stroke.width * 0.5), clipped)
+            }
+            SceneCommand::FillPath { path, .. } => self.apply_rect(path.bounds(), clipped),
+            SceneCommand::StrokePath { path, stroke, .. } => self.apply_rect(
+                path.bounds().inflate(stroke.width * 0.5, stroke.width * 0.5),
+                clipped,
+            ),
+            SceneCommand::DrawText(text) => self.apply_rect(text.rect, clipped),
+            SceneCommand::DrawShapedText(text) => {
+                let bounds = text.layout.measurement().bounds.translate(text.origin.to_vector());
+                self.apply_rect(bounds, clipped)
+            }
+            SceneCommand::DrawImage { rect, .. } => self.apply_rect(*rect, clipped),
+            SceneCommand::PushClip { rect } => {
+                let clip = self.transform.transform_rect_bbox(*rect);
+                self.push_clip(clip);
+                None
+            }
+            SceneCommand::PushClipPath { path } => {
+                let clip = self.transform.transform_rect_bbox(path.bounds());
+                self.push_clip(clip);
+                None
+            }
+            SceneCommand::PopClip => {
+                self.clip_stack.pop();
+                None
+            }
+            SceneCommand::PushTransform { transform } => {
+                self.transform_stack.push(self.transform);
+                self.transform = self.transform.then(*transform);
+                None
+            }
+            SceneCommand::PopTransform => {
+                self.transform = self.transform_stack.pop().unwrap_or_default();
+                None
+            }
+            SceneCommand::Layer(layer) => Some(if clipped {
+                layer.descriptor.paint_bounds
+            } else {
+                layer.descriptor.content_bounds
+            }),
+            SceneCommand::Label { rect, .. } => self.apply_rect(*rect, clipped),
+        }
+    }
+
+    fn apply_rect(&self, rect: Rect, clipped: bool) -> Option<Rect> {
+        let transformed = self.transform.transform_rect_bbox(rect);
+        if clipped {
+            self.clip_rect(transformed)
+        } else {
+            Some(transformed)
+        }
+    }
+
+    fn push_clip(&mut self, clip: Rect) {
+        let clip = self.clip_rect(clip).unwrap_or(Rect::ZERO);
+        self.clip_stack.push(clip);
+    }
+
+    fn clip_rect(&self, rect: Rect) -> Option<Rect> {
+        let mut clipped = rect;
+        for clip in &self.clip_stack {
+            clipped = clipped.intersection(*clip)?;
+        }
+        Some(clipped)
+    }
+
+    fn current_clip(&self) -> Option<Rect> {
+        self.clip_stack.last().copied()
     }
 }
 
@@ -291,7 +553,7 @@ pub struct SceneFrame {
     pub surface_size: Size,
     pub scale_factor: f32,
     pub dirty_regions: Vec<DirtyRegion>,
-    pub dirty_layers: Vec<WidgetId>,
+    pub layer_updates: Vec<SceneLayerUpdate>,
     pub scene: Scene,
     pub font_registry: Arc<FontRegistry>,
     pub image_registry: Arc<ImageRegistry>,
@@ -305,7 +567,7 @@ impl SceneFrame {
             surface_size: viewport,
             scale_factor: 1.0,
             dirty_regions: Vec::new(),
-            dirty_layers: Vec::new(),
+            layer_updates: Vec::new(),
             scene: Scene::new(),
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
@@ -316,8 +578,9 @@ impl SceneFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, ImageRegistry, ImageSource, RegisteredImage, Scene, SceneCommand, SceneFrame,
-        SceneLayer, StrokeStyle,
+        Brush, ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode,
+        RegisteredImage, Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor,
+        SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -392,7 +655,7 @@ mod tests {
 
         assert_eq!(frame.font_registry.len(), 1);
         assert!(frame.font_registry.contains(FontHandle::new(9)));
-        assert!(frame.dirty_layers.is_empty());
+        assert!(frame.layer_updates.is_empty());
     }
 
     #[test]
@@ -408,7 +671,24 @@ mod tests {
 
         assert_eq!(frame.image_registry.len(), 1);
         assert!(frame.image_registry.contains(ImageHandle::new(5)));
-        assert!(frame.dirty_layers.is_empty());
+        assert!(frame.layer_updates.is_empty());
+
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::new(12),
+            WidgetId::new(4),
+            Rect::new(2.0, 3.0, 40.0, 20.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 80.0, 32.0))
+        .with_paint_bounds(Rect::new(2.0, 3.0, 40.0, 20.0))
+        .with_cache_policy(LayerCachePolicy::Cached)
+        .with_composition_mode(LayerCompositionMode::Scroll);
+        let update = SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Transform, descriptor)
+            .with_damage(Rect::new(1.0, 2.0, 42.0, 24.0));
+
+        assert_eq!(update.layer_id.get(), 12);
+        assert_eq!(update.owner, WidgetId::new(4));
+        assert_eq!(update.kind, SceneLayerUpdateKind::Transform);
+        assert_eq!(update.damage, Some(Rect::new(1.0, 2.0, 42.0, 24.0)));
     }
 
     #[test]
