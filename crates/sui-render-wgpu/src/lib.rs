@@ -265,6 +265,7 @@ struct TileEntry {
     rect: Rect,
     dirty: bool,
     visible: bool,
+    layer_local: bool,
     last_used_frame: u64,
     memory_cost: usize,
     payload: TilePayload,
@@ -377,7 +378,14 @@ struct RetainedDirectPacket {
     scene: Scene,
     initial_state: ResolvedRasterState,
     signature: u64,
+    coordinate_space: PacketCoordinateSpace,
     draw_ops: DrawOpArena,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PacketCoordinateSpace {
+    World,
+    LayerLocal,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -785,19 +793,16 @@ impl RetainedCompositorState {
             }
 
             if let Some(cached_root) = cached_coverage.get(&update.layer_id).copied().flatten() {
-                let full_dirty = matches!(
-                        update.kind,
-                        SceneLayerUpdateKind::Transform
-                            | SceneLayerUpdateKind::Clip
-                            | SceneLayerUpdateKind::Effect
-                            | SceneLayerUpdateKind::Visibility
+                if matches!(
+                    update.kind,
+                    SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
+                ) {
+                    merge_damage_rect(
+                        &mut tiled_damage,
+                        cached_root,
+                        update.damage.or(Some(update.content_bounds)),
                     );
-                let damage = if full_dirty {
-                    None
-                } else {
-                    update.damage.or(Some(update.content_bounds))
-                };
-                merge_damage_rect(&mut tiled_damage, cached_root, damage);
+                }
                 if cached_root == update.layer_id {
                     continue;
                 }
@@ -810,9 +815,7 @@ impl RetainedCompositorState {
                 SceneLayerUpdateKind::Transform
                 | SceneLayerUpdateKind::Clip
                 | SceneLayerUpdateKind::Effect
-                | SceneLayerUpdateKind::Visibility => {
-                    mark_layer_subtree_dirty(update.layer_id, &snapshot.layers, &mut packet_dirty_layers);
-                }
+                | SceneLayerUpdateKind::Visibility => {}
             }
         }
 
@@ -831,7 +834,15 @@ impl RetainedCompositorState {
         self.root.packet_ids = snapshot.root.packet_ids.clone();
 
         for packet in snapshot.root.packets {
-            self.upsert_packet(frame, packet, root_dirty, text_engine, feather_width)?;
+            self.upsert_packet(
+                frame,
+                packet,
+                root_dirty,
+                PacketCoordinateSpace::World,
+                Vector::ZERO,
+                text_engine,
+                feather_width,
+            )?;
         }
 
         let snapshot_layers = snapshot.layers.clone();
@@ -841,6 +852,9 @@ impl RetainedCompositorState {
         let mut structure_dirty_layers = HashSet::new();
 
         for (layer_id, layer_snapshot) in snapshot.layers {
+            let translated_only = previous_layers.get(&layer_id).is_some_and(|previous| {
+                descriptor_translation_delta(&previous.descriptor, &layer_snapshot.descriptor).is_some()
+            });
             let structure_changed = previous_layers.get(&layer_id).is_none_or(|previous| {
                 previous.parent != layer_snapshot.parent
                     || previous.children != layer_snapshot.children
@@ -849,13 +863,13 @@ impl RetainedCompositorState {
                     || previous.transform_node != layer_snapshot.transform_node
                     || previous.clip_node != layer_snapshot.clip_node
                     || previous.effect_node != layer_snapshot.effect_node
-                    || previous.descriptor != layer_snapshot.descriptor
+                    || (!translated_only && previous.descriptor != layer_snapshot.descriptor)
             });
 
             let content_changed = packet_dirty_layers.contains(&layer_id)
-                || previous_layers
-                    .get(&layer_id)
-                    .is_none_or(|previous| previous.descriptor.bounds != layer_snapshot.descriptor.bounds);
+                || previous_layers.get(&layer_id).is_none_or(|previous| {
+                    !translated_only && previous.descriptor.bounds != layer_snapshot.descriptor.bounds
+                });
 
             let previous = previous_layers.get(&layer_id);
             let retained = self.layers.entry(layer_id).or_insert_with(|| RetainedLayer {
@@ -900,8 +914,22 @@ impl RetainedCompositorState {
 
             if cached_coverage.get(&layer_id).copied().flatten().is_none() {
                 let packet_dirty = global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
+                let coordinate_space = if render_modes[&layer_id] == RetainedLayerRenderMode::Direct {
+                    PacketCoordinateSpace::LayerLocal
+                } else {
+                    PacketCoordinateSpace::World
+                };
+                let normalization_origin = layer_snapshot.descriptor.bounds.origin.to_vector();
                 for packet in layer_snapshot.packets {
-                    self.upsert_packet(frame, packet, packet_dirty, text_engine, feather_width)?;
+                    self.upsert_packet(
+                        frame,
+                        packet,
+                        packet_dirty,
+                        coordinate_space,
+                        normalization_origin,
+                        text_engine,
+                        feather_width,
+                    )?;
                 }
             }
         }
@@ -926,15 +954,21 @@ impl RetainedCompositorState {
         frame: &SceneFrame,
         snapshot: PacketSnapshot,
         forced_dirty: bool,
+        coordinate_space: PacketCoordinateSpace,
+        normalization_origin: Vector,
         text_engine: &mut TextEngine,
         feather_width: f32,
     ) -> Result<()> {
+        let snapshot = normalize_packet_snapshot(snapshot, coordinate_space, normalization_origin);
         let signature = packet_signature(&snapshot.scene, &snapshot.initial_state, frame.viewport, feather_width);
         let should_rebuild = forced_dirty
             || self
                 .packets
                 .get(&snapshot.id)
                 .is_none_or(|packet| {
+                    packet.coordinate_space != coordinate_space
+                        || packet.id != snapshot.id
+                        ||
                     packet.signature != signature
                         || packet.scene != snapshot.scene
                         || packet.initial_state != snapshot.initial_state
@@ -955,6 +989,7 @@ impl RetainedCompositorState {
                     scene: snapshot.scene,
                     initial_state: snapshot.initial_state,
                     signature,
+                    coordinate_space,
                     draw_ops,
                 },
             );
@@ -979,7 +1014,25 @@ impl RetainedCompositorState {
             match item {
                 CompositionItem::Packet(packet_id) => {
                     if let Some(packet) = self.packets.get(packet_id) {
-                        draw_ops.append_fragment(&packet.draw_ops);
+                        match packet.coordinate_space {
+                            PacketCoordinateSpace::World => {
+                                draw_ops.append_fragment(&packet.draw_ops);
+                            }
+                            PacketCoordinateSpace::LayerLocal => {
+                                let origin = match packet.id.container {
+                                    CompositionContainerId::Root => Vector::ZERO,
+                                    CompositionContainerId::Layer(layer_id) => self
+                                        .layers
+                                        .get(&layer_id)
+                                        .map(|layer| layer.descriptor.bounds.origin.to_vector())
+                                        .unwrap_or(Vector::ZERO),
+                                };
+                                draw_ops.append_transformed_fragment(
+                                    &packet.draw_ops,
+                                    Transform::translation_vector(origin),
+                                );
+                            }
+                        }
                         stats.direct_packets += 1;
                     }
                 }
@@ -997,7 +1050,17 @@ impl RetainedCompositorState {
                                 for tile in &layer.visible_tiles {
                                     if let Some(entry) = self.tiles.get(tile) {
                                         let TilePayload::DirectPacket(fragment) = &entry.payload;
-                                        draw_ops.append_fragment(fragment);
+                                        if entry.layer_local {
+                                            draw_ops.append_transformed_fragment(
+                                                fragment,
+                                                Transform::translation(
+                                                    layer.descriptor.bounds.x(),
+                                                    layer.descriptor.bounds.y(),
+                                                ),
+                                            );
+                                        } else {
+                                            draw_ops.append_fragment(fragment);
+                                        }
                                         stats.visible_tiles += 1;
                                     }
                                 }
@@ -1043,6 +1106,11 @@ impl RetainedCompositorState {
             let content_version = layer.content_version;
             let transform_node = layer.transform_node;
             let clip_node = layer.clip_node;
+            let layer_local_tiles = cached_layer_translation_fast_path(
+                transform_node,
+                clip_node,
+                layer.effect_node,
+            );
 
             let tile_grid = TileGrid::new(&descriptor, frame.scale_factor);
             let grid_changed = layer.tile_grid != Some(tile_grid);
@@ -1100,6 +1168,7 @@ impl RetainedCompositorState {
                             content_version,
                             tile_grid,
                             *address,
+                            layer_local_tiles,
                             frame,
                             layer_snapshot,
                             snapshot_layers,
@@ -1118,6 +1187,7 @@ impl RetainedCompositorState {
                         content_version,
                         tile_grid,
                         *address,
+                        layer_local_tiles,
                         frame,
                         layer_snapshot,
                         snapshot_layers,
@@ -1331,6 +1401,7 @@ fn build_tile_entry(
     content_version: u64,
     tile_grid: TileGrid,
     address: TileAddress,
+    layer_local: bool,
     frame: &SceneFrame,
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
@@ -1340,14 +1411,21 @@ fn build_tile_entry(
 ) -> Result<TileEntry> {
     let tile_local = tile_grid.tile_rect(address.tile_x, address.tile_y);
     let tile_scene = layer_local_to_scene(tile_local, descriptor);
-    let payload = TilePayload::DirectPacket(build_cached_tile_fragment(
+    let mut fragment = build_cached_tile_fragment(
         frame,
         tile_scene,
         layer_snapshot,
         snapshot_layers,
         text_engine,
         feather_width,
-    )?);
+    )?;
+    if layer_local {
+        fragment.transform_in_place(Transform::translation(
+            -descriptor.bounds.x(),
+            -descriptor.bounds.y(),
+        ));
+    }
+    let payload = TilePayload::DirectPacket(fragment);
     let memory_cost = match &payload {
         TilePayload::DirectPacket(packet) => packet.byte_size(),
     };
@@ -1363,6 +1441,7 @@ fn build_tile_entry(
         rect: tile_local,
         dirty: false,
         visible: true,
+        layer_local,
         last_used_frame: frame_index,
         memory_cost,
         payload,
@@ -1536,19 +1615,86 @@ fn scene_has_draw_content(scene: &Scene) -> bool {
     })
 }
 
-fn mark_layer_subtree_dirty(
-    layer_id: SceneLayerId,
-    layers: &HashMap<SceneLayerId, LayerSnapshot>,
-    dirty_layers: &mut HashSet<SceneLayerId>,
-) {
-    if !dirty_layers.insert(layer_id) {
-        return;
+fn normalize_packet_snapshot(
+    mut snapshot: PacketSnapshot,
+    coordinate_space: PacketCoordinateSpace,
+    normalization_origin: Vector,
+) -> PacketSnapshot {
+    if coordinate_space == PacketCoordinateSpace::LayerLocal && normalization_origin != Vector::ZERO {
+        let delta = Vector::new(-normalization_origin.x, -normalization_origin.y);
+        snapshot.scene.translate(delta);
+        snapshot.initial_state = translate_resolved_raster_state(&snapshot.initial_state, delta);
+    }
+    snapshot
+}
+
+fn translate_resolved_raster_state(
+    state: &ResolvedRasterState,
+    delta: Vector,
+) -> ResolvedRasterState {
+    let mut translated = state.clone();
+    translated.clip_stack = translated
+        .clip_stack
+        .into_iter()
+        .map(|clip| translate_resolved_clip_primitive(clip, delta))
+        .collect();
+    translated
+}
+
+fn translate_resolved_clip_primitive(
+    primitive: ResolvedClipPrimitive,
+    delta: Vector,
+) -> ResolvedClipPrimitive {
+    match primitive {
+        ResolvedClipPrimitive::Rect(rect) => ResolvedClipPrimitive::Rect(rect.translate(delta)),
+        ResolvedClipPrimitive::Path {
+            path,
+            bounds,
+            ..
+        } => {
+            let translated_path = transform_scene_path(&path, Transform::translation_vector(delta));
+            let translated_bounds = bounds.translate(delta);
+            ResolvedClipPrimitive::Path {
+                signature: hash_path(&translated_path, Transform::IDENTITY),
+                path: translated_path,
+                bounds: translated_bounds,
+            }
+        }
+    }
+}
+
+fn cached_layer_translation_fast_path(
+    transform_node: TransformNodeId,
+    clip_node: ClipNodeId,
+    effect_node: EffectNodeId,
+) -> bool {
+    transform_node == TransformNodeId::ROOT
+        && clip_node == ClipNodeId::ROOT
+        && effect_node == EffectNodeId::ROOT
+}
+
+fn descriptor_translation_delta(
+    previous: &sui_scene::SceneLayerDescriptor,
+    current: &sui_scene::SceneLayerDescriptor,
+) -> Option<Vector> {
+    if previous.id != current.id
+        || previous.owner != current.owner
+        || previous.cache_policy != current.cache_policy
+        || previous.composition_mode != current.composition_mode
+        || previous.bounds.size != current.bounds.size
+        || previous.content_bounds.size != current.content_bounds.size
+        || previous.paint_bounds.size != current.paint_bounds.size
+    {
+        return None;
     }
 
-    if let Some(layer) = layers.get(&layer_id) {
-        for child in &layer.children {
-            mark_layer_subtree_dirty(*child, layers, dirty_layers);
-        }
+    let bounds_delta = current.bounds.origin - previous.bounds.origin;
+    let content_delta = current.content_bounds.origin - previous.content_bounds.origin;
+    let paint_delta = current.paint_bounds.origin - previous.paint_bounds.origin;
+    if bounds_delta == content_delta && bounds_delta == paint_delta {
+        Some(bounds_delta)
+    } else {
+        None
     }
 }
 
@@ -4254,6 +4400,37 @@ fn push_draw_op(
 }
 
 impl DrawOpArena {
+    fn transform_in_place(&mut self, transform: Transform) {
+        if transform.is_identity() {
+            return;
+        }
+
+        for vertex in &mut self.scene_vertices {
+            let point = transform.transform_point(Point::new(vertex.position[0], vertex.position[1]));
+            vertex.position = [point.x, point.y];
+        }
+        for vertex in &mut self.clip_vertices {
+            let point = transform.transform_point(Point::new(vertex.position[0], vertex.position[1]));
+            vertex.position = [point.x, point.y];
+        }
+        for draw_op in &mut self.draw_ops {
+            draw_op.clip_rect = draw_op
+                .clip_rect
+                .map(|rect| transform.transform_rect_bbox(rect));
+        }
+    }
+
+    fn append_transformed_fragment(&mut self, fragment: &DrawOpArena, transform: Transform) {
+        if transform.is_identity() {
+            self.append_fragment(fragment);
+            return;
+        }
+
+        let mut transformed = fragment.clone();
+        transformed.transform_in_place(transform);
+        self.append_fragment(&transformed);
+    }
+
     fn append_fragment(&mut self, fragment: &DrawOpArena) {
         let scene_delta = self.scene_vertices.len() as u32;
         let clip_delta = self.clip_vertices.len() as u32;
@@ -5092,9 +5269,9 @@ mod tests {
         Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WidgetId, WindowId,
     };
     use sui_scene::{
-        ImageRegistry, ImageSource, LayerCachePolicy, RegisteredImage, Scene, SceneCommand,
-        SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
-        SceneLayerUpdateKind, StrokeStyle,
+        ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, RegisteredImage,
+        Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId,
+        SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
     };
     use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
 
@@ -5708,6 +5885,78 @@ mod tests {
     }
 
     #[test]
+    fn retained_compositor_reuses_direct_packets_across_layer_translation() {
+        let layer_id = WidgetId::new(53);
+
+        let build_layer = |x: f32| {
+            let descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(layer_id),
+                layer_id,
+                Rect::new(x, 10.0, 80.0, 36.0),
+            )
+            .with_content_bounds(Rect::new(x, 10.0, 80.0, 36.0))
+            .with_paint_bounds(Rect::new(x, 10.0, 80.0, 36.0))
+            .with_cache_policy(LayerCachePolicy::Direct);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(x, 10.0, 80.0, 36.0),
+                brush: Color::rgba(0.82, 0.36, 0.18, 1.0).into(),
+            });
+
+            SceneLayer::from_descriptor(descriptor, layer_scene)
+        };
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(build_layer(8.0)));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(24),
+            viewport: Size::new(160.0, 80.0),
+            surface_size: Size::new(160.0, 80.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: content_updates([layer_id]),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let layer_container = CompositionContainerId::Layer(SceneLayerId::from_widget(layer_id));
+        let first_signature = packet_signature(&compositor, layer_container);
+        let first_content_version = compositor.layers[&SceneLayerId::from_widget(layer_id)].content_version;
+
+        frame.scene = {
+            let mut next = Scene::new();
+            next.push(SceneCommand::Layer(build_layer(44.0)));
+            next
+        };
+        frame.layer_updates = vec![SceneLayerUpdate::from_descriptor(
+            SceneLayerUpdateKind::Transform,
+            SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(layer_id),
+                layer_id,
+                Rect::new(44.0, 10.0, 80.0, 36.0),
+            )
+            .with_content_bounds(Rect::new(44.0, 10.0, 80.0, 36.0))
+            .with_paint_bounds(Rect::new(44.0, 10.0, 80.0, 36.0))
+            .with_cache_policy(LayerCachePolicy::Direct),
+        )];
+
+        let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let second_signature = packet_signature(&compositor, layer_container);
+        let second_content_version = compositor.layers[&SceneLayerId::from_widget(layer_id)].content_version;
+
+        assert_eq!(first_signature, second_signature);
+        assert_eq!(first_content_version, second_content_version);
+        assert_eq!(compositor.last_frame_stats.direct_packets, 1);
+        assert_ne!(first.scene_vertices, second.scene_vertices);
+    }
+
+    #[test]
     fn retained_compositor_prunes_removed_layers_and_packets() {
         let removed_id = WidgetId::new(61);
         let replacement_id = WidgetId::new(62);
@@ -5861,6 +6110,95 @@ mod tests {
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
         assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
         assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
+    }
+
+    #[test]
+    fn retained_compositor_reuses_cached_tiles_across_layer_translation() {
+        let layer_id = WidgetId::new(74);
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached)
+        .with_composition_mode(LayerCompositionMode::Scroll);
+
+        let build_scene = |x: f32| {
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::PushClip {
+                rect: Rect::new(x, 0.0, 512.0, 128.0),
+            });
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(x, 0.0, 512.0, 128.0),
+                brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
+            });
+            layer_scene.push(SceneCommand::PopClip);
+
+            let translated = descriptor
+                .clone()
+                .with_content_bounds(Rect::new(x, 0.0, 512.0, 128.0))
+                .with_paint_bounds(Rect::new(x, 0.0, 512.0, 128.0));
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                SceneLayerDescriptor::new(
+                    SceneLayerId::from_widget(layer_id),
+                    layer_id,
+                    Rect::new(x, 0.0, 512.0, 128.0),
+                )
+                .with_content_bounds(Rect::new(x, 0.0, 512.0, 128.0))
+                .with_paint_bounds(Rect::new(x, 0.0, 512.0, 128.0))
+                .with_cache_policy(translated.cache_policy)
+                .with_composition_mode(translated.composition_mode),
+                layer_scene,
+            )));
+            scene
+        };
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(34),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor.clone())
+                    .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
+            ],
+            scene: build_scene(0.0),
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
+
+        let translated_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(64.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(64.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(64.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached)
+        .with_composition_mode(LayerCompositionMode::Scroll);
+        frame.scene = build_scene(64.0);
+        frame.layer_updates = vec![SceneLayerUpdate::from_descriptor(
+            SceneLayerUpdateKind::Transform,
+            translated_descriptor,
+        )];
+
+        let _second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
     }
 
     #[test]

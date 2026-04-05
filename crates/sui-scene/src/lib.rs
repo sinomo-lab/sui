@@ -3,7 +3,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use sui_core::{
-    Color, DirtyRegion, Error, ImageHandle, Path, Rect, Result, Size, Transform, WidgetId,
+    Color, DirtyRegion, Error, ImageHandle, Path, PathElement, Rect, Result, Size, Transform,
+    Vector, WidgetId,
     WindowId,
 };
 use sui_text::{FontRegistry, ShapedText, TextRun};
@@ -104,6 +105,13 @@ impl SceneLayerDescriptor {
 
     pub const fn with_composition_mode(mut self, composition_mode: LayerCompositionMode) -> Self {
         self.composition_mode = composition_mode;
+        self
+    }
+
+    pub fn translate(mut self, delta: Vector) -> Self {
+        self.bounds = self.bounds.translate(delta);
+        self.content_bounds = self.content_bounds.translate(delta);
+        self.paint_bounds = self.paint_bounds.translate(delta);
         self
     }
 }
@@ -333,6 +341,31 @@ impl Scene {
         false
     }
 
+    pub fn translate(&mut self, delta: Vector) {
+        for command in &mut self.commands {
+            translate_command(command, delta);
+        }
+    }
+
+    pub fn translate_layer(&mut self, widget_id: WidgetId, delta: Vector) -> bool {
+        for command in &mut self.commands {
+            match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
+                    layer.translate(delta);
+                    return true;
+                }
+                SceneCommand::Layer(layer) => {
+                    if layer.scene.translate_layer(widget_id, delta) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
     fn compute_bounds(&self, clipped: bool) -> Option<Rect> {
         let mut state = SceneBoundsState::default();
         let mut bounds: Option<Rect> = None;
@@ -433,6 +466,65 @@ impl SceneBoundsState {
     fn current_clip(&self) -> Option<Rect> {
         self.clip_stack.last().copied()
     }
+}
+
+impl SceneLayer {
+    fn translate(&mut self, delta: Vector) {
+        self.descriptor = self.descriptor.clone().translate(delta);
+        self.scene.translate(delta);
+    }
+}
+
+fn translate_command(command: &mut SceneCommand, delta: Vector) {
+    match command {
+        SceneCommand::Clear(_) | SceneCommand::PopClip | SceneCommand::PopTransform => {}
+        SceneCommand::FillRect { rect, .. }
+        | SceneCommand::StrokeRect { rect, .. }
+        | SceneCommand::DrawImage { rect, .. }
+        | SceneCommand::PushClip { rect }
+        | SceneCommand::Label { rect, .. } => {
+            *rect = rect.translate(delta);
+        }
+        SceneCommand::FillPath { path, .. }
+        | SceneCommand::StrokePath { path, .. }
+        | SceneCommand::PushClipPath { path } => {
+            *path = translate_path(path, delta);
+        }
+        SceneCommand::DrawText(text) => {
+            text.rect = text.rect.translate(delta);
+        }
+        SceneCommand::DrawShapedText(text) => {
+            text.origin += delta;
+        }
+        SceneCommand::PushTransform { .. } => {}
+        SceneCommand::Layer(layer) => {
+            layer.translate(delta);
+        }
+    }
+}
+
+fn translate_path(path: &Path, delta: Vector) -> Path {
+    let mut builder = Path::builder();
+    for element in path.elements() {
+        match element {
+            PathElement::MoveTo(point) => {
+                builder.move_to(*point + delta);
+            }
+            PathElement::LineTo(point) => {
+                builder.line_to(*point + delta);
+            }
+            PathElement::QuadTo { ctrl, to } => {
+                builder.quad_to(*ctrl + delta, *to + delta);
+            }
+            PathElement::CubicTo { ctrl1, ctrl2, to } => {
+                builder.cubic_to(*ctrl1 + delta, *ctrl2 + delta, *to + delta);
+            }
+            PathElement::Close => {
+                builder.close();
+            }
+        }
+    }
+    builder.build()
 }
 
 impl From<TextRun> for SceneCommand {

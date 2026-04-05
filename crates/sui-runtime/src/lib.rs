@@ -12,7 +12,7 @@ use std::{
 use sui_core::{
     AsyncWakeToken, DirtyRegion, Error, Event, FontHandle, ImageHandle, InvalidationKind,
     InvalidationRequest, InvalidationTarget, KeyState, Point, PointerEventKind, Rect, Result,
-    SemanticsNode, Size, TimerToken, WakeEvent, WidgetId, WindowEvent, WindowId,
+    SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -537,6 +537,18 @@ struct ScheduledTimer {
     target: WidgetId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LayerTranslation {
+    widget_id: WidgetId,
+    delta: Vector,
+}
+
+#[derive(Debug, Default)]
+struct GraphChangeSet {
+    repaint_widgets: Vec<WidgetId>,
+    transform_widgets: Vec<LayerTranslation>,
+}
+
 struct WindowState {
     id: WindowId,
     title: String,
@@ -1049,7 +1061,7 @@ impl WindowState {
         } else {
             None
         };
-        let mut graph_dirty_widgets = Vec::new();
+        let mut graph_changes = GraphChangeSet::default();
 
         if self.last_frame.is_none() {
             self.schedule = FrameSchedule::bootstrap();
@@ -1062,7 +1074,7 @@ impl WindowState {
                 Arc::clone(&font_registry),
                 Arc::clone(&image_registry),
             ));
-            graph_dirty_widgets = collect_graph_dirty_widgets(previous_graph.as_ref(), &self.graph);
+            graph_changes = self.collect_graph_changes(previous_graph.as_ref());
             diagnostics.push(FramePhase::MeasureArrange, started.elapsed());
         } else if self.schedule.hit_test || self.graph.is_empty() {
             let started = Instant::now();
@@ -1072,11 +1084,25 @@ impl WindowState {
 
         let viewport = self.viewport.unwrap_or(Size::ZERO);
         let dpi_info = self.dpi_info_for_viewport(viewport);
+        let composition_only_transforms = self.select_composition_only_transforms(
+            self.last_frame.as_ref().map(|frame| &frame.scene),
+            &graph_changes.transform_widgets,
+        );
+        let composition_only_transform_ids = composition_only_transforms
+            .iter()
+            .map(|translation| translation.widget_id)
+            .collect::<HashSet<_>>();
+        let mut repaint_graph_widgets = graph_changes.repaint_widgets.clone();
+        for translation in &graph_changes.transform_widgets {
+            if !composition_only_transform_ids.contains(&translation.widget_id) {
+                repaint_graph_widgets.push(translation.widget_id);
+            }
+        }
 
         if self.schedule.paint || self.last_frame.is_none() {
-            repaint_layers = self.collect_dirty_layers(&invalidations, &graph_dirty_widgets);
+            repaint_layers = self.collect_dirty_layers(&invalidations);
             dirty_layers = repaint_layers.clone();
-            for widget_id in graph_dirty_widgets.iter().copied() {
+            for widget_id in repaint_graph_widgets.iter().copied() {
                 if self.graph.contains(widget_id) && !dirty_layers.contains(&widget_id) {
                     dirty_layers.push(widget_id);
                 }
@@ -1091,9 +1117,11 @@ impl WindowState {
             });
         }
 
-        if self.last_frame.is_none() || !repaint_layers.is_empty() {
+        let mut scene_changed = false;
+        if self.last_frame.is_none() || !repaint_layers.is_empty() || !composition_only_transforms.is_empty() {
             let started = Instant::now();
-            repainted = true;
+            repainted = self.last_frame.is_none() || !repaint_layers.is_empty();
+            scene_changed = true;
 
             let focused_path = self
                 .focus
@@ -1113,6 +1141,15 @@ impl WindowState {
             let (scene, paint_invalidations, ime_composition_rect) =
                 if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
                     self.paint_full_scene(dpi_info)
+                } else if repaint_layers.is_empty() {
+                    (
+                        self.last_frame
+                            .as_ref()
+                            .map(|frame| frame.scene.clone())
+                            .unwrap_or_default(),
+                        Vec::new(),
+                        baseline_ime_composition_rect,
+                    )
                 } else {
                     self.repaint_dirty_layers(
                         dpi_info,
@@ -1120,6 +1157,10 @@ impl WindowState {
                         baseline_ime_composition_rect,
                     )
                 };
+            let mut scene = scene;
+            for translation in &composition_only_transforms {
+                let _ = scene.translate_layer(translation.widget_id, translation.delta);
+            }
             invalidations.extend(paint_invalidations);
             self.ime_composition_rect = ime_composition_rect;
             let previous_scene = self.last_frame.as_ref().map(|frame| &frame.scene);
@@ -1128,7 +1169,10 @@ impl WindowState {
                 &scene,
                 &invalidations,
                 &dirty_layers,
-                &graph_dirty_widgets,
+                &composition_only_transforms
+                    .iter()
+                    .map(|translation| translation.widget_id)
+                    .collect::<Vec<_>>(),
             );
             self.last_frame = Some(SceneFrame {
                 window_id: self.id,
@@ -1141,7 +1185,9 @@ impl WindowState {
                 font_registry: Arc::clone(&font_registry),
                 image_registry: Arc::clone(&image_registry),
             });
-            diagnostics.push(FramePhase::Paint, started.elapsed());
+            if repainted {
+                diagnostics.push(FramePhase::Paint, started.elapsed());
+            }
         }
 
         if self.schedule.semantics || self.last_semantics.is_empty() {
@@ -1167,7 +1213,7 @@ impl WindowState {
         frame.surface_size = dpi_info.surface_size;
         frame.scale_factor = dpi_info.scale_factor;
         frame.dirty_regions = dirty_regions;
-        frame.layer_updates = if repainted {
+        frame.layer_updates = if scene_changed {
             layer_updates
         } else {
             self.collect_layer_updates(
@@ -1175,7 +1221,10 @@ impl WindowState {
                 &frame.scene,
                 &invalidations,
                 &[],
-                &graph_dirty_widgets,
+                &composition_only_transforms
+                    .iter()
+                    .map(|translation| translation.widget_id)
+                    .collect::<Vec<_>>(),
             )
         };
         frame.font_registry = font_registry;
@@ -1266,15 +1315,13 @@ impl WindowState {
     fn collect_dirty_layers(
         &self,
         invalidations: &[InvalidationRequest],
-        graph_dirty_widgets: &[WidgetId],
     ) -> Vec<WidgetId> {
-        let mut candidates: HashSet<WidgetId> = invalidations
+        let candidates: HashSet<WidgetId> = invalidations
             .iter()
             .filter(|request| {
                 matches!(
                     request.kind,
                     InvalidationKind::Measure
-                        | InvalidationKind::Arrange
                         | InvalidationKind::Transform
                         | InvalidationKind::Clip
                         | InvalidationKind::Effect
@@ -1290,8 +1337,6 @@ impl WindowState {
                 InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
             })
             .collect();
-
-        candidates.extend(graph_dirty_widgets.iter().copied());
 
         if self.last_frame.is_none() || candidates.contains(&self.root.id()) {
             return self
@@ -1325,6 +1370,124 @@ impl WindowState {
         }
 
         minimized
+    }
+
+    fn collect_graph_changes(&self, previous: Option<&WidgetGraphSnapshot>) -> GraphChangeSet {
+        let Some(previous) = previous else {
+            return GraphChangeSet {
+                repaint_widgets: vec![self.graph.root],
+                transform_widgets: Vec::new(),
+            };
+        };
+
+        let current_snapshot = self.graph.snapshot();
+        let previous_nodes: HashMap<_, _> = previous.nodes.iter().map(|node| (node.id, node)).collect();
+        let current_nodes: HashMap<_, _> = current_snapshot
+            .nodes
+            .iter()
+            .map(|node| (node.id, node))
+            .collect();
+        let widget_ids = previous_nodes
+            .keys()
+            .chain(current_nodes.keys())
+            .copied()
+            .collect::<HashSet<_>>();
+        let mut repaint_candidates = HashSet::new();
+        let mut transform_candidates = Vec::new();
+
+        for widget_id in widget_ids {
+            match (previous_nodes.get(&widget_id), current_nodes.get(&widget_id)) {
+                (Some(previous_node), Some(current_node)) => {
+                    if previous_node.measured_size != current_node.measured_size
+                        || previous_node.bounds.size != current_node.bounds.size
+                        || previous_node.parent != current_node.parent
+                        || previous_node.children != current_node.children
+                    {
+                        repaint_candidates.insert(current_node.id);
+                        continue;
+                    }
+
+                    let delta = current_node.bounds.origin - previous_node.bounds.origin;
+                    if delta != Vector::ZERO {
+                        transform_candidates.push(LayerTranslation {
+                            widget_id: current_node.id,
+                            delta,
+                        });
+                    }
+                }
+                (None, Some(current_node)) => {
+                    repaint_candidates.insert(current_node.parent.unwrap_or(current_snapshot.root));
+                }
+                (Some(previous_node), None) => {
+                    repaint_candidates.insert(previous_node.parent.unwrap_or(previous.root));
+                }
+                (None, None) => {}
+            }
+        }
+
+        let mut repaint_widgets = repaint_candidates.into_iter().collect::<Vec<_>>();
+        repaint_widgets.sort_by_key(|widget_id| self.widget_depth(*widget_id));
+        let mut minimized_repaint = Vec::new();
+        for widget_id in repaint_widgets {
+            if minimized_repaint
+                .iter()
+                .any(|ancestor| self.widget_is_ancestor_of(*ancestor, widget_id))
+            {
+                continue;
+            }
+            minimized_repaint.push(widget_id);
+        }
+
+        transform_candidates.sort_by_key(|translation| self.widget_depth(translation.widget_id));
+        let mut minimized_transforms = Vec::new();
+        for candidate in transform_candidates {
+            if minimized_repaint
+                .iter()
+                .any(|ancestor| self.widget_is_ancestor_of(*ancestor, candidate.widget_id))
+            {
+                continue;
+            }
+
+            let inherited_delta = minimized_transforms
+                .iter()
+                .filter(|translation: &&LayerTranslation| {
+                    self.widget_is_ancestor_of(translation.widget_id, candidate.widget_id)
+                })
+                .fold(Vector::ZERO, |current, translation| current + translation.delta);
+            let residual = candidate.delta - inherited_delta;
+            if residual == Vector::ZERO {
+                continue;
+            }
+
+            minimized_transforms.push(LayerTranslation {
+                widget_id: candidate.widget_id,
+                delta: residual,
+            });
+        }
+
+        GraphChangeSet {
+            repaint_widgets: minimized_repaint,
+            transform_widgets: minimized_transforms,
+        }
+    }
+
+    fn select_composition_only_transforms(
+        &self,
+        previous_scene: Option<&Scene>,
+        transform_widgets: &[LayerTranslation],
+    ) -> Vec<LayerTranslation> {
+        let previous_layers = previous_scene.map(collect_scene_layers).unwrap_or_default();
+        transform_widgets
+            .iter()
+            .copied()
+            .filter(|translation| previous_layers.contains_key(&translation.widget_id))
+            .collect()
+    }
+
+    fn widget_depth(&self, widget_id: WidgetId) -> usize {
+        self.graph
+            .path_to(widget_id)
+            .map_or(usize::MAX, |path| path.len())
     }
 
     fn collect_layer_updates(
@@ -1751,51 +1914,6 @@ fn collect_dirty_regions(
     dirty_regions
 }
 
-fn collect_graph_dirty_widgets(
-    previous: Option<&WidgetGraphSnapshot>,
-    current: &WidgetGraph,
-) -> Vec<WidgetId> {
-    let Some(previous) = previous else {
-        return vec![current.root];
-    };
-
-    let current_snapshot = current.snapshot();
-    let previous_nodes: HashMap<_, _> = previous.nodes.iter().map(|node| (node.id, node)).collect();
-    let current_nodes: HashMap<_, _> = current_snapshot
-        .nodes
-        .iter()
-        .map(|node| (node.id, node))
-        .collect();
-    let mut dirty = HashSet::new();
-
-    for widget_id in previous_nodes.keys().chain(current_nodes.keys()) {
-        match (previous_nodes.get(widget_id), current_nodes.get(widget_id)) {
-            (Some(previous_node), Some(current_node)) => {
-                if previous_node.measured_size != current_node.measured_size
-                    || previous_node.bounds != current_node.bounds
-                    || previous_node.parent != current_node.parent
-                    || previous_node.children != current_node.children
-                {
-                    dirty.insert(current_node.id);
-                }
-            }
-            (None, Some(current_node)) => {
-                dirty.insert(current_node.parent.unwrap_or(current_snapshot.root));
-            }
-            (Some(previous_node), None) => {
-                dirty.insert(previous_node.parent.unwrap_or(previous.root));
-            }
-            (None, None) => {}
-        }
-    }
-
-    if dirty.is_empty() {
-        Vec::new()
-    } else {
-        dirty.into_iter().collect()
-    }
-}
-
 fn collect_scene_layers(scene: &Scene) -> HashMap<WidgetId, SceneLayerDescriptor> {
     let mut layers = HashMap::new();
     scene.visit_layers(&mut |layer| {
@@ -1860,7 +1978,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, MeasureCtx,
+        Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
         PaintCtx, Runtime, SemanticsCtx, SingleChild, Widget, WidgetChildren,
         WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
         WindowBuilder,
@@ -1871,7 +1989,7 @@ mod tests {
         Rect, SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent, WindowEvent,
     };
     use sui_layout::Constraints;
-    use sui_scene::RegisteredImage;
+    use sui_scene::{RegisteredImage, SceneCommand, SceneLayerUpdateKind};
     use sui_text::{RegisteredFont, TextLayout, TextStyle};
 
     #[derive(Default)]
@@ -1965,6 +2083,137 @@ mod tests {
                 ctx.bounds(),
             ));
             self.child.semantics(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
+    struct CachedMoveLeaf {
+        counters: Rc<RefCell<Counters>>,
+    }
+
+    impl Widget for CachedMoveLeaf {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(220.0, 72.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.counters.borrow_mut().paint += 1;
+            ctx.fill_bounds(Color::rgba(0.14, 0.42, 0.72, 1.0));
+        }
+
+        fn layer_options(&self) -> LayerOptions {
+            LayerOptions {
+                cache_policy: sui_scene::LayerCachePolicy::Cached,
+                composition_mode: sui_scene::LayerCompositionMode::Scroll,
+            }
+        }
+    }
+
+    struct DirectMoveLeaf {
+        counters: Rc<RefCell<Counters>>,
+    }
+
+    impl Widget for DirectMoveLeaf {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(140.0, 48.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.counters.borrow_mut().paint += 1;
+            ctx.fill_bounds(Color::rgba(0.78, 0.43, 0.14, 1.0));
+        }
+    }
+
+    struct DirectMoveRoot {
+        counters: Rc<RefCell<Counters>>,
+        child: SingleChild,
+        offset_x: f32,
+    }
+
+    impl Widget for DirectMoveRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Custom(custom) = event
+                && custom.kind == "shift-direct"
+            {
+                self.offset_x += 36.0;
+                ctx.request_arrange();
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.child.measure(
+                ctx,
+                Constraints::tight(Size::new(140.0, 48.0)),
+            );
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 28.0 + self.offset_x, bounds.y() + 32.0, 140.0, 48.0),
+            );
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.counters.borrow_mut().paint += 1;
+            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            self.child.paint(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
+    struct CachedMoveRoot {
+        counters: Rc<RefCell<Counters>>,
+        child: SingleChild,
+        offset_x: f32,
+    }
+
+    impl Widget for CachedMoveRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Custom(custom) = event
+                && custom.kind == "shift-cached"
+            {
+                self.offset_x += 48.0;
+                ctx.request_arrange();
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.child.measure(
+                ctx,
+                Constraints::tight(Size::new(220.0, 72.0)),
+            );
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 24.0 + self.offset_x, bounds.y() + 28.0, 220.0, 72.0),
+            );
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.counters.borrow_mut().paint += 1;
+            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            self.child.paint(ctx);
         }
 
         fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
@@ -2277,6 +2526,54 @@ mod tests {
         (runtime, window_id, root_counters, leaf_counters)
     }
 
+    fn build_cached_move_runtime() -> (
+        Runtime,
+        sui_core::WindowId,
+        Rc<RefCell<Counters>>,
+        Rc<RefCell<Counters>>,
+    ) {
+        let root_counters = Rc::new(RefCell::new(Counters::default()));
+        let leaf_counters = Rc::new(RefCell::new(Counters::default()));
+
+        let runtime = Application::new()
+            .window(WindowBuilder::new().title("Cached move").root(CachedMoveRoot {
+                counters: Rc::clone(&root_counters),
+                child: SingleChild::new(CachedMoveLeaf {
+                    counters: Rc::clone(&leaf_counters),
+                }),
+                offset_x: 0.0,
+            }))
+            .build()
+            .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id, root_counters, leaf_counters)
+    }
+
+    fn build_direct_move_runtime() -> (
+        Runtime,
+        sui_core::WindowId,
+        Rc<RefCell<Counters>>,
+        Rc<RefCell<Counters>>,
+    ) {
+        let root_counters = Rc::new(RefCell::new(Counters::default()));
+        let leaf_counters = Rc::new(RefCell::new(Counters::default()));
+
+        let runtime = Application::new()
+            .window(WindowBuilder::new().title("Direct move").root(DirectMoveRoot {
+                counters: Rc::clone(&root_counters),
+                child: SingleChild::new(DirectMoveLeaf {
+                    counters: Rc::clone(&leaf_counters),
+                }),
+                offset_x: 0.0,
+            }))
+            .build()
+            .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id, root_counters, leaf_counters)
+    }
+
     fn build_focus_traversal_runtime() -> (
         Runtime,
         sui_core::WindowId,
@@ -2476,6 +2773,98 @@ mod tests {
         assert_eq!(leaf_counters.borrow().paint, leaf_paint_before + 1);
         assert_eq!(output.frame.layer_updates.len(), 1);
         assert_eq!(output.frame.layer_updates[0].owner, leaf_id);
+    }
+
+    #[test]
+    fn cached_layer_translation_updates_scene_without_repaint() {
+        let (mut runtime, window_id, root_counters, leaf_counters) = build_cached_move_runtime();
+
+        let first = runtime.render(window_id).unwrap();
+        let layer_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+        let root_paint_before = root_counters.borrow().paint;
+        let leaf_paint_before = leaf_counters.borrow().paint;
+        let initial_bounds = first
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == layer_id => Some(layer.bounds()),
+                _ => None,
+            })
+            .expect("cached layer present before translation");
+
+        runtime
+            .handle_event(window_id, Event::Custom(CustomEvent::new("shift-cached")))
+            .unwrap();
+
+        let second = runtime.render(window_id).unwrap();
+
+        assert_eq!(root_counters.borrow().paint, root_paint_before);
+        assert_eq!(leaf_counters.borrow().paint, leaf_paint_before);
+        assert_eq!(second.frame.layer_updates.len(), 1);
+        assert_eq!(second.frame.layer_updates[0].owner, layer_id);
+        assert_eq!(second.frame.layer_updates[0].kind, SceneLayerUpdateKind::Transform);
+
+        let translated_bounds = second
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == layer_id => Some(layer.bounds()),
+                _ => None,
+            })
+            .expect("cached layer present after translation");
+
+        assert_eq!(translated_bounds.x(), initial_bounds.x() + 48.0);
+        assert_eq!(translated_bounds.y(), initial_bounds.y());
+    }
+
+    #[test]
+    fn direct_layer_translation_updates_scene_without_repaint() {
+        let (mut runtime, window_id, root_counters, leaf_counters) = build_direct_move_runtime();
+
+        let first = runtime.render(window_id).unwrap();
+        let layer_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+        let root_paint_before = root_counters.borrow().paint;
+        let leaf_paint_before = leaf_counters.borrow().paint;
+        let initial_bounds = first
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == layer_id => Some(layer.bounds()),
+                _ => None,
+            })
+            .expect("direct layer present before translation");
+
+        runtime
+            .handle_event(window_id, Event::Custom(CustomEvent::new("shift-direct")))
+            .unwrap();
+
+        let second = runtime.render(window_id).unwrap();
+
+        assert_eq!(root_counters.borrow().paint, root_paint_before);
+        assert_eq!(leaf_counters.borrow().paint, leaf_paint_before);
+        assert_eq!(second.frame.layer_updates.len(), 1);
+        assert_eq!(second.frame.layer_updates[0].owner, layer_id);
+        assert_eq!(second.frame.layer_updates[0].kind, SceneLayerUpdateKind::Transform);
+
+        let translated_bounds = second
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == layer_id => Some(layer.bounds()),
+                _ => None,
+            })
+            .expect("direct layer present after translation");
+
+        assert_eq!(translated_bounds.x(), initial_bounds.x() + 36.0);
+        assert_eq!(translated_bounds.y(), initial_bounds.y());
     }
 
     #[test]
