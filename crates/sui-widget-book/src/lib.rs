@@ -184,7 +184,9 @@ impl Widget for WidgetBookRoot {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
             if let Some(summary) = window_performance_summary(ctx.window_id()) {
-                let _ = self.set_performance_display(Some(summary), false);
+                if self.set_performance_display(Some(summary), false) {
+                    ctx.request_paint();
+                }
             }
         }
     }
@@ -1841,7 +1843,7 @@ impl LivePerformanceLineSpec {
 
 impl Widget for LivePerformancePanel {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if ctx.phase() != sui::EventPhase::Capture {
+        if !matches!(ctx.phase(), sui::EventPhase::Capture | sui::EventPhase::Target) {
             return;
         }
 
@@ -2186,16 +2188,19 @@ mod tests {
     use super::{
         DARK_PREVIEW_ACTION_LABEL, GALLERY_SCROLL_NAME, LivePerformanceDisplay,
         LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, PRIMARY_BUTTON_LABEL,
-        SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, THEME_PREVIEW_TOGGLE_LABEL,
+        SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, THEME_PREVIEW_TOGGLE_LABEL, WidgetBookRoot,
         WidgetBookState, build_widget_book_application, default_widget_book_state,
     };
     use super::visual_artifacts::{StoryCase, scroll_to_story_target};
     use sui::{
-        Application, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics, Result,
-        SemanticsRole, SemanticsValue,
-        TextCacheDiagnostics, Vector, Widget, WidgetPod,
-        WidgetPodVisitor, WindowBuilder, WindowId, WindowPerformanceSummary,
+        Application, Event, FramePhase, FramePhaseSample, Point, PointerButton,
+        PointerButtons, PointerEvent, PointerEventKind, RendererSubmissionDiagnostics, Result,
+        SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size,
+        TextCacheDiagnostics, TextCacheDeltaDiagnostics, Vector, Widget, WidgetPod,
+        WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
+        WindowPerformanceSummary, window_scene_statistics_detail_mode,
     };
+    use sui_runtime::publish_window_performance_snapshot;
     use sui_testing::prelude::*;
 
     #[test]
@@ -2532,6 +2537,131 @@ mod tests {
     }
 
     #[test]
+    fn widget_book_root_requests_paint_when_a_published_snapshot_arrives() {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Widget Book")
+                    .root(WidgetBookRoot::new(default_widget_book_state())),
+            )
+            .build()
+            .expect("runtime should build");
+        let window_id = runtime.window_ids()[0];
+
+        runtime.render(window_id).expect("initial render should succeed");
+        assert!(
+            !runtime.needs_render(window_id).expect("window should be idle after initial render")
+        );
+
+        publish_window_performance_snapshot(sample_window_performance_snapshot_record(window_id));
+        runtime
+            .handle_event(window_id, Event::Window(WindowEvent::RedrawRequested))
+            .expect("redraw event should be handled");
+
+        assert!(runtime.needs_render(window_id).expect(
+            "widget-book root should request a paint when the published performance snapshot changes"
+        ));
+    }
+
+    #[test]
+    fn widget_book_startup_bootstraps_live_performance_overlay() -> Result<()> {
+        let placeholder = TestApp::from_runtime(
+            Application::new()
+                .window(WindowBuilder::new().title("Overlay").root(LivePerformancePanel::new()))
+                .build()?,
+        )?;
+        let placeholder_window = placeholder.main_window()?;
+        let placeholder_overlay = placeholder_window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name("Live performance overlay");
+        let placeholder_image = placeholder_overlay.capture_screenshot()?;
+
+        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let window = app.main_window()?;
+        let overlay = window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name("Live performance overlay");
+
+        let live_image = overlay.capture_screenshot()?;
+        let performance = window.performance_snapshot()?;
+
+        assert_ne!(live_image, placeholder_image);
+        assert!(performance.frame_index >= 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_overlay_toggle_enables_detail_mode() -> Result<()> {
+        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let window = app.main_window()?;
+        let overlay = window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name("Live performance overlay");
+
+        assert_eq!(
+            window_scene_statistics_detail_mode(window.id()),
+            SceneStatisticsDetailMode::Lightweight
+        );
+
+        let overlay_node = window
+            .snapshot()?
+            .accessibility
+            .nodes
+            .into_iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Live performance overlay")
+            })
+            .expect("overlay semantics node present");
+        let toggle_point = Point::new(
+            overlay_node.bounds.max_x()
+                - LivePerformancePanel::PADDING_X
+                - LivePerformancePanel::TOGGLE_WIDTH * 0.5,
+            overlay_node.bounds.y()
+                + LivePerformancePanel::PADDING_Y
+                - 1.0
+                + LivePerformancePanel::TOGGLE_HEIGHT * 0.5,
+        );
+
+        overlay.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            toggle_point,
+        )))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, toggle_point);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        overlay.dispatch_event(Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, toggle_point);
+        up.button = Some(PointerButton::Primary);
+        overlay.dispatch_event(Event::Pointer(up))?;
+
+        assert_eq!(
+            window_scene_statistics_detail_mode(window.id()),
+            SceneStatisticsDetailMode::Detailed
+        );
+
+        let overlay_node = window
+            .snapshot()?
+            .accessibility
+            .nodes
+            .into_iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Live performance overlay")
+            })
+            .expect("overlay semantics node present after toggle");
+        assert_eq!(
+            overlay_node.value,
+            Some(SemanticsValue::Text("detail on".to_string()))
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn widget_book_scroll_updates_performance_overlay_without_extra_frame() -> Result<()> {
         let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
         let window = app.main_window()?;
@@ -2591,8 +2721,42 @@ mod tests {
     }
 
     fn sample_window_performance_snapshot() -> WindowPerformanceSummary {
+        sample_window_performance_snapshot_for(WindowId::new(11))
+    }
+
+    fn sample_window_performance_snapshot_record(window_id: WindowId) -> WindowPerformanceSnapshot {
+        let summary = sample_window_performance_snapshot_for(window_id);
+
+        WindowPerformanceSnapshot::new(
+            summary.window_id,
+            summary.frame_index,
+            vec![FramePhaseSample::new(FramePhase::Renderer, summary.total_time_ms)],
+            summary.renderer_submission,
+            summary.text_caches,
+            TextCacheDeltaDiagnostics::default(),
+            SceneStatistics {
+                detail_mode: Default::default(),
+                viewport: Size::new(1280.0, 720.0),
+                dirty_region_count: summary.dirty_region_count,
+                dirty_regions: Vec::new(),
+                dirty_area: 0.0,
+                dirty_coverage: summary.dirty_coverage,
+                command_count: summary.command_count,
+                command_breakdown: Vec::new(),
+                layer_count: 0,
+                layer_update_count: 0,
+                layer_update_breakdown: Vec::new(),
+                text_command_count: 0,
+                image_command_count: 0,
+                clip_command_count: 0,
+                transform_command_count: 0,
+            },
+        )
+    }
+
+    fn sample_window_performance_snapshot_for(window_id: WindowId) -> WindowPerformanceSummary {
         WindowPerformanceSummary {
-            window_id: WindowId::new(11),
+            window_id,
             frame_index: 7,
             total_time_ms: 1.5,
             slowest_phase: Some(FramePhaseSample::new(FramePhase::Renderer, 1.5)),

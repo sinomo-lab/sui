@@ -148,6 +148,7 @@ impl<'a> DesktopApp<'a> {
                 WindowState {
                     id: window_id,
                     title,
+                    awaiting_performance_bootstrap: true,
                     redraw_requested: false,
                     frame_index: 0,
                     pending_event_time_ms: 0.0,
@@ -316,6 +317,16 @@ impl<'a> DesktopApp<'a> {
                     self.renderer,
                     renderer_time_ms,
                 );
+
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    if window.awaiting_performance_bootstrap {
+                        window.awaiting_performance_bootstrap = false;
+                        if !window.redraw_requested {
+                            window.redraw_requested = true;
+                            window.window.request_redraw();
+                        }
+                    }
+                }
             }
         }
 
@@ -588,6 +599,7 @@ impl ApplicationHandler for DesktopApp<'_> {
 struct WindowState {
     id: WindowId,
     title: String,
+    awaiting_performance_bootstrap: bool,
     redraw_requested: bool,
     frame_index: u64,
     pending_event_time_ms: f64,

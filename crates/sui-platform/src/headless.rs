@@ -176,6 +176,7 @@ impl HeadlessPlatform {
                 id: window_id,
                 title: runtime.window_title(window_id)?.to_string(),
                 open: true,
+                awaiting_performance_bootstrap: true,
                 redraw_requested: false,
                 frame_index: 0,
                 pending_event_time_ms: 0.0,
@@ -256,6 +257,17 @@ impl HeadlessPlatform {
                     renderer_time_ms,
                 );
 
+                if self.windows[window_index].awaiting_performance_bootstrap {
+                    self.windows[window_index].awaiting_performance_bootstrap = false;
+                    if !self.windows[window_index].redraw_requested {
+                        self.windows[window_index].redraw_requested = true;
+                        self.pending_events.push_back(QueuedEvent {
+                            window_id,
+                            event: Event::Window(WindowEvent::RedrawRequested),
+                        });
+                    }
+                }
+
                 self.windows[window_index].title = output.title;
                 self.windows[window_index]
                     .accessibility
@@ -281,6 +293,7 @@ struct WindowState {
     id: WindowId,
     title: String,
     open: bool,
+    awaiting_performance_bootstrap: bool,
     redraw_requested: bool,
     frame_index: u64,
     pending_event_time_ms: f64,
@@ -407,8 +420,9 @@ mod tests {
         assert_eq!(windows[0].accessibility.as_ref(), Some(accessibility));
         assert_eq!(accessibility.nodes.len(), 1);
         assert_eq!(accessibility.nodes[0].role, SemanticsRole::Window);
-        assert_eq!(platform.renderer().frames_rendered(), 1);
+        assert_eq!(platform.renderer().frames_rendered(), 2);
         assert_eq!(counters.borrow().paints, 1);
+        assert!(!platform.has_pending_events());
 
         platform.dispatch_event(
             &runtime,
@@ -418,8 +432,9 @@ mod tests {
         let _ = platform.run(&mut runtime)?;
 
         assert_eq!(counters.borrow().events, 1);
-        assert_eq!(counters.borrow().paints, 2);
-        assert_eq!(platform.renderer().frames_rendered(), 2);
+    assert_eq!(counters.borrow().paints, 2);
+        assert_eq!(platform.renderer().frames_rendered(), 3);
+        assert!(!platform.has_pending_events());
         assert!(!runtime.needs_render(window_id)?);
 
         Ok(())
