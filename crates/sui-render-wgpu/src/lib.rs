@@ -112,21 +112,271 @@ pub struct WgpuRenderer {
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
     image_cache: HashMap<ImageHandle, CachedImageTexture>,
-    layer_caches: HashMap<WindowId, RetainedLayerCache>,
+    compositors: HashMap<WindowId, RetainedCompositorState>,
     surfaces: HashMap<WindowId, SurfaceState>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
     frame_resources: FrameResources,
 }
 
 const MAX_RETAINED_LAYER_CACHE_BYTES: usize = 64 * 1024 * 1024;
+#[cfg_attr(not(test), allow(dead_code))]
 const MAX_DIRTY_LAYERS_FOR_CACHE_REUSE: usize = 64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum CompositionContainerId {
+    Root,
+    Layer(SceneLayerId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RetainedPacketId {
+    container: CompositionContainerId,
+    segment_index: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TransformNodeId(u64);
+
+impl TransformNodeId {
+    const ROOT: Self = Self(0);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ClipNodeId(u64);
+
+impl ClipNodeId {
+    const ROOT: Self = Self(0);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct EffectNodeId(u64);
+
+impl EffectNodeId {
+    const ROOT: Self = Self(0);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetainedLayerRenderMode {
+    Direct,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompositionItem {
+    Packet(RetainedPacketId),
+    Layer(SceneLayerId),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct TransformNode {
+    id: TransformNodeId,
+    parent: Option<TransformNodeId>,
+    local: Transform,
+    world: Transform,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ResolvedClipPrimitive {
+    Rect(Rect),
+    Path {
+        path: ScenePath,
+        bounds: Rect,
+        signature: u64,
+    },
+}
+
+#[allow(dead_code)]
+impl ResolvedClipPrimitive {
+    fn bounds(&self) -> Rect {
+        match self {
+            Self::Rect(rect) => *rect,
+            Self::Path { bounds, .. } => *bounds,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct ClipNode {
+    id: ClipNodeId,
+    parent: Option<ClipNodeId>,
+    primitive: Option<ResolvedClipPrimitive>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct EffectNode {
+    id: EffectNodeId,
+    parent: Option<EffectNodeId>,
+    composition_mode: sui_scene::LayerCompositionMode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ResolvedRasterState {
+    current_transform: Transform,
+    clip_stack: Vec<ResolvedClipPrimitive>,
+    transform_node: TransformNodeId,
+    clip_node: ClipNodeId,
+    effect_node: EffectNodeId,
+}
+
+impl ResolvedRasterState {
+    fn signature(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        hash_transform(&mut hasher, self.current_transform);
+        self.transform_node.hash(&mut hasher);
+        self.clip_node.hash(&mut hasher);
+        self.effect_node.hash(&mut hasher);
+        for clip in &self.clip_stack {
+            match clip {
+                ResolvedClipPrimitive::Rect(rect) => {
+                    0u8.hash(&mut hasher);
+                    hash_rect(&mut hasher, *rect);
+                }
+                ResolvedClipPrimitive::Path {
+                    bounds,
+                    signature,
+                    ..
+                } => {
+                    1u8.hash(&mut hasher);
+                    hash_rect(&mut hasher, *bounds);
+                    signature.hash(&mut hasher);
+                }
+            }
+        }
+        hasher.finish()
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct RetainedDirectPacket {
+    id: RetainedPacketId,
+    scene: Scene,
+    initial_state: ResolvedRasterState,
+    signature: u64,
+    draw_ops: DrawOpArena,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RetainedRootNode {
+    items: Vec<CompositionItem>,
+    packet_ids: Vec<RetainedPacketId>,
+    structure_version: u64,
+}
+
+#[derive(Debug, Clone)]
+struct RetainedLayer {
+    descriptor: sui_scene::SceneLayerDescriptor,
+    parent: Option<SceneLayerId>,
+    children: Vec<SceneLayerId>,
+    items: Vec<CompositionItem>,
+    packet_ids: Vec<RetainedPacketId>,
+    transform_node: TransformNodeId,
+    clip_node: ClipNodeId,
+    effect_node: EffectNodeId,
+    render_mode: RetainedLayerRenderMode,
+    content_version: u64,
+    structure_version: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PacketSnapshot {
+    id: RetainedPacketId,
+    scene: Scene,
+    initial_state: ResolvedRasterState,
+}
+
+#[derive(Debug, Clone)]
+struct LayerSnapshot {
+    descriptor: sui_scene::SceneLayerDescriptor,
+    parent: Option<SceneLayerId>,
+    children: Vec<SceneLayerId>,
+    items: Vec<CompositionItem>,
+    packet_ids: Vec<RetainedPacketId>,
+    packets: Vec<PacketSnapshot>,
+    transform_node: TransformNodeId,
+    clip_node: ClipNodeId,
+    effect_node: EffectNodeId,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RootSnapshot {
+    items: Vec<CompositionItem>,
+    packet_ids: Vec<RetainedPacketId>,
+    packets: Vec<PacketSnapshot>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompositorSnapshot {
+    root: RootSnapshot,
+    layers: HashMap<SceneLayerId, LayerSnapshot>,
+}
+
+#[derive(Debug, Clone)]
+struct CompositionTraversalState {
+    current_transform: Transform,
+    transform_node: TransformNodeId,
+    transform_stack: Vec<(Transform, TransformNodeId)>,
+    clip_stack: Vec<(ResolvedClipPrimitive, ClipNodeId)>,
+    effect_node: EffectNodeId,
+}
+
+impl Default for CompositionTraversalState {
+    fn default() -> Self {
+        Self {
+            current_transform: Transform::IDENTITY,
+            transform_node: TransformNodeId::ROOT,
+            transform_stack: Vec::new(),
+            clip_stack: Vec::new(),
+            effect_node: EffectNodeId::ROOT,
+        }
+    }
+}
+
+impl CompositionTraversalState {
+    fn resolved_state(&self) -> ResolvedRasterState {
+        ResolvedRasterState {
+            current_transform: self.current_transform,
+            clip_stack: self
+                .clip_stack
+                .iter()
+                .map(|(primitive, _)| primitive.clone())
+                .collect(),
+            transform_node: self.transform_node,
+            clip_node: self
+                .clip_stack
+                .last()
+                .map(|(_, node_id)| *node_id)
+                .unwrap_or(ClipNodeId::ROOT),
+            effect_node: self.effect_node,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct RetainedCompositorState {
+    root: RetainedRootNode,
+    layers: HashMap<SceneLayerId, RetainedLayer>,
+    packets: HashMap<RetainedPacketId, RetainedDirectPacket>,
+    transforms: HashMap<TransformNodeId, TransformNode>,
+    clips: HashMap<ClipNodeId, ClipNode>,
+    effects: HashMap<EffectNodeId, EffectNode>,
+    next_transform_node: u64,
+    next_clip_node: u64,
+    next_effect_node: u64,
+    viewport: Size,
+    feather_width_bits: u32,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Default)]
 struct RetainedLayerCache {
     fragments: HashMap<LayerCacheKey, DrawOpArena>,
     estimated_bytes: usize,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl RetainedLayerCache {
     fn invalidate(&mut self, scene: &Scene, layer_updates: &[SceneLayerUpdate]) {
         let active_layers = collect_active_layers(scene);
@@ -186,6 +436,643 @@ impl RetainedLayerCache {
     }
 }
 
+impl RetainedCompositorState {
+    fn prepare_frame(
+        &mut self,
+        frame: &SceneFrame,
+        text_engine: &mut TextEngine,
+        feather_width: f32,
+    ) -> Result<DrawOpArena> {
+        let viewport_changed = self.viewport != frame.viewport;
+        let feather_changed = self.feather_width_bits != feather_width.to_bits();
+        let snapshot = self.build_snapshot(&frame.scene)?;
+        self.apply_snapshot(frame, snapshot, text_engine, feather_width, viewport_changed || feather_changed)?;
+        self.viewport = frame.viewport;
+        self.feather_width_bits = feather_width.to_bits();
+        Ok(self.compose_draw_ops())
+    }
+
+    fn build_snapshot(&mut self, scene: &Scene) -> Result<CompositorSnapshot> {
+        self.reset_property_trees();
+        let mut snapshot = CompositorSnapshot::default();
+        snapshot.root = self.build_container_snapshot(
+            CompositionContainerId::Root,
+            scene,
+            CompositionTraversalState::default(),
+            &mut snapshot,
+            None,
+        )?;
+        Ok(snapshot)
+    }
+
+    fn build_container_snapshot(
+        &mut self,
+        container: CompositionContainerId,
+        scene: &Scene,
+        mut state: CompositionTraversalState,
+        snapshot: &mut CompositorSnapshot,
+        parent_layer: Option<SceneLayerId>,
+    ) -> Result<RootSnapshot> {
+        let mut result = RootSnapshot::default();
+        let mut segment_scene = Scene::new();
+        let mut segment_start = None::<ResolvedRasterState>;
+
+        let flush_segment = |result: &mut RootSnapshot,
+                             segment_scene: &mut Scene,
+                             segment_start: &mut Option<ResolvedRasterState>| {
+            if !scene_has_draw_content(segment_scene) {
+                *segment_scene = Scene::new();
+                *segment_start = None;
+                return;
+            }
+
+            let packet_id = RetainedPacketId {
+                container,
+                segment_index: result.packets.len() as u32,
+            };
+            result.items.push(CompositionItem::Packet(packet_id));
+            result.packet_ids.push(packet_id);
+            result.packets.push(PacketSnapshot {
+                id: packet_id,
+                scene: std::mem::take(segment_scene),
+                initial_state: segment_start.take().expect("segment state available before flush"),
+            });
+        };
+
+        for command in scene.commands() {
+            match command {
+                SceneCommand::Layer(layer) => {
+                    flush_segment(&mut result, &mut segment_scene, &mut segment_start);
+
+                    let mut child_state = state.clone();
+                    child_state.effect_node = self.push_effect_node(
+                        Some(state.effect_node),
+                        layer.descriptor.composition_mode,
+                    );
+                    let layer_snapshot = self.build_layer_snapshot(
+                        layer,
+                        parent_layer,
+                        child_state,
+                        snapshot,
+                    )?;
+                    result.items.push(CompositionItem::Layer(layer.layer_id()));
+                    snapshot.layers.insert(layer.layer_id(), layer_snapshot);
+                }
+                _ => {
+                    if segment_start.is_none() {
+                        segment_start = Some(state.resolved_state());
+                    }
+                    segment_scene.push(command.clone());
+                    self.apply_command_to_traversal_state(command, &mut state);
+                }
+            }
+        }
+
+        flush_segment(&mut result, &mut segment_scene, &mut segment_start);
+        Ok(result)
+    }
+
+    fn build_layer_snapshot(
+        &mut self,
+        layer: &SceneLayer,
+        parent_layer: Option<SceneLayerId>,
+        state: CompositionTraversalState,
+        snapshot: &mut CompositorSnapshot,
+    ) -> Result<LayerSnapshot> {
+        let inherited_state = state.resolved_state();
+        let container = self.build_container_snapshot(
+            CompositionContainerId::Layer(layer.layer_id()),
+            &layer.scene,
+            state,
+            snapshot,
+            Some(layer.layer_id()),
+        )?;
+        let children = container
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CompositionItem::Layer(layer_id) => Some(*layer_id),
+                CompositionItem::Packet(_) => None,
+            })
+            .collect();
+
+        Ok(LayerSnapshot {
+            descriptor: layer.descriptor.clone(),
+            parent: parent_layer,
+            children,
+            items: container.items,
+            packet_ids: container.packet_ids,
+            packets: container.packets,
+            transform_node: inherited_state.transform_node,
+            clip_node: inherited_state.clip_node,
+            effect_node: inherited_state.effect_node,
+        })
+    }
+
+    fn apply_command_to_traversal_state(
+        &mut self,
+        command: &SceneCommand,
+        state: &mut CompositionTraversalState,
+    ) {
+        match command {
+            SceneCommand::PushTransform { transform } => {
+                let parent_world = state.current_transform;
+                let parent_node = state.transform_node;
+                state.transform_stack.push((parent_world, parent_node));
+                let world = parent_world.then(*transform);
+                state.current_transform = world;
+                state.transform_node = self.push_transform_node(Some(parent_node), *transform, world);
+            }
+            SceneCommand::PopTransform => {
+                let (world, node_id) = state
+                    .transform_stack
+                    .pop()
+                    .unwrap_or((Transform::IDENTITY, TransformNodeId::ROOT));
+                state.current_transform = world;
+                state.transform_node = node_id;
+            }
+            SceneCommand::PushClip { rect } => {
+                let clip = ResolvedClipPrimitive::Rect(
+                    state.current_transform.transform_rect_bbox(*rect),
+                );
+                let parent = state
+                    .clip_stack
+                    .last()
+                    .map(|(_, node_id)| *node_id)
+                    .unwrap_or(ClipNodeId::ROOT);
+                let node_id = self.push_clip_node(Some(parent), clip.clone());
+                state.clip_stack.push((clip, node_id));
+            }
+            SceneCommand::PushClipPath { path } => {
+                let transformed_path = transform_scene_path(path, state.current_transform);
+                let bounds = transformed_path.bounds();
+                let clip = ResolvedClipPrimitive::Path {
+                    signature: hash_path(&transformed_path, Transform::IDENTITY),
+                    path: transformed_path,
+                    bounds,
+                };
+                let parent = state
+                    .clip_stack
+                    .last()
+                    .map(|(_, node_id)| *node_id)
+                    .unwrap_or(ClipNodeId::ROOT);
+                let node_id = self.push_clip_node(Some(parent), clip.clone());
+                state.clip_stack.push((clip, node_id));
+            }
+            SceneCommand::PopClip => {
+                let _ = state.clip_stack.pop();
+            }
+            SceneCommand::Clear(_)
+            | SceneCommand::FillRect { .. }
+            | SceneCommand::StrokeRect { .. }
+            | SceneCommand::FillPath { .. }
+            | SceneCommand::StrokePath { .. }
+            | SceneCommand::DrawText(_)
+            | SceneCommand::DrawShapedText(_)
+            | SceneCommand::DrawImage { .. }
+            | SceneCommand::Layer(_)
+            | SceneCommand::Label { .. } => {}
+        }
+    }
+
+    fn apply_snapshot(
+        &mut self,
+        frame: &SceneFrame,
+        snapshot: CompositorSnapshot,
+        text_engine: &mut TextEngine,
+        feather_width: f32,
+        global_rebuild: bool,
+    ) -> Result<()> {
+        let mut dirty_layers = HashSet::new();
+        let current_layers = snapshot.layers.keys().copied().collect::<HashSet<_>>();
+        let mut root_dirty = global_rebuild;
+
+        for update in &frame.layer_updates {
+            if !current_layers.contains(&update.layer_id) {
+                root_dirty = true;
+                continue;
+            }
+
+            match update.kind {
+                SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources => {
+                    dirty_layers.insert(update.layer_id);
+                }
+                SceneLayerUpdateKind::Transform
+                | SceneLayerUpdateKind::Clip
+                | SceneLayerUpdateKind::Effect
+                | SceneLayerUpdateKind::Visibility => {
+                    mark_layer_subtree_dirty(update.layer_id, &snapshot.layers, &mut dirty_layers);
+                }
+            }
+        }
+
+        let mut valid_packets = HashSet::new();
+        valid_packets.extend(snapshot.root.packet_ids.iter().copied());
+        for layer in snapshot.layers.values() {
+            valid_packets.extend(layer.packet_ids.iter().copied());
+        }
+
+        if self.root.items != snapshot.root.items || self.root.packet_ids != snapshot.root.packet_ids {
+            self.root.structure_version = self.root.structure_version.wrapping_add(1);
+        }
+        self.root.items = snapshot.root.items.clone();
+        self.root.packet_ids = snapshot.root.packet_ids.clone();
+
+        for packet in snapshot.root.packets {
+            self.upsert_packet(frame, packet, root_dirty, text_engine, feather_width)?;
+        }
+
+        let previous_layers = self.layers.clone();
+        self.layers.retain(|layer_id, _| current_layers.contains(layer_id));
+
+        for (layer_id, layer_snapshot) in snapshot.layers {
+            let structure_changed = previous_layers.get(&layer_id).is_none_or(|previous| {
+                previous.parent != layer_snapshot.parent
+                    || previous.children != layer_snapshot.children
+                    || previous.items != layer_snapshot.items
+                    || previous.packet_ids != layer_snapshot.packet_ids
+                    || previous.transform_node != layer_snapshot.transform_node
+                    || previous.clip_node != layer_snapshot.clip_node
+                    || previous.effect_node != layer_snapshot.effect_node
+                    || previous.descriptor != layer_snapshot.descriptor
+            });
+
+            let content_changed = dirty_layers.contains(&layer_id)
+                || previous_layers
+                    .get(&layer_id)
+                    .is_none_or(|previous| previous.descriptor.bounds != layer_snapshot.descriptor.bounds);
+
+            let previous = previous_layers.get(&layer_id);
+            let retained = self.layers.entry(layer_id).or_insert_with(|| RetainedLayer {
+                descriptor: layer_snapshot.descriptor.clone(),
+                parent: layer_snapshot.parent,
+                children: layer_snapshot.children.clone(),
+                items: layer_snapshot.items.clone(),
+                packet_ids: layer_snapshot.packet_ids.clone(),
+                transform_node: layer_snapshot.transform_node,
+                clip_node: layer_snapshot.clip_node,
+                effect_node: layer_snapshot.effect_node,
+                render_mode: RetainedLayerRenderMode::Direct,
+                content_version: 0,
+                structure_version: 0,
+            });
+
+            if structure_changed {
+                retained.structure_version = previous
+                    .map_or(retained.structure_version + 1, |old| old.structure_version.wrapping_add(1));
+            }
+            if content_changed {
+                retained.content_version = previous
+                    .map_or(retained.content_version + 1, |old| old.content_version.wrapping_add(1));
+            }
+
+            retained.descriptor = layer_snapshot.descriptor.clone();
+            retained.parent = layer_snapshot.parent;
+            retained.children = layer_snapshot.children.clone();
+            retained.items = layer_snapshot.items.clone();
+            retained.packet_ids = layer_snapshot.packet_ids.clone();
+            retained.transform_node = layer_snapshot.transform_node;
+            retained.clip_node = layer_snapshot.clip_node;
+            retained.effect_node = layer_snapshot.effect_node;
+            retained.render_mode = RetainedLayerRenderMode::Direct;
+
+            let packet_dirty = global_rebuild || structure_changed || dirty_layers.contains(&layer_id);
+            for packet in layer_snapshot.packets {
+                self.upsert_packet(frame, packet, packet_dirty, text_engine, feather_width)?;
+            }
+        }
+
+        self.packets.retain(|packet_id, _| valid_packets.contains(packet_id));
+        Ok(())
+    }
+
+    fn upsert_packet(
+        &mut self,
+        frame: &SceneFrame,
+        snapshot: PacketSnapshot,
+        forced_dirty: bool,
+        text_engine: &mut TextEngine,
+        feather_width: f32,
+    ) -> Result<()> {
+        let signature = packet_signature(&snapshot.scene, &snapshot.initial_state, frame.viewport, feather_width);
+        let should_rebuild = forced_dirty
+            || self
+                .packets
+                .get(&snapshot.id)
+                .is_none_or(|packet| {
+                    packet.signature != signature
+                        || packet.scene != snapshot.scene
+                        || packet.initial_state != snapshot.initial_state
+                });
+
+        if should_rebuild {
+            let draw_ops = build_direct_packet(
+                frame,
+                &snapshot.scene,
+                &snapshot.initial_state,
+                text_engine,
+                feather_width,
+            )?;
+            self.packets.insert(
+                snapshot.id,
+                RetainedDirectPacket {
+                    id: snapshot.id,
+                    scene: snapshot.scene,
+                    initial_state: snapshot.initial_state,
+                    signature,
+                    draw_ops,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    fn compose_draw_ops(&self) -> DrawOpArena {
+        let mut draw_ops = DrawOpArena::default();
+        self.append_items(&self.root.items, &mut draw_ops);
+        draw_ops
+    }
+
+    fn append_items(&self, items: &[CompositionItem], draw_ops: &mut DrawOpArena) {
+        for item in items {
+            match item {
+                CompositionItem::Packet(packet_id) => {
+                    if let Some(packet) = self.packets.get(packet_id) {
+                        draw_ops.append_fragment(&packet.draw_ops);
+                    }
+                }
+                CompositionItem::Layer(layer_id) => {
+                    if let Some(layer) = self.layers.get(layer_id) {
+                        self.append_items(&layer.items, draw_ops);
+                    }
+                }
+            }
+        }
+    }
+
+    fn reset_property_trees(&mut self) {
+        self.transforms.clear();
+        self.clips.clear();
+        self.effects.clear();
+        self.transforms.insert(
+            TransformNodeId::ROOT,
+            TransformNode {
+                id: TransformNodeId::ROOT,
+                parent: None,
+                local: Transform::IDENTITY,
+                world: Transform::IDENTITY,
+            },
+        );
+        self.clips.insert(
+            ClipNodeId::ROOT,
+            ClipNode {
+                id: ClipNodeId::ROOT,
+                parent: None,
+                primitive: None,
+            },
+        );
+        self.effects.insert(
+            EffectNodeId::ROOT,
+            EffectNode {
+                id: EffectNodeId::ROOT,
+                parent: None,
+                composition_mode: sui_scene::LayerCompositionMode::Normal,
+            },
+        );
+        self.next_transform_node = 1;
+        self.next_clip_node = 1;
+        self.next_effect_node = 1;
+    }
+
+    fn push_transform_node(
+        &mut self,
+        parent: Option<TransformNodeId>,
+        local: Transform,
+        world: Transform,
+    ) -> TransformNodeId {
+        let id = TransformNodeId(self.next_transform_node);
+        self.next_transform_node += 1;
+        self.transforms.insert(
+            id,
+            TransformNode {
+                id,
+                parent,
+                local,
+                world,
+            },
+        );
+        id
+    }
+
+    fn push_clip_node(
+        &mut self,
+        parent: Option<ClipNodeId>,
+        primitive: ResolvedClipPrimitive,
+    ) -> ClipNodeId {
+        let id = ClipNodeId(self.next_clip_node);
+        self.next_clip_node += 1;
+        self.clips.insert(
+            id,
+            ClipNode {
+                id,
+                parent,
+                primitive: Some(primitive),
+            },
+        );
+        id
+    }
+
+    fn push_effect_node(
+        &mut self,
+        parent: Option<EffectNodeId>,
+        composition_mode: sui_scene::LayerCompositionMode,
+    ) -> EffectNodeId {
+        let id = EffectNodeId(self.next_effect_node);
+        self.next_effect_node += 1;
+        self.effects.insert(
+            id,
+            EffectNode {
+                id,
+                parent,
+                composition_mode,
+            },
+        );
+        id
+    }
+}
+
+fn scene_has_draw_content(scene: &Scene) -> bool {
+    scene.commands().iter().any(|command| {
+        matches!(
+            command,
+            SceneCommand::Clear(_)
+                | SceneCommand::FillRect { .. }
+                | SceneCommand::StrokeRect { .. }
+                | SceneCommand::FillPath { .. }
+                | SceneCommand::StrokePath { .. }
+                | SceneCommand::DrawText(_)
+                | SceneCommand::DrawShapedText(_)
+                | SceneCommand::DrawImage { .. }
+                | SceneCommand::Label { .. }
+        )
+    })
+}
+
+fn mark_layer_subtree_dirty(
+    layer_id: SceneLayerId,
+    layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    dirty_layers: &mut HashSet<SceneLayerId>,
+) {
+    if !dirty_layers.insert(layer_id) {
+        return;
+    }
+
+    if let Some(layer) = layers.get(&layer_id) {
+        for child in &layer.children {
+            mark_layer_subtree_dirty(*child, layers, dirty_layers);
+        }
+    }
+}
+
+fn packet_signature(
+    scene: &Scene,
+    initial_state: &ResolvedRasterState,
+    viewport: Size,
+    feather_width: f32,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    scene.commands().len().hash(&mut hasher);
+    hash_scene(scene, &mut hasher);
+    initial_state.signature().hash(&mut hasher);
+    viewport.width.to_bits().hash(&mut hasher);
+    viewport.height.to_bits().hash(&mut hasher);
+    feather_width.to_bits().hash(&mut hasher);
+    hasher.finish()
+}
+
+fn hash_scene(scene: &Scene, hasher: &mut DefaultHasher) {
+    for command in scene.commands() {
+        hash_scene_command(command, hasher);
+    }
+}
+
+fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
+    match command {
+        SceneCommand::Clear(color) => {
+            0u8.hash(hasher);
+            hash_color(*color, hasher);
+        }
+        SceneCommand::FillRect { rect, brush } => {
+            1u8.hash(hasher);
+            hash_rect(hasher, *rect);
+            hash_brush(brush, hasher);
+        }
+        SceneCommand::StrokeRect { rect, brush, stroke } => {
+            2u8.hash(hasher);
+            hash_rect(hasher, *rect);
+            hash_brush(brush, hasher);
+            stroke.width.to_bits().hash(hasher);
+        }
+        SceneCommand::FillPath { path, brush } => {
+            3u8.hash(hasher);
+            hash_path(path, Transform::IDENTITY).hash(hasher);
+            hash_brush(brush, hasher);
+        }
+        SceneCommand::StrokePath { path, brush, stroke } => {
+            4u8.hash(hasher);
+            hash_path(path, Transform::IDENTITY).hash(hasher);
+            hash_brush(brush, hasher);
+            stroke.width.to_bits().hash(hasher);
+        }
+        SceneCommand::DrawText(text) => {
+            5u8.hash(hasher);
+            hash_rect(hasher, text.rect);
+            text.text.hash(hasher);
+            hash_text_style(&text.style, hasher);
+        }
+        SceneCommand::DrawShapedText(text) => {
+            6u8.hash(hasher);
+            hash_point(hasher, text.origin);
+            text.layout.text().hash(hasher);
+            hash_text_style(text.layout.style(), hasher);
+            text.layout.box_size().width.to_bits().hash(hasher);
+            text.layout.box_size().height.to_bits().hash(hasher);
+        }
+        SceneCommand::DrawImage { rect, source } => {
+            7u8.hash(hasher);
+            hash_rect(hasher, *rect);
+            source.image.get().hash(hasher);
+            source
+                .source_rect
+                .map(|rect| {
+                    1u8.hash(hasher);
+                    hash_rect(hasher, rect);
+                })
+                .unwrap_or_else(|| 0u8.hash(hasher));
+            source
+                .tint
+                .map(|color| {
+                    1u8.hash(hasher);
+                    hash_color(color, hasher);
+                })
+                .unwrap_or_else(|| 0u8.hash(hasher));
+        }
+        SceneCommand::PushClip { rect } => {
+            8u8.hash(hasher);
+            hash_rect(hasher, *rect);
+        }
+        SceneCommand::PushClipPath { path } => {
+            9u8.hash(hasher);
+            hash_path(path, Transform::IDENTITY).hash(hasher);
+        }
+        SceneCommand::PopClip => {
+            10u8.hash(hasher);
+        }
+        SceneCommand::PushTransform { transform } => {
+            11u8.hash(hasher);
+            hash_transform(hasher, *transform);
+        }
+        SceneCommand::PopTransform => {
+            12u8.hash(hasher);
+        }
+        SceneCommand::Layer(layer) => {
+            13u8.hash(hasher);
+            layer.layer_id().get().hash(hasher);
+        }
+        SceneCommand::Label { rect, text, color } => {
+            14u8.hash(hasher);
+            hash_rect(hasher, *rect);
+            text.hash(hasher);
+            hash_color(*color, hasher);
+        }
+    }
+}
+
+fn hash_brush(brush: &Brush, hasher: &mut DefaultHasher) {
+    match brush {
+        Brush::Solid(color) => {
+            0u8.hash(hasher);
+            hash_color(*color, hasher);
+        }
+    }
+}
+
+fn hash_color(color: Color, hasher: &mut DefaultHasher) {
+    color.red.to_bits().hash(hasher);
+    color.green.to_bits().hash(hasher);
+    color.blue.to_bits().hash(hasher);
+    color.alpha.to_bits().hash(hasher);
+}
+
+fn hash_text_style(style: &TextStyle, hasher: &mut DefaultHasher) {
+    style.font.map(|font| font.get()).hash(hasher);
+    style.font_size.to_bits().hash(hasher);
+    style.line_height.to_bits().hash(hasher);
+    hash_color(style.color, hasher);
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 fn collect_active_layers(scene: &Scene) -> HashSet<SceneLayerId> {
     let mut active_layers = HashSet::new();
     scene.visit_commands(&mut |command| {
@@ -196,6 +1083,7 @@ fn collect_active_layers(scene: &Scene) -> HashSet<SceneLayerId> {
     active_layers
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn collect_layer_ancestors(
     scene: &Scene,
     dirty_layers: &[SceneLayerId],
@@ -221,6 +1109,7 @@ fn collect_layer_ancestors(
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn layer_update_invalidates_fragments(kind: SceneLayerUpdateKind) -> bool {
     !matches!(kind, SceneLayerUpdateKind::Visibility)
 }
@@ -344,7 +1233,7 @@ impl WgpuRenderer {
         self.offscreen_targets.remove(&window_id);
         self.last_frames.remove(&window_id);
         self.last_frame_stats.remove(&window_id);
-        self.layer_caches.remove(&window_id);
+        self.compositors.remove(&window_id);
     }
 
     pub fn render(&mut self, frame: &SceneFrame) -> Result<()> {
@@ -706,16 +1595,8 @@ impl WgpuRenderer {
                 .text_engine
                 .as_mut()
                 .expect("text engine initialized before draw-op construction");
-            let layer_cache = self.layer_caches.entry(frame.window_id).or_default();
-            layer_cache.invalidate(&frame.scene, &frame.layer_updates);
-            let enable_layer_cache = layer_cache.can_cache(&frame.layer_updates);
-            build_draw_ops(
-                frame,
-                text_engine,
-                feather_width,
-                layer_cache,
-                enable_layer_cache,
-            )?
+            let compositor = self.compositors.entry(frame.window_id).or_default();
+            compositor.prepare_frame(frame, text_engine, feather_width)?
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
         let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
@@ -1052,7 +1933,7 @@ impl Default for WgpuRenderer {
             shared: None,
             text_engine: None,
             image_cache: HashMap::new(),
-            layer_caches: HashMap::new(),
+            compositors: HashMap::new(),
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
             frame_resources: FrameResources::default(),
@@ -1629,6 +2510,7 @@ fn batch_draw_ops(
     passes
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn build_draw_ops(
     frame: &SceneFrame,
     text_engine: &mut TextEngine,
@@ -1648,6 +2530,29 @@ fn build_draw_ops(
         clip_scratch_vertices: Vec::new(),
     };
     builder.build_scene(&frame.scene, &mut draw_ops, &mut state)?;
+    Ok(draw_ops)
+}
+
+fn build_direct_packet(
+    frame: &SceneFrame,
+    scene: &Scene,
+    initial_state: &ResolvedRasterState,
+    text_engine: &mut TextEngine,
+    feather_width: f32,
+) -> Result<DrawOpArena> {
+    let mut draw_ops = DrawOpArena::default();
+    let mut state = SceneRasterState::from_resolved(initial_state, &mut draw_ops, frame.viewport)?;
+    let mut no_cache = RetainedLayerCache::default();
+    let mut builder = SceneDrawOpBuilder {
+        frame,
+        text_engine,
+        feather_width,
+        layer_cache: &mut no_cache,
+        enable_layer_cache: false,
+        scratch_vertices: Vec::new(),
+        clip_scratch_vertices: Vec::new(),
+    };
+    builder.build_scene(scene, &mut draw_ops, &mut state)?;
     Ok(draw_ops)
 }
 
@@ -1891,6 +2796,51 @@ impl SceneRasterState {
         }
     }
 
+    fn from_resolved(
+        resolved: &ResolvedRasterState,
+        draw_ops: &mut DrawOpArena,
+        viewport: Size,
+    ) -> Result<Self> {
+        let mut state = Self::new(draw_ops);
+        state.current_transform = resolved.current_transform;
+        state.transform_stack.clear();
+        state.path_clip_state_id = 0;
+        state.active_path_clips.clear();
+        state.clip_stack.clear();
+
+        for clip in &resolved.clip_stack {
+            match clip {
+                ResolvedClipPrimitive::Rect(rect) => {
+                    state.clip_stack.push(ClipPrimitive::Rect(*rect));
+                }
+                ResolvedClipPrimitive::Path {
+                    path,
+                    bounds,
+                    signature,
+                } => {
+                    let mut scratch = Vec::new();
+                    if !path.is_empty() && !viewport.is_empty() {
+                        let lyon_path = build_lyon_path(path, Transform::IDENTITY);
+                        append_tessellated_filled_lyon_path_vertices(
+                            &mut scratch,
+                            &lyon_path,
+                            viewport,
+                        )?;
+                    }
+                    let vertices = draw_ops.push_clip_vertices(&scratch);
+                    state.active_path_clips.push(vertices);
+                    state.clip_stack.push(ClipPrimitive::Path {
+                        bounds: *bounds,
+                        signature: *signature,
+                    });
+                }
+            }
+        }
+
+        state.clip_state_index = draw_ops.push_clip_state(&state.active_path_clips);
+        Ok(state)
+    }
+
     fn inherit(parent: &Self, source_draw_ops: &DrawOpArena, draw_ops: &mut DrawOpArena) -> Self {
         let active_path_clips = parent
             .active_path_clips
@@ -2032,6 +2982,34 @@ fn hash_transform(hasher: &mut DefaultHasher, transform: Transform) {
     transform.yy.to_bits().hash(hasher);
     transform.dx.to_bits().hash(hasher);
     transform.dy.to_bits().hash(hasher);
+}
+
+fn transform_scene_path(path: &ScenePath, transform: Transform) -> ScenePath {
+    let mut builder = ScenePath::builder();
+    for element in path.elements() {
+        match element {
+            PathElement::MoveTo(point) => {
+                builder.move_to(transform.transform_point(*point));
+            }
+            PathElement::LineTo(point) => {
+                builder.line_to(transform.transform_point(*point));
+            }
+            PathElement::QuadTo { ctrl, to } => {
+                builder.quad_to(transform.transform_point(*ctrl), transform.transform_point(*to));
+            }
+            PathElement::CubicTo { ctrl1, ctrl2, to } => {
+                builder.cubic_to(
+                    transform.transform_point(*ctrl1),
+                    transform.transform_point(*ctrl2),
+                    transform.transform_point(*to),
+                );
+            }
+            PathElement::Close => {
+                builder.close();
+            }
+        }
+    }
+    builder.build()
 }
 
 fn hash_rect(hasher: &mut DefaultHasher, rect: Rect) {
