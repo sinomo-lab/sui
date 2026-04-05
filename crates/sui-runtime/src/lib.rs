@@ -28,8 +28,8 @@ pub use diagnostics::{
     window_performance_snapshot,
 };
 pub use widget::{
-    EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetChildren,
-    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, LayoutCtx, MeasureCtx, PaintCtx, SemanticsCtx,
+    SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
 
@@ -417,7 +417,8 @@ pub struct FocusState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FrameSchedule {
-    pub layout: bool,
+    pub measure: bool,
+    pub arrange: bool,
     pub paint: bool,
     pub semantics: bool,
     pub hit_test: bool,
@@ -428,7 +429,8 @@ pub struct FrameSchedule {
 impl FrameSchedule {
     fn bootstrap() -> Self {
         Self {
-            layout: true,
+            measure: true,
+            arrange: true,
             paint: true,
             semantics: true,
             hit_test: true,
@@ -438,11 +440,17 @@ impl FrameSchedule {
     }
 
     pub const fn any(self) -> bool {
-        self.layout || self.paint || self.semantics || self.hit_test || self.text || self.resources
+        self.measure
+            || self.arrange
+            || self.paint
+            || self.semantics
+            || self.hit_test
+            || self.text
+            || self.resources
     }
 
     pub const fn needs_render(self) -> bool {
-        self.layout || self.paint || self.semantics || self.text || self.resources
+        self.measure || self.arrange || self.paint || self.semantics || self.text || self.resources
     }
 
     fn clear(&mut self) {
@@ -451,8 +459,28 @@ impl FrameSchedule {
 
     fn mark(&mut self, kind: InvalidationKind) {
         match kind {
+            InvalidationKind::Measure => {
+                self.measure = true;
+                self.arrange = true;
+                self.paint = true;
+                self.hit_test = true;
+                self.semantics = true;
+            }
+            InvalidationKind::Arrange
+            | InvalidationKind::Transform
+            | InvalidationKind::Clip
+            | InvalidationKind::Visibility => {
+                self.arrange = true;
+                self.paint = true;
+                self.hit_test = true;
+                self.semantics = true;
+            }
+            InvalidationKind::Effect => {
+                self.paint = true;
+            }
             InvalidationKind::Layout => {
-                self.layout = true;
+                self.measure = true;
+                self.arrange = true;
                 self.paint = true;
                 self.hit_test = true;
                 self.semantics = true;
@@ -465,7 +493,8 @@ impl FrameSchedule {
             }
             InvalidationKind::Text => {
                 self.text = true;
-                self.layout = true;
+                self.measure = true;
+                self.arrange = true;
                 self.paint = true;
                 self.semantics = true;
             }
@@ -491,6 +520,7 @@ pub struct WidgetNodeSnapshot {
     pub id: WidgetId,
     pub parent: Option<WidgetId>,
     pub children: Vec<WidgetId>,
+    pub measured_size: Size,
     pub bounds: Rect,
     pub accepts_focus: bool,
     pub focused: bool,
@@ -661,7 +691,7 @@ impl WindowState {
         match window_event {
             WindowEvent::Resized(size) => {
                 self.viewport_hint = Some(*size);
-                self.schedule.mark(InvalidationKind::Layout);
+                self.schedule.mark(InvalidationKind::Measure);
             }
             WindowEvent::ScaleFactorChanged {
                 scale_factor,
@@ -673,7 +703,7 @@ impl WindowState {
                 if let Some(size) = suggested_size {
                     self.viewport_hint = Some(*size);
                 }
-                self.schedule.mark(InvalidationKind::Layout);
+                self.schedule.mark(InvalidationKind::Measure);
             }
             WindowEvent::Focused(focused) => {
                 self.focus.window_focused = *focused;
@@ -695,7 +725,7 @@ impl WindowState {
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) {
-        if self.schedule.layout || self.viewport.is_none() {
+        if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
             let _ = self.run_layout_pass(text_system, font_registry, image_registry);
             return;
         }
@@ -1015,7 +1045,7 @@ impl WindowState {
         let mut repainted = false;
         let mut repaint_layers = Vec::new();
         let mut dirty_layers = Vec::new();
-        let previous_graph = if self.schedule.layout && !self.graph.is_empty() {
+        let previous_graph = if (self.schedule.measure || self.schedule.arrange) && !self.graph.is_empty() {
             Some(self.graph.snapshot())
         } else {
             None
@@ -1026,7 +1056,7 @@ impl WindowState {
             self.schedule = FrameSchedule::bootstrap();
         }
 
-        if self.schedule.layout || self.viewport.is_none() {
+        if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
             let started = Instant::now();
             invalidations.extend(self.run_layout_pass(
                 Arc::clone(&text_system),
@@ -1220,7 +1250,13 @@ impl WindowState {
             .filter(|request| {
                 matches!(
                     request.kind,
-                    InvalidationKind::Layout
+                    InvalidationKind::Measure
+                        | InvalidationKind::Arrange
+                        | InvalidationKind::Transform
+                        | InvalidationKind::Clip
+                        | InvalidationKind::Effect
+                        | InvalidationKind::Visibility
+                        | InvalidationKind::Layout
                         | InvalidationKind::Paint
                         | InvalidationKind::Text
                         | InvalidationKind::Resources
@@ -1279,22 +1315,35 @@ impl WindowState {
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) -> Vec<InvalidationRequest> {
-        let mut layout_ctx = LayoutCtx::new(
+        let constraints = self.layout_constraints();
+        let mut measure_ctx = MeasureCtx::new(
             self.id,
             self.root.id(),
+            self.root.bounds(),
             self.current_dpi_info(),
             text_system,
             font_registry,
             image_registry,
         );
-        let viewport = self.root.layout(&mut layout_ctx, self.layout_constraints());
+        let measured_root = if self.schedule.measure || self.viewport.is_none() {
+            self.root.measure(&mut measure_ctx, constraints)
+        } else {
+            self.root.measured_size()
+        };
+        let viewport = constraints.clamp(measured_root);
+
+        let mut arrange_ctx = ArrangeCtx::new(self.id, self.root.id(), self.current_dpi_info());
         self.root
-            .set_bounds(Rect::from_origin_size(Point::ZERO, viewport));
+            .arrange(&mut arrange_ctx, Rect::from_origin_size(Point::ZERO, viewport));
         self.viewport = Some(viewport);
-        self.schedule.layout = false;
+        self.schedule.measure = false;
+        self.schedule.arrange = false;
         self.schedule.hit_test = false;
         self.refresh_graph();
-        layout_ctx.take_invalidations()
+
+        let mut invalidations = measure_ctx.take_invalidations();
+        invalidations.extend(arrange_ctx.take_invalidations());
+        invalidations
     }
 
     fn refresh_graph(&mut self) {
@@ -1522,6 +1571,7 @@ impl WidgetGraph {
                 id,
                 parent,
                 children,
+                measured_size: pod.measured_size(),
                 bounds: pod.bounds(),
                 accepts_focus: pod.accepts_focus(),
                 focused: Some(id) == focused_widget,
@@ -1642,7 +1692,8 @@ fn collect_graph_dirty_widgets(
     for widget_id in previous_nodes.keys().chain(current_nodes.keys()) {
         match (previous_nodes.get(widget_id), current_nodes.get(widget_id)) {
             (Some(previous_node), Some(current_node)) => {
-                if previous_node.bounds != current_node.bounds
+                if previous_node.measured_size != current_node.measured_size
+                    || previous_node.bounds != current_node.bounds
                     || previous_node.parent != current_node.parent
                     || previous_node.children != current_node.children
                 {

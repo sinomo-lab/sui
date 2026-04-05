@@ -36,6 +36,12 @@ pub trait WidgetPodMutVisitor {
 pub trait Widget {
     fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
 
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.layout(ctx, constraints)
+    }
+
+    fn arrange(&mut self, _ctx: &mut ArrangeCtx, _bounds: Rect) {}
+
     fn layout(&mut self, _ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
         constraints.max
     }
@@ -77,6 +83,14 @@ impl SingleChild {
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         &mut self.child
+    }
+
+    pub fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.child.measure(ctx, constraints)
+    }
+
+    pub fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, bounds);
     }
 
     pub fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
@@ -156,6 +170,19 @@ impl WidgetChildren {
         &mut self.children
     }
 
+    pub fn measure_child(
+        &mut self,
+        index: usize,
+        ctx: &mut MeasureCtx,
+        constraints: Constraints,
+    ) -> Size {
+        self.children[index].measure(ctx, constraints)
+    }
+
+    pub fn arrange_child(&mut self, index: usize, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.children[index].arrange(ctx, bounds);
+    }
+
     pub fn paint(&self, ctx: &mut PaintCtx) {
         for child in &self.children {
             child.paint(ctx);
@@ -183,8 +210,29 @@ impl WidgetChildren {
 
 pub struct WidgetPod {
     id: WidgetId,
-    bounds: Rect,
+    layout_state: LayoutState,
     widget: Box<dyn Widget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LayoutState {
+    measured_size: Size,
+    arranged_bounds: Rect,
+    last_constraints: Constraints,
+    measure_valid: bool,
+    arrange_valid: bool,
+}
+
+impl Default for LayoutState {
+    fn default() -> Self {
+        Self {
+            measured_size: Size::ZERO,
+            arranged_bounds: Rect::ZERO,
+            last_constraints: Constraints::default(),
+            measure_valid: false,
+            arrange_valid: false,
+        }
+    }
 }
 
 impl WidgetPod {
@@ -194,7 +242,7 @@ impl WidgetPod {
     {
         Self {
             id: WidgetId::new(NEXT_WIDGET_ID.fetch_add(1, Ordering::Relaxed)),
-            bounds: Rect::ZERO,
+            layout_state: LayoutState::default(),
             widget: Box::new(widget),
         }
     }
@@ -204,29 +252,58 @@ impl WidgetPod {
     }
 
     pub const fn bounds(&self) -> Rect {
-        self.bounds
+        self.layout_state.arranged_bounds
+    }
+
+    pub const fn measured_size(&self) -> Size {
+        self.layout_state.measured_size
     }
 
     pub fn set_bounds(&mut self, bounds: Rect) {
-        let delta = bounds.origin - self.bounds.origin;
-        self.bounds = bounds;
+        let delta = bounds.origin - self.layout_state.arranged_bounds.origin;
+        self.layout_state.arranged_bounds = bounds;
+        self.layout_state.measured_size = bounds.size;
+        self.layout_state.arrange_valid = true;
         self.translate_descendants(delta);
     }
 
-    pub fn layout(&mut self, parent_ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        let origin = self.bounds.origin;
-        let mut child_ctx = LayoutCtx::new(
+    pub fn measure(&mut self, parent_ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let origin = self.layout_state.arranged_bounds.origin;
+        let mut child_ctx = MeasureCtx::new(
             parent_ctx.window_id(),
             self.id,
+            self.layout_state.arranged_bounds,
             parent_ctx.dpi(),
             Arc::clone(&parent_ctx.text_system),
             Arc::clone(&parent_ctx.font_registry),
             Arc::clone(&parent_ctx.image_registry),
         );
-        let size = self.widget.layout(&mut child_ctx, constraints);
-        self.bounds = Rect::from_origin_size(origin, size);
-        self.translate_descendants(origin.to_vector());
+        let size = self.widget.measure(&mut child_ctx, constraints);
+        self.layout_state.measured_size = size;
+        self.layout_state.last_constraints = constraints;
+        self.layout_state.measure_valid = true;
+        self.layout_state.arranged_bounds = Rect::from_origin_size(origin, size);
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
+        size
+    }
+
+    pub fn arrange(&mut self, parent_ctx: &mut ArrangeCtx, bounds: Rect) {
+        let delta = bounds.origin - self.layout_state.arranged_bounds.origin;
+        self.layout_state.arranged_bounds = bounds;
+        self.layout_state.arrange_valid = true;
+        self.translate_descendants(delta);
+
+        let mut child_ctx = ArrangeCtx::new(parent_ctx.window_id(), self.id, parent_ctx.dpi());
+        self.widget.arrange(&mut child_ctx, bounds);
+        parent_ctx.extend_invalidations(child_ctx.take_invalidations());
+    }
+
+    pub fn layout(&mut self, parent_ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+        let size = self.measure(parent_ctx, constraints);
+        self.arrange_with_measure_ctx(
+            parent_ctx,
+            Rect::from_origin_size(self.layout_state.arranged_bounds.origin, size),
+        );
         size
     }
 
@@ -236,10 +313,11 @@ impl WidgetPod {
         constraints: Constraints,
         origin: Point,
     ) -> Size {
-        let size = self.layout(parent_ctx, constraints);
-        let delta = origin - self.bounds.origin;
-        self.bounds = Rect::from_origin_size(origin, size);
-        self.translate_descendants(delta);
+        let size = self.measure(parent_ctx, constraints);
+        self.arrange_with_measure_ctx(
+            parent_ctx,
+            Rect::from_origin_size(parent_ctx.bounds().origin + origin.to_vector(), size),
+        );
         size
     }
 
@@ -247,14 +325,14 @@ impl WidgetPod {
         let mut child_ctx = PaintCtx::new(
             parent_ctx.window_id(),
             self.id,
-            self.bounds,
+            self.layout_state.arranged_bounds,
             parent_ctx.focused_widget_id(),
             parent_ctx.dpi(),
         );
         self.widget.paint(&mut child_ctx);
 
         let (scene, invalidations, ime_composition_rect) = child_ctx.into_parts();
-        parent_ctx.push_layer(self.id, self.bounds, scene);
+        parent_ctx.push_layer(self.id, self.layout_state.arranged_bounds, scene);
         parent_ctx.extend_invalidations(invalidations);
         parent_ctx.extend_ime_composition_rect(ime_composition_rect);
     }
@@ -273,7 +351,7 @@ impl WidgetPod {
             parent_ctx.window_id(),
             self.id,
             parent_ctx.root_widget_id(),
-            self.bounds,
+            self.layout_state.arranged_bounds,
             parent_ctx.focused_widget_id(),
         );
         self.widget.semantics(&mut child_ctx);
@@ -330,7 +408,7 @@ impl WidgetPod {
         let mut ctx = EventCtx::new(
             window_id,
             self.id,
-            self.bounds,
+            self.layout_state.arranged_bounds,
             current_time,
             phase,
             focused_widget,
@@ -355,7 +433,7 @@ impl WidgetPod {
         let mut ctx = EventCtx::new(
             window_id,
             self.id,
-            self.bounds,
+            self.layout_state.arranged_bounds,
             current_time,
             EventPhase::Target,
             focused_widget,
@@ -402,8 +480,14 @@ impl WidgetPod {
             return;
         }
 
-        self.bounds = self.bounds.translate(delta);
+        self.layout_state.arranged_bounds = self.layout_state.arranged_bounds.translate(delta);
         self.translate_descendants(delta);
+    }
+
+    fn arrange_with_measure_ctx(&mut self, parent_ctx: &mut MeasureCtx, bounds: Rect) {
+        let mut arrange_ctx = ArrangeCtx::new(parent_ctx.window_id(), parent_ctx.widget_id(), parent_ctx.dpi());
+        self.arrange(&mut arrange_ctx, bounds);
+        parent_ctx.extend_invalidations(arrange_ctx.take_invalidations());
     }
 }
 
@@ -609,8 +693,16 @@ impl EventCtx {
         self.invalidations.push(request);
     }
 
+    pub fn request_measure(&mut self) {
+        self.request_widget(InvalidationKind::Measure);
+    }
+
+    pub fn request_arrange(&mut self) {
+        self.request_widget(InvalidationKind::Arrange);
+    }
+
     pub fn request_layout(&mut self) {
-        self.request_widget(InvalidationKind::Layout);
+        self.request_measure();
     }
 
     pub fn request_paint(&mut self) {
@@ -672,9 +764,10 @@ impl EventCtx {
 }
 
 #[derive(Debug, Clone)]
-pub struct LayoutCtx {
+pub struct MeasureCtx {
     window_id: WindowId,
     widget_id: WidgetId,
+    bounds: Rect,
     dpi_info: DpiInfo,
     text_system: Arc<TextSystem>,
     font_registry: Arc<FontRegistry>,
@@ -682,10 +775,11 @@ pub struct LayoutCtx {
     invalidations: Vec<InvalidationRequest>,
 }
 
-impl LayoutCtx {
+impl MeasureCtx {
     pub(crate) fn new(
         window_id: WindowId,
         widget_id: WidgetId,
+        bounds: Rect,
         dpi_info: DpiInfo,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
@@ -694,6 +788,7 @@ impl LayoutCtx {
         Self {
             window_id,
             widget_id,
+            bounds,
             dpi_info,
             text_system,
             font_registry,
@@ -710,6 +805,10 @@ impl LayoutCtx {
         self.widget_id
     }
 
+    pub const fn bounds(&self) -> Rect {
+        self.bounds
+    }
+
     pub const fn dpi(&self) -> DpiInfo {
         self.dpi_info
     }
@@ -718,8 +817,16 @@ impl LayoutCtx {
         self.invalidations.push(request);
     }
 
+    pub fn request_measure(&mut self) {
+        self.request_widget(InvalidationKind::Measure);
+    }
+
+    pub fn request_arrange(&mut self) {
+        self.request_widget(InvalidationKind::Arrange);
+    }
+
     pub fn request_layout(&mut self) {
-        self.request_widget(InvalidationKind::Layout);
+        self.request_measure();
     }
 
     pub fn request_paint(&mut self) {
@@ -753,6 +860,74 @@ impl LayoutCtx {
         self.image_registry
             .get(image)
             .map(|image| Size::new(image.width() as f32, image.height() as f32))
+    }
+
+    pub fn invalidations(&self) -> &[InvalidationRequest] {
+        &self.invalidations
+    }
+
+    pub(crate) fn take_invalidations(&mut self) -> Vec<InvalidationRequest> {
+        std::mem::take(&mut self.invalidations)
+    }
+
+    pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {
+        self.invalidations.extend(invalidations);
+    }
+
+    fn request_widget(&mut self, kind: InvalidationKind) {
+        self.request(InvalidationRequest::new(
+            InvalidationTarget::Widget(self.widget_id),
+            kind,
+        ));
+    }
+}
+
+pub type LayoutCtx = MeasureCtx;
+
+#[derive(Debug, Clone)]
+pub struct ArrangeCtx {
+    window_id: WindowId,
+    widget_id: WidgetId,
+    dpi_info: DpiInfo,
+    invalidations: Vec<InvalidationRequest>,
+}
+
+impl ArrangeCtx {
+    pub(crate) fn new(window_id: WindowId, widget_id: WidgetId, dpi_info: DpiInfo) -> Self {
+        Self {
+            window_id,
+            widget_id,
+            dpi_info,
+            invalidations: Vec::new(),
+        }
+    }
+
+    pub const fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
+    pub const fn widget_id(&self) -> WidgetId {
+        self.widget_id
+    }
+
+    pub const fn dpi(&self) -> DpiInfo {
+        self.dpi_info
+    }
+
+    pub fn request(&mut self, request: InvalidationRequest) {
+        self.invalidations.push(request);
+    }
+
+    pub fn request_arrange(&mut self) {
+        self.request_widget(InvalidationKind::Arrange);
+    }
+
+    pub fn request_paint(&mut self) {
+        self.request_widget(InvalidationKind::Paint);
+    }
+
+    pub fn request_semantics(&mut self) {
+        self.request_widget(InvalidationKind::Semantics);
     }
 
     pub fn invalidations(&self) -> &[InvalidationRequest] {
@@ -1088,6 +1263,7 @@ mod tests {
         LayoutCtx::new(
             window_id,
             widget_id,
+            Rect::ZERO,
             DpiInfo::default(),
             std::sync::Arc::new(TextSystem::new()),
             std::sync::Arc::new(FontRegistry::new()),
@@ -1107,6 +1283,7 @@ mod tests {
         let layout = LayoutCtx::new(
             WindowId::new(1),
             WidgetId::new(2),
+            Rect::ZERO,
             dpi,
             std::sync::Arc::new(TextSystem::new()),
             std::sync::Arc::new(FontRegistry::new()),
@@ -1163,7 +1340,7 @@ mod tests {
         assert!(ctx.is_handled());
         assert_eq!(ctx.bounds(), Rect::new(8.0, 12.0, 24.0, 36.0));
         assert_eq!(ctx.invalidations().len(), 2);
-        assert_eq!(ctx.invalidations()[0].kind, InvalidationKind::Layout);
+        assert_eq!(ctx.invalidations()[0].kind, InvalidationKind::Measure);
         assert_eq!(
             ctx.invalidations()[1].region,
             Some(Rect::new(8.0, 12.0, 24.0, 36.0))

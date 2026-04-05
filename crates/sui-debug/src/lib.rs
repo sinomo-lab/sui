@@ -562,8 +562,11 @@ fn format_optional_widget_id(widget_id: Option<WidgetId>) -> String {
 
 fn format_schedule(schedule: FrameSchedule) -> String {
     let mut pending = Vec::new();
-    if schedule.layout {
-        pending.push("layout");
+    if schedule.measure {
+        pending.push("measure");
+    }
+    if schedule.arrange {
+        pending.push("arrange");
     }
     if schedule.paint {
         pending.push("paint");

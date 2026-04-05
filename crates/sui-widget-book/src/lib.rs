@@ -142,11 +142,15 @@ pub fn run_desktop_widget_book() -> Result<()> {
 }
 
 impl Widget for WidgetBookRoot {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let viewport = constraints.clamp(Size::new(1280.0, 720.0));
-        self.child
-            .layout_at(ctx, Constraints::tight(viewport), Point::ZERO);
+        self.child.measure(ctx, Constraints::tight(viewport));
         viewport
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child
+            .arrange(ctx, Rect::from_origin_size(bounds.origin, bounds.size));
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -1227,6 +1231,7 @@ fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
                 id: window_widget,
                 parent: None,
                 children: vec![scroll_widget],
+                measured_size: Size::new(1280.0, 720.0),
                 bounds: Rect::new(0.0, 0.0, 1280.0, 720.0),
                 accepts_focus: false,
                 focused: false,
@@ -1235,6 +1240,7 @@ fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
                 id: scroll_widget,
                 parent: Some(window_widget),
                 children: vec![controls_widget, slider_widget, tabs_widget],
+                measured_size: Size::new(1280.0, 720.0),
                 bounds: Rect::new(0.0, 0.0, 1280.0, 720.0),
                 accepts_focus: false,
                 focused: false,
@@ -1243,6 +1249,7 @@ fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
                 id: controls_widget,
                 parent: Some(scroll_widget),
                 children: vec![input_widget, button_widget],
+                measured_size: Size::new(680.0, 220.0),
                 bounds: Rect::new(24.0, 104.0, 680.0, 220.0),
                 accepts_focus: false,
                 focused: false,
@@ -1251,6 +1258,7 @@ fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
                 id: input_widget,
                 parent: Some(controls_widget),
                 children: Vec::new(),
+                measured_size: Size::new(320.0, 42.0),
                 bounds: Rect::new(48.0, 176.0, 320.0, 42.0),
                 accepts_focus: true,
                 focused: false,
@@ -1259,6 +1267,7 @@ fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
                 id: button_widget,
                 parent: Some(controls_widget),
                 children: Vec::new(),
+                measured_size: Size::new(180.0, 40.0),
                 bounds: Rect::new(48.0, 238.0, 180.0, 40.0),
                 accepts_focus: true,
                 focused: focused_widget == button_widget,
@@ -1267,6 +1276,7 @@ fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
                 id: slider_widget,
                 parent: Some(scroll_widget),
                 children: Vec::new(),
+                measured_size: Size::new(320.0, 38.0),
                 bounds: Rect::new(48.0, 346.0, 320.0, 38.0),
                 accepts_focus: true,
                 focused: focused_widget == slider_widget,
@@ -1275,6 +1285,7 @@ fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
                 id: tabs_widget,
                 parent: Some(scroll_widget),
                 children: Vec::new(),
+                measured_size: Size::new(420.0, 172.0),
                 bounds: Rect::new(48.0, 428.0, 420.0, 172.0),
                 accepts_focus: true,
                 focused: false,
@@ -1328,7 +1339,8 @@ fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
         widget_graph,
     )
     .with_schedule(FrameSchedule {
-        layout: false,
+        measure: false,
+        arrange: false,
         paint: true,
         semantics: state.switch_on,
         hit_test: false,

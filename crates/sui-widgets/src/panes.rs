@@ -4,8 +4,8 @@ use sui_core::{
 };
 use sui_layout::{Axis, Constraints};
 use sui_runtime::{
-    EventCtx, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget, WidgetPodMutVisitor,
-    WidgetPodVisitor,
+    ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+    WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::StrokeStyle;
 
@@ -192,7 +192,7 @@ impl Widget for SplitView {
                 let divider = self.divider_rect(ctx.bounds());
                 if self.drag_pointer == Some(pointer.pointer_id) {
                     self.set_ratio_from_position(ctx.bounds(), pointer.position);
-                    ctx.request_layout();
+                    ctx.request_arrange();
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
@@ -210,7 +210,7 @@ impl Widget for SplitView {
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
                 self.set_ratio_from_position(ctx.bounds(), pointer.position);
-                ctx.request_layout();
+                ctx.request_arrange();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -250,7 +250,7 @@ impl Widget for SplitView {
                     (Axis::Horizontal, "ArrowRight") | (Axis::Vertical, "ArrowDown") => step,
                     (Axis::Horizontal, "Home") | (Axis::Vertical, "Home") => {
                         self.ratio = 0.0;
-                        ctx.request_layout();
+                        ctx.request_arrange();
                         ctx.request_paint();
                         ctx.request_semantics();
                         ctx.set_handled();
@@ -258,7 +258,7 @@ impl Widget for SplitView {
                     }
                     (Axis::Horizontal, "End") | (Axis::Vertical, "End") => {
                         self.ratio = 1.0;
-                        ctx.request_layout();
+                        ctx.request_arrange();
                         ctx.request_paint();
                         ctx.request_semantics();
                         ctx.set_handled();
@@ -267,7 +267,7 @@ impl Widget for SplitView {
                     _ => return,
                 };
                 self.nudge_ratio(delta);
-                ctx.request_layout();
+                ctx.request_arrange();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -276,12 +276,12 @@ impl Widget for SplitView {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let divider = self.resolved_divider_thickness();
 
         let probe_constraints = constraints.loosen();
-        let first_probe = self.first.layout(ctx, probe_constraints);
-        let second_probe = self.second.layout(ctx, probe_constraints);
+        let first_probe = self.first.measure(ctx, probe_constraints);
+        let second_probe = self.second.measure(ctx, probe_constraints);
         let natural = axis_size(
             self.axis,
             axis_main(self.axis, first_probe) + divider + axis_main(self.axis, second_probe),
@@ -301,34 +301,37 @@ impl Widget for SplitView {
             },
         ));
 
+        size
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let divider = self.resolved_divider_thickness();
+        let size = bounds.size;
+
         let total_main = axis_main(self.axis, size);
         let cross = axis_cross(self.axis, size);
         let divider_offset = self.divider_main_offset(Rect::from_origin_size(Point::ZERO, size));
         let first_main = divider_offset.max(0.0);
         let second_main = (total_main - divider - first_main).max(0.0);
+        let first_constraints = split_child_constraints(self.axis, first_main, cross);
+        let second_constraints = split_child_constraints(self.axis, second_main, cross);
+        let first_size = first_constraints.clamp(self.first.child().measured_size());
+        let second_size = second_constraints.clamp(self.second.child().measured_size());
 
-        let first_size = self.first.layout_at(
+        self.first.arrange(
             ctx,
-            split_child_constraints(self.axis, first_main, cross),
-            Point::ZERO,
+            Rect::from_origin_size(bounds.origin, first_size),
         );
-        let second_origin = axis_point(self.axis, first_main + divider, 0.0);
-        let second_size = self.second.layout_at(
+        let second_origin = bounds.origin + axis_point(self.axis, first_main + divider, 0.0).to_vector();
+        self.second.arrange(
             ctx,
-            split_child_constraints(self.axis, second_main, cross),
-            second_origin,
+            Rect::from_origin_size(second_origin, second_size),
         );
 
         self.divider_bounds = Rect::from_origin_size(
             axis_point(self.axis, first_size_main(self.axis, first_size), 0.0),
-            axis_size(
-                self.axis,
-                divider,
-                cross.max(axis_cross(self.axis, second_size)),
-            ),
+            axis_size(self.axis, divider, cross),
         );
-
-        size
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {

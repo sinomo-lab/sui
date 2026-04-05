@@ -4,6 +4,8 @@
 
 - [Core Architecture](./architecture.md)
 - [Crate Architecture and API Boundary Plan](./crate-architecture.md)
+- [Layout Rework Proposal](./layout-proposal.md)
+- [Tile-Based Retained Compositor Proposal](./tile-compositor-proposal.md)
 - [Testing Architecture](./testing.md)
 
 ## Vision

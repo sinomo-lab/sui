@@ -221,6 +221,8 @@ The workspace now has the first concrete step in that direction: `sui-scene` sup
 
 `SceneFrame` should remain immutable once produced so render backends can consume it safely and so tooling can inspect a stable snapshot.
 
+The higher-ceiling version of this renderer boundary should be a retained compositor rather than a frame-scoped draw-op compiler. The dedicated design for that target lives in [tile-compositor-proposal.md](./tile-compositor-proposal.md).
+
 ## Semantics Architecture
 
 Semantics are produced from the same widget graph as the scene. They are not a bolt-on adapter.

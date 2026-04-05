@@ -3,8 +3,8 @@ use sui_core::{
 };
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
-    EventCtx, EventPhase, LayoutCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
-    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx,
+    SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::Brush;
 
@@ -45,13 +45,19 @@ impl Padding {
 }
 
 impl Widget for Padding {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let child_constraints = inset_constraints(constraints, self.insets);
-        let child_size = self
-            .child
-            .layout_at(ctx, child_constraints, self.insets.offset());
+        let child_size = self.child.measure(ctx, child_constraints);
 
         constraints.clamp(expand_size(child_size, self.insets))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let child_size = self.child.child().measured_size();
+        self.child.arrange(
+            ctx,
+            Rect::from_origin_size(bounds.origin + self.insets.offset().to_vector(), child_size),
+        );
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -106,24 +112,28 @@ impl Align {
 }
 
 impl Widget for Align {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let child_constraints =
             aligned_child_constraints(constraints, self.horizontal, self.vertical);
-        let child_size = self.child.layout(ctx, child_constraints);
-        let size = constraints.clamp(Size::new(
+        let child_size = self.child.measure(ctx, child_constraints);
+        constraints.clamp(Size::new(
             stretched_dimension(self.horizontal, constraints.max.width, child_size.width),
             stretched_dimension(self.vertical, constraints.max.height, child_size.height),
-        ));
+        ))
+    }
 
-        self.child.set_bounds(Rect::from_origin_size(
-            Point::new(
-                aligned_offset(self.horizontal, size.width - child_size.width),
-                aligned_offset(self.vertical, size.height - child_size.height),
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let child_size = self.child.child().measured_size();
+        self.child.arrange(
+            ctx,
+            Rect::from_origin_size(
+                Point::new(
+                    bounds.x() + aligned_offset(self.horizontal, bounds.width() - child_size.width),
+                    bounds.y() + aligned_offset(self.vertical, bounds.height() - child_size.height),
+                ),
+                child_size,
             ),
-            child_size,
-        ));
-
-        size
+        );
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -169,8 +179,12 @@ impl Background {
 }
 
 impl Widget for Background {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        self.child.layout_at(ctx, constraints, Point::ZERO)
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.child.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, bounds);
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -246,10 +260,10 @@ impl Default for SizedBox {
 }
 
 impl Widget for SizedBox {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let child_constraints = sized_box_constraints(constraints, self.width, self.height);
         let child_size = if let Some(child) = &mut self.child {
-            child.layout_at(ctx, child_constraints, Point::ZERO)
+            child.measure(ctx, child_constraints)
         } else {
             Size::ZERO
         };
@@ -258,6 +272,15 @@ impl Widget for SizedBox {
             self.width.unwrap_or(child_size.width),
             self.height.unwrap_or(child_size.height),
         ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        if let Some(child) = &mut self.child {
+            child.arrange(
+                ctx,
+                Rect::from_origin_size(bounds.origin, child.child().measured_size()),
+            );
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -345,8 +368,7 @@ impl Stack {
 }
 
 impl Widget for Stack {
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
-        let mut child_sizes = Vec::with_capacity(self.children.len());
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let max_main = axis_main(self.axis, constraints.max);
         let max_cross = axis_cross(self.axis, constraints.max);
         let stretch_cross = self.alignment == Alignment::Stretch && max_cross.is_finite();
@@ -358,39 +380,38 @@ impl Widget for Stack {
             let remaining_main = (max_main - main_extent - spacing_before).max(0.0);
             let child_constraints =
                 stack_child_constraints(self.axis, remaining_main, max_cross, stretch_cross);
-            let child_size = child.layout(ctx, child_constraints);
+            let child_size = child.measure(ctx, child_constraints);
             main_extent += spacing_before + axis_main(self.axis, child_size);
             cross_extent = cross_extent.max(axis_cross(self.axis, child_size));
-            child_sizes.push(child_size);
         }
 
-        let size = constraints.clamp(axis_size(self.axis, main_extent, cross_extent));
-        let cross_available = axis_cross(self.axis, size);
+        constraints.clamp(axis_size(self.axis, main_extent, cross_extent))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let cross_available = axis_cross(self.axis, bounds.size);
         let mut main_offset = 0.0;
 
-        for (index, (child, child_size)) in self
-            .children
-            .as_mut_slice()
-            .iter_mut()
-            .zip(child_sizes.into_iter())
-            .enumerate()
-        {
+        for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
             if index > 0 {
                 main_offset += self.spacing;
             }
 
+            let child_size = child.measured_size();
             let cross_offset = aligned_offset(
                 self.alignment,
                 cross_available - axis_cross(self.axis, child_size),
             );
-            child.set_bounds(Rect::from_origin_size(
-                axis_point(self.axis, main_offset, cross_offset),
-                child_size,
-            ));
+            child.arrange(
+                ctx,
+                Rect::from_origin_size(
+                    Point::new(bounds.x(), bounds.y())
+                        + axis_point(self.axis, main_offset, cross_offset).to_vector(),
+                    child_size,
+                ),
+            );
             main_offset += axis_main(self.axis, child_size);
         }
-
-        size
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -525,7 +546,7 @@ impl ScrollView {
         let next = self.clamp_offset(viewport, self.offset + delta);
         if next != self.offset {
             self.offset = next;
-            ctx.request_layout();
+            ctx.request_arrange();
             ctx.request_paint();
             ctx.request_semantics();
             true
@@ -591,7 +612,7 @@ impl Widget for ScrollView {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let mut child_constraints = constraints.loosen();
         if self.axes.allows_horizontal() {
             child_constraints.max.width = f32::INFINITY;
@@ -607,7 +628,7 @@ impl Widget for ScrollView {
             child_constraints.max.height = constraints.max.height;
         }
 
-        let child_size = self.child.layout(ctx, child_constraints);
+        let child_size = self.child.measure(ctx, child_constraints);
         self.content_size = child_size;
 
         let viewport = constraints.clamp(Size::new(
@@ -623,12 +644,18 @@ impl Widget for ScrollView {
             },
         ));
         self.offset = self.clamp_offset(viewport, self.offset);
-        self.child.set_bounds(Rect::from_origin_size(
-            Point::new(-self.offset.x, -self.offset.y),
-            child_size,
-        ));
 
         viewport
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(
+            ctx,
+            Rect::from_origin_size(
+                Point::new(bounds.x() - self.offset.x, bounds.y() - self.offset.y),
+                self.child.child().measured_size(),
+            ),
+        );
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {

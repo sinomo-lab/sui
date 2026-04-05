@@ -2,6 +2,12 @@ use crate::{Rect, SurfaceId, WidgetId, WindowId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvalidationKind {
+    Measure,
+    Arrange,
+    Transform,
+    Clip,
+    Effect,
+    Visibility,
     Layout,
     Paint,
     HitTest,
