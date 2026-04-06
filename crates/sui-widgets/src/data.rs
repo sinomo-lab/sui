@@ -195,7 +195,7 @@ impl Widget for ListView {
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Scroll
-                    && ctx.bounds().contains(pointer.position) =>
+                    && viewport.contains(pointer.position) =>
             {
                 let delta = pointer
                     .scroll_delta
@@ -206,8 +206,8 @@ impl Widget for ListView {
                     self.scroll_y = next;
                     ctx.request_paint();
                     ctx.request_semantics();
+                    ctx.set_handled();
                 }
-                ctx.set_handled();
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -644,7 +644,7 @@ impl Widget for TreeView {
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Scroll
-                    && ctx.bounds().contains(pointer.position) =>
+                    && viewport.contains(pointer.position) =>
             {
                 let delta = pointer
                     .scroll_delta
@@ -655,8 +655,8 @@ impl Widget for TreeView {
                     self.scroll_y = next;
                     ctx.request_paint();
                     ctx.request_semantics();
+                    ctx.set_handled();
                 }
-                ctx.set_handled();
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -1176,7 +1176,7 @@ impl Widget for Table {
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Scroll
-                    && ctx.bounds().contains(pointer.position) =>
+                    && body.contains(pointer.position) =>
             {
                 let delta = pointer
                     .scroll_delta
@@ -1187,8 +1187,8 @@ impl Widget for Table {
                     self.scroll_y = next;
                     ctx.request_paint();
                     ctx.request_semantics();
+                    ctx.set_handled();
                 }
-                ctx.set_handled();
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -1894,9 +1894,11 @@ mod tests {
         Breadcrumb, BreadcrumbItem, ListItem, ListView, Table, TableColumn, TableRow, TreeItem,
         TreeView,
     };
+    use crate::{ScrollView, SizedBox, Stack};
     use sui_core::{
         Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, PointerKind, Result, SemanticsRole, SemanticsValue, Vector,
+        PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta, SemanticsRole,
+        SemanticsValue, Size, Vector,
     };
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
 
@@ -2049,6 +2051,47 @@ mod tests {
             .find(|node| node.role == SemanticsRole::Table)
             .expect("table semantics present");
         assert_eq!(table.value, Some(SemanticsValue::Text("Water".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn non_scrollable_table_allows_wheel_to_bubble_to_parent_scroll_view() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(220.0, 120.0)).with_child(ScrollView::vertical(
+                Stack::vertical()
+                    .with_child(SizedBox::new().width(220.0).height(80.0))
+                    .with_child(
+                        SizedBox::new().width(220.0).height(120.0).with_child(
+                            Table::new("Materials")
+                                .columns([
+                                    TableColumn::new("Name"),
+                                    TableColumn::new("Passes").width(80.0),
+                                ])
+                                .rows([
+                                    TableRow::new(["Glass", "3"]),
+                                    TableRow::new(["Water", "4"]),
+                                ]),
+                        ),
+                    )
+                    .with_child(SizedBox::new().width(220.0).height(160.0)),
+            )),
+        );
+
+        let _ = runtime.render(window_id)?;
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(60.0, 90.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -24.0)));
+        runtime.handle_event(window_id, Event::Pointer(scroll))?;
+        let _ = runtime.render(window_id)?;
+
+        let graph = runtime.widget_graph(window_id)?;
+        let outer_content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 220.0 && node.bounds.height() == 360.0)
+            .expect("outer scroll content present");
+
+        assert_eq!(outer_content.bounds.y(), -24.0);
         Ok(())
     }
 
