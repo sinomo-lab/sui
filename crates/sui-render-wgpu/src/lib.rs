@@ -2159,14 +2159,7 @@ fn hash_text_style(style: &TextStyle, hasher: &mut DefaultHasher) {
 
 #[derive(Default)]
 struct FrameResources {
-    scene_vertices: Option<DynamicVertexBuffer>,
-    clip_vertices: Option<DynamicVertexBuffer>,
     stencil: Option<StencilTarget>,
-}
-
-struct DynamicVertexBuffer {
-    buffer: wgpu::Buffer,
-    capacity: u64,
 }
 
 struct StencilTarget {
@@ -2769,17 +2762,16 @@ impl WgpuRenderer {
                     label: Some("SUI scene encoder"),
                 })
         };
-        let mut cleared = false;
-        let mut pass_count = 0usize;
+        let mut prepared_fragments = Vec::new();
         let mut draw_count = 0usize;
         let mut uploaded_vertex_bytes = 0u64;
+        let mut needs_stencil = false;
 
         for fragment in submission.fragments {
             match fragment {
                 RetainedFrameFragment::Transient(draw_ops) => {
                     let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
-                    let (fragment_pass_count, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
-                    pass_count += fragment_pass_count;
+                    let (_, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
                     draw_count += fragment_draw_count;
                     uploaded_vertex_bytes +=
                         (prepared.scene_vertices.len() as u64 + prepared.clip_vertices.len() as u64)
@@ -2789,72 +2781,26 @@ impl WgpuRenderer {
                         continue;
                     }
 
-                    {
-                        let shared = self
-                            .shared
-                            .as_ref()
-                            .expect("renderer shared state initialized");
-                        self.frame_resources.ensure_scene_buffer(
-                            &shared.device,
-                            prepared.scene_vertices.len() as u64 * VERTEX_SIZE,
-                        );
-                        if let Some(buffer) = self.frame_resources.scene_vertices.as_ref() {
-                            if !prepared.scene_vertices.is_empty() {
-                                shared.queue.write_buffer(
-                                    &buffer.buffer,
-                                    0,
-                                    bytemuck::cast_slice(&prepared.scene_vertices),
-                                );
-                            }
-                        }
-
-                        self.frame_resources.ensure_clip_buffer(
-                            &shared.device,
-                            prepared.clip_vertices.len() as u64 * VERTEX_SIZE,
-                        );
-                        if let Some(buffer) = self.frame_resources.clip_vertices.as_ref() {
-                            if !prepared.clip_vertices.is_empty() {
-                                shared.queue.write_buffer(
-                                    &buffer.buffer,
-                                    0,
-                                    bytemuck::cast_slice(&prepared.clip_vertices),
-                                );
-                            }
-                        }
-
-                        if prepared.passes.iter().any(|pass| !pass.clip_paths.is_empty()) {
-                            self.frame_resources.ensure_stencil(&shared.device, framebuffer_size);
-                        }
-                    }
-
-                    let scene_buffer = self
-                        .frame_resources
-                        .scene_vertices
-                        .as_ref()
-                        .expect("scene buffer available for transient fragment rendering");
-                    let clip_buffer = self.frame_resources.clip_vertices.as_ref();
                     let shared = self
                         .shared
-                        .as_mut()
+                        .as_ref()
                         .expect("renderer shared state initialized");
-                    let stencil_view = self.frame_resources.stencil.as_ref().map(|target| {
-                        let _ = &target.texture;
-                        &target.view
+                    needs_stencil |= prepared.passes.iter().any(|pass| !pass.clip_paths.is_empty());
+                    prepared_fragments.push(PreparedFragmentSubmission {
+                        passes: prepared.passes,
+                        scene_buffer: create_static_vertex_buffer(
+                            &shared.device,
+                            &shared.queue,
+                            "SUI transient fragment scene",
+                            &prepared.scene_vertices,
+                        ),
+                        clip_buffer: create_static_vertex_buffer(
+                            &shared.device,
+                            &shared.queue,
+                            "SUI transient fragment clip",
+                            &prepared.clip_vertices,
+                        ),
                     });
-                    encode_prepared_passes(
-                        shared,
-                        &mut encoder,
-                        view,
-                        target_format,
-                        framebuffer_size,
-                        &prepared.passes,
-                        &scene_buffer.buffer,
-                        clip_buffer.map(|buffer| &buffer.buffer),
-                        stencil_view,
-                        &image_bind_groups,
-                        &analytic_path_bind_groups,
-                        &mut cleared,
-                    )?;
                 }
                 RetainedFrameFragment::Tile(address) => {
                     let (passes, scene_buffer, clip_buffer, fragment_uploaded_bytes) = {
@@ -2887,8 +2833,7 @@ impl WgpuRenderer {
                             uploaded,
                         )
                     };
-                    let (fragment_pass_count, fragment_draw_count) = prepared_batch_counts(&passes);
-                    pass_count += fragment_pass_count;
+                    let (_, fragment_draw_count) = prepared_batch_counts(&passes);
                     draw_count += fragment_draw_count;
                     uploaded_vertex_bytes += fragment_uploaded_bytes;
 
@@ -2896,46 +2841,26 @@ impl WgpuRenderer {
                         continue;
                     }
 
-                    {
-                        let shared = self
-                            .shared
-                            .as_ref()
-                            .expect("renderer shared state initialized");
-                        if passes.iter().any(|pass| !pass.clip_paths.is_empty()) {
-                            self.frame_resources.ensure_stencil(&shared.device, framebuffer_size);
-                        }
-                    }
-
-                    let scene_buffer = scene_buffer.as_ref().ok_or_else(|| {
-                        Error::new("retained tile submission is missing a scene vertex buffer")
-                    })?;
-                    let shared = self
-                        .shared
-                        .as_mut()
-                        .expect("renderer shared state initialized");
-                    let stencil_view = self.frame_resources.stencil.as_ref().map(|target| {
-                        let _ = &target.texture;
-                        &target.view
-                    });
-                    encode_prepared_passes(
-                        shared,
-                        &mut encoder,
-                        view,
-                        target_format,
-                        framebuffer_size,
-                        &passes,
+                    needs_stencil |= passes.iter().any(|pass| !pass.clip_paths.is_empty());
+                    prepared_fragments.push(PreparedFragmentSubmission {
+                        passes,
                         scene_buffer,
-                        clip_buffer.as_ref(),
-                        stencil_view,
-                        &image_bind_groups,
-                        &analytic_path_bind_groups,
-                        &mut cleared,
-                    )?;
+                        clip_buffer,
+                    });
                 }
             }
         }
 
-        if !cleared {
+        if needs_stencil {
+            let shared = self
+                .shared
+                .as_ref()
+                .expect("renderer shared state initialized");
+            self.frame_resources.ensure_stencil(&shared.device, framebuffer_size);
+        }
+
+        let encodable_passes = flatten_fragment_passes(&prepared_fragments);
+        let pass_count = if encodable_passes.is_empty() {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SUI scene clear pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2957,7 +2882,28 @@ impl WgpuRenderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-        }
+            1
+        } else {
+            let shared = self
+                .shared
+                .as_mut()
+                .expect("renderer shared state initialized");
+            let stencil_view = self.frame_resources.stencil.as_ref().map(|target| {
+                let _ = &target.texture;
+                &target.view
+            });
+            encode_fragment_passes(
+                shared,
+                &mut encoder,
+                view,
+                target_format,
+                framebuffer_size,
+                &encodable_passes,
+                stencil_view,
+                &image_bind_groups,
+                &analytic_path_bind_groups,
+            )?
+        };
 
         self.shared
             .as_ref()
@@ -3192,43 +3138,6 @@ impl fmt::Debug for WgpuRenderer {
 }
 
 impl FrameResources {
-    fn ensure_scene_buffer(&mut self, device: &wgpu::Device, size: u64) {
-        Self::ensure_dynamic_buffer(&mut self.scene_vertices, device, size, "SUI scene vertices");
-    }
-
-    fn ensure_clip_buffer(&mut self, device: &wgpu::Device, size: u64) {
-        Self::ensure_dynamic_buffer(&mut self.clip_vertices, device, size, "SUI clip vertices");
-    }
-
-    fn ensure_dynamic_buffer(
-        slot: &mut Option<DynamicVertexBuffer>,
-        device: &wgpu::Device,
-        required_size: u64,
-        label: &str,
-    ) {
-        if required_size == 0 {
-            return;
-        }
-
-        let needs_recreate = slot
-            .as_ref()
-            .is_none_or(|buffer| buffer.capacity < required_size);
-        if !needs_recreate {
-            return;
-        }
-
-        let capacity = next_dynamic_buffer_capacity(required_size);
-        *slot = Some(DynamicVertexBuffer {
-            buffer: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: capacity,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            capacity,
-        });
-    }
-
     fn ensure_stencil(&mut self, device: &wgpu::Device, size: (u32, u32)) {
         let needs_recreate = self.stencil.as_ref().is_none_or(|target| target.size != size);
         if !needs_recreate {
@@ -3256,10 +3165,6 @@ impl FrameResources {
             size,
         });
     }
-}
-
-fn next_dynamic_buffer_capacity(required_size: u64) -> u64 {
-    required_size.max(4096).next_power_of_two()
 }
 
 struct SharedRenderer {
@@ -3902,6 +3807,18 @@ struct PreparedDrawBatch {
     vertices: PreparedVertices,
 }
 
+struct PreparedFragmentSubmission {
+    passes: Vec<PreparedPassBatch>,
+    scene_buffer: Option<wgpu::Buffer>,
+    clip_buffer: Option<wgpu::Buffer>,
+}
+
+struct EncodablePassBatch {
+    pass: PreparedPassBatch,
+    scene_buffer: Option<wgpu::Buffer>,
+    clip_buffer: Option<wgpu::Buffer>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PreparedVertices {
     start: u32,
@@ -4063,127 +3980,268 @@ fn create_static_vertex_buffer(
     Some(buffer)
 }
 
-fn encode_prepared_passes(
+fn flatten_fragment_passes(fragments: &[PreparedFragmentSubmission]) -> Vec<EncodablePassBatch> {
+    let mut flattened = Vec::new();
+    for fragment in fragments {
+        for pass in &fragment.passes {
+            flattened.push(EncodablePassBatch {
+                pass: pass.clone(),
+                scene_buffer: fragment.scene_buffer.clone(),
+                clip_buffer: fragment.clip_buffer.clone(),
+            });
+        }
+    }
+    flattened
+}
+
+fn encode_fragment_passes(
     shared: &mut SharedRenderer,
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     target_format: wgpu::TextureFormat,
     framebuffer_size: (u32, u32),
-    passes: &[PreparedPassBatch],
-    scene_buffer: &wgpu::Buffer,
-    clip_buffer: Option<&wgpu::Buffer>,
+    passes: &[EncodablePassBatch],
+    stencil_view: Option<&wgpu::TextureView>,
+    image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
+) -> Result<usize> {
+    let mut cleared = false;
+    let mut index = 0;
+    let mut render_pass_count = 0;
+
+    while index < passes.len() {
+        if passes[index].pass.clip_paths.is_empty() {
+            let start = index;
+            while index < passes.len() && passes[index].pass.clip_paths.is_empty() {
+                index += 1;
+            }
+            encode_unclipped_pass_run(
+                shared,
+                encoder,
+                view,
+                target_format,
+                framebuffer_size,
+                &passes[start..index],
+                image_bind_groups,
+                analytic_path_bind_groups,
+                &mut cleared,
+            )?;
+            render_pass_count += 1;
+        } else {
+            encode_clipped_pass(
+                shared,
+                encoder,
+                view,
+                target_format,
+                framebuffer_size,
+                &passes[index],
+                stencil_view,
+                image_bind_groups,
+                analytic_path_bind_groups,
+                &mut cleared,
+            )?;
+            render_pass_count += 1;
+            index += 1;
+        }
+    }
+
+    Ok(render_pass_count)
+}
+
+fn encode_unclipped_pass_run(
+    shared: &mut SharedRenderer,
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    target_format: wgpu::TextureFormat,
+    framebuffer_size: (u32, u32),
+    passes: &[EncodablePassBatch],
+    image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
+    cleared: &mut bool,
+) -> Result<()> {
+    let load_op = next_pass_load_op(cleared);
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("SUI scene unclipped batch pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: load_op,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
+        multiview_mask: None,
+    });
+
+    let mut current_kind = None;
+    for batch in passes {
+        encode_draws_for_pass(
+            &mut render_pass,
+            shared,
+            target_format,
+            framebuffer_size,
+            &batch.pass,
+            batch.scene_buffer.as_ref(),
+            false,
+            image_bind_groups,
+            analytic_path_bind_groups,
+            &mut current_kind,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn encode_clipped_pass(
+    shared: &mut SharedRenderer,
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    target_format: wgpu::TextureFormat,
+    framebuffer_size: (u32, u32),
+    batch: &EncodablePassBatch,
     stencil_view: Option<&wgpu::TextureView>,
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
     analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
     cleared: &mut bool,
 ) -> Result<()> {
-    for pass in passes {
-        let load_op = if *cleared {
-            wgpu::LoadOp::Load
-        } else {
-            *cleared = true;
-            wgpu::LoadOp::Clear(wgpu::Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.0,
-            })
-        };
-        let depth_stencil_attachment = if pass.clip_paths.is_empty() {
-            None
-        } else {
-            Some(wgpu::RenderPassDepthStencilAttachment {
-                view: stencil_view.expect("stencil view available for path-clipped pass"),
-                depth_ops: None,
-                stencil_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
-                    store: wgpu::StoreOp::Store,
-                }),
-            })
-        };
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("SUI scene batch pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: load_op,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-            multiview_mask: None,
-        });
+    let load_op = next_pass_load_op(cleared);
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("SUI scene clipped batch pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: load_op,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: stencil_view.expect("stencil view available for path-clipped pass"),
+            depth_ops: None,
+            stencil_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(0),
+                store: wgpu::StoreOp::Store,
+            }),
+        }),
+        occlusion_query_set: None,
+        timestamp_writes: None,
+        multiview_mask: None,
+    });
 
-        if !pass.clip_paths.is_empty() {
-            let clip_pipeline = shared.clip_pipeline(target_format);
-            render_pass.set_pipeline(clip_pipeline);
-            let clip_buffer = clip_buffer.expect("clip buffer available for path-clipped pass");
-            render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1);
-            for (clip_index, clip_path) in pass.clip_paths.iter().enumerate() {
-                render_pass.set_stencil_reference(clip_index as u32);
-                render_pass.set_vertex_buffer(0, vertex_buffer_slice(clip_buffer, clip_path.vertices));
-                render_pass.draw(0..clip_path.vertices.len, 0..1);
+    let clip_pipeline = shared.clip_pipeline(target_format);
+    render_pass.set_pipeline(clip_pipeline);
+    render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1);
+    let clip_buffer = batch
+        .clip_buffer
+        .as_ref()
+        .expect("clip buffer available for path-clipped pass");
+    for (clip_index, clip_path) in batch.pass.clip_paths.iter().enumerate() {
+        render_pass.set_stencil_reference(clip_index as u32);
+        render_pass.set_vertex_buffer(0, vertex_buffer_slice(clip_buffer, clip_path.vertices));
+        render_pass.draw(0..clip_path.vertices.len, 0..1);
+    }
+
+    let mut current_kind = None;
+    encode_draws_for_pass(
+        &mut render_pass,
+        shared,
+        target_format,
+        framebuffer_size,
+        &batch.pass,
+        batch.scene_buffer.as_ref(),
+        true,
+        image_bind_groups,
+        analytic_path_bind_groups,
+        &mut current_kind,
+    )?;
+
+    Ok(())
+}
+
+fn next_pass_load_op(cleared: &mut bool) -> wgpu::LoadOp<wgpu::Color> {
+    if *cleared {
+        wgpu::LoadOp::Load
+    } else {
+        *cleared = true;
+        wgpu::LoadOp::Clear(wgpu::Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        })
+    }
+}
+
+fn encode_draws_for_pass(
+    render_pass: &mut wgpu::RenderPass<'_>,
+    shared: &mut SharedRenderer,
+    target_format: wgpu::TextureFormat,
+    framebuffer_size: (u32, u32),
+    pass: &PreparedPassBatch,
+    scene_buffer: Option<&wgpu::Buffer>,
+    clipped: bool,
+    image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
+    current_kind: &mut Option<PreparedDrawKind>,
+) -> Result<()> {
+    for draw in &pass.draws {
+        match draw.clip_rect {
+            Some(scissor) => render_pass.set_scissor_rect(
+                scissor.x,
+                scissor.y,
+                scissor.width,
+                scissor.height,
+            ),
+            None => render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1),
+        }
+
+        if *current_kind != Some(draw.kind) {
+            let pipeline = match (draw.kind, clipped) {
+                (PreparedDrawKind::Solid, true) => shared.clipped_pipeline(target_format),
+                (PreparedDrawKind::Solid, false) => shared.pipeline(target_format),
+                (PreparedDrawKind::Image { .. }, true) => shared.clipped_image_pipeline(target_format),
+                (PreparedDrawKind::Image { .. }, false) => shared.image_pipeline(target_format),
+                (PreparedDrawKind::AnalyticPath { .. }, true) => {
+                    shared.clipped_analytic_path_pipeline(target_format)
+                }
+                (PreparedDrawKind::AnalyticPath { .. }, false) => {
+                    shared.analytic_path_pipeline(target_format)
+                }
+            };
+            render_pass.set_pipeline(pipeline);
+            *current_kind = Some(draw.kind);
+        }
+
+        if clipped {
+            render_pass.set_stencil_reference(pass.clip_paths.len() as u32);
+        }
+
+        match draw.kind {
+            PreparedDrawKind::Solid => {}
+            PreparedDrawKind::Image { handle } => {
+                let bind_group = image_bind_groups
+                    .get(&handle)
+                    .expect("image bind group prepared before retained render pass");
+                render_pass.set_bind_group(0, bind_group, &[]);
+            }
+            PreparedDrawKind::AnalyticPath { resource_signature } => {
+                let bind_group = analytic_path_bind_groups
+                    .get(&resource_signature)
+                    .expect("analytic path bind group prepared before retained render pass");
+                render_pass.set_bind_group(0, bind_group, &[]);
             }
         }
 
-        let mut current_kind = None;
-        for draw in &pass.draws {
-            match draw.clip_rect {
-                Some(scissor) => render_pass.set_scissor_rect(
-                    scissor.x,
-                    scissor.y,
-                    scissor.width,
-                    scissor.height,
-                ),
-                None => render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1),
-            }
-
-            if current_kind != Some(draw.kind) {
-                let pipeline = match (draw.kind, pass.clip_paths.is_empty()) {
-                    (PreparedDrawKind::Solid, true) => shared.pipeline(target_format),
-                    (PreparedDrawKind::Solid, false) => shared.clipped_pipeline(target_format),
-                    (PreparedDrawKind::Image { .. }, true) => shared.image_pipeline(target_format),
-                    (PreparedDrawKind::Image { .. }, false) => {
-                        shared.clipped_image_pipeline(target_format)
-                    }
-                    (PreparedDrawKind::AnalyticPath { .. }, true) => {
-                        shared.analytic_path_pipeline(target_format)
-                    }
-                    (PreparedDrawKind::AnalyticPath { .. }, false) => {
-                        shared.clipped_analytic_path_pipeline(target_format)
-                    }
-                };
-                render_pass.set_pipeline(pipeline);
-                current_kind = Some(draw.kind);
-            }
-
-            if !pass.clip_paths.is_empty() {
-                render_pass.set_stencil_reference(pass.clip_paths.len() as u32);
-            }
-
-            match draw.kind {
-                PreparedDrawKind::Solid => {}
-                PreparedDrawKind::Image { handle } => {
-                    let bind_group = image_bind_groups
-                        .get(&handle)
-                        .expect("image bind group prepared before retained render pass");
-                    render_pass.set_bind_group(0, bind_group, &[]);
-                }
-                PreparedDrawKind::AnalyticPath { resource_signature } => {
-                    let bind_group = analytic_path_bind_groups
-                        .get(&resource_signature)
-                        .expect("analytic path bind group prepared before retained render pass");
-                    render_pass.set_bind_group(0, bind_group, &[]);
-                }
-            }
-
-            render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
-            render_pass.draw(0..draw.vertices.len, 0..1);
-        }
+        let scene_buffer = scene_buffer.ok_or_else(|| {
+            Error::new("prepared render batch is missing a scene vertex buffer")
+        })?;
+        render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
+        render_pass.draw(0..draw.vertices.len, 0..1);
     }
 
     Ok(())
