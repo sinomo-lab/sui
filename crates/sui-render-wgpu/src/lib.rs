@@ -318,6 +318,7 @@ struct TileEntry {
     last_used_frame: u64,
     memory_cost: usize,
     payload: TilePayload,
+    cached_passes: Vec<CachedPassBatch>,
     gpu_geometry: Option<RetainedGpuGeometry>,
 }
 
@@ -1755,6 +1756,7 @@ fn build_tile_entry(
         path_cache,
         feather_width,
     )?;
+    let cached_passes = cache_draw_ops(&fragment);
     let payload = TilePayload::DirectPacket(fragment);
     let memory_cost = match &payload {
         TilePayload::DirectPacket(packet) => packet.byte_size(),
@@ -1774,6 +1776,7 @@ fn build_tile_entry(
         last_used_frame: frame_index,
         memory_cost,
         payload,
+        cached_passes,
         gpu_geometry: None,
     })
 }
@@ -2017,6 +2020,11 @@ fn translate_cached_layer_tiles(
 
         let TilePayload::DirectPacket(fragment) = &mut entry.payload;
         fragment.translate_in_place(delta, viewport);
+        for pass in &mut entry.cached_passes {
+            for draw in &mut pass.draws {
+                draw.clip_rect = draw.clip_rect.map(|rect| rect.translate(delta));
+            }
+        }
         entry.gpu_geometry = None;
     }
 }
@@ -2847,7 +2855,8 @@ impl WgpuRenderer {
                             ))
                         })?;
                         let uploaded = entry.ensure_gpu_geometry(&shared.device, &shared.queue);
-                        let passes = batch_draw_ops(entry.draw_ops(), frame.viewport, framebuffer_size);
+                        let passes =
+                            prepare_cached_passes(&entry.cached_passes, frame.viewport, framebuffer_size);
                         let gpu_geometry = entry
                             .gpu_geometry
                             .as_ref()
@@ -3809,7 +3818,6 @@ struct PreparedFrameBatches {
 
 #[derive(Debug, Clone)]
 struct PreparedPassBatch {
-    clip_state_index: usize,
     clip_paths: Vec<PreparedClipPath>,
     draws: Vec<PreparedDrawBatch>,
 }
@@ -3824,6 +3832,19 @@ enum PreparedDrawKind {
     Solid,
     Image { handle: ImageHandle },
     AnalyticPath { resource_signature: u64 },
+}
+
+#[derive(Debug, Clone)]
+struct CachedPassBatch {
+    clip_paths: Vec<PreparedClipPath>,
+    draws: Vec<CachedDrawBatch>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CachedDrawBatch {
+    kind: PreparedDrawKind,
+    clip_rect: Option<Rect>,
+    vertices: PreparedVertices,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3886,27 +3907,26 @@ fn batch_draw_ops(
     viewport: Size,
     framebuffer_size: (u32, u32),
 ) -> Vec<PreparedPassBatch> {
+    let cached_passes = cache_draw_ops(draw_ops);
+    prepare_cached_passes(&cached_passes, viewport, framebuffer_size)
+}
+
+fn cache_draw_ops(draw_ops: &DrawOpArena) -> Vec<CachedPassBatch> {
     let mut passes = Vec::new();
 
     for op in &draw_ops.draw_ops {
-        let share_pass = passes.last().is_some_and(|pass: &PreparedPassBatch| {
-            if pass.clip_state_index == op.clip_state_index {
-                return true;
-            }
-            
-            let pass_clip = &draw_ops.clip_states[pass.clip_state_index];
+        let share_pass = passes.last().is_some_and(|pass: &CachedPassBatch| {
             let op_clip = &draw_ops.clip_states[op.clip_state_index];
-            pass_clip.clip_paths.len() == op_clip.clip_paths.len()
-                && pass_clip
+            pass.clip_paths.len() == op_clip.clip_paths.len()
+                && pass
                     .clip_paths
                     .iter()
                     .zip(op_clip.clip_paths.iter())
-                    .all(|(a, b)| a.start == b.start && a.len == b.len)
+                    .all(|(a, b)| a.vertices.start == b.start && a.vertices.len == b.len)
         });
         if !share_pass {
             let clip_state = &draw_ops.clip_states[op.clip_state_index];
-            passes.push(PreparedPassBatch {
-                clip_state_index: op.clip_state_index,
+            passes.push(CachedPassBatch {
                 clip_paths: clip_state
                     .clip_paths
                     .iter()
@@ -3919,11 +3939,9 @@ fn batch_draw_ops(
 
         let pass = passes
             .last_mut()
-            .expect("prepared pass created before draw insertion");
+            .expect("cached pass created before draw insertion");
         let kind = prepared_draw_kind(draw_ops, op);
-        let clip_rect = op
-            .clip_rect
-            .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size));
+        let clip_rect = op.clip_rect;
         if let Some(previous) = pass.draws.last_mut() {
             let previous_end = previous.vertices.start + previous.vertices.len;
             if previous.kind == kind
@@ -3935,7 +3953,7 @@ fn batch_draw_ops(
             }
         }
 
-        pass.draws.push(PreparedDrawBatch {
+        pass.draws.push(CachedDrawBatch {
             kind,
             clip_rect,
             vertices: op.vertices,
@@ -3943,6 +3961,31 @@ fn batch_draw_ops(
     }
 
     passes
+}
+
+fn prepare_cached_passes(
+    cached_passes: &[CachedPassBatch],
+    viewport: Size,
+    framebuffer_size: (u32, u32),
+) -> Vec<PreparedPassBatch> {
+    cached_passes
+        .iter()
+        .enumerate()
+        .map(|(_, pass)| PreparedPassBatch {
+            clip_paths: pass.clip_paths.clone(),
+            draws: pass
+                .draws
+                .iter()
+                .map(|draw| PreparedDrawBatch {
+                    kind: draw.kind,
+                    clip_rect: draw
+                        .clip_rect
+                        .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size)),
+                    vertices: draw.vertices,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 fn prepared_draw_kind(draw_ops: &DrawOpArena, op: &DrawOp) -> PreparedDrawKind {
@@ -6479,7 +6522,6 @@ mod tests {
             clip_vertices: vec![vertex; 6],
             passes: vec![
                 PreparedPassBatch {
-                    clip_state_index: 0,
                     clip_paths: vec![PreparedClipPath {
                         vertices: PreparedVertices { start: 0, len: 6 },
                     }],
@@ -6502,7 +6544,6 @@ mod tests {
                     ],
                 },
                 PreparedPassBatch {
-                    clip_state_index: 1,
                     clip_paths: Vec::new(),
                     draws: vec![PreparedDrawBatch {
                         kind: PreparedDrawKind::Image {
@@ -7298,6 +7339,8 @@ mod tests {
         let mut text_engine = TextEngine::new().unwrap();
         let mut compositor = RetainedCompositorState::default();
         let _first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let first_tile = compositor.layers[&SceneLayerId::from_widget(layer_id)].visible_tiles[0];
+        let first_clip_rect = compositor.tiles[&first_tile].cached_passes[0].draws[0].clip_rect;
 
         assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
         assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
@@ -7318,10 +7361,14 @@ mod tests {
         )];
 
         let _second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        let translated_tile = compositor.layers[&SceneLayerId::from_widget(layer_id)].visible_tiles[0];
+        let translated_clip_rect = compositor.tiles[&translated_tile].cached_passes[0].draws[0].clip_rect;
 
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
         assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
         assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
+        assert_eq!(first_clip_rect, Some(Rect::new(0.0, 0.0, 256.0, 128.0)));
+        assert_eq!(translated_clip_rect, Some(Rect::new(64.0, 0.0, 256.0, 128.0)));
     }
 
     #[test]
