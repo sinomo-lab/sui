@@ -13,9 +13,8 @@ use sui_runtime::{
 use sui_testing::prelude::*;
 
 fn main() -> Result<()> {
-    let state = Rc::new(RefCell::new(AppState::default()));
-
     let app = TestApp::new(|| {
+        let state = Rc::new(RefCell::new(AppState::default()));
         Application::new().window(
             WindowBuilder::new()
                 .title("SUI Testing Example")

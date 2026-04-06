@@ -286,8 +286,8 @@ mod tests {
     }
 
     fn build_app() -> Result<TestApp> {
-        let state = Rc::new(RefCell::new(AppState::default()));
         TestApp::new(|| {
+            let state = Rc::new(RefCell::new(AppState::default()));
             Application::new().window(
                 WindowBuilder::new()
                     .title("Harness")
@@ -536,8 +536,8 @@ mod tests {
     }
 
     fn build_list_app() -> Result<TestApp> {
-        let state = Rc::new(RefCell::new(ListState::default()));
         TestApp::new(|| {
+            let state = Rc::new(RefCell::new(ListState::default()));
             Application::new().window(
                 WindowBuilder::new()
                     .title("List Harness")

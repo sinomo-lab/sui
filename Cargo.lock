@@ -1962,6 +1962,7 @@ dependencies = [
  "sui-render-wgpu",
  "sui-runtime",
  "sui-scene",
+ "winit",
 ]
 
 [[package]]

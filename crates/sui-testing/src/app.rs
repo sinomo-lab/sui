@@ -21,6 +21,12 @@ impl IntoTestRuntime for sui_runtime::Application {
     }
 }
 
+impl IntoTestRuntime for Result<Runtime> {
+    fn into_test_runtime(self) -> Result<Runtime> {
+        self
+    }
+}
+
 #[derive(Clone)]
 pub struct TestApp {
     pub(crate) harness: Rc<RefCell<Harness>>,
@@ -29,14 +35,17 @@ pub struct TestApp {
 impl TestApp {
     pub fn new<F, A>(build: F) -> Result<Self>
     where
-        F: FnOnce() -> A,
+        F: FnOnce() -> A + Send + 'static,
         A: IntoTestRuntime,
     {
-        Self::from_runtime(build().into_test_runtime()?)
+        let harness = Rc::new(RefCell::new(Harness::new_live(move || {
+            build().into_test_runtime()
+        })?));
+        Ok(Self { harness })
     }
 
     pub fn from_runtime(runtime: Runtime) -> Result<Self> {
-        let harness = Rc::new(RefCell::new(Harness::new(runtime)?));
+        let harness = Rc::new(RefCell::new(Harness::new_headless(runtime)?));
         Ok(Self { harness })
     }
 

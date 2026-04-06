@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
-    PointerEvent, PointerEventKind, Result, ScrollDelta, SemanticsNode, Vector, WidgetId,
-    WindowId,
+    PointerEvent, PointerEventKind, Rect, Result, ScrollDelta, SemanticsNode, Vector,
+    WidgetId, WindowId,
 };
 use sui_platform::AccessibilitySnapshot;
 
@@ -271,9 +271,35 @@ impl Locator {
     }
 
     pub(crate) fn capture_screenshot_from(&self, harness: &Harness) -> Result<Screenshot> {
-        let node = self.resolve_unique(harness)?;
+        let snapshot = harness.snapshot(self.window_id)?;
+        let scope_ids = self.resolve_scope_ids(&snapshot.accessibility);
+        let nodes = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .filter(|node| {
+                self.selector.matches(&snapshot.accessibility, node)
+                    && self.matches_scope(&snapshot.accessibility, node.id, &scope_ids)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let node = match nodes.as_slice() {
+            [node] => node.clone(),
+            [] => return Err(Error::new("locator did not match any nodes")),
+            _ => {
+                return Err(Error::new(format!(
+                    "locator matched {} nodes instead of exactly one",
+                    nodes.len()
+                )))
+            }
+        };
         let screenshot = harness.capture_screenshot(self.window_id)?;
-        screenshot.crop(node.bounds)
+        screenshot.crop(scale_bounds_for_screenshot(
+            node.bounds,
+            &snapshot,
+            screenshot.width(),
+            screenshot.height(),
+        ))
     }
 
     fn resolve_scope_ids(&self, snapshot: &AccessibilitySnapshot) -> Vec<WidgetId> {
@@ -319,6 +345,31 @@ fn center(bounds: sui_core::Rect) -> Point {
     Point::new(
         bounds.x() + (bounds.width() / 2.0),
         bounds.y() + (bounds.height() / 2.0),
+    )
+}
+
+fn scale_bounds_for_screenshot(
+    bounds: Rect,
+    snapshot: &crate::snapshot::WindowSnapshot,
+    screenshot_width: u32,
+    screenshot_height: u32,
+) -> Rect {
+    let Some(scene) = &snapshot.scene_summary else {
+        return bounds;
+    };
+
+    let viewport = scene.viewport;
+    if viewport.width <= 0.0 || viewport.height <= 0.0 {
+        return bounds;
+    }
+
+    let scale_x = screenshot_width as f32 / viewport.width;
+    let scale_y = screenshot_height as f32 / viewport.height;
+    Rect::new(
+        bounds.x() * scale_x,
+        bounds.y() * scale_y,
+        bounds.width() * scale_x,
+        bounds.height() * scale_y,
     )
 }
 

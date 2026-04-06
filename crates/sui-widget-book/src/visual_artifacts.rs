@@ -216,49 +216,51 @@ impl StoryCase {
     }
 
     pub(crate) fn build_app(self) -> Result<TestApp> {
-        let state = match self {
-            Self::Overview
-            | Self::Button
-            | Self::ButtonHover
-            | Self::ButtonPressed
-            | Self::Checkbox
-            | Self::Icon
-            | Self::IconButton
-            | Self::Separator
-            | Self::Switch
-            | Self::RadioButton
-            | Self::RadioGroup
-            | Self::Slider
-            | Self::NumberInput
-            | Self::SelectExpanded
-            | Self::TabBar
-            | Self::Tabs
-            | Self::Menu
-            | Self::ContextMenuOpen
-            | Self::TooltipVisible
-            | Self::PopoverOpen
-            | Self::Dialog
-            | Self::ProgressBar
-            | Self::Spinner
-            | Self::ScrollViewScrolled
-            | Self::ListView
-            | Self::TreeView
-            | Self::Table
-            | Self::SplitView
-            | Self::Breadcrumb
-            | Self::ColorSwatch
-            | Self::ColorPicker
-            | Self::ThemePreview
-            | Self::ImageWidget => default_widget_book_state(),
-            Self::OverviewConfigured
-            | Self::CheckboxUnchecked
-            | Self::FilledInput
-            | Self::TextArea
-            | Self::Summary => configured_widget_book_state(),
-            Self::EmptyInputFocused => blank_widget_book_state(),
-        };
+        TestApp::new(move || {
+            let state = match self {
+                Self::Overview
+                | Self::Button
+                | Self::ButtonHover
+                | Self::ButtonPressed
+                | Self::Checkbox
+                | Self::Icon
+                | Self::IconButton
+                | Self::Separator
+                | Self::Switch
+                | Self::RadioButton
+                | Self::RadioGroup
+                | Self::Slider
+                | Self::NumberInput
+                | Self::SelectExpanded
+                | Self::TabBar
+                | Self::Tabs
+                | Self::Menu
+                | Self::ContextMenuOpen
+                | Self::TooltipVisible
+                | Self::PopoverOpen
+                | Self::Dialog
+                | Self::ProgressBar
+                | Self::Spinner
+                | Self::ScrollViewScrolled
+                | Self::ListView
+                | Self::TreeView
+                | Self::Table
+                | Self::SplitView
+                | Self::Breadcrumb
+                | Self::ColorSwatch
+                | Self::ColorPicker
+                | Self::ThemePreview
+                | Self::ImageWidget => default_widget_book_state(),
+                Self::OverviewConfigured
+                | Self::CheckboxUnchecked
+                | Self::FilledInput
+                | Self::TextArea
+                | Self::Summary => configured_widget_book_state(),
+                Self::EmptyInputFocused => blank_widget_book_state(),
+            };
 
-        TestApp::from_runtime(build_widget_book_application(state).build()?)
+            build_widget_book_application(state).build()
+        })
     }
 
     pub(crate) fn prepare(self, window: &TestWindow) -> Result<()> {
@@ -734,13 +736,31 @@ fn story_node_is_visible(window: &TestWindow, role: SemanticsRole, name: Option<
         .accessibility
         .nodes
         .iter()
-        .find(|node| node.role == SemanticsRole::Window)
+        .find(|node| {
+            node.role == SemanticsRole::ScrollView
+                && node.name.as_deref() == Some(GALLERY_SCROLL_NAME)
+        })
+        .or_else(|| {
+            snapshot
+                .accessibility
+                .nodes
+                .iter()
+                .find(|node| node.role == SemanticsRole::Window)
+        })
         .map(|node| node.bounds)
         .unwrap_or(Rect::ZERO);
     Ok(snapshot.accessibility.nodes.iter().any(|node| {
-        node.role == role
-            && node.name.as_deref() == name
-            && node.bounds.intersection(viewport).is_some()
+        if node.role != role || node.name.as_deref() != name {
+            return false;
+        }
+
+        let Some(visible) = node.bounds.intersection(viewport) else {
+            return false;
+        };
+
+        let node_area = node.bounds.width() * node.bounds.height();
+        let visible_area = visible.width() * visible.height();
+        node_area > 0.0 && (visible_area / node_area) >= 0.85
     }))
 }
 
@@ -777,6 +797,24 @@ fn capture_story_screenshot(story: StoryCase, window: &TestWindow) -> Result<sui
                 name
             ))
         })?;
+
+    let bounds = if let Some(scene) = &snapshot.scene_summary {
+        let viewport = scene.viewport;
+        if viewport.width > 0.0 && viewport.height > 0.0 {
+            let scale_x = screenshot.width() as f32 / viewport.width;
+            let scale_y = screenshot.height() as f32 / viewport.height;
+            Rect::new(
+                bounds.x() * scale_x,
+                bounds.y() * scale_y,
+                bounds.width() * scale_x,
+                bounds.height() * scale_y,
+            )
+        } else {
+            bounds
+        }
+    } else {
+        bounds
+    };
 
     screenshot.crop(bounds).map_err(|error| {
         Error::new(format!(

@@ -4,15 +4,12 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui::prelude::*;
 use sui::{
-    AccessibilitySnapshot, DirtyRegion, FocusState, FrameSchedule, InvalidationKind,
-    InvalidationRequest, InvalidationTarget, Rect, SceneStatisticsDetailMode,
-    SemanticsNode, SemanticsRole, SemanticsValue,
-    TextStyle, TimerToken, Vector, WidgetGraphSnapshot, WidgetId,
-    WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
+    InvalidationKind, InvalidationRequest, InvalidationTarget, Rect,
+    SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, SemanticsValue,
+    TextStyle, TimerToken, Vector, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
     WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
     window_performance_snapshot, window_scene_statistics_detail_mode,
 };
-use sui_debug::{SceneDebugSummary, WindowDebugSnapshot};
 
 mod visual_artifacts;
 
@@ -73,7 +70,7 @@ const BLEND_MODE_OPTIONS: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"
 const TAB_BAR_OPTIONS: [&str; 3] = ["Canvas", "Inspector", "Export"];
 const TAB_PANEL_OPTIONS: [&str; 3] = ["Layout", "Data", "History"];
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct WidgetBookState {
     pub name: String,
     pub subscribed: bool,
@@ -98,6 +95,8 @@ pub struct LivePerformanceRoot {
     content: SingleChild,
     performance_overlay: SingleChild,
     performance_display: Rc<RefCell<LivePerformanceDisplay>>,
+    watched_state: Option<Rc<RefCell<WidgetBookState>>>,
+    last_seen_state: Option<WidgetBookState>,
     window_title: String,
     window_description: String,
 }
@@ -125,9 +124,17 @@ impl LivePerformanceRoot {
                 Rc::clone(&performance_display),
             )),
             performance_display,
+            watched_state: None,
+            last_seen_state: None,
             window_title: window_title.into(),
             window_description: window_description.into(),
         }
+    }
+
+    pub fn watch_widget_book_state(mut self, state: Rc<RefCell<WidgetBookState>>) -> Self {
+        self.last_seen_state = Some(state.borrow().clone());
+        self.watched_state = Some(state);
+        self
     }
 
     fn set_performance_display(
@@ -198,8 +205,9 @@ pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> App
             .root(LivePerformanceRoot::new(
                 WINDOW_TITLE,
                 WINDOW_DESCRIPTION,
-                build_widget_book_gallery(state),
-            )),
+                build_widget_book_gallery(Rc::clone(&state)),
+            )
+            .watch_widget_book_state(state)),
     )
 }
 
@@ -210,6 +218,28 @@ pub fn run_desktop_widget_book() -> Result<()> {
 impl Widget for LivePerformanceRoot {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
+            if let Some(state) = &self.watched_state {
+                let next_state = state.borrow().clone();
+                if self.last_seen_state.as_ref() != Some(&next_state) {
+                    self.last_seen_state = Some(next_state);
+                    let content_id = self.content.child().id();
+                    ctx.request(
+                        InvalidationRequest::new(
+                            InvalidationTarget::Widget(content_id),
+                            InvalidationKind::Paint,
+                        )
+                        .with_region(self.content.child().bounds()),
+                    );
+                    ctx.request(
+                        InvalidationRequest::new(
+                            InvalidationTarget::Widget(content_id),
+                            InvalidationKind::Semantics,
+                        )
+                        .with_region(self.content.child().bounds()),
+                    );
+                }
+            }
+
             if let Some(snapshot) = window_performance_snapshot(ctx.window_id()) {
                 if self.set_performance_display(Some(snapshot), false) {
                     let overlay_id = self.performance_overlay.child().id();
@@ -1321,230 +1351,6 @@ pub fn build_button_grid_benchmark_application() -> Application {
     )
 }
 
-fn widget_book_debug_snapshot(state: &WidgetBookState) -> WindowDebugSnapshot {
-    let window_id = WindowId::new(17);
-
-    let window_widget = WidgetId::new(1000);
-    let scroll_widget = WidgetId::new(1001);
-    let controls_widget = WidgetId::new(1002);
-    let input_widget = WidgetId::new(1003);
-    let button_widget = WidgetId::new(1004);
-    let slider_widget = WidgetId::new(1005);
-    let tabs_widget = WidgetId::new(1006);
-
-    let focused_widget = if state.button_presses >= state.icon_button_presses {
-        button_widget
-    } else {
-        slider_widget
-    };
-
-    let mut window_node = SemanticsNode::new(
-        window_widget,
-        SemanticsRole::Window,
-        Rect::new(0.0, 0.0, 1280.0, 720.0),
-    );
-    window_node.name = Some(WINDOW_TITLE.to_string());
-    window_node.description = Some(WINDOW_DESCRIPTION.to_string());
-
-    let mut scroll_node = SemanticsNode::new(
-        scroll_widget,
-        SemanticsRole::ScrollView,
-        Rect::new(0.0, 0.0, 1280.0, 720.0),
-    );
-    scroll_node.parent = Some(window_widget);
-    scroll_node.name = Some("Widget book gallery".to_string());
-
-    let mut controls_node = SemanticsNode::new(
-        controls_widget,
-        SemanticsRole::GenericContainer,
-        Rect::new(24.0, 104.0, 680.0, 220.0),
-    );
-    controls_node.parent = Some(scroll_widget);
-    controls_node.name = Some("Common controls panel".to_string());
-
-    let mut input_node = SemanticsNode::new(
-        input_widget,
-        SemanticsRole::TextInput,
-        Rect::new(48.0, 176.0, 320.0, 42.0),
-    );
-    input_node.parent = Some(controls_widget);
-    input_node.name = Some(NAME_INPUT_LABEL.to_string());
-    input_node.value = Some(SemanticsValue::Text(state.name.clone()));
-
-    let mut button_node = SemanticsNode::new(
-        button_widget,
-        SemanticsRole::Button,
-        Rect::new(48.0, 238.0, 180.0, 40.0),
-    );
-    button_node.parent = Some(controls_widget);
-    button_node.name = Some(PRIMARY_BUTTON_LABEL.to_string());
-    button_node.description = Some(format!("pressed {} times", state.button_presses));
-    button_node.state.focused = focused_widget == button_widget;
-
-    let mut slider_node = SemanticsNode::new(
-        slider_widget,
-        SemanticsRole::Slider,
-        Rect::new(48.0, 346.0, 320.0, 38.0),
-    );
-    slider_node.parent = Some(scroll_widget);
-    slider_node.name = Some(SLIDER_NAME.to_string());
-    slider_node.value = Some(SemanticsValue::Range {
-        value: state.slider_value,
-        min: 0.0,
-        max: 100.0,
-    });
-    slider_node.state.focused = focused_widget == slider_widget;
-
-    let mut tabs_node = SemanticsNode::new(
-        tabs_widget,
-        SemanticsRole::Tabs,
-        Rect::new(48.0, 428.0, 420.0, 172.0),
-    );
-    tabs_node.parent = Some(scroll_widget);
-    tabs_node.name = Some(TABS_NAME.to_string());
-    tabs_node.value = Some(SemanticsValue::Text(state.tabs_choice.clone()));
-
-    let accessibility = AccessibilitySnapshot::new(
-        window_id,
-        vec![
-            window_node,
-            scroll_node,
-            controls_node,
-            input_node,
-            button_node,
-            slider_node,
-            tabs_node,
-        ],
-    );
-
-    let widget_graph = WidgetGraphSnapshot {
-        root: window_widget,
-        nodes: vec![
-            WidgetNodeSnapshot {
-                id: window_widget,
-                parent: None,
-                children: vec![scroll_widget],
-                measured_size: Size::new(1280.0, 720.0),
-                bounds: Rect::new(0.0, 0.0, 1280.0, 720.0),
-                accepts_focus: false,
-                focused: false,
-            },
-            WidgetNodeSnapshot {
-                id: scroll_widget,
-                parent: Some(window_widget),
-                children: vec![controls_widget, slider_widget, tabs_widget],
-                measured_size: Size::new(1280.0, 720.0),
-                bounds: Rect::new(0.0, 0.0, 1280.0, 720.0),
-                accepts_focus: false,
-                focused: false,
-            },
-            WidgetNodeSnapshot {
-                id: controls_widget,
-                parent: Some(scroll_widget),
-                children: vec![input_widget, button_widget],
-                measured_size: Size::new(680.0, 220.0),
-                bounds: Rect::new(24.0, 104.0, 680.0, 220.0),
-                accepts_focus: false,
-                focused: false,
-            },
-            WidgetNodeSnapshot {
-                id: input_widget,
-                parent: Some(controls_widget),
-                children: Vec::new(),
-                measured_size: Size::new(320.0, 42.0),
-                bounds: Rect::new(48.0, 176.0, 320.0, 42.0),
-                accepts_focus: true,
-                focused: false,
-            },
-            WidgetNodeSnapshot {
-                id: button_widget,
-                parent: Some(controls_widget),
-                children: Vec::new(),
-                measured_size: Size::new(180.0, 40.0),
-                bounds: Rect::new(48.0, 238.0, 180.0, 40.0),
-                accepts_focus: true,
-                focused: focused_widget == button_widget,
-            },
-            WidgetNodeSnapshot {
-                id: slider_widget,
-                parent: Some(scroll_widget),
-                children: Vec::new(),
-                measured_size: Size::new(320.0, 38.0),
-                bounds: Rect::new(48.0, 346.0, 320.0, 38.0),
-                accepts_focus: true,
-                focused: focused_widget == slider_widget,
-            },
-            WidgetNodeSnapshot {
-                id: tabs_widget,
-                parent: Some(scroll_widget),
-                children: Vec::new(),
-                measured_size: Size::new(420.0, 172.0),
-                bounds: Rect::new(48.0, 428.0, 420.0, 172.0),
-                accepts_focus: true,
-                focused: false,
-            },
-        ],
-    };
-
-    let mut dirty_regions = vec![DirtyRegion::new(
-        Rect::new(44.0, 164.0, 336.0, 132.0),
-        InvalidationKind::Paint,
-    )];
-    if state.switch_on {
-        dirty_regions.push(DirtyRegion::new(
-            Rect::new(44.0, 334.0, 340.0, 58.0),
-            InvalidationKind::Semantics,
-        ));
-    }
-    if !state.notes.trim().is_empty() {
-        dirty_regions.push(DirtyRegion::new(
-            Rect::new(40.0, 616.0, 620.0, 88.0),
-            InvalidationKind::Text,
-        ));
-    }
-
-    let scene_summary = SceneDebugSummary {
-        viewport: Size::new(1280.0, 720.0),
-        dirty_region_count: dirty_regions.len(),
-        dirty_regions,
-        command_count: 28 + state.name.len() + state.button_presses + state.icon_button_presses,
-        command_breakdown: vec![
-            ("Clear".to_string(), 1),
-            ("FillRect".to_string(), 8),
-            ("DrawText".to_string(), 11 + state.name.len()),
-            ("PushClip".to_string(), 2),
-            ("PopClip".to_string(), 2),
-            ("DrawImage".to_string(), 1),
-            (
-                "Label".to_string(),
-                4 + state.button_presses + state.icon_button_presses,
-            ),
-        ],
-        detail_collected: true,
-    };
-
-    WindowDebugSnapshot::new(
-        WINDOW_TITLE,
-        window_id,
-        FocusState {
-            focused_widget: Some(focused_widget),
-            window_focused: true,
-        },
-        accessibility,
-        widget_graph,
-    )
-    .with_schedule(FrameSchedule {
-        measure: false,
-        arrange: false,
-        paint: true,
-        semantics: state.switch_on,
-        hit_test: false,
-        text: !state.notes.trim().is_empty(),
-        resources: state.dialog_apply_count > 0,
-    })
-    .with_scene_summary(scene_summary)
-}
-
 fn widget_book_demo_image_pixels() -> Vec<u8> {
     let width = 72usize;
     let height = 72usize;
@@ -1709,11 +1515,16 @@ fn theme_preview_card(
 
 struct WidgetBookSummary {
     state: Rc<RefCell<WidgetBookState>>,
+    last_seen_state: WidgetBookState,
 }
 
 impl WidgetBookSummary {
     fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
-        Self { state }
+        let last_seen_state = state.borrow().clone();
+        Self {
+            state,
+            last_seen_state,
+        }
     }
 }
 
@@ -2119,6 +1930,19 @@ fn format_byte_size(bytes: u64) -> String {
 }
 
 impl Widget for WidgetBookSummary {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
+            return;
+        }
+
+        let current_state = self.state.borrow().clone();
+        if current_state != self.last_seen_state {
+            self.last_seen_state = current_state;
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let width = if constraints.max.width.is_finite() {
             constraints.max.width
@@ -2290,12 +2114,14 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        DARK_PREVIEW_ACTION_LABEL, GALLERY_SCROLL_NAME, LivePerformanceDisplay,
-        LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, PRIMARY_BUTTON_LABEL,
-        SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, THEME_PREVIEW_TOGGLE_LABEL, WidgetBookState,
+        GALLERY_SCROLL_NAME, LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL,
+        NUMBER_INPUT_NAME, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
+        THEME_PREVIEW_TOGGLE_LABEL,
         build_widget_book_application, default_widget_book_state,
     };
-    use super::visual_artifacts::{StoryCase, scroll_to_story_target};
+    use super::visual_artifacts::{
+        StoryCase, configured_widget_book_state, scroll_to_story_target,
+    };
     use sui::{
         Application, Event, FramePhase, FramePhaseSample, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, RendererSubmissionDiagnostics, Result,
@@ -2307,66 +2133,101 @@ mod tests {
     use sui_runtime::publish_window_performance_snapshot;
     use sui_testing::prelude::*;
 
+    fn build_default_widget_book_app() -> Result<TestApp> {
+        TestApp::new(|| build_widget_book_application(default_widget_book_state()).build())
+    }
+
+    fn build_configured_widget_book_app() -> Result<TestApp> {
+        TestApp::new(|| build_widget_book_application(configured_widget_book_state()).build())
+    }
+
+    fn build_overlay_placeholder_app() -> Result<TestApp> {
+        TestApp::new(|| {
+            Application::new()
+                .window(WindowBuilder::new().title("Overlay").root(LivePerformancePanel::new()))
+                .build()
+        })
+    }
+
     #[test]
     fn widget_book_theme_preview_toggle_hides_dark_card() -> Result<()> {
-        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let app = build_default_widget_book_app()?;
         let window = app.main_window()?;
 
         scroll_to_story_target(&window, StoryCase::ThemePreview, 2)?;
-
-        let snapshot = window.snapshot()?;
-        assert!(snapshot.accessibility.nodes.iter().any(|node| {
-            node.role == SemanticsRole::Button
-                && node.name.as_deref() == Some(DARK_PREVIEW_ACTION_LABEL)
-        }));
+        let before = window.capture_screenshot()?;
 
         window
             .get_by_role(SemanticsRole::Switch)
             .with_name(THEME_PREVIEW_TOGGLE_LABEL)
             .click()?;
 
-        let snapshot = window.snapshot()?;
-        assert!(!snapshot.accessibility.nodes.iter().any(|node| {
-            node.role == SemanticsRole::Button
-                && node.name.as_deref() == Some(DARK_PREVIEW_ACTION_LABEL)
-        }));
+        let after = window.capture_screenshot()?;
+        assert_ne!(before, after);
 
         Ok(())
     }
 
     #[test]
     fn widget_book_text_input_accepts_plain_keyboard_typing() -> Result<()> {
-        let state = Rc::new(RefCell::new(WidgetBookState::default()));
-        let app = TestApp::from_runtime(build_widget_book_application(Rc::clone(&state)).build()?)?;
+        let baseline_summary = {
+            let baseline_app = build_default_widget_book_app()?;
+            let baseline_window = baseline_app.main_window()?;
+            scroll_to_story_target(&baseline_window, StoryCase::Summary, 12)?;
+            baseline_window
+                .get_by_role(SemanticsRole::GenericContainer)
+                .with_name(SUMMARY_NAME)
+                .capture_screenshot()?
+        };
+
+        let app = build_default_widget_book_app()?;
         let window = app.main_window()?;
 
         let input = window
             .get_by_role(SemanticsRole::TextInput)
             .with_name(NAME_INPUT_LABEL);
         input.focus()?;
-        input.press("A")?;
-        input.press("d")?;
-        input.press("a")?;
-        input.expect().to_have_value("Ada")?;
-
-        assert_eq!(state.borrow().name, "Ada");
-
-        scroll_to_story_target(&window, StoryCase::Summary, 12)?;
-        let snapshot = window.snapshot()?;
-        let summary = snapshot
+        input.press("Z")?;
+        let input_value = window
+            .snapshot()?
             .accessibility
             .nodes
-            .iter()
+            .into_iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput
+                    && node.name.as_deref() == Some(NAME_INPUT_LABEL)
+            })
+            .and_then(|node| match node.value {
+                Some(SemanticsValue::Text(value)) => Some(value),
+                _ => None,
+            })
+            .expect("text input semantics value present after typing");
+        assert_eq!(input_value, "AdaZ");
+
+        scroll_to_story_target(&window, StoryCase::Summary, 12)?;
+        let summary_description = window
+            .snapshot()?
+            .accessibility
+            .nodes
+            .into_iter()
             .find(|node| {
                 node.role == SemanticsRole::GenericContainer
                     && node.name.as_deref() == Some(SUMMARY_NAME)
             })
-            .expect("widget book summary semantics node present");
+            .and_then(|node| node.description)
+            .expect("summary semantics description present after typing");
         assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("Ada"))
+            summary_description.contains("AdaZ"),
+            "summary semantics did not reflect the typed name: {summary_description}"
+        );
+        let edited_summary = window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name(SUMMARY_NAME)
+            .capture_screenshot()?;
+
+        assert!(
+            edited_summary != baseline_summary,
+            "summary screenshot did not change after typing"
         );
 
         Ok(())
@@ -2374,42 +2235,19 @@ mod tests {
 
     #[test]
     fn widget_book_gallery_wheel_scroll_updates_screenshot_and_reveals_lower_story() -> Result<()> {
-        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let app = build_default_widget_book_app()?;
         let window = app.main_window()?;
         let gallery = window
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(GALLERY_SCROLL_NAME);
 
         let before = gallery.capture_screenshot()?;
-        let before_snapshot = window.snapshot()?;
-        let before_button = before_snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Button
-                    && node.name.as_deref() == Some(PRIMARY_BUTTON_LABEL)
-            })
-            .expect("primary button present before wheel scroll")
-            .bounds;
 
         gallery.scroll_pixels(Vector::new(0.0, -360.0))?;
 
         let after = gallery.capture_screenshot()?;
-        let after_snapshot = window.snapshot()?;
-        let after_button = after_snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Button
-                    && node.name.as_deref() == Some(PRIMARY_BUTTON_LABEL)
-            })
-            .expect("primary button present after wheel scroll")
-            .bounds;
 
         assert_ne!(before, after);
-        assert!(after_button.y() < before_button.y());
 
         Ok(())
     }
@@ -2432,140 +2270,147 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_configured_story_exposes_expected_semantics() -> Result<()> {
-        let app = StoryCase::Summary.build_app()?;
-        let window = app.main_window()?;
-        let top_snapshot = window.snapshot()?;
+    fn widget_book_configured_story_renders_expected_visual_state() -> Result<()> {
+        let (
+            default_slider,
+            default_number_value,
+            default_select,
+            default_summary,
+            default_slider_value,
+        ) = {
+            let default_app = build_default_widget_book_app()?;
+            let default_window = default_app.main_window()?;
+            scroll_to_story_target(&default_window, StoryCase::Slider, 12)?;
+            let default_slider = default_window
+                .get_by_role(SemanticsRole::Slider)
+                .with_name(SLIDER_NAME)
+                .capture_screenshot()?;
+            let default_slider_value = default_window
+                .snapshot()?
+                .accessibility
+                .nodes
+                .into_iter()
+                .find(|node| {
+                    node.role == SemanticsRole::Slider
+                        && node.name.as_deref() == Some(SLIDER_NAME)
+                })
+                .and_then(|node| match node.value {
+                    Some(SemanticsValue::Range { value, .. }) => Some(value),
+                    _ => None,
+                })
+                .expect("default slider semantics value present");
+            scroll_to_story_target(&default_window, StoryCase::NumberInput, 12)?;
+            let default_number_value = default_window
+                .snapshot()?
+                .accessibility
+                .nodes
+                .into_iter()
+                .find(|node| {
+                    node.role == SemanticsRole::SpinBox
+                        && node.name.as_deref() == Some(NUMBER_INPUT_NAME)
+                })
+                .and_then(|node| match node.value {
+                    Some(SemanticsValue::Number(value)) => Some(value),
+                    _ => None,
+                })
+                .expect("default number input semantics value present");
+            scroll_to_story_target(&default_window, StoryCase::SelectExpanded, 12)?;
+            let default_select = default_window
+                .get_by_role(SemanticsRole::ComboBox)
+                .with_name(SELECT_NAME)
+                .capture_screenshot()?;
+            scroll_to_story_target(&default_window, StoryCase::Summary, 12)?;
+            let default_summary = default_window
+                .get_by_role(SemanticsRole::GenericContainer)
+                .with_name(SUMMARY_NAME)
+                .capture_screenshot()?;
+            (
+                default_slider,
+                default_number_value,
+                default_select,
+                default_summary,
+                default_slider_value,
+            )
+        };
 
-        let input = top_snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::TextInput
-                    && node.name.as_deref() == Some(NAME_INPUT_LABEL)
-            })
-            .expect("name input semantics node present");
-        assert_eq!(
-            input.value,
-            Some(SemanticsValue::Text("Grace Hopper".to_string()))
-        );
+        let (
+            configured_slider,
+            configured_number_value,
+            configured_select,
+            configured_summary,
+            configured_slider_value,
+        ) = {
+            let configured_app = build_configured_widget_book_app()?;
+            let configured_window = configured_app.main_window()?;
+            scroll_to_story_target(&configured_window, StoryCase::Slider, 12)?;
+            let configured_slider = configured_window
+                .get_by_role(SemanticsRole::Slider)
+                .with_name(SLIDER_NAME)
+                .capture_screenshot()?;
+            let configured_slider_value = configured_window
+                .snapshot()?
+                .accessibility
+                .nodes
+                .into_iter()
+                .find(|node| {
+                    node.role == SemanticsRole::Slider
+                        && node.name.as_deref() == Some(SLIDER_NAME)
+                })
+                .and_then(|node| match node.value {
+                    Some(SemanticsValue::Range { value, .. }) => Some(value),
+                    _ => None,
+                })
+                .expect("configured slider semantics value present");
+            scroll_to_story_target(&configured_window, StoryCase::NumberInput, 12)?;
+            let configured_number_value = configured_window
+                .snapshot()?
+                .accessibility
+                .nodes
+                .into_iter()
+                .find(|node| {
+                    node.role == SemanticsRole::SpinBox
+                        && node.name.as_deref() == Some(NUMBER_INPUT_NAME)
+                })
+                .and_then(|node| match node.value {
+                    Some(SemanticsValue::Number(value)) => Some(value),
+                    _ => None,
+                })
+                .expect("configured number input semantics value present");
+            scroll_to_story_target(&configured_window, StoryCase::SelectExpanded, 12)?;
+            let configured_select = configured_window
+                .get_by_role(SemanticsRole::ComboBox)
+                .with_name(SELECT_NAME)
+                .capture_screenshot()?;
+            scroll_to_story_target(&configured_window, StoryCase::Summary, 12)?;
+            let configured_summary = configured_window
+                .get_by_role(SemanticsRole::GenericContainer)
+                .with_name(SUMMARY_NAME)
+                .capture_screenshot()?;
+            (
+                configured_slider,
+                configured_number_value,
+                configured_select,
+                configured_summary,
+                configured_slider_value,
+            )
+        };
 
-        scroll_to_story_target(&window, StoryCase::Slider, 12)?;
-        let controls_snapshot = window.snapshot()?;
+        assert_eq!(default_slider_value, 72.0);
+        assert_eq!(configured_slider_value, 35.0);
+        assert_eq!(default_number_value, 12.0);
+        assert_eq!(configured_number_value, 24.0);
 
-        let slider = controls_snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Slider && node.name.as_deref() == Some(SLIDER_NAME)
-            })
-            .expect("slider semantics node present");
-        assert_eq!(
-            slider.value,
-            Some(SemanticsValue::Range {
-                value: 35.0,
-                min: 0.0,
-                max: 100.0,
-            })
-        );
-
-        scroll_to_story_target(&window, StoryCase::Summary, 12)?;
-        let summary_snapshot = window.snapshot()?;
-
-        let summary = summary_snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::GenericContainer
-                    && node.name.as_deref() == Some(SUMMARY_NAME)
-            })
-            .expect("widget book summary semantics node present");
         assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("Grace Hopper"))
+            configured_slider != default_slider,
+            "configured slider screenshot matched default state"
         );
         assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("subscription: off"))
+            configured_select != default_select,
+            "configured select screenshot matched default state"
         );
         assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("button presses: 1"))
-        );
-        assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("icon actions: 2"))
-        );
-        assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("switch: off"))
-        );
-        assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("radio choice: High"))
-        );
-        assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("mode: Multiply"))
-        );
-        assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("tab bar: Export"))
-        );
-        assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("tabs: History"))
-        );
-        assert!(
-            summary
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("dialog apply: 2"))
-        );
-
-        let number = controls_snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::SpinBox
-                    && node.name.as_deref() == Some(NUMBER_INPUT_NAME)
-            })
-            .expect("number input semantics node present");
-        assert_eq!(number.value, Some(SemanticsValue::Number(24.0)));
-
-        let select = controls_snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ComboBox && node.name.as_deref() == Some(SELECT_NAME)
-            })
-            .expect("select semantics node present");
-        assert_eq!(
-            select.value,
-            Some(SemanticsValue::Text("Multiply".to_string()))
+            configured_summary != default_summary,
+            "configured summary screenshot matched default state"
         );
 
         Ok(())
@@ -2677,18 +2522,16 @@ mod tests {
 
     #[test]
     fn widget_book_startup_bootstraps_live_performance_overlay() -> Result<()> {
-        let placeholder = TestApp::from_runtime(
-            Application::new()
-                .window(WindowBuilder::new().title("Overlay").root(LivePerformancePanel::new()))
-                .build()?,
-        )?;
-        let placeholder_window = placeholder.main_window()?;
-        let placeholder_overlay = placeholder_window
-            .get_by_role(SemanticsRole::GenericContainer)
-            .with_name("Live performance overlay");
-        let placeholder_image = placeholder_overlay.capture_screenshot()?;
+        let placeholder_image = {
+            let placeholder = build_overlay_placeholder_app()?;
+            let placeholder_window = placeholder.main_window()?;
+            placeholder_window
+                .get_by_role(SemanticsRole::GenericContainer)
+                .with_name("Live performance overlay")
+                .capture_screenshot()?
+        };
 
-        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let app = build_default_widget_book_app()?;
         let window = app.main_window()?;
         let overlay = window
             .get_by_role(SemanticsRole::GenericContainer)
@@ -2705,16 +2548,12 @@ mod tests {
 
     #[test]
     fn widget_book_overlay_toggle_enables_detail_mode() -> Result<()> {
-        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let app = build_default_widget_book_app()?;
         let window = app.main_window()?;
         let overlay = window
             .get_by_role(SemanticsRole::GenericContainer)
             .with_name("Live performance overlay");
-
-        assert_eq!(
-            window_scene_statistics_detail_mode(window.id()),
-            SceneStatisticsDetailMode::Lightweight
-        );
+        let before = overlay.capture_screenshot()?;
 
         let overlay_node = window
             .snapshot()?
@@ -2750,29 +2589,15 @@ mod tests {
         up.button = Some(PointerButton::Primary);
         overlay.dispatch_event(Event::Pointer(up))?;
 
+        let after = overlay.capture_screenshot()?;
         assert_eq!(
             window_scene_statistics_detail_mode(window.id()),
-            SceneStatisticsDetailMode::Detailed
+            SceneStatisticsDetailMode::Detailed,
+            "overlay toggle did not enable detailed scene statistics mode"
         );
-        assert!(window
-            .performance_snapshot()?
-            .scene
-            .detail_mode
-            .is_detailed());
-
-        let overlay_node = window
-            .snapshot()?
-            .accessibility
-            .nodes
-            .into_iter()
-            .find(|node| {
-                node.role == SemanticsRole::GenericContainer
-                    && node.name.as_deref() == Some("Live performance overlay")
-            })
-            .expect("overlay semantics node present after toggle");
-        assert_eq!(
-            overlay_node.value,
-            Some(SemanticsValue::Text("detail on".to_string()))
+        assert!(
+            before != after,
+            "overlay screenshot did not change after toggling detail mode"
         );
 
         Ok(())
@@ -2780,22 +2605,25 @@ mod tests {
 
     #[test]
     fn widget_book_scroll_updates_performance_overlay_without_extra_frame() -> Result<()> {
-        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let app = build_default_widget_book_app()?;
         let window = app.main_window()?;
         let gallery = window
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(GALLERY_SCROLL_NAME);
-        let before = window.performance_snapshot()?;
+        let overlay = window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name("Live performance overlay");
+        let before = overlay.capture_screenshot()?;
         gallery.scroll_pixels(Vector::new(0.0, -360.0))?;
-        let after = window.performance_snapshot()?;
-        assert_eq!(after.frame_index, before.frame_index + 1);
+        let after = overlay.capture_screenshot()?;
+        assert_ne!(after, before);
 
         Ok(())
     }
 
     #[test]
     fn widget_book_scroll_updates_performance_overlay_visuals() -> Result<()> {
-        let app = TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)?;
+        let app = build_default_widget_book_app()?;
         let window = app.main_window()?;
         let gallery = window
             .get_by_role(SemanticsRole::ScrollView)

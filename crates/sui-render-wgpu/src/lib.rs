@@ -844,6 +844,7 @@ impl RetainedCompositorState {
                     update.kind,
                     SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
                 ) {
+                    packet_dirty_layers.insert(cached_root);
                     merge_damage_rect(
                         &mut tiled_damage,
                         cached_root,

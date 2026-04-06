@@ -13,3 +13,4 @@ sui-platform = { workspace = true }
 sui-render-wgpu = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
+winit = { workspace = true }

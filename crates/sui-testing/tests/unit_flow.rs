@@ -14,8 +14,8 @@ use sui_testing::prelude::*;
 
 #[test]
 fn saves_form_in_a_unit_test() -> Result<()> {
-    let state = Rc::new(RefCell::new(AppState::default()));
     let app = TestApp::new(|| {
+        let state = Rc::new(RefCell::new(AppState::default()));
         Application::new().window(
             WindowBuilder::new()
                 .title("Unit Test Example")
