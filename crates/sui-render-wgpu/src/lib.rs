@@ -2034,7 +2034,7 @@ impl RgbaImage {
 }
 
 const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
-const DEFAULT_FEATHER_WIDTH: f32 = 0.15;
+const DEFAULT_FEATHER_WIDTH: f32 = 1.0;
 
 impl WgpuRenderer {
     pub fn new() -> Self {

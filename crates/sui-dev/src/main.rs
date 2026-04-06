@@ -76,7 +76,7 @@ impl RenderSettingsTab {
                 )
                 .with_child(
                     Label::new(
-                        "A width around 0.15 matches the current default. Larger values exaggerate the fringe to make behavior differences obvious during visual checks.",
+                        "A width around 1.0 matches the current default. Larger values exaggerate the fringe to make behavior differences obvious during visual checks.",
                     )
                     .font_size(13.0)
                     .line_height(18.0)
