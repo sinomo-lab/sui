@@ -1349,6 +1349,8 @@ fn publish_frame_performance(
             renderer_stats.pass_count,
             renderer_stats.draw_count,
             renderer_stats.uploaded_vertex_bytes,
+            renderer_stats.text_glyph_instance_count,
+            renderer_stats.text_vertex_bytes,
             renderer_stats.visible_layer_count,
             renderer_stats.visible_tile_count,
             renderer_stats.reused_tile_count,

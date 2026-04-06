@@ -20,8 +20,9 @@ use sui::{
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, RendererSubmissionDiagnostics,
-    SceneStatistics, TextCacheDiagnostics, WindowPerformanceSnapshot,
+    SceneStatistics, SceneStatisticsDetailMode, TextCacheDiagnostics, WindowPerformanceSnapshot,
     clear_window_performance_snapshots, publish_window_performance_snapshot,
+    set_window_scene_statistics_detail_mode,
     window_performance_text_caches, window_scene_statistics_detail_mode,
 };
 use sui_widget_book::{
@@ -1054,6 +1055,8 @@ fn publish_frame_performance(
             renderer_stats.pass_count,
             renderer_stats.draw_count,
             renderer_stats.uploaded_vertex_bytes,
+            renderer_stats.text_glyph_instance_count,
+            renderer_stats.text_vertex_bytes,
             renderer_stats.visible_layer_count,
             renderer_stats.visible_tile_count,
             renderer_stats.reused_tile_count,
@@ -1287,6 +1290,8 @@ fn widget_book_scroll_fps_benchmark() -> Result<()> {
     })?;
     let window_id = harness.main_window_id();
 
+    set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+
     harness.dispatch(window_id, HostInputEvent::Focused(true))?;
 
     // Warm-up: initial render + one scroll to prime caches
@@ -1378,6 +1383,7 @@ fn widget_book_scroll_fps_benchmark() -> Result<()> {
     if let Some(snapshot) = harness.snapshot(window_id)?.performance {
         println!("\n--- Last frame scene stats ---");
         println!("  commands:        {}", snapshot.scene.command_count);
+        println!("  text commands:   {}", snapshot.scene.text_command_count);
         println!("  dirty regions:   {}", snapshot.scene.dirty_region_count);
         println!("  dirty coverage:  {:.1}%", snapshot.scene.dirty_coverage);
         println!("  gpu draws:       {}", snapshot.renderer_submission.draw_count);
@@ -1385,7 +1391,9 @@ fn widget_book_scroll_fps_benchmark() -> Result<()> {
         println!("  tiles visible:   {}", snapshot.renderer_submission.visible_tile_count);
         println!("  tiles reused:    {}", snapshot.renderer_submission.reused_tile_count);
         println!("  tiles regen:     {}", snapshot.renderer_submission.regenerated_tile_count);
+        println!("  glyph instances: {}", snapshot.renderer_submission.text_glyph_instance_count);
         println!("  vertex bytes:    {}", snapshot.renderer_submission.uploaded_vertex_bytes);
+        println!("  text bytes:      {}", snapshot.renderer_submission.text_vertex_bytes);
         println!(
             "  path cache:      {} entries, {} hits, {} misses",
             snapshot.text_caches.renderer_path.entries,

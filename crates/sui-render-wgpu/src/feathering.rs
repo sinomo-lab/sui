@@ -700,4 +700,3 @@ fn negate_vector(vector: Vector) -> Vector {
 fn offset_point(point: Point, offset: Vector) -> Point {
     Point::new(point.x + offset.x, point.y + offset.y)
 }
-
