@@ -908,6 +908,17 @@ impl RetainedCompositorState {
                 )
             })
             .collect::<HashMap<_, _>>();
+        let cached_tile_owners = snapshot
+            .layers
+            .keys()
+            .copied()
+            .map(|layer_id| {
+                (
+                    layer_id,
+                    owning_cached_root(Some(layer_id), &snapshot.layers, &cached_roots),
+                )
+            })
+            .collect::<HashMap<_, _>>();
         let mut packet_dirty_layers = HashSet::new();
         let mut tiled_damage = HashMap::<SceneLayerId, Option<Rect>>::new();
         let current_layers = snapshot.layers.keys().copied().collect::<HashSet<_>>();
@@ -932,21 +943,21 @@ impl RetainedCompositorState {
                 continue;
             }
 
-            if let Some(cached_root) = cached_coverage.get(&update.layer_id).copied().flatten() {
+            if let Some(cached_root) = cached_tile_owners.get(&update.layer_id).copied().flatten() {
                 if matches!(
                     update.kind,
                     SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
-                ) {
+                ) || cached_root != update.layer_id
+                {
                     packet_dirty_layers.insert(cached_root);
                     merge_damage_rect(
                         &mut tiled_damage,
                         cached_root,
-                        update.damage.or(Some(update.content_bounds)),
+                        update.damage.or(Some(update.paint_bounds)),
                     );
                 }
-                if cached_root == update.layer_id {
-                    continue;
-                }
+
+                continue;
             }
 
             match update.kind {
@@ -1545,6 +1556,21 @@ fn nearest_cached_root(
         }
         current = layers.get(&layer_id).and_then(|layer| layer.parent);
     }
+    None
+}
+
+fn owning_cached_root(
+    mut current: Option<SceneLayerId>,
+    layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    cached_roots: &HashSet<SceneLayerId>,
+) -> Option<SceneLayerId> {
+    while let Some(layer_id) = current {
+        if cached_roots.contains(&layer_id) {
+            return Some(layer_id);
+        }
+        current = layers.get(&layer_id).and_then(|layer| layer.parent);
+    }
+
     None
 }
 
@@ -7474,6 +7500,123 @@ mod tests {
 
         let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
+    }
+
+    #[test]
+    fn retained_compositor_routes_nested_cached_descendant_damage_into_tile_owner() {
+        let outer_id = WidgetId::new(83);
+        let inner_id = WidgetId::new(84);
+        let leaf_id = WidgetId::new(85);
+
+        let outer_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(outer_id),
+            outer_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached);
+        let inner_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(inner_id),
+            inner_id,
+            Rect::new(256.0, 0.0, 256.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(256.0, 0.0, 256.0, 128.0))
+        .with_paint_bounds(Rect::new(256.0, 0.0, 256.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached);
+        let leaf_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(leaf_id),
+            leaf_id,
+            Rect::new(300.0, 24.0, 48.0, 48.0),
+        )
+        .with_content_bounds(Rect::new(300.0, 24.0, 48.0, 48.0))
+        .with_paint_bounds(Rect::new(300.0, 24.0, 48.0, 48.0));
+
+        let build_scene = |leaf_brush: Color| {
+            let mut leaf_scene = Scene::new();
+            leaf_scene.push(SceneCommand::FillRect {
+                rect: leaf_descriptor.bounds,
+                brush: leaf_brush.into(),
+            });
+
+            let mut inner_scene = Scene::new();
+            inner_scene.push(SceneCommand::FillRect {
+                rect: inner_descriptor.bounds,
+                brush: Color::rgba(0.12, 0.12, 0.16, 1.0).into(),
+            });
+            inner_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                leaf_descriptor.clone(),
+                leaf_scene,
+            )));
+
+            let mut outer_scene = Scene::new();
+            outer_scene.push(SceneCommand::FillRect {
+                rect: outer_descriptor.bounds,
+                brush: Color::rgba(0.08, 0.08, 0.10, 1.0).into(),
+            });
+            outer_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                inner_descriptor.clone(),
+                inner_scene,
+            )));
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                outer_descriptor.clone(),
+                outer_scene,
+            )));
+            scene
+        };
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(36),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    outer_descriptor.clone(),
+                )
+                .with_damage(outer_descriptor.paint_bounds),
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    inner_descriptor.clone(),
+                )
+                .with_damage(inner_descriptor.paint_bounds),
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    leaf_descriptor.clone(),
+                )
+                .with_damage(leaf_descriptor.paint_bounds),
+            ],
+            scene: build_scene(Color::rgba(1.0, 0.0, 0.0, 1.0)),
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
+
+        frame.scene = build_scene(Color::rgba(0.0, 1.0, 0.0, 1.0));
+        frame.layer_updates = vec![
+            SceneLayerUpdate::from_descriptor(
+                SceneLayerUpdateKind::Content,
+                leaf_descriptor.clone(),
+            )
+            .with_damage(leaf_descriptor.paint_bounds),
+        ];
+
+        let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_ne!(first.scene_vertices, second.scene_vertices);
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
         assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
         assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
