@@ -642,8 +642,13 @@ impl VirtualScrollView {
     }
 
     fn update_visible_range(&mut self, viewport_height: f32) {
-        let visible_top = self.offset_y;
-        let visible_bottom = self.offset_y + viewport_height;
+        // Extend the visible window by a buffer zone so that small scrolls
+        // do not change the set of painted children.  This keeps the scene
+        // content stable, allowing the tile cache to reuse previously
+        // generated tiles instead of regenerating them from scratch.
+        let overdraw = viewport_height * 0.35;
+        let visible_top = (self.offset_y - overdraw).max(0.0);
+        let visible_bottom = self.offset_y + viewport_height + overdraw;
         let child_count = self.children.len();
         let mut start = 0;
         while start < child_count {
@@ -1512,6 +1517,8 @@ mod tests {
         );
 
         let _ = runtime.render(window_id).unwrap();
+        // With the overdraw buffer (35% of viewport = 14px for a 40px
+        // viewport), only items 0 and 1 are initially visible.
         assert_eq!(*counts.borrow(), vec![1, 1, 0, 0]);
 
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
@@ -1521,7 +1528,10 @@ mod tests {
             .unwrap();
         let _ = runtime.render(window_id).unwrap();
 
-        assert_eq!(*counts.borrow(), vec![1, 2, 1, 0]);
+        // After scrolling 32px, the overdraw buffer keeps item 0 in the
+        // visible range (its bottom at y=30 is still within the buffer zone
+        // above the viewport), while item 2 enters the visible range.
+        assert_eq!(*counts.borrow(), vec![2, 2, 1, 0]);
     }
 
     #[test]
@@ -1553,9 +1563,12 @@ mod tests {
 
     #[test]
     fn virtual_scroll_view_skips_repaint_while_visible_range_is_unchanged() {
+        // Use a wider viewport (80px) so the overdraw buffer (35% = 28px)
+        // is large enough that a small 4px scroll does not bring new items
+        // into the visible range.
         let counts = Rc::new(RefCell::new(vec![0usize; 4]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
                 VirtualScrollView::new()
                     .with_child(PaintCounterBox::new(
                         Size::new(80.0, 30.0),
@@ -1585,16 +1598,19 @@ mod tests {
         );
 
         let _ = runtime.render(window_id).unwrap();
-        assert_eq!(*counts.borrow(), vec![1, 1, 0, 0]);
+        // All 4 items fit within the 80px viewport + 28px overdraw = 108px.
+        assert_eq!(*counts.borrow(), vec![1, 1, 1, 1]);
 
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
-        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -8.0)));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -4.0)));
         runtime
             .handle_event(window_id, Event::Pointer(scroll))
             .unwrap();
         let _ = runtime.render(window_id).unwrap();
 
-        assert_eq!(*counts.borrow(), vec![1, 1, 0, 0]);
+        // A small 4px scroll should not change the visible range when
+        // the overdraw buffer covers all items.
+        assert_eq!(*counts.borrow(), vec![1, 1, 1, 1]);
     }
 
     #[test]

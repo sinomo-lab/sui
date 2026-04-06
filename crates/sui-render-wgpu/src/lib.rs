@@ -785,14 +785,14 @@ impl RetainedCompositorState {
         let mut tiled_damage = HashMap::<SceneLayerId, Option<Rect>>::new();
         let current_layers = snapshot.layers.keys().copied().collect::<HashSet<_>>();
         let mut root_dirty = global_rebuild;
-        let mut has_content_updates = false;
+        let mut _has_content_updates = false;
 
         for update in &frame.layer_updates {
             if matches!(
                 update.kind,
                 SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
             ) {
-                has_content_updates = true;
+                _has_content_updates = true;
             }
 
             if !current_layers.contains(&update.layer_id) {
@@ -840,9 +840,25 @@ impl RetainedCompositorState {
             }
         }
 
-        if has_content_updates {
+        if _has_content_updates {
+            let content_damage: Option<Rect> = frame
+                .layer_updates
+                .iter()
+                .filter(|update| {
+                    matches!(
+                        update.kind,
+                        SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
+                    )
+                })
+                .fold(None, |current, update| {
+                    let update_damage = update.damage.unwrap_or(update.content_bounds);
+                    Some(match current {
+                        Some(existing) => existing.union(update_damage),
+                        None => update_damage,
+                    })
+                });
             for &cached_root in &cached_roots {
-                merge_damage_rect(&mut tiled_damage, cached_root, None);
+                merge_damage_rect(&mut tiled_damage, cached_root, content_damage);
             }
         }
 
@@ -1990,7 +2006,7 @@ impl RgbaImage {
 }
 
 const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
-const DEFAULT_FEATHER_WIDTH: f32 = 1.0;
+const DEFAULT_FEATHER_WIDTH: f32 = 0.15;
 const AA_FLATTEN_TOLERANCE: f32 = 0.1;
 
 impl WgpuRenderer {
@@ -3275,9 +3291,20 @@ fn batch_draw_ops(
     let mut passes = Vec::new();
 
     for op in &draw_ops.draw_ops {
-        let share_pass = passes
-            .last()
-            .is_some_and(|pass: &PreparedPassBatch| pass.clip_state_index == op.clip_state_index);
+        let share_pass = passes.last().is_some_and(|pass: &PreparedPassBatch| {
+            if pass.clip_state_index == op.clip_state_index {
+                return true;
+            }
+            
+            let pass_clip = &draw_ops.clip_states[pass.clip_state_index];
+            let op_clip = &draw_ops.clip_states[op.clip_state_index];
+            pass_clip.clip_paths.len() == op_clip.clip_paths.len()
+                && pass_clip
+                    .clip_paths
+                    .iter()
+                    .zip(op_clip.clip_paths.iter())
+                    .all(|(a, b)| a.start == b.start && a.len == b.len)
+        });
         if !share_pass {
             let clip_state = &draw_ops.clip_states[op.clip_state_index];
             passes.push(PreparedPassBatch {
@@ -6554,8 +6581,8 @@ mod tests {
         let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
     }
 
     #[test]

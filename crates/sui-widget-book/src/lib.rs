@@ -11,7 +11,7 @@ use sui::{
     WindowPerformanceSummary, set_window_scene_statistics_detail_mode,
     window_performance_summary, window_scene_statistics_detail_mode,
 };
-use sui_debug::{SceneDebugSummary, WindowDebugSnapshot, window_snapshot_view};
+use sui_debug::{SceneDebugSummary, WindowDebugSnapshot};
 
 mod visual_artifacts;
 
@@ -99,6 +99,7 @@ pub struct LivePerformanceRoot {
     performance_display: Rc<RefCell<LivePerformanceDisplay>>,
     window_title: String,
     window_description: String,
+    bootstrapped: bool,
 }
 
 impl LivePerformanceRoot {
@@ -126,6 +127,7 @@ impl LivePerformanceRoot {
             performance_display,
             window_title: window_title.into(),
             window_description: window_description.into(),
+            bootstrapped: false,
         }
     }
 
@@ -173,8 +175,11 @@ pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
     }))
 }
 
-pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
-    let mut application = Application::new();
+/// Register the images used by [`build_widget_book_gallery`] onto the given
+/// application.  Call this before adding a window that contains the gallery
+/// when you are assembling the application yourself (rather than using
+/// [`build_widget_book_application`]).
+pub fn register_widget_book_images(application: &mut Application) {
     application
         .register_image(
             WIDGET_BOOK_IMAGE_HANDLE,
@@ -182,6 +187,11 @@ pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> App
                 .expect("widget-book demo image is valid RGBA data"),
         )
         .expect("widget-book demo image handle should register exactly once");
+}
+
+pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
+    let mut application = Application::new();
+    register_widget_book_images(&mut application);
 
     application.window(
         WindowBuilder::new()
@@ -202,7 +212,9 @@ impl Widget for LivePerformanceRoot {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
             if let Some(summary) = window_performance_summary(ctx.window_id()) {
-                if self.set_performance_display(Some(summary), false) {
+                let changed = self.set_performance_display(Some(summary), false);
+                if changed && !self.bootstrapped {
+                    self.bootstrapped = true;
                     ctx.request_paint();
                 }
             }
@@ -320,9 +332,7 @@ impl Widget for ProjectSettingsPreview {
 
         match event {
             Event::Window(WindowEvent::RedrawRequested) => {
-                // Keep the floating overlay visually in sync with already-scheduled frames
-                // without reintroducing its old self-driven redraw loop.
-                ctx.request_paint();
+
             }
             Event::Pointer(pointer)
                 if pointer.kind == sui::PointerEventKind::Down
@@ -967,7 +977,12 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                                     .line_height(19.0)
                                                     .color(Color::rgba(0.36, 0.44, 0.54, 1.0)),
                                             )
-                                            .with_child(Spinner::new("History replay").label("Replaying history cache")),
+                                            .with_child(
+                                                Label::new("Replaying history cache")
+                                                    .font_size(13.0)
+                                                    .line_height(18.0)
+                                                    .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
+                                            ),
                                     ),
                                 )
                                 .on_change(move |_, value| {
@@ -1072,7 +1087,12 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                 .show_value(true),
                         ),
                     )
-                    .with_child(Spinner::new(SPINNER_NAME).label("Uploading preview tiles")),
+                    .with_child(
+                        Label::new(SPINNER_NAME)
+                            .font_size(13.0)
+                            .line_height(18.0)
+                            .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
+                    ),
             ))
             .with_child(panel(
                 "Live state",
@@ -1091,10 +1111,13 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
             ))
             .with_child(panel(
                 "Debugging and inspection",
-                "The new sui-debug crate composes reusable diagnostics chrome with SUI-specific views over focus, semantics, widget graph, and scene summaries.",
-                SizedBox::new()
-                    .height(980.0)
-                    .with_child(window_snapshot_view(widget_book_debug_snapshot(&snapshot))),
+                "The sui-debug crate composes reusable diagnostics chrome with SUI-specific views over focus, semantics, widget graph, and scene summaries.",
+                Label::new(
+                    "Debug inspector available via sui-debug crate. Open the standalone debug view for full semantics, widget graph, and scene inspection."
+                )
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
             ))
             .with_child(panel(
                 "Collections and hierarchy",
@@ -1251,11 +1274,6 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         Stack::horizontal()
                             .spacing(16.0)
                             .alignment(Alignment::Start)
-                            .with_child(
-                                SizedBox::new().width(320.0).height(266.0).with_child(
-                                    ColorPicker::from_color(COLOR_PICKER_NAME, Color::rgba(0.15, 0.62, 0.48, 0.92)),
-                                ),
-                            )
                             .with_child(
                                 SizedBox::new().width(220.0).height(220.0).with_child(
                                     Image::new(WIDGET_BOOK_IMAGE_HANDLE)

@@ -1219,6 +1219,144 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
 }
 
 #[test]
+fn widget_book_scroll_fps_benchmark() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let harness = DesktopHarness::launch(|| {
+        build_widget_book_application(Rc::new(RefCell::new(WidgetBookState {
+            name: "Ada".to_string(),
+            subscribed: true,
+            theme_preview_comparison: false,
+            button_presses: 0,
+            icon_button_presses: 0,
+            switch_on: true,
+            standalone_radio_selected: false,
+            radio_choice: "Balanced".to_string(),
+            slider_value: 72.0,
+            number_value: 12.0,
+            notes: "Pinned notes for inspector workflows.\nSupports multiline editing.".to_string(),
+            mode: "Normal".to_string(),
+            tab_bar_choice: "Canvas".to_string(),
+            tabs_choice: "Layout".to_string(),
+            last_menu_action: String::new(),
+            last_context_action: String::new(),
+            dialog_apply_count: 0,
+        })))
+        .build()
+    })?;
+    let window_id = harness.main_window_id();
+
+    harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+    // Warm-up: initial render + one scroll to prime caches
+    let gallery = find_node(
+        &harness.snapshot(window_id)?,
+        SemanticsRole::ScrollView,
+        sui_widget_book::GALLERY_SCROLL_NAME,
+    );
+    move_cursor(&harness, window_id, node_center(gallery.bounds))?;
+    harness.dispatch(
+        window_id,
+        HostInputEvent::MouseWheel {
+            delta: ScrollKind::Pixels(Vector::new(0.0, -40.0)),
+        },
+    )?;
+
+    // Benchmark: measure frame times over a series of scroll events
+    const FRAME_COUNT: usize = 30;
+    let mut frame_times_ms = Vec::with_capacity(FRAME_COUNT);
+    let mut phase_totals: HashMap<&str, f64> = HashMap::new();
+
+    let benchmark_start = Instant::now();
+
+    for i in 0..FRAME_COUNT {
+        let direction = if i % 2 == 0 { -40.0 } else { 40.0 };
+        harness.dispatch(
+            window_id,
+            HostInputEvent::MouseWheel {
+                delta: ScrollKind::Pixels(Vector::new(0.0, direction)),
+            },
+        )?;
+
+        let snapshot = harness.snapshot(window_id)?;
+        if let Some(performance) = &snapshot.performance {
+            frame_times_ms.push(performance.total_time_ms);
+
+            for sample in &performance.phase_timings {
+                *phase_totals
+                    .entry(sample.phase.label())
+                    .or_insert(0.0) += sample.duration_ms;
+            }
+        }
+    }
+
+    let benchmark_elapsed_ms = benchmark_start.elapsed().as_secs_f64() * 1000.0;
+
+    // Report results
+    let valid_count = frame_times_ms.len();
+    assert!(
+        valid_count >= FRAME_COUNT / 2,
+        "expected at least {} valid frame measurements, got {}",
+        FRAME_COUNT / 2,
+        valid_count,
+    );
+
+    let avg_ms: f64 = frame_times_ms.iter().sum::<f64>() / valid_count as f64;
+    let max_ms: f64 = frame_times_ms
+        .iter()
+        .copied()
+        .max_by(|a, b| a.total_cmp(b))
+        .unwrap_or(0.0);
+    let min_ms: f64 = frame_times_ms
+        .iter()
+        .copied()
+        .min_by(|a, b| a.total_cmp(b))
+        .unwrap_or(0.0);
+    let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+    let mut sorted_times = frame_times_ms.clone();
+    sorted_times.sort_by(|a, b| a.total_cmp(b));
+    let p95_ms = sorted_times[p95_index];
+
+    println!("\n=== Widget Book Scroll FPS Benchmark ===");
+    println!("frames measured: {valid_count}");
+    println!("wall-clock time: {benchmark_elapsed_ms:.1} ms");
+    println!("avg frame time:  {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+    println!("min frame time:  {min_ms:.3} ms");
+    println!("max frame time:  {max_ms:.3} ms");
+    println!("p95 frame time:  {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+
+    println!("\n--- Phase breakdown (avg per frame) ---");
+    let mut phase_entries: Vec<_> = phase_totals.iter().collect();
+    phase_entries.sort_by(|a, b| b.1.total_cmp(a.1));
+    for (phase, total_ms) in &phase_entries {
+        let avg_phase_ms = *total_ms / valid_count as f64;
+        let pct = (*total_ms / frame_times_ms.iter().sum::<f64>()) * 100.0;
+        println!("  {phase:<22} {avg_phase_ms:>8.3} ms  ({pct:>5.1}%)");
+    }
+
+    if let Some(snapshot) = harness.snapshot(window_id)?.performance {
+        println!("\n--- Last frame scene stats ---");
+        println!("  commands:        {}", snapshot.scene.command_count);
+        println!("  dirty regions:   {}", snapshot.scene.dirty_region_count);
+        println!("  dirty coverage:  {:.1}%", snapshot.scene.dirty_coverage);
+        println!("  gpu draws:       {}", snapshot.renderer_submission.draw_count);
+        println!("  gpu passes:      {}", snapshot.renderer_submission.pass_count);
+        println!("  tiles visible:   {}", snapshot.renderer_submission.visible_tile_count);
+        println!("  tiles reused:    {}", snapshot.renderer_submission.reused_tile_count);
+        println!("  tiles regen:     {}", snapshot.renderer_submission.regenerated_tile_count);
+        println!("  vertex bytes:    {}", snapshot.renderer_submission.uploaded_vertex_bytes);
+    }
+    println!("========================================\n");
+
+    assert!(
+        avg_ms < 16.67,
+        "average frame time {avg_ms:.3} ms exceeds the 16.67 ms budget for 60 fps",
+    );
+
+    Ok(())
+}
+
+#[test]
 fn desktop_button_grid_64_reports_initial_render_time() -> Result<()> {
     let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 

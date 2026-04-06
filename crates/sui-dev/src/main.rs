@@ -1,7 +1,7 @@
 use sui::prelude::*;
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_widget_book_gallery,
-    default_widget_book_state,
+    default_widget_book_state, register_widget_book_images,
 };
 
 const WINDOW_TITLE: &str = "SUI Dev";
@@ -14,7 +14,9 @@ const BUTTON_GRID_TAB_LABEL: &str = "64 buttons";
 fn build_dev_application() -> Application {
     let widget_book_state = default_widget_book_state();
 
-    Application::new().window(
+    let mut app = Application::new();
+    register_widget_book_images(&mut app);
+    app.window(
         WindowBuilder::new().title(WINDOW_TITLE).root(LivePerformanceRoot::new(
             WINDOW_TITLE,
             WINDOW_DESCRIPTION,
