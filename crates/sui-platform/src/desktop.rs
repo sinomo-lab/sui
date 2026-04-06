@@ -9,8 +9,8 @@ use sui_core::{
     PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta, Size, Vector,
     WindowEvent, WindowId,
 };
-use sui_render_wgpu::WgpuRenderer;
-use sui_runtime::Runtime;
+use sui_render_wgpu::{FeatheringOptions, WgpuRenderer};
+use sui_runtime::{Runtime, window_render_options};
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
@@ -41,6 +41,11 @@ impl DesktopPlatform {
         self
     }
 
+    pub fn with_feathering_enabled(mut self, enabled: bool) -> Self {
+        self.set_feathering_enabled(enabled);
+        self
+    }
+
     pub fn renderer(&self) -> &WgpuRenderer {
         &self.renderer
     }
@@ -49,8 +54,16 @@ impl DesktopPlatform {
         self.renderer.feather_width()
     }
 
+    pub fn feathering_enabled(&self) -> bool {
+        self.renderer.feathering_enabled()
+    }
+
     pub fn set_feather_width(&mut self, feather_width: f32) {
         self.renderer.set_feather_width(feather_width);
+    }
+
+    pub fn set_feathering_enabled(&mut self, enabled: bool) {
+        self.renderer.set_feathering_enabled(enabled);
     }
 
     pub fn renderer_mut(&mut self) -> &mut WgpuRenderer {
@@ -288,6 +301,12 @@ impl<'a> DesktopApp<'a> {
                 let output = self.runtime.render(window_id)?;
                 let semantics = output.semantics.clone();
                 let renderer_started = Instant::now();
+                self.renderer.set_runtime_feathering_override(window_render_options(window_id).map(
+                    |options| FeatheringOptions::new(
+                        options.feathering_enabled,
+                        options.feather_width,
+                    ),
+                ));
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
 

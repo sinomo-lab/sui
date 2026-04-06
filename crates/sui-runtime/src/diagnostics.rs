@@ -223,6 +223,28 @@ impl SceneStatisticsDetailMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowRenderOptions {
+    pub feathering_enabled: bool,
+    pub feather_width: f32,
+}
+
+impl WindowRenderOptions {
+    pub const fn new(feathering_enabled: bool, feather_width: f32) -> Self {
+        Self {
+            feathering_enabled,
+            feather_width,
+        }
+    }
+
+    pub fn clamped(self) -> Self {
+        Self {
+            feathering_enabled: self.feathering_enabled,
+            feather_width: self.feather_width.max(0.0),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct WindowPerformanceSummary {
     pub window_id: WindowId,
@@ -419,6 +441,8 @@ static WINDOW_PERFORMANCE_SNAPSHOTS: OnceLock<RwLock<HashMap<WindowId, WindowPer
 static WINDOW_SCENE_STATISTICS_DETAIL_MODES: OnceLock<
     RwLock<HashMap<WindowId, SceneStatisticsDetailMode>>,
 > = OnceLock::new();
+static WINDOW_RENDER_OPTIONS: OnceLock<RwLock<HashMap<WindowId, WindowRenderOptions>>> =
+    OnceLock::new();
 
 pub fn publish_window_performance_snapshot(snapshot: WindowPerformanceSnapshot) {
     let mut store = window_performance_store()
@@ -469,6 +493,27 @@ pub fn window_scene_statistics_detail_mode(window_id: WindowId) -> SceneStatisti
     store.get(&window_id).copied().unwrap_or_default()
 }
 
+pub fn set_window_render_options(window_id: WindowId, options: WindowRenderOptions) {
+    let mut store = window_render_options_store()
+        .write()
+        .expect("window render options store lock should not be poisoned");
+    store.insert(window_id, options.clamped());
+}
+
+pub fn window_render_options(window_id: WindowId) -> Option<WindowRenderOptions> {
+    let store = window_render_options_store()
+        .read()
+        .expect("window render options store lock should not be poisoned");
+    store.get(&window_id).copied()
+}
+
+pub fn clear_window_render_options(window_id: WindowId) {
+    let mut store = window_render_options_store()
+        .write()
+        .expect("window render options store lock should not be poisoned");
+    store.remove(&window_id);
+}
+
 pub fn clear_window_performance_snapshot(window_id: WindowId) {
     let mut store = window_performance_store()
         .write()
@@ -479,6 +524,8 @@ pub fn clear_window_performance_snapshot(window_id: WindowId) {
         .write()
         .expect("scene statistics detail mode store lock should not be poisoned");
     detail_modes.remove(&window_id);
+
+    clear_window_render_options(window_id);
 }
 
 pub fn clear_window_performance_snapshots() {
@@ -491,6 +538,11 @@ pub fn clear_window_performance_snapshots() {
         .write()
         .expect("scene statistics detail mode store lock should not be poisoned");
     detail_modes.clear();
+
+    let mut render_options = window_render_options_store()
+        .write()
+        .expect("window render options store lock should not be poisoned");
+    render_options.clear();
 }
 
 fn window_performance_store() -> &'static RwLock<HashMap<WindowId, WindowPerformanceSnapshot>> {
@@ -500,6 +552,10 @@ fn window_performance_store() -> &'static RwLock<HashMap<WindowId, WindowPerform
 fn window_scene_statistics_detail_mode_store(
 ) -> &'static RwLock<HashMap<WindowId, SceneStatisticsDetailMode>> {
     WINDOW_SCENE_STATISTICS_DETAIL_MODES.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn window_render_options_store() -> &'static RwLock<HashMap<WindowId, WindowRenderOptions>> {
+    WINDOW_RENDER_OPTIONS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 fn command_kind(command: &SceneCommand) -> &'static str {
@@ -538,8 +594,10 @@ mod tests {
     use super::{
         CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics,
         SceneStatistics, SceneStatisticsDetailMode, TextCacheDeltaDiagnostics,
-        TextCacheDiagnostics, WindowPerformanceSnapshot, clear_window_performance_snapshot,
-        set_window_scene_statistics_detail_mode, window_scene_statistics_detail_mode,
+        TextCacheDiagnostics, WindowPerformanceSnapshot, WindowRenderOptions,
+        clear_window_performance_snapshot, set_window_render_options,
+        set_window_scene_statistics_detail_mode, window_render_options,
+        window_scene_statistics_detail_mode,
     };
     use sui_core::{Color, DirtyRegion, InvalidationKind, Rect, Size, WindowId};
     use sui_scene::{SceneCommand, SceneFrame};
@@ -660,5 +718,21 @@ mod tests {
             window_scene_statistics_detail_mode(window_id),
             SceneStatisticsDetailMode::Lightweight
         );
+    }
+
+    #[test]
+    fn window_render_options_are_clamped_and_cleared_with_window_state() {
+        let window_id = WindowId::new(91);
+
+        set_window_render_options(window_id, WindowRenderOptions::new(false, -2.0));
+
+        assert_eq!(
+            window_render_options(window_id),
+            Some(WindowRenderOptions::new(false, 0.0))
+        );
+
+        clear_window_performance_snapshot(window_id);
+
+        assert_eq!(window_render_options(window_id), None);
     }
 }

@@ -1,8 +1,8 @@
 use std::{collections::VecDeque, time::Instant};
 
 use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
-use sui_render_wgpu::{RgbaImage, WgpuRenderer};
-use sui_runtime::Runtime;
+use sui_render_wgpu::{FeatheringOptions, RgbaImage, WgpuRenderer};
+use sui_runtime::{Runtime, window_render_options};
 
 use crate::{AccessibilityBridge, AccessibilitySnapshot};
 
@@ -31,6 +31,11 @@ impl HeadlessPlatform {
 
     pub fn with_feather_width(mut self, feather_width: f32) -> Self {
         self.set_feather_width(feather_width);
+        self
+    }
+
+    pub fn with_feathering_enabled(mut self, enabled: bool) -> Self {
+        self.set_feathering_enabled(enabled);
         self
     }
 
@@ -119,8 +124,16 @@ impl HeadlessPlatform {
         self.renderer.feather_width()
     }
 
+    pub fn feathering_enabled(&self) -> bool {
+        self.renderer.feathering_enabled()
+    }
+
     pub fn set_feather_width(&mut self, feather_width: f32) {
         self.renderer.set_feather_width(feather_width);
+    }
+
+    pub fn set_feathering_enabled(&mut self, enabled: bool) {
+        self.renderer.set_feathering_enabled(enabled);
     }
 
     pub fn renderer_mut(&mut self) -> &mut WgpuRenderer {
@@ -240,6 +253,12 @@ impl HeadlessPlatform {
 
                 let output = runtime.render(window_id)?;
                 let renderer_started = Instant::now();
+                self.renderer.set_runtime_feathering_override(window_render_options(window_id).map(
+                    |options| FeatheringOptions::new(
+                        options.feathering_enabled,
+                        options.feather_width,
+                    ),
+                ));
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
 
@@ -497,12 +516,17 @@ mod tests {
 
     #[test]
     fn feather_width_is_configurable_without_renderer_access() {
-        let mut platform = HeadlessPlatform::new().with_feather_width(2.5);
+        let mut platform = HeadlessPlatform::new()
+            .with_feathering_enabled(false)
+            .with_feather_width(2.5);
 
+        assert!(!platform.feathering_enabled());
         assert_eq!(platform.feather_width(), 2.5);
 
         platform.set_feather_width(-4.0);
+        platform.set_feathering_enabled(true);
 
+        assert!(platform.feathering_enabled());
         assert_eq!(platform.feather_width(), 0.0);
     }
 }

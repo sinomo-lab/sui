@@ -26,10 +26,12 @@ pub use diagnostics::{
     CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, RenderDiagnostics,
     RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
     TextCacheDeltaDiagnostics, TextCacheDiagnostics,
-    WindowPerformanceSnapshot, clear_window_performance_snapshot,
+    WindowPerformanceSnapshot, WindowRenderOptions, clear_window_performance_snapshot,
+    clear_window_render_options,
     clear_window_performance_snapshots, publish_window_performance_snapshot,
+    set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
-    window_performance_summary, window_performance_text_caches,
+    window_performance_summary, window_performance_text_caches, window_render_options,
     window_scene_statistics_detail_mode, WindowPerformanceSummary,
 };
 pub use widget::{

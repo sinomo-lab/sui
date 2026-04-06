@@ -43,9 +43,10 @@ pub use sui_runtime::{
     TextCacheDeltaDiagnostics,
     TextCacheDiagnostics, Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot,
     WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
-    WindowPerformanceSnapshot, WindowPerformanceSummary,
+    WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions,
+    clear_window_render_options, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
-    window_performance_summary, window_scene_statistics_detail_mode,
+    window_performance_summary, window_render_options, window_scene_statistics_detail_mode,
 };
 pub use sui_scene::{
     Brush, ImageRegistry, ImageSource, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand,
@@ -216,6 +217,8 @@ impl Theme {
 pub struct Application {
     inner: RuntimeApplication,
     #[cfg(feature = "wgpu")]
+    feathering_enabled: bool,
+    #[cfg(feature = "wgpu")]
     feather_width: f32,
 }
 
@@ -223,6 +226,8 @@ impl Default for Application {
     fn default() -> Self {
         Self {
             inner: RuntimeApplication::default(),
+            #[cfg(feature = "wgpu")]
+            feathering_enabled: WgpuRenderer::new().feathering_enabled(),
             #[cfg(feature = "wgpu")]
             feather_width: WgpuRenderer::new().feather_width(),
         }
@@ -240,9 +245,20 @@ impl Application {
     }
 
     #[cfg(feature = "wgpu")]
+    pub fn with_feathering_enabled(mut self, enabled: bool) -> Self {
+        self.feathering_enabled = enabled;
+        self
+    }
+
+    #[cfg(feature = "wgpu")]
     pub fn with_feather_width(mut self, feather_width: f32) -> Self {
         self.feather_width = feather_width.max(0.0);
         self
+    }
+
+    #[cfg(feature = "wgpu")]
+    pub fn feathering_enabled(&self) -> bool {
+        self.feathering_enabled
     }
 
     #[cfg(feature = "wgpu")]
@@ -277,9 +293,12 @@ impl Application {
 
     #[cfg(feature = "desktop")]
     pub fn run(self) -> Result<()> {
+        let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
         let mut runtime = self.build()?;
-        let mut platform = DesktopPlatform::new().with_feather_width(feather_width);
+        let mut platform = DesktopPlatform::new()
+            .with_feathering_enabled(feathering_enabled)
+            .with_feather_width(feather_width);
         let _ = platform.run(&mut runtime)?;
         Ok(())
     }
@@ -330,7 +349,7 @@ pub mod prelude {
         ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken,
         ThemeTracking, TimerToken, Tooltip, TooltipPlacement, Transform, TreeItem, TreeView,
         VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
-        containers::Padding,
+        WindowRenderOptions, containers::Padding, set_window_render_options,
     };
 }
 
@@ -406,9 +425,12 @@ mod tests {
     #[cfg(feature = "wgpu")]
     #[test]
     fn application_feather_width_is_configurable() {
-        let app = Application::new().with_feather_width(2.25);
+        let app = Application::new()
+            .with_feathering_enabled(false)
+            .with_feather_width(2.25);
         let clamped = Application::new().with_feather_width(-1.0);
 
+        assert!(!app.feathering_enabled());
         assert_eq!(app.feather_width(), 2.25);
         assert_eq!(clamped.feather_width(), 0.0);
     }
