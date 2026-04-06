@@ -29,6 +29,13 @@ pub(super) fn build_local_glyph_mesh(
     path: &LyonPath,
     feather_width: f32,
 ) -> Result<CachedGlyphMesh> {
+    build_local_fill_mesh(path, feather_width)
+}
+
+pub(super) fn build_local_fill_mesh(
+    path: &LyonPath,
+    feather_width: f32,
+) -> Result<CachedGlyphMesh> {
     let mut mesh = CachedGlyphMesh::default();
     let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
     let mut builder = BuffersBuilder::new(&mut buffers, TessellatedPoint);
@@ -58,6 +65,42 @@ pub(super) fn build_local_glyph_mesh(
 
             append_local_fill_fringe_for_contour(&mut mesh, &aa_points, feather_width);
         }
+    }
+
+    Ok(mesh)
+}
+
+pub(super) fn build_local_stroke_mesh(
+    path: &LyonPath,
+    line_width: f32,
+    feather_width: f32,
+) -> Result<CachedGlyphMesh> {
+    let mut mesh = CachedGlyphMesh::default();
+    if line_width <= 0.0 {
+        return Ok(mesh);
+    }
+
+    if feather_width <= 0.0 {
+        append_local_hard_stroked_lyon_path(&mut mesh, path, line_width)?;
+        return Ok(mesh);
+    }
+
+    let contours = flatten_path_contours(path);
+
+    for contour in contours {
+        let path_type = if contour.closed {
+            FeatheredPathType::Closed
+        } else {
+            FeatheredPathType::Open
+        };
+
+        let aa_points = if contour.closed {
+            build_closed_aa_points(&contour.points)
+        } else {
+            build_open_aa_points(&contour.points)
+        };
+
+        append_local_stroke_contour(&mut mesh, &aa_points, path_type, line_width, feather_width);
     }
 
     Ok(mesh)
@@ -116,75 +159,6 @@ pub(super) fn append_painted_rect(
     }
 }
 
-pub(super) fn append_fill_fringe(
-    vertices: &mut Vec<Vertex>,
-    path: &LyonPath,
-    color: Color,
-    viewport: Size,
-    feather_width: f32,
-) {
-    if feather_width <= 0.0 {
-        return;
-    }
-
-    let contours = flatten_path_contours(path);
-
-    for contour in &contours {
-        if !contour.closed || contour.points.len() < 3 {
-            continue;
-        }
-
-        let mut aa_points = build_closed_aa_points(&contour.points);
-        if !normals_point_to_transparent_side(contour, &contours, feather_width) {
-            for point in &mut aa_points {
-                point.normal = negate_vector(point.normal);
-            }
-        }
-
-        append_fill_fringe_for_contour(vertices, &aa_points, color, viewport, feather_width);
-    }
-}
-
-pub(super) fn append_feathered_stroke(
-    vertices: &mut Vec<Vertex>,
-    path: &LyonPath,
-    color: Color,
-    line_width: f32,
-    viewport: Size,
-    feather_width: f32,
-) {
-    if feather_width <= 0.0 {
-        append_hard_stroked_lyon_path(vertices, path, color, line_width, viewport);
-        return;
-    }
-
-    let contours = flatten_path_contours(path);
-
-    for contour in contours {
-        let path_type = if contour.closed {
-            FeatheredPathType::Closed
-        } else {
-            FeatheredPathType::Open
-        };
-
-        let aa_points = if contour.closed {
-            build_closed_aa_points(&contour.points)
-        } else {
-            build_open_aa_points(&contour.points)
-        };
-
-        append_stroke_contour(
-            vertices,
-            &aa_points,
-            path_type,
-            color,
-            line_width,
-            viewport,
-            feather_width,
-        );
-    }
-}
-
 fn append_local_fill_fringe_for_contour(
     mesh: &mut CachedGlyphMesh,
     contour: &[AaPathPoint],
@@ -216,6 +190,214 @@ fn append_local_fill_fringe_for_contour(
     let first_outer = base_index + 1;
     mesh.add_triangle(first_inner, previous_inner, previous_outer);
     mesh.add_triangle(previous_outer, first_outer, first_inner);
+}
+
+fn append_local_hard_stroked_lyon_path(
+    mesh: &mut CachedGlyphMesh,
+    path: &LyonPath,
+    line_width: f32,
+) -> Result<()> {
+    let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
+    let mut builder = BuffersBuilder::new(&mut buffers, TessellatedPoint);
+    let mut tessellator = StrokeTessellator::new();
+    tessellator
+        .tessellate_path(
+            path,
+            &StrokeOptions::default().with_line_width(line_width),
+            &mut builder,
+        )
+        .map_err(|error| Error::new(format!("failed to tessellate stroked path: {error}")))?;
+
+    for position in &buffers.vertices {
+        mesh.push_vertex(Point::new(position[0], position[1]), 1.0);
+    }
+    mesh.indices.extend(buffers.indices.iter().copied());
+    Ok(())
+}
+
+fn append_local_stroke_contour(
+    mesh: &mut CachedGlyphMesh,
+    path: &[AaPathPoint],
+    path_type: FeatheredPathType,
+    line_width: f32,
+    feather_width: f32,
+) {
+    let n = path.len() as u32;
+    if n < 2 || line_width <= 0.0 || feather_width <= 0.0 {
+        return;
+    }
+
+    let thin_line = line_width <= 0.9 * feather_width;
+    if thin_line {
+        let coverage = (line_width / feather_width).clamp(0.0, 1.0);
+        let mut previous_base = 0;
+
+        for (index, point) in path.iter().enumerate() {
+            let outer = mesh.push_vertex(
+                offset_point(point.position, scale_vector(point.normal, feather_width)),
+                0.0,
+            );
+            mesh.push_vertex(point.position, coverage);
+            mesh.push_vertex(
+                offset_point(point.position, scale_vector(point.normal, -feather_width)),
+                0.0,
+            );
+
+            if path_type == FeatheredPathType::Closed || index > 0 {
+                mesh.add_triangle(previous_base + 0, previous_base + 1, outer);
+                mesh.add_triangle(previous_base + 1, outer, outer + 1);
+                mesh.add_triangle(previous_base + 1, previous_base + 2, outer + 1);
+                mesh.add_triangle(previous_base + 2, outer + 1, outer + 2);
+            }
+
+            previous_base = outer;
+        }
+
+        if path_type == FeatheredPathType::Closed {
+            mesh.add_triangle(previous_base + 0, previous_base + 1, 0);
+            mesh.add_triangle(previous_base + 1, 0, 1);
+            mesh.add_triangle(previous_base + 1, previous_base + 2, 1);
+            mesh.add_triangle(previous_base + 2, 1, 2);
+        }
+        return;
+    }
+
+    let inner_radius = 0.5 * (line_width - feather_width);
+    let outer_radius = 0.5 * (line_width + feather_width);
+
+    match path_type {
+        FeatheredPathType::Closed => {
+            let mut previous_base = 0;
+
+            for (index, point) in path.iter().enumerate() {
+                let outer_pos = mesh.push_vertex(
+                    offset_point(point.position, scale_vector(point.normal, outer_radius)),
+                    0.0,
+                );
+                mesh.push_vertex(
+                    offset_point(point.position, scale_vector(point.normal, inner_radius)),
+                    1.0,
+                );
+                mesh.push_vertex(
+                    offset_point(point.position, scale_vector(point.normal, -inner_radius)),
+                    1.0,
+                );
+                mesh.push_vertex(
+                    offset_point(point.position, scale_vector(point.normal, -outer_radius)),
+                    0.0,
+                );
+
+                if index > 0 {
+                    mesh.add_triangle(previous_base + 0, previous_base + 1, outer_pos);
+                    mesh.add_triangle(previous_base + 1, outer_pos, outer_pos + 1);
+                    mesh.add_triangle(previous_base + 1, previous_base + 2, outer_pos + 1);
+                    mesh.add_triangle(previous_base + 2, outer_pos + 1, outer_pos + 2);
+                    mesh.add_triangle(previous_base + 2, previous_base + 3, outer_pos + 2);
+                    mesh.add_triangle(previous_base + 3, outer_pos + 2, outer_pos + 3);
+                }
+
+                previous_base = outer_pos;
+            }
+
+            mesh.add_triangle(previous_base + 0, previous_base + 1, 0);
+            mesh.add_triangle(previous_base + 1, 0, 1);
+            mesh.add_triangle(previous_base + 1, previous_base + 2, 1);
+            mesh.add_triangle(previous_base + 2, 1, 2);
+            mesh.add_triangle(previous_base + 2, previous_base + 3, 2);
+            mesh.add_triangle(previous_base + 3, 2, 3);
+        }
+        FeatheredPathType::Open => {
+            let first = path[0];
+            let first_extrude = scale_vector(vector_rot90(first.normal), feather_width);
+            let first_base = mesh.push_vertex(
+                offset_point(
+                    offset_point(first.position, scale_vector(first.normal, outer_radius)),
+                    first_extrude,
+                ),
+                0.0,
+            );
+            mesh.push_vertex(
+                offset_point(first.position, scale_vector(first.normal, inner_radius)),
+                1.0,
+            );
+            mesh.push_vertex(
+                offset_point(first.position, scale_vector(first.normal, -inner_radius)),
+                1.0,
+            );
+            mesh.push_vertex(
+                offset_point(
+                    offset_point(first.position, scale_vector(first.normal, -outer_radius)),
+                    first_extrude,
+                ),
+                0.0,
+            );
+            mesh.add_triangle(first_base + 0, first_base + 1, first_base + 2);
+            mesh.add_triangle(first_base + 0, first_base + 2, first_base + 3);
+
+            let mut previous_base = first_base;
+            for point in path.iter().skip(1).take(path.len().saturating_sub(2)) {
+                let base = mesh.push_vertex(
+                    offset_point(point.position, scale_vector(point.normal, outer_radius)),
+                    0.0,
+                );
+                mesh.push_vertex(
+                    offset_point(point.position, scale_vector(point.normal, inner_radius)),
+                    1.0,
+                );
+                mesh.push_vertex(
+                    offset_point(point.position, scale_vector(point.normal, -inner_radius)),
+                    1.0,
+                );
+                mesh.push_vertex(
+                    offset_point(point.position, scale_vector(point.normal, -outer_radius)),
+                    0.0,
+                );
+
+                mesh.add_triangle(previous_base + 0, previous_base + 1, base + 0);
+                mesh.add_triangle(previous_base + 1, base + 0, base + 1);
+                mesh.add_triangle(previous_base + 1, previous_base + 2, base + 1);
+                mesh.add_triangle(previous_base + 2, base + 1, base + 2);
+                mesh.add_triangle(previous_base + 2, previous_base + 3, base + 2);
+                mesh.add_triangle(previous_base + 3, base + 2, base + 3);
+
+                previous_base = base;
+            }
+
+            let last = path[path.len() - 1];
+            let last_extrude = scale_vector(vector_rot90(last.normal), -feather_width);
+            let last_base = mesh.push_vertex(
+                offset_point(
+                    offset_point(last.position, scale_vector(last.normal, outer_radius)),
+                    last_extrude,
+                ),
+                0.0,
+            );
+            mesh.push_vertex(
+                offset_point(last.position, scale_vector(last.normal, inner_radius)),
+                1.0,
+            );
+            mesh.push_vertex(
+                offset_point(last.position, scale_vector(last.normal, -inner_radius)),
+                1.0,
+            );
+            mesh.push_vertex(
+                offset_point(
+                    offset_point(last.position, scale_vector(last.normal, -outer_radius)),
+                    last_extrude,
+                ),
+                0.0,
+            );
+
+            mesh.add_triangle(previous_base + 0, previous_base + 1, last_base + 0);
+            mesh.add_triangle(previous_base + 1, last_base + 0, last_base + 1);
+            mesh.add_triangle(previous_base + 1, previous_base + 2, last_base + 1);
+            mesh.add_triangle(previous_base + 2, last_base + 1, last_base + 2);
+            mesh.add_triangle(previous_base + 2, previous_base + 3, last_base + 2);
+            mesh.add_triangle(previous_base + 3, last_base + 2, last_base + 3);
+            mesh.add_triangle(last_base + 0, last_base + 1, last_base + 2);
+            mesh.add_triangle(last_base + 0, last_base + 2, last_base + 3);
+        }
+    }
 }
 
 fn append_feathered_rect(
@@ -275,224 +457,6 @@ fn append_fill_fringe_for_contour(
     let first_outer = 1;
     mesh.add_triangle(first_inner, previous_inner, previous_outer);
     mesh.add_triangle(previous_outer, first_outer, first_inner);
-
-    append_scene_mesh(vertices, &mesh, viewport);
-}
-
-fn append_hard_stroked_lyon_path(
-    vertices: &mut Vec<Vertex>,
-    path: &LyonPath,
-    color: Color,
-    line_width: f32,
-    viewport: Size,
-) {
-    let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
-    let mut builder = BuffersBuilder::new(&mut buffers, TessellatedPoint);
-    let mut tessellator = StrokeTessellator::new();
-    if tessellator
-        .tessellate_path(
-            path,
-            &StrokeOptions::default().with_line_width(line_width),
-            &mut builder,
-        )
-        .is_ok()
-    {
-        append_indexed_triangles(vertices, &buffers, color, viewport);
-    }
-}
-
-fn append_stroke_contour(
-    vertices: &mut Vec<Vertex>,
-    path: &[AaPathPoint],
-    path_type: FeatheredPathType,
-    color: Color,
-    line_width: f32,
-    viewport: Size,
-    feather_width: f32,
-) {
-    if feather_width <= 0.0 {
-        return;
-    }
-
-    let n = path.len() as u32;
-    if n < 2 || viewport.is_empty() || line_width <= 0.0 {
-        return;
-    }
-
-    let transparent = Color::TRANSPARENT;
-    let mut mesh = SceneMesh::default();
-
-    let thin_line = line_width <= 0.9 * feather_width;
-    if thin_line {
-        let opacity = (line_width / feather_width).clamp(0.0, 1.0);
-        let mid_color = multiply_color_alpha(color, opacity);
-        let mut previous_base = 0;
-
-        for (index, point) in path.iter().enumerate() {
-            let outer = mesh.colored_vertex(
-                offset_point(point.position, scale_vector(point.normal, feather_width)),
-                transparent,
-            );
-            let middle = mesh.colored_vertex(point.position, mid_color);
-            let inner = mesh.colored_vertex(
-                offset_point(point.position, scale_vector(point.normal, -feather_width)),
-                transparent,
-            );
-
-            if path_type == FeatheredPathType::Closed || index > 0 {
-                mesh.add_triangle(previous_base + 0, previous_base + 1, outer);
-                mesh.add_triangle(previous_base + 1, outer, middle);
-                mesh.add_triangle(previous_base + 1, previous_base + 2, middle);
-                mesh.add_triangle(previous_base + 2, middle, inner);
-            }
-
-            previous_base = outer;
-        }
-
-        if path_type == FeatheredPathType::Closed {
-            mesh.add_triangle(previous_base + 0, previous_base + 1, 0);
-            mesh.add_triangle(previous_base + 1, 0, 1);
-            mesh.add_triangle(previous_base + 1, previous_base + 2, 1);
-            mesh.add_triangle(previous_base + 2, 1, 2);
-        }
-    } else {
-        let inner_radius = 0.5 * (line_width - feather_width);
-        let outer_radius = 0.5 * (line_width + feather_width);
-
-        match path_type {
-            FeatheredPathType::Closed => {
-                let mut previous_base = 0;
-
-                for (index, point) in path.iter().enumerate() {
-                    let outer_pos = mesh.colored_vertex(
-                        offset_point(point.position, scale_vector(point.normal, outer_radius)),
-                        transparent,
-                    );
-                    let inner_pos = mesh.colored_vertex(
-                        offset_point(point.position, scale_vector(point.normal, inner_radius)),
-                        color,
-                    );
-                    let inner_neg = mesh.colored_vertex(
-                        offset_point(point.position, scale_vector(point.normal, -inner_radius)),
-                        color,
-                    );
-                    let outer_neg = mesh.colored_vertex(
-                        offset_point(point.position, scale_vector(point.normal, -outer_radius)),
-                        transparent,
-                    );
-
-                    if index > 0 {
-                        mesh.add_triangle(previous_base + 0, previous_base + 1, outer_pos);
-                        mesh.add_triangle(previous_base + 1, outer_pos, inner_pos);
-                        mesh.add_triangle(previous_base + 1, previous_base + 2, inner_pos);
-                        mesh.add_triangle(previous_base + 2, inner_pos, inner_neg);
-                        mesh.add_triangle(previous_base + 2, previous_base + 3, inner_neg);
-                        mesh.add_triangle(previous_base + 3, inner_neg, outer_neg);
-                    }
-
-                    previous_base = outer_pos;
-                }
-
-                mesh.add_triangle(previous_base + 0, previous_base + 1, 0);
-                mesh.add_triangle(previous_base + 1, 0, 1);
-                mesh.add_triangle(previous_base + 1, previous_base + 2, 1);
-                mesh.add_triangle(previous_base + 2, 1, 2);
-                mesh.add_triangle(previous_base + 2, previous_base + 3, 2);
-                mesh.add_triangle(previous_base + 3, 2, 3);
-            }
-            FeatheredPathType::Open => {
-                let first = path[0];
-                let first_extrude = scale_vector(vector_rot90(first.normal), feather_width);
-                let first_base = mesh.colored_vertex(
-                    offset_point(
-                        offset_point(first.position, scale_vector(first.normal, outer_radius)),
-                        first_extrude,
-                    ),
-                    transparent,
-                );
-                mesh.colored_vertex(
-                    offset_point(first.position, scale_vector(first.normal, inner_radius)),
-                    color,
-                );
-                mesh.colored_vertex(
-                    offset_point(first.position, scale_vector(first.normal, -inner_radius)),
-                    color,
-                );
-                mesh.colored_vertex(
-                    offset_point(
-                        offset_point(first.position, scale_vector(first.normal, -outer_radius)),
-                        first_extrude,
-                    ),
-                    transparent,
-                );
-                mesh.add_triangle(first_base + 0, first_base + 1, first_base + 2);
-                mesh.add_triangle(first_base + 0, first_base + 2, first_base + 3);
-
-                let mut previous_base = first_base;
-                for point in path.iter().skip(1).take(path.len().saturating_sub(2)) {
-                    let base = mesh.colored_vertex(
-                        offset_point(point.position, scale_vector(point.normal, outer_radius)),
-                        transparent,
-                    );
-                    mesh.colored_vertex(
-                        offset_point(point.position, scale_vector(point.normal, inner_radius)),
-                        color,
-                    );
-                    mesh.colored_vertex(
-                        offset_point(point.position, scale_vector(point.normal, -inner_radius)),
-                        color,
-                    );
-                    mesh.colored_vertex(
-                        offset_point(point.position, scale_vector(point.normal, -outer_radius)),
-                        transparent,
-                    );
-
-                    mesh.add_triangle(previous_base + 0, previous_base + 1, base + 0);
-                    mesh.add_triangle(previous_base + 1, base + 0, base + 1);
-                    mesh.add_triangle(previous_base + 1, previous_base + 2, base + 1);
-                    mesh.add_triangle(previous_base + 2, base + 1, base + 2);
-                    mesh.add_triangle(previous_base + 2, previous_base + 3, base + 2);
-                    mesh.add_triangle(previous_base + 3, base + 2, base + 3);
-
-                    previous_base = base;
-                }
-
-                let last = path[path.len() - 1];
-                let last_extrude = scale_vector(vector_rot90(last.normal), -feather_width);
-                let last_base = mesh.colored_vertex(
-                    offset_point(
-                        offset_point(last.position, scale_vector(last.normal, outer_radius)),
-                        last_extrude,
-                    ),
-                    transparent,
-                );
-                mesh.colored_vertex(
-                    offset_point(last.position, scale_vector(last.normal, inner_radius)),
-                    color,
-                );
-                mesh.colored_vertex(
-                    offset_point(last.position, scale_vector(last.normal, -inner_radius)),
-                    color,
-                );
-                mesh.colored_vertex(
-                    offset_point(
-                        offset_point(last.position, scale_vector(last.normal, -outer_radius)),
-                        last_extrude,
-                    ),
-                    transparent,
-                );
-
-                mesh.add_triangle(previous_base + 0, previous_base + 1, last_base + 0);
-                mesh.add_triangle(previous_base + 1, last_base + 0, last_base + 1);
-                mesh.add_triangle(previous_base + 1, previous_base + 2, last_base + 1);
-                mesh.add_triangle(previous_base + 2, last_base + 1, last_base + 2);
-                mesh.add_triangle(previous_base + 2, previous_base + 3, last_base + 2);
-                mesh.add_triangle(previous_base + 3, last_base + 2, last_base + 3);
-                mesh.add_triangle(last_base + 0, last_base + 1, last_base + 2);
-                mesh.add_triangle(last_base + 0, last_base + 2, last_base + 3);
-            }
-        }
-    }
 
     append_scene_mesh(vertices, &mesh, viewport);
 }
@@ -737,6 +701,3 @@ fn offset_point(point: Point, offset: Vector) -> Point {
     Point::new(point.x + offset.x, point.y + offset.y)
 }
 
-fn multiply_color_alpha(color: Color, factor: f32) -> Color {
-    color.with_alpha(color.alpha * factor)
-}

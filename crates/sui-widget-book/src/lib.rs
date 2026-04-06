@@ -1822,10 +1822,11 @@ impl LivePerformancePanel {
                     )
                 } else {
                     format!(
-                        "text cache rt {}  |  rr {}  |  glyph {}",
+                        "cache rt {}  |  rr {}  |  gp {}  |  path {}",
                         snapshot.text_caches.runtime_layout.entries,
                         snapshot.text_caches.renderer_layout.entries,
                         snapshot.text_caches.renderer_glyph.entries,
+                        snapshot.text_caches.renderer_path.entries,
                     )
                 };
 

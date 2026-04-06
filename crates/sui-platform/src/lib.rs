@@ -39,7 +39,7 @@ pub(crate) fn publish_frame_performance(
 ) {
 	let diagnostics_started = Instant::now();
 	let mut phase_timings = Vec::with_capacity(output.diagnostics.phase_timings.len() + 2);
-	let renderer_text_cache = renderer.text_cache_snapshot();
+	let renderer_text_cache = renderer.text_cache_snapshot(window_id);
 	let text_caches = TextCacheDiagnostics {
 		runtime_layout: output.diagnostics.text_caches.runtime_layout,
 		renderer_layout: CacheMetrics::new(
@@ -51,6 +51,11 @@ pub(crate) fn publish_frame_performance(
 			renderer_text_cache.glyph.entries,
 			renderer_text_cache.glyph.hits,
 			renderer_text_cache.glyph.misses,
+		),
+		renderer_path: CacheMetrics::new(
+			renderer_text_cache.path.entries,
+			renderer_text_cache.path.hits,
+			renderer_text_cache.path.misses,
 		),
 	};
 	let text_cache_deltas = window_performance_text_caches(window_id)

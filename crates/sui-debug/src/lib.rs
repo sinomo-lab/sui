@@ -791,6 +791,10 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
                 "Renderer glyph cache total",
                 format_cache_metrics(snapshot.text_caches.renderer_glyph),
             ),
+            DebugKeyValue::new(
+                "Renderer path cache total",
+                format_cache_metrics(snapshot.text_caches.renderer_path),
+            ),
         ]))
         .with_child(debug_key_values([
             DebugKeyValue::new(
@@ -804,6 +808,10 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             DebugKeyValue::new(
                 "Renderer glyph cache frame delta",
                 format_cache_delta_metrics(snapshot.text_cache_deltas.renderer_glyph),
+            ),
+            DebugKeyValue::new(
+                "Renderer path cache frame delta",
+                format_cache_delta_metrics(snapshot.text_cache_deltas.renderer_path),
             ),
         ]))
         .with_child(

@@ -1011,7 +1011,7 @@ fn publish_frame_performance(
 ) {
     let diagnostics_started = Instant::now();
     let mut phase_timings = Vec::with_capacity(output.diagnostics.phase_timings.len() + 2);
-    let renderer_text_cache = renderer.text_cache_snapshot();
+    let renderer_text_cache = renderer.text_cache_snapshot(window_id);
     let text_caches = TextCacheDiagnostics {
         runtime_layout: output.diagnostics.text_caches.runtime_layout,
         renderer_layout: CacheMetrics::new(
@@ -1023,6 +1023,11 @@ fn publish_frame_performance(
             renderer_text_cache.glyph.entries,
             renderer_text_cache.glyph.hits,
             renderer_text_cache.glyph.misses,
+        ),
+        renderer_path: CacheMetrics::new(
+            renderer_text_cache.path.entries,
+            renderer_text_cache.path.hits,
+            renderer_text_cache.path.misses,
         ),
     };
     let text_cache_deltas = window_performance_text_caches(window_id)
@@ -1381,6 +1386,18 @@ fn widget_book_scroll_fps_benchmark() -> Result<()> {
         println!("  tiles reused:    {}", snapshot.renderer_submission.reused_tile_count);
         println!("  tiles regen:     {}", snapshot.renderer_submission.regenerated_tile_count);
         println!("  vertex bytes:    {}", snapshot.renderer_submission.uploaded_vertex_bytes);
+        println!(
+            "  path cache:      {} entries, {} hits, {} misses",
+            snapshot.text_caches.renderer_path.entries,
+            snapshot.text_caches.renderer_path.hits,
+            snapshot.text_caches.renderer_path.misses,
+        );
+        println!(
+            "  path cache Δ:    {:+} entries, {} hits, {} misses",
+            snapshot.text_cache_deltas.renderer_path.entries_delta,
+            snapshot.text_cache_deltas.renderer_path.hits,
+            snapshot.text_cache_deltas.renderer_path.misses,
+        );
     }
     println!("========================================\n");
 

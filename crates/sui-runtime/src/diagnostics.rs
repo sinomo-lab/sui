@@ -175,6 +175,7 @@ pub struct TextCacheDiagnostics {
     pub runtime_layout: CacheMetrics,
     pub renderer_layout: CacheMetrics,
     pub renderer_glyph: CacheMetrics,
+    pub renderer_path: CacheMetrics,
 }
 
 impl TextCacheDiagnostics {
@@ -192,6 +193,10 @@ impl TextCacheDiagnostics {
                 self.renderer_glyph,
                 previous.renderer_glyph,
             ),
+            renderer_path: CacheMetricsDelta::from_counters(
+                self.renderer_path,
+                previous.renderer_path,
+            ),
         }
     }
 }
@@ -201,6 +206,7 @@ pub struct TextCacheDeltaDiagnostics {
     pub runtime_layout: CacheMetricsDelta,
     pub renderer_layout: CacheMetricsDelta,
     pub renderer_glyph: CacheMetricsDelta,
+    pub renderer_path: CacheMetricsDelta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -608,11 +614,13 @@ mod tests {
             runtime_layout: CacheMetrics::new(2, 10, 4),
             renderer_layout: CacheMetrics::new(3, 6, 2),
             renderer_glyph: CacheMetrics::new(5, 12, 3),
+            renderer_path: CacheMetrics::new(7, 14, 5),
         };
         let current = TextCacheDiagnostics {
             runtime_layout: CacheMetrics::new(4, 15, 6),
             renderer_layout: CacheMetrics::new(3, 9, 3),
             renderer_glyph: CacheMetrics::new(7, 18, 5),
+            renderer_path: CacheMetrics::new(8, 21, 6),
         };
 
         let delta = current.delta_from(&previous);
@@ -626,6 +634,9 @@ mod tests {
         assert_eq!(delta.renderer_glyph.entries_delta, 2);
         assert_eq!(delta.renderer_glyph.hits, 6);
         assert_eq!(delta.renderer_glyph.misses, 2);
+        assert_eq!(delta.renderer_path.entries_delta, 1);
+        assert_eq!(delta.renderer_path.hits, 7);
+        assert_eq!(delta.renderer_path.misses, 1);
     }
 
     #[test]

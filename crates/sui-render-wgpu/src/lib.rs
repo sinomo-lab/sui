@@ -104,6 +104,7 @@ impl GlyphCacheSnapshot {
 pub struct RendererTextCacheSnapshot {
     pub layout: TextLayoutCacheSnapshot,
     pub glyph: GlyphCacheSnapshot,
+    pub path: GlyphCacheSnapshot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -531,6 +532,7 @@ struct RetainedCompositorState {
     frame_index: u64,
     tile_budget_bytes: usize,
     last_frame_stats: RetainedCompositorFrameStats,
+    path_cache: PathMeshCache,
 }
 
 impl Default for RetainedCompositorState {
@@ -551,6 +553,7 @@ impl Default for RetainedCompositorState {
             frame_index: 0,
             tile_budget_bytes: TILE_CACHE_BUDGET_BYTES,
             last_frame_stats: RetainedCompositorFrameStats::default(),
+            path_cache: PathMeshCache::default(),
         }
     }
 }
@@ -1052,6 +1055,7 @@ impl RetainedCompositorState {
                 &snapshot.scene,
                 &snapshot.initial_state,
                 text_engine,
+                &mut self.path_cache,
                 feather_width,
             )?;
             self.packets.insert(
@@ -1261,6 +1265,7 @@ impl RetainedCompositorState {
                             layer_snapshot,
                             snapshot_layers,
                             text_engine,
+                            &mut self.path_cache,
                             feather_width,
                             self.frame_index,
                         )?
@@ -1280,6 +1285,7 @@ impl RetainedCompositorState {
                         layer_snapshot,
                         snapshot_layers,
                         text_engine,
+                        &mut self.path_cache,
                         feather_width,
                         self.frame_index,
                     )?
@@ -1539,6 +1545,7 @@ fn build_tile_entry(
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
     text_engine: &mut TextEngine,
+    path_cache: &mut PathMeshCache,
     feather_width: f32,
     frame_index: u64,
 ) -> Result<TileEntry> {
@@ -1550,6 +1557,7 @@ fn build_tile_entry(
         layer_snapshot,
         snapshot_layers,
         text_engine,
+        path_cache,
         feather_width,
     )?;
     if layer_local {
@@ -1587,6 +1595,7 @@ fn build_cached_tile_fragment(
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
     text_engine: &mut TextEngine,
+    path_cache: &mut PathMeshCache,
     feather_width: f32,
 ) -> Result<DrawOpArena> {
     let mut draw_ops = DrawOpArena::default();
@@ -1606,6 +1615,7 @@ fn build_cached_tile_fragment(
                     &packet_snapshot.scene,
                     &tile_state,
                     text_engine,
+                    path_cache,
                     feather_width,
                 )?;
                 draw_ops.append_fragment(&fragment);
@@ -1629,6 +1639,7 @@ fn build_cached_tile_fragment(
                     child_snapshot,
                     snapshot_layers,
                     text_engine,
+                    path_cache,
                     feather_width,
                 )?;
                 draw_ops.append_fragment(&child_fragment);
@@ -2144,11 +2155,18 @@ impl WgpuRenderer {
         self.last_frame_stats.get(&window_id).copied()
     }
 
-    pub fn text_cache_snapshot(&self) -> RendererTextCacheSnapshot {
-        self.text_engine
+    pub fn text_cache_snapshot(&self, window_id: WindowId) -> RendererTextCacheSnapshot {
+        let mut snapshot = self
+            .text_engine
             .as_ref()
             .map(TextEngine::cache_snapshot)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        snapshot.path = self
+            .compositors
+            .get(&window_id)
+            .map(|compositor| compositor.path_cache.snapshot())
+            .unwrap_or_default();
+        snapshot
     }
 
     pub fn capture_last_frame_rgba(&mut self, window_id: WindowId) -> Result<RgbaImage> {
@@ -3215,6 +3233,100 @@ impl CachedGlyphMesh {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PathCacheKind {
+    Fill,
+    Stroke { line_width_bits: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PathCacheKey {
+    signature: u64,
+    kind: PathCacheKind,
+    feather_width_bits: u32,
+}
+
+impl PathCacheKey {
+    fn fill(path: &ScenePath, transform: Transform, feather_width: f32) -> Self {
+        Self {
+            signature: hash_path(path, transform),
+            kind: PathCacheKind::Fill,
+            feather_width_bits: feather_width.to_bits(),
+        }
+    }
+
+    fn stroke(path: &ScenePath, transform: Transform, line_width: f32, feather_width: f32) -> Self {
+        Self {
+            signature: hash_path(path, transform),
+            kind: PathCacheKind::Stroke {
+                line_width_bits: line_width.to_bits(),
+            },
+            feather_width_bits: feather_width.to_bits(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct PathMeshCache {
+    meshes: HashMap<PathCacheKey, CachedGlyphMesh>,
+    hits: usize,
+    misses: usize,
+}
+
+impl PathMeshCache {
+    fn cached_fill_mesh(
+        &mut self,
+        path: &ScenePath,
+        transform: Transform,
+        feather_width: f32,
+    ) -> Result<&CachedGlyphMesh> {
+        let key = PathCacheKey::fill(path, transform, feather_width);
+        if self.meshes.contains_key(&key) {
+            self.hits += 1;
+            return Ok(self.meshes.get(&key).expect("path cache entry should exist"));
+        }
+
+        self.misses += 1;
+        let lyon_path = build_lyon_path(path, transform);
+        let mesh = feathering::build_local_fill_mesh(&lyon_path, feather_width)?;
+        self.meshes.insert(key, mesh);
+        Ok(self.meshes.get(&key).expect("path cache entry inserted"))
+    }
+
+    fn cached_stroke_mesh(
+        &mut self,
+        path: &ScenePath,
+        transform: Transform,
+        line_width: f32,
+        feather_width: f32,
+    ) -> Result<&CachedGlyphMesh> {
+        let key = PathCacheKey::stroke(path, transform, line_width, feather_width);
+        if self.meshes.contains_key(&key) {
+            self.hits += 1;
+            return Ok(self.meshes.get(&key).expect("path cache entry should exist"));
+        }
+
+        self.misses += 1;
+        let lyon_path = build_lyon_path(path, transform);
+        let mesh = feathering::build_local_stroke_mesh(&lyon_path, line_width, feather_width)?;
+        self.meshes.insert(key, mesh);
+        Ok(self.meshes.get(&key).expect("path cache entry inserted"))
+    }
+
+    #[cfg(test)]
+    fn stats(&self) -> (usize, usize, usize) {
+        (self.meshes.len(), self.hits, self.misses)
+    }
+
+    fn snapshot(&self) -> GlyphCacheSnapshot {
+        GlyphCacheSnapshot {
+            entries: self.meshes.len(),
+            hits: self.hits,
+            misses: self.misses,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 struct SceneMesh {
     vertices: Vec<MeshVertex>,
@@ -3401,6 +3513,7 @@ fn build_direct_packet(
     scene: &Scene,
     initial_state: &ResolvedRasterState,
     text_engine: &mut TextEngine,
+    path_cache: &mut PathMeshCache,
     feather_width: f32,
 ) -> Result<DrawOpArena> {
     let mut draw_ops = DrawOpArena::default();
@@ -3408,6 +3521,7 @@ fn build_direct_packet(
     let mut builder = SceneDrawOpBuilder {
         frame,
         text_engine,
+        path_cache,
         feather_width,
         scratch_vertices: Vec::new(),
         clip_scratch_vertices: Vec::new(),
@@ -3419,6 +3533,7 @@ fn build_direct_packet(
 struct SceneDrawOpBuilder<'a> {
     frame: &'a SceneFrame,
     text_engine: &'a mut TextEngine,
+    path_cache: &'a mut PathMeshCache,
     feather_width: f32,
     scratch_vertices: Vec<Vertex>,
     clip_scratch_vertices: Vec<Vertex>,
@@ -3496,6 +3611,7 @@ impl SceneDrawOpBuilder<'_> {
                     state,
                     path,
                     *color,
+                    self.path_cache,
                     viewport,
                     self.feather_width,
                 )?;
@@ -3514,6 +3630,7 @@ impl SceneDrawOpBuilder<'_> {
                     path,
                     *color,
                     *stroke,
+                    self.path_cache,
                     viewport,
                     self.feather_width,
                 )?;
@@ -3995,6 +4112,7 @@ impl TextEngine {
                 hits: self.glyph_cache_hits,
                 misses: self.glyph_cache_misses,
             },
+            path: GlyphCacheSnapshot::default(),
         }
     }
 }
@@ -4050,11 +4168,34 @@ fn append_cached_glyph_mesh(
     }
 }
 
+
+fn append_cached_path_mesh(
+    vertices: &mut Vec<Vertex>,
+    mesh: &CachedGlyphMesh,
+    color: Color,
+    viewport: Size,
+) {
+    if viewport.is_empty() {
+        return;
+    }
+
+    let rgba = color.clamped().to_array();
+    for index in &mesh.indices {
+        let vertex = mesh.vertices[*index as usize];
+        let ndc = to_ndc(vertex.position.x, vertex.position.y, viewport);
+        vertices.push(Vertex {
+            position: ndc,
+            color: [rgba[0], rgba[1], rgba[2], rgba[3] * vertex.coverage],
+            tex_coords: [0.0, 0.0],
+        });
+    }
+}
 fn append_painted_path(
     vertices: &mut Vec<Vertex>,
     state: &SceneRasterState,
     path: &ScenePath,
     color: Color,
+    path_cache: &mut PathMeshCache,
     viewport: Size,
     feather_width: f32,
 ) -> Result<()> {
@@ -4066,8 +4207,9 @@ fn append_painted_path(
         return Ok(());
     }
 
-    let lyon_path = build_lyon_path(path, state.current_transform);
-    append_filled_aa_lyon_path(vertices, &lyon_path, color, viewport, feather_width)
+    let mesh = path_cache.cached_fill_mesh(path, state.current_transform, feather_width)?;
+    append_cached_path_mesh(vertices, mesh, color, viewport);
+    Ok(())
 }
 
 fn append_stroked_path(
@@ -4076,6 +4218,7 @@ fn append_stroked_path(
     path: &ScenePath,
     color: Color,
     stroke: StrokeStyle,
+    path_cache: &mut PathMeshCache,
     viewport: Size,
     feather_width: f32,
 ) -> Result<()> {
@@ -4094,27 +4237,8 @@ fn append_stroked_path(
         return Ok(());
     }
 
-    let lyon_path = build_lyon_path(path, state.current_transform);
-    append_feathered_stroke(
-        vertices,
-        &lyon_path,
-        color,
-        line_width,
-        viewport,
-        feather_width,
-    );
-    Ok(())
-}
-
-fn append_filled_aa_lyon_path(
-    vertices: &mut Vec<Vertex>,
-    path: &LyonPath,
-    color: Color,
-    viewport: Size,
-    feather_width: f32,
-) -> Result<()> {
-    tessellate_filled_lyon_path(vertices, path, color, viewport)?;
-    append_fill_fringe(vertices, path, color, viewport, feather_width);
+    let mesh = path_cache.cached_stroke_mesh(path, state.current_transform, line_width, feather_width)?;
+    append_cached_path_mesh(vertices, mesh, color, viewport);
     Ok(())
 }
 
@@ -4728,27 +4852,6 @@ fn normalize_surface_size(width: u32, height: u32) -> (u32, u32) {
     (width.max(1), height.max(1))
 }
 
-fn append_fill_fringe(
-    vertices: &mut Vec<Vertex>,
-    path: &LyonPath,
-    color: Color,
-    viewport: Size,
-    feather_width: f32,
-) {
-    feathering::append_fill_fringe(vertices, path, color, viewport, feather_width);
-}
-
-fn append_feathered_stroke(
-    vertices: &mut Vec<Vertex>,
-    path: &LyonPath,
-    color: Color,
-    line_width: f32,
-    viewport: Size,
-    feather_width: f32,
-) {
-    feathering::append_feathered_stroke(vertices, path, color, line_width, viewport, feather_width);
-}
-
 fn append_scene_mesh(vertices: &mut Vec<Vertex>, mesh: &SceneMesh, viewport: Size) {
     for index in &mesh.indices {
         let vertex = mesh.vertices[*index as usize];
@@ -5342,6 +5445,54 @@ mod tests {
                 && left.tex_coords == right.tex_coords
         }));
         assert_eq!(text_engine.glyph_cache_stats(), (3, 3, 3));
+    }
+
+    #[test]
+    fn retained_compositor_reuses_cached_path_meshes_across_cached_tiles() {
+        let layer_id = WidgetId::new(70);
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached);
+
+        let mut layer_scene = Scene::new();
+        layer_scene.push(SceneCommand::FillPath {
+            path: Path::rect(Rect::new(0.0, 0.0, 512.0, 128.0)),
+            brush: Color::rgba(0.24, 0.48, 0.72, 1.0).into(),
+        });
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            descriptor.clone(),
+            layer_scene,
+        )));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(30),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                    .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let draw_ops = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert!(!draw_ops.draw_ops.is_empty());
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.path_cache.stats(), (1, 1, 1));
     }
 
     #[test]
