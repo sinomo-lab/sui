@@ -1149,6 +1149,67 @@ fn phase_duration_ms(snapshot: &WindowPerformanceSnapshot, phase: FramePhase) ->
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ScrollBenchmarkFrameSample {
+    frame_index: u64,
+    total_time_ms: f64,
+    draw_count: usize,
+    pass_count: usize,
+    visible_tile_count: usize,
+    reused_tile_count: usize,
+    regenerated_tile_count: usize,
+    uploaded_vertex_bytes: u64,
+    text_vertex_bytes: u64,
+    tile_memory_bytes: u64,
+    dirty_region_count: usize,
+    dirty_coverage: f32,
+}
+
+impl ScrollBenchmarkFrameSample {
+    fn from_snapshot(snapshot: &WindowPerformanceSnapshot) -> Self {
+        Self {
+            frame_index: snapshot.frame_index,
+            total_time_ms: snapshot.total_time_ms,
+            draw_count: snapshot.renderer_submission.draw_count,
+            pass_count: snapshot.renderer_submission.pass_count,
+            visible_tile_count: snapshot.renderer_submission.visible_tile_count,
+            reused_tile_count: snapshot.renderer_submission.reused_tile_count,
+            regenerated_tile_count: snapshot.renderer_submission.regenerated_tile_count,
+            uploaded_vertex_bytes: snapshot.renderer_submission.uploaded_vertex_bytes,
+            text_vertex_bytes: snapshot.renderer_submission.text_vertex_bytes,
+            tile_memory_bytes: snapshot.renderer_submission.tile_memory_bytes,
+            dirty_region_count: snapshot.scene.dirty_region_count,
+            dirty_coverage: snapshot.scene.dirty_coverage,
+        }
+    }
+}
+
+fn gallery_scroll_point(bounds: Rect) -> Point {
+    Point::new(bounds.max_x() - 40.0, bounds.y() + bounds.height() * 0.5)
+}
+
+fn node_is_mostly_visible(
+    snapshot: &DesktopWindowSnapshot,
+    viewport: Rect,
+    role: SemanticsRole,
+    name: &str,
+    min_visible_area_ratio: f32,
+) -> bool {
+    snapshot.semantics.iter().any(|node| {
+        if node.role != role || node.name.as_deref() != Some(name) {
+            return false;
+        }
+
+        let Some(visible) = node.bounds.intersection(viewport) else {
+            return false;
+        };
+
+        let node_area = node.bounds.width() * node.bounds.height();
+        let visible_area = visible.width() * visible.height();
+        node_area > 0.0 && (visible_area / node_area) >= min_visible_area_ratio
+    })
+}
+
 #[test]
 fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Result<()> {
     let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1266,6 +1327,10 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
 fn widget_book_scroll_fps_benchmark() -> Result<()> {
     let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
+    const SCROLL_STEP_PX: f32 = -40.0;
+    const MAX_SCROLL_FRAMES: usize = 4096;
+    const MIN_VISIBLE_AREA_RATIO: f32 = 0.85;
+
     let harness = DesktopHarness::launch(|| {
         build_widget_book_application(Rc::new(RefCell::new(WidgetBookState {
             name: "Ada".to_string(),
@@ -1294,60 +1359,99 @@ fn widget_book_scroll_fps_benchmark() -> Result<()> {
 
     harness.dispatch(window_id, HostInputEvent::Focused(true))?;
 
-    // Warm-up: initial render + one scroll to prime caches
+    let initial_snapshot = harness.snapshot(window_id)?;
     let gallery = find_node(
-        &harness.snapshot(window_id)?,
+        &initial_snapshot,
         SemanticsRole::ScrollView,
         sui_widget_book::GALLERY_SCROLL_NAME,
     );
-    move_cursor(&harness, window_id, node_center(gallery.bounds))?;
-    harness.dispatch(
-        window_id,
-        HostInputEvent::MouseWheel {
-            delta: ScrollKind::Pixels(Vector::new(0.0, -40.0)),
-        },
-    )?;
+    let scroll_point = gallery_scroll_point(gallery.bounds);
+    let mut previous_frame_index = initial_snapshot
+        .performance
+        .as_ref()
+        .expect("initial widget-book render should publish a performance snapshot")
+        .frame_index;
+    let mut reached_bottom = node_is_mostly_visible(
+        &initial_snapshot,
+        gallery.bounds,
+        SemanticsRole::Image,
+        sui_widget_book::DEMO_IMAGE_LABEL,
+        MIN_VISIBLE_AREA_RATIO,
+    );
 
-    // Benchmark: measure frame times over a series of scroll events
-    const FRAME_COUNT: usize = 30;
-    let mut frame_times_ms = Vec::with_capacity(FRAME_COUNT);
+    move_cursor(&harness, window_id, scroll_point)?;
+
+    let mut frame_samples = Vec::new();
     let mut phase_totals: HashMap<&str, f64> = HashMap::new();
+    let mut stalled_at_end = false;
 
     let benchmark_start = Instant::now();
 
-    for i in 0..FRAME_COUNT {
-        let direction = if i % 2 == 0 { -40.0 } else { 40.0 };
+    for _ in 0..MAX_SCROLL_FRAMES {
         harness.dispatch(
             window_id,
             HostInputEvent::MouseWheel {
-                delta: ScrollKind::Pixels(Vector::new(0.0, direction)),
+                delta: ScrollKind::Pixels(Vector::new(0.0, SCROLL_STEP_PX)),
             },
         )?;
 
         let snapshot = harness.snapshot(window_id)?;
-        if let Some(performance) = &snapshot.performance {
-            frame_times_ms.push(performance.total_time_ms);
+        let performance = snapshot
+            .performance
+            .as_ref()
+            .expect("widget-book scroll benchmark should publish performance snapshots");
 
-            for sample in &performance.phase_timings {
-                *phase_totals
-                    .entry(sample.phase.label())
-                    .or_insert(0.0) += sample.duration_ms;
+        reached_bottom |= node_is_mostly_visible(
+            &snapshot,
+            gallery.bounds,
+            SemanticsRole::Image,
+            sui_widget_book::DEMO_IMAGE_LABEL,
+            MIN_VISIBLE_AREA_RATIO,
+        );
+
+        if performance.frame_index == previous_frame_index {
+            if reached_bottom {
+                stalled_at_end = true;
+                break;
             }
+
+            return Err(Error::new(format!(
+                "widget-book scroll benchmark stalled before reaching the end after {} scroll frames",
+                frame_samples.len()
+            )));
+        }
+
+        previous_frame_index = performance.frame_index;
+        frame_samples.push(ScrollBenchmarkFrameSample::from_snapshot(performance));
+
+        for sample in &performance.phase_timings {
+            *phase_totals
+                .entry(sample.phase.label())
+                .or_insert(0.0) += sample.duration_ms;
         }
     }
 
     let benchmark_elapsed_ms = benchmark_start.elapsed().as_secs_f64() * 1000.0;
 
-    // Report results
-    let valid_count = frame_times_ms.len();
     assert!(
-        valid_count >= FRAME_COUNT / 2,
-        "expected at least {} valid frame measurements, got {}",
-        FRAME_COUNT / 2,
-        valid_count,
+        stalled_at_end,
+        "widget-book scroll benchmark hit the {}-frame safety limit before the gallery stopped scrolling",
+        MAX_SCROLL_FRAMES,
+    );
+    assert!(
+        reached_bottom,
+        "widget-book scroll benchmark reached a stall without bringing the final image story into view",
     );
 
-    let avg_ms: f64 = frame_times_ms.iter().sum::<f64>() / valid_count as f64;
+    let valid_count = frame_samples.len();
+    assert!(
+        valid_count > 0,
+        "expected at least one measured scroll frame",
+    );
+
+    let frame_times_ms: Vec<_> = frame_samples.iter().map(|sample| sample.total_time_ms).collect();
+    let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+    let avg_ms: f64 = total_frame_time_ms / valid_count as f64;
     let max_ms: f64 = frame_times_ms
         .iter()
         .copied()
@@ -1362,21 +1466,89 @@ fn widget_book_scroll_fps_benchmark() -> Result<()> {
     let mut sorted_times = frame_times_ms.clone();
     sorted_times.sort_by(|a, b| a.total_cmp(b));
     let p95_ms = sorted_times[p95_index];
+    let avg_draws = frame_samples.iter().map(|sample| sample.draw_count as f64).sum::<f64>()
+        / valid_count as f64;
+    let avg_passes = frame_samples.iter().map(|sample| sample.pass_count as f64).sum::<f64>()
+        / valid_count as f64;
+    let avg_visible_tiles = frame_samples
+        .iter()
+        .map(|sample| sample.visible_tile_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_reused_tiles = frame_samples
+        .iter()
+        .map(|sample| sample.reused_tile_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_regenerated_tiles = frame_samples
+        .iter()
+        .map(|sample| sample.regenerated_tile_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_uploaded_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.uploaded_vertex_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.text_vertex_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_tile_memory_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.tile_memory_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_dirty_regions = frame_samples
+        .iter()
+        .map(|sample| sample.dirty_region_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_dirty_coverage = frame_samples
+        .iter()
+        .map(|sample| sample.dirty_coverage as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let max_uploaded_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.uploaded_vertex_bytes)
+        .max()
+        .unwrap_or(0);
+    let last_sample = frame_samples
+        .last()
+        .copied()
+        .expect("scroll benchmark should record at least one sample");
 
     println!("\n=== Widget Book Scroll FPS Benchmark ===");
-    println!("frames measured: {valid_count}");
-    println!("wall-clock time: {benchmark_elapsed_ms:.1} ms");
-    println!("avg frame time:  {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
-    println!("min frame time:  {min_ms:.3} ms");
-    println!("max frame time:  {max_ms:.3} ms");
-    println!("p95 frame time:  {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+    println!("scroll direction: downward");
+    println!("scroll step:      {:.0} px/frame", SCROLL_STEP_PX.abs());
+    println!("frames measured:  {valid_count}");
+    println!("scroll distance:  {:.0} px", valid_count as f32 * SCROLL_STEP_PX.abs());
+    println!("wall-clock time:  {benchmark_elapsed_ms:.1} ms");
+    println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+    println!("min frame time:   {min_ms:.3} ms");
+    println!("max frame time:   {max_ms:.3} ms");
+    println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+    println!("avg gpu passes:   {avg_passes:.2}");
+    println!("avg gpu draws:    {avg_draws:.2}");
+    println!("avg visible tiles:{avg_visible_tiles:.2}");
+    println!("avg reused tiles: {avg_reused_tiles:.2}");
+    println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
+    println!("avg vertex bytes: {:.0}", avg_uploaded_vertex_bytes);
+    println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
+    println!("avg tile memory:  {:.0}", avg_tile_memory_bytes);
+    println!("avg dirty regions:{avg_dirty_regions:.2}");
+    println!("avg dirty cover:  {avg_dirty_coverage:.1}%");
+    println!("max vertex bytes: {max_uploaded_vertex_bytes}");
+    println!("last frame index: {}", last_sample.frame_index);
 
     println!("\n--- Phase breakdown (avg per frame) ---");
     let mut phase_entries: Vec<_> = phase_totals.iter().collect();
     phase_entries.sort_by(|a, b| b.1.total_cmp(a.1));
     for (phase, total_ms) in &phase_entries {
         let avg_phase_ms = *total_ms / valid_count as f64;
-        let pct = (*total_ms / frame_times_ms.iter().sum::<f64>()) * 100.0;
+        let pct = (*total_ms / total_frame_time_ms) * 100.0;
         println!("  {phase:<22} {avg_phase_ms:>8.3} ms  ({pct:>5.1}%)");
     }
 
