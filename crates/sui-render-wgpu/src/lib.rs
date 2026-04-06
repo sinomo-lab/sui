@@ -5018,7 +5018,7 @@ fn append_cached_path_mesh(
         return;
     }
 
-    let rgba = color.clamped().to_array();
+    let rgba = shader_color(color);
     for index in &mesh.indices {
         let vertex = mesh.vertices[*index as usize];
         let ndc = to_ndc(vertex.position.x, vertex.position.y, viewport);
@@ -6165,11 +6165,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
+        CachedGlyphMesh,
         ClipState, CompositionContainerId, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena,
         DrawOpKind, PreparedClipPath, PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches,
         PreparedPassBatch, PreparedVertices, RendererFrameStats, RetainedCompositorState,
         RetainedFrameFragment, RetainedLayerRenderMode,
         RetainedPacketId, ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer,
+        append_cached_path_mesh,
         batch_draw_ops, build_vertices, prepare_frame_batches, shader_color, to_ndc,
     };
     use std::sync::Arc;
@@ -6382,6 +6384,28 @@ mod tests {
         assert!((rgba[1] - 0.02315).abs() < 0.0001);
         assert!((rgba[2] - 0.66539).abs() < 0.0001);
         assert_eq!(rgba[3], 1.0);
+    }
+
+    #[test]
+    fn cached_path_mesh_linearizes_srgb_inputs() {
+        let mut mesh = CachedGlyphMesh::default();
+        let a = mesh.push_vertex(Point::new(0.0, 0.0), 1.0);
+        let b = mesh.push_vertex(Point::new(10.0, 0.0), 1.0);
+        let c = mesh.push_vertex(Point::new(0.0, 10.0), 1.0);
+        mesh.add_triangle(a, b, c);
+
+        let color = Color::srgba(66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0, 1.0);
+        let mut vertices = Vec::new();
+        append_cached_path_mesh(&mut vertices, &mesh, color, Size::new(32.0, 32.0));
+
+        assert_eq!(vertices.len(), 3);
+        let expected = shader_color(color);
+        for vertex in vertices {
+            assert!((vertex.color[0] - expected[0]).abs() < 0.0001);
+            assert!((vertex.color[1] - expected[1]).abs() < 0.0001);
+            assert!((vertex.color[2] - expected[2]).abs() < 0.0001);
+            assert_eq!(vertex.color[3], 1.0);
+        }
     }
 
     #[test]
