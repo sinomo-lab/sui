@@ -123,17 +123,29 @@ pub struct RendererFrameStats {
 }
 
 impl RendererFrameStats {
+    #[cfg(test)]
     fn from_prepared_frame(prepared: &PreparedFrameBatches) -> Self {
-        Self {
-            pass_count: prepared.passes.len().max(1),
-            draw_count: prepared
+        Self::from_prepared_counts(
+            prepared.passes.len().max(1),
+            prepared
                 .passes
                 .iter()
                 .map(|pass| pass.clip_paths.len() + pass.draws.len())
                 .sum(),
-            uploaded_vertex_bytes: (prepared.scene_vertices.len() as u64
-                + prepared.clip_vertices.len() as u64)
+            (prepared.scene_vertices.len() as u64 + prepared.clip_vertices.len() as u64)
                 * VERTEX_SIZE,
+        )
+    }
+
+    fn from_prepared_counts(
+        pass_count: usize,
+        draw_count: usize,
+        uploaded_vertex_bytes: u64,
+    ) -> Self {
+        Self {
+            pass_count,
+            draw_count,
+            uploaded_vertex_bytes,
             visible_layer_count: 0,
             visible_tile_count: 0,
             reused_tile_count: 0,
@@ -291,16 +303,51 @@ enum TilePayload {
     DirectPacket(DrawOpArena),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+struct RetainedGpuGeometry {
+    scene_buffer: Option<wgpu::Buffer>,
+    clip_buffer: Option<wgpu::Buffer>,
+}
+
+#[derive(Debug)]
 struct TileEntry {
     key: TileKey,
     rect: Rect,
     dirty: bool,
     visible: bool,
-    layer_local: bool,
     last_used_frame: u64,
     memory_cost: usize,
     payload: TilePayload,
+    gpu_geometry: Option<RetainedGpuGeometry>,
+}
+
+impl TileEntry {
+    fn draw_ops(&self) -> &DrawOpArena {
+        match &self.payload {
+            TilePayload::DirectPacket(draw_ops) => draw_ops,
+        }
+    }
+
+    fn ensure_gpu_geometry(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> u64 {
+        if self.gpu_geometry.is_some() {
+            return 0;
+        }
+
+        let draw_ops = self.draw_ops();
+        let scene_buffer = create_static_vertex_buffer(device, queue, "SUI retained tile scene", &draw_ops.scene_vertices);
+        let clip_buffer = create_static_vertex_buffer(device, queue, "SUI retained tile clip", &draw_ops.clip_vertices);
+        let uploaded_vertex_bytes =
+            (draw_ops.scene_vertices.len() as u64 + draw_ops.clip_vertices.len() as u64) * VERTEX_SIZE;
+        self.gpu_geometry = Some(RetainedGpuGeometry {
+            scene_buffer,
+            clip_buffer,
+        });
+        uploaded_vertex_bytes
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -313,6 +360,17 @@ struct RetainedCompositorFrameStats {
     tile_memory_bytes: usize,
     tile_generation_time_ms: f64,
     composition_time_ms: f64,
+}
+
+#[derive(Debug)]
+struct RetainedFrameSubmission {
+    fragments: Vec<RetainedFrameFragment>,
+}
+
+#[derive(Debug)]
+enum RetainedFrameFragment {
+    Transient(DrawOpArena),
+    Tile(TileAddress),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -562,12 +620,39 @@ impl Default for RetainedCompositorState {
 }
 
 impl RetainedCompositorState {
+    #[cfg(test)]
     fn prepare_frame(
         &mut self,
         frame: &SceneFrame,
         text_engine: &mut TextEngine,
         feather_width: f32,
     ) -> Result<DrawOpArena> {
+        let mut frame_stats = self.refresh_frame_state(frame, text_engine, feather_width)?;
+        let composition_started = Instant::now();
+        let draw_ops = self.compose_draw_ops(frame.viewport, &mut frame_stats)?;
+        self.finish_frame(frame.viewport, feather_width, &mut frame_stats, composition_started);
+        Ok(draw_ops)
+    }
+
+    fn prepare_frame_submission(
+        &mut self,
+        frame: &SceneFrame,
+        text_engine: &mut TextEngine,
+        feather_width: f32,
+    ) -> Result<RetainedFrameSubmission> {
+        let mut frame_stats = self.refresh_frame_state(frame, text_engine, feather_width)?;
+        let composition_started = Instant::now();
+        let submission = self.compose_submission(frame.viewport, &mut frame_stats)?;
+        self.finish_frame(frame.viewport, feather_width, &mut frame_stats, composition_started);
+        Ok(submission)
+    }
+
+    fn refresh_frame_state(
+        &mut self,
+        frame: &SceneFrame,
+        text_engine: &mut TextEngine,
+        feather_width: f32,
+    ) -> Result<RetainedCompositorFrameStats> {
         let viewport_changed = self.viewport != frame.viewport;
         let feather_changed = self.feather_width_bits != feather_width.to_bits();
         self.frame_index = self.frame_index.wrapping_add(1);
@@ -582,15 +667,23 @@ impl RetainedCompositorState {
             viewport_changed || feather_changed,
             &mut frame_stats,
         )?;
-        frame_stats.tile_generation_time_ms = tile_generation_started.elapsed().as_secs_f64() * 1000.0;
-        let composition_started = Instant::now();
-        let draw_ops = self.compose_draw_ops(frame.viewport, &mut frame_stats)?;
+        frame_stats.tile_generation_time_ms =
+            tile_generation_started.elapsed().as_secs_f64() * 1000.0;
+        Ok(frame_stats)
+    }
+
+    fn finish_frame(
+        &mut self,
+        viewport: Size,
+        feather_width: f32,
+        frame_stats: &mut RetainedCompositorFrameStats,
+        composition_started: Instant,
+    ) {
         frame_stats.composition_time_ms = composition_started.elapsed().as_secs_f64() * 1000.0;
         frame_stats.tile_memory_bytes = self.total_tile_memory_bytes();
-        self.last_frame_stats = frame_stats;
-        self.viewport = frame.viewport;
+        self.last_frame_stats = *frame_stats;
+        self.viewport = viewport;
         self.feather_width_bits = feather_width.to_bits();
-        Ok(draw_ops)
     }
 
     fn build_snapshot(&mut self, scene: &Scene) -> Result<CompositorSnapshot> {
@@ -900,9 +993,10 @@ impl RetainedCompositorState {
         let mut structure_dirty_layers = HashSet::new();
 
         for (layer_id, layer_snapshot) in snapshot.layers {
-            let translated_only = previous_layers.get(&layer_id).is_some_and(|previous| {
-                descriptor_translation_delta(&previous.descriptor, &layer_snapshot.descriptor).is_some()
+            let translation_delta = previous_layers.get(&layer_id).and_then(|previous| {
+                descriptor_translation_delta(&previous.descriptor, &layer_snapshot.descriptor)
             });
+            let translated_only = translation_delta.is_some();
             let structure_changed = previous_layers.get(&layer_id).is_none_or(|previous| {
                 previous.parent != layer_snapshot.parent
                     || previous.children != layer_snapshot.children
@@ -919,6 +1013,17 @@ impl RetainedCompositorState {
                 || previous_layers.get(&layer_id).is_none_or(|previous| {
                     !translated_only && previous.descriptor.bounds != layer_snapshot.descriptor.bounds
                 });
+
+            if let Some(delta) = translation_delta {
+                if !global_rebuild
+                    && previous_layers
+                        .get(&layer_id)
+                        .is_some_and(|previous| previous.render_mode == RetainedLayerRenderMode::CachedTiles)
+                    && render_modes[&layer_id] == RetainedLayerRenderMode::CachedTiles
+                {
+                    translate_cached_layer_tiles(&mut self.tiles, layer_id, delta, frame.viewport);
+                }
+            }
 
             let previous = previous_layers.get(&layer_id);
             let retained = self.layers.entry(layer_id).or_insert_with(|| RetainedLayer {
@@ -1048,6 +1153,7 @@ impl RetainedCompositorState {
         Ok(())
     }
 
+    #[cfg(test)]
     fn compose_draw_ops(
         &self,
         viewport: Size,
@@ -1058,6 +1164,27 @@ impl RetainedCompositorState {
         Ok(draw_ops)
     }
 
+    fn compose_submission(
+        &self,
+        viewport: Size,
+        stats: &mut RetainedCompositorFrameStats,
+    ) -> Result<RetainedFrameSubmission> {
+        let mut submission = RetainedFrameSubmission {
+            fragments: Vec::new(),
+        };
+        let mut current = DrawOpArena::default();
+        self.append_items_to_submission(
+            &self.root.items,
+            &mut current,
+            &mut submission,
+            viewport,
+            stats,
+        )?;
+        flush_transient_fragment(&mut submission, &mut current);
+        Ok(submission)
+    }
+
+    #[cfg(test)]
     fn append_items(
         &self,
         items: &[CompositionItem],
@@ -1112,19 +1239,82 @@ impl RetainedCompositorState {
                                 for tile in &layer.visible_tiles {
                                     if let Some(entry) = self.tiles.get(tile) {
                                         let TilePayload::DirectPacket(fragment) = &entry.payload;
-                                        if entry.layer_local {
-                                            draw_ops.append_composed_fragment(
-                                                fragment,
-                                                Vector::new(
-                                                    layer.descriptor.bounds.x(),
-                                                    layer.descriptor.bounds.y(),
-                                                ),
-                                                &[],
-                                                viewport,
-                                            )?;
-                                        } else {
-                                            draw_ops.append_fragment(fragment);
-                                        }
+                                        draw_ops.append_fragment(fragment);
+                                        stats.visible_tiles += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn append_items_to_submission(
+        &self,
+        items: &[CompositionItem],
+        current: &mut DrawOpArena,
+        submission: &mut RetainedFrameSubmission,
+        viewport: Size,
+        stats: &mut RetainedCompositorFrameStats,
+    ) -> Result<()> {
+        for item in items {
+            match item {
+                CompositionItem::Packet(packet_id) => {
+                    if let Some(packet) = self.packets.get(packet_id) {
+                        match packet.coordinate_space {
+                            PacketCoordinateSpace::World => {
+                                current.append_fragment(&packet.draw_ops);
+                            }
+                            PacketCoordinateSpace::LayerLocal => {
+                                let (origin, clip_stack) = match packet.id.container {
+                                    CompositionContainerId::Root => (Vector::ZERO, Vec::new()),
+                                    CompositionContainerId::Layer(layer_id) => self
+                                        .layers
+                                        .get(&layer_id)
+                                        .map(|layer| {
+                                            (
+                                                layer.descriptor.bounds.origin.to_vector(),
+                                                resolved_clip_primitives(layer.clip_node, &self.clips),
+                                            )
+                                        })
+                                        .unwrap_or((Vector::ZERO, Vec::new())),
+                                };
+                                current.append_composed_fragment(
+                                    &packet.draw_ops,
+                                    origin,
+                                    &clip_stack,
+                                    viewport,
+                                )?;
+                            }
+                        }
+                        stats.direct_packets += 1;
+                    }
+                }
+                CompositionItem::Layer(layer_id) => {
+                    if let Some(layer) = self.layers.get(layer_id) {
+                        match layer.render_mode {
+                            RetainedLayerRenderMode::Direct => {
+                                stats.visible_layers += 1;
+                                self.append_items_to_submission(
+                                    &layer.items,
+                                    current,
+                                    submission,
+                                    viewport,
+                                    stats,
+                                )?;
+                            }
+                            RetainedLayerRenderMode::CachedTiles => {
+                                if !layer.visible_tiles.is_empty() {
+                                    stats.visible_layers += 1;
+                                }
+                                for tile in &layer.visible_tiles {
+                                    if self.tiles.contains_key(tile) {
+                                        flush_transient_fragment(submission, current);
+                                        submission.fragments.push(RetainedFrameFragment::Tile(*tile));
                                         stats.visible_tiles += 1;
                                     }
                                 }
@@ -1172,11 +1362,6 @@ impl RetainedCompositorState {
             let content_version = layer.content_version;
             let transform_node = layer.transform_node;
             let clip_node = layer.clip_node;
-            let layer_local_tiles = cached_layer_translation_fast_path(
-                transform_node,
-                clip_node,
-                layer.effect_node,
-            );
 
             let tile_grid = TileGrid::new(&descriptor, frame.scale_factor);
             let grid_changed = layer.tile_grid != Some(tile_grid);
@@ -1234,7 +1419,6 @@ impl RetainedCompositorState {
                             content_version,
                             tile_grid,
                             *address,
-                            layer_local_tiles,
                             frame,
                             layer_snapshot,
                             snapshot_layers,
@@ -1254,7 +1438,6 @@ impl RetainedCompositorState {
                         content_version,
                         tile_grid,
                         *address,
-                        layer_local_tiles,
                         frame,
                         layer_snapshot,
                         snapshot_layers,
@@ -1307,6 +1490,19 @@ impl RetainedCompositorState {
             }
         }
     }
+}
+
+fn flush_transient_fragment(
+    submission: &mut RetainedFrameSubmission,
+    current: &mut DrawOpArena,
+) {
+    if current.draw_ops.is_empty() {
+        return;
+    }
+
+    submission
+        .fragments
+        .push(RetainedFrameFragment::Transient(std::mem::take(current)));
 }
 
 
@@ -1514,7 +1710,6 @@ fn build_tile_entry(
     content_version: u64,
     tile_grid: TileGrid,
     address: TileAddress,
-    layer_local: bool,
     frame: &SceneFrame,
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
@@ -1525,7 +1720,7 @@ fn build_tile_entry(
 ) -> Result<TileEntry> {
     let tile_local = tile_grid.tile_rect(address.tile_x, address.tile_y);
     let tile_scene = layer_local_to_scene(tile_local, descriptor);
-    let mut fragment = build_cached_tile_fragment(
+    let fragment = build_cached_tile_fragment(
         frame,
         tile_scene,
         layer_snapshot,
@@ -1534,12 +1729,6 @@ fn build_tile_entry(
         path_cache,
         feather_width,
     )?;
-    if layer_local {
-        fragment.translate_in_place(
-            Vector::new(-descriptor.bounds.x(), -descriptor.bounds.y()),
-            frame.viewport,
-        );
-    }
     let payload = TilePayload::DirectPacket(fragment);
     let memory_cost = match &payload {
         TilePayload::DirectPacket(packet) => packet.byte_size(),
@@ -1556,10 +1745,10 @@ fn build_tile_entry(
         rect: tile_local,
         dirty: false,
         visible: true,
-        layer_local,
         last_used_frame: frame_index,
         memory_cost,
         payload,
+        gpu_geometry: None,
     })
 }
 
@@ -1785,14 +1974,25 @@ fn translate_resolved_clip_primitive(
     }
 }
 
-fn cached_layer_translation_fast_path(
-    transform_node: TransformNodeId,
-    clip_node: ClipNodeId,
-    effect_node: EffectNodeId,
-) -> bool {
-    transform_node == TransformNodeId::ROOT
-        && clip_node == ClipNodeId::ROOT
-        && effect_node == EffectNodeId::ROOT
+fn translate_cached_layer_tiles(
+    tiles: &mut HashMap<TileAddress, TileEntry>,
+    layer_id: SceneLayerId,
+    delta: Vector,
+    viewport: Size,
+) {
+    if delta == Vector::ZERO {
+        return;
+    }
+
+    for (address, entry) in tiles.iter_mut() {
+        if address.layer != layer_id {
+            continue;
+        }
+
+        let TilePayload::DirectPacket(fragment) = &mut entry.payload;
+        fragment.translate_in_place(delta, viewport);
+        entry.gpu_geometry = None;
+    }
 }
 
 fn descriptor_translation_delta(
@@ -2512,7 +2712,7 @@ impl WgpuRenderer {
         view: &wgpu::TextureView,
     ) -> Result<RendererFrameStats> {
         let feather_width = self.active_feather_width();
-        let (draw_ops, compositor_stats) = {
+        let (submission, compositor_stats) = {
             if self.text_engine.is_none() {
                 self.text_engine = Some(TextEngine::new()?);
             }
@@ -2521,81 +2721,41 @@ impl WgpuRenderer {
                 .as_mut()
                 .expect("text engine initialized before draw-op construction");
             let compositor = self.compositors.entry(frame.window_id).or_default();
-            let draw_ops = compositor.prepare_frame(frame, text_engine, feather_width)?;
-            (draw_ops, compositor.last_frame_stats)
+            let submission = compositor.prepare_frame_submission(frame, text_engine, feather_width)?;
+            (submission, compositor.last_frame_stats)
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
-        let mut analytic_path_bind_groups = HashMap::new();
-        for draw in &draw_ops.draw_ops {
-            let DrawOpKind::AnalyticPath { id } = draw.kind else {
-                continue;
-            };
-            if analytic_path_bind_groups.contains_key(&id) {
-                continue;
+        let mut analytic_paths = HashMap::new();
+        let mut image_handles = HashSet::new();
+        for fragment in &submission.fragments {
+            match fragment {
+                RetainedFrameFragment::Transient(draw_ops) => {
+                    collect_draw_op_resources(draw_ops, &mut analytic_paths, &mut image_handles);
+                }
+                RetainedFrameFragment::Tile(address) => {
+                    let Some(compositor) = self.compositors.get(&frame.window_id) else {
+                        continue;
+                    };
+                    let Some(entry) = compositor.tiles.get(address) else {
+                        continue;
+                    };
+                    collect_draw_op_resources(entry.draw_ops(), &mut analytic_paths, &mut image_handles);
+                }
             }
-
-            let path = draw_ops.analytic_paths.get(&id).ok_or_else(|| {
-                Error::new(format!("missing analytic path payload for draw {id}"))
-            })?;
-            analytic_path_bind_groups.insert(
-                id,
-                self.ensure_analytic_path_bind_group(path.resource_signature, path)?,
-            );
         }
-        let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
-        let frame_stats = RendererFrameStats::from_prepared_frame(&prepared)
-            .with_compositor_stats(compositor_stats);
+
+        let mut analytic_path_bind_groups = HashMap::new();
+        for (signature, path) in analytic_paths {
+            analytic_path_bind_groups
+                .insert(signature, self.ensure_analytic_path_bind_group(signature, &path)?);
+        }
 
         let mut image_bind_groups = HashMap::new();
-        for pass in &prepared.passes {
-            for draw in &pass.draws {
-                let DrawOpKind::Image { handle } = draw.kind else {
-                    continue;
-                };
-                if image_bind_groups.contains_key(&handle) {
-                    continue;
-                }
-
-                let image = frame.image_registry.get(handle).ok_or_else(|| {
-                    Error::new(format!("image handle {} is not registered", handle.get()))
-                })?;
-                image_bind_groups.insert(handle, self.ensure_image_bind_group(handle, image)?);
-            }
-        }
-
-        {
-            let shared = self
-                .shared
-                .as_ref()
-                .expect("renderer shared state initialized");
-            self.frame_resources
-                .ensure_scene_buffer(&shared.device, prepared.scene_vertices.len() as u64 * VERTEX_SIZE);
-            if let Some(buffer) = self.frame_resources.scene_vertices.as_ref() {
-                if !prepared.scene_vertices.is_empty() {
-                    shared.queue.write_buffer(
-                        &buffer.buffer,
-                        0,
-                        bytemuck::cast_slice(&prepared.scene_vertices),
-                    );
-                }
-            }
-
-            self.frame_resources
-                .ensure_clip_buffer(&shared.device, prepared.clip_vertices.len() as u64 * VERTEX_SIZE);
-            if let Some(buffer) = self.frame_resources.clip_vertices.as_ref() {
-                if !prepared.clip_vertices.is_empty() {
-                    shared.queue.write_buffer(
-                        &buffer.buffer,
-                        0,
-                        bytemuck::cast_slice(&prepared.clip_vertices),
-                    );
-                }
-            }
-
-            if prepared.passes.iter().any(|pass| !pass.clip_paths.is_empty()) {
-                self.frame_resources
-                    .ensure_stencil(&shared.device, framebuffer_size);
-            }
+        for handle in image_handles {
+            let image = frame.image_registry.get(handle).ok_or_else(|| {
+                Error::new(format!("image handle {} is not registered", handle.get()))
+            })?;
+            image_bind_groups.insert(handle, self.ensure_image_bind_group(handle, image)?);
         }
 
         let mut encoder = {
@@ -2609,7 +2769,173 @@ impl WgpuRenderer {
                     label: Some("SUI scene encoder"),
                 })
         };
-        if prepared.passes.is_empty() {
+        let mut cleared = false;
+        let mut pass_count = 0usize;
+        let mut draw_count = 0usize;
+        let mut uploaded_vertex_bytes = 0u64;
+
+        for fragment in submission.fragments {
+            match fragment {
+                RetainedFrameFragment::Transient(draw_ops) => {
+                    let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
+                    let (fragment_pass_count, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
+                    pass_count += fragment_pass_count;
+                    draw_count += fragment_draw_count;
+                    uploaded_vertex_bytes +=
+                        (prepared.scene_vertices.len() as u64 + prepared.clip_vertices.len() as u64)
+                            * VERTEX_SIZE;
+
+                    if prepared.passes.is_empty() {
+                        continue;
+                    }
+
+                    {
+                        let shared = self
+                            .shared
+                            .as_ref()
+                            .expect("renderer shared state initialized");
+                        self.frame_resources.ensure_scene_buffer(
+                            &shared.device,
+                            prepared.scene_vertices.len() as u64 * VERTEX_SIZE,
+                        );
+                        if let Some(buffer) = self.frame_resources.scene_vertices.as_ref() {
+                            if !prepared.scene_vertices.is_empty() {
+                                shared.queue.write_buffer(
+                                    &buffer.buffer,
+                                    0,
+                                    bytemuck::cast_slice(&prepared.scene_vertices),
+                                );
+                            }
+                        }
+
+                        self.frame_resources.ensure_clip_buffer(
+                            &shared.device,
+                            prepared.clip_vertices.len() as u64 * VERTEX_SIZE,
+                        );
+                        if let Some(buffer) = self.frame_resources.clip_vertices.as_ref() {
+                            if !prepared.clip_vertices.is_empty() {
+                                shared.queue.write_buffer(
+                                    &buffer.buffer,
+                                    0,
+                                    bytemuck::cast_slice(&prepared.clip_vertices),
+                                );
+                            }
+                        }
+
+                        if prepared.passes.iter().any(|pass| !pass.clip_paths.is_empty()) {
+                            self.frame_resources.ensure_stencil(&shared.device, framebuffer_size);
+                        }
+                    }
+
+                    let scene_buffer = self
+                        .frame_resources
+                        .scene_vertices
+                        .as_ref()
+                        .expect("scene buffer available for transient fragment rendering");
+                    let clip_buffer = self.frame_resources.clip_vertices.as_ref();
+                    let shared = self
+                        .shared
+                        .as_mut()
+                        .expect("renderer shared state initialized");
+                    let stencil_view = self.frame_resources.stencil.as_ref().map(|target| {
+                        let _ = &target.texture;
+                        &target.view
+                    });
+                    encode_prepared_passes(
+                        shared,
+                        &mut encoder,
+                        view,
+                        target_format,
+                        framebuffer_size,
+                        &prepared.passes,
+                        &scene_buffer.buffer,
+                        clip_buffer.map(|buffer| &buffer.buffer),
+                        stencil_view,
+                        &image_bind_groups,
+                        &analytic_path_bind_groups,
+                        &mut cleared,
+                    )?;
+                }
+                RetainedFrameFragment::Tile(address) => {
+                    let (passes, scene_buffer, clip_buffer, fragment_uploaded_bytes) = {
+                        let shared = self
+                            .shared
+                            .as_ref()
+                            .expect("renderer shared state initialized");
+                        let compositor = self
+                            .compositors
+                            .get_mut(&frame.window_id)
+                            .expect("window compositor retained for tile submission");
+                        let entry = compositor.tiles.get_mut(&address).ok_or_else(|| {
+                            Error::new(format!(
+                                "missing retained tile for layer {} at ({}, {})",
+                                address.layer.get(),
+                                address.tile_x,
+                                address.tile_y
+                            ))
+                        })?;
+                        let uploaded = entry.ensure_gpu_geometry(&shared.device, &shared.queue);
+                        let passes = batch_draw_ops(entry.draw_ops(), frame.viewport, framebuffer_size);
+                        let gpu_geometry = entry
+                            .gpu_geometry
+                            .as_ref()
+                            .expect("tile GPU geometry created before retained submission");
+                        (
+                            passes,
+                            gpu_geometry.scene_buffer.clone(),
+                            gpu_geometry.clip_buffer.clone(),
+                            uploaded,
+                        )
+                    };
+                    let (fragment_pass_count, fragment_draw_count) = prepared_batch_counts(&passes);
+                    pass_count += fragment_pass_count;
+                    draw_count += fragment_draw_count;
+                    uploaded_vertex_bytes += fragment_uploaded_bytes;
+
+                    if passes.is_empty() {
+                        continue;
+                    }
+
+                    {
+                        let shared = self
+                            .shared
+                            .as_ref()
+                            .expect("renderer shared state initialized");
+                        if passes.iter().any(|pass| !pass.clip_paths.is_empty()) {
+                            self.frame_resources.ensure_stencil(&shared.device, framebuffer_size);
+                        }
+                    }
+
+                    let scene_buffer = scene_buffer.as_ref().ok_or_else(|| {
+                        Error::new("retained tile submission is missing a scene vertex buffer")
+                    })?;
+                    let shared = self
+                        .shared
+                        .as_mut()
+                        .expect("renderer shared state initialized");
+                    let stencil_view = self.frame_resources.stencil.as_ref().map(|target| {
+                        let _ = &target.texture;
+                        &target.view
+                    });
+                    encode_prepared_passes(
+                        shared,
+                        &mut encoder,
+                        view,
+                        target_format,
+                        framebuffer_size,
+                        &passes,
+                        scene_buffer,
+                        clip_buffer.as_ref(),
+                        stencil_view,
+                        &image_bind_groups,
+                        &analytic_path_bind_groups,
+                        &mut cleared,
+                    )?;
+                }
+            }
+        }
+
+        if !cleared {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SUI scene clear pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2631,140 +2957,6 @@ impl WgpuRenderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-        } else {
-            let shared = self
-                .shared
-                .as_mut()
-                .expect("renderer shared state initialized");
-            let scene_buffer = self
-                .frame_resources
-                .scene_vertices
-                .as_ref()
-                .expect("scene buffer available when rendering batched passes");
-            let clip_buffer = self.frame_resources.clip_vertices.as_ref();
-            let stencil_view = self.frame_resources.stencil.as_ref().map(|target| {
-                let _ = &target.texture;
-                &target.view
-            });
-
-            for (index, pass) in prepared.passes.iter().enumerate() {
-                let load_op = if index == 0 {
-                    wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 0.0,
-                    })
-                } else {
-                    wgpu::LoadOp::Load
-                };
-                let depth_stencil_attachment = if pass.clip_paths.is_empty() {
-                    None
-                } else {
-                    Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: stencil_view
-                            .expect("stencil view available for path-clipped pass"),
-                        depth_ops: None,
-                        stencil_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                    })
-                };
-                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("SUI scene batch pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: load_op,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                    multiview_mask: None,
-                });
-
-                if !pass.clip_paths.is_empty() {
-                    let clip_pipeline = shared.clip_pipeline(target_format);
-                    render_pass.set_pipeline(clip_pipeline);
-                    let clip_buffer = clip_buffer
-                        .as_ref()
-                        .expect("clip buffer available for path-clipped pass");
-                    render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1);
-                    for (clip_index, clip_path) in pass.clip_paths.iter().enumerate() {
-                        render_pass.set_stencil_reference(clip_index as u32);
-                        render_pass.set_vertex_buffer(
-                            0,
-                            vertex_buffer_slice(&clip_buffer.buffer, clip_path.vertices),
-                        );
-                        render_pass.draw(0..clip_path.vertices.len, 0..1);
-                    }
-                }
-
-                let mut current_kind = None;
-                for draw in &pass.draws {
-                    match draw.clip_rect {
-                        Some(scissor) => render_pass.set_scissor_rect(
-                            scissor.x,
-                            scissor.y,
-                            scissor.width,
-                            scissor.height,
-                        ),
-                        None => {
-                            render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1)
-                        }
-                    }
-
-                    if current_kind != Some(draw.kind) {
-                        let pipeline = match (draw.kind, pass.clip_paths.is_empty()) {
-                            (DrawOpKind::Solid, true) => shared.pipeline(target_format),
-                            (DrawOpKind::Solid, false) => shared.clipped_pipeline(target_format),
-                            (DrawOpKind::Image { .. }, true) => shared.image_pipeline(target_format),
-                            (DrawOpKind::Image { .. }, false) => {
-                                shared.clipped_image_pipeline(target_format)
-                            }
-                            (DrawOpKind::AnalyticPath { .. }, true) => {
-                                shared.analytic_path_pipeline(target_format)
-                            }
-                            (DrawOpKind::AnalyticPath { .. }, false) => {
-                                shared.clipped_analytic_path_pipeline(target_format)
-                            }
-                        };
-                        render_pass.set_pipeline(pipeline);
-                        current_kind = Some(draw.kind);
-                    }
-
-                    if !pass.clip_paths.is_empty() {
-                        render_pass.set_stencil_reference(pass.clip_paths.len() as u32);
-                    }
-
-                    match draw.kind {
-                        DrawOpKind::Solid => {}
-                        DrawOpKind::Image { handle } => {
-                            let bind_group = image_bind_groups
-                                .get(&handle)
-                                .expect("image bind group prepared before batched render pass");
-                            render_pass.set_bind_group(0, bind_group, &[]);
-                        }
-                        DrawOpKind::AnalyticPath { id } => {
-                            let bind_group = analytic_path_bind_groups
-                                .get(&id)
-                                .expect("analytic path bind group prepared before batched render pass");
-                            render_pass.set_bind_group(0, bind_group, &[]);
-                        }
-                    }
-
-                    render_pass.set_vertex_buffer(
-                        0,
-                        vertex_buffer_slice(&scene_buffer.buffer, draw.vertices),
-                    );
-                    render_pass.draw(0..draw.vertices.len, 0..1);
-                }
-            }
         }
 
         self.shared
@@ -2772,6 +2964,12 @@ impl WgpuRenderer {
             .expect("renderer shared state initialized")
             .queue
             .submit([encoder.finish()]);
+        let frame_stats = RendererFrameStats::from_prepared_counts(
+            pass_count.max(1),
+            draw_count,
+            uploaded_vertex_bytes,
+        )
+        .with_compositor_stats(compositor_stats);
         Ok(frame_stats)
     }
 
@@ -3690,9 +3888,16 @@ struct PreparedClipPath {
     vertices: PreparedVertices,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreparedDrawKind {
+    Solid,
+    Image { handle: ImageHandle },
+    AnalyticPath { resource_signature: u64 },
+}
+
 #[derive(Debug, Clone, Copy)]
 struct PreparedDrawBatch {
-    kind: DrawOpKind,
+    kind: PreparedDrawKind,
     clip_rect: Option<ScissorRect>,
     vertices: PreparedVertices,
 }
@@ -3772,12 +3977,13 @@ fn batch_draw_ops(
         let pass = passes
             .last_mut()
             .expect("prepared pass created before draw insertion");
+        let kind = prepared_draw_kind(draw_ops, op);
         let clip_rect = op
             .clip_rect
             .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size));
         if let Some(previous) = pass.draws.last_mut() {
             let previous_end = previous.vertices.start + previous.vertices.len;
-            if previous.kind == op.kind
+            if previous.kind == kind
                 && previous.clip_rect == clip_rect
                 && previous_end == op.vertices.start
             {
@@ -3787,13 +3993,200 @@ fn batch_draw_ops(
         }
 
         pass.draws.push(PreparedDrawBatch {
-            kind: op.kind,
+            kind,
             clip_rect,
             vertices: op.vertices,
         });
     }
 
     passes
+}
+
+fn prepared_draw_kind(draw_ops: &DrawOpArena, op: &DrawOp) -> PreparedDrawKind {
+    match op.kind {
+        DrawOpKind::Solid => PreparedDrawKind::Solid,
+        DrawOpKind::Image { handle } => PreparedDrawKind::Image { handle },
+        DrawOpKind::AnalyticPath { id } => PreparedDrawKind::AnalyticPath {
+            resource_signature: draw_ops.analytic_paths[&id].resource_signature,
+        },
+    }
+}
+
+fn collect_draw_op_resources(
+    draw_ops: &DrawOpArena,
+    analytic_paths: &mut HashMap<u64, AnalyticPathCpuData>,
+    image_handles: &mut HashSet<ImageHandle>,
+) {
+    for draw in &draw_ops.draw_ops {
+        match draw.kind {
+            DrawOpKind::Solid => {}
+            DrawOpKind::Image { handle } => {
+                image_handles.insert(handle);
+            }
+            DrawOpKind::AnalyticPath { id } => {
+                let path = &draw_ops.analytic_paths[&id];
+                analytic_paths
+                    .entry(path.resource_signature)
+                    .or_insert_with(|| path.clone());
+            }
+        }
+    }
+}
+
+fn prepared_batch_counts(passes: &[PreparedPassBatch]) -> (usize, usize) {
+    (
+        passes.len(),
+        passes
+            .iter()
+            .map(|pass| pass.clip_paths.len() + pass.draws.len())
+            .sum(),
+    )
+}
+
+fn create_static_vertex_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    vertices: &[Vertex],
+) -> Option<wgpu::Buffer> {
+    if vertices.is_empty() {
+        return None;
+    }
+
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: vertices.len() as u64 * VERTEX_SIZE,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buffer, 0, bytemuck::cast_slice(vertices));
+    Some(buffer)
+}
+
+fn encode_prepared_passes(
+    shared: &mut SharedRenderer,
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    target_format: wgpu::TextureFormat,
+    framebuffer_size: (u32, u32),
+    passes: &[PreparedPassBatch],
+    scene_buffer: &wgpu::Buffer,
+    clip_buffer: Option<&wgpu::Buffer>,
+    stencil_view: Option<&wgpu::TextureView>,
+    image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
+    cleared: &mut bool,
+) -> Result<()> {
+    for pass in passes {
+        let load_op = if *cleared {
+            wgpu::LoadOp::Load
+        } else {
+            *cleared = true;
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            })
+        };
+        let depth_stencil_attachment = if pass.clip_paths.is_empty() {
+            None
+        } else {
+            Some(wgpu::RenderPassDepthStencilAttachment {
+                view: stencil_view.expect("stencil view available for path-clipped pass"),
+                depth_ops: None,
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            })
+        };
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("SUI scene batch pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: load_op,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+
+        if !pass.clip_paths.is_empty() {
+            let clip_pipeline = shared.clip_pipeline(target_format);
+            render_pass.set_pipeline(clip_pipeline);
+            let clip_buffer = clip_buffer.expect("clip buffer available for path-clipped pass");
+            render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1);
+            for (clip_index, clip_path) in pass.clip_paths.iter().enumerate() {
+                render_pass.set_stencil_reference(clip_index as u32);
+                render_pass.set_vertex_buffer(0, vertex_buffer_slice(clip_buffer, clip_path.vertices));
+                render_pass.draw(0..clip_path.vertices.len, 0..1);
+            }
+        }
+
+        let mut current_kind = None;
+        for draw in &pass.draws {
+            match draw.clip_rect {
+                Some(scissor) => render_pass.set_scissor_rect(
+                    scissor.x,
+                    scissor.y,
+                    scissor.width,
+                    scissor.height,
+                ),
+                None => render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1),
+            }
+
+            if current_kind != Some(draw.kind) {
+                let pipeline = match (draw.kind, pass.clip_paths.is_empty()) {
+                    (PreparedDrawKind::Solid, true) => shared.pipeline(target_format),
+                    (PreparedDrawKind::Solid, false) => shared.clipped_pipeline(target_format),
+                    (PreparedDrawKind::Image { .. }, true) => shared.image_pipeline(target_format),
+                    (PreparedDrawKind::Image { .. }, false) => {
+                        shared.clipped_image_pipeline(target_format)
+                    }
+                    (PreparedDrawKind::AnalyticPath { .. }, true) => {
+                        shared.analytic_path_pipeline(target_format)
+                    }
+                    (PreparedDrawKind::AnalyticPath { .. }, false) => {
+                        shared.clipped_analytic_path_pipeline(target_format)
+                    }
+                };
+                render_pass.set_pipeline(pipeline);
+                current_kind = Some(draw.kind);
+            }
+
+            if !pass.clip_paths.is_empty() {
+                render_pass.set_stencil_reference(pass.clip_paths.len() as u32);
+            }
+
+            match draw.kind {
+                PreparedDrawKind::Solid => {}
+                PreparedDrawKind::Image { handle } => {
+                    let bind_group = image_bind_groups
+                        .get(&handle)
+                        .expect("image bind group prepared before retained render pass");
+                    render_pass.set_bind_group(0, bind_group, &[]);
+                }
+                PreparedDrawKind::AnalyticPath { resource_signature } => {
+                    let bind_group = analytic_path_bind_groups
+                        .get(&resource_signature)
+                        .expect("analytic path bind group prepared before retained render pass");
+                    render_pass.set_bind_group(0, bind_group, &[]);
+                }
+            }
+
+            render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
+            render_pass.draw(0..draw.vertices.len, 0..1);
+        }
+    }
+
+    Ok(())
 }
 
 fn build_direct_packet(
@@ -5646,9 +6039,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 mod tests {
     use super::{
         ClipState, CompositionContainerId, DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena,
-        DrawOpKind, PreparedClipPath, PreparedDrawBatch, PreparedFrameBatches,
+        DrawOpKind, PreparedClipPath, PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches,
         PreparedPassBatch, PreparedVertices, RendererFrameStats, RetainedCompositorState,
-        RetainedLayerRenderMode,
+        RetainedFrameFragment, RetainedLayerRenderMode,
         RetainedPacketId, ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer,
         batch_draw_ops, build_vertices, prepare_frame_batches, shader_color, to_ndc,
     };
@@ -5702,6 +6095,16 @@ mod tests {
         compositor: &mut RetainedCompositorState,
     ) -> sui_core::Result<DrawOpArena> {
         compositor.prepare_frame(frame, text_engine, DEFAULT_FEATHER_WIDTH)
+    }
+
+    fn prepare_submission_with_compositor(
+        frame: &SceneFrame,
+        text_engine: &mut TextEngine,
+        compositor: &mut RetainedCompositorState,
+    ) -> sui_core::Result<Vec<RetainedFrameFragment>> {
+        Ok(compositor
+            .prepare_frame_submission(frame, text_engine, DEFAULT_FEATHER_WIDTH)?
+            .fragments)
     }
 
     fn packet_signature(
@@ -5998,12 +6401,12 @@ mod tests {
                     }],
                     draws: vec![
                         PreparedDrawBatch {
-                            kind: DrawOpKind::Solid,
+                            kind: PreparedDrawKind::Solid,
                             clip_rect: None,
                             vertices: PreparedVertices { start: 0, len: 3 },
                         },
                         PreparedDrawBatch {
-                            kind: DrawOpKind::Solid,
+                            kind: PreparedDrawKind::Solid,
                             clip_rect: Some(ScissorRect {
                                 x: 0,
                                 y: 0,
@@ -6018,7 +6421,7 @@ mod tests {
                     clip_state_index: 1,
                     clip_paths: Vec::new(),
                     draws: vec![PreparedDrawBatch {
-                        kind: DrawOpKind::Image {
+                        kind: PreparedDrawKind::Image {
                             handle: ImageHandle::new(1),
                         },
                         clip_rect: None,
@@ -6691,6 +7094,61 @@ mod tests {
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
         assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
         assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
+    }
+
+    #[test]
+    fn retained_submission_keeps_reused_cached_tiles_as_tile_fragments() {
+        let layer_id = WidgetId::new(107);
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached);
+
+        let mut layer_scene = Scene::new();
+        layer_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 512.0, 128.0),
+            brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
+        });
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            descriptor.clone(),
+            layer_scene,
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(41),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor.clone())
+                    .with_damage(descriptor.paint_bounds),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        frame.layer_updates.clear();
+        let fragments =
+            prepare_submission_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
+        assert_eq!(fragments.len(), 2);
+        assert!(fragments
+            .iter()
+            .all(|fragment| matches!(fragment, RetainedFrameFragment::Tile(_))));
     }
 
     #[test]
