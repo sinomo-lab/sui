@@ -1211,7 +1211,10 @@ impl WindowState {
             diagnostics.push(FramePhase::Semantics, started.elapsed());
         }
 
-        let dirty_regions = collect_dirty_regions(viewport, &invalidations, repainted);
+        let viewport_rect = Rect::from_origin_size(Point::ZERO, viewport);
+        let dirty_regions = collect_dirty_regions(viewport, &invalidations, repainted, |request| {
+            self.default_dirty_region_for_request(viewport_rect, request)
+        });
         let mut frame = self
             .last_frame
             .clone()
@@ -1497,6 +1500,21 @@ impl WindowState {
             .map_or(usize::MAX, |path| path.len())
     }
 
+    fn default_dirty_region_for_request(
+        &self,
+        viewport_rect: Rect,
+        request: &InvalidationRequest,
+    ) -> Rect {
+        match request.target {
+            InvalidationTarget::Widget(widget_id) => self
+                .graph
+                .node(widget_id)
+                .map(|node| node.bounds)
+                .unwrap_or(viewport_rect),
+            InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => viewport_rect,
+        }
+    }
+
     fn collect_layer_updates(
         &self,
         previous_scene: Option<&Scene>,
@@ -1512,6 +1530,7 @@ impl WindowState {
 
         let previous_layers = previous_scene.map(collect_scene_layers).unwrap_or_default();
         let mut updates = HashMap::<WidgetId, SceneLayerUpdateKind>::new();
+        let mut damage_regions = HashMap::<WidgetId, Rect>::new();
 
         for request in invalidations {
             let Some(kind) = invalidation_to_layer_update_kind(request.kind) else {
@@ -1523,6 +1542,12 @@ impl WindowState {
                 InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
             };
             merge_layer_update_kind(&mut updates, widget_id, kind);
+            if let Some(region) = request.region {
+                damage_regions
+                    .entry(widget_id)
+                    .and_modify(|current| *current = current.union(region))
+                    .or_insert(region);
+            }
         }
 
         for widget_id in graph_dirty_widgets.iter().copied() {
@@ -1538,10 +1563,13 @@ impl WindowState {
             let Some(descriptor) = current_layers.get(&widget_id).cloned() else {
                 continue;
             };
-            let damage = previous_layers
+            let fallback_damage = previous_layers
                 .get(&widget_id)
                 .map(|previous| previous.paint_bounds.union(descriptor.paint_bounds))
                 .unwrap_or(descriptor.paint_bounds);
+            let damage = damage_regions.get(&widget_id).copied().map_or(fallback_damage, |region| {
+                region.union(fallback_damage)
+            });
             resolved_updates
                 .push(SceneLayerUpdate::from_descriptor(kind, descriptor).with_damage(damage));
         }
@@ -1891,12 +1919,17 @@ fn empty_dispatch() -> widget::EventDispatch {
     }
 }
 
-fn collect_dirty_regions(
+fn collect_dirty_regions<F>(
     viewport: Size,
     invalidations: &[InvalidationRequest],
     repainted: bool,
-) -> Vec<DirtyRegion> {
+    default_region_for: F,
+) -> Vec<DirtyRegion>
+where
+    F: FnMut(&InvalidationRequest) -> Rect,
+{
     let viewport_rect = Rect::from_origin_size(Point::ZERO, viewport);
+    let mut default_region_for = default_region_for;
 
     if invalidations.is_empty() {
         return if repainted {
@@ -1907,7 +1940,14 @@ fn collect_dirty_regions(
     }
     let mut dirty_regions: Vec<_> = invalidations
         .iter()
-        .map(|request| DirtyRegion::new(request.region.unwrap_or(viewport_rect), request.kind))
+        .map(|request| {
+            DirtyRegion::new(
+                request
+                    .region
+                    .unwrap_or_else(|| default_region_for(request)),
+                request.kind,
+            )
+        })
         .collect();
 
     if repainted

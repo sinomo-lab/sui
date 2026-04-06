@@ -4,8 +4,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui::prelude::*;
 use sui::{
-    AccessibilitySnapshot, DirtyRegion, FocusState, FrameSchedule, InvalidationKind, Rect,
-    SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, SemanticsValue,
+    AccessibilitySnapshot, DirtyRegion, FocusState, FrameSchedule, InvalidationKind,
+    InvalidationRequest, InvalidationTarget, Rect, SceneStatisticsDetailMode,
+    SemanticsNode, SemanticsRole, SemanticsValue,
     TextStyle, TimerToken, Vector, WidgetGraphSnapshot, WidgetId,
     WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
     WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
@@ -211,7 +212,14 @@ impl Widget for LivePerformanceRoot {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
             if let Some(snapshot) = window_performance_snapshot(ctx.window_id()) {
                 if self.set_performance_display(Some(snapshot), false) {
-                    ctx.request_paint();
+                    let overlay_id = self.performance_overlay.child().id();
+                    ctx.request(
+                        InvalidationRequest::new(
+                            InvalidationTarget::Widget(overlay_id),
+                            InvalidationKind::Paint,
+                        )
+                        .with_region(self.performance_overlay.child().bounds()),
+                    );
                 }
             }
         }

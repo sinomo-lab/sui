@@ -170,6 +170,7 @@ pub struct WgpuRenderer {
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
     image_cache: HashMap<ImageHandle, CachedImageTexture>,
+    analytic_path_cache: HashMap<u64, CachedAnalyticPathGpu>,
     compositors: HashMap<WindowId, RetainedCompositorState>,
     surfaces: HashMap<WindowId, SurfaceState>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
@@ -217,6 +218,8 @@ enum RetainedLayerRenderMode {
 
 const DEFAULT_TILE_SIZE_PX: u32 = 256;
 const TILE_CACHE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+const MAX_ANALYTIC_PATH_CONTOURS: usize = 32;
+const MAX_ANALYTIC_PATH_POINTS: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TileGrid {
@@ -816,16 +819,8 @@ impl RetainedCompositorState {
         let mut tiled_damage = HashMap::<SceneLayerId, Option<Rect>>::new();
         let current_layers = snapshot.layers.keys().copied().collect::<HashSet<_>>();
         let mut root_dirty = global_rebuild;
-        let mut _has_content_updates = false;
 
         for update in &frame.layer_updates {
-            if matches!(
-                update.kind,
-                SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
-            ) {
-                _has_content_updates = true;
-            }
-
             if !current_layers.contains(&update.layer_id) {
                 if matches!(
                     update.kind,
@@ -868,28 +863,6 @@ impl RetainedCompositorState {
                 | SceneLayerUpdateKind::Clip
                 | SceneLayerUpdateKind::Effect
                 | SceneLayerUpdateKind::Visibility => {}
-            }
-        }
-
-        if _has_content_updates {
-            let content_damage: Option<Rect> = frame
-                .layer_updates
-                .iter()
-                .filter(|update| {
-                    matches!(
-                        update.kind,
-                        SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
-                    )
-                })
-                .fold(None, |current, update| {
-                    let update_damage = update.damage.unwrap_or(update.content_bounds);
-                    Some(match current {
-                        Some(existing) => existing.union(update_damage),
-                        None => update_damage,
-                    })
-                });
-            for &cached_root in &cached_roots {
-                merge_damage_rect(&mut tiled_damage, cached_root, content_damage);
             }
         }
 
@@ -2136,6 +2109,9 @@ impl WgpuRenderer {
         self.frames_rendered += 1;
         self.last_frames.insert(frame.window_id, frame.clone());
         self.last_frame_stats.insert(frame.window_id, frame_stats);
+        self.analytic_path_cache.retain(|_, entry| {
+            self.frames_rendered.saturating_sub(entry.last_used_frame) <= 120
+        });
         Ok(())
     }
 
@@ -2326,6 +2302,42 @@ impl WgpuRenderer {
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
+        let analytic_path_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("SUI analytic path bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
 
         self.shared = Some(SharedRenderer {
             adapter,
@@ -2333,6 +2345,7 @@ impl WgpuRenderer {
             queue,
             pipelines: HashMap::new(),
             image_bind_group_layout,
+            analytic_path_bind_group_layout,
             image_sampler,
         });
 
@@ -2511,6 +2524,23 @@ impl WgpuRenderer {
             (draw_ops, compositor.last_frame_stats)
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
+        let mut analytic_path_bind_groups = HashMap::new();
+        for draw in &draw_ops.draw_ops {
+            let DrawOpKind::AnalyticPath { id } = draw.kind else {
+                continue;
+            };
+            if analytic_path_bind_groups.contains_key(&id) {
+                continue;
+            }
+
+            let path = draw_ops.analytic_paths.get(&id).ok_or_else(|| {
+                Error::new(format!("missing analytic path payload for draw {id}"))
+            })?;
+            analytic_path_bind_groups.insert(
+                id,
+                self.ensure_analytic_path_bind_group(path.resource_signature, path)?,
+            );
+        }
         let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
         let frame_stats = RendererFrameStats::from_prepared_frame(&prepared)
             .with_compositor_stats(compositor_stats);
@@ -2696,6 +2726,12 @@ impl WgpuRenderer {
                             (DrawOpKind::Image { .. }, false) => {
                                 shared.clipped_image_pipeline(target_format)
                             }
+                            (DrawOpKind::AnalyticPath { .. }, true) => {
+                                shared.analytic_path_pipeline(target_format)
+                            }
+                            (DrawOpKind::AnalyticPath { .. }, false) => {
+                                shared.clipped_analytic_path_pipeline(target_format)
+                            }
                         };
                         render_pass.set_pipeline(pipeline);
                         current_kind = Some(draw.kind);
@@ -2711,6 +2747,12 @@ impl WgpuRenderer {
                             let bind_group = image_bind_groups
                                 .get(&handle)
                                 .expect("image bind group prepared before batched render pass");
+                            render_pass.set_bind_group(0, bind_group, &[]);
+                        }
+                        DrawOpKind::AnalyticPath { id } => {
+                            let bind_group = analytic_path_bind_groups
+                                .get(&id)
+                                .expect("analytic path bind group prepared before batched render pass");
                             render_pass.set_bind_group(0, bind_group, &[]);
                         }
                     }
@@ -2809,6 +2851,84 @@ impl WgpuRenderer {
         Ok(bind_group)
     }
 
+    fn ensure_analytic_path_bind_group(
+        &mut self,
+        signature: u64,
+        path: &AnalyticPathCpuData,
+    ) -> Result<wgpu::BindGroup> {
+        if let Some(cached) = self.analytic_path_cache.get_mut(&signature) {
+            cached.last_used_frame = self.frames_rendered;
+            return Ok(cached.bind_group.clone());
+        }
+
+        let shared = self
+            .shared
+            .as_ref()
+            .expect("renderer shared state initialized");
+        let meta = path.meta();
+        let meta_buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SUI analytic path metadata"),
+            size: std::mem::size_of::<AnalyticPathMetaGpu>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        shared
+            .queue
+            .write_buffer(&meta_buffer, 0, bytemuck::bytes_of(&meta));
+
+        let contour_buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SUI analytic path contours"),
+            size: (path.contours.len() * std::mem::size_of::<AnalyticContourGpu>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        shared
+            .queue
+            .write_buffer(&contour_buffer, 0, bytemuck::cast_slice(&path.contours));
+
+        let point_buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SUI analytic path points"),
+            size: (path.points.len() * std::mem::size_of::<AnalyticPointGpu>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        shared
+            .queue
+            .write_buffer(&point_buffer, 0, bytemuck::cast_slice(&path.points));
+
+        let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SUI analytic path bind group"),
+            layout: &shared.analytic_path_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: meta_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: contour_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: point_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        self.analytic_path_cache.insert(
+            signature,
+            CachedAnalyticPathGpu {
+                _meta: meta_buffer,
+                _contours: contour_buffer,
+                _points: point_buffer,
+                bind_group: bind_group.clone(),
+                last_used_frame: self.frames_rendered,
+            },
+        );
+
+        Ok(bind_group)
+    }
+
     fn create_surface_state(
         &mut self,
         window: Arc<Window>,
@@ -2848,6 +2968,7 @@ impl Default for WgpuRenderer {
             shared: None,
             text_engine: None,
             image_cache: HashMap::new(),
+            analytic_path_cache: HashMap::new(),
             compositors: HashMap::new(),
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
@@ -2948,6 +3069,7 @@ struct SharedRenderer {
     queue: wgpu::Queue,
     pipelines: HashMap<(wgpu::TextureFormat, PipelineKind), wgpu::RenderPipeline>,
     image_bind_group_layout: wgpu::BindGroupLayout,
+    analytic_path_bind_group_layout: wgpu::BindGroupLayout,
     image_sampler: wgpu::Sampler,
 }
 
@@ -2972,6 +3094,17 @@ impl SharedRenderer {
         self.pipeline_for(format, PipelineKind::TexturedClipped)
     }
 
+    fn analytic_path_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::AnalyticPath)
+    }
+
+    fn clipped_analytic_path_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::AnalyticPathClipped)
+    }
+
     fn pipeline_for(
         &mut self,
         format: wgpu::TextureFormat,
@@ -2985,12 +3118,18 @@ impl SharedRenderer {
                 PipelineKind::Textured | PipelineKind::TexturedClipped => {
                     "SUI textured scene shader"
                 }
+                PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
+                    "SUI analytic path shader"
+                }
             };
             let shader_source = match kind {
                 PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
                     SHADER_SOURCE
                 }
                 PipelineKind::Textured | PipelineKind::TexturedClipped => TEXTURED_SHADER_SOURCE,
+                PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
+                    ANALYTIC_PATH_SHADER_SOURCE
+                }
             };
             let shader = self
                 .device
@@ -3000,8 +3139,10 @@ impl SharedRenderer {
                 });
 
             let depth_stencil = match kind {
-                PipelineKind::Solid | PipelineKind::Textured => None,
-                PipelineKind::Clipped | PipelineKind::TexturedClipped => {
+                PipelineKind::Solid | PipelineKind::Textured | PipelineKind::AnalyticPath => None,
+                PipelineKind::Clipped
+                | PipelineKind::TexturedClipped
+                | PipelineKind::AnalyticPathClipped => {
                     Some(wgpu::DepthStencilState {
                         format: STENCIL_FORMAT,
                         depth_write_enabled: Some(false),
@@ -3062,6 +3203,14 @@ impl SharedRenderer {
                             immediate_size: 0,
                         }),
                 ),
+                PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => Some(
+                    self.device
+                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("SUI analytic path pipeline layout"),
+                            bind_group_layouts: &[Some(&self.analytic_path_bind_group_layout)],
+                            immediate_size: 0,
+                        }),
+                ),
                 PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => None,
             };
 
@@ -3072,6 +3221,10 @@ impl SharedRenderer {
                         PipelineKind::Clipped => "SUI clipped scene pipeline",
                         PipelineKind::Textured => "SUI textured scene pipeline",
                         PipelineKind::TexturedClipped => "SUI clipped textured scene pipeline",
+                        PipelineKind::AnalyticPath => "SUI analytic path pipeline",
+                        PipelineKind::AnalyticPathClipped => {
+                            "SUI clipped analytic path pipeline"
+                        }
                         PipelineKind::ClipMask => "SUI clip mask pipeline",
                     }),
                     layout: layout.as_ref(),
@@ -3089,7 +3242,9 @@ impl SharedRenderer {
                         PipelineKind::Solid
                         | PipelineKind::Clipped
                         | PipelineKind::Textured
-                        | PipelineKind::TexturedClipped => Some(wgpu::FragmentState {
+                        | PipelineKind::TexturedClipped
+                        | PipelineKind::AnalyticPath
+                        | PipelineKind::AnalyticPathClipped => Some(wgpu::FragmentState {
                             module: &shader,
                             entry_point: Some("fs_main"),
                             targets: &fragment_targets,
@@ -3109,6 +3264,8 @@ enum PipelineKind {
     Clipped,
     Textured,
     TexturedClipped,
+    AnalyticPath,
+    AnalyticPathClipped,
     ClipMask,
 }
 
@@ -3116,6 +3273,14 @@ struct CachedImageTexture {
     _texture: wgpu::Texture,
     _view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
+}
+
+struct CachedAnalyticPathGpu {
+    _meta: wgpu::Buffer,
+    _contours: wgpu::Buffer,
+    _points: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    last_used_frame: usize,
 }
 
 struct SurfaceState {
@@ -3360,6 +3525,7 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
 enum DrawOpKind {
     Solid,
     Image { handle: ImageHandle },
+    AnalyticPath { id: u64 },
 }
 
 #[derive(Debug, Clone)]
@@ -3376,6 +3542,127 @@ struct DrawOpArena {
     clip_vertices: Vec<Vertex>,
     clip_states: Vec<ClipState>,
     draw_ops: Vec<DrawOp>,
+    analytic_paths: HashMap<u64, AnalyticPathCpuData>,
+    next_analytic_path_id: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+struct AnalyticPathMetaGpu {
+    contour_count: u32,
+    mode: u32,
+    feather_width: f32,
+    stroke_width: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+struct AnalyticContourGpu {
+    start: u32,
+    len: u32,
+    flags: u32,
+    _pad0: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnalyticPathMode {
+    Fill,
+    Stroke,
+}
+
+impl AnalyticPathMode {
+    const fn to_gpu(self) -> u32 {
+        match self {
+            Self::Fill => 0,
+            Self::Stroke => 1,
+        }
+    }
+}
+
+const ANALYTIC_CONTOUR_FLAG_CLOSED: u32 = 1;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+struct AnalyticPointGpu {
+    position: [f32; 2],
+    _pad: [f32; 2],
+}
+
+#[derive(Debug, Clone)]
+struct AnalyticPathCpuData {
+    resource_signature: u64,
+    mode: AnalyticPathMode,
+    feather_width: f32,
+    stroke_width: f32,
+    contours: Vec<AnalyticContourGpu>,
+    points: Vec<AnalyticPointGpu>,
+}
+
+impl AnalyticPathCpuData {
+    fn new(
+        mode: AnalyticPathMode,
+        feather_width: f32,
+        stroke_width: f32,
+        contours: Vec<AnalyticContourGpu>,
+        points: Vec<AnalyticPointGpu>,
+    ) -> Self {
+        let mut data = Self {
+            resource_signature: 0,
+            mode,
+            feather_width,
+            stroke_width,
+            contours,
+            points,
+        };
+        data.resource_signature = data.compute_signature();
+        data
+    }
+
+    fn meta(&self) -> AnalyticPathMetaGpu {
+        AnalyticPathMetaGpu {
+            contour_count: self.contours.len() as u32,
+            mode: self.mode.to_gpu(),
+            feather_width: self.feather_width,
+            stroke_width: self.stroke_width,
+        }
+    }
+
+    fn translate(&mut self, delta: Vector) {
+        if delta == Vector::ZERO {
+            return;
+        }
+
+        for point in &mut self.points {
+            point.position[0] += delta.x;
+            point.position[1] += delta.y;
+        }
+        self.resource_signature = self.compute_signature();
+    }
+
+    fn byte_size(&self) -> usize {
+        std::mem::size_of::<AnalyticPathMetaGpu>()
+            + self.contours.len() * std::mem::size_of::<AnalyticContourGpu>()
+            + self.points.len() * std::mem::size_of::<AnalyticPointGpu>()
+    }
+
+    fn compute_signature(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.mode.to_gpu().hash(&mut hasher);
+        self.feather_width.to_bits().hash(&mut hasher);
+        self.stroke_width.to_bits().hash(&mut hasher);
+        self.contours.len().hash(&mut hasher);
+        self.points.len().hash(&mut hasher);
+        for contour in &self.contours {
+            contour.start.hash(&mut hasher);
+            contour.len.hash(&mut hasher);
+            contour.flags.hash(&mut hasher);
+        }
+        for point in &self.points {
+            point.position[0].to_bits().hash(&mut hasher);
+            point.position[1].to_bits().hash(&mut hasher);
+        }
+        hasher.finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3524,6 +3811,7 @@ fn build_direct_packet(
         path_cache,
         feather_width,
         scratch_vertices: Vec::new(),
+        overlay_scratch_vertices: Vec::new(),
         clip_scratch_vertices: Vec::new(),
     };
     builder.build_scene(scene, &mut draw_ops, &mut state)?;
@@ -3536,7 +3824,13 @@ struct SceneDrawOpBuilder<'a> {
     path_cache: &'a mut PathMeshCache,
     feather_width: f32,
     scratch_vertices: Vec<Vertex>,
+    overlay_scratch_vertices: Vec<Vertex>,
     clip_scratch_vertices: Vec<Vertex>,
+}
+
+enum FillPathRenderMode {
+    SolidOnly,
+    SolidPlusAnalytic { id: u64 },
 }
 
 impl SceneDrawOpBuilder<'_> {
@@ -3606,8 +3900,11 @@ impl SceneDrawOpBuilder<'_> {
             SceneCommand::FillPath { path, brush } => {
                 let Brush::Solid(color) = brush;
                 self.scratch_vertices.clear();
-                append_painted_path(
+                self.overlay_scratch_vertices.clear();
+                let render_mode = append_painted_path(
                     &mut self.scratch_vertices,
+                    &mut self.overlay_scratch_vertices,
+                    draw_ops,
                     state,
                     path,
                     *color,
@@ -3616,6 +3913,14 @@ impl SceneDrawOpBuilder<'_> {
                     self.feather_width,
                 )?;
                 push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                if let FillPathRenderMode::SolidPlusAnalytic { id } = render_mode {
+                    push_draw_op(
+                        draw_ops,
+                        DrawOpKind::AnalyticPath { id },
+                        &self.overlay_scratch_vertices,
+                        state,
+                    );
+                }
             }
             SceneCommand::StrokePath {
                 path,
@@ -3624,8 +3929,11 @@ impl SceneDrawOpBuilder<'_> {
             } => {
                 let Brush::Solid(color) = brush;
                 self.scratch_vertices.clear();
-                append_stroked_path(
+                self.overlay_scratch_vertices.clear();
+                let analytic_id = append_stroked_path(
                     &mut self.scratch_vertices,
+                    &mut self.overlay_scratch_vertices,
+                    draw_ops,
                     state,
                     path,
                     *color,
@@ -3634,7 +3942,17 @@ impl SceneDrawOpBuilder<'_> {
                     viewport,
                     self.feather_width,
                 )?;
-                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                if !self.scratch_vertices.is_empty() {
+                    push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                }
+                if let Some(id) = analytic_id {
+                    push_draw_op(
+                        draw_ops,
+                        DrawOpKind::AnalyticPath { id },
+                        &self.overlay_scratch_vertices,
+                        state,
+                    );
+                }
             }
             SceneCommand::DrawText(text) => {
                 self.scratch_vertices.clear();
@@ -4192,28 +4510,48 @@ fn append_cached_path_mesh(
 }
 fn append_painted_path(
     vertices: &mut Vec<Vertex>,
+    overlay_vertices: &mut Vec<Vertex>,
+    draw_ops: &mut DrawOpArena,
     state: &SceneRasterState,
     path: &ScenePath,
     color: Color,
     path_cache: &mut PathMeshCache,
     viewport: Size,
     feather_width: f32,
-) -> Result<()> {
+) -> Result<FillPathRenderMode> {
     if path.is_empty() || viewport.is_empty() {
-        return Ok(());
+        return Ok(FillPathRenderMode::SolidOnly);
     }
 
     if state.visible_rect(path.bounds()).is_none() {
-        return Ok(());
+        return Ok(FillPathRenderMode::SolidOnly);
+    }
+
+    let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
+    if feather_width > 0.0 {
+        let lyon_path = build_lyon_path(path, state.current_transform);
+        if let Some(data) = build_analytic_fill_path_data(&lyon_path, feather_width) {
+            tessellate_filled_lyon_path(vertices, &lyon_path, color, viewport)?;
+            append_analytic_path_quad(
+                overlay_vertices,
+                transformed_bounds.inflate(feather_width, feather_width),
+                color,
+                viewport,
+            );
+            let id = draw_ops.insert_analytic_path(data);
+            return Ok(FillPathRenderMode::SolidPlusAnalytic { id });
+        }
     }
 
     let mesh = path_cache.cached_fill_mesh(path, state.current_transform, feather_width)?;
     append_cached_path_mesh(vertices, mesh, color, viewport);
-    Ok(())
+    Ok(FillPathRenderMode::SolidOnly)
 }
 
 fn append_stroked_path(
     vertices: &mut Vec<Vertex>,
+    overlay_vertices: &mut Vec<Vertex>,
+    draw_ops: &mut DrawOpArena,
     state: &SceneRasterState,
     path: &ScenePath,
     color: Color,
@@ -4221,9 +4559,9 @@ fn append_stroked_path(
     path_cache: &mut PathMeshCache,
     viewport: Size,
     feather_width: f32,
-) -> Result<()> {
+) -> Result<Option<u64>> {
     if path.is_empty() || viewport.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     let line_width = stroke.width.max(1.0);
@@ -4234,12 +4572,184 @@ fn append_stroked_path(
         ))
         .is_none()
     {
-        return Ok(());
+        return Ok(None);
+    }
+
+    let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
+    if feather_width > 0.0 {
+        let lyon_path = build_lyon_path(path, state.current_transform);
+        if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
+            append_analytic_path_quad(
+                overlay_vertices,
+                transformed_bounds.inflate(
+                    (line_width + feather_width) * 0.5,
+                    (line_width + feather_width) * 0.5,
+                ),
+                color,
+                viewport,
+            );
+            let id = draw_ops.insert_analytic_path(data);
+            return Ok(Some(id));
+        }
     }
 
     let mesh = path_cache.cached_stroke_mesh(path, state.current_transform, line_width, feather_width)?;
     append_cached_path_mesh(vertices, mesh, color, viewport);
-    Ok(())
+    Ok(None)
+}
+
+fn build_analytic_fill_path_data(
+    path: &LyonPath,
+    feather_width: f32,
+) -> Option<AnalyticPathCpuData> {
+    let contours = feathering::flatten_path_contours(path);
+    if contours.is_empty() || contours.len() > MAX_ANALYTIC_PATH_CONTOURS {
+        return None;
+    }
+
+    let mut contour_data = Vec::with_capacity(contours.len());
+    let mut point_data = Vec::new();
+
+    for contour in contours {
+        if !contour.closed || contour.points.len() < 3 {
+            return None;
+        }
+
+        let start = point_data.len() as u32;
+        for point in contour.points {
+            point_data.push(AnalyticPointGpu {
+                position: [point.x, point.y],
+                _pad: [0.0, 0.0],
+            });
+            if point_data.len() > MAX_ANALYTIC_PATH_POINTS {
+                return None;
+            }
+        }
+        contour_data.push(AnalyticContourGpu {
+            start,
+            len: (point_data.len() as u32).saturating_sub(start),
+            flags: ANALYTIC_CONTOUR_FLAG_CLOSED,
+            _pad0: 0,
+        });
+    }
+
+    if point_data.is_empty() {
+        return None;
+    }
+
+    Some(AnalyticPathCpuData::new(
+        AnalyticPathMode::Fill,
+        feather_width.max(0.5),
+        0.0,
+        contour_data,
+        point_data,
+    ))
+}
+
+fn build_analytic_stroke_path_data(
+    path: &LyonPath,
+    line_width: f32,
+    feather_width: f32,
+) -> Option<AnalyticPathCpuData> {
+    let contours = feathering::flatten_path_contours(path);
+    if contours.is_empty() || contours.len() > MAX_ANALYTIC_PATH_CONTOURS {
+        return None;
+    }
+
+    let mut contour_data = Vec::with_capacity(contours.len());
+    let mut point_data = Vec::new();
+
+    for contour in contours {
+        let minimum_points = if contour.closed { 3 } else { 2 };
+        if contour.points.len() < minimum_points {
+            return None;
+        }
+
+        let start = point_data.len() as u32;
+        for point in contour.points {
+            point_data.push(AnalyticPointGpu {
+                position: [point.x, point.y],
+                _pad: [0.0, 0.0],
+            });
+            if point_data.len() > MAX_ANALYTIC_PATH_POINTS {
+                return None;
+            }
+        }
+        contour_data.push(AnalyticContourGpu {
+            start,
+            len: (point_data.len() as u32).saturating_sub(start),
+            flags: if contour.closed {
+                ANALYTIC_CONTOUR_FLAG_CLOSED
+            } else {
+                0
+            },
+            _pad0: 0,
+        });
+    }
+
+    if point_data.is_empty() {
+        return None;
+    }
+
+    Some(AnalyticPathCpuData::new(
+        AnalyticPathMode::Stroke,
+        feather_width.max(0.5),
+        line_width.max(0.5),
+        contour_data,
+        point_data,
+    ))
+}
+
+fn append_analytic_path_quad(
+    vertices: &mut Vec<Vertex>,
+    rect: Rect,
+    color: Color,
+    viewport: Size,
+) {
+    if rect.is_empty() || viewport.is_empty() {
+        return;
+    }
+
+    let min = to_ndc(rect.x(), rect.y(), viewport);
+    let max = to_ndc(rect.max_x(), rect.max_y(), viewport);
+    let rgba = shader_color(color);
+    let x0 = rect.x();
+    let x1 = rect.max_x();
+    let y0 = rect.y();
+    let y1 = rect.max_y();
+
+    vertices.extend_from_slice(&[
+        Vertex {
+            position: [min[0], min[1]],
+            color: rgba,
+            tex_coords: [x0, y0],
+        },
+        Vertex {
+            position: [max[0], min[1]],
+            color: rgba,
+            tex_coords: [x1, y0],
+        },
+        Vertex {
+            position: [min[0], max[1]],
+            color: rgba,
+            tex_coords: [x0, y1],
+        },
+        Vertex {
+            position: [min[0], max[1]],
+            color: rgba,
+            tex_coords: [x0, y1],
+        },
+        Vertex {
+            position: [max[0], min[1]],
+            color: rgba,
+            tex_coords: [x1, y0],
+        },
+        Vertex {
+            position: [max[0], max[1]],
+            color: rgba,
+            tex_coords: [x1, y1],
+        },
+    ]);
 }
 
 fn tessellate_filled_lyon_path(
@@ -4596,6 +5106,22 @@ fn push_draw_op(
 }
 
 impl DrawOpArena {
+    fn insert_analytic_path(&mut self, data: AnalyticPathCpuData) -> u64 {
+        let id = self.next_analytic_path_id;
+        self.next_analytic_path_id = self.next_analytic_path_id.wrapping_add(1);
+        self.analytic_paths.insert(id, data);
+        id
+    }
+
+    fn import_analytic_paths(&mut self, fragment: &DrawOpArena) -> HashMap<u64, u64> {
+        let mut id_map = HashMap::new();
+        for (old_id, data) in &fragment.analytic_paths {
+            let new_id = self.insert_analytic_path(data.clone());
+            id_map.insert(*old_id, new_id);
+        }
+        id_map
+    }
+
     fn translate_in_place(&mut self, translation: Vector, viewport: Size) {
         if translation == Vector::ZERO || viewport.is_empty() {
             return;
@@ -4617,6 +5143,9 @@ impl DrawOpArena {
                 .clip_rect
                 .map(|rect| rect.translate(translation));
         }
+        for path in self.analytic_paths.values_mut() {
+            path.translate(translation);
+        }
     }
 
     fn append_composed_fragment(
@@ -4636,6 +5165,7 @@ impl DrawOpArena {
 
         let scene_delta = self.scene_vertices.len() as u32;
         let clip_delta = self.clip_vertices.len() as u32;
+        let analytic_id_map = self.import_analytic_paths(&transformed);
         self.scene_vertices.extend_from_slice(&transformed.scene_vertices);
         self.clip_vertices.extend_from_slice(&transformed.clip_vertices);
 
@@ -4673,6 +5203,11 @@ impl DrawOpArena {
                 draw_op.vertices = draw_op.vertices.offset(scene_delta);
                 draw_op.clip_state_index += clip_state_base;
                 draw_op.clip_rect = intersect_optional_rect(draw_op.clip_rect, external_clip_rect);
+                if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
+                    draw_op.kind = DrawOpKind::AnalyticPath {
+                        id: analytic_id_map[&id],
+                    };
+                }
                 draw_op
             }));
             return Ok(());
@@ -4697,6 +5232,12 @@ impl DrawOpArena {
                 clip_rect: intersect_optional_rect(draw_op.clip_rect, external_clip_rect),
                 clip_state_index: merged_clip_state,
             });
+            if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
+                let last = self.draw_ops.last_mut().expect("analytic draw op inserted");
+                last.kind = DrawOpKind::AnalyticPath {
+                    id: analytic_id_map[&id],
+                };
+            }
         }
 
         Ok(())
@@ -4706,6 +5247,7 @@ impl DrawOpArena {
         let scene_delta = self.scene_vertices.len() as u32;
         let clip_delta = self.clip_vertices.len() as u32;
         let clip_state_delta = self.clip_states.len();
+        let analytic_id_map = self.import_analytic_paths(fragment);
 
         self.scene_vertices.extend_from_slice(&fragment.scene_vertices);
         self.clip_vertices.extend_from_slice(&fragment.clip_vertices);
@@ -4720,6 +5262,11 @@ impl DrawOpArena {
         self.draw_ops.extend(fragment.draw_ops.iter().cloned().map(|mut draw_op| {
             draw_op.vertices = draw_op.vertices.offset(scene_delta);
             draw_op.clip_state_index += clip_state_delta;
+            if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
+                draw_op.kind = DrawOpKind::AnalyticPath {
+                    id: analytic_id_map[&id],
+                };
+            }
             draw_op
         }));
     }
@@ -4729,6 +5276,7 @@ impl DrawOpArena {
             + self.clip_vertices.len() * std::mem::size_of::<Vertex>()
             + self.clip_states.iter().map(|clip| clip.clip_paths.len() * std::mem::size_of::<PreparedVertices>()).sum::<usize>()
             + self.draw_ops.len() * std::mem::size_of::<DrawOp>()
+            + self.analytic_paths.values().map(AnalyticPathCpuData::byte_size).sum::<usize>()
     }
 
     fn push_scene_vertices(&mut self, vertices: &[Vertex]) -> PreparedVertices {
@@ -4962,6 +5510,134 @@ fn vs_main(
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return textureSample(image_texture, image_sampler, in.tex_coords) * in.color;
+}
+"#;
+
+const ANALYTIC_PATH_SHADER_SOURCE: &str = r#"
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) scene_position: vec2<f32>,
+};
+
+struct AnalyticPathMeta {
+    contour_count: u32,
+    mode: u32,
+    feather_width: f32,
+    stroke_width: f32,
+};
+
+struct AnalyticContour {
+    start: u32,
+    len: u32,
+    flags: u32,
+    _pad0: u32,
+};
+
+const ANALYTIC_CONTOUR_FLAG_CLOSED: u32 = 1u;
+const ANALYTIC_PATH_MODE_FILL: u32 = 0u;
+const ANALYTIC_PATH_MODE_STROKE: u32 = 1u;
+
+struct AnalyticPoint {
+    position: vec2<f32>,
+    _pad: vec2<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> path_meta: AnalyticPathMeta;
+
+@group(0) @binding(1)
+var<storage, read> contours: array<AnalyticContour>;
+
+@group(0) @binding(2)
+var<storage, read> points: array<AnalyticPoint>;
+
+@vertex
+fn vs_main(
+    @location(0) position: vec2<f32>,
+    @location(1) color: vec4<f32>,
+    @location(2) scene_position: vec2<f32>,
+) -> VsOut {
+    var out: VsOut;
+    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.color = color;
+    out.scene_position = scene_position;
+    return out;
+}
+
+fn segment_distance(point: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let ab = b - a;
+    let denom = max(dot(ab, ab), 1e-5);
+    let t = clamp(dot(point - a, ab) / denom, 0.0, 1.0);
+    return length(point - (a + (ab * t)));
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    if path_meta.contour_count == 0u {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let point = in.scene_position;
+    var inside = false;
+    var min_distance = 1e9;
+
+    for (var contour_index = 0u; contour_index < path_meta.contour_count; contour_index = contour_index + 1u) {
+        let contour = contours[contour_index];
+        if contour.len < 2u {
+            continue;
+        }
+
+        let closed = (contour.flags & ANALYTIC_CONTOUR_FLAG_CLOSED) != 0u;
+        var previous = select(
+            points[contour.start].position,
+            points[contour.start + contour.len - 1u].position,
+            closed,
+        );
+        var start_index = select(1u, 0u, closed);
+        for (var point_index = start_index; point_index < contour.len; point_index = point_index + 1u) {
+            let current = points[contour.start + point_index].position;
+                let denom = previous.y - current.y;
+                let safe_denom = select(
+                    denom,
+                    select(-1e-5, 1e-5, denom >= 0.0),
+                    abs(denom) < 1e-5,
+                );
+            let intersects = ((current.y > point.y) != (previous.y > point.y))
+                && (point.x < (((previous.x - current.x) * (point.y - current.y))
+                / safe_denom) + current.x);
+            if intersects {
+                inside = !inside;
+            }
+
+            min_distance = min(min_distance, segment_distance(point, previous, current));
+            previous = current;
+        }
+    }
+
+    let derivative_width = length(vec2<f32>(fwidth(point.x), fwidth(point.y)));
+    let feather = max(path_meta.feather_width, derivative_width);
+    var coverage = 0.0;
+
+    if path_meta.mode == ANALYTIC_PATH_MODE_FILL {
+        let signed_distance = select(min_distance, -min_distance, inside);
+        coverage = clamp(0.5 - (signed_distance / max(feather, 1e-4)), 0.0, 1.0);
+    } else {
+        if path_meta.stroke_width <= feather {
+            let opacity = clamp(path_meta.stroke_width / max(feather, 1e-4), 0.0, 1.0);
+            coverage = opacity * clamp(1.0 - (min_distance / max(feather, 1e-4)), 0.0, 1.0);
+        } else {
+            let inner_radius = max(0.0, 0.5 * (path_meta.stroke_width - path_meta.feather_width));
+            let outer_radius = 0.5 * (path_meta.stroke_width + path_meta.feather_width);
+            coverage = select(
+                clamp((outer_radius - min_distance) / max(feather, 1e-4), 0.0, 1.0),
+                1.0,
+                min_distance <= inner_radius,
+            );
+        }
+    }
+
+    return vec4<f32>(in.color.rgb, in.color.a * coverage);
 }
 "#;
 
@@ -5250,6 +5926,8 @@ mod tests {
                         clip_state_index: 0,
                     },
                 ],
+                analytic_paths: std::collections::HashMap::new(),
+                next_analytic_path_id: 0,
             },
             Size::new(50.0, 40.0),
             (100, 80),
@@ -5282,6 +5960,8 @@ mod tests {
                     vertices: PreparedVertices { start: 0, len: 6 },
                     clip_state_index: 0,
                 }],
+                analytic_paths: std::collections::HashMap::new(),
+                next_analytic_path_id: 0,
             },
             Size::new(50.0, 40.0),
             (100, 80),
@@ -5492,7 +6172,73 @@ mod tests {
 
         assert!(!draw_ops.draw_ops.is_empty());
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.path_cache.stats(), (1, 1, 1));
+        assert_eq!(compositor.path_cache.stats(), (0, 0, 0));
+        assert_eq!(draw_ops.analytic_paths.len(), 2);
+        assert!(draw_ops
+            .draw_ops
+            .iter()
+            .any(|draw| matches!(draw.kind, DrawOpKind::AnalyticPath { .. })));
+    }
+
+    #[test]
+    fn retained_compositor_uses_analytic_stroke_paths_across_cached_tiles() {
+        let layer_id = WidgetId::new(71);
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached);
+
+        let mut stroke_path = Path::builder();
+        stroke_path
+            .move_to(Point::new(8.0, 24.0))
+            .line_to(Point::new(180.0, 92.0))
+            .line_to(Point::new(340.0, 20.0))
+            .line_to(Point::new(500.0, 92.0));
+
+        let mut layer_scene = Scene::new();
+        layer_scene.push(SceneCommand::StrokePath {
+            path: stroke_path.build(),
+            brush: Color::rgba(0.92, 0.46, 0.18, 1.0).into(),
+            stroke: StrokeStyle::new(12.0),
+        });
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            descriptor.clone(),
+            layer_scene,
+        )));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(31),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                    .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let draw_ops = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert!(!draw_ops.draw_ops.is_empty());
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.path_cache.stats(), (0, 0, 0));
+        assert_eq!(draw_ops.analytic_paths.len(), 2);
+        assert!(draw_ops
+            .draw_ops
+            .iter()
+            .any(|draw| matches!(draw.kind, DrawOpKind::AnalyticPath { .. })));
     }
 
     #[test]
@@ -6027,6 +6773,101 @@ mod tests {
             SceneLayerUpdateKind::Transform,
             translated_descriptor,
         )];
+
+        let _second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
+    }
+
+    #[test]
+    fn retained_compositor_keeps_cached_tiles_when_unrelated_content_changes() {
+        let cached_id = WidgetId::new(104);
+        let overlay_id = WidgetId::new(105);
+
+        let cached_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(cached_id),
+            cached_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached)
+        .with_composition_mode(LayerCompositionMode::Scroll);
+        let overlay_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(overlay_id),
+            overlay_id,
+            Rect::new(24.0, 24.0, 64.0, 40.0),
+        )
+        .with_content_bounds(Rect::new(24.0, 24.0, 64.0, 40.0))
+        .with_paint_bounds(Rect::new(24.0, 24.0, 64.0, 40.0))
+        .with_cache_policy(LayerCachePolicy::Direct);
+
+        let build_scene = |overlay_brush: Color| {
+            let mut cached_scene = Scene::new();
+            cached_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 512.0, 128.0),
+                brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
+            });
+
+            let mut overlay_scene = Scene::new();
+            overlay_scene.push(SceneCommand::FillRect {
+                rect: overlay_descriptor.bounds,
+                brush: overlay_brush.into(),
+            });
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                cached_descriptor.clone(),
+                cached_scene,
+            )));
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                overlay_descriptor.clone(),
+                overlay_scene,
+            )));
+            scene
+        };
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(35),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    cached_descriptor.clone(),
+                )
+                .with_damage(cached_descriptor.paint_bounds),
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    overlay_descriptor.clone(),
+                )
+                .with_damage(overlay_descriptor.paint_bounds),
+            ],
+            scene: build_scene(Color::rgba(0.8, 0.2, 0.2, 1.0)),
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
+
+        frame.scene = build_scene(Color::rgba(0.2, 0.8, 0.2, 1.0));
+        frame.layer_updates = vec![
+            SceneLayerUpdate::from_descriptor(
+                SceneLayerUpdateKind::Content,
+                overlay_descriptor.clone(),
+            )
+            .with_damage(overlay_descriptor.paint_bounds),
+        ];
 
         let _second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 

@@ -8,9 +8,9 @@ use super::*;
 const AA_FLATTEN_TOLERANCE: f32 = 0.1;
 
 #[derive(Debug, Clone)]
-struct FlattenedContour {
-    points: Vec<Point>,
-    closed: bool,
+pub(super) struct FlattenedContour {
+    pub(super) points: Vec<Point>,
+    pub(super) closed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -461,7 +461,7 @@ fn append_fill_fringe_for_contour(
     append_scene_mesh(vertices, &mesh, viewport);
 }
 
-fn flatten_path_contours(path: &LyonPath) -> Vec<FlattenedContour> {
+pub(super) fn flatten_path_contours(path: &LyonPath) -> Vec<FlattenedContour> {
     let mut contours = Vec::new();
     let mut current = Vec::new();
 
