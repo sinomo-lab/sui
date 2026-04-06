@@ -5,10 +5,10 @@ use std::{
     collections::HashMap,
     rc::Rc,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         mpsc::{self, Receiver, SyncSender},
     },
-    thread::{self, JoinHandle},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -75,6 +75,10 @@ enum HostInputEvent {
 }
 
 enum HarnessCommand {
+    Launch {
+        build_runtime: RuntimeBuilder,
+        reply: SyncSender<Result<WindowId>>,
+    },
     Dispatch {
         window_id: WindowId,
         event: HostInputEvent,
@@ -88,36 +92,24 @@ enum HarnessCommand {
         window_id: WindowId,
         reply: SyncSender<Result<CapturedFrame>>,
     },
-    Shutdown {
+    Reset {
         reply: SyncSender<()>,
     },
 }
 
-struct DesktopHarness {
+type RuntimeBuilder = Box<dyn FnOnce() -> Result<sui::Runtime> + Send>;
+
+struct DesktopHarnessService {
     proxy: EventLoopProxy<HarnessCommand>,
-    thread: Option<JoinHandle<()>>,
-    main_window_id: WindowId,
 }
 
-impl DesktopHarness {
-    fn launch<F>(build_runtime: F) -> Result<Self>
-    where
-        F: FnOnce() -> Result<sui::Runtime> + Send + 'static,
-    {
-        clear_window_performance_snapshots();
+static DESKTOP_HARNESS_SERVICE: OnceLock<DesktopHarnessService> = OnceLock::new();
 
+fn desktop_harness_service() -> &'static DesktopHarnessService {
+    DESKTOP_HARNESS_SERVICE.get_or_init(|| {
         let (setup_tx, setup_rx) = mpsc::sync_channel(1);
-        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
 
-        let thread = thread::spawn(move || {
-            let runtime = match build_runtime() {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let _ = setup_tx.send(Err(error));
-                    return;
-                }
-            };
-
+        thread::spawn(move || {
             let mut event_loop_builder = EventLoop::<HarnessCommand>::with_user_event();
             #[cfg(target_os = "windows")]
             {
@@ -138,18 +130,40 @@ impl DesktopHarness {
                 return;
             }
 
-            let mut app = DesktopHarnessApp::new(runtime, ready_tx);
+            let mut app = DesktopHarnessApp::new();
             if let Err(error) = event_loop.run_app(&mut app) {
                 app.report_error(map_event_loop_error(error));
             }
         });
 
-        let proxy = recv_result(&setup_rx, "desktop harness setup", Duration::from_secs(3))?;
-        let main_window_id = recv_result(&ready_rx, "desktop harness startup", Duration::from_secs(3))?;
+        let proxy = recv_result(&setup_rx, "desktop harness service setup", Duration::from_secs(3))
+            .expect("desktop harness service should start exactly once");
+
+        DesktopHarnessService { proxy }
+    })
+}
+
+struct DesktopHarness {
+    proxy: EventLoopProxy<HarnessCommand>,
+    main_window_id: WindowId,
+}
+
+impl DesktopHarness {
+    fn launch<F>(build_runtime: F) -> Result<Self>
+    where
+        F: FnOnce() -> Result<sui::Runtime> + Send + 'static,
+    {
+        let proxy = desktop_harness_service().proxy.clone();
+        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+        proxy.send_event(HarnessCommand::Launch {
+            build_runtime: Box::new(build_runtime),
+            reply: reply_tx,
+        })
+        .map_err(|_| Error::new("desktop harness service is unavailable"))?;
+        let main_window_id = recv_result(&reply_rx, "desktop harness launch", Duration::from_secs(3))?;
 
         Ok(Self {
             proxy,
-            thread: Some(thread),
             main_window_id,
         })
     }
@@ -196,12 +210,8 @@ impl DesktopHarness {
 impl Drop for DesktopHarness {
     fn drop(&mut self) {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        let _ = self.proxy.send_event(HarnessCommand::Shutdown { reply: reply_tx });
+        let _ = self.proxy.send_event(HarnessCommand::Reset { reply: reply_tx });
         let _ = reply_rx.recv_timeout(Duration::from_secs(1));
-
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
     }
 }
 
@@ -212,48 +222,61 @@ struct DesktopHarnessApp {
     frame_clock: f64,
     windows: HashMap<WindowId, WindowState>,
     host_to_runtime: HashMap<HostWindowId, WindowId>,
-    ready_tx: Option<SyncSender<Result<WindowId>>>,
-    ready_sent: bool,
     last_error: Option<Error>,
 }
 
 impl DesktopHarnessApp {
-    fn new(runtime: sui::Runtime, ready_tx: SyncSender<Result<WindowId>>) -> Self {
+    fn new() -> Self {
         Self {
-            runtime,
+            runtime: sui::Runtime::new(),
             renderer: WgpuRenderer::default(),
             started_at: Instant::now(),
             frame_clock: 0.0,
             windows: HashMap::new(),
             host_to_runtime: HashMap::new(),
-            ready_tx: Some(ready_tx),
-            ready_sent: false,
             last_error: None,
         }
     }
 
-    fn signal_ready(&mut self) {
-        if self.ready_sent {
-            return;
+    fn reset_runtime_state(&mut self) {
+        for window_id in self.windows.keys().copied().collect::<Vec<_>>() {
+            self.renderer.remove_window(window_id);
         }
-
-        let Some(window_id) = self.runtime.window_ids().first().copied() else {
-            return;
-        };
-
-        self.ready_sent = true;
-        if let Some(ready_tx) = self.ready_tx.take() {
-            let _ = ready_tx.send(Ok(window_id));
-        }
+        self.windows.clear();
+        self.host_to_runtime.clear();
+        self.runtime = sui::Runtime::new();
+        self.renderer = WgpuRenderer::default();
+        self.started_at = Instant::now();
+        self.frame_clock = 0.0;
+        clear_window_performance_snapshots();
     }
 
     fn report_error(&mut self, error: Error) {
-        self.last_error = Some(error.clone());
-        if !self.ready_sent {
-            self.ready_sent = true;
-            if let Some(ready_tx) = self.ready_tx.take() {
-                let _ = ready_tx.send(Err(error));
-            }
+        self.last_error = Some(error);
+        self.reset_runtime_state();
+    }
+
+    fn launch_runtime(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        build_runtime: RuntimeBuilder,
+    ) -> Result<WindowId> {
+        self.reset_runtime_state();
+        self.last_error = None;
+        self.runtime = build_runtime()?;
+        self.flush_pending_frames(event_loop)?;
+        self.runtime
+            .window_ids()
+            .first()
+            .copied()
+            .ok_or_else(|| Error::new("desktop runtime did not create any windows"))
+    }
+
+    fn take_last_error(&mut self) -> Result<()> {
+        if let Some(error) = self.last_error.take() {
+            Err(error)
+        } else {
+            Ok(())
         }
     }
 
@@ -333,10 +356,6 @@ impl DesktopHarnessApp {
             )?;
         }
 
-        if self.windows.is_empty() {
-            event_loop.exit();
-        }
-
         Ok(())
     }
 
@@ -346,7 +365,7 @@ impl DesktopHarnessApp {
 
     fn update_control_flow(&self, event_loop: &ActiveEventLoop) -> Result<()> {
         if self.windows.is_empty() {
-            event_loop.exit();
+            event_loop.set_control_flow(ControlFlow::Wait);
             return Ok(());
         }
 
@@ -502,10 +521,6 @@ impl DesktopHarnessApp {
         if is_close {
             self.runtime.remove_window(window_id)?;
             self.sync_windows(event_loop)?;
-        }
-
-        if self.windows.is_empty() {
-            event_loop.exit();
         }
 
         Ok(())
@@ -786,22 +801,37 @@ impl DesktopHarnessApp {
 
     fn handle_command(&mut self, event_loop: &ActiveEventLoop, command: HarnessCommand) {
         match command {
+            HarnessCommand::Launch {
+                build_runtime,
+                reply,
+            } => {
+                let _ = reply.send(self.launch_runtime(event_loop, build_runtime));
+            }
             HarnessCommand::Dispatch {
                 window_id,
                 event,
                 reply,
             } => {
-                let _ = reply.send(self.dispatch_host_event(event_loop, window_id, event));
+                let _ = reply.send(
+                    self.take_last_error()
+                        .and_then(|()| self.dispatch_host_event(event_loop, window_id, event)),
+                );
             }
             HarnessCommand::Snapshot { window_id, reply } => {
-                let _ = reply.send(self.snapshot(event_loop, window_id));
+                let _ = reply.send(
+                    self.take_last_error()
+                        .and_then(|()| self.snapshot(event_loop, window_id)),
+                );
             }
             HarnessCommand::Capture { window_id, reply } => {
-                let _ = reply.send(self.capture(event_loop, window_id));
+                let _ = reply.send(
+                    self.take_last_error()
+                        .and_then(|()| self.capture(event_loop, window_id)),
+                );
             }
-            HarnessCommand::Shutdown { reply } => {
+            HarnessCommand::Reset { reply } => {
+                self.reset_runtime_state();
                 let _ = reply.send(());
-                event_loop.exit();
             }
         }
     }
@@ -809,12 +839,8 @@ impl DesktopHarnessApp {
 
 impl ApplicationHandler<HarnessCommand> for DesktopHarnessApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        match self.flush_pending_frames(event_loop) {
-            Ok(()) => self.signal_ready(),
-            Err(error) => {
+        if let Err(error) = self.flush_pending_frames(event_loop) {
                 self.report_error(error);
-                event_loop.exit();
-            }
         }
     }
 
@@ -830,14 +856,12 @@ impl ApplicationHandler<HarnessCommand> for DesktopHarnessApp {
     ) {
         if let Err(error) = self.handle_window_event(event_loop, window_id, event) {
             self.report_error(error);
-            event_loop.exit();
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Err(error) = self.drive_runtime(event_loop) {
             self.report_error(error);
-            event_loop.exit();
         }
     }
 }
