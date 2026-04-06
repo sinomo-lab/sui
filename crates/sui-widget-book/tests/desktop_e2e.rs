@@ -1073,6 +1073,18 @@ fn click_at(harness: &DesktopHarness, window_id: WindowId, position: Point) -> R
     )
 }
 
+fn live_performance_toggle_point(snapshot: &DesktopWindowSnapshot) -> Point {
+    let overlay = find_node(
+        snapshot,
+        SemanticsRole::GenericContainer,
+        "Live performance overlay",
+    );
+    Point::new(
+        overlay.bounds.max_x() - 12.0 - 38.0,
+        overlay.bounds.y() + 10.0 - 1.0 + 9.0,
+    )
+}
+
 fn find_node(snapshot: &DesktopWindowSnapshot, role: SemanticsRole, name: &str) -> SemanticsNode {
     snapshot
         .semantics
@@ -1399,6 +1411,75 @@ fn desktop_button_grid_64_reports_initial_render_time() -> Result<()> {
             .map(|sample| sample.phase.label())
             .unwrap_or("none"),
         slowest_phase.map(|sample| sample.duration_ms).unwrap_or(0.0),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn desktop_widget_book_overlay_toggle_publishes_detailed_scene_stats() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let harness = DesktopHarness::launch(|| {
+        build_widget_book_application(Rc::new(RefCell::new(WidgetBookState {
+            name: "Ada".to_string(),
+            subscribed: true,
+            theme_preview_comparison: true,
+            button_presses: 0,
+            icon_button_presses: 0,
+            switch_on: true,
+            standalone_radio_selected: false,
+            radio_choice: "Balanced".to_string(),
+            slider_value: 72.0,
+            number_value: 12.0,
+            notes: "Pinned notes for inspector workflows.\nSupports multiline editing.".to_string(),
+            mode: "Normal".to_string(),
+            tab_bar_choice: "Canvas".to_string(),
+            tabs_choice: "Layout".to_string(),
+            last_menu_action: "New tab".to_string(),
+            last_context_action: "Rename".to_string(),
+            dialog_apply_count: 0,
+        })))
+        .build()
+    })?;
+    let window_id = harness.main_window_id();
+
+    harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+    let before_frame = harness.capture(window_id)?;
+    let before_snapshot = harness.snapshot(window_id)?;
+    let before_performance = before_snapshot
+        .performance
+        .clone()
+        .expect("desktop widget book should publish an initial performance snapshot");
+
+    assert!(!before_performance.scene.detail_mode.is_detailed());
+
+    click_at(
+        &harness,
+        window_id,
+        live_performance_toggle_point(&before_snapshot),
+    )?;
+
+    let after_frame = harness.capture(window_id)?;
+    let after_snapshot = harness.snapshot(window_id)?;
+    let after_performance = after_snapshot
+        .performance
+        .clone()
+        .expect("desktop widget book should publish a performance snapshot after toggling detail mode");
+    let overlay = find_node(
+        &after_snapshot,
+        SemanticsRole::GenericContainer,
+        "Live performance overlay",
+    );
+
+    assert!(frame_pixel_diff_count(&before_frame, &after_frame) > 0);
+    assert!(window_scene_statistics_detail_mode(window_id).is_detailed());
+    assert!(after_performance.scene.detail_mode.is_detailed());
+    assert!(!after_performance.scene.command_breakdown.is_empty());
+    assert_eq!(
+        overlay.value,
+        Some(SemanticsValue::Text("detail on".to_string()))
     );
 
     Ok(())

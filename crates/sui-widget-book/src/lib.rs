@@ -6,10 +6,10 @@ use sui::prelude::*;
 use sui::{
     AccessibilitySnapshot, DirtyRegion, FocusState, FrameSchedule, InvalidationKind, Rect,
     SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, SemanticsValue,
-    TextStyle, Vector, WidgetGraphSnapshot, WidgetId,
+    TextStyle, TimerToken, Vector, WidgetGraphSnapshot, WidgetId,
     WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
-    WindowPerformanceSummary, set_window_scene_statistics_detail_mode,
-    window_performance_summary, window_scene_statistics_detail_mode,
+    WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
+    window_performance_snapshot, window_scene_statistics_detail_mode,
 };
 use sui_debug::{SceneDebugSummary, WindowDebugSnapshot};
 
@@ -99,7 +99,6 @@ pub struct LivePerformanceRoot {
     performance_display: Rc<RefCell<LivePerformanceDisplay>>,
     window_title: String,
     window_description: String,
-    bootstrapped: bool,
 }
 
 impl LivePerformanceRoot {
@@ -127,13 +126,12 @@ impl LivePerformanceRoot {
             performance_display,
             window_title: window_title.into(),
             window_description: window_description.into(),
-            bootstrapped: false,
         }
     }
 
     fn set_performance_display(
         &mut self,
-        snapshot: Option<WindowPerformanceSummary>,
+        snapshot: Option<WindowPerformanceSnapshot>,
         idle: bool,
     ) -> bool {
         let next = LivePerformanceDisplay { snapshot, idle };
@@ -147,9 +145,9 @@ impl LivePerformanceRoot {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 struct LivePerformanceDisplay {
-    snapshot: Option<WindowPerformanceSummary>,
+    snapshot: Option<WindowPerformanceSnapshot>,
     idle: bool,
 }
 
@@ -211,10 +209,8 @@ pub fn run_desktop_widget_book() -> Result<()> {
 impl Widget for LivePerformanceRoot {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
-            if let Some(summary) = window_performance_summary(ctx.window_id()) {
-                let changed = self.set_performance_display(Some(summary), false);
-                if changed && !self.bootstrapped {
-                    self.bootstrapped = true;
+            if let Some(snapshot) = window_performance_snapshot(ctx.window_id()) {
+                if self.set_performance_display(Some(snapshot), false) {
                     ctx.request_paint();
                 }
             }
@@ -1716,6 +1712,7 @@ impl WidgetBookSummary {
 struct LivePerformancePanel {
     display: Rc<RefCell<LivePerformanceDisplay>>,
     toggle_pressed: bool,
+    detail_refresh_timer: Option<TimerToken>,
 }
 
 #[derive(Debug, Clone)]
@@ -1750,6 +1747,7 @@ impl LivePerformancePanel {
         Self {
             display,
             toggle_pressed: false,
+            detail_refresh_timer: None,
         }
     }
 
@@ -1789,17 +1787,47 @@ impl LivePerformancePanel {
     }
 
     fn content_specs(&self, _window_id: WindowId) -> Vec<LivePerformanceLineSpec> {
-        let display = *self.display.borrow();
+        let display = self.display.borrow().clone();
 
         match display.snapshot {
             Some(snapshot) => {
-                let slowest_phase = snapshot.slowest_phase;
+                let slowest_phase = snapshot.slowest_phase();
                 let slowest_label = slowest_phase
                     .map(|sample| sample.phase.label())
                     .unwrap_or("idle");
                 let slowest_duration = slowest_phase
                     .map(|sample| format_duration_ms(sample.duration_ms))
                     .unwrap_or_else(|| "0.0 ms".to_string());
+                let scene_metric = if snapshot.scene.detail_mode.is_detailed() {
+                    format!(
+                        "scene {} dirty  |  {} layers  |  {} updates",
+                        snapshot.scene.dirty_region_count,
+                        snapshot.scene.layer_count,
+                        snapshot.scene.layer_update_count,
+                    )
+                } else {
+                    format!(
+                        "scene {} dirty  |  {} cmds  |  {:.0}% dirty",
+                        snapshot.scene.dirty_region_count,
+                        snapshot.scene.command_count,
+                        snapshot.scene.dirty_coverage,
+                    )
+                };
+                let trailing_metric = if snapshot.scene.detail_mode.is_detailed() {
+                    format!(
+                        "cmds txt {}  |  img {}  |  clip {}",
+                        snapshot.scene.text_command_count,
+                        snapshot.scene.image_command_count,
+                        snapshot.scene.clip_command_count,
+                    )
+                } else {
+                    format!(
+                        "text cache rt {}  |  rr {}  |  glyph {}",
+                        snapshot.text_caches.runtime_layout.entries,
+                        snapshot.text_caches.renderer_layout.entries,
+                        snapshot.text_caches.renderer_glyph.entries,
+                    )
+                };
 
                 vec![
                     LivePerformanceLineSpec::title("live performance".to_string()),
@@ -1850,18 +1878,8 @@ impl LivePerformancePanel {
                         format_duration_ms(snapshot.renderer_submission.tile_generation_time_us as f64 / 1000.0),
                         format_duration_ms(snapshot.renderer_submission.composition_time_us as f64 / 1000.0),
                     )),
-                    LivePerformanceLineSpec::metric(format!(
-                        "scene {} dirty  |  {} cmds  |  {:.0}% dirty",
-                        snapshot.dirty_region_count,
-                        snapshot.command_count,
-                        snapshot.dirty_coverage,
-                    )),
-                    LivePerformanceLineSpec::metric(format!(
-                        "text cache rt {}  |  rr {}  |  glyph {}",
-                        snapshot.text_caches.runtime_layout.entries,
-                        snapshot.text_caches.renderer_layout.entries,
-                        snapshot.text_caches.renderer_glyph.entries,
-                    )),
+                    LivePerformanceLineSpec::metric(scene_metric),
+                    LivePerformanceLineSpec::metric(trailing_metric),
                 ]
             }
             None => vec![
@@ -1941,12 +1959,23 @@ impl Widget for LivePerformancePanel {
                         SceneStatisticsDetailMode::Detailed
                     };
                     set_window_scene_statistics_detail_mode(ctx.window_id(), next_mode);
+                    if let Some(token) = self.detail_refresh_timer.take() {
+                        ctx.cancel_timer(token);
+                    }
+                    self.detail_refresh_timer = Some(ctx.schedule_timer_after(0.0));
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
                 } else if was_pressed {
                     ctx.request_paint();
                 }
+            }
+            Event::Wake(WakeEvent::Timer { token, .. })
+                if self.detail_refresh_timer == Some(*token) =>
+            {
+                self.detail_refresh_timer = None;
+                ctx.request_paint();
+                ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == sui::PointerEventKind::Cancel => {
                 if self.toggle_pressed {
@@ -2264,7 +2293,7 @@ mod tests {
         SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size,
         TextCacheDiagnostics, TextCacheDeltaDiagnostics, Vector, Widget, WidgetPod,
         WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
-        WindowPerformanceSummary, window_scene_statistics_detail_mode,
+        window_scene_statistics_detail_mode,
     };
     use sui_runtime::publish_window_performance_snapshot;
     use sui_testing::prelude::*;
@@ -2540,7 +2569,7 @@ mod tests {
 
         assert_eq!(panel.content_specs(WindowId::new(11)).len(), 3);
 
-        display.borrow_mut().snapshot = Some(sample_window_performance_snapshot());
+        display.borrow_mut().snapshot = Some(sample_window_performance_snapshot_record(WindowId::new(11)));
 
         assert_eq!(panel.content_specs(WindowId::new(11)).len(), 9);
     }
@@ -2563,7 +2592,7 @@ mod tests {
         Widget::visit_children(&panel, &mut visitor);
         assert_eq!(visitor.count, 0);
 
-        display.borrow_mut().snapshot = Some(sample_window_performance_snapshot());
+        display.borrow_mut().snapshot = Some(sample_window_performance_snapshot_record(WindowId::new(11)));
 
         let mut visitor = CountingVisitor { count: 0 };
         Widget::visit_children(&panel, &mut visitor);
@@ -2592,7 +2621,7 @@ mod tests {
     #[test]
     fn live_performance_panel_reports_zero_fps_when_idle() {
         let display = Rc::new(RefCell::new(LivePerformanceDisplay {
-            snapshot: Some(sample_window_performance_snapshot()),
+            snapshot: Some(sample_window_performance_snapshot_record(WindowId::new(11))),
             idle: true,
         }));
         let panel = LivePerformancePanel::with_display(display);
@@ -2600,6 +2629,19 @@ mod tests {
         let lines = panel.content_specs(WindowId::new(11));
         assert_eq!(lines[1].text, "0 fps  |  idle");
         assert!(lines[2].text.contains("last active"));
+    }
+
+    #[test]
+    fn live_performance_panel_renders_detailed_scene_metrics() {
+        let display = Rc::new(RefCell::new(LivePerformanceDisplay {
+            snapshot: Some(sample_detailed_window_performance_snapshot_record(WindowId::new(11))),
+            idle: false,
+        }));
+        let panel = LivePerformancePanel::with_display(display);
+
+        let lines = panel.content_specs(WindowId::new(11));
+        assert!(lines.iter().any(|line| line.text.contains("layers")));
+        assert!(lines.iter().any(|line| line.text.contains("cmds txt")));
     }
 
     #[test]
@@ -2703,6 +2745,11 @@ mod tests {
             window_scene_statistics_detail_mode(window.id()),
             SceneStatisticsDetailMode::Detailed
         );
+        assert!(window
+            .performance_snapshot()?
+            .scene
+            .detail_mode
+            .is_detailed());
 
         let overlay_node = window
             .snapshot()?
@@ -2781,28 +2828,22 @@ mod tests {
         assert!(overlay.bounds.y() <= 24.0);
     }
 
-    fn sample_window_performance_snapshot() -> WindowPerformanceSummary {
-        sample_window_performance_snapshot_for(WindowId::new(11))
-    }
-
     fn sample_window_performance_snapshot_record(window_id: WindowId) -> WindowPerformanceSnapshot {
-        let summary = sample_window_performance_snapshot_for(window_id);
-
         WindowPerformanceSnapshot::new(
-            summary.window_id,
-            summary.frame_index,
-            vec![FramePhaseSample::new(FramePhase::Renderer, summary.total_time_ms)],
-            summary.renderer_submission,
-            summary.text_caches,
+            window_id,
+            7,
+            vec![FramePhaseSample::new(FramePhase::Renderer, 1.5)],
+            RendererSubmissionDiagnostics::new(2, 6, 2048, 3, 18, 15, 3, 6, 65536, 420, 160),
+            TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
             SceneStatistics {
                 detail_mode: Default::default(),
                 viewport: Size::new(1280.0, 720.0),
-                dirty_region_count: summary.dirty_region_count,
+                dirty_region_count: 0,
                 dirty_regions: Vec::new(),
                 dirty_area: 0.0,
-                dirty_coverage: summary.dirty_coverage,
-                command_count: summary.command_count,
+                dirty_coverage: 0.0,
+                command_count: 0,
                 command_breakdown: Vec::new(),
                 layer_count: 0,
                 layer_update_count: 0,
@@ -2815,13 +2856,17 @@ mod tests {
         )
     }
 
-    fn sample_window_performance_snapshot_for(window_id: WindowId) -> WindowPerformanceSummary {
-        WindowPerformanceSummary {
+    fn sample_detailed_window_performance_snapshot_record(
+        window_id: WindowId,
+    ) -> WindowPerformanceSnapshot {
+        WindowPerformanceSnapshot::new(
             window_id,
-            frame_index: 7,
-            total_time_ms: 1.5,
-            slowest_phase: Some(FramePhaseSample::new(FramePhase::Renderer, 1.5)),
-            renderer_submission: RendererSubmissionDiagnostics::new(
+            8,
+            vec![
+                FramePhaseSample::new(FramePhase::Paint, 0.8),
+                FramePhaseSample::new(FramePhase::Renderer, 1.9),
+            ],
+            RendererSubmissionDiagnostics::new(
                 2,
                 6,
                 2048,
@@ -2834,10 +2879,25 @@ mod tests {
                 420,
                 160,
             ),
-            text_caches: TextCacheDiagnostics::default(),
-            dirty_region_count: 0,
-            dirty_coverage: 0.0,
-            command_count: 0,
-        }
+            TextCacheDiagnostics::default(),
+            TextCacheDeltaDiagnostics::default(),
+            SceneStatistics {
+                detail_mode: SceneStatisticsDetailMode::Detailed,
+                viewport: Size::new(1280.0, 720.0),
+                dirty_region_count: 2,
+                dirty_regions: Vec::new(),
+                dirty_area: 128.0,
+                dirty_coverage: 3.0,
+                command_count: 14,
+                command_breakdown: vec![("FillRect".to_string(), 8), ("Layer".to_string(), 6)],
+                layer_count: 6,
+                layer_update_count: 4,
+                layer_update_breakdown: vec![("Repaint".to_string(), 4)],
+                text_command_count: 3,
+                image_command_count: 1,
+                clip_command_count: 2,
+                transform_command_count: 1,
+            },
+        )
     }
 }
