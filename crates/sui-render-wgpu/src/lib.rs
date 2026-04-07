@@ -2955,44 +2955,14 @@ impl WgpuRenderer {
         self.ensure_shared(None)?;
         self.configure_surface_if_needed(frame.window_id, size)?;
 
-        let surface_acquire_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
-        let (frame_texture, suboptimal) = loop {
-            let result = {
-                let surface = self.surfaces.get(&frame.window_id).ok_or_else(|| {
-                    Error::new(format!(
-                        "missing surface for window {}",
-                        frame.window_id.get()
-                    ))
-                })?;
-                surface.surface.get_current_texture()
-            };
+        let prepared = self.prepare_scene_submission(frame)?;
 
-            match result {
-                wgpu::CurrentSurfaceTexture::Success(texture) => break (texture, false),
-                wgpu::CurrentSurfaceTexture::Suboptimal(texture) => break (texture, true),
-                wgpu::CurrentSurfaceTexture::Outdated => {
-                    self.configure_surface(frame.window_id, size)?;
-                }
-                wgpu::CurrentSurfaceTexture::Lost => {
-                    self.recreate_surface(frame.window_id, size)?;
-                }
-                wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                    return Ok(RendererFrameStats::default());
-                }
-                wgpu::CurrentSurfaceTexture::Validation => {
-                    return Err(Error::new(
-                        "wgpu surface acquisition triggered a validation error",
-                    ));
-                }
-            }
+        let Some((frame_texture, suboptimal, surface_acquire_time_us)) =
+            self.acquire_surface_texture(frame.window_id, size)?
+        else {
+            return Ok(RendererFrameStats::default());
         };
-        let surface_acquire_time_us = surface_acquire_started
-            .map(|started| started.elapsed().as_micros() as u64)
-            .unwrap_or(0);
 
-        let view = frame_texture
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
         let format = {
             let surface = self.surfaces.get(&frame.window_id).ok_or_else(|| {
                 Error::new(format!(
@@ -3002,8 +2972,11 @@ impl WgpuRenderer {
             })?;
             surface.config.format
         };
+        let view = frame_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut frame_stats = self.encode_scene(frame, format, &view)?;
+        let mut frame_stats = self.submit_prepared_scene(prepared, format, &view)?;
         frame_stats.surface_acquire_time_us = surface_acquire_time_us;
         let surface_present_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
         frame_texture.present();
@@ -3016,6 +2989,46 @@ impl WgpuRenderer {
         }
 
         Ok(frame_stats)
+    }
+
+    fn acquire_surface_texture(
+        &mut self,
+        window_id: WindowId,
+        size: (u32, u32),
+    ) -> Result<Option<(wgpu::SurfaceTexture, bool, u64)>> {
+        let surface_acquire_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
+        let (frame_texture, suboptimal) = loop {
+            let result = {
+                let surface = self.surfaces.get(&window_id).ok_or_else(|| {
+                    Error::new(format!("missing surface for window {}", window_id.get()))
+                })?;
+                surface.surface.get_current_texture()
+            };
+
+            match result {
+                wgpu::CurrentSurfaceTexture::Success(texture) => break (texture, false),
+                wgpu::CurrentSurfaceTexture::Suboptimal(texture) => break (texture, true),
+                wgpu::CurrentSurfaceTexture::Outdated => {
+                    self.configure_surface(window_id, size)?;
+                }
+                wgpu::CurrentSurfaceTexture::Lost => {
+                    self.recreate_surface(window_id, size)?;
+                }
+                wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                    return Ok(None);
+                }
+                wgpu::CurrentSurfaceTexture::Validation => {
+                    return Err(Error::new(
+                        "wgpu surface acquisition triggered a validation error",
+                    ));
+                }
+            }
+        };
+        let surface_acquire_time_us = surface_acquire_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
+
+        Ok(Some((frame_texture, suboptimal, surface_acquire_time_us)))
     }
 
     fn render_offscreen(
@@ -3061,19 +3074,22 @@ impl WgpuRenderer {
             );
         }
 
-        let target = self
-            .offscreen_targets
-            .get(&frame.window_id)
-            .ok_or_else(|| {
+        let prepared = self.prepare_scene_submission(frame)?;
+        let (format, view) = {
+            let target = self.offscreen_targets.get(&frame.window_id).ok_or_else(|| {
                 Error::new(format!(
                     "missing offscreen target for window {}",
                     frame.window_id.get()
                 ))
             })?;
-        let view = target
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        self.encode_scene(frame, target.format, &view)
+            (
+                target.format,
+                target
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+            )
+        };
+        self.submit_prepared_scene(prepared, format, &view)
     }
 
     fn configure_surface_if_needed(&mut self, window_id: WindowId, size: (u32, u32)) -> Result<()> {
@@ -3116,12 +3132,7 @@ impl WgpuRenderer {
         Ok(())
     }
 
-    fn encode_scene(
-        &mut self,
-        frame: &SceneFrame,
-        target_format: wgpu::TextureFormat,
-        view: &wgpu::TextureView,
-    ) -> Result<RendererFrameStats> {
+    fn prepare_scene_submission(&mut self, frame: &SceneFrame) -> Result<PreparedSceneSubmission> {
         let diagnostics_enabled = self.runtime_diagnostics_enabled;
         let feather_width = self.active_feather_width();
         let (submission, compositor_stats, text_frame_stats) = {
@@ -3222,18 +3233,6 @@ impl WgpuRenderer {
         let bind_group_prepare_time_us = bind_group_prepare_started
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
-
-        let mut encoder = {
-            let shared = self
-                .shared
-                .as_ref()
-                .expect("renderer shared state initialized");
-            shared
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("SUI scene encoder"),
-                })
-        };
         let mut prepared_fragments = Vec::new();
         let mut draw_count = 0usize;
         let mut uploaded_vertex_bytes = 0u64;
@@ -3374,8 +3373,60 @@ impl WgpuRenderer {
         if let Some(started) = batch_prepare_started {
             batch_prepare_time_us += started.elapsed().as_micros() as u64;
         }
-        let pass_encode_started = diagnostics_enabled.then(|| Instant::now());
-        let pass_count = if encodable_passes.is_empty() {
+        let mut frame_stats = if diagnostics_enabled {
+            RendererFrameStats::from_prepared_counts(
+                0,
+                draw_count,
+                uploaded_vertex_bytes,
+            )
+            .with_text_stats(text_frame_stats)
+            .with_compositor_stats(compositor_stats)
+        } else {
+            RendererFrameStats::default()
+        };
+        frame_stats.resource_collection_time_us = resource_collection_time_us;
+        frame_stats.bind_group_prepare_time_us = bind_group_prepare_time_us;
+        frame_stats.image_bind_group_time_us = image_bind_group_time_us;
+        frame_stats.analytic_path_bind_group_time_us = analytic_path_bind_group_time_us;
+        frame_stats.analytic_path_bind_group_miss_count = analytic_path_bind_group_miss_count;
+        frame_stats.analytic_path_bind_group_upload_bytes = analytic_path_bind_group_upload_bytes;
+        frame_stats.text_atlas_bind_group_time_us = text_atlas_bind_group_time_us;
+        frame_stats.text_atlas_upload_copy_time_us = text_atlas_upload_copy_time_us;
+        frame_stats.text_atlas_upload_write_time_us = text_atlas_upload_write_time_us;
+        frame_stats.text_atlas_upload_bytes = text_atlas_upload_bytes;
+        frame_stats.batch_prepare_time_us = batch_prepare_time_us;
+        frame_stats.gpu_upload_time_us = gpu_upload_time_us;
+        Ok(PreparedSceneSubmission {
+            viewport: frame.viewport,
+            framebuffer_size,
+            encodable_passes,
+            image_bind_groups,
+            text_atlas_bind_group,
+            analytic_path_resources,
+            frame_stats,
+        })
+    }
+
+    fn submit_prepared_scene(
+        &mut self,
+        prepared: PreparedSceneSubmission,
+        target_format: wgpu::TextureFormat,
+        view: &wgpu::TextureView,
+    ) -> Result<RendererFrameStats> {
+        let mut encoder = {
+            let shared = self
+                .shared
+                .as_ref()
+                .expect("renderer shared state initialized");
+            shared
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("SUI scene encoder"),
+                })
+        };
+
+        let pass_encode_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
+        let pass_count = if prepared.encodable_passes.is_empty() {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SUI scene clear pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3412,20 +3463,20 @@ impl WgpuRenderer {
                 &mut encoder,
                 view,
                 target_format,
-                frame.viewport,
-                framebuffer_size,
-                &encodable_passes,
+                prepared.viewport,
+                prepared.framebuffer_size,
+                &prepared.encodable_passes,
                 stencil_view,
-                &image_bind_groups,
-                text_atlas_bind_group.as_ref(),
-                analytic_path_resources.as_ref(),
+                &prepared.image_bind_groups,
+                prepared.text_atlas_bind_group.as_ref(),
+                prepared.analytic_path_resources.as_ref(),
             )?
         };
         let pass_encode_time_us = pass_encode_started
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
 
-        let queue_submit_started = diagnostics_enabled.then(|| Instant::now());
+        let queue_submit_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
         self.shared
             .as_ref()
             .expect("renderer shared state initialized")
@@ -3434,31 +3485,11 @@ impl WgpuRenderer {
         let queue_submit_time_us = queue_submit_started
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
-        let mut frame_stats = if diagnostics_enabled {
-            RendererFrameStats::from_prepared_counts(
-                pass_count.max(1),
-                draw_count,
-                uploaded_vertex_bytes,
-            )
-            .with_text_stats(text_frame_stats)
-            .with_compositor_stats(compositor_stats)
-        } else {
-            RendererFrameStats::default()
-        };
-        frame_stats.resource_collection_time_us = resource_collection_time_us;
-        frame_stats.bind_group_prepare_time_us = bind_group_prepare_time_us;
-        frame_stats.image_bind_group_time_us = image_bind_group_time_us;
-        frame_stats.analytic_path_bind_group_time_us = analytic_path_bind_group_time_us;
-        frame_stats.analytic_path_bind_group_miss_count = analytic_path_bind_group_miss_count;
-        frame_stats.analytic_path_bind_group_upload_bytes = analytic_path_bind_group_upload_bytes;
-        frame_stats.text_atlas_bind_group_time_us = text_atlas_bind_group_time_us;
-        frame_stats.text_atlas_upload_copy_time_us = text_atlas_upload_copy_time_us;
-        frame_stats.text_atlas_upload_write_time_us = text_atlas_upload_write_time_us;
-        frame_stats.text_atlas_upload_bytes = text_atlas_upload_bytes;
-        frame_stats.batch_prepare_time_us = batch_prepare_time_us;
-        frame_stats.gpu_upload_time_us = gpu_upload_time_us;
+
+        let mut frame_stats = prepared.frame_stats;
         frame_stats.pass_encode_time_us = pass_encode_time_us;
         frame_stats.queue_submit_time_us = queue_submit_time_us;
+        frame_stats.pass_count = pass_count.max(1);
         Ok(frame_stats)
     }
 
@@ -5154,6 +5185,16 @@ struct PreparedFragmentSubmission {
     scene_buffer: Option<wgpu::Buffer>,
     clip_buffer: Option<wgpu::Buffer>,
     translation: Vector,
+}
+
+struct PreparedSceneSubmission {
+    viewport: Size,
+    framebuffer_size: (u32, u32),
+    encodable_passes: Vec<EncodablePassBatch>,
+    image_bind_groups: HashMap<ImageHandle, wgpu::BindGroup>,
+    text_atlas_bind_group: Option<wgpu::BindGroup>,
+    analytic_path_resources: Option<PreparedAnalyticPathResources>,
+    frame_stats: RendererFrameStats,
 }
 
 struct PreparedAnalyticPathResources {
