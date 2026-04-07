@@ -1214,10 +1214,8 @@ impl RetainedCompositorState {
 
         let mut valid_packets = HashSet::new();
         valid_packets.extend(snapshot.root.packet_ids.iter().copied());
-        for (layer_id, layer) in &snapshot.layers {
-            if cached_coverage.get(layer_id).copied().flatten().is_none() {
-                valid_packets.extend(layer.packet_ids.iter().copied());
-            }
+        for layer in snapshot.layers.values() {
+            valid_packets.extend(layer.packet_ids.iter().copied());
         }
 
         if self.root.items != snapshot.root.items
@@ -1328,28 +1326,32 @@ impl RetainedCompositorState {
                 retained.visible_tiles.clear();
             }
 
-            if cached_coverage.get(&layer_id).copied().flatten().is_none() {
-                let packet_dirty =
-                    global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
-                let coordinate_space = if render_modes[&layer_id] == RetainedLayerRenderMode::Direct
-                {
-                    PacketCoordinateSpace::LayerLocal
-                } else {
-                    PacketCoordinateSpace::World
-                };
-                let normalization_origin = layer_snapshot.descriptor.bounds.origin.to_vector();
-                for packet in layer_snapshot.packets {
-                    self.upsert_packet(
-                        frame,
-                        packet,
-                        packet_dirty,
-                        coordinate_space,
-                        normalization_origin,
-                        text_engine,
-                        feather_width,
-                        frame_stats,
-                    )?;
-                }
+            let packet_dirty =
+                global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
+            let cached_owner = cached_coverage.get(&layer_id).copied().flatten();
+            let coordinate_space = if cached_owner.is_some() {
+                PacketCoordinateSpace::World
+            } else if render_modes[&layer_id] == RetainedLayerRenderMode::Direct {
+                PacketCoordinateSpace::LayerLocal
+            } else {
+                PacketCoordinateSpace::World
+            };
+            let normalization_origin = if coordinate_space == PacketCoordinateSpace::LayerLocal {
+                layer_snapshot.descriptor.bounds.origin.to_vector()
+            } else {
+                Vector::ZERO
+            };
+            for packet in layer_snapshot.packets {
+                self.upsert_packet(
+                    frame,
+                    packet,
+                    packet_dirty,
+                    coordinate_space,
+                    normalization_origin,
+                    text_engine,
+                    feather_width,
+                    frame_stats,
+                )?;
             }
         }
 
@@ -1704,6 +1706,7 @@ impl RetainedCompositorState {
                             frame,
                             layer_snapshot,
                             snapshot_layers,
+                            &self.packets,
                             text_engine,
                             &mut self.path_cache,
                             feather_width,
@@ -1723,6 +1726,7 @@ impl RetainedCompositorState {
                         frame,
                         layer_snapshot,
                         snapshot_layers,
+                        &self.packets,
                         text_engine,
                         &mut self.path_cache,
                         feather_width,
@@ -2080,6 +2084,7 @@ fn build_tile_entry(
     frame: &SceneFrame,
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    packets: &HashMap<RetainedPacketId, RetainedDirectPacket>,
     text_engine: &mut TextEngine,
     path_cache: &mut PathMeshCache,
     feather_width: f32,
@@ -2092,6 +2097,7 @@ fn build_tile_entry(
         tile_scene,
         layer_snapshot,
         snapshot_layers,
+        packets,
         text_engine,
         path_cache,
         feather_width,
@@ -2127,15 +2133,27 @@ fn build_cached_tile_fragment(
     tile_scene_rect: Rect,
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    packets: &HashMap<RetainedPacketId, RetainedDirectPacket>,
     text_engine: &mut TextEngine,
     path_cache: &mut PathMeshCache,
     feather_width: f32,
 ) -> Result<DrawOpArena> {
     let mut draw_ops = DrawOpArena::default();
+    let tile_clip = [ResolvedClipPrimitive::Rect(tile_scene_rect)];
 
     for item in &layer_snapshot.items {
         match item {
             CompositionItem::Packet(packet_id) => {
+                if let Some(packet) = packets.get(packet_id) {
+                    draw_ops.append_composed_fragment(
+                        &packet.draw_ops,
+                        Vector::ZERO,
+                        &tile_clip,
+                        frame.viewport,
+                    )?;
+                    continue;
+                }
+
                 let Some(packet_snapshot) = layer_snapshot
                     .packets
                     .iter()
@@ -2144,9 +2162,7 @@ fn build_cached_tile_fragment(
                     continue;
                 };
                 let mut tile_state = packet_snapshot.initial_state.clone();
-                tile_state
-                    .clip_stack
-                    .push(ResolvedClipPrimitive::Rect(tile_scene_rect));
+                tile_state.clip_stack.push(tile_clip[0].clone());
                 let fragment = build_direct_packet(
                     frame,
                     &packet_snapshot.scene,
@@ -2175,6 +2191,7 @@ fn build_cached_tile_fragment(
                     tile_scene_rect,
                     child_snapshot,
                     snapshot_layers,
+                    packets,
                     text_engine,
                     path_cache,
                     feather_width,
