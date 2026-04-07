@@ -30,6 +30,7 @@ use sui_text::{
 };
 use tiny_skia::{FillRule, Paint as TinySkiaPaint, PathBuilder as TinySkiaPathBuilder, Pixmap, Transform as TinySkiaTransform};
 use ttf_parser::GlyphId;
+use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,18 +432,8 @@ impl TileEntry {
             return uploaded_vertex_bytes;
         }
 
-        let scene_buffer = create_static_vertex_buffer(
-            device,
-            queue,
-            "SUI retained tile scene",
-            scene_vertices,
-        );
-        let clip_buffer = create_static_vertex_buffer(
-            device,
-            queue,
-            "SUI retained tile clip",
-            clip_vertices,
-        );
+        let scene_buffer = create_static_vertex_buffer(device, "SUI retained tile scene", scene_vertices);
+        let clip_buffer = create_static_vertex_buffer(device, "SUI retained tile clip", clip_vertices);
         self.gpu_geometry = Some(RetainedGpuGeometry {
             scene_buffer,
             clip_buffer,
@@ -3227,13 +3218,11 @@ impl WgpuRenderer {
                         passes: prepared.passes,
                         scene_buffer: create_static_vertex_buffer(
                             &shared.device,
-                            &shared.queue,
                             "SUI transient fragment scene",
                             &prepared.scene_vertices,
                         ),
                         clip_buffer: create_static_vertex_buffer(
                             &shared.device,
-                            &shared.queue,
                             "SUI transient fragment clip",
                             &prepared.clip_vertices,
                         ),
@@ -3802,37 +3791,28 @@ impl WgpuRenderer {
                 .point_buffer
                 .as_ref()
                 .expect("analytic path arena point buffer initialized");
+            let base_slot = self.frame_resources.analytic_path_arena.used_slots as u32;
+            let base_contour = self.frame_resources.analytic_path_arena.used_contours as u32;
+            let base_point = self.frame_resources.analytic_path_arena.used_points as u32;
+            let total_contours = pending
+                .iter()
+                .map(|(_, data)| data.contours.len())
+                .sum::<usize>();
+            let total_points = pending
+                .iter()
+                .map(|(_, data)| data.points.len())
+                .sum::<usize>();
+            let mut meta_data = Vec::with_capacity(pending.len());
+            let mut contour_data = Vec::with_capacity(total_contours);
+            let mut point_data = Vec::with_capacity(total_points);
+
             for (signature, data) in pending {
-                let slot = self.frame_resources.analytic_path_arena.used_slots as u32;
-                let contour_start = self.frame_resources.analytic_path_arena.used_contours as u32;
-                let point_start = self.frame_resources.analytic_path_arena.used_points as u32;
-                let meta_offset = slot as u64 * std::mem::size_of::<AnalyticPathMetaGpu>() as u64;
-                let contour_offset = contour_start as u64
-                    * std::mem::size_of::<AnalyticContourGpu>() as u64;
-                let point_offset = point_start as u64 * std::mem::size_of::<AnalyticPointGpu>() as u64;
-                let meta = data.meta(contour_start, point_start);
-
-                shared
-                    .queue
-                    .write_buffer(meta_buffer, meta_offset, bytemuck::bytes_of(&meta));
-                if !data.contours.is_empty() {
-                    shared.queue.write_buffer(
-                        contour_buffer,
-                        contour_offset,
-                        bytemuck::cast_slice(&data.contours),
-                    );
-                }
-                if !data.points.is_empty() {
-                    shared.queue.write_buffer(
-                        point_buffer,
-                        point_offset,
-                        bytemuck::cast_slice(&data.points),
-                    );
-                }
-
-                self.frame_resources.analytic_path_arena.used_slots += 1;
-                self.frame_resources.analytic_path_arena.used_contours += data.contours.len();
-                self.frame_resources.analytic_path_arena.used_points += data.points.len();
+                let slot = base_slot + meta_data.len() as u32;
+                let contour_start = base_contour + contour_data.len() as u32;
+                let point_start = base_point + point_data.len() as u32;
+                meta_data.push(data.meta(contour_start, point_start));
+                contour_data.extend_from_slice(&data.contours);
+                point_data.extend_from_slice(&data.points);
                 if collect_stats {
                     stats.upload_bytes += data.byte_size() as u64;
                 }
@@ -3846,6 +3826,34 @@ impl WgpuRenderer {
                     },
                 );
             }
+
+            if !meta_data.is_empty() {
+                let meta_offset = base_slot as u64 * std::mem::size_of::<AnalyticPathMetaGpu>() as u64;
+                shared
+                    .queue
+                    .write_buffer(meta_buffer, meta_offset, bytemuck::cast_slice(&meta_data));
+            }
+            if !contour_data.is_empty() {
+                let contour_offset =
+                    base_contour as u64 * std::mem::size_of::<AnalyticContourGpu>() as u64;
+                shared.queue.write_buffer(
+                    contour_buffer,
+                    contour_offset,
+                    bytemuck::cast_slice(&contour_data),
+                );
+            }
+            if !point_data.is_empty() {
+                let point_offset = base_point as u64 * std::mem::size_of::<AnalyticPointGpu>() as u64;
+                shared.queue.write_buffer(
+                    point_buffer,
+                    point_offset,
+                    bytemuck::cast_slice(&point_data),
+                );
+            }
+
+            self.frame_resources.analytic_path_arena.used_slots += meta_data.len();
+            self.frame_resources.analytic_path_arena.used_contours += contour_data.len();
+            self.frame_resources.analytic_path_arena.used_points += point_data.len();
         }
 
         let bind_group = self
@@ -5165,7 +5173,6 @@ fn prepared_batch_counts(passes: &[PreparedPassBatch]) -> (usize, usize) {
 
 fn create_static_vertex_buffer(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
     label: &str,
     vertices: &[Vertex],
 ) -> Option<wgpu::Buffer> {
@@ -5173,14 +5180,11 @@ fn create_static_vertex_buffer(
         return None;
     }
 
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),
-        size: vertices.len() as u64 * VERTEX_SIZE,
+        contents: bytemuck::cast_slice(vertices),
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&buffer, 0, bytemuck::cast_slice(vertices));
-    Some(buffer)
+    }))
 }
 
 fn flatten_fragment_passes(fragments: &[PreparedFragmentSubmission]) -> Vec<EncodablePassBatch> {
