@@ -1,9 +1,5 @@
 # SUI Rendering Architecture
 
-This document describes the renderer that is in the repo today.
-
-It replaces the older proposal-oriented renderer docs. It describes the current renderer path for scene output, layer invalidation, retained compositor behavior, and renderer diagnostics.
-
 ## Current Renderer Contract
 
 The renderer boundary is:

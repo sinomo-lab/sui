@@ -860,7 +860,7 @@ impl Menu {
     }
 
     fn row_height(&self) -> f32 {
-        (self.theme.metrics.min_height - 4.0).max(32.0)
+        (self.theme.metrics.min_height + 2.0).max(24.0)
     }
 
     fn activate(&mut self, index: usize) {
@@ -1008,10 +1008,10 @@ impl Widget for Menu {
             width = width.max(label + shortcut + 64.0);
         }
         self.measured_width = width.max(220.0);
-        let height = 16.0 + (self.row_height() * self.items.len() as f32);
+        let height = 12.0 + (self.row_height() * self.items.len() as f32);
         constraints.clamp(Size::new(
             self.measured_width,
-            height.max(self.row_height() + 16.0),
+            height.max(self.row_height() + 12.0),
         ))
     }
 
@@ -1556,7 +1556,7 @@ impl ContextMenu {
     }
 
     fn row_height(&self) -> f32 {
-        (self.theme.metrics.min_height - 4.0).max(32.0)
+        (self.theme.metrics.min_height + 2.0).max(24.0)
     }
 
     fn measured_menu_width(&self, ctx: &mut MeasureCtx) -> f32 {
@@ -1740,11 +1740,11 @@ impl Widget for ContextMenu {
         let mut size = trigger_size;
         if self.open {
             let width = self.measured_menu_width(ctx).max(trigger_size.width);
-            let height = 16.0 + (self.row_height() * self.items.len() as f32);
-            self.frame_rect = Rect::new(0.0, trigger_size.height + 8.0, width, height);
+            let height = 12.0 + (self.row_height() * self.items.len() as f32);
+            self.frame_rect = Rect::new(0.0, trigger_size.height + 6.0, width, height);
             size = Size::new(
                 width.max(trigger_size.width),
-                trigger_size.height + 8.0 + height,
+                trigger_size.height + 6.0 + height,
             );
         } else {
             self.frame_rect = Rect::ZERO;
@@ -2322,7 +2322,7 @@ impl ProgressBar {
 
 impl Widget for ProgressBar {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(240.0, 22.0))
+        constraints.clamp(Size::new(240.0, 18.0))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {

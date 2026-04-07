@@ -380,14 +380,14 @@ pub struct ThemeRadii {
 impl Default for ThemeRadii {
     fn default() -> Self {
         Self {
-            xs: 2.0,
-            sm: 4.0,
-            md: 6.0,
-            lg: 8.0,
-            xl: 12.0,
-            _2xl: 16.0,
-            _3xl: 24.0,
-            _4xl: 32.0,
+            xs: 1.0,
+            sm: 2.0,
+            md: 4.0,
+            lg: 6.0,
+            xl: 8.0,
+            _2xl: 12.0,
+            _3xl: 16.0,
+            _4xl: 24.0,
         }
     }
 }
@@ -661,8 +661,8 @@ pub struct ControlTypography {
 impl ControlTypography {
     pub fn from_text_scale(text: &ThemeTextScale) -> Self {
         Self {
-            body_font_size: text.sm.size,
-            body_line_height: text.sm.line_height,
+            body_font_size: text.xs.size,
+            body_line_height: text.xs.line_height,
         }
     }
 }
@@ -706,42 +706,42 @@ impl ControlMetrics {
     pub fn from_tokens(spacing: f32, radius: ThemeRadii) -> Self {
         let unit = spacing.max(1.0);
         Self {
-            min_height: 40.0,
-            button_min_width: 88.0,
+            min_height: 24.0,
+            button_min_width: 64.0,
             button_padding: Insets {
-                left: unit * 3.5,
-                top: unit * 2.5,
-                right: unit * 3.5,
-                bottom: unit * 2.5,
+                left: unit * 2.0,
+                top: unit,
+                right: unit * 2.0,
+                bottom: unit,
             },
             checkbox_padding: Insets {
-                left: unit * 2.5,
-                top: unit * 2.0,
-                right: unit * 2.5,
-                bottom: unit * 2.0,
+                left: unit * 1.5,
+                top: unit,
+                right: unit * 1.5,
+                bottom: unit,
             },
-            checkbox_indicator_size: 18.0,
-            checkbox_gap: 10.0,
+            checkbox_indicator_size: 14.0,
+            checkbox_gap: 6.0,
             separator_thickness: 1.0,
-            icon_size: 18.0,
-            icon_button_size: 40.0,
-            switch_track_width: 38.0,
-            switch_track_height: 22.0,
-            slider_min_width: 180.0,
-            slider_track_height: 4.0,
-            slider_thumb_size: 18.0,
-            number_input_stepper_width: 32.0,
-            text_input_min_width: 240.0,
+            icon_size: 14.0,
+            icon_button_size: 24.0,
+            switch_track_width: 28.0,
+            switch_track_height: 16.0,
+            slider_min_width: 140.0,
+            slider_track_height: 3.0,
+            slider_thumb_size: 14.0,
+            number_input_stepper_width: 24.0,
+            text_input_min_width: 180.0,
             text_input_padding: Insets {
-                left: unit * 3.0,
-                top: unit * 2.5,
-                right: unit * 3.0,
-                bottom: unit * 2.5,
+                left: unit * 2.0,
+                top: unit,
+                right: unit * 2.0,
+                bottom: unit,
             },
-            text_area_min_height: 120.0,
+            text_area_min_height: 80.0,
             select_menu_max_height: 200.0,
-            corner_radius: radius.lg,
-            indicator_corner_radius: 5.0,
+            corner_radius: radius.md,
+            indicator_corner_radius: radius.sm + 1.0,
             border_width: 1.0,
             focus_ring_width: 2.0,
             focus_ring_outset: 2.0,
@@ -906,21 +906,24 @@ mod tests {
     fn default_theme_uses_body_text_scale_for_typography() {
         let theme = DefaultTheme::default();
 
-        assert_eq!(theme.typography.body_font_size, theme.text.sm.size);
-        assert_eq!(theme.typography.body_line_height, theme.text.sm.line_height);
+        assert_eq!(theme.typography.body_font_size, theme.text.xs.size);
+        assert_eq!(theme.typography.body_line_height, theme.text.xs.line_height);
+        assert_eq!(theme.typography.body_font_size, 12.0);
+        assert_eq!(theme.typography.body_line_height, 16.0);
+        assert_eq!(theme.metrics.min_height, 24.0);
     }
 
     #[test]
     fn sync_derived_fields_updates_semantic_palette_and_typography() {
         let mut theme = DefaultTheme::default();
         theme.colors.primary = Color::rgba(0.2, 0.3, 0.4, 1.0);
-        theme.text.sm.size = 15.0;
-        theme.text.sm.line_height = 22.0;
+        theme.text.xs.size = 11.0;
+        theme.text.xs.line_height = 15.0;
         theme.sync_derived_fields();
 
         assert_eq!(theme.palette.accent, Color::rgba(0.2, 0.3, 0.4, 1.0));
-        assert_eq!(theme.typography.body_font_size, 15.0);
-        assert_eq!(theme.typography.body_line_height, 22.0);
+        assert_eq!(theme.typography.body_font_size, 11.0);
+        assert_eq!(theme.typography.body_line_height, 15.0);
     }
 
     #[test]

@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn theme_stores_default_widget_theme_separately_from_extensions() {
         let mut defaults = DefaultTheme::default();
-        defaults.metrics.min_height = 44.0;
+        defaults.metrics.min_height = 24.0;
 
         let theme = Theme::new()
             .with_default_widgets(defaults)
@@ -379,7 +379,7 @@ mod tests {
                 density: 2,
             });
 
-        assert_eq!(theme.default_widgets.metrics.min_height, 44.0);
+        assert_eq!(theme.default_widgets.metrics.min_height, 24.0);
         assert!(theme.has_extension::<CustomWidgetTheme>());
         assert_eq!(
             theme.extension::<CustomWidgetTheme>(),

@@ -289,13 +289,15 @@ impl Widget for ColorSwatch {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let outer_radius = self.theme.metrics.corner_radius;
+        let inner_radius = (outer_radius - 1.0).max(0.0);
         draw_checkerboard(ctx, ctx.bounds(), 6.0);
         ctx.fill(
-            rounded_rect_path(inset_rect(ctx.bounds(), Insets::all(1.0)), 8.0),
+            rounded_rect_path(inset_rect(ctx.bounds(), Insets::all(1.0)), inner_radius),
             self.color,
         );
         ctx.stroke(
-            rounded_rect_path(ctx.bounds(), 9.0),
+            rounded_rect_path(ctx.bounds(), outer_radius),
             if ctx.is_focused() || self.hovered {
                 self.theme.palette.border_focus
             } else {
@@ -726,9 +728,12 @@ fn paint_marker(ctx: &mut PaintCtx, center: Point, color: Color) {
 }
 
 fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focused: bool) {
-    ctx.fill(rounded_rect_path(rect, 10.0), theme.palette.surface);
+    ctx.fill(
+        rounded_rect_path(rect, theme.metrics.corner_radius),
+        theme.palette.surface,
+    );
     ctx.stroke(
-        rounded_rect_path(rect, 10.0),
+        rounded_rect_path(rect, theme.metrics.corner_radius),
         if focused {
             theme.palette.border_focus
         } else {

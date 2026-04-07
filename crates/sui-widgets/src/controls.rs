@@ -3924,7 +3924,7 @@ mod tests {
     fn label_paints_text_and_exposes_text_semantics() {
         let output = render(Label::new("Hello SUI").color(Color::rgba(0.8, 0.9, 1.0, 1.0)));
 
-        assert!(output.frame.viewport.height >= 18.0);
+        assert!(output.frame.viewport.height >= 16.0);
         assert!(matches!(
             output.frame.scene.commands()[0],
             SceneCommand::DrawText(_)
@@ -4093,8 +4093,8 @@ mod tests {
 
     #[test]
     fn button_obeys_minimum_size() {
-        let output = render(Button::new("Go").min_width(140.0).min_height(44.0));
-        assert_eq!(output.frame.viewport, Size::new(140.0, 44.0));
+        let output = render(Button::new("Go").min_width(140.0).min_height(24.0));
+        assert_eq!(output.frame.viewport, Size::new(140.0, 24.0));
     }
 
     #[test]

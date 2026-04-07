@@ -67,7 +67,7 @@ impl ListView {
             selected: None,
             hovered: None,
             pressed: None,
-            row_height: 34.0,
+            row_height: 28.0,
             scroll_y: 0.0,
             on_change: None,
         }
@@ -115,11 +115,11 @@ impl ListView {
 
     fn resolved_row_height(&self) -> f32 {
         self.row_height
-            .max((self.theme.metrics.min_height - 4.0).max(28.0))
+            .max((self.theme.metrics.min_height + 4.0).max(28.0))
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, Insets::all(10.0))
+        inset_rect(bounds, Insets::all(8.0))
     }
 
     fn content_height(&self) -> f32 {
@@ -315,10 +315,10 @@ impl Widget for ListView {
                     .as_deref()
                     .map(|detail| measure_text(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
-                label.max(detail) + 34.0
+                label.max(detail) + 28.0
             })
             .fold(220.0, f32::max);
-        let desired = Size::new(content_width + 20.0, self.content_height() + 20.0);
+        let desired = Size::new(content_width + 16.0, self.content_height() + 16.0);
         let size = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
@@ -359,7 +359,7 @@ impl Widget for ListView {
 
             if selected || hovered || pressed {
                 ctx.fill(
-                    rounded_rect_path(inset_rect(row, Insets::all(2.0)), 8.0),
+                    rounded_rect_path(inset_rect(row, Insets::all(1.0)), 6.0),
                     if selected {
                         palette.accent.with_alpha(0.14)
                     } else if pressed {
@@ -375,13 +375,13 @@ impl Widget for ListView {
             };
             if let Some(accent) = item.accent {
                 ctx.fill_rect(
-                    Rect::new(row.x() + 6.0, row.y() + 7.0, 4.0, row.height() - 14.0),
+                    Rect::new(row.x() + 4.0, row.y() + 5.0, 3.0, row.height() - 10.0),
                     accent,
                 );
             }
 
-            let text_x = row.x() + 18.0;
-            let label_rect = Rect::new(text_x, row.y() + 7.0, row.width() - 28.0, 18.0);
+            let text_x = row.x() + 14.0;
+            let label_rect = Rect::new(text_x, row.y() + 5.0, row.width() - 22.0, 16.0);
             ctx.draw_text(
                 label_rect,
                 item.label.clone(),
@@ -397,9 +397,9 @@ impl Widget for ListView {
                 ctx.draw_text(
                     Rect::new(
                         text_x,
-                        row.y() + row.height() - 20.0,
-                        row.width() - 28.0,
-                        16.0,
+                        row.y() + row.height() - 16.0,
+                        row.width() - 22.0,
+                        14.0,
                     ),
                     detail.clone(),
                     detail_style.clone(),
@@ -513,7 +513,7 @@ impl TreeView {
             selected: None,
             hovered: None,
             pressed: None,
-            row_height: 32.0,
+            row_height: 30.0,
             scroll_y: 0.0,
             on_change: None,
         }
@@ -551,11 +551,12 @@ impl TreeView {
     }
 
     fn resolved_row_height(&self) -> f32 {
-        self.row_height.max(30.0)
+        self.row_height
+            .max((self.theme.metrics.min_height + 4.0).max(28.0))
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, Insets::all(10.0))
+        inset_rect(bounds, Insets::all(8.0))
     }
 
     fn visible_rows(&self) -> Vec<TreeRow> {
@@ -797,7 +798,7 @@ impl Widget for TreeView {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let label_style = self.theme.body_text_style();
         let detail_style = caption_style(self.theme.as_ref());
-        let row_padding = 42.0;
+        let row_padding = 34.0;
         let width = self
             .visible_rows()
             .iter()
@@ -812,7 +813,7 @@ impl Widget for TreeView {
                 indent + label.max(detail) + row_padding
             })
             .fold(220.0, f32::max);
-        let desired = Size::new(width + 20.0, self.content_height() + 20.0);
+        let desired = Size::new(width + 16.0, self.content_height() + 16.0);
         let size = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
@@ -852,7 +853,7 @@ impl Widget for TreeView {
 
             if selected || hovered || pressed {
                 ctx.fill(
-                    rounded_rect_path(inset_rect(row_rect, Insets::all(2.0)), 8.0),
+                    rounded_rect_path(inset_rect(row_rect, Insets::all(1.0)), 6.0),
                     if selected {
                         palette.accent.with_alpha(0.14)
                     } else if pressed {
@@ -863,7 +864,7 @@ impl Widget for TreeView {
                 );
             }
 
-            let indent = row.depth as f32 * 18.0;
+            let indent = row.depth as f32 * 16.0;
             if row.has_children {
                 ctx.fill(
                     disclosure_path(disclosure_rect(row_rect, row.depth), row.expanded),
@@ -875,13 +876,13 @@ impl Widget for TreeView {
                 );
             }
 
-            let label_x = row_rect.x() + 20.0 + indent;
+            let label_x = row_rect.x() + 16.0 + indent;
             ctx.draw_text(
                 Rect::new(
                     label_x,
-                    row_rect.y() + 7.0,
+                    row_rect.y() + 5.0,
                     row_rect.width() - label_x,
-                    18.0,
+                    16.0,
                 ),
                 row.label.clone(),
                 if row.disabled {
@@ -896,9 +897,9 @@ impl Widget for TreeView {
                 ctx.draw_text(
                     Rect::new(
                         label_x,
-                        row_rect.y() + row_rect.height() - 20.0,
+                        row_rect.y() + row_rect.height() - 16.0,
                         row_rect.width() - label_x,
-                        16.0,
+                        14.0,
                     ),
                     detail.clone(),
                     caption_style(self.theme.as_ref()),
@@ -1029,8 +1030,8 @@ impl Table {
             selected: None,
             hovered: None,
             pressed: None,
-            row_height: 34.0,
-            header_height: 38.0,
+            row_height: 28.0,
+            header_height: 30.0,
             scroll_y: 0.0,
             column_widths: Vec::new(),
             on_change: None,
@@ -1082,19 +1083,21 @@ impl Table {
     }
 
     fn resolved_row_height(&self) -> f32 {
-        self.row_height.max(28.0)
+        self.row_height
+            .max((self.theme.metrics.min_height + 2.0).max(26.0))
     }
 
     fn resolved_header_height(&self) -> f32 {
-        self.header_height.max(30.0)
+        self.header_height
+            .max((self.theme.metrics.min_height + 4.0).max(28.0))
     }
 
     fn body_rect(&self, bounds: Rect) -> Rect {
         Rect::new(
-            bounds.x() + 10.0,
-            bounds.y() + self.resolved_header_height() + 6.0,
-            (bounds.width() - 20.0).max(0.0),
-            (bounds.height() - self.resolved_header_height() - 16.0).max(0.0),
+            bounds.x() + 8.0,
+            bounds.y() + self.resolved_header_height() + 4.0,
+            (bounds.width() - 16.0).max(0.0),
+            (bounds.height() - self.resolved_header_height() - 12.0).max(0.0),
         )
     }
 
@@ -1266,7 +1269,7 @@ impl Widget for Table {
             540.0
         };
         self.resolve_column_widths(ctx, (desired_width - 20.0).max(0.0));
-        let desired_height = self.resolved_header_height() + self.content_height() + 16.0;
+        let desired_height = self.resolved_header_height() + self.content_height() + 12.0;
         let size = constraints.clamp(Size::new(desired_width, desired_height));
         self.scroll_y = self.clamp_scroll(
             self.body_rect(Rect::from_origin_size(Point::ZERO, size))
@@ -1281,16 +1284,16 @@ impl Widget for Table {
         let header_style = self.theme.text_style(palette.placeholder);
         let body = self.body_rect(ctx.bounds());
         let header = Rect::new(
-            ctx.bounds().x() + 10.0,
-            ctx.bounds().y() + 10.0,
-            (ctx.bounds().width() - 20.0).max(0.0),
+            ctx.bounds().x() + 8.0,
+            ctx.bounds().y() + 8.0,
+            (ctx.bounds().width() - 16.0).max(0.0),
             self.resolved_header_height(),
         );
         let row_height = self.resolved_row_height();
 
         draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
         ctx.fill(
-            rounded_rect_path(header, 8.0),
+            rounded_rect_path(header, 6.0),
             Color::rgba(0.95, 0.965, 0.985, 1.0),
         );
 
@@ -1300,14 +1303,14 @@ impl Widget for Table {
             let cell = Rect::new(x, header.y(), width, header.height());
             if index > 0 {
                 ctx.stroke_rect(
-                    Rect::new(cell.x(), cell.y() + 6.0, 1.0, cell.height() - 12.0),
+                    Rect::new(cell.x(), cell.y() + 4.0, 1.0, cell.height() - 8.0),
                     palette.border,
                     sui_scene::StrokeStyle::new(1.0),
                 );
             }
             draw_aligned_text(
                 ctx,
-                inset_rect(cell, Insets::all(10.0)),
+                inset_rect(cell, Insets::all(8.0)),
                 &column.title,
                 &header_style,
                 column.alignment,
@@ -1354,7 +1357,7 @@ impl Widget for Table {
                 if let Some(value) = self.rows[row_index].cells.get(column_index) {
                     draw_aligned_text(
                         ctx,
-                        inset_rect(cell_rect, Insets::all(10.0)),
+                        inset_rect(cell_rect, Insets::all(8.0)),
                         value,
                         &if selected {
                             self.theme.text_style(palette.border_focus)
@@ -1613,7 +1616,7 @@ impl Widget for Breadcrumb {
             + 20.0;
         constraints.clamp(Size::new(
             desired_width.max(180.0),
-            self.theme.metrics.min_height.max(40.0),
+            self.theme.metrics.min_height,
         ))
     }
 
@@ -1632,7 +1635,7 @@ impl Widget for Breadcrumb {
 
             if current || hovered || pressed || focused {
                 ctx.fill(
-                    rounded_rect_path(rect, 7.0),
+                    rounded_rect_path(rect, self.theme.metrics.corner_radius),
                     if current {
                         palette.accent.with_alpha(0.14)
                     } else if pressed {
@@ -1644,7 +1647,7 @@ impl Widget for Breadcrumb {
             }
 
             ctx.draw_text(
-                inset_rect(rect, Insets::all(10.0)),
+                inset_rect(rect, Insets::all(8.0)),
                 item.label.clone(),
                 if current {
                     self.theme.text_style(palette.border_focus)
@@ -1785,9 +1788,9 @@ fn chevron_path(rect: Rect) -> Path {
 
 fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focused: bool) {
     let palette = theme.palette;
-    ctx.fill(rounded_rect_path(rect, 10.0), palette.surface);
+    ctx.fill(rounded_rect_path(rect, theme.metrics.corner_radius), palette.surface);
     ctx.stroke(
-        rounded_rect_path(rect, 10.0),
+        rounded_rect_path(rect, theme.metrics.corner_radius),
         if focused {
             palette.border_focus
         } else {
@@ -1951,11 +1954,11 @@ mod tests {
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(44.0, 64.0), true),
+            primary_pointer(PointerEventKind::Down, Point::new(44.0, 44.0), true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Up, Point::new(44.0, 64.0), false),
+            primary_pointer(PointerEventKind::Up, Point::new(44.0, 44.0), false),
         )?;
 
         assert_eq!(changes.borrow().as_slice(), &[(1, "Second".to_string())]);
