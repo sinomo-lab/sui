@@ -244,7 +244,7 @@ enum RetainedLayerRenderMode {
     CachedTiles,
 }
 
-const DEFAULT_TILE_SIZE_PX: u32 = 256;
+const DEFAULT_TILE_SIZE_PX: u32 = 384;
 const TILE_CACHE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ANALYTIC_PATH_CONTOURS: usize = 32;
 const MAX_ANALYTIC_PATH_POINTS: usize = 512;
@@ -323,12 +323,14 @@ enum TilePayload {
 struct RetainedGpuGeometry {
     scene_buffer: Option<wgpu::Buffer>,
     clip_buffer: Option<wgpu::Buffer>,
+    dirty: bool,
 }
 
 #[derive(Debug)]
 struct TileEntry {
     key: TileKey,
     rect: Rect,
+    translation: Vector,
     dirty: bool,
     visible: bool,
     last_used_frame: u64,
@@ -346,29 +348,43 @@ impl TileEntry {
     }
 
     fn ensure_gpu_geometry(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> u64 {
-        if self.gpu_geometry.is_some() {
-            return 0;
+        let (scene_vertices, clip_vertices) = match &self.payload {
+            TilePayload::DirectPacket(draw_ops) => (&draw_ops.scene_vertices, &draw_ops.clip_vertices),
+        };
+        let uploaded_vertex_bytes = (scene_vertices.len() as u64 + clip_vertices.len() as u64)
+            * VERTEX_SIZE;
+
+        if let Some(gpu_geometry) = self.gpu_geometry.as_mut() {
+            if !gpu_geometry.dirty {
+                return 0;
+            }
+
+            if let Some(scene_buffer) = &gpu_geometry.scene_buffer {
+                queue.write_buffer(scene_buffer, 0, bytemuck::cast_slice(scene_vertices));
+            }
+            if let Some(clip_buffer) = &gpu_geometry.clip_buffer {
+                queue.write_buffer(clip_buffer, 0, bytemuck::cast_slice(clip_vertices));
+            }
+            gpu_geometry.dirty = false;
+            return uploaded_vertex_bytes;
         }
 
-        let draw_ops = self.draw_ops();
         let scene_buffer = create_static_vertex_buffer(
             device,
             queue,
             "SUI retained tile scene",
-            &draw_ops.scene_vertices,
+            scene_vertices,
         );
         let clip_buffer = create_static_vertex_buffer(
             device,
             queue,
             "SUI retained tile clip",
-            &draw_ops.clip_vertices,
+            clip_vertices,
         );
-        let uploaded_vertex_bytes = (draw_ops.scene_vertices.len() as u64
-            + draw_ops.clip_vertices.len() as u64)
-            * VERTEX_SIZE;
         self.gpu_geometry = Some(RetainedGpuGeometry {
             scene_buffer,
             clip_buffer,
+            dirty: false,
         });
         uploaded_vertex_bytes
     }
@@ -955,8 +971,11 @@ impl RetainedCompositorState {
                 )
             })
             .collect::<HashMap<_, _>>();
+        let previous_layers = self.layers.clone();
         let mut packet_dirty_layers = HashSet::new();
         let mut tiled_damage = HashMap::<SceneLayerId, Option<Rect>>::new();
+        let mut cached_scroll_translations = HashMap::<SceneLayerId, Vector>::new();
+        let mut cached_scroll_translation_conflicts = HashSet::<SceneLayerId>::new();
         let current_layers = snapshot.layers.keys().copied().collect::<HashSet<_>>();
         let mut root_dirty = global_rebuild;
 
@@ -978,6 +997,46 @@ impl RetainedCompositorState {
             }
 
             if let Some(cached_root) = cached_tile_owners.get(&update.layer_id).copied().flatten() {
+                let cached_root_is_scroll = snapshot
+                    .layers
+                    .get(&cached_root)
+                    .is_some_and(|layer| {
+                        layer.descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
+                    });
+                if update.kind == SceneLayerUpdateKind::Transform
+                    && cached_root != update.layer_id
+                    && cached_root_is_scroll
+                    && !packet_dirty_layers.contains(&cached_root)
+                {
+                    let translation_delta = previous_layers
+                        .get(&update.layer_id)
+                        .and_then(|previous| {
+                            snapshot.layers.get(&update.layer_id).and_then(|current| {
+                                descriptor_translation_delta(
+                                    &previous.descriptor,
+                                    &current.descriptor,
+                                )
+                            })
+                        });
+                    if let Some(delta) = translation_delta {
+                        if let Some(existing) = cached_scroll_translations.get(&cached_root) {
+                            if *existing != delta {
+                                cached_scroll_translations.remove(&cached_root);
+                                cached_scroll_translation_conflicts.insert(cached_root);
+                                packet_dirty_layers.insert(cached_root);
+                                merge_damage_rect(
+                                    &mut tiled_damage,
+                                    cached_root,
+                                    update.damage.or(Some(update.paint_bounds)),
+                                );
+                            }
+                        } else if !cached_scroll_translation_conflicts.contains(&cached_root) {
+                            cached_scroll_translations.insert(cached_root, delta);
+                        }
+                        continue;
+                    }
+                }
+
                 if matches!(
                     update.kind,
                     SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources
@@ -1002,6 +1061,22 @@ impl RetainedCompositorState {
                 | SceneLayerUpdateKind::Clip
                 | SceneLayerUpdateKind::Effect
                 | SceneLayerUpdateKind::Visibility => {}
+            }
+        }
+
+        for (cached_root, delta) in cached_scroll_translations {
+            if packet_dirty_layers.contains(&cached_root) {
+                continue;
+            }
+
+            translate_cached_layer_tiles(&mut self.tiles, cached_root, delta, frame.viewport);
+            if let Some(descriptor) = snapshot.layers.get(&cached_root).map(|layer| &layer.descriptor)
+            {
+                merge_damage_rect(
+                    &mut tiled_damage,
+                    cached_root,
+                    scroll_translation_exposed_damage(descriptor, delta),
+                );
             }
         }
 
@@ -1034,7 +1109,6 @@ impl RetainedCompositorState {
         }
 
         let snapshot_layers = snapshot.layers.clone();
-        let previous_layers = self.layers.clone();
         self.layers
             .retain(|layer_id, _| current_layers.contains(layer_id));
 
@@ -1690,6 +1764,68 @@ fn merge_damage_rect(
     }
 }
 
+fn scroll_translation_exposed_damage(
+    descriptor: &sui_scene::SceneLayerDescriptor,
+    delta: Vector,
+) -> Option<Rect> {
+    if delta == Vector::ZERO {
+        return None;
+    }
+
+    let mut damage: Option<Rect> = None;
+    let paint_bounds = descriptor.paint_bounds;
+    let width = paint_bounds.width();
+    let height = paint_bounds.height();
+
+    if delta.x.abs() >= width || delta.y.abs() >= height {
+        return Some(paint_bounds);
+    }
+
+    if delta.x > 0.0 {
+        damage = Some(Rect::new(
+            paint_bounds.x(),
+            paint_bounds.y(),
+            delta.x.min(width),
+            height,
+        ));
+    } else if delta.x < 0.0 {
+        let strip_width = (-delta.x).min(width);
+        damage = Some(Rect::new(
+            paint_bounds.max_x() - strip_width,
+            paint_bounds.y(),
+            strip_width,
+            height,
+        ));
+    }
+
+    if delta.y > 0.0 {
+        let strip = Rect::new(
+            paint_bounds.x(),
+            paint_bounds.y(),
+            width,
+            delta.y.min(height),
+        );
+        damage = Some(match damage {
+            Some(current) => current.union(strip),
+            None => strip,
+        });
+    } else if delta.y < 0.0 {
+        let strip_height = (-delta.y).min(height);
+        let strip = Rect::new(
+            paint_bounds.x(),
+            paint_bounds.max_y() - strip_height,
+            width,
+            strip_height,
+        );
+        damage = Some(match damage {
+            Some(current) => current.union(strip),
+            None => strip,
+        });
+    }
+
+    damage
+}
+
 fn mark_cached_layer_tiles_dirty(
     tiles: &mut HashMap<TileAddress, TileEntry>,
     layer_id: SceneLayerId,
@@ -1835,6 +1971,7 @@ fn build_tile_entry(
             content_version,
         },
         rect: tile_local,
+        translation: Vector::ZERO,
         dirty: false,
         visible: true,
         last_used_frame: frame_index,
@@ -2072,7 +2209,7 @@ fn translate_cached_layer_tiles(
     tiles: &mut HashMap<TileAddress, TileEntry>,
     layer_id: SceneLayerId,
     delta: Vector,
-    viewport: Size,
+    _viewport: Size,
 ) {
     if delta == Vector::ZERO {
         return;
@@ -2083,14 +2220,7 @@ fn translate_cached_layer_tiles(
             continue;
         }
 
-        let TilePayload::DirectPacket(fragment) = &mut entry.payload;
-        fragment.translate_in_place(delta, viewport);
-        for pass in &mut entry.cached_passes {
-            for draw in &mut pass.draws {
-                draw.clip_rect = draw.clip_rect.map(|rect| rect.translate(delta));
-            }
-        }
-        entry.gpu_geometry = None;
+        entry.translation += delta;
     }
 }
 
@@ -2930,10 +3060,11 @@ impl WgpuRenderer {
                             "SUI transient fragment clip",
                             &prepared.clip_vertices,
                         ),
+                        translation: Vector::ZERO,
                     });
                 }
                 RetainedFrameFragment::Tile(address) => {
-                    let (passes, scene_buffer, clip_buffer, fragment_uploaded_bytes) = {
+                    let (passes, scene_buffer, clip_buffer, fragment_uploaded_bytes, translation) = {
                         let shared = self
                             .shared
                             .as_ref()
@@ -2955,6 +3086,7 @@ impl WgpuRenderer {
                             &entry.cached_passes,
                             frame.viewport,
                             framebuffer_size,
+                            entry.translation,
                         );
                         let gpu_geometry = entry
                             .gpu_geometry
@@ -2965,6 +3097,7 @@ impl WgpuRenderer {
                             gpu_geometry.scene_buffer.clone(),
                             gpu_geometry.clip_buffer.clone(),
                             uploaded,
+                            entry.translation,
                         )
                     };
                     let (_, fragment_draw_count) = prepared_batch_counts(&passes);
@@ -2980,6 +3113,7 @@ impl WgpuRenderer {
                         passes,
                         scene_buffer,
                         clip_buffer,
+                        translation,
                     });
                 }
             }
@@ -3032,6 +3166,7 @@ impl WgpuRenderer {
                 &mut encoder,
                 view,
                 target_format,
+                frame.viewport,
                 framebuffer_size,
                 &encodable_passes,
                 stencil_view,
@@ -3982,12 +4117,14 @@ struct PreparedFragmentSubmission {
     passes: Vec<PreparedPassBatch>,
     scene_buffer: Option<wgpu::Buffer>,
     clip_buffer: Option<wgpu::Buffer>,
+    translation: Vector,
 }
 
 struct EncodablePassBatch {
     pass: PreparedPassBatch,
     scene_buffer: Option<wgpu::Buffer>,
     clip_buffer: Option<wgpu::Buffer>,
+    translation: Vector,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4032,7 +4169,7 @@ fn batch_draw_ops(
     framebuffer_size: (u32, u32),
 ) -> Vec<PreparedPassBatch> {
     let cached_passes = cache_draw_ops(draw_ops);
-    prepare_cached_passes(&cached_passes, viewport, framebuffer_size)
+    prepare_cached_passes(&cached_passes, viewport, framebuffer_size, Vector::ZERO)
 }
 
 fn cache_draw_ops(draw_ops: &DrawOpArena) -> Vec<CachedPassBatch> {
@@ -4091,6 +4228,7 @@ fn prepare_cached_passes(
     cached_passes: &[CachedPassBatch],
     viewport: Size,
     framebuffer_size: (u32, u32),
+    translation: Vector,
 ) -> Vec<PreparedPassBatch> {
     cached_passes
         .iter()
@@ -4104,6 +4242,7 @@ fn prepare_cached_passes(
                     kind: draw.kind,
                     clip_rect: draw
                         .clip_rect
+                        .map(|rect| rect.translate(translation))
                         .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size)),
                     vertices: draw.vertices,
                 })
@@ -4181,6 +4320,7 @@ fn flatten_fragment_passes(fragments: &[PreparedFragmentSubmission]) -> Vec<Enco
                 pass: pass.clone(),
                 scene_buffer: fragment.scene_buffer.clone(),
                 clip_buffer: fragment.clip_buffer.clone(),
+                translation: fragment.translation,
             });
         }
     }
@@ -4192,6 +4332,7 @@ fn encode_fragment_passes(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     target_format: wgpu::TextureFormat,
+    viewport: Size,
     framebuffer_size: (u32, u32),
     passes: &[EncodablePassBatch],
     stencil_view: Option<&wgpu::TextureView>,
@@ -4213,6 +4354,7 @@ fn encode_fragment_passes(
                 encoder,
                 view,
                 target_format,
+                viewport,
                 framebuffer_size,
                 &passes[start..index],
                 image_bind_groups,
@@ -4226,6 +4368,7 @@ fn encode_fragment_passes(
                 encoder,
                 view,
                 target_format,
+                viewport,
                 framebuffer_size,
                 &passes[index],
                 stencil_view,
@@ -4246,6 +4389,7 @@ fn encode_unclipped_pass_run(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     target_format: wgpu::TextureFormat,
+    viewport: Size,
     framebuffer_size: (u32, u32),
     passes: &[EncodablePassBatch],
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
@@ -4276,9 +4420,11 @@ fn encode_unclipped_pass_run(
             &mut render_pass,
             shared,
             target_format,
+            viewport,
             framebuffer_size,
             &batch.pass,
             batch.scene_buffer.as_ref(),
+            batch.translation,
             false,
             image_bind_groups,
             analytic_path_bind_groups,
@@ -4294,6 +4440,7 @@ fn encode_clipped_pass(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     target_format: wgpu::TextureFormat,
+    viewport: Size,
     framebuffer_size: (u32, u32),
     batch: &EncodablePassBatch,
     stencil_view: Option<&wgpu::TextureView>,
@@ -4344,9 +4491,11 @@ fn encode_clipped_pass(
         &mut render_pass,
         shared,
         target_format,
+        viewport,
         framebuffer_size,
         &batch.pass,
         batch.scene_buffer.as_ref(),
+        batch.translation,
         true,
         image_bind_groups,
         analytic_path_bind_groups,
@@ -4374,14 +4523,26 @@ fn encode_draws_for_pass(
     render_pass: &mut wgpu::RenderPass<'_>,
     shared: &mut SharedRenderer,
     target_format: wgpu::TextureFormat,
+    viewport: Size,
     framebuffer_size: (u32, u32),
     pass: &PreparedPassBatch,
     scene_buffer: Option<&wgpu::Buffer>,
+    translation: Vector,
     clipped: bool,
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
     analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
     current_kind: &mut Option<PreparedDrawKind>,
 ) -> Result<()> {
+    let (viewport_x, viewport_y) = translation_to_viewport_origin(translation, viewport, framebuffer_size);
+    render_pass.set_viewport(
+        viewport_x,
+        viewport_y,
+        framebuffer_size.0 as f32,
+        framebuffer_size.1 as f32,
+        0.0,
+        1.0,
+    );
+
     for draw in &pass.draws {
         match draw.clip_rect {
             Some(scissor) => {
@@ -4436,6 +4597,20 @@ fn encode_draws_for_pass(
     }
 
     Ok(())
+}
+
+fn translation_to_viewport_origin(
+    translation: Vector,
+    viewport: Size,
+    framebuffer_size: (u32, u32),
+) -> (f32, f32) {
+    if translation == Vector::ZERO || viewport.is_empty() {
+        return (0.0, 0.0);
+    }
+
+    let scale_x = framebuffer_size.0 as f32 / viewport.width.max(1.0);
+    let scale_y = framebuffer_size.1 as f32 / viewport.height.max(1.0);
+    (translation.x * scale_x, translation.y * scale_y)
 }
 
 fn build_direct_packet(
@@ -6367,7 +6542,8 @@ mod tests {
     };
     use std::sync::Arc;
     use sui_core::{
-        Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, WidgetId, WindowId,
+        Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, Vector, WidgetId,
+        WindowId,
     };
     use sui_scene::{
         ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, RegisteredImage, Scene,
@@ -7678,15 +7854,14 @@ mod tests {
             compositor.layers[&SceneLayerId::from_widget(layer_id)].visible_tiles[0];
         let translated_clip_rect =
             compositor.tiles[&translated_tile].cached_passes[0].draws[0].clip_rect;
+        let translated_offset = compositor.tiles[&translated_tile].translation;
 
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
         assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
         assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
-        assert_eq!(first_clip_rect, Some(Rect::new(0.0, 0.0, 256.0, 128.0)));
-        assert_eq!(
-            translated_clip_rect,
-            Some(Rect::new(64.0, 0.0, 256.0, 128.0))
-        );
+        assert_eq!(first_clip_rect, Some(Rect::new(0.0, 0.0, 384.0, 128.0)));
+        assert_eq!(translated_clip_rect, Some(Rect::new(0.0, 0.0, 384.0, 128.0)));
+        assert_eq!(translated_offset, Vector::new(64.0, 0.0));
     }
 
     #[test]
@@ -7973,8 +8148,181 @@ mod tests {
         let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
+    }
+
+    #[test]
+    fn retained_compositor_updates_nested_cached_scroll_layer_after_child_transform() {
+        let shell_id = WidgetId::new(191);
+        let scroll_id = WidgetId::new(192);
+        let content_id = WidgetId::new(193);
+        let first_id = WidgetId::new(194);
+        let second_id = WidgetId::new(195);
+        let third_id = WidgetId::new(196);
+
+        let shell_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(shell_id),
+            shell_id,
+            Rect::new(0.0, 0.0, 360.0, 220.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 360.0, 220.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 360.0, 220.0))
+        .with_cache_policy(LayerCachePolicy::Direct);
+
+        let scroll_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(scroll_id),
+            scroll_id,
+            Rect::new(0.0, 0.0, 240.0, 220.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 240.0, 220.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 240.0, 220.0))
+        .with_cache_policy(LayerCachePolicy::Cached)
+        .with_composition_mode(LayerCompositionMode::Scroll);
+
+        let content_descriptor = |y: f32| {
+            SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(content_id),
+                content_id,
+                Rect::new(0.0, y, 360.0, 360.0),
+            )
+            .with_content_bounds(Rect::new(0.0, y, 220.0, 360.0))
+            .with_paint_bounds(Rect::new(0.0, y, 220.0, 360.0))
+            .with_cache_policy(LayerCachePolicy::Direct)
+        };
+
+        let child_layer = |id: WidgetId, y: f32, brush: Color| {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, y, 220.0, 120.0),
+                brush: brush.into(),
+            });
+            SceneLayer::from_descriptor(
+                SceneLayerDescriptor::new(
+                    SceneLayerId::from_widget(id),
+                    id,
+                    Rect::new(0.0, y, 220.0, 120.0),
+                )
+                .with_content_bounds(Rect::new(0.0, y, 220.0, 120.0))
+                .with_paint_bounds(Rect::new(0.0, y, 220.0, 120.0))
+                .with_cache_policy(LayerCachePolicy::Direct),
+                scene,
+            )
+        };
+
+        let build_content_scene = |y: f32| {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(child_layer(
+                first_id,
+                y,
+                Color::rgba(0.82, 0.36, 0.18, 1.0),
+            )));
+            scene.push(SceneCommand::Layer(child_layer(
+                second_id,
+                y + 120.0,
+                Color::rgba(0.18, 0.54, 0.82, 1.0),
+            )));
+            scene.push(SceneCommand::Layer(child_layer(
+                third_id,
+                y + 240.0,
+                Color::rgba(0.24, 0.72, 0.36, 1.0),
+            )));
+            scene
+        };
+
+        let build_shell_scene = |content_y: f32| {
+            let mut scroll_scene = Scene::new();
+            scroll_scene.push(SceneCommand::PushClip {
+                rect: Rect::new(0.0, 0.0, 230.0, 220.0),
+            });
+            scroll_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                content_descriptor(content_y),
+                build_content_scene(content_y),
+            )));
+            scroll_scene.push(SceneCommand::PopClip);
+
+            let mut shell_scene = Scene::new();
+            shell_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                scroll_descriptor.clone(),
+                scroll_scene,
+            )));
+            shell_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(240.0, 0.0, 120.0, 220.0),
+                brush: Color::rgba(0.94, 0.95, 0.97, 1.0).into(),
+            });
+            shell_scene
+        };
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            shell_descriptor.clone(),
+            build_shell_scene(0.0),
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(142),
+            viewport: Size::new(360.0, 220.0),
+            surface_size: Size::new(360.0, 220.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    scroll_descriptor.clone(),
+                )
+                .with_damage(scroll_descriptor.paint_bounds),
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    content_descriptor(0.0),
+                )
+                .with_damage(Rect::new(0.0, 0.0, 220.0, 360.0)),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let first_frame = frame.clone();
+        let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert!(frame
+            .scene
+            .translate_layer(content_id, Vector::new(0.0, -72.0)));
+        frame.layer_updates = vec![
+            SceneLayerUpdate::from_descriptor(
+                SceneLayerUpdateKind::Transform,
+                content_descriptor(-72.0),
+            )
+            .with_damage(Rect::new(0.0, -72.0, 220.0, 432.0)),
+            SceneLayerUpdate::from_descriptor(
+                SceneLayerUpdateKind::Transform,
+                scroll_descriptor.clone(),
+            )
+            .with_damage(Rect::new(0.0, 0.0, 220.0, 360.0)),
+        ];
+
+        let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_ne!(first.scene_vertices, second.scene_vertices);
+        assert!(compositor.last_frame_stats.regenerated_tiles > 0);
+
+        let mut renderer = WgpuRenderer::default();
+        renderer.render(&first_frame).unwrap();
+        let before = renderer
+            .capture_last_frame_rgba(first_frame.window_id)
+            .unwrap();
+        renderer.render(&frame).unwrap();
+        let after = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        assert!(
+            before
+                .pixels()
+                .iter()
+                .zip(after.pixels().iter())
+                .any(|(left, right)| left != right)
+        );
     }
 
     #[test]

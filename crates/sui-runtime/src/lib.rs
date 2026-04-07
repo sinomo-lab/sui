@@ -1091,10 +1091,21 @@ impl WindowState {
 
         let viewport = self.viewport.unwrap_or(Size::ZERO);
         let dpi_info = self.dpi_info_for_viewport(viewport);
-        let composition_only_transforms = self.select_composition_only_transforms(
+        let mut composition_only_transforms = self.select_composition_only_transforms(
             self.last_frame.as_ref().map(|frame| &frame.scene),
             &graph_changes.transform_widgets,
         );
+        for translation in self.select_explicit_transform_translations(
+            self.last_frame.as_ref().map(|frame| &frame.scene),
+            &invalidations,
+        ) {
+            if composition_only_transforms
+                .iter()
+                .all(|existing| existing.widget_id != translation.widget_id)
+            {
+                composition_only_transforms.push(translation);
+            }
+        }
         let composition_only_transform_ids = composition_only_transforms
             .iter()
             .map(|translation| translation.widget_id)
@@ -1332,7 +1343,6 @@ impl WindowState {
                 matches!(
                     request.kind,
                     InvalidationKind::Measure
-                        | InvalidationKind::Transform
                         | InvalidationKind::Clip
                         | InvalidationKind::Effect
                         | InvalidationKind::Visibility
@@ -1494,6 +1504,45 @@ impl WindowState {
             .collect()
     }
 
+    fn select_explicit_transform_translations(
+        &self,
+        previous_scene: Option<&Scene>,
+        invalidations: &[InvalidationRequest],
+    ) -> Vec<LayerTranslation> {
+        let previous_layers = previous_scene.map(collect_scene_layers).unwrap_or_default();
+        let mut translations = Vec::new();
+
+        for request in invalidations {
+            if request.kind != InvalidationKind::Transform {
+                continue;
+            }
+
+            let InvalidationTarget::Widget(widget_id) = request.target else {
+                continue;
+            };
+            let Some(previous) = previous_layers.get(&widget_id) else {
+                continue;
+            };
+            let Some(current) = self.graph.node(widget_id) else {
+                continue;
+            };
+
+            let delta = current.bounds.origin - previous.bounds.origin;
+            if delta == Vector::ZERO {
+                continue;
+            }
+
+            if translations
+                .iter()
+                .all(|translation: &LayerTranslation| translation.widget_id != widget_id)
+            {
+                translations.push(LayerTranslation { widget_id, delta });
+            }
+        }
+
+        translations
+    }
+
     fn widget_depth(&self, widget_id: WidgetId) -> usize {
         self.graph
             .path_to(widget_id)
@@ -1531,6 +1580,21 @@ impl WindowState {
         let previous_layers = previous_scene.map(collect_scene_layers).unwrap_or_default();
         let mut updates = HashMap::<WidgetId, SceneLayerUpdateKind>::new();
         let mut damage_regions = HashMap::<WidgetId, Rect>::new();
+        let explicit_transform_widgets = invalidations
+            .iter()
+            .filter_map(|request| {
+                if request.kind != InvalidationKind::Transform {
+                    return None;
+                }
+
+                match request.target {
+                    InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => {
+                        Some(widget_id)
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<HashSet<_>>();
 
         for request in invalidations {
             let Some(kind) = invalidation_to_layer_update_kind(request.kind) else {
@@ -1541,6 +1605,13 @@ impl WindowState {
                 InvalidationTarget::Widget(_) => self.root.id(),
                 InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
             };
+            if request.kind == InvalidationKind::Arrange
+                && explicit_transform_widgets
+                    .iter()
+                    .any(|candidate| self.widget_is_ancestor_of(widget_id, *candidate))
+            {
+                continue;
+            }
             merge_layer_update_kind(&mut updates, widget_id, kind);
             if let Some(region) = request.region {
                 damage_regions
@@ -1567,9 +1638,10 @@ impl WindowState {
                 .get(&widget_id)
                 .map(|previous| previous.paint_bounds.union(descriptor.paint_bounds))
                 .unwrap_or(descriptor.paint_bounds);
-            let damage = damage_regions.get(&widget_id).copied().map_or(fallback_damage, |region| {
-                region.union(fallback_damage)
-            });
+            let damage = damage_regions
+                .get(&widget_id)
+                .copied()
+                .unwrap_or(fallback_damage);
             resolved_updates
                 .push(SceneLayerUpdate::from_descriptor(kind, descriptor).with_damage(damage));
         }

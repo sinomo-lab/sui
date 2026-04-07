@@ -2274,6 +2274,25 @@ mod tests {
     }
 
     #[test]
+    fn widget_book_gallery_small_wheel_scroll_updates_screenshot() -> Result<()> {
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+        let gallery = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(GALLERY_SCROLL_NAME);
+
+        let before = gallery.capture_screenshot()?;
+
+        gallery.scroll_pixels(Vector::new(0.0, -12.0))?;
+
+        let after = gallery.capture_screenshot()?;
+
+        assert_ne!(before, after);
+
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "slow; run `cargo run -p sui-widget-book` to generate artifacts"]
     fn widget_book_generates_visual_artifacts() -> Result<()> {
         let artifact_root = super::write_visual_artifacts()?;

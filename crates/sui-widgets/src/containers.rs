@@ -1,7 +1,8 @@
 use std::ops::Range;
 
 use sui_core::{
-    Event, Point, Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, Size, Vector,
+    Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point, Rect, ScrollDelta,
+    SemanticsAction, SemanticsNode, SemanticsRole, Size, Vector,
 };
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
@@ -549,7 +550,10 @@ impl ScrollView {
         if next != self.offset {
             self.offset = next;
             ctx.request_arrange();
-            ctx.request_paint();
+            ctx.request(InvalidationRequest::new(
+                InvalidationTarget::Widget(self.child.child().id()),
+                InvalidationKind::Transform,
+            ));
             ctx.request_semantics();
             true
         } else {
@@ -563,6 +567,7 @@ pub struct VirtualScrollView {
     padding: Insets,
     spacing: f32,
     offset_y: f32,
+    last_arranged_offset_y: f32,
     content_height: f32,
     item_offsets: Vec<f32>,
     visible_range: Range<usize>,
@@ -576,6 +581,7 @@ impl VirtualScrollView {
             padding: Insets::ZERO,
             spacing: 0.0,
             offset_y: 0.0,
+            last_arranged_offset_y: 0.0,
             content_height: 0.0,
             item_offsets: Vec::new(),
             visible_range: 0..0,
@@ -635,7 +641,12 @@ impl VirtualScrollView {
         if (next - self.offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
             ctx.request_arrange();
-            ctx.request_paint();
+            for child in self.visible_children() {
+                ctx.request(InvalidationRequest::new(
+                    InvalidationTarget::Widget(child.id()),
+                    InvalidationKind::Transform,
+                ));
+            }
             ctx.request_semantics();
             true
         } else {
@@ -648,7 +659,7 @@ impl VirtualScrollView {
         // do not change the set of painted children.  This keeps the scene
         // content stable, allowing the tile cache to reuse previously
         // generated tiles instead of regenerating them from scratch.
-        let overdraw = viewport_height * 0.35;
+        let overdraw = viewport_height * 0.75;
         let visible_top = (self.offset_y - overdraw).max(0.0);
         let visible_bottom = self.offset_y + viewport_height + overdraw;
         let child_count = self.children.len();
@@ -941,11 +952,23 @@ impl Widget for VirtualScrollView {
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let viewport = self.viewport_rect(bounds);
         self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
+        let scroll_delta_y = self.offset_y - self.last_arranged_offset_y;
         let previous_visible_range = self.visible_range.clone();
         self.update_visible_range(viewport.height());
         if self.visible_range != previous_visible_range {
-            ctx.request_paint();
+            if let Some(rect) = scroll_exposed_rect(viewport, scroll_delta_y) {
+                ctx.request(
+                    InvalidationRequest::new(
+                        InvalidationTarget::Widget(ctx.widget_id()),
+                        InvalidationKind::Paint,
+                    )
+                    .with_region(rect),
+                );
+            } else {
+                ctx.request_paint();
+            }
         }
+        self.last_arranged_offset_y = self.offset_y;
         let viewport_width = viewport.width();
         let visible_range = self.visible_range.clone();
         let offset_y = self.offset_y;
@@ -1020,6 +1043,33 @@ fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {
     match delta {
         ScrollDelta::Lines(delta) => Vector::new(delta.x * 40.0, delta.y * 40.0),
         ScrollDelta::Pixels(delta) => delta,
+    }
+}
+
+fn scroll_exposed_rect(viewport: Rect, delta_y: f32) -> Option<Rect> {
+    if delta_y.abs() <= f32::EPSILON {
+        return None;
+    }
+
+    let height = viewport.height();
+    if delta_y.abs() >= height {
+        return Some(viewport);
+    }
+
+    if delta_y > 0.0 {
+        Some(Rect::new(
+            viewport.x(),
+            viewport.max_y() - delta_y,
+            viewport.width(),
+            delta_y,
+        ))
+    } else {
+        Some(Rect::new(
+            viewport.x(),
+            viewport.y(),
+            viewport.width(),
+            -delta_y,
+        ))
     }
 }
 
@@ -1160,20 +1210,23 @@ fn stack_child_constraints(
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use super::{Align, Background, Padding, ScrollView, SizedBox, Stack, VirtualScrollView};
+    use super::{Align, Background, Padding, ScrollAxes, ScrollView, SizedBox, Stack, VirtualScrollView};
     use sui_core::{
-        Color, Event, Point, PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode,
-        SemanticsRole, Size, Vector, WidgetId,
+        Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
+        PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode, SemanticsRole, Size,
+        Vector, WidgetId,
     };
     use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
     use sui_runtime::{
-        Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
-        WidgetGraphSnapshot, WindowBuilder,
+        Application, ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx,
+        RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot,
+        WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::{
         Brush, LayerCachePolicy, LayerCompositionMode, Scene, SceneCommand, SceneLayer,
         SceneLayerDescriptor,
     };
+    use crate::SplitView;
 
     struct FixedBox {
         size: Size,
@@ -1230,6 +1283,163 @@ mod tests {
         fn paint(&self, ctx: &mut PaintCtx) {
             self.counts.borrow_mut()[self.index] += 1;
             ctx.fill_bounds(self.color);
+        }
+    }
+
+    struct ScrollViewNoPaint {
+        axes: ScrollAxes,
+        name: Option<String>,
+        offset: Vector,
+        content_size: Size,
+        child: SingleChild,
+    }
+
+    impl ScrollViewNoPaint {
+        fn vertical<W>(child: W) -> Self
+        where
+            W: Widget + 'static,
+        {
+            Self {
+                axes: ScrollAxes::Vertical,
+                name: None,
+                offset: Vector::ZERO,
+                content_size: Size::ZERO,
+                child: SingleChild::new(child),
+            }
+        }
+
+        fn name(mut self, name: impl Into<String>) -> Self {
+            self.name = Some(name.into());
+            self
+        }
+
+        fn clamp_offset(&self, viewport: Size, offset: Vector) -> Vector {
+            let max_x = (self.content_size.width - viewport.width).max(0.0);
+            let max_y = (self.content_size.height - viewport.height).max(0.0);
+
+            Vector::new(
+                if self.axes.allows_horizontal() {
+                    offset.x.clamp(0.0, max_x)
+                } else {
+                    0.0
+                },
+                if self.axes.allows_vertical() {
+                    offset.y.clamp(0.0, max_y)
+                } else {
+                    0.0
+                },
+            )
+        }
+    }
+
+    impl Widget for ScrollViewNoPaint {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            let viewport = ctx.bounds().size;
+
+            match event {
+                Event::Pointer(pointer)
+                    if pointer.kind == sui_core::PointerEventKind::Scroll
+                        && ctx.phase() != EventPhase::Capture
+                        && ctx.bounds().contains(pointer.position) =>
+                {
+                    let delta = pointer
+                        .scroll_delta
+                        .map(super::scroll_delta_to_offset)
+                        .unwrap_or(pointer.delta);
+                    let next = self.clamp_offset(viewport, self.offset + Vector::new(-delta.x, -delta.y));
+                    if next != self.offset {
+                        self.offset = next;
+                        ctx.request_arrange();
+                        ctx.request(InvalidationRequest::new(
+                            InvalidationTarget::Widget(self.child.child().id()),
+                            InvalidationKind::Transform,
+                        ));
+                        ctx.request_semantics();
+                        ctx.set_handled();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let mut child_constraints = constraints.loosen();
+            if self.axes.allows_horizontal() {
+                child_constraints.max.width = f32::INFINITY;
+            } else if constraints.max.width.is_finite() {
+                child_constraints.min.width = constraints.max.width;
+                child_constraints.max.width = constraints.max.width;
+            }
+
+            if self.axes.allows_vertical() {
+                child_constraints.max.height = f32::INFINITY;
+            } else if constraints.max.height.is_finite() {
+                child_constraints.min.height = constraints.max.height;
+                child_constraints.max.height = constraints.max.height;
+            }
+
+            let child_size = self.child.measure(ctx, child_constraints);
+            self.content_size = child_size;
+
+            let viewport = constraints.clamp(Size::new(
+                if constraints.max.width.is_finite() {
+                    constraints.max.width
+                } else {
+                    child_size.width
+                },
+                if constraints.max.height.is_finite() {
+                    constraints.max.height
+                } else {
+                    child_size.height
+                },
+            ));
+            self.offset = self.clamp_offset(viewport, self.offset);
+
+            viewport
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::from_origin_size(
+                    Point::new(bounds.x() - self.offset.x, bounds.y() - self.offset.y),
+                    self.child.child().measured_size(),
+                ),
+            );
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.push_clip_rect(ctx.bounds());
+            self.child.paint(ctx);
+            ctx.pop_clip();
+        }
+
+        fn layer_options(&self) -> LayerOptions {
+            LayerOptions {
+                cache_policy: LayerCachePolicy::Cached,
+                composition_mode: LayerCompositionMode::Scroll,
+            }
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
+            node.name = self.name.clone();
+            node.actions = vec![sui_core::SemanticsAction::Focus];
+            node.state.focused = ctx.is_focused();
+            ctx.push(node);
+            self.child.semantics(ctx);
+        }
+
+        fn accepts_focus(&self) -> bool {
+            true
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
         }
     }
 
@@ -1537,7 +1747,7 @@ mod tests {
     }
 
     #[test]
-    fn scroll_view_repaints_child_after_scroll_offset_changes() {
+    fn scroll_view_emits_transform_updates_after_scroll_offset_changes() {
         let counts = Rc::new(RefCell::new(vec![0usize; 1]));
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().size(Size::new(80.0, 40.0)).with_child(ScrollView::vertical(
@@ -1558,13 +1768,62 @@ mod tests {
         runtime
             .handle_event(window_id, Event::Pointer(scroll))
             .unwrap();
-        let _ = runtime.render(window_id).unwrap();
+        let output = runtime.render(window_id).unwrap();
 
         assert_eq!(*counts.borrow(), vec![2]);
+        assert!(!output.frame.layer_updates.is_empty());
     }
 
     #[test]
-    fn virtual_scroll_view_repaints_visible_children_after_small_scroll() {
+    fn split_view_scroll_without_paint_still_updates_runtime_scene() {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(360.0, 220.0)).with_child(
+                SplitView::horizontal(
+                    ScrollViewNoPaint::vertical(
+                        Stack::vertical()
+                            .with_child(FixedBox::new(
+                                Size::new(220.0, 120.0),
+                                Color::rgba(0.82, 0.36, 0.18, 1.0),
+                            ))
+                            .with_child(FixedBox::new(
+                                Size::new(220.0, 120.0),
+                                Color::rgba(0.18, 0.54, 0.82, 1.0),
+                            ))
+                            .with_child(FixedBox::new(
+                                Size::new(220.0, 120.0),
+                                Color::rgba(0.24, 0.72, 0.36, 1.0),
+                            )),
+                    )
+                    .name("NoPaint scroll"),
+                    SizedBox::new().size(Size::new(120.0, 220.0)),
+                )
+                .ratio(0.68),
+            ),
+        );
+
+        let before = runtime.render(window_id).unwrap();
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(48.0, 96.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -72.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+
+        let after = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+
+        assert!(graph.nodes.iter().any(|node| node.bounds.y() < 0.0));
+        assert_ne!(before.frame.scene, after.frame.scene);
+        assert!(after.frame.layer_updates.iter().any(|update| {
+            update.kind == sui_scene::SceneLayerUpdateKind::Transform
+        }));
+    }
+
+    #[test]
+    fn virtual_scroll_view_emits_transform_updates_while_visible_range_is_unchanged() {
+        // Use a wider viewport (80px) so the overdraw buffer (35% = 28px)
+        // is large enough that a small 4px scroll does not bring new items
+        // into the visible range.
         let counts = Rc::new(RefCell::new(vec![0usize; 4]));
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
@@ -1605,9 +1864,14 @@ mod tests {
         runtime
             .handle_event(window_id, Event::Pointer(scroll))
             .unwrap();
-        let _ = runtime.render(window_id).unwrap();
+        let output = runtime.render(window_id).unwrap();
 
-        assert_eq!(*counts.borrow(), vec![2, 2, 2, 2]);
+        // A small 4px scroll should not change the visible range when
+        // the overdraw buffer covers all items.
+        assert_eq!(*counts.borrow(), vec![1, 1, 1, 1]);
+        assert!(output.frame.layer_updates.iter().any(|update| {
+            update.kind == sui_scene::SceneLayerUpdateKind::Transform
+        }));
     }
 
     #[test]
