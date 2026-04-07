@@ -205,9 +205,8 @@ impl TextLine {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TextLayout {
+struct TextLayoutData {
     text: String,
-    style: TextStyle,
     box_size: Size,
     face: ResolvedTextFace,
     measurement: TextMeasurement,
@@ -215,33 +214,39 @@ pub struct TextLayout {
     lines: Vec<TextLine>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextLayout {
+    data: Arc<TextLayoutData>,
+    style: TextStyle,
+}
+
 impl TextLayout {
     pub fn text(&self) -> &str {
-        &self.text
+        &self.data.text
     }
 
     pub fn style(&self) -> &TextStyle {
         &self.style
     }
 
-    pub const fn box_size(&self) -> Size {
-        self.box_size
+    pub fn box_size(&self) -> Size {
+        self.data.box_size
     }
 
-    pub const fn measurement(&self) -> TextMeasurement {
-        self.measurement
+    pub fn measurement(&self) -> TextMeasurement {
+        self.data.measurement
     }
 
     pub fn glyphs(&self) -> &[ShapedGlyph] {
-        &self.glyphs
+        &self.data.glyphs
     }
 
     pub fn lines(&self) -> &[TextLine] {
-        &self.lines
+        &self.data.lines
     }
 
     pub fn face(&self) -> &ResolvedTextFace {
-        &self.face
+        &self.data.face
     }
 
     pub fn caret_rect(&self, utf8_offset: usize) -> Rect {
@@ -255,8 +260,8 @@ impl TextLayout {
     }
 
     pub fn selection_rects(&self, range: Range<usize>) -> Vec<Rect> {
-        let start = range.start.min(self.text.len());
-        let end = range.end.min(self.text.len());
+        let start = range.start.min(self.data.text.len());
+        let end = range.end.min(self.data.text.len());
         let (start, end) = if start <= end {
             (start, end)
         } else {
@@ -269,7 +274,7 @@ impl TextLayout {
 
         let mut rects = Vec::new();
 
-        for line in &self.lines {
+        for line in &self.data.lines {
             let line_start = start.max(line.byte_range.start);
             let line_end = end.min(line.byte_range.end);
             if line_start >= line_end {
@@ -298,12 +303,23 @@ impl TextLayout {
     }
 
     fn line_for_offset(&self, utf8_offset: usize) -> &TextLine {
-        let offset = utf8_offset.min(self.text.len());
-        self.lines
+        let offset = utf8_offset.min(self.data.text.len());
+        self.data
+            .lines
             .iter()
             .find(|line| offset <= line.byte_range.end)
-            .or_else(|| self.lines.last())
+            .or_else(|| self.data.lines.last())
             .expect("text layouts always contain at least one line")
+    }
+
+    fn with_style(mut self, style: TextStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    #[cfg(test)]
+    fn shares_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.data, &other.data)
     }
 }
 
@@ -462,15 +478,13 @@ impl TextSystem {
         let face = self.resolve_face(style.font, font_registry)?;
         let cache_key = TextLayoutCacheKey::new(&text, &style, box_size, &face);
 
-        if let Some(mut cached) = self.cached_layout(&cache_key)? {
-            cached.style = style;
-            return Ok(cached);
+        if let Some(cached) = self.cached_layout(&cache_key)? {
+            return Ok(cached.with_style(style));
         }
 
-        let mut layout = self.shape_text_uncached(text, style.clone(), box_size, face)?;
-        layout.style = style;
+        let layout = self.shape_text_uncached(text, style.clone(), box_size, face)?;
         self.store_layout(cache_key, layout.clone())?;
-        Ok(layout)
+        Ok(layout.with_style(style))
     }
 
     fn shape_text_uncached(
@@ -608,17 +622,19 @@ impl TextSystem {
             });
 
         Ok(TextLayout {
-            text,
+            data: Arc::new(TextLayoutData {
+                text,
+                box_size,
+                face,
+                measurement: TextMeasurement {
+                    width: measured_width,
+                    height: block_height.max(ascent + descent),
+                    bounds,
+                },
+                glyphs,
+                lines,
+            }),
             style,
-            box_size,
-            face,
-            measurement: TextMeasurement {
-                width: measured_width,
-                height: block_height.max(ascent + descent),
-                bounds,
-            },
-            glyphs,
-            lines,
         })
     }
 
@@ -932,6 +948,7 @@ mod tests {
             misses: 1,
         });
         assert_eq!(second.style().color, Color::rgba(0.2, 0.7, 0.9, 1.0));
+        assert!(second.shares_storage_with(&layout));
         assert_eq!(second.glyphs(), layout.glyphs());
     }
 }
