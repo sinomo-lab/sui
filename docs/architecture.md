@@ -1,432 +1,221 @@
-# SUI Core Architecture
+# SUI Architecture Overview
 
-This document turns the goals in [design.md](./design.md) into a concrete core architecture for the current workspace.
+## What SUI Is Right Now
 
-It sits between the high-level product design and the crate boundary plan in [crate-architecture.md](./crate-architecture.md). The focus here is the runtime model: what the core subsystems are, how data moves through them, which crate owns which responsibility, and how the current scaffold should grow into the intended toolkit.
+SUI is a retained widget toolkit with an explicit runtime.
 
-## Scope
+The current implementation centers on these ideas:
 
-This document defines the architecture for the core SUI runtime only. It does not try to fully specify higher-level widget libraries, text editing features, language bindings, or every renderer optimization. Those remain separate concerns built on top of the same foundation.
+- widgets own state and child composition through `Widget`, `WidgetPod`, `SingleChild`, and `WidgetChildren`
+- the runtime owns event routing, focus, pointer capture, invalidation, layout, scene generation, and semantics generation
+- widgets paint into a renderer-neutral `Scene`
+- the renderer consumes immutable `SceneFrame` snapshots and maintains retained compositor state
+- semantics are generated alongside the scene and are used by accessibility, testing, and diagnostics
 
-The core architecture must preserve the design constraints from [design.md](./design.md):
+The public Rust entry point is `sui::Application`. With the default features enabled, `Application::run()` builds a `sui_runtime::Runtime` and hands execution to `sui_platform::DesktopPlatform`.
 
-- retained widget state and stable identity
-- event-driven updates rather than diff-driven reconciliation
-- explicit invalidation for layout, paint, semantics, hit testing, text, and resources
-- scene-based rendering rather than direct GPU ownership in widgets
-- platform normalization at the edge of the system
-- accessibility semantics as a first-class output of the widget tree
-- a bindings-aware execution model with explicit ownership and scheduling
+## The Main Execution Path
 
-## Architectural Summary
+The normal desktop flow is:
 
-SUI should be built around a retained widget runtime that produces two outputs from the same tree:
+1. User code creates an `Application` and one or more `WindowBuilder` values.
+2. `sui::Application::run()` builds a `Runtime` with shared font and image registries.
+3. `DesktopPlatform` creates native windows, wires them to a shared `WgpuRenderer`, and enters the `winit` event loop.
+4. Native events are normalized into `sui_core::Event` values.
+5. `Runtime::handle_event()` routes the event through the retained widget tree.
+6. Widgets request explicit invalidation through runtime contexts.
+7. When a window needs work, the runtime runs measure, arrange, paint, semantics, and resource updates as needed.
+8. The runtime returns a `RenderOutput` containing a `SceneFrame` and diagnostics.
+9. `sui-render-wgpu` updates retained compositor state, prepares GPU work, and presents the frame.
 
-1. a scene frame for rendering
-2. a semantics tree for accessibility, automation, and testing
+The same runtime contract is used by the headless platform for tests. The platform changes, but the runtime boundary does not.
 
-The runtime is driven by normalized platform events. Widgets mutate local state in response to those events and request explicit invalidation. The runtime then schedules only the necessary work across layout, hit testing, scene generation, semantics recomputation, text work, and renderer resource updates.
+## Runtime Model
 
-At the architectural level, the system is split into six layers:
+### Retained widget graph
 
-1. public API and application bootstrap
-2. platform normalization and host integration
-3. retained runtime and scheduling
-4. layout, scene, and semantics production
-5. renderer backend and GPU resource management
-6. tooling surfaces for testing, inspection, and future bindings
+Each widget lives inside a `WidgetPod` with a stable `WidgetId`. The runtime keeps window-scoped graph state for:
 
-The current workspace already contains the phase-1 skeleton of this design:
+- parent and child relationships
+- measured size and arranged bounds
+- focus state
+- pointer capture
+- last semantics snapshot
+- per-window frame scheduling and diagnostics
 
-- `sui-core` owns shared data types and contracts
-- `sui-layout` owns constraints and sizing primitives
-- `sui-runtime` owns the retained runtime and widget contract
-- `sui-scene` owns render-neutral paint output
-- `sui-text` owns shaping, font registration, and text layout
-- `sui-render-wgpu` owns renderer execution
-- `sui-platform` owns host integration
-- `sui` acts as the public facade
-- `sui-dev` acts as the development host and now launches a real desktop window by default
+Widgets are not responsible for global orchestration. They implement behavior through the `Widget` trait and use runtime contexts to request work.
 
-The remaining work is to deepen these crates rather than replace them.
+### Explicit invalidation
 
-## Core Runtime Model
+SUI does not use a diff-based UI model. Widgets mutate state in response to events and request invalidation explicitly.
 
-### 1. Retained widget graph
+The current invalidation kinds are:
 
-The canonical UI representation is a retained widget graph with stable identity. Every node has a `WidgetId`, explicit state, geometry, and semantic contribution.
-
-The current runtime now uses retained `WidgetPod` child ownership and window-level graph snapshots. That foundation should continue to grow into a richer runtime-owned graph with the following responsibilities:
-
-- parent-child ownership and lifecycle
-- stable identity for focus, testing, semantics, and future collaboration hooks
-- cached layout results and paint bounds
-- per-node dirty flags
-- event routing metadata
-- hit-test participation
-
-Widgets remain user-defined stateful units. The runtime owns graph orchestration, while widgets own domain state and behavior.
-
-### 2. Explicit phases
-
-The runtime should execute work in explicit phases instead of hiding behavior behind implicit redraw or reconciliation loops.
-
-The core phases are:
-
-1. ingest platform or application events
-2. route events through the widget graph
-3. collect invalidation requests
-4. resolve scheduled work in dependency order
-5. produce scene and semantics outputs
-6. hand immutable frame data to the renderer and host layer
-
-This phase separation is essential for determinism, debugging, automation, and future bindings.
-
-### 3. Dirty invalidation rather than diffing
-
-Widgets do not re-declare the whole UI on every update. Instead, event handlers mutate state and request invalidation explicitly. The runtime merges those requests and schedules the smallest safe amount of work.
-
-The invalidation kinds already present in `sui-core` are the correct foundation:
-
-- `Layout`
+- `Measure`
+- `Arrange`
+- `Transform`
+- `Clip`
+- `Effect`
+- `Visibility`
 - `Paint`
 - `HitTest`
 - `Text`
 - `Semantics`
 - `Resources`
 
-The scheduler should treat them as separate queues with dependency ordering:
+That split matters because the runtime and renderer treat geometry, paint, semantics, and resource work differently.
 
-- layout invalidation may imply paint, hit-test, and semantics updates
-- text invalidation may imply layout and paint updates
-- resource invalidation may require scene regeneration and renderer cache updates
-- semantics invalidation must not require a repaint unless visual output also changed
+### Phase-driven frame work
 
-## Window and Frame Architecture
+The runtime operates as a sequence of explicit phases rather than a hidden redraw loop. The current order is:
 
-Each window should be managed as an independent runtime island with shared process-level services.
+1. event handling and routing
+2. invalidation collection
+3. measure and arrange work
+4. scene generation
+5. semantics generation
+6. renderer submission
+7. diagnostics publication
 
-Per-window state should include:
+This is the structure that tests, debugging tools, and the widget book all rely on.
 
-- root widget graph
-- focus state
-- pointer capture state
-- IME and text-input state
-- dirty queues and frame scheduling state
-- last computed layout tree
-- last produced scene frame
-- last produced semantics tree
-- renderer-facing surface state handle
+## Event Routing
 
-Shared process-level services should include:
+`sui-platform` is responsible for translating host events into `sui_core::Event` values. The runtime then routes those events using explicit phases:
 
-- image and font registries
-- timers and async wakeups
-- platform clipboard and drag-and-drop adapters
-- renderer device and cache pools where sharing is valid
-- debug and inspection channels
+- capture
+- target
+- bubble
 
-This keeps windows isolated enough for correctness while still enabling shared caches and tooling.
+Routing decisions depend on the event type:
 
-## Event Architecture
+- pointer events use hit testing and pointer capture
+- keyboard and IME events use focus state
+- timers and async wakeups are scheduled by the runtime and re-enter as `WakeEvent`
+- redraw and resize events enter through `WindowEvent`
 
-### Event sources
+Widgets can mark events handled, request focus, schedule timers, request async wakeups, and request invalidation. They do not reach into platform objects or renderer state directly.
 
-All runtime work starts from normalized events. Event sources include:
+## Layout, Paint, and Semantics
 
-- pointer input
-- keyboard input
-- text and IME input
-- focus transitions
-- drag-and-drop
-- window lifecycle changes
-- timers and async commands
-- custom application events
+### Layout
 
-Platform-specific details must be translated in `sui-platform` before they reach widgets.
+The current layout contract is already split into measure and arrange.
 
-Platform adapters should normalize host coordinates into logical units before dispatch. When widgets need device-aware behavior, runtime contexts such as layout and paint should expose DPI metadata including scale factor, effective DPI, optional raw DPI, and the logical versus physical surface sizes. That keeps input and layout deterministic while still letting widgets opt into pixel-sensitive rendering decisions such as hairline borders or caret widths.
+- `measure(&mut MeasureCtx, Constraints) -> Size`
+- `arrange(&mut ArrangeCtx, Rect)`
 
-### Routing model
+This split means geometry-only changes do not need to look like full paint rebuilds.
 
-SUI should use a small, explicit routing model inspired by capture and bubble semantics without inheriting browser complexity.
+`sui-layout` provides the shared constraint and geometry primitives, while `sui-runtime` owns the widget-facing layout contexts and caching.
 
-The target delivery order is:
+### Paint
 
-1. global runtime preprocessors
-2. capture path from root to target
-3. target widget
-4. bubble path from target back to root
-5. fallback runtime handlers such as focus traversal or default shortcuts
+Widgets render through `PaintCtx` into `sui-scene`. They do not emit raw GPU commands.
 
-Routing decisions depend on:
+The current scene layer includes:
 
-- hit testing for pointer events
-- focus ownership for keyboard and text events
-- capture ownership for drag or gesture flows
-- explicit runtime targets for synthetic or custom events
+- fills and strokes
+- paths
+- text draws and shaped text draws
+- image draws
+- transforms, clips, and nested layers
+- layer descriptors with cache and composition hints
 
-The event context should stay narrow. Widgets may mark events handled, request invalidation, enqueue commands, and query relevant runtime metadata. They should not directly mutate unrelated runtime internals.
+`SceneFrame` is the renderer-facing snapshot. It also carries font and image registry snapshots so the renderer can resolve resources without pulling mutable runtime state.
 
-## Layout Architecture
+### Semantics
 
-The default layout contract remains the one-pass model already implied by `sui-layout`:
+Widgets contribute `SemanticsNode` values through `SemanticsCtx`. The runtime assembles those nodes into the window's semantics snapshot.
 
-1. parent sends constraints
-2. child returns a size
-3. parent positions children
+That snapshot is used by:
 
-This should remain the common path because it is predictable and cheap. The architecture must also support opt-in advanced behavior for:
+- accessibility bridges in `sui-platform`
+- locators and expectations in `sui-testing`
+- debug UIs in `sui-debug`
+- widget-book tests and screenshot helpers
 
-- intrinsic measurement
-- deferred text measurement
-- virtualized collections
-- free-positioned canvas containers
-- multi-pass containers where child measurement influences sibling constraints
-
-The runtime should separate three concepts clearly:
-
-- layout algorithm definitions in `sui-layout`
-- per-widget layout participation in `sui-runtime`
-- cached geometry results in the runtime-owned graph
-
-The layout phase should produce a geometry tree that is reused by paint, hit testing, semantics, and debug overlays.
-
-## Scene and Paint Architecture
-
-### Scene as the stable visual boundary
-
-Widgets do not render by issuing raw GPU commands. They emit render-neutral scene commands into `sui-scene` through `PaintCtx`.
-
-That scene is the stable boundary between application logic and renderer implementation. It enables:
-
-- batching and draw ordering decisions outside widget code
-- cached layers and partial redraw policies
-- debug overlays and repaint visualization
-- test harnesses that can inspect visual intent without requiring GPU internals
-- renderer backend replacement without rewriting widgets
-
-### Scene structure
-
-The current `Scene` and `SceneFrame` types are a minimal version of the right idea. The target scene model should grow to represent:
-
-- draw primitives such as fills, strokes, images, and text runs
-- transforms and clip stacks
-- opacity and compositing groups
-- retained cached layer descriptors
-- paint bounds for invalidation and culling
-- optional debug and diagnostic annotations
-
-The workspace now has the first concrete step in that direction: `sui-scene` supports explicit text runs, image draws, stroke rectangles, and clip/transform stack commands in addition to fills and clears, while `sui-text` owns font registration, shaping, and text layout. `sui-render-wgpu` consumes those layouts to rasterize glyph outlines and images without pushing text-system details back into widgets.
-
-`SceneFrame` should remain immutable once produced so render backends can consume it safely and so tooling can inspect a stable snapshot.
-
-The higher-ceiling version of this renderer boundary should be a retained compositor rather than a frame-scoped draw-op compiler. The dedicated design for that target lives in [tile-compositor-proposal.md](./tile-compositor-proposal.md).
-
-## Semantics Architecture
-
-Semantics are produced from the same widget graph as the scene. They are not a bolt-on adapter.
-
-Each widget may contribute one or more semantic nodes describing:
-
-- role
-- bounds
-- name and description
-- value and state
-- supported actions
-- parent-child relationships
-
-The runtime should assemble these contributions into a semantic tree that is synchronized with layout and focus state. The tree should be usable by:
-
-- platform accessibility adapters
-- automated test harnesses
-- debug tools
-- future AI or automation integrations
-
-Semantics invalidation must remain independent from paint invalidation so non-visual state updates remain cheap.
+User-observable and automation-observable changes usually affect the semantics path as well as paint.
 
 ## Platform Boundary
 
-`sui-platform` is the only layer that should know about host windowing systems, DOM hosts, IME services, clipboard APIs, drag-and-drop backends, or accessibility bridges.
+`sui-platform` is the host integration layer.
 
-Its job is to:
+Today it has two important entry points:
 
-- create and own host windows or embedded surfaces
-- normalize native input into `sui-core` events
-- hand those events to `sui-runtime`
-- present renderer output to the host surface
-- bridge semantics and focus state to platform accessibility APIs
+- `DesktopPlatform` for the real `winit` event loop and `wgpu` surfaces
+- `HeadlessPlatform` for deterministic tests, manual time control, and offscreen rendering
 
-The platform layer must not become a second runtime. It is an adapter around the retained runtime, not a peer architecture.
+The platform layer owns:
+
+- host window creation and teardown
+- native event normalization
+- redraw scheduling
+- accessibility snapshots and bridge updates
+- renderer registration for each window
+
+It does not own widget logic, layout rules, or scene production.
 
 ## Renderer Boundary
 
-`sui-render-wgpu` owns scene compilation and GPU execution. It must consume immutable frame data and renderer resources only.
+`sui-render-wgpu` is the only crate that owns `wgpu` concepts.
 
-It is responsible for:
+Today it provides:
 
-- translating scene commands into render passes
-- maintaining texture, glyph, tile, and offscreen caches
-- applying color-management transforms
-- exposing explicit interop hooks for advanced custom GPU passes
+- a shared device and queue setup
+- per-window surface or offscreen target registration
+- retained compositor state per window
+- text, image, and analytic path caches
+- capture helpers for headless screenshots and desktop harnesses
+- per-frame renderer statistics consumed by diagnostics tooling
 
-It is not responsible for:
+The renderer consumes `SceneFrame` snapshots. It does not walk widget internals or compute layout.
 
-- widget behavior
-- layout decisions
-- focus or semantics logic
-- platform event interpretation
+See [renderer-architecture.md](./renderer-architecture.md) for the current renderer model and its constraints.
 
-This separation is critical if SUI is going to support debug tooling, test harnesses, and multiple host environments without coupling everything to `wgpu`.
+## Diagnostics And Tooling
 
-## Crate Ownership Model
+Diagnostics are part of the main runtime path, not a separate simulation.
 
-The current crate split is already close to the desired architecture. The ownership model should be:
+The current stack includes:
 
-### `sui-core`
+- `WindowPerformanceSnapshot` and related phase timing types in `sui-runtime`
+- per-frame renderer submission stats published by `sui-platform`
+- the widget book performance overlay in `sui-widget-book`
+- reusable inspector widgets in `sui-debug`
+- semantics-first locators and artifact capture in `sui-testing`
 
-Shared contracts and value types:
+The current tooling uses real snapshots and real runtime outputs. The existing runtime surfaces already provide the main testing and diagnostics data.
 
-- IDs, geometry, color, events, invalidation, semantics, errors
+## What Is In Scope Today
 
-This crate must remain free of renderer, runtime-graph, and platform dependencies.
+These parts are implemented and are active in day-to-day development:
 
-### `sui-layout`
+- retained widget runtime with stable widget identity
+- measure and arrange layout phases
+- scene-based paint output
+- semantics snapshots
+- desktop host integration
+- deterministic headless testing
+- retained `wgpu` compositor path
+- widget book gallery and visual artifact generation
 
-Reusable layout primitives and algorithms:
+These parts are intentionally not yet a first-class workspace surface:
 
-- constraints, alignment, padding, sizing helpers, container algorithms
+- Python bindings
+- JavaScript or WASM bindings
+- a separate bindings-core crate
+- mobile-specific platform integration beyond placeholders
 
-It should remain runtime-neutral and renderer-neutral.
+The design doc still discusses some future directions, but the current Rust desktop and testing stack is the implemented source of truth.
 
-### `sui-scene`
+## Where To Start When Making Changes
 
-The render-neutral visual representation:
+Choose the entry point that matches the change.
 
-- scene commands, brushes, frame snapshots, future layer and clip structures
-
-This crate is the output target for widget painting and the input source for renderers.
-
-### `sui-runtime`
-
-The retained UI engine:
-
-- widget graph
-- event routing
-- focus and capture
-- invalidation scheduler
-- layout orchestration
-- scene production
-- semantics assembly
-
-This crate is the heart of the framework.
-
-### `sui-render-wgpu`
-
-The concrete GPU backend:
-
-- scene compilation
-- GPU resources
-- caches
-- presentation
-
-### `sui-platform`
-
-Host integration:
-
-- windows and surfaces
-- event normalization
-- IME, clipboard, drag-and-drop, accessibility bridges
-
-### `sui`
-
-The public facade:
-
-- stable application-facing API
-- re-exports of core types
-- feature-gated platform and renderer entry points
-
-### `sui-dev`
-
-The manual testbed and development app.
-
-It should remain outside the stable API surface and evolve freely as the architecture grows.
-
-Current workspace status:
-
-- `cargo run -p sui-dev` launches the real desktop host through `sui::Application::run()`
-
-## End-to-End Data Flow
-
-The normal frame loop should be:
-
-1. host receives native input or lifecycle changes
-2. `sui-platform` translates them into normalized `sui-core::Event` values
-3. `sui-runtime` routes the event through the retained widget graph
-4. widgets mutate local state and emit invalidation requests
-5. the runtime scheduler resolves the required layout, text, semantics, hit-test, paint, and resource work
-6. widgets emit scene commands into a new `SceneFrame`
-7. widgets emit semantic nodes into a new semantics snapshot
-8. `sui-render-wgpu` consumes the scene frame and updates GPU resources as needed
-9. `sui-platform` presents the result and updates platform accessibility state from the semantics snapshot
-
-This gives SUI a clear unidirectional execution path without forcing a virtual-DOM-style diffing model.
-
-## Scheduling and Threading
-
-The scheduler should be single-owner even when work is parallelized.
-
-That means:
-
-- the runtime owns authoritative widget state on one thread or executor context
-- scene preparation, text shaping, tile generation, and renderer compilation may be parallelized when safe
-- platform and renderer callbacks must re-enter runtime state through explicit queues or commands
-
-This model keeps state transitions deterministic and makes language bindings feasible. Python and JavaScript integrations can interact through explicit commands and snapshots rather than shared mutable Rust internals.
-
-## Testing and Diagnostics Hooks
-
-The architecture should treat inspection as a built-in capability, not a side effect.
-
-The runtime should expose stable hooks for:
-
-- event tracing
-- invalidation tracing
-- layout tree inspection
-- scene snapshot inspection
-- semantics snapshot inspection
-- deterministic event injection
-
-These hooks should operate on the same core artifacts used by the real runtime so tests and diagnostics observe real behavior instead of a separate simulation path.
-
-## Phase-1 Target Versus Future Expansion
-
-For the current workspace, the recommended phase-1 target is:
-
-- keep `sui-core`, `sui-layout`, `sui-scene`, `sui-runtime`, `sui-render-wgpu`, `sui-platform`, `sui`, and `sui-dev`
-- keep deepening `sui-runtime` beyond the current retained graph, scheduler, and focus foundations
-- deepen `sui-scene` into a richer paint graph
-- keep `sui-render-wgpu` as the only GPU-owning crate
-- keep `sui-platform` as the only host-owning crate
-
-After that foundation is stable, the next architecture-safe additions are:
-
-- `sui-text` for first-class shaping and text layout
-- `sui-widgets` for standard controls outside the runtime core
-- `sui-testing` for deterministic automation
-- `sui-bindings-core`, `sui-python`, and `sui-js` for cross-language adoption
-
-These should be added by extending the existing boundaries, not by moving responsibilities out of the core crates retroactively.
-
-## Concrete Next Implementation Steps
-
-The architecture above implies the following implementation order:
-
-1. deepen the retained `WidgetPod` model into richer container, hit-test, and lifecycle primitives without regressing stable identity
-2. expand the frame scheduler with timers, async wakeups, and renderer-resource work queues
-3. add pointer capture, richer event targeting, and default focus traversal to `sui-runtime`
-4. evolve `sui-scene` from a flat command list into a richer scene frame with clips, transforms, text, and cached-layer descriptors
-5. move platform execution in `sui-platform` to a real event pump that drives `sui-runtime` rather than calling a one-shot render path
-6. expand semantics generation into a tree synchronized with layout, focus, and future accessibility actions
-
-If these steps are followed, SUI will preserve the intent of the design document while staying compatible with the existing workspace structure.
+- Widget behavior: start in `sui-runtime::widget` and `sui-widgets`.
+- Event delivery or window lifecycle: start in `sui-platform` and `sui-runtime`.
+- Layout or invalidation behavior: start in `sui-runtime` and `sui-layout`.
+- Paint or scene changes: start in `sui-scene`, then follow through `sui-render-wgpu`.
+- Accessibility or locator behavior: start in semantics generation, then check `sui-testing` and `sui-platform::accessibility`.
+- Renderer performance: start in `sui-render-wgpu`, then validate with widget-book diagnostics and targeted tests.

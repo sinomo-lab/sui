@@ -2,11 +2,13 @@
 
 ## Companion Documents
 
-- [Core Architecture](./architecture.md)
-- [Crate Architecture and API Boundary Plan](./crate-architecture.md)
-- [Layout Rework Proposal](./layout-proposal.md)
-- [Tile-Based Retained Compositor Proposal](./tile-compositor-proposal.md)
-- [Testing Architecture](./testing.md)
+- [Documentation Index](./README.md)
+- [Architecture Overview](./architecture.md)
+- [Crate Guide](./crate-architecture.md)
+- [Rendering Architecture](./renderer-architecture.md)
+- [Testing Guide](./testing.md)
+
+The documents above describe the current codebase. This file remains the higher-level design target for the framework.
 
 ## Vision
 
