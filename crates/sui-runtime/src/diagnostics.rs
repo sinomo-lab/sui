@@ -75,6 +75,22 @@ pub struct RendererSubmissionDiagnostics {
     pub text_atlas_miss_count: usize,
     pub text_atlas_miss_time_us: u64,
     pub text_atlas_fallback_count: usize,
+    pub surface_acquire_time_us: u64,
+    pub resource_collection_time_us: u64,
+    pub bind_group_prepare_time_us: u64,
+    pub image_bind_group_time_us: u64,
+    pub analytic_path_bind_group_time_us: u64,
+    pub analytic_path_bind_group_miss_count: usize,
+    pub analytic_path_bind_group_upload_bytes: u64,
+    pub text_atlas_bind_group_time_us: u64,
+    pub text_atlas_upload_copy_time_us: u64,
+    pub text_atlas_upload_write_time_us: u64,
+    pub text_atlas_upload_bytes: u64,
+    pub batch_prepare_time_us: u64,
+    pub gpu_upload_time_us: u64,
+    pub pass_encode_time_us: u64,
+    pub queue_submit_time_us: u64,
+    pub surface_present_time_us: u64,
 }
 
 impl RendererSubmissionDiagnostics {
@@ -98,6 +114,22 @@ impl RendererSubmissionDiagnostics {
         text_atlas_miss_count: usize,
         text_atlas_miss_time_us: u64,
         text_atlas_fallback_count: usize,
+        surface_acquire_time_us: u64,
+        resource_collection_time_us: u64,
+        bind_group_prepare_time_us: u64,
+        image_bind_group_time_us: u64,
+        analytic_path_bind_group_time_us: u64,
+        analytic_path_bind_group_miss_count: usize,
+        analytic_path_bind_group_upload_bytes: u64,
+        text_atlas_bind_group_time_us: u64,
+        text_atlas_upload_copy_time_us: u64,
+        text_atlas_upload_write_time_us: u64,
+        text_atlas_upload_bytes: u64,
+        batch_prepare_time_us: u64,
+        gpu_upload_time_us: u64,
+        pass_encode_time_us: u64,
+        queue_submit_time_us: u64,
+        surface_present_time_us: u64,
     ) -> Self {
         Self {
             pass_count,
@@ -119,6 +151,22 @@ impl RendererSubmissionDiagnostics {
             text_atlas_miss_count,
             text_atlas_miss_time_us,
             text_atlas_fallback_count,
+            surface_acquire_time_us,
+            resource_collection_time_us,
+            bind_group_prepare_time_us,
+            image_bind_group_time_us,
+            analytic_path_bind_group_time_us,
+            analytic_path_bind_group_miss_count,
+            analytic_path_bind_group_upload_bytes,
+            text_atlas_bind_group_time_us,
+            text_atlas_upload_copy_time_us,
+            text_atlas_upload_write_time_us,
+            text_atlas_upload_bytes,
+            batch_prepare_time_us,
+            gpu_upload_time_us,
+            pass_encode_time_us,
+            queue_submit_time_us,
+            surface_present_time_us,
         }
     }
 }
@@ -689,6 +737,22 @@ mod tests {
                 5,
                 80,
                 1,
+                440,
+                210,
+                130,
+                15,
+                95,
+                4,
+                32768,
+                115,
+                85,
+                22,
+                16384,
+                920,
+                640,
+                180,
+                70,
+                560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -724,6 +788,22 @@ mod tests {
         assert_eq!(snapshot.renderer_submission.text_atlas_miss_count, 5);
         assert_eq!(snapshot.renderer_submission.text_atlas_miss_time_us, 80);
         assert_eq!(snapshot.renderer_submission.text_atlas_fallback_count, 1);
+        assert_eq!(snapshot.renderer_submission.surface_acquire_time_us, 440);
+        assert_eq!(snapshot.renderer_submission.resource_collection_time_us, 210);
+        assert_eq!(snapshot.renderer_submission.bind_group_prepare_time_us, 130);
+        assert_eq!(snapshot.renderer_submission.image_bind_group_time_us, 15);
+        assert_eq!(snapshot.renderer_submission.analytic_path_bind_group_time_us, 95);
+        assert_eq!(snapshot.renderer_submission.analytic_path_bind_group_miss_count, 4);
+        assert_eq!(snapshot.renderer_submission.analytic_path_bind_group_upload_bytes, 32768);
+        assert_eq!(snapshot.renderer_submission.text_atlas_bind_group_time_us, 115);
+        assert_eq!(snapshot.renderer_submission.text_atlas_upload_copy_time_us, 85);
+        assert_eq!(snapshot.renderer_submission.text_atlas_upload_write_time_us, 22);
+        assert_eq!(snapshot.renderer_submission.text_atlas_upload_bytes, 16384);
+        assert_eq!(snapshot.renderer_submission.batch_prepare_time_us, 920);
+        assert_eq!(snapshot.renderer_submission.gpu_upload_time_us, 640);
+        assert_eq!(snapshot.renderer_submission.pass_encode_time_us, 180);
+        assert_eq!(snapshot.renderer_submission.queue_submit_time_us, 70);
+        assert_eq!(snapshot.renderer_submission.surface_present_time_us, 560);
         assert_eq!(snapshot.total_time_ms, 2.5);
     }
 

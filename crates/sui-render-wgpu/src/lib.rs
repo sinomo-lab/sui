@@ -142,6 +142,22 @@ pub struct RendererFrameStats {
     pub text_atlas_miss_count: usize,
     pub text_atlas_miss_time_us: u64,
     pub text_atlas_fallback_count: usize,
+    pub surface_acquire_time_us: u64,
+    pub resource_collection_time_us: u64,
+    pub bind_group_prepare_time_us: u64,
+    pub image_bind_group_time_us: u64,
+    pub analytic_path_bind_group_time_us: u64,
+    pub analytic_path_bind_group_miss_count: usize,
+    pub analytic_path_bind_group_upload_bytes: u64,
+    pub text_atlas_bind_group_time_us: u64,
+    pub text_atlas_upload_copy_time_us: u64,
+    pub text_atlas_upload_write_time_us: u64,
+    pub text_atlas_upload_bytes: u64,
+    pub batch_prepare_time_us: u64,
+    pub gpu_upload_time_us: u64,
+    pub pass_encode_time_us: u64,
+    pub queue_submit_time_us: u64,
+    pub surface_present_time_us: u64,
 }
 
 impl RendererFrameStats {
@@ -184,6 +200,22 @@ impl RendererFrameStats {
             text_atlas_miss_count: 0,
             text_atlas_miss_time_us: 0,
             text_atlas_fallback_count: 0,
+            surface_acquire_time_us: 0,
+            resource_collection_time_us: 0,
+            bind_group_prepare_time_us: 0,
+            image_bind_group_time_us: 0,
+            analytic_path_bind_group_time_us: 0,
+            analytic_path_bind_group_miss_count: 0,
+            analytic_path_bind_group_upload_bytes: 0,
+            text_atlas_bind_group_time_us: 0,
+            text_atlas_upload_copy_time_us: 0,
+            text_atlas_upload_write_time_us: 0,
+            text_atlas_upload_bytes: 0,
+            batch_prepare_time_us: 0,
+            gpu_upload_time_us: 0,
+            pass_encode_time_us: 0,
+            queue_submit_time_us: 0,
+            surface_present_time_us: 0,
         }
     }
 
@@ -2831,6 +2863,7 @@ impl WgpuRenderer {
         self.ensure_shared(None)?;
         self.configure_surface_if_needed(frame.window_id, size)?;
 
+        let surface_acquire_started = Instant::now();
         let (frame_texture, suboptimal) = loop {
             let result = {
                 let surface = self.surfaces.get(&frame.window_id).ok_or_else(|| {
@@ -2861,6 +2894,7 @@ impl WgpuRenderer {
                 }
             }
         };
+        let surface_acquire_time_us = surface_acquire_started.elapsed().as_micros() as u64;
 
         let view = frame_texture
             .texture
@@ -2875,8 +2909,11 @@ impl WgpuRenderer {
             surface.config.format
         };
 
-        let frame_stats = self.encode_scene(frame, format, &view)?;
+        let mut frame_stats = self.encode_scene(frame, format, &view)?;
+        frame_stats.surface_acquire_time_us = surface_acquire_time_us;
+        let surface_present_started = Instant::now();
         frame_texture.present();
+        frame_stats.surface_present_time_us = surface_present_started.elapsed().as_micros() as u64;
 
         if suboptimal {
             self.configure_surface(frame.window_id, size)?;
@@ -3012,6 +3049,7 @@ impl WgpuRenderer {
         let mut analytic_paths = HashMap::new();
         let mut image_handles = HashSet::new();
         let mut uses_text_atlas = false;
+        let resource_collection_started = Instant::now();
         for fragment in &submission.fragments {
             match fragment {
                 RetainedFrameFragment::Transient(draw_ops) => {
@@ -3036,15 +3074,22 @@ impl WgpuRenderer {
                 }
             }
         }
+        let resource_collection_time_us = resource_collection_started.elapsed().as_micros() as u64;
 
+        let bind_group_prepare_started = Instant::now();
         let mut analytic_path_bind_groups = HashMap::new();
+        let mut analytic_path_bind_group_time_us = 0u64;
+        let mut analytic_path_bind_group_miss_count = 0usize;
+        let mut analytic_path_bind_group_upload_bytes = 0u64;
         for (signature, path) in analytic_paths {
-            analytic_path_bind_groups.insert(
-                signature,
-                self.ensure_analytic_path_bind_group(signature, &path)?,
-            );
+            let (bind_group, stats) = self.ensure_analytic_path_bind_group(signature, &path)?;
+            analytic_path_bind_group_time_us += stats.total_time_us;
+            analytic_path_bind_group_miss_count += usize::from(stats.was_miss);
+            analytic_path_bind_group_upload_bytes += stats.upload_bytes;
+            analytic_path_bind_groups.insert(signature, bind_group);
         }
 
+        let image_bind_group_started = Instant::now();
         let mut image_bind_groups = HashMap::new();
         for handle in image_handles {
             let image = frame.image_registry.get(handle).ok_or_else(|| {
@@ -3052,17 +3097,27 @@ impl WgpuRenderer {
             })?;
             image_bind_groups.insert(handle, self.ensure_image_bind_group(handle, image)?);
         }
+        let image_bind_group_time_us = image_bind_group_started.elapsed().as_micros() as u64;
+        let mut text_atlas_bind_group_time_us = 0u64;
+        let mut text_atlas_upload_copy_time_us = 0u64;
+        let mut text_atlas_upload_write_time_us = 0u64;
+        let mut text_atlas_upload_bytes = 0u64;
         let text_atlas_bind_group = if uses_text_atlas {
             let mut text_engine = self
                 .text_engine
                 .take()
                 .expect("text engine initialized before text atlas upload");
-            let bind_group = self.ensure_text_atlas_bind_group(&mut text_engine)?;
+            let (bind_group, stats) = self.ensure_text_atlas_bind_group(&mut text_engine)?;
             self.text_engine = Some(text_engine);
+            text_atlas_bind_group_time_us = stats.total_time_us;
+            text_atlas_upload_copy_time_us = stats.upload_copy_time_us;
+            text_atlas_upload_write_time_us = stats.upload_write_time_us;
+            text_atlas_upload_bytes = stats.upload_bytes;
             Some(bind_group)
         } else {
             None
         };
+        let bind_group_prepare_time_us = bind_group_prepare_started.elapsed().as_micros() as u64;
 
         let mut encoder = {
             let shared = self
@@ -3079,12 +3134,16 @@ impl WgpuRenderer {
         let mut draw_count = 0usize;
         let mut uploaded_vertex_bytes = 0u64;
         let mut needs_stencil = false;
+        let mut batch_prepare_time_us = 0u64;
+        let mut gpu_upload_time_us = 0u64;
 
         for fragment in submission.fragments {
             match fragment {
                 RetainedFrameFragment::Transient(draw_ops) => {
+                    let batch_prepare_started = Instant::now();
                     let prepared =
                         prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
+                    batch_prepare_time_us += batch_prepare_started.elapsed().as_micros() as u64;
                     let (_, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
                     draw_count += fragment_draw_count;
                     uploaded_vertex_bytes += (prepared.scene_vertices.len() as u64
@@ -3103,6 +3162,7 @@ impl WgpuRenderer {
                         .passes
                         .iter()
                         .any(|pass| !pass.clip_paths.is_empty());
+                    let gpu_upload_started = Instant::now();
                     prepared_fragments.push(PreparedFragmentSubmission {
                         passes: prepared.passes,
                         scene_buffer: create_static_vertex_buffer(
@@ -3119,6 +3179,7 @@ impl WgpuRenderer {
                         ),
                         translation: Vector::ZERO,
                     });
+                    gpu_upload_time_us += gpu_upload_started.elapsed().as_micros() as u64;
                 }
                 RetainedFrameFragment::Tile(address) => {
                     let (passes, scene_buffer, clip_buffer, fragment_uploaded_bytes, translation) = {
@@ -3138,13 +3199,17 @@ impl WgpuRenderer {
                                 address.tile_y
                             ))
                         })?;
+                        let gpu_upload_started = Instant::now();
                         let uploaded = entry.ensure_gpu_geometry(&shared.device, &shared.queue);
+                        gpu_upload_time_us += gpu_upload_started.elapsed().as_micros() as u64;
+                        let batch_prepare_started = Instant::now();
                         let passes = prepare_cached_passes(
                             &entry.cached_passes,
                             frame.viewport,
                             framebuffer_size,
                             entry.translation,
                         );
+                        batch_prepare_time_us += batch_prepare_started.elapsed().as_micros() as u64;
                         let gpu_geometry = entry
                             .gpu_geometry
                             .as_ref()
@@ -3181,11 +3246,16 @@ impl WgpuRenderer {
                 .shared
                 .as_ref()
                 .expect("renderer shared state initialized");
+            let gpu_upload_started = Instant::now();
             self.frame_resources
                 .ensure_stencil(&shared.device, framebuffer_size);
+            gpu_upload_time_us += gpu_upload_started.elapsed().as_micros() as u64;
         }
 
+        let batch_prepare_started = Instant::now();
         let encodable_passes = flatten_fragment_passes(&prepared_fragments);
+        batch_prepare_time_us += batch_prepare_started.elapsed().as_micros() as u64;
+        let pass_encode_started = Instant::now();
         let pass_count = if encodable_passes.is_empty() {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SUI scene clear pass"),
@@ -3232,19 +3302,36 @@ impl WgpuRenderer {
                 &analytic_path_bind_groups,
             )?
         };
+        let pass_encode_time_us = pass_encode_started.elapsed().as_micros() as u64;
 
+        let queue_submit_started = Instant::now();
         self.shared
             .as_ref()
             .expect("renderer shared state initialized")
             .queue
             .submit([encoder.finish()]);
-        let frame_stats = RendererFrameStats::from_prepared_counts(
+        let queue_submit_time_us = queue_submit_started.elapsed().as_micros() as u64;
+        let mut frame_stats = RendererFrameStats::from_prepared_counts(
             pass_count.max(1),
             draw_count,
             uploaded_vertex_bytes,
         )
         .with_text_stats(text_frame_stats)
         .with_compositor_stats(compositor_stats);
+        frame_stats.resource_collection_time_us = resource_collection_time_us;
+        frame_stats.bind_group_prepare_time_us = bind_group_prepare_time_us;
+        frame_stats.image_bind_group_time_us = image_bind_group_time_us;
+        frame_stats.analytic_path_bind_group_time_us = analytic_path_bind_group_time_us;
+        frame_stats.analytic_path_bind_group_miss_count = analytic_path_bind_group_miss_count;
+        frame_stats.analytic_path_bind_group_upload_bytes = analytic_path_bind_group_upload_bytes;
+        frame_stats.text_atlas_bind_group_time_us = text_atlas_bind_group_time_us;
+        frame_stats.text_atlas_upload_copy_time_us = text_atlas_upload_copy_time_us;
+        frame_stats.text_atlas_upload_write_time_us = text_atlas_upload_write_time_us;
+        frame_stats.text_atlas_upload_bytes = text_atlas_upload_bytes;
+        frame_stats.batch_prepare_time_us = batch_prepare_time_us;
+        frame_stats.gpu_upload_time_us = gpu_upload_time_us;
+        frame_stats.pass_encode_time_us = pass_encode_time_us;
+        frame_stats.queue_submit_time_us = queue_submit_time_us;
         Ok(frame_stats)
     }
 
@@ -3328,12 +3415,19 @@ impl WgpuRenderer {
     fn ensure_text_atlas_bind_group(
         &mut self,
         text_engine: &mut TextEngine,
-    ) -> Result<wgpu::BindGroup> {
+    ) -> Result<(wgpu::BindGroup, TextAtlasBindGroupStats)> {
+        let total_started = Instant::now();
         let shared = self
             .shared
             .as_ref()
             .expect("renderer shared state initialized");
+        let upload_copy_started = Instant::now();
         let upload = text_engine.take_atlas_upload();
+        let mut stats = TextAtlasBindGroupStats {
+            upload_copy_time_us: upload_copy_started.elapsed().as_micros() as u64,
+            upload_bytes: upload.as_ref().map_or(0, |upload| upload.pixels.len() as u64),
+            ..TextAtlasBindGroupStats::default()
+        };
 
         if let Some(upload) = upload {
             let needs_recreate = self
@@ -3382,6 +3476,7 @@ impl WgpuRenderer {
                 .text_atlas_texture
                 .as_ref()
                 .expect("text atlas texture cached after creation");
+            let upload_write_started = Instant::now();
             shared.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &cached.texture,
@@ -3405,24 +3500,29 @@ impl WgpuRenderer {
                     depth_or_array_layers: 1,
                 },
             );
+            stats.upload_write_time_us = upload_write_started.elapsed().as_micros() as u64;
         }
 
-        self.text_atlas_texture
+        let bind_group = self
+            .text_atlas_texture
             .as_ref()
             .map(|cached| cached.bind_group.clone())
-            .ok_or_else(|| Error::new("text atlas bind group requested before any atlas upload"))
+            .ok_or_else(|| Error::new("text atlas bind group requested before any atlas upload"))?;
+        stats.total_time_us = total_started.elapsed().as_micros() as u64;
+        Ok((bind_group, stats))
     }
 
     fn ensure_analytic_path_bind_group(
         &mut self,
         signature: u64,
         path: &AnalyticPathCpuData,
-    ) -> Result<wgpu::BindGroup> {
+    ) -> Result<(wgpu::BindGroup, AnalyticPathBindGroupStats)> {
         if let Some(cached) = self.analytic_path_cache.get_mut(&signature) {
             cached.last_used_frame = self.frames_rendered;
-            return Ok(cached.bind_group.clone());
+            return Ok((cached.bind_group.clone(), AnalyticPathBindGroupStats::default()));
         }
 
+        let total_started = Instant::now();
         let shared = self
             .shared
             .as_ref()
@@ -3488,7 +3588,14 @@ impl WgpuRenderer {
             },
         );
 
-        Ok(bind_group)
+        Ok((
+            bind_group,
+            AnalyticPathBindGroupStats {
+                total_time_us: total_started.elapsed().as_micros() as u64,
+                upload_bytes: path.byte_size() as u64,
+                was_miss: true,
+            },
+        ))
     }
 
     fn create_surface_state(
@@ -3801,6 +3908,21 @@ struct CachedTextAtlasTexture {
     _view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
     size: (u32, u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct TextAtlasBindGroupStats {
+    total_time_us: u64,
+    upload_copy_time_us: u64,
+    upload_write_time_us: u64,
+    upload_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct AnalyticPathBindGroupStats {
+    total_time_us: u64,
+    upload_bytes: u64,
+    was_miss: bool,
 }
 
 struct CachedAnalyticPathGpu {

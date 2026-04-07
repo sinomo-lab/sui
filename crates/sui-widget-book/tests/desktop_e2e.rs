@@ -1102,6 +1102,22 @@ fn publish_frame_performance(
             renderer_stats.text_atlas_miss_count,
             renderer_stats.text_atlas_miss_time_us,
             renderer_stats.text_atlas_fallback_count,
+            renderer_stats.surface_acquire_time_us,
+            renderer_stats.resource_collection_time_us,
+            renderer_stats.bind_group_prepare_time_us,
+            renderer_stats.image_bind_group_time_us,
+            renderer_stats.analytic_path_bind_group_time_us,
+            renderer_stats.analytic_path_bind_group_miss_count,
+            renderer_stats.analytic_path_bind_group_upload_bytes,
+            renderer_stats.text_atlas_bind_group_time_us,
+            renderer_stats.text_atlas_upload_copy_time_us,
+            renderer_stats.text_atlas_upload_write_time_us,
+            renderer_stats.text_atlas_upload_bytes,
+            renderer_stats.batch_prepare_time_us,
+            renderer_stats.gpu_upload_time_us,
+            renderer_stats.pass_encode_time_us,
+            renderer_stats.queue_submit_time_us,
+            renderer_stats.surface_present_time_us,
         ),
         text_caches,
         text_cache_deltas,
@@ -1206,6 +1222,22 @@ struct ScrollBenchmarkFrameSample {
     text_atlas_miss_count: usize,
     text_atlas_miss_time_us: u64,
     text_atlas_fallback_count: usize,
+    surface_acquire_time_us: u64,
+    resource_collection_time_us: u64,
+    bind_group_prepare_time_us: u64,
+    image_bind_group_time_us: u64,
+    analytic_path_bind_group_time_us: u64,
+    analytic_path_bind_group_miss_count: usize,
+    analytic_path_bind_group_upload_bytes: u64,
+    text_atlas_bind_group_time_us: u64,
+    text_atlas_upload_copy_time_us: u64,
+    text_atlas_upload_write_time_us: u64,
+    text_atlas_upload_bytes: u64,
+    batch_prepare_time_us: u64,
+    gpu_upload_time_us: u64,
+    pass_encode_time_us: u64,
+    queue_submit_time_us: u64,
+    surface_present_time_us: u64,
     dirty_region_count: usize,
     dirty_coverage: f32,
 }
@@ -1239,6 +1271,34 @@ impl ScrollBenchmarkFrameSample {
             text_atlas_fallback_count: snapshot
                 .renderer_submission
                 .text_atlas_fallback_count,
+            surface_acquire_time_us: snapshot.renderer_submission.surface_acquire_time_us,
+            resource_collection_time_us: snapshot.renderer_submission.resource_collection_time_us,
+            bind_group_prepare_time_us: snapshot.renderer_submission.bind_group_prepare_time_us,
+            image_bind_group_time_us: snapshot.renderer_submission.image_bind_group_time_us,
+            analytic_path_bind_group_time_us: snapshot
+                .renderer_submission
+                .analytic_path_bind_group_time_us,
+            analytic_path_bind_group_miss_count: snapshot
+                .renderer_submission
+                .analytic_path_bind_group_miss_count,
+            analytic_path_bind_group_upload_bytes: snapshot
+                .renderer_submission
+                .analytic_path_bind_group_upload_bytes,
+            text_atlas_bind_group_time_us: snapshot
+                .renderer_submission
+                .text_atlas_bind_group_time_us,
+            text_atlas_upload_copy_time_us: snapshot
+                .renderer_submission
+                .text_atlas_upload_copy_time_us,
+            text_atlas_upload_write_time_us: snapshot
+                .renderer_submission
+                .text_atlas_upload_write_time_us,
+            text_atlas_upload_bytes: snapshot.renderer_submission.text_atlas_upload_bytes,
+            batch_prepare_time_us: snapshot.renderer_submission.batch_prepare_time_us,
+            gpu_upload_time_us: snapshot.renderer_submission.gpu_upload_time_us,
+            pass_encode_time_us: snapshot.renderer_submission.pass_encode_time_us,
+            queue_submit_time_us: snapshot.renderer_submission.queue_submit_time_us,
+            surface_present_time_us: snapshot.renderer_submission.surface_present_time_us,
             dirty_region_count: snapshot.scene.dirty_region_count,
             dirty_coverage: snapshot.scene.dirty_coverage,
         }
@@ -1466,6 +1526,86 @@ fn run_widget_book_scroll_benchmark(
         .map(|sample| sample.text_atlas_fallback_count as f64)
         .sum::<f64>()
         / valid_count as f64;
+    let avg_surface_acquire_ms = frame_samples
+        .iter()
+        .map(|sample| sample.surface_acquire_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_resource_collection_ms = frame_samples
+        .iter()
+        .map(|sample| sample.resource_collection_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_bind_group_prepare_ms = frame_samples
+        .iter()
+        .map(|sample| sample.bind_group_prepare_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_image_bind_group_ms = frame_samples
+        .iter()
+        .map(|sample| sample.image_bind_group_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_analytic_path_bind_group_ms = frame_samples
+        .iter()
+        .map(|sample| sample.analytic_path_bind_group_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_analytic_path_bind_group_misses = frame_samples
+        .iter()
+        .map(|sample| sample.analytic_path_bind_group_miss_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_analytic_path_bind_group_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.analytic_path_bind_group_upload_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_bind_group_ms = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_bind_group_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_upload_copy_ms = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_upload_copy_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_upload_write_ms = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_upload_write_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_upload_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_upload_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_batch_prepare_ms = frame_samples
+        .iter()
+        .map(|sample| sample.batch_prepare_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_gpu_upload_ms = frame_samples
+        .iter()
+        .map(|sample| sample.gpu_upload_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_pass_encode_ms = frame_samples
+        .iter()
+        .map(|sample| sample.pass_encode_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_queue_submit_ms = frame_samples
+        .iter()
+        .map(|sample| sample.queue_submit_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_surface_present_ms = frame_samples
+        .iter()
+        .map(|sample| sample.surface_present_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
     let avg_dirty_regions = frame_samples
         .iter()
         .map(|sample| sample.dirty_region_count as f64)
@@ -1513,6 +1653,26 @@ fn run_widget_book_scroll_benchmark(
     println!(
         "avg atlas miss:   {avg_text_atlas_miss_ms:.3} ms ({avg_text_atlas_miss_count:.2} misses, {avg_text_atlas_fallback_count:.2} fallback)"
     );
+    println!(
+        "avg surface:      acq {avg_surface_acquire_ms:.3} ms  pres {avg_surface_present_ms:.3} ms"
+    );
+    println!(
+        "avg prep:         scan {avg_resource_collection_ms:.3} ms  bind {avg_bind_group_prepare_ms:.3} ms  batch {avg_batch_prepare_ms:.3} ms"
+    );
+    println!(
+        "avg atlas upload: bind {avg_text_atlas_bind_group_ms:.3} ms  copy {avg_text_atlas_upload_copy_ms:.3} ms  write {avg_text_atlas_upload_write_ms:.3} ms  bytes {:.0}",
+        avg_text_atlas_upload_bytes,
+    );
+    println!(
+        "avg image bind:   {avg_image_bind_group_ms:.3} ms"
+    );
+    println!(
+        "avg analytic bg:  {avg_analytic_path_bind_group_ms:.3} ms  misses {avg_analytic_path_bind_group_misses:.2}  bytes {:.0}",
+        avg_analytic_path_bind_group_bytes,
+    );
+    println!(
+        "avg submit path:  upload {avg_gpu_upload_ms:.3} ms  encode {avg_pass_encode_ms:.3} ms  submit {avg_queue_submit_ms:.3} ms"
+    );
     println!("avg dirty regions:{avg_dirty_regions:.2}");
     println!("avg dirty cover:  {avg_dirty_coverage:.1}%");
     println!("max vertex bytes: {max_uploaded_vertex_bytes}");
@@ -1551,6 +1711,31 @@ fn run_widget_book_scroll_benchmark(
             sample.text_atlas_miss_time_us as f64 / 1000.0,
             sample.text_atlas_fallback_count,
         );
+        println!(
+            "             surface {:>7.3} / {:>7.3} ms  prep {:>7.3} / {:>7.3} / {:>7.3} ms  submit {:>7.3} / {:>7.3} / {:>7.3} ms",
+            sample.surface_acquire_time_us as f64 / 1000.0,
+            sample.surface_present_time_us as f64 / 1000.0,
+            sample.resource_collection_time_us as f64 / 1000.0,
+            sample.bind_group_prepare_time_us as f64 / 1000.0,
+            sample.batch_prepare_time_us as f64 / 1000.0,
+            sample.gpu_upload_time_us as f64 / 1000.0,
+            sample.pass_encode_time_us as f64 / 1000.0,
+            sample.queue_submit_time_us as f64 / 1000.0,
+        );
+        println!(
+            "             atlas-bind {:>7.3} ms  copy {:>7.3} ms  write {:>7.3} ms  bytes {:>8}  image-bind {:>7.3} ms",
+            sample.text_atlas_bind_group_time_us as f64 / 1000.0,
+            sample.text_atlas_upload_copy_time_us as f64 / 1000.0,
+            sample.text_atlas_upload_write_time_us as f64 / 1000.0,
+            sample.text_atlas_upload_bytes,
+            sample.image_bind_group_time_us as f64 / 1000.0,
+        );
+        println!(
+            "             analytic {:>7.3} ms  misses {:>3}  bytes {:>8}",
+            sample.analytic_path_bind_group_time_us as f64 / 1000.0,
+            sample.analytic_path_bind_group_miss_count,
+            sample.analytic_path_bind_group_upload_bytes,
+        );
     }
 
     if let Some(snapshot) = harness.snapshot(window_id)?.performance {
@@ -1581,6 +1766,40 @@ fn run_widget_book_scroll_benchmark(
             snapshot.renderer_submission.text_atlas_miss_count,
             snapshot.renderer_submission.text_atlas_miss_time_us as f64 / 1000.0,
             snapshot.renderer_submission.text_atlas_fallback_count,
+        );
+        println!(
+            "  surface:         {:.3} ms acquire / {:.3} ms present",
+            snapshot.renderer_submission.surface_acquire_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.surface_present_time_us as f64 / 1000.0,
+        );
+        println!(
+            "  prep:            {:.3} ms scan / {:.3} ms bind / {:.3} ms batch",
+            snapshot.renderer_submission.resource_collection_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.bind_group_prepare_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.batch_prepare_time_us as f64 / 1000.0,
+        );
+        println!(
+            "  atlas upload:    {:.3} ms bind / {:.3} ms copy / {:.3} ms write / {} bytes",
+            snapshot.renderer_submission.text_atlas_bind_group_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.text_atlas_upload_copy_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.text_atlas_upload_write_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.text_atlas_upload_bytes,
+        );
+        println!(
+            "  image bind:      {:.3} ms",
+            snapshot.renderer_submission.image_bind_group_time_us as f64 / 1000.0,
+        );
+        println!(
+            "  analytic bind:   {:.3} ms / {} misses / {} bytes",
+            snapshot.renderer_submission.analytic_path_bind_group_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.analytic_path_bind_group_miss_count,
+            snapshot.renderer_submission.analytic_path_bind_group_upload_bytes,
+        );
+        println!(
+            "  submit path:     {:.3} ms upload / {:.3} ms encode / {:.3} ms submit",
+            snapshot.renderer_submission.gpu_upload_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.pass_encode_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.queue_submit_time_us as f64 / 1000.0,
         );
         println!(
             "  path cache:      {} entries, {} hits, {} misses",
