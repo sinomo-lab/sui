@@ -1096,6 +1096,12 @@ fn publish_frame_performance(
             renderer_stats.tile_memory_bytes,
             renderer_stats.tile_generation_time_us,
             renderer_stats.composition_time_us,
+            renderer_stats.retained_scene_traversal_time_us,
+            renderer_stats.retained_packet_build_time_us,
+            renderer_stats.retained_packet_build_count,
+            renderer_stats.text_atlas_miss_count,
+            renderer_stats.text_atlas_miss_time_us,
+            renderer_stats.text_atlas_fallback_count,
         ),
         text_caches,
         text_cache_deltas,
@@ -1194,6 +1200,12 @@ struct ScrollBenchmarkFrameSample {
     tile_memory_bytes: u64,
     tile_generation_time_us: u64,
     composition_time_us: u64,
+    retained_scene_traversal_time_us: u64,
+    retained_packet_build_time_us: u64,
+    retained_packet_build_count: usize,
+    text_atlas_miss_count: usize,
+    text_atlas_miss_time_us: u64,
+    text_atlas_fallback_count: usize,
     dirty_region_count: usize,
     dirty_coverage: f32,
 }
@@ -1213,6 +1225,20 @@ impl ScrollBenchmarkFrameSample {
             tile_memory_bytes: snapshot.renderer_submission.tile_memory_bytes,
             tile_generation_time_us: snapshot.renderer_submission.tile_generation_time_us,
             composition_time_us: snapshot.renderer_submission.composition_time_us,
+            retained_scene_traversal_time_us: snapshot
+                .renderer_submission
+                .retained_scene_traversal_time_us,
+            retained_packet_build_time_us: snapshot
+                .renderer_submission
+                .retained_packet_build_time_us,
+            retained_packet_build_count: snapshot
+                .renderer_submission
+                .retained_packet_build_count,
+            text_atlas_miss_count: snapshot.renderer_submission.text_atlas_miss_count,
+            text_atlas_miss_time_us: snapshot.renderer_submission.text_atlas_miss_time_us,
+            text_atlas_fallback_count: snapshot
+                .renderer_submission
+                .text_atlas_fallback_count,
             dirty_region_count: snapshot.scene.dirty_region_count,
             dirty_coverage: snapshot.scene.dirty_coverage,
         }
@@ -1410,6 +1436,36 @@ fn run_widget_book_scroll_benchmark(
         .map(|sample| sample.tile_memory_bytes as f64)
         .sum::<f64>()
         / valid_count as f64;
+    let avg_retained_scene_traversal_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_scene_traversal_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_build_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_build_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_build_count = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_build_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_miss_ms = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_miss_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_miss_count = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_miss_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_fallback_count = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_fallback_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
     let avg_dirty_regions = frame_samples
         .iter()
         .map(|sample| sample.dirty_region_count as f64)
@@ -1448,6 +1504,15 @@ fn run_widget_book_scroll_benchmark(
     println!("avg vertex bytes: {:.0}", avg_uploaded_vertex_bytes);
     println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
     println!("avg tile memory:  {:.0}", avg_tile_memory_bytes);
+    println!(
+        "avg traverse:     {avg_retained_scene_traversal_ms:.3} ms"
+    );
+    println!(
+        "avg packet build: {avg_retained_packet_build_ms:.3} ms ({avg_retained_packet_build_count:.2} packets)"
+    );
+    println!(
+        "avg atlas miss:   {avg_text_atlas_miss_ms:.3} ms ({avg_text_atlas_miss_count:.2} misses, {avg_text_atlas_fallback_count:.2} fallback)"
+    );
     println!("avg dirty regions:{avg_dirty_regions:.2}");
     println!("avg dirty cover:  {avg_dirty_coverage:.1}%");
     println!("max vertex bytes: {max_uploaded_vertex_bytes}");
@@ -1477,6 +1542,15 @@ fn run_widget_book_scroll_benchmark(
             sample.tile_generation_time_us as f64 / 1000.0,
             sample.composition_time_us as f64 / 1000.0,
         );
+        println!(
+            "             traverse {:>7.3} ms  packets {:>3} / {:>7.3} ms  atlas {:>3} / {:>7.3} ms  fallback {:>2}",
+            sample.retained_scene_traversal_time_us as f64 / 1000.0,
+            sample.retained_packet_build_count,
+            sample.retained_packet_build_time_us as f64 / 1000.0,
+            sample.text_atlas_miss_count,
+            sample.text_atlas_miss_time_us as f64 / 1000.0,
+            sample.text_atlas_fallback_count,
+        );
     }
 
     if let Some(snapshot) = harness.snapshot(window_id)?.performance {
@@ -1493,6 +1567,21 @@ fn run_widget_book_scroll_benchmark(
         println!("  glyph instances: {}", snapshot.renderer_submission.text_glyph_instance_count);
         println!("  vertex bytes:    {}", snapshot.renderer_submission.uploaded_vertex_bytes);
         println!("  text bytes:      {}", snapshot.renderer_submission.text_vertex_bytes);
+        println!(
+            "  traverse:        {:.3} ms",
+            snapshot.renderer_submission.retained_scene_traversal_time_us as f64 / 1000.0,
+        );
+        println!(
+            "  packet build:    {} packets / {:.3} ms",
+            snapshot.renderer_submission.retained_packet_build_count,
+            snapshot.renderer_submission.retained_packet_build_time_us as f64 / 1000.0,
+        );
+        println!(
+            "  atlas miss:      {} misses / {:.3} ms / {} fallback",
+            snapshot.renderer_submission.text_atlas_miss_count,
+            snapshot.renderer_submission.text_atlas_miss_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.text_atlas_fallback_count,
+        );
         println!(
             "  path cache:      {} entries, {} hits, {} misses",
             snapshot.text_caches.renderer_path.entries,

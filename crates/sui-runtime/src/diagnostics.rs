@@ -69,6 +69,12 @@ pub struct RendererSubmissionDiagnostics {
     pub tile_memory_bytes: u64,
     pub tile_generation_time_us: u64,
     pub composition_time_us: u64,
+    pub retained_scene_traversal_time_us: u64,
+    pub retained_packet_build_time_us: u64,
+    pub retained_packet_build_count: usize,
+    pub text_atlas_miss_count: usize,
+    pub text_atlas_miss_time_us: u64,
+    pub text_atlas_fallback_count: usize,
 }
 
 impl RendererSubmissionDiagnostics {
@@ -86,6 +92,12 @@ impl RendererSubmissionDiagnostics {
         tile_memory_bytes: u64,
         tile_generation_time_us: u64,
         composition_time_us: u64,
+        retained_scene_traversal_time_us: u64,
+        retained_packet_build_time_us: u64,
+        retained_packet_build_count: usize,
+        text_atlas_miss_count: usize,
+        text_atlas_miss_time_us: u64,
+        text_atlas_fallback_count: usize,
     ) -> Self {
         Self {
             pass_count,
@@ -101,6 +113,12 @@ impl RendererSubmissionDiagnostics {
             tile_memory_bytes,
             tile_generation_time_us,
             composition_time_us,
+            retained_scene_traversal_time_us,
+            retained_packet_build_time_us,
+            retained_packet_build_count,
+            text_atlas_miss_count,
+            text_atlas_miss_time_us,
+            text_atlas_fallback_count,
         }
     }
 }
@@ -665,6 +683,12 @@ mod tests {
                 16384,
                 230,
                 90,
+                310,
+                120,
+                2,
+                5,
+                80,
+                1,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -694,6 +718,12 @@ mod tests {
         assert_eq!(snapshot.renderer_submission.reused_tile_count, 10);
         assert_eq!(snapshot.renderer_submission.regenerated_tile_count, 2);
         assert_eq!(snapshot.renderer_submission.tile_memory_bytes, 16384);
+        assert_eq!(snapshot.renderer_submission.retained_scene_traversal_time_us, 310);
+        assert_eq!(snapshot.renderer_submission.retained_packet_build_time_us, 120);
+        assert_eq!(snapshot.renderer_submission.retained_packet_build_count, 2);
+        assert_eq!(snapshot.renderer_submission.text_atlas_miss_count, 5);
+        assert_eq!(snapshot.renderer_submission.text_atlas_miss_time_us, 80);
+        assert_eq!(snapshot.renderer_submission.text_atlas_fallback_count, 1);
         assert_eq!(snapshot.total_time_ms, 2.5);
     }
 

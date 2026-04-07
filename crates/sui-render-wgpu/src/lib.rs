@@ -112,6 +112,9 @@ pub struct RendererTextCacheSnapshot {
 struct TextFrameStats {
     glyph_instances: usize,
     glyph_vertices: usize,
+    atlas_miss_count: usize,
+    atlas_miss_time_us: u64,
+    atlas_fallback_count: usize,
 }
 
 const TEXT_ATLAS_WIDTH: usize = 2048;
@@ -133,6 +136,12 @@ pub struct RendererFrameStats {
     pub tile_memory_bytes: u64,
     pub tile_generation_time_us: u64,
     pub composition_time_us: u64,
+    pub retained_scene_traversal_time_us: u64,
+    pub retained_packet_build_time_us: u64,
+    pub retained_packet_build_count: usize,
+    pub text_atlas_miss_count: usize,
+    pub text_atlas_miss_time_us: u64,
+    pub text_atlas_fallback_count: usize,
 }
 
 impl RendererFrameStats {
@@ -169,6 +178,12 @@ impl RendererFrameStats {
             tile_memory_bytes: 0,
             tile_generation_time_us: 0,
             composition_time_us: 0,
+            retained_scene_traversal_time_us: 0,
+            retained_packet_build_time_us: 0,
+            retained_packet_build_count: 0,
+            text_atlas_miss_count: 0,
+            text_atlas_miss_time_us: 0,
+            text_atlas_fallback_count: 0,
         }
     }
 
@@ -181,12 +196,20 @@ impl RendererFrameStats {
         self.tile_memory_bytes = stats.tile_memory_bytes as u64;
         self.tile_generation_time_us = (stats.tile_generation_time_ms * 1000.0).round() as u64;
         self.composition_time_us = (stats.composition_time_ms * 1000.0).round() as u64;
+        self.retained_scene_traversal_time_us =
+            (stats.scene_traversal_time_ms * 1000.0).round() as u64;
+        self.retained_packet_build_time_us =
+            (stats.packet_build_time_ms * 1000.0).round() as u64;
+        self.retained_packet_build_count = stats.packet_build_count;
         self
     }
 
-    fn with_text_stats(mut self, glyph_instances: usize, text_vertex_bytes: u64) -> Self {
-        self.text_glyph_instance_count = glyph_instances;
-        self.text_vertex_bytes = text_vertex_bytes;
+    fn with_text_stats(mut self, stats: TextFrameStats) -> Self {
+        self.text_glyph_instance_count = stats.glyph_instances;
+        self.text_vertex_bytes = stats.glyph_vertices as u64 * VERTEX_SIZE;
+        self.text_atlas_miss_count = stats.atlas_miss_count;
+        self.text_atlas_miss_time_us = stats.atlas_miss_time_us;
+        self.text_atlas_fallback_count = stats.atlas_fallback_count;
         self
     }
 }
@@ -406,6 +429,9 @@ struct RetainedCompositorFrameStats {
     tile_memory_bytes: usize,
     tile_generation_time_ms: f64,
     composition_time_ms: f64,
+    scene_traversal_time_ms: f64,
+    packet_build_count: usize,
+    packet_build_time_ms: f64,
 }
 
 #[derive(Debug)]
@@ -710,8 +736,11 @@ impl RetainedCompositorState {
         let viewport_changed = self.viewport != frame.viewport;
         let feather_changed = self.feather_width_bits != feather_width.to_bits();
         self.frame_index = self.frame_index.wrapping_add(1);
-        let snapshot = self.build_snapshot(&frame.scene)?;
         let mut frame_stats = RetainedCompositorFrameStats::default();
+        let scene_traversal_started = Instant::now();
+        let snapshot = self.build_snapshot(&frame.scene)?;
+        frame_stats.scene_traversal_time_ms =
+            scene_traversal_started.elapsed().as_secs_f64() * 1000.0;
         let tile_generation_started = Instant::now();
         self.apply_snapshot(
             frame,
@@ -1111,6 +1140,7 @@ impl RetainedCompositorState {
                 Vector::ZERO,
                 text_engine,
                 feather_width,
+                frame_stats,
             )?;
         }
 
@@ -1220,6 +1250,7 @@ impl RetainedCompositorState {
                         normalization_origin,
                         text_engine,
                         feather_width,
+                        frame_stats,
                     )?;
                 }
             }
@@ -1250,6 +1281,7 @@ impl RetainedCompositorState {
         normalization_origin: Vector,
         text_engine: &mut TextEngine,
         feather_width: f32,
+        stats: &mut RetainedCompositorFrameStats,
     ) -> Result<()> {
         let snapshot = normalize_packet_snapshot(snapshot, coordinate_space, normalization_origin);
         let signature = packet_signature(
@@ -1268,6 +1300,7 @@ impl RetainedCompositorState {
             });
 
         if should_rebuild {
+            let packet_build_started = Instant::now();
             let draw_ops = build_direct_packet(
                 frame,
                 &snapshot.scene,
@@ -1276,6 +1309,8 @@ impl RetainedCompositorState {
                 &mut self.path_cache,
                 feather_width,
             )?;
+            stats.packet_build_count += 1;
+            stats.packet_build_time_ms += packet_build_started.elapsed().as_secs_f64() * 1000.0;
             self.packets.insert(
                 snapshot.id,
                 RetainedDirectPacket {
@@ -3208,10 +3243,7 @@ impl WgpuRenderer {
             draw_count,
             uploaded_vertex_bytes,
         )
-        .with_text_stats(
-            text_frame_stats.glyph_instances,
-            text_frame_stats.glyph_vertices as u64 * VERTEX_SIZE,
-        )
+        .with_text_stats(text_frame_stats)
         .with_compositor_stats(compositor_stats);
         Ok(frame_stats)
     }
@@ -5635,6 +5667,7 @@ impl TextEngine {
         }
 
         self.glyph_cache_misses += 1;
+        let atlas_miss_started = Instant::now();
         let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
         let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
         let primitive = if let Some(atlas) = build_cached_glyph_atlas(
@@ -5645,8 +5678,12 @@ impl TextEngine {
             raster_scale_factor.max(1.0),
             bucketed_logical_scale,
         )? {
+            self.frame_stats.atlas_miss_count += 1;
+            self.frame_stats.atlas_miss_time_us += atlas_miss_started.elapsed().as_micros() as u64;
             CachedGlyphPrimitive::Atlas(atlas)
         } else {
+            self.frame_stats.atlas_miss_count += 1;
+            self.frame_stats.atlas_miss_time_us += atlas_miss_started.elapsed().as_micros() as u64;
             let Some(mesh) = build_cached_glyph_mesh(
                 face,
                 glyph_id,
@@ -5656,6 +5693,7 @@ impl TextEngine {
             else {
                 return Ok(None);
             };
+            self.frame_stats.atlas_fallback_count += 1;
             CachedGlyphPrimitive::Mesh(mesh)
         };
 
@@ -7857,6 +7895,7 @@ mod tests {
         let mut text_engine = TextEngine::new().unwrap();
         let mut compositor = RetainedCompositorState::default();
         let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        assert!(compositor.last_frame_stats.packet_build_count > 0);
         let layer_container = CompositionContainerId::Layer(SceneLayerId::from_widget(layer_id));
         let first_signature = packet_signature(&compositor, layer_container);
         let first_content_version =
@@ -7864,6 +7903,7 @@ mod tests {
 
         frame.layer_updates.clear();
         let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        assert_eq!(compositor.last_frame_stats.packet_build_count, 0);
         assert_eq!(first.scene_vertices, second.scene_vertices);
         assert_eq!(
             first_signature,
@@ -7889,6 +7929,7 @@ mod tests {
             ),
         ));
         let third = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        assert!(compositor.last_frame_stats.packet_build_count > 0);
         let third_signature = packet_signature(&compositor, layer_container);
         let third_content_version =
             compositor.layers[&SceneLayerId::from_widget(layer_id)].content_version;
@@ -8039,6 +8080,7 @@ mod tests {
         let mut text_engine = TextEngine::new().unwrap();
         let mut compositor = RetainedCompositorState::default();
         let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        assert!(compositor.last_frame_stats.packet_build_count > 0);
         let layer_container = CompositionContainerId::Layer(SceneLayerId::from_widget(layer_id));
         let first_signature = packet_signature(&compositor, layer_container);
         let first_content_version =
@@ -8069,6 +8111,7 @@ mod tests {
         assert_eq!(first_signature, second_signature);
         assert_eq!(first_content_version, second_content_version);
         assert_eq!(compositor.last_frame_stats.direct_packets, 1);
+        assert_eq!(compositor.last_frame_stats.packet_build_count, 0);
         assert_ne!(first.scene_vertices, second.scene_vertices);
     }
 
