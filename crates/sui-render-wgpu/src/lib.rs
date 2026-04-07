@@ -3650,7 +3650,7 @@ impl WgpuRenderer {
 
     fn prepare_analytic_path_resources(
         &mut self,
-        analytic_paths: HashMap<u64, AnalyticPathCpuData>,
+        analytic_paths: HashMap<u64, Arc<AnalyticPathCpuData>>,
         collect_stats: bool,
     ) -> Result<(Option<PreparedAnalyticPathResources>, AnalyticPathBindGroupStats)> {
         if analytic_paths.is_empty() {
@@ -4393,7 +4393,7 @@ struct AnalyticPathBindGroupStats {
 }
 
 struct CachedAnalyticPathGpu {
-    data: AnalyticPathCpuData,
+    data: Arc<AnalyticPathCpuData>,
     slot: u32,
     last_used_frame: usize,
 }
@@ -4886,7 +4886,7 @@ struct DrawOpArena {
     clip_vertices: Vec<Vertex>,
     clip_states: Vec<ClipState>,
     draw_ops: Vec<DrawOp>,
-    analytic_paths: HashMap<u64, AnalyticPathCpuData>,
+    analytic_paths: HashMap<u64, Arc<AnalyticPathCpuData>>,
     next_analytic_path_id: u64,
 }
 
@@ -5257,7 +5257,7 @@ fn prepared_draw_kind(draw_ops: &DrawOpArena, op: &DrawOp) -> PreparedDrawKind {
 
 fn collect_draw_op_resources(
     draw_ops: &DrawOpArena,
-    analytic_paths: &mut HashMap<u64, AnalyticPathCpuData>,
+    analytic_paths: &mut HashMap<u64, Arc<AnalyticPathCpuData>>,
     image_handles: &mut HashSet<ImageHandle>,
 ) -> bool {
     let mut uses_text_atlas = false;
@@ -7625,14 +7625,16 @@ impl DrawOpArena {
     fn insert_analytic_path(&mut self, data: AnalyticPathCpuData) -> u64 {
         let id = self.next_analytic_path_id;
         self.next_analytic_path_id = self.next_analytic_path_id.wrapping_add(1);
-        self.analytic_paths.insert(id, data);
+        self.analytic_paths.insert(id, Arc::new(data));
         id
     }
 
     fn import_analytic_paths(&mut self, fragment: &DrawOpArena) -> HashMap<u64, u64> {
         let mut id_map = HashMap::new();
         for (old_id, data) in &fragment.analytic_paths {
-            let new_id = self.insert_analytic_path(data.clone());
+            let new_id = self.next_analytic_path_id;
+            self.next_analytic_path_id = self.next_analytic_path_id.wrapping_add(1);
+            self.analytic_paths.insert(new_id, Arc::clone(data));
             id_map.insert(*old_id, new_id);
         }
         id_map
@@ -7658,7 +7660,7 @@ impl DrawOpArena {
             draw_op.clip_rect = draw_op.clip_rect.map(|rect| rect.translate(translation));
         }
         for path in self.analytic_paths.values_mut() {
-            path.translate(translation);
+            Arc::make_mut(path).translate(translation);
         }
     }
 
@@ -7816,7 +7818,7 @@ impl DrawOpArena {
             + self
                 .analytic_paths
                 .values()
-                .map(AnalyticPathCpuData::byte_size)
+                .map(|path| path.byte_size())
                 .sum::<usize>()
     }
 
