@@ -121,6 +121,7 @@ struct TextFrameStats {
 const TEXT_ATLAS_WIDTH: usize = 2048;
 const TEXT_ATLAS_HEIGHT: usize = 2048;
 const TEXT_ATLAS_PADDING: usize = 1;
+const TEXT_ATLAS_TEXTURE_RING_LEN: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RendererFrameStats {
@@ -260,7 +261,8 @@ pub struct WgpuRenderer {
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
     image_cache: HashMap<ImageHandle, CachedImageTexture>,
-    text_atlas_texture: Option<CachedTextAtlasTexture>,
+    text_atlas_textures: Vec<CachedTextAtlasTexture>,
+    active_text_atlas_texture_index: usize,
     analytic_path_cache: HashMap<u64, CachedAnalyticPathGpu>,
     compositors: HashMap<WindowId, RetainedCompositorState>,
     retained_tile_arenas: HashMap<WindowId, RetainedTileVertexArena>,
@@ -3543,10 +3545,6 @@ impl WgpuRenderer {
         collect_stats: bool,
     ) -> Result<(wgpu::BindGroup, TextAtlasBindGroupStats)> {
         let total_started = collect_stats.then(|| Instant::now());
-        let shared = self
-            .shared
-            .as_ref()
-            .expect("renderer shared state initialized");
         let upload_copy_started = collect_stats.then(|| Instant::now());
         let upload = text_engine.take_atlas_upload();
         let mut stats = TextAtlasBindGroupStats {
@@ -3562,51 +3560,19 @@ impl WgpuRenderer {
         };
 
         if let Some(upload) = upload {
-            let needs_recreate = self
-                .text_atlas_texture
+            let target_index = if self.text_atlas_textures.is_empty() {
+                0
+            } else {
+                (self.active_text_atlas_texture_index + 1) % TEXT_ATLAS_TEXTURE_RING_LEN
+            };
+            self.ensure_text_atlas_texture_slot(target_index, upload.size)?;
+            let shared = self
+                .shared
                 .as_ref()
-                .is_none_or(|cached| cached.size != upload.size);
-            if needs_recreate {
-                let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("SUI text atlas texture"),
-                    size: wgpu::Extent3d {
-                        width: upload.size.0,
-                        height: upload.size.1,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("SUI text atlas bind group"),
-                    layout: &shared.image_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::Sampler(&shared.image_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                    ],
-                });
-                self.text_atlas_texture = Some(CachedTextAtlasTexture {
-                    texture,
-                    _view: view,
-                    bind_group,
-                    size: upload.size,
-                });
-            }
-
+                .expect("renderer shared state initialized");
             let cached = self
-                .text_atlas_texture
-                .as_ref()
+                .text_atlas_textures
+                .get(target_index)
                 .expect("text atlas texture cached after creation");
             let upload_write_started = collect_stats.then(|| Instant::now());
             shared.queue.write_texture(
@@ -3635,17 +3601,77 @@ impl WgpuRenderer {
             stats.upload_write_time_us = upload_write_started
                 .map(|started| started.elapsed().as_micros() as u64)
                 .unwrap_or(0);
+            self.active_text_atlas_texture_index = target_index;
         }
 
         let bind_group = self
-            .text_atlas_texture
-            .as_ref()
+            .text_atlas_textures
+            .get(self.active_text_atlas_texture_index)
             .map(|cached| cached.bind_group.clone())
             .ok_or_else(|| Error::new("text atlas bind group requested before any atlas upload"))?;
         stats.total_time_us = total_started
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
         Ok((bind_group, stats))
+    }
+
+    fn ensure_text_atlas_texture_slot(&mut self, index: usize, size: (u32, u32)) -> Result<()> {
+        let shared = self
+            .shared
+            .as_ref()
+            .expect("renderer shared state initialized before text atlas texture setup");
+
+        if self
+            .text_atlas_textures
+            .get(index)
+            .is_some_and(|cached| cached.size == size)
+        {
+            return Ok(());
+        }
+
+        let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("SUI text atlas texture"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SUI text atlas bind group"),
+            layout: &shared.image_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&shared.image_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+            ],
+        });
+        let cached = CachedTextAtlasTexture {
+            texture,
+            _view: view,
+            bind_group,
+            size,
+        };
+
+        if index < self.text_atlas_textures.len() {
+            self.text_atlas_textures[index] = cached;
+        } else {
+            self.text_atlas_textures.push(cached);
+        }
+
+        Ok(())
     }
 
     fn prepare_analytic_path_resources(
@@ -4015,7 +4041,8 @@ impl Default for WgpuRenderer {
             shared: None,
             text_engine: None,
             image_cache: HashMap::new(),
-            text_atlas_texture: None,
+            text_atlas_textures: Vec::new(),
+            active_text_atlas_texture_index: 0,
             analytic_path_cache: HashMap::new(),
             compositors: HashMap::new(),
             retained_tile_arenas: HashMap::new(),
