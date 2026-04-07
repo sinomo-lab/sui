@@ -252,6 +252,7 @@ pub struct WgpuRenderer {
     instance: wgpu::Instance,
     feathering_enabled: bool,
     feather_width: f32,
+    vsync_enabled: bool,
     runtime_feathering_override: Option<FeatheringOptions>,
     runtime_diagnostics_enabled: bool,
     frames_rendered: usize,
@@ -2625,6 +2626,11 @@ impl WgpuRenderer {
         self
     }
 
+    pub fn with_vsync_enabled(mut self, enabled: bool) -> Self {
+        self.set_vsync_enabled(enabled);
+        self
+    }
+
     pub fn feathering(&self) -> FeatheringOptions {
         FeatheringOptions::new(self.feathering_enabled, self.feather_width)
     }
@@ -2635,6 +2641,10 @@ impl WgpuRenderer {
 
     pub fn feather_width(&self) -> f32 {
         self.feather_width
+    }
+
+    pub fn vsync_enabled(&self) -> bool {
+        self.vsync_enabled
     }
 
     pub fn set_feathering(&mut self, feathering: FeatheringOptions) {
@@ -2649,6 +2659,10 @@ impl WgpuRenderer {
 
     pub fn set_feather_width(&mut self, feather_width: f32) {
         self.feather_width = feather_width.max(0.0);
+    }
+
+    pub fn set_vsync_enabled(&mut self, enabled: bool) {
+        self.vsync_enabled = enabled;
     }
 
     pub fn set_runtime_feathering_override(&mut self, feathering: Option<FeatheringOptions>) {
@@ -3115,7 +3129,13 @@ impl WgpuRenderer {
             .get_mut(&window_id)
             .ok_or_else(|| Error::new(format!("missing surface for window {}", window_id.get())))?;
 
-        let config = configure_surface(&surface.surface, &shared.adapter, &shared.device, size)?;
+        let config = configure_surface(
+            &surface.surface,
+            &shared.adapter,
+            &shared.device,
+            size,
+            self.vsync_enabled,
+        )?;
         surface.config = config;
         Ok(())
     }
@@ -4084,7 +4104,13 @@ impl WgpuRenderer {
             .shared
             .as_ref()
             .expect("renderer shared state initialized");
-        let config = configure_surface(&surface, &shared.adapter, &shared.device, size)?;
+        let config = configure_surface(
+            &surface,
+            &shared.adapter,
+            &shared.device,
+            size,
+            self.vsync_enabled,
+        )?;
 
         Ok(SurfaceState {
             window,
@@ -4100,6 +4126,7 @@ impl Default for WgpuRenderer {
             instance: wgpu::Instance::default(),
             feathering_enabled: true,
             feather_width: DEFAULT_FEATHER_WIDTH,
+            vsync_enabled: true,
             runtime_feathering_override: None,
             runtime_diagnostics_enabled: true,
             frames_rendered: 0,
@@ -8146,12 +8173,18 @@ fn configure_surface(
     adapter: &wgpu::Adapter,
     device: &wgpu::Device,
     size: (u32, u32),
+    vsync_enabled: bool,
 ) -> Result<wgpu::SurfaceConfiguration> {
     let mut config = surface
         .get_default_config(adapter, size.0, size.1)
         .ok_or_else(|| Error::new("wgpu adapter does not support presenting to this surface"))?;
     config.format = preferred_surface_format(&surface.get_capabilities(adapter).formats)
         .unwrap_or(config.format);
+    config.present_mode = if vsync_enabled {
+        wgpu::PresentMode::AutoVsync
+    } else {
+        wgpu::PresentMode::AutoNoVsync
+    };
     surface.configure(device, &config);
     Ok(config)
 }

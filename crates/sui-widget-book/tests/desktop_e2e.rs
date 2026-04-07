@@ -80,6 +80,7 @@ enum HostInputEvent {
 enum HarnessCommand {
     Launch {
         build_runtime: RuntimeBuilder,
+        vsync_enabled: bool,
         reply: SyncSender<Result<WindowId>>,
     },
     Dispatch {
@@ -156,10 +157,18 @@ impl DesktopHarness {
     where
         F: FnOnce() -> Result<sui::Runtime> + Send + 'static,
     {
+        Self::launch_with_vsync(build_runtime, true)
+    }
+
+    fn launch_with_vsync<F>(build_runtime: F, vsync_enabled: bool) -> Result<Self>
+    where
+        F: FnOnce() -> Result<sui::Runtime> + Send + 'static,
+    {
         let proxy = desktop_harness_service().proxy.clone();
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         proxy.send_event(HarnessCommand::Launch {
             build_runtime: Box::new(build_runtime),
+            vsync_enabled,
             reply: reply_tx,
         })
         .map_err(|_| Error::new("desktop harness service is unavailable"))?;
@@ -221,6 +230,7 @@ impl Drop for DesktopHarness {
 struct DesktopHarnessApp {
     runtime: sui::Runtime,
     renderer: WgpuRenderer,
+    vsync_enabled: bool,
     started_at: Instant,
     frame_clock: f64,
     windows: HashMap<WindowId, WindowState>,
@@ -233,6 +243,7 @@ impl DesktopHarnessApp {
         Self {
             runtime: sui::Runtime::new(),
             renderer: WgpuRenderer::default(),
+            vsync_enabled: true,
             started_at: Instant::now(),
             frame_clock: 0.0,
             windows: HashMap::new(),
@@ -248,7 +259,7 @@ impl DesktopHarnessApp {
         self.windows.clear();
         self.host_to_runtime.clear();
         self.runtime = sui::Runtime::new();
-        self.renderer = WgpuRenderer::default();
+        self.renderer = WgpuRenderer::default().with_vsync_enabled(self.vsync_enabled);
         self.started_at = Instant::now();
         self.frame_clock = 0.0;
         clear_window_performance_snapshots();
@@ -263,7 +274,9 @@ impl DesktopHarnessApp {
         &mut self,
         event_loop: &ActiveEventLoop,
         build_runtime: RuntimeBuilder,
+        vsync_enabled: bool,
     ) -> Result<WindowId> {
+        self.vsync_enabled = vsync_enabled;
         self.reset_runtime_state();
         self.last_error = None;
         self.runtime = build_runtime()?;
@@ -812,9 +825,10 @@ impl DesktopHarnessApp {
         match command {
             HarnessCommand::Launch {
                 build_runtime,
+                vsync_enabled,
                 reply,
             } => {
-                let _ = reply.send(self.launch_runtime(event_loop, build_runtime));
+                let _ = reply.send(self.launch_runtime(event_loop, build_runtime, vsync_enabled));
             }
             HarnessCommand::Dispatch {
                 window_id,
@@ -1360,7 +1374,7 @@ fn run_widget_book_scroll_benchmark(
     const MAX_SCROLL_FRAMES: usize = 4096;
     const MIN_VISIBLE_AREA_RATIO: f32 = 0.85;
 
-    let harness = DesktopHarness::launch(|| build_runtime().build())?;
+    let harness = DesktopHarness::launch_with_vsync(|| build_runtime().build(), false)?;
     let window_id = harness.main_window_id();
 
     set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
