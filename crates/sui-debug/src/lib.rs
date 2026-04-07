@@ -664,6 +664,30 @@ mod tests {
 }
 
 pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Widget {
+    if !snapshot.scene.detail_mode.is_detailed() {
+        let fps = if snapshot.total_time_ms > 0.0 {
+            format!("{:.0} fps", 1000.0 / snapshot.total_time_ms)
+        } else {
+            "0 fps".to_string()
+        };
+
+        return Stack::vertical()
+            .spacing(10.0)
+            .alignment(Alignment::Stretch)
+            .with_child(debug_metric_grid([
+                DebugMetric::new("Frame", format_duration_ms(snapshot.total_time_ms))
+                    .detail("Wall time across event handling, runtime, and renderer")
+                    .tone(duration_tone(snapshot.total_time_ms)),
+                DebugMetric::new("FPS", fps)
+                    .detail("Live overlay detail is off; detailed analytics are disabled")
+                    .tone(DebugTone::Neutral),
+            ]))
+            .with_child(debug_key_values([
+                DebugKeyValue::new("Frame index", snapshot.frame_index.to_string()),
+                DebugKeyValue::new("Scene detail", snapshot.scene.detail_mode.label()),
+            ]));
+    }
+
     let slowest_phase = snapshot.slowest_phase();
     let slowest_label = slowest_phase
         .map(|sample| sample.phase.label())

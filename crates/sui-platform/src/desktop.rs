@@ -10,7 +10,7 @@ use sui_core::{
     WindowEvent, WindowId,
 };
 use sui_render_wgpu::{FeatheringOptions, WgpuRenderer};
-use sui_runtime::{Runtime, window_render_options};
+use sui_runtime::{Runtime, window_render_options, window_scene_statistics_detail_mode};
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
@@ -298,9 +298,14 @@ impl<'a> DesktopApp<'a> {
                 self.update_clock();
                 self.runtime.tick(self.frame_clock);
 
+                let runtime_started = Instant::now();
                 let output = self.runtime.render(window_id)?;
+                let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
                 let semantics = output.semantics.clone();
                 let renderer_started = Instant::now();
+                let diagnostics_enabled = window_scene_statistics_detail_mode(window_id).is_detailed();
+                self.renderer
+                    .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 self.renderer.set_runtime_feathering_override(window_render_options(window_id).map(
                     |options| FeatheringOptions::new(
                         options.feathering_enabled,
@@ -332,6 +337,7 @@ impl<'a> DesktopApp<'a> {
                     window_id,
                     frame_index,
                     pending_event_time_ms,
+                    runtime_time_ms,
                     &output,
                     self.renderer,
                     renderer_time_ms,

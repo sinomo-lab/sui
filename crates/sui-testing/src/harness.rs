@@ -728,8 +728,13 @@ impl LiveHarnessApp {
                 self.update_clock();
                 self.runtime.tick(self.frame_clock);
 
+                let runtime_started = Instant::now();
                 let output = self.runtime.render(window_id)?;
+                let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
                 let renderer_started = Instant::now();
+                let diagnostics_enabled = window_scene_statistics_detail_mode(window_id).is_detailed();
+                self.renderer
+                    .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
 
@@ -750,6 +755,7 @@ impl LiveHarnessApp {
                     window_id,
                     frame_index,
                     pending_event_time_ms,
+                    runtime_time_ms,
                     &output,
                     &self.renderer,
                     renderer_time_ms,
@@ -1329,10 +1335,28 @@ fn publish_frame_performance(
     window_id: WindowId,
     frame_index: u64,
     event_time_ms: f64,
+    runtime_time_ms: f64,
     output: &RenderOutput,
     renderer: &WgpuRenderer,
     renderer_time_ms: f64,
 ) {
+    let detail_mode = window_scene_statistics_detail_mode(window_id);
+    let total_time_ms = event_time_ms + runtime_time_ms + renderer_time_ms;
+
+    if !detail_mode.is_detailed() {
+        publish_window_performance_snapshot(WindowPerformanceSnapshot::with_total_time_ms(
+            window_id,
+            frame_index,
+            total_time_ms,
+            Vec::new(),
+            RendererSubmissionDiagnostics::default(),
+            TextCacheDiagnostics::default(),
+            Default::default(),
+            SceneStatistics::minimal(&output.frame, detail_mode),
+        ));
+        return;
+    }
+
     let diagnostics_started = Instant::now();
     let mut phase_timings = Vec::with_capacity(output.diagnostics.phase_timings.len() + 2);
     let renderer_text_cache = renderer.text_cache_snapshot(window_id);
@@ -1370,9 +1394,15 @@ fn publish_frame_performance(
         diagnostics_started.elapsed().as_secs_f64() * 1000.0,
     ));
 
-    publish_window_performance_snapshot(WindowPerformanceSnapshot::new(
+    let total_time_ms = event_time_ms
+        + runtime_time_ms
+        + renderer_time_ms
+        + diagnostics_started.elapsed().as_secs_f64() * 1000.0;
+
+    publish_window_performance_snapshot(WindowPerformanceSnapshot::with_total_time_ms(
         window_id,
         frame_index,
+        total_time_ms,
         phase_timings,
         RendererSubmissionDiagnostics::new(
             renderer_stats.pass_count,
@@ -1413,10 +1443,7 @@ fn publish_frame_performance(
         ),
         text_caches,
         text_cache_deltas,
-        SceneStatistics::from_frame_with_mode(
-            &output.frame,
-            window_scene_statistics_detail_mode(window_id),
-        ),
+        SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
     ));
 }
 

@@ -251,6 +251,7 @@ pub struct WgpuRenderer {
     feathering_enabled: bool,
     feather_width: f32,
     runtime_feathering_override: Option<FeatheringOptions>,
+    runtime_diagnostics_enabled: bool,
     frames_rendered: usize,
     capabilities: RendererCapabilities,
     last_frames: HashMap<WindowId, SceneFrame>,
@@ -695,6 +696,7 @@ struct RetainedCompositorState {
     frame_index: u64,
     tile_budget_bytes: usize,
     last_frame_stats: RetainedCompositorFrameStats,
+    diagnostics_enabled: bool,
     path_cache: PathMeshCache,
 }
 
@@ -716,12 +718,21 @@ impl Default for RetainedCompositorState {
             frame_index: 0,
             tile_budget_bytes: TILE_CACHE_BUDGET_BYTES,
             last_frame_stats: RetainedCompositorFrameStats::default(),
+            diagnostics_enabled: true,
             path_cache: PathMeshCache::default(),
         }
     }
 }
 
 impl RetainedCompositorState {
+    fn set_diagnostics_enabled(&mut self, enabled: bool) {
+        self.diagnostics_enabled = enabled;
+        self.path_cache.set_diagnostics_enabled(enabled);
+        if !enabled {
+            self.last_frame_stats = RetainedCompositorFrameStats::default();
+        }
+    }
+
     #[cfg(test)]
     fn prepare_frame(
         &mut self,
@@ -730,7 +741,7 @@ impl RetainedCompositorState {
         feather_width: f32,
     ) -> Result<DrawOpArena> {
         let mut frame_stats = self.refresh_frame_state(frame, text_engine, feather_width)?;
-        let composition_started = Instant::now();
+        let composition_started = self.diagnostics_enabled.then(|| Instant::now());
         let draw_ops = self.compose_draw_ops(frame.viewport, &mut frame_stats)?;
         self.finish_frame(
             frame.viewport,
@@ -748,7 +759,7 @@ impl RetainedCompositorState {
         feather_width: f32,
     ) -> Result<RetainedFrameSubmission> {
         let mut frame_stats = self.refresh_frame_state(frame, text_engine, feather_width)?;
-        let composition_started = Instant::now();
+        let composition_started = self.diagnostics_enabled.then(|| Instant::now());
         let submission = self.compose_submission(frame.viewport, &mut frame_stats)?;
         self.finish_frame(
             frame.viewport,
@@ -769,11 +780,12 @@ impl RetainedCompositorState {
         let feather_changed = self.feather_width_bits != feather_width.to_bits();
         self.frame_index = self.frame_index.wrapping_add(1);
         let mut frame_stats = RetainedCompositorFrameStats::default();
-        let scene_traversal_started = Instant::now();
+        let scene_traversal_started = self.diagnostics_enabled.then(|| Instant::now());
         let snapshot = self.build_snapshot(&frame.scene)?;
-        frame_stats.scene_traversal_time_ms =
-            scene_traversal_started.elapsed().as_secs_f64() * 1000.0;
-        let tile_generation_started = Instant::now();
+        if let Some(started) = scene_traversal_started {
+            frame_stats.scene_traversal_time_ms = started.elapsed().as_secs_f64() * 1000.0;
+        }
+        let tile_generation_started = self.diagnostics_enabled.then(|| Instant::now());
         self.apply_snapshot(
             frame,
             snapshot,
@@ -782,8 +794,9 @@ impl RetainedCompositorState {
             viewport_changed || feather_changed,
             &mut frame_stats,
         )?;
-        frame_stats.tile_generation_time_ms =
-            tile_generation_started.elapsed().as_secs_f64() * 1000.0;
+        if let Some(started) = tile_generation_started {
+            frame_stats.tile_generation_time_ms = started.elapsed().as_secs_f64() * 1000.0;
+        }
         Ok(frame_stats)
     }
 
@@ -792,11 +805,15 @@ impl RetainedCompositorState {
         viewport: Size,
         feather_width: f32,
         frame_stats: &mut RetainedCompositorFrameStats,
-        composition_started: Instant,
+        composition_started: Option<Instant>,
     ) {
-        frame_stats.composition_time_ms = composition_started.elapsed().as_secs_f64() * 1000.0;
-        frame_stats.tile_memory_bytes = self.total_tile_memory_bytes();
-        self.last_frame_stats = *frame_stats;
+        if let Some(started) = composition_started {
+            frame_stats.composition_time_ms = started.elapsed().as_secs_f64() * 1000.0;
+            frame_stats.tile_memory_bytes = self.total_tile_memory_bytes();
+            self.last_frame_stats = *frame_stats;
+        } else {
+            self.last_frame_stats = RetainedCompositorFrameStats::default();
+        }
         self.viewport = viewport;
         self.feather_width_bits = feather_width.to_bits();
     }
@@ -1332,7 +1349,7 @@ impl RetainedCompositorState {
             });
 
         if should_rebuild {
-            let packet_build_started = Instant::now();
+            let packet_build_started = self.diagnostics_enabled.then(|| Instant::now());
             let draw_ops = build_direct_packet(
                 frame,
                 &snapshot.scene,
@@ -1341,8 +1358,10 @@ impl RetainedCompositorState {
                 &mut self.path_cache,
                 feather_width,
             )?;
-            stats.packet_build_count += 1;
-            stats.packet_build_time_ms += packet_build_started.elapsed().as_secs_f64() * 1000.0;
+            if let Some(started) = packet_build_started {
+                stats.packet_build_count += 1;
+                stats.packet_build_time_ms += started.elapsed().as_secs_f64() * 1000.0;
+            }
             self.packets.insert(
                 snapshot.id,
                 RetainedDirectPacket {
@@ -2588,6 +2607,16 @@ impl WgpuRenderer {
     pub fn set_runtime_feathering_override(&mut self, feathering: Option<FeatheringOptions>) {
         self.runtime_feathering_override = feathering.map(FeatheringOptions::clamped);
     }
+    
+    pub fn set_runtime_diagnostics_enabled(&mut self, enabled: bool) {
+        self.runtime_diagnostics_enabled = enabled;
+        if let Some(text_engine) = self.text_engine.as_mut() {
+            text_engine.set_diagnostics_enabled(enabled);
+        }
+        for compositor in self.compositors.values_mut() {
+            compositor.set_diagnostics_enabled(enabled);
+        }
+    }
 
     fn active_feather_width(&self) -> f32 {
         self.runtime_feathering_override
@@ -2878,7 +2907,7 @@ impl WgpuRenderer {
         self.ensure_shared(None)?;
         self.configure_surface_if_needed(frame.window_id, size)?;
 
-        let surface_acquire_started = Instant::now();
+        let surface_acquire_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
         let (frame_texture, suboptimal) = loop {
             let result = {
                 let surface = self.surfaces.get(&frame.window_id).ok_or_else(|| {
@@ -2909,7 +2938,9 @@ impl WgpuRenderer {
                 }
             }
         };
-        let surface_acquire_time_us = surface_acquire_started.elapsed().as_micros() as u64;
+        let surface_acquire_time_us = surface_acquire_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
 
         let view = frame_texture
             .texture
@@ -2926,9 +2957,11 @@ impl WgpuRenderer {
 
         let mut frame_stats = self.encode_scene(frame, format, &view)?;
         frame_stats.surface_acquire_time_us = surface_acquire_time_us;
-        let surface_present_started = Instant::now();
+        let surface_present_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
         frame_texture.present();
-        frame_stats.surface_present_time_us = surface_present_started.elapsed().as_micros() as u64;
+        frame_stats.surface_present_time_us = surface_present_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
 
         if suboptimal {
             self.configure_surface(frame.window_id, size)?;
@@ -3041,6 +3074,7 @@ impl WgpuRenderer {
         target_format: wgpu::TextureFormat,
         view: &wgpu::TextureView,
     ) -> Result<RendererFrameStats> {
+        let diagnostics_enabled = self.runtime_diagnostics_enabled;
         let feather_width = self.active_feather_width();
         let (submission, compositor_stats, text_frame_stats) = {
             if self.text_engine.is_none() {
@@ -3050,21 +3084,27 @@ impl WgpuRenderer {
                 .text_engine
                 .as_mut()
                 .expect("text engine initialized before draw-op construction");
+            text_engine.set_diagnostics_enabled(diagnostics_enabled);
             text_engine.begin_frame();
             let compositor = self.compositors.entry(frame.window_id).or_default();
+            compositor.set_diagnostics_enabled(diagnostics_enabled);
             let submission =
                 compositor.prepare_frame_submission(frame, text_engine, feather_width)?;
             (
                 submission,
                 compositor.last_frame_stats,
-                text_engine.frame_stats(),
+                if diagnostics_enabled {
+                    text_engine.frame_stats()
+                } else {
+                    TextFrameStats::default()
+                },
             )
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
         let mut analytic_paths = HashMap::new();
         let mut image_handles = HashSet::new();
         let mut uses_text_atlas = false;
-        let resource_collection_started = Instant::now();
+        let resource_collection_started = diagnostics_enabled.then(|| Instant::now());
         for fragment in &submission.fragments {
             match fragment {
                 RetainedFrameFragment::Transient(draw_ops) => {
@@ -3089,16 +3129,18 @@ impl WgpuRenderer {
                 }
             }
         }
-        let resource_collection_time_us = resource_collection_started.elapsed().as_micros() as u64;
+        let resource_collection_time_us = resource_collection_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
 
-        let bind_group_prepare_started = Instant::now();
+        let bind_group_prepare_started = diagnostics_enabled.then(|| Instant::now());
         let (analytic_path_resources, analytic_path_stats) =
-            self.prepare_analytic_path_resources(analytic_paths)?;
+            self.prepare_analytic_path_resources(analytic_paths, diagnostics_enabled)?;
         let analytic_path_bind_group_time_us = analytic_path_stats.total_time_us;
         let analytic_path_bind_group_miss_count = analytic_path_stats.miss_count;
         let analytic_path_bind_group_upload_bytes = analytic_path_stats.upload_bytes;
 
-        let image_bind_group_started = Instant::now();
+        let image_bind_group_started = diagnostics_enabled.then(|| Instant::now());
         let mut image_bind_groups = HashMap::new();
         for handle in image_handles {
             let image = frame.image_registry.get(handle).ok_or_else(|| {
@@ -3106,7 +3148,9 @@ impl WgpuRenderer {
             })?;
             image_bind_groups.insert(handle, self.ensure_image_bind_group(handle, image)?);
         }
-        let image_bind_group_time_us = image_bind_group_started.elapsed().as_micros() as u64;
+        let image_bind_group_time_us = image_bind_group_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
         let mut text_atlas_bind_group_time_us = 0u64;
         let mut text_atlas_upload_copy_time_us = 0u64;
         let mut text_atlas_upload_write_time_us = 0u64;
@@ -3116,7 +3160,8 @@ impl WgpuRenderer {
                 .text_engine
                 .take()
                 .expect("text engine initialized before text atlas upload");
-            let (bind_group, stats) = self.ensure_text_atlas_bind_group(&mut text_engine)?;
+            let (bind_group, stats) =
+                self.ensure_text_atlas_bind_group(&mut text_engine, diagnostics_enabled)?;
             self.text_engine = Some(text_engine);
             text_atlas_bind_group_time_us = stats.total_time_us;
             text_atlas_upload_copy_time_us = stats.upload_copy_time_us;
@@ -3126,7 +3171,9 @@ impl WgpuRenderer {
         } else {
             None
         };
-        let bind_group_prepare_time_us = bind_group_prepare_started.elapsed().as_micros() as u64;
+        let bind_group_prepare_time_us = bind_group_prepare_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
 
         let mut encoder = {
             let shared = self
@@ -3149,15 +3196,19 @@ impl WgpuRenderer {
         for fragment in submission.fragments {
             match fragment {
                 RetainedFrameFragment::Transient(draw_ops) => {
-                    let batch_prepare_started = Instant::now();
+                    let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
                     let prepared =
                         prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
-                    batch_prepare_time_us += batch_prepare_started.elapsed().as_micros() as u64;
-                    let (_, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
-                    draw_count += fragment_draw_count;
-                    uploaded_vertex_bytes += (prepared.scene_vertices.len() as u64
-                        + prepared.clip_vertices.len() as u64)
-                        * VERTEX_SIZE;
+                    if let Some(started) = batch_prepare_started {
+                        batch_prepare_time_us += started.elapsed().as_micros() as u64;
+                    }
+                    if diagnostics_enabled {
+                        let (_, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
+                        draw_count += fragment_draw_count;
+                        uploaded_vertex_bytes += (prepared.scene_vertices.len() as u64
+                            + prepared.clip_vertices.len() as u64)
+                            * VERTEX_SIZE;
+                    }
 
                     if prepared.passes.is_empty() {
                         continue;
@@ -3171,7 +3222,7 @@ impl WgpuRenderer {
                         .passes
                         .iter()
                         .any(|pass| !pass.clip_paths.is_empty());
-                    let gpu_upload_started = Instant::now();
+                    let gpu_upload_started = diagnostics_enabled.then(|| Instant::now());
                     prepared_fragments.push(PreparedFragmentSubmission {
                         passes: prepared.passes,
                         scene_buffer: create_static_vertex_buffer(
@@ -3188,7 +3239,9 @@ impl WgpuRenderer {
                         ),
                         translation: Vector::ZERO,
                     });
-                    gpu_upload_time_us += gpu_upload_started.elapsed().as_micros() as u64;
+                    if let Some(started) = gpu_upload_started {
+                        gpu_upload_time_us += started.elapsed().as_micros() as u64;
+                    }
                 }
                 RetainedFrameFragment::Tile(address) => {
                     let (passes, scene_buffer, clip_buffer, fragment_uploaded_bytes, translation) = {
@@ -3208,17 +3261,21 @@ impl WgpuRenderer {
                                 address.tile_y
                             ))
                         })?;
-                        let gpu_upload_started = Instant::now();
+                        let gpu_upload_started = diagnostics_enabled.then(|| Instant::now());
                         let uploaded = entry.ensure_gpu_geometry(&shared.device, &shared.queue);
-                        gpu_upload_time_us += gpu_upload_started.elapsed().as_micros() as u64;
-                        let batch_prepare_started = Instant::now();
+                        if let Some(started) = gpu_upload_started {
+                            gpu_upload_time_us += started.elapsed().as_micros() as u64;
+                        }
+                        let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
                         let passes = prepare_cached_passes(
                             &entry.cached_passes,
                             frame.viewport,
                             framebuffer_size,
                             entry.translation,
                         );
-                        batch_prepare_time_us += batch_prepare_started.elapsed().as_micros() as u64;
+                        if let Some(started) = batch_prepare_started {
+                            batch_prepare_time_us += started.elapsed().as_micros() as u64;
+                        }
                         let gpu_geometry = entry
                             .gpu_geometry
                             .as_ref()
@@ -3231,9 +3288,11 @@ impl WgpuRenderer {
                             entry.translation,
                         )
                     };
-                    let (_, fragment_draw_count) = prepared_batch_counts(&passes);
-                    draw_count += fragment_draw_count;
-                    uploaded_vertex_bytes += fragment_uploaded_bytes;
+                    if diagnostics_enabled {
+                        let (_, fragment_draw_count) = prepared_batch_counts(&passes);
+                        draw_count += fragment_draw_count;
+                        uploaded_vertex_bytes += fragment_uploaded_bytes;
+                    }
 
                     if passes.is_empty() {
                         continue;
@@ -3255,16 +3314,20 @@ impl WgpuRenderer {
                 .shared
                 .as_ref()
                 .expect("renderer shared state initialized");
-            let gpu_upload_started = Instant::now();
+            let gpu_upload_started = diagnostics_enabled.then(|| Instant::now());
             self.frame_resources
                 .ensure_stencil(&shared.device, framebuffer_size);
-            gpu_upload_time_us += gpu_upload_started.elapsed().as_micros() as u64;
+            if let Some(started) = gpu_upload_started {
+                gpu_upload_time_us += started.elapsed().as_micros() as u64;
+            }
         }
 
-        let batch_prepare_started = Instant::now();
+        let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
         let encodable_passes = flatten_fragment_passes(&prepared_fragments);
-        batch_prepare_time_us += batch_prepare_started.elapsed().as_micros() as u64;
-        let pass_encode_started = Instant::now();
+        if let Some(started) = batch_prepare_started {
+            batch_prepare_time_us += started.elapsed().as_micros() as u64;
+        }
+        let pass_encode_started = diagnostics_enabled.then(|| Instant::now());
         let pass_count = if encodable_passes.is_empty() {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SUI scene clear pass"),
@@ -3311,22 +3374,30 @@ impl WgpuRenderer {
                 analytic_path_resources.as_ref(),
             )?
         };
-        let pass_encode_time_us = pass_encode_started.elapsed().as_micros() as u64;
+        let pass_encode_time_us = pass_encode_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
 
-        let queue_submit_started = Instant::now();
+        let queue_submit_started = diagnostics_enabled.then(|| Instant::now());
         self.shared
             .as_ref()
             .expect("renderer shared state initialized")
             .queue
             .submit([encoder.finish()]);
-        let queue_submit_time_us = queue_submit_started.elapsed().as_micros() as u64;
-        let mut frame_stats = RendererFrameStats::from_prepared_counts(
-            pass_count.max(1),
-            draw_count,
-            uploaded_vertex_bytes,
-        )
-        .with_text_stats(text_frame_stats)
-        .with_compositor_stats(compositor_stats);
+        let queue_submit_time_us = queue_submit_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
+        let mut frame_stats = if diagnostics_enabled {
+            RendererFrameStats::from_prepared_counts(
+                pass_count.max(1),
+                draw_count,
+                uploaded_vertex_bytes,
+            )
+            .with_text_stats(text_frame_stats)
+            .with_compositor_stats(compositor_stats)
+        } else {
+            RendererFrameStats::default()
+        };
         frame_stats.resource_collection_time_us = resource_collection_time_us;
         frame_stats.bind_group_prepare_time_us = bind_group_prepare_time_us;
         frame_stats.image_bind_group_time_us = image_bind_group_time_us;
@@ -3424,17 +3495,24 @@ impl WgpuRenderer {
     fn ensure_text_atlas_bind_group(
         &mut self,
         text_engine: &mut TextEngine,
+        collect_stats: bool,
     ) -> Result<(wgpu::BindGroup, TextAtlasBindGroupStats)> {
-        let total_started = Instant::now();
+        let total_started = collect_stats.then(|| Instant::now());
         let shared = self
             .shared
             .as_ref()
             .expect("renderer shared state initialized");
-        let upload_copy_started = Instant::now();
+        let upload_copy_started = collect_stats.then(|| Instant::now());
         let upload = text_engine.take_atlas_upload();
         let mut stats = TextAtlasBindGroupStats {
-            upload_copy_time_us: upload_copy_started.elapsed().as_micros() as u64,
-            upload_bytes: upload.as_ref().map_or(0, |upload| upload.pixels.len() as u64),
+            upload_copy_time_us: upload_copy_started
+                .map(|started| started.elapsed().as_micros() as u64)
+                .unwrap_or(0),
+            upload_bytes: if collect_stats {
+                upload.as_ref().map_or(0, |upload| upload.pixels.len() as u64)
+            } else {
+                0
+            },
             ..TextAtlasBindGroupStats::default()
         };
 
@@ -3485,7 +3563,7 @@ impl WgpuRenderer {
                 .text_atlas_texture
                 .as_ref()
                 .expect("text atlas texture cached after creation");
-            let upload_write_started = Instant::now();
+            let upload_write_started = collect_stats.then(|| Instant::now());
             shared.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &cached.texture,
@@ -3509,7 +3587,9 @@ impl WgpuRenderer {
                     depth_or_array_layers: 1,
                 },
             );
-            stats.upload_write_time_us = upload_write_started.elapsed().as_micros() as u64;
+            stats.upload_write_time_us = upload_write_started
+                .map(|started| started.elapsed().as_micros() as u64)
+                .unwrap_or(0);
         }
 
         let bind_group = self
@@ -3517,19 +3597,22 @@ impl WgpuRenderer {
             .as_ref()
             .map(|cached| cached.bind_group.clone())
             .ok_or_else(|| Error::new("text atlas bind group requested before any atlas upload"))?;
-        stats.total_time_us = total_started.elapsed().as_micros() as u64;
+        stats.total_time_us = total_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
         Ok((bind_group, stats))
     }
 
     fn prepare_analytic_path_resources(
         &mut self,
         analytic_paths: HashMap<u64, AnalyticPathCpuData>,
+        collect_stats: bool,
     ) -> Result<(Option<PreparedAnalyticPathResources>, AnalyticPathBindGroupStats)> {
         if analytic_paths.is_empty() {
             return Ok((None, AnalyticPathBindGroupStats::default()));
         }
 
-        let total_started = Instant::now();
+        let total_started = collect_stats.then(|| Instant::now());
         let shared = self
             .shared
             .as_ref()
@@ -3551,7 +3634,7 @@ impl WgpuRenderer {
         }
 
         let mut stats = AnalyticPathBindGroupStats {
-            miss_count: pending.len(),
+            miss_count: if collect_stats { pending.len() } else { 0 },
             ..AnalyticPathBindGroupStats::default()
         };
         let needs_rebuild = if self.frame_resources.analytic_path_arena.bind_group.is_none() {
@@ -3680,10 +3763,12 @@ impl WgpuRenderer {
                     .write_buffer(point_buffer, 0, bytemuck::cast_slice(&point_data));
             }
 
-            stats.upload_bytes = (meta_data.len() * std::mem::size_of::<AnalyticPathMetaGpu>()
-                + contour_data.len() * std::mem::size_of::<AnalyticContourGpu>()
-                + point_data.len() * std::mem::size_of::<AnalyticPointGpu>())
-                as u64;
+            if collect_stats {
+                stats.upload_bytes = (meta_data.len() * std::mem::size_of::<AnalyticPathMetaGpu>()
+                    + contour_data.len() * std::mem::size_of::<AnalyticContourGpu>()
+                    + point_data.len() * std::mem::size_of::<AnalyticPointGpu>())
+                    as u64;
+            }
 
             self.analytic_path_cache = rebuilt_cache;
             self.frame_resources.analytic_path_arena.used_slots = meta_data.len();
@@ -3748,7 +3833,9 @@ impl WgpuRenderer {
                 self.frame_resources.analytic_path_arena.used_slots += 1;
                 self.frame_resources.analytic_path_arena.used_contours += data.contours.len();
                 self.frame_resources.analytic_path_arena.used_points += data.points.len();
-                stats.upload_bytes += data.byte_size() as u64;
+                if collect_stats {
+                    stats.upload_bytes += data.byte_size() as u64;
+                }
                 slots.insert(signature, slot);
                 self.analytic_path_cache.insert(
                     signature,
@@ -3768,7 +3855,9 @@ impl WgpuRenderer {
             .as_ref()
             .expect("analytic path arena bind group initialized")
             .clone();
-        stats.total_time_us = total_started.elapsed().as_micros() as u64;
+        stats.total_time_us = total_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
         Ok((
             Some(PreparedAnalyticPathResources { bind_group, slots }),
             stats,
@@ -3807,6 +3896,7 @@ impl Default for WgpuRenderer {
             feathering_enabled: true,
             feather_width: DEFAULT_FEATHER_WIDTH,
             runtime_feathering_override: None,
+            runtime_diagnostics_enabled: true,
             frames_rendered: 0,
             capabilities: RendererCapabilities::default(),
             last_frames: HashMap::new(),
@@ -4542,14 +4632,30 @@ impl PathCacheKey {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct PathMeshCache {
     meshes: HashMap<PathCacheKey, CachedGlyphMesh>,
+    diagnostics_enabled: bool,
     hits: usize,
     misses: usize,
 }
 
+impl Default for PathMeshCache {
+    fn default() -> Self {
+        Self {
+            meshes: HashMap::new(),
+            diagnostics_enabled: true,
+            hits: 0,
+            misses: 0,
+        }
+    }
+}
+
 impl PathMeshCache {
+        fn set_diagnostics_enabled(&mut self, enabled: bool) {
+            self.diagnostics_enabled = enabled;
+        }
+
     fn cached_fill_mesh(
         &mut self,
         path: &ScenePath,
@@ -4558,14 +4664,18 @@ impl PathMeshCache {
     ) -> Result<&CachedGlyphMesh> {
         let key = PathCacheKey::fill(path, transform, feather_width);
         if self.meshes.contains_key(&key) {
-            self.hits += 1;
+            if self.diagnostics_enabled {
+                self.hits += 1;
+            }
             return Ok(self
                 .meshes
                 .get(&key)
                 .expect("path cache entry should exist"));
         }
 
-        self.misses += 1;
+        if self.diagnostics_enabled {
+            self.misses += 1;
+        }
         let lyon_path = build_lyon_path(path, transform);
         let mesh = feathering::build_local_fill_mesh(&lyon_path, feather_width)?;
         self.meshes.insert(key, mesh);
@@ -4581,14 +4691,18 @@ impl PathMeshCache {
     ) -> Result<&CachedGlyphMesh> {
         let key = PathCacheKey::stroke(path, transform, line_width, feather_width);
         if self.meshes.contains_key(&key) {
-            self.hits += 1;
+            if self.diagnostics_enabled {
+                self.hits += 1;
+            }
             return Ok(self
                 .meshes
                 .get(&key)
                 .expect("path cache entry should exist"));
         }
 
-        self.misses += 1;
+        if self.diagnostics_enabled {
+            self.misses += 1;
+        }
         let lyon_path = build_lyon_path(path, transform);
         let mesh = feathering::build_local_stroke_mesh(&lyon_path, line_width, feather_width)?;
         self.meshes.insert(key, mesh);
@@ -5909,19 +6023,41 @@ fn hash_path(path: &ScenePath, transform: Transform) -> u64 {
     hasher.finish()
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TextEngine {
     system: TextSystem,
     glyph_cache: HashMap<GlyphCacheKey, CachedGlyphPrimitive>,
     atlas: TextAtlas,
+    diagnostics_enabled: bool,
     glyph_cache_hits: usize,
     glyph_cache_misses: usize,
     frame_stats: TextFrameStats,
 }
 
+impl Default for TextEngine {
+    fn default() -> Self {
+        Self {
+            system: TextSystem::new(),
+            glyph_cache: HashMap::new(),
+            atlas: TextAtlas::default(),
+            diagnostics_enabled: true,
+            glyph_cache_hits: 0,
+            glyph_cache_misses: 0,
+            frame_stats: TextFrameStats::default(),
+        }
+    }
+}
+
 impl TextEngine {
     fn new() -> Result<Self> {
         Ok(Self::default())
+    }
+
+    fn set_diagnostics_enabled(&mut self, enabled: bool) {
+        self.diagnostics_enabled = enabled;
+        if !enabled {
+            self.frame_stats = TextFrameStats::default();
+        }
     }
 
     fn begin_frame(&mut self) {
@@ -6053,8 +6189,10 @@ impl TextEngine {
                             state.current_transform,
                             viewport,
                         );
-                        self.frame_stats.glyph_instances += 1;
-                        self.frame_stats.glyph_vertices += 6;
+                        if self.diagnostics_enabled {
+                            self.frame_stats.glyph_instances += 1;
+                            self.frame_stats.glyph_vertices += 6;
+                        }
                     }
                     CachedGlyphPrimitive::Mesh(mesh) => {
                         let glyph_vertex_count = mesh.indices.len();
@@ -6066,8 +6204,10 @@ impl TextEngine {
                             state.current_transform,
                             viewport,
                         );
-                        self.frame_stats.glyph_instances += 1;
-                        self.frame_stats.glyph_vertices += glyph_vertex_count;
+                        if self.diagnostics_enabled {
+                            self.frame_stats.glyph_instances += 1;
+                            self.frame_stats.glyph_vertices += glyph_vertex_count;
+                        }
                     }
                 }
             }
@@ -6093,12 +6233,16 @@ impl TextEngine {
         let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
         let key = GlyphCacheKey::new(face_key, glyph_id, scale_bucket, feather_width);
         if self.glyph_cache.contains_key(&key) {
-            self.glyph_cache_hits += 1;
+            if self.diagnostics_enabled {
+                self.glyph_cache_hits += 1;
+            }
             return Ok(self.glyph_cache.get(&key));
         }
 
-        self.glyph_cache_misses += 1;
-        let atlas_miss_started = Instant::now();
+        if self.diagnostics_enabled {
+            self.glyph_cache_misses += 1;
+        }
+        let atlas_miss_started = self.diagnostics_enabled.then(|| Instant::now());
         let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
         let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
         let primitive = if let Some(atlas) = build_cached_glyph_atlas(
@@ -6109,12 +6253,16 @@ impl TextEngine {
             raster_scale_factor.max(1.0),
             bucketed_logical_scale,
         )? {
-            self.frame_stats.atlas_miss_count += 1;
-            self.frame_stats.atlas_miss_time_us += atlas_miss_started.elapsed().as_micros() as u64;
+            if let Some(started) = atlas_miss_started {
+                self.frame_stats.atlas_miss_count += 1;
+                self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
+            }
             CachedGlyphPrimitive::Atlas(atlas)
         } else {
-            self.frame_stats.atlas_miss_count += 1;
-            self.frame_stats.atlas_miss_time_us += atlas_miss_started.elapsed().as_micros() as u64;
+            if let Some(started) = atlas_miss_started {
+                self.frame_stats.atlas_miss_count += 1;
+                self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
+            }
             let Some(mesh) = build_cached_glyph_mesh(
                 face,
                 glyph_id,
@@ -6124,7 +6272,9 @@ impl TextEngine {
             else {
                 return Ok(None);
             };
-            self.frame_stats.atlas_fallback_count += 1;
+            if self.diagnostics_enabled {
+                self.frame_stats.atlas_fallback_count += 1;
+            }
             CachedGlyphPrimitive::Mesh(mesh)
         };
 

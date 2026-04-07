@@ -360,6 +360,26 @@ impl SceneStatistics {
         Self::from_frame_with_mode(frame, SceneStatisticsDetailMode::Lightweight)
     }
 
+    pub fn minimal(frame: &SceneFrame, detail_mode: SceneStatisticsDetailMode) -> Self {
+        Self {
+            detail_mode,
+            viewport: frame.viewport,
+            dirty_region_count: 0,
+            dirty_regions: Vec::new(),
+            dirty_area: 0.0,
+            dirty_coverage: 0.0,
+            command_count: 0,
+            command_breakdown: Vec::new(),
+            layer_count: 0,
+            layer_update_count: 0,
+            layer_update_breakdown: Vec::new(),
+            text_command_count: 0,
+            image_command_count: 0,
+            clip_command_count: 0,
+            transform_command_count: 0,
+        }
+    }
+
     pub fn from_frame_with_mode(
         frame: &SceneFrame,
         detail_mode: SceneStatisticsDetailMode,
@@ -480,6 +500,29 @@ impl WindowPerformanceSnapshot {
         scene: SceneStatistics,
     ) -> Self {
         let total_time_ms = phase_timings.iter().map(|sample| sample.duration_ms).sum();
+
+        Self::with_total_time_ms(
+            window_id,
+            frame_index,
+            total_time_ms,
+            phase_timings,
+            renderer_submission,
+            text_caches,
+            text_cache_deltas,
+            scene,
+        )
+    }
+
+    pub fn with_total_time_ms(
+        window_id: WindowId,
+        frame_index: u64,
+        total_time_ms: f64,
+        phase_timings: Vec<FramePhaseSample>,
+        renderer_submission: RendererSubmissionDiagnostics,
+        text_caches: TextCacheDiagnostics,
+        text_cache_deltas: TextCacheDeltaDiagnostics,
+        scene: SceneStatistics,
+    ) -> Self {
 
         Self {
             window_id,

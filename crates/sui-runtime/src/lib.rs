@@ -1055,6 +1055,7 @@ impl WindowState {
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) -> RenderOutput {
+        let diagnostics_enabled = window_scene_statistics_detail_mode(self.id).is_detailed();
         let mut diagnostics = RenderDiagnostics::default();
         let mut invalidations = std::mem::take(&mut self.pending_invalidations);
         let mut repainted = false;
@@ -1082,11 +1083,15 @@ impl WindowState {
             self.schedule.extend(&pass_invalidations);
             invalidations.extend(pass_invalidations);
             graph_changes = self.collect_graph_changes(previous_graph.as_ref());
-            diagnostics.push(FramePhase::MeasureArrange, started.elapsed());
+            if diagnostics_enabled {
+                diagnostics.push(FramePhase::MeasureArrange, started.elapsed());
+            }
         } else if self.schedule.hit_test || self.graph.is_empty() {
             let started = Instant::now();
             self.refresh_graph();
-            diagnostics.push(FramePhase::HitTest, started.elapsed());
+            if diagnostics_enabled {
+                diagnostics.push(FramePhase::HitTest, started.elapsed());
+            }
         }
 
         let viewport = self.viewport.unwrap_or(Size::ZERO);
@@ -1203,7 +1208,7 @@ impl WindowState {
                 font_registry: Arc::clone(&font_registry),
                 image_registry: Arc::clone(&image_registry),
             });
-            if repainted {
+            if diagnostics_enabled && repainted {
                 diagnostics.push(FramePhase::Paint, started.elapsed());
             }
         }
@@ -1219,7 +1224,9 @@ impl WindowState {
             );
             self.root.semantics(&mut semantics_ctx);
             self.last_semantics = self.assemble_semantics_tree(semantics_ctx.into_nodes());
-            diagnostics.push(FramePhase::Semantics, started.elapsed());
+            if diagnostics_enabled {
+                diagnostics.push(FramePhase::Semantics, started.elapsed());
+            }
         }
 
         let viewport_rect = Rect::from_origin_size(Point::ZERO, viewport);
@@ -1251,12 +1258,14 @@ impl WindowState {
         frame.font_registry = font_registry;
         frame.image_registry = image_registry;
 
-        let layout_cache = text_system.layout_cache_snapshot();
-        diagnostics.text_caches.runtime_layout = CacheMetrics::new(
-            layout_cache.entries,
-            layout_cache.hits,
-            layout_cache.misses,
-        );
+        if diagnostics_enabled {
+            let layout_cache = text_system.layout_cache_snapshot();
+            diagnostics.text_caches.runtime_layout = CacheMetrics::new(
+                layout_cache.entries,
+                layout_cache.hits,
+                layout_cache.misses,
+            );
+        }
 
         self.schedule.clear();
 
@@ -2100,7 +2109,7 @@ mod tests {
         Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
         PaintCtx, Runtime, SemanticsCtx, SingleChild, Widget, WidgetChildren,
         WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
-        WindowBuilder,
+        WindowBuilder, set_window_scene_statistics_detail_mode, SceneStatisticsDetailMode,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
@@ -3182,6 +3191,7 @@ mod tests {
     #[test]
     fn runtime_render_reports_ime_composition_rect_for_shaped_text_widgets() {
         let (mut runtime, window_id) = build_text_runtime();
+        set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
 
         let output = runtime.render(window_id).unwrap();
 

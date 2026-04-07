@@ -488,8 +488,13 @@ impl DesktopHarnessApp {
                 self.update_clock();
                 self.runtime.tick(self.frame_clock);
 
+                let runtime_started = Instant::now();
                 let output = self.runtime.render(window_id)?;
+                let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
                 let renderer_started = Instant::now();
+                let diagnostics_enabled = window_scene_statistics_detail_mode(window_id).is_detailed();
+                self.renderer
+                    .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
 
@@ -510,14 +515,15 @@ impl DesktopHarnessApp {
                     apply_ime_composition_rect(window.window.as_ref(), output.ime_composition_rect);
                 }
 
-                    publish_frame_performance(
-                        window_id,
-                        frame_index,
-                        pending_event_time_ms,
-                        &output,
-                        &self.renderer,
-                        renderer_time_ms,
-                    );
+                publish_frame_performance(
+                    window_id,
+                    frame_index,
+                    pending_event_time_ms,
+                    runtime_time_ms,
+                    &output,
+                    &self.renderer,
+                    renderer_time_ms,
+                );
             }
         }
 
@@ -1037,10 +1043,28 @@ fn publish_frame_performance(
     window_id: WindowId,
     frame_index: u64,
     event_time_ms: f64,
+    runtime_time_ms: f64,
     output: &RenderOutput,
     renderer: &WgpuRenderer,
     renderer_time_ms: f64,
 ) {
+    let detail_mode = window_scene_statistics_detail_mode(window_id);
+    let total_time_ms = event_time_ms + runtime_time_ms + renderer_time_ms;
+
+    if !detail_mode.is_detailed() {
+        publish_window_performance_snapshot(WindowPerformanceSnapshot::with_total_time_ms(
+            window_id,
+            frame_index,
+            total_time_ms,
+            Vec::new(),
+            RendererSubmissionDiagnostics::default(),
+            TextCacheDiagnostics::default(),
+            Default::default(),
+            SceneStatistics::minimal(&output.frame, detail_mode),
+        ));
+        return;
+    }
+
     let diagnostics_started = Instant::now();
     let mut phase_timings = Vec::with_capacity(output.diagnostics.phase_timings.len() + 2);
     let renderer_text_cache = renderer.text_cache_snapshot(window_id);
@@ -1078,9 +1102,15 @@ fn publish_frame_performance(
         diagnostics_started.elapsed().as_secs_f64() * 1000.0,
     ));
 
-    publish_window_performance_snapshot(WindowPerformanceSnapshot::new(
+    let total_time_ms = event_time_ms
+        + runtime_time_ms
+        + renderer_time_ms
+        + diagnostics_started.elapsed().as_secs_f64() * 1000.0;
+
+    publish_window_performance_snapshot(WindowPerformanceSnapshot::with_total_time_ms(
         window_id,
         frame_index,
+        total_time_ms,
         phase_timings,
         RendererSubmissionDiagnostics::new(
             renderer_stats.pass_count,
@@ -1121,10 +1151,7 @@ fn publish_frame_performance(
         ),
         text_caches,
         text_cache_deltas,
-        SceneStatistics::from_frame_with_mode(
-            &output.frame,
-            window_scene_statistics_detail_mode(window_id),
-        ),
+        SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
     ));
 }
 
@@ -1184,21 +1211,6 @@ fn text_input_value(snapshot: &DesktopWindowSnapshot, name: &str) -> String {
     match input.value {
         Some(SemanticsValue::Text(value)) => value,
         other => panic!("unexpected text input value for {name}: {other:?}"),
-    }
-}
-
-fn phase_duration_ms(snapshot: &WindowPerformanceSnapshot, phase: FramePhase) -> f64 {
-    let total: f64 = snapshot
-        .phase_timings
-        .iter()
-        .filter(|sample| sample.phase == phase)
-        .map(|sample| sample.duration_ms)
-        .sum();
-
-    if total == 0.0 {
-        0.0
-    } else {
-        total
     }
 }
 
@@ -2231,15 +2243,13 @@ fn desktop_button_grid_64_reports_initial_render_time() -> Result<()> {
     assert_eq!(row_positions.len(), BUTTON_GRID_ROWS);
     assert!(performance.frame_index > 0);
     assert!(performance.total_time_ms >= 0.0);
-    assert!(performance.renderer_submission.draw_count > 0);
+    assert!(performance.phase_timings.is_empty());
+    assert_eq!(performance.renderer_submission.draw_count, 0);
+    assert!(!performance.scene.detail_mode.is_detailed());
 
     println!(
-        "64-button grid first frame: total={:.3} ms, paint={:.3} ms, renderer={:.3} ms, draws={}, commands={}, slowest={} ({:.3} ms)",
+        "64-button grid first frame: total={:.3} ms, slowest={} ({:.3} ms)",
         performance.total_time_ms,
-        phase_duration_ms(&performance, FramePhase::Paint),
-        phase_duration_ms(&performance, FramePhase::Renderer),
-        performance.renderer_submission.draw_count,
-        performance.scene.command_count,
         slowest_phase
             .map(|sample| sample.phase.label())
             .unwrap_or("none"),
@@ -2287,6 +2297,8 @@ fn desktop_widget_book_overlay_toggle_publishes_detailed_scene_stats() -> Result
         .expect("desktop widget book should publish an initial performance snapshot");
 
     assert!(!before_performance.scene.detail_mode.is_detailed());
+    assert!(before_performance.phase_timings.is_empty());
+    assert_eq!(before_performance.renderer_submission, RendererSubmissionDiagnostics::default());
 
     click_at(
         &harness,

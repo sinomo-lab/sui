@@ -1610,6 +1610,26 @@ impl LivePerformancePanel {
 
         match display.snapshot {
             Some(snapshot) => {
+                let headline = format!(
+                    "{}  |  {}",
+                    if display.idle {
+                        "0 fps".to_string()
+                    } else {
+                        format_fps(snapshot.total_time_ms)
+                    },
+                    if display.idle {
+                        "idle".to_string()
+                    } else {
+                        format_duration_ms(snapshot.total_time_ms)
+                    },
+                );
+                if !snapshot.scene.detail_mode.is_detailed() {
+                    return vec![
+                        LivePerformanceLineSpec::title("live performance".to_string()),
+                        LivePerformanceLineSpec::headline(headline),
+                    ];
+                }
+
                 let slowest_phase = snapshot.slowest_phase();
                 let slowest_label = slowest_phase
                     .map(|sample| sample.phase.label())
@@ -1617,53 +1637,22 @@ impl LivePerformancePanel {
                 let slowest_duration = slowest_phase
                     .map(|sample| format_duration_ms(sample.duration_ms))
                     .unwrap_or_else(|| "0.0 ms".to_string());
-                let scene_metric = if snapshot.scene.detail_mode.is_detailed() {
-                    format!(
-                        "scene {} dirty  |  {} layers  |  {} updates",
-                        snapshot.scene.dirty_region_count,
-                        snapshot.scene.layer_count,
-                        snapshot.scene.layer_update_count,
-                    )
-                } else {
-                    format!(
-                        "scene {} dirty  |  {} cmds  |  {:.0}% dirty",
-                        snapshot.scene.dirty_region_count,
-                        snapshot.scene.command_count,
-                        snapshot.scene.dirty_coverage,
-                    )
-                };
-                let trailing_metric = if snapshot.scene.detail_mode.is_detailed() {
-                    format!(
-                        "cmds txt {}  |  img {}  |  clip {}",
-                        snapshot.scene.text_command_count,
-                        snapshot.scene.image_command_count,
-                        snapshot.scene.clip_command_count,
-                    )
-                } else {
-                    format!(
-                        "cache rt {}  |  rr {}  |  gp {}  |  path {}",
-                        snapshot.text_caches.runtime_layout.entries,
-                        snapshot.text_caches.renderer_layout.entries,
-                        snapshot.text_caches.renderer_glyph.entries,
-                        snapshot.text_caches.renderer_path.entries,
-                    )
-                };
+                let scene_metric = format!(
+                    "scene {} dirty  |  {} layers  |  {} updates",
+                    snapshot.scene.dirty_region_count,
+                    snapshot.scene.layer_count,
+                    snapshot.scene.layer_update_count,
+                );
+                let trailing_metric = format!(
+                    "cmds txt {}  |  img {}  |  clip {}",
+                    snapshot.scene.text_command_count,
+                    snapshot.scene.image_command_count,
+                    snapshot.scene.clip_command_count,
+                );
 
                 vec![
                     LivePerformanceLineSpec::title("live performance".to_string()),
-                    LivePerformanceLineSpec::headline(format!(
-                        "{}  |  {}",
-                        if display.idle {
-                            "0 fps".to_string()
-                        } else {
-                            format_fps(snapshot.total_time_ms)
-                        },
-                        if display.idle {
-                            "idle".to_string()
-                        } else {
-                            format_duration_ms(snapshot.total_time_ms)
-                        },
-                    )),
+                    LivePerformanceLineSpec::headline(headline),
                     LivePerformanceLineSpec::metric(if display.idle {
                         format!(
                             "frame {}  |  last active {} {}",
@@ -2465,7 +2454,7 @@ mod tests {
 
         display.borrow_mut().snapshot = Some(sample_window_performance_snapshot_record(WindowId::new(11)));
 
-        assert_eq!(panel.content_specs(WindowId::new(11)).len(), 9);
+        assert_eq!(panel.content_specs(WindowId::new(11)).len(), 2);
     }
 
     #[test]
@@ -2522,7 +2511,7 @@ mod tests {
 
         let lines = panel.content_specs(WindowId::new(11));
         assert_eq!(lines[1].text, "0 fps  |  idle");
-        assert!(lines[2].text.contains("last active"));
+        assert_eq!(lines.len(), 2);
     }
 
     #[test]
