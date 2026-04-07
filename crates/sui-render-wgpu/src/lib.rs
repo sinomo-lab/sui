@@ -3,7 +3,7 @@
 mod feathering;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     fmt,
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
@@ -4527,10 +4527,9 @@ struct GlyphFaceCacheKey {
 
 impl GlyphFaceCacheKey {
     fn new(face: &ResolvedTextFace) -> Self {
-        let data = face.shared_bytes();
         Self {
-            data_ptr: data.as_ptr() as usize,
-            data_len: data.len(),
+            data_ptr: face.data_ptr(),
+            data_len: face.data_len(),
             face_index: face.face_index(),
         }
     }
@@ -4831,9 +4830,9 @@ impl Default for PathMeshCache {
 }
 
 impl PathMeshCache {
-        fn set_diagnostics_enabled(&mut self, enabled: bool) {
-            self.diagnostics_enabled = enabled;
-        }
+    fn set_diagnostics_enabled(&mut self, enabled: bool) {
+        self.diagnostics_enabled = enabled;
+    }
 
     fn cached_fill_mesh(
         &mut self,
@@ -4842,23 +4841,22 @@ impl PathMeshCache {
         feather_width: f32,
     ) -> Result<&CachedGlyphMesh> {
         let key = PathCacheKey::fill(path, transform, feather_width);
-        if self.meshes.contains_key(&key) {
-            if self.diagnostics_enabled {
-                self.hits += 1;
+        match self.meshes.entry(key) {
+            Entry::Occupied(entry) => {
+                if self.diagnostics_enabled {
+                    self.hits += 1;
+                }
+                Ok(entry.into_mut())
             }
-            return Ok(self
-                .meshes
-                .get(&key)
-                .expect("path cache entry should exist"));
+            Entry::Vacant(entry) => {
+                if self.diagnostics_enabled {
+                    self.misses += 1;
+                }
+                let lyon_path = build_lyon_path(path, transform);
+                let mesh = feathering::build_local_fill_mesh(&lyon_path, feather_width)?;
+                Ok(entry.insert(mesh))
+            }
         }
-
-        if self.diagnostics_enabled {
-            self.misses += 1;
-        }
-        let lyon_path = build_lyon_path(path, transform);
-        let mesh = feathering::build_local_fill_mesh(&lyon_path, feather_width)?;
-        self.meshes.insert(key, mesh);
-        Ok(self.meshes.get(&key).expect("path cache entry inserted"))
     }
 
     fn cached_stroke_mesh(
@@ -4869,23 +4867,22 @@ impl PathMeshCache {
         feather_width: f32,
     ) -> Result<&CachedGlyphMesh> {
         let key = PathCacheKey::stroke(path, transform, line_width, feather_width);
-        if self.meshes.contains_key(&key) {
-            if self.diagnostics_enabled {
-                self.hits += 1;
+        match self.meshes.entry(key) {
+            Entry::Occupied(entry) => {
+                if self.diagnostics_enabled {
+                    self.hits += 1;
+                }
+                Ok(entry.into_mut())
             }
-            return Ok(self
-                .meshes
-                .get(&key)
-                .expect("path cache entry should exist"));
+            Entry::Vacant(entry) => {
+                if self.diagnostics_enabled {
+                    self.misses += 1;
+                }
+                let lyon_path = build_lyon_path(path, transform);
+                let mesh = feathering::build_local_stroke_mesh(&lyon_path, line_width, feather_width)?;
+                Ok(entry.insert(mesh))
+            }
         }
-
-        if self.diagnostics_enabled {
-            self.misses += 1;
-        }
-        let lyon_path = build_lyon_path(path, transform);
-        let mesh = feathering::build_local_stroke_mesh(&lyon_path, line_width, feather_width)?;
-        self.meshes.insert(key, mesh);
-        Ok(self.meshes.get(&key).expect("path cache entry inserted"))
     }
 
     #[cfg(test)]
@@ -6635,8 +6632,6 @@ impl TextEngine {
             return Ok(());
         }
 
-        let face = rustybuzz::Face::from_slice(layout.face().bytes(), layout.face().face_index())
-            .ok_or_else(|| Error::new("failed to parse shaped text face data"))?;
         let face_key = GlyphFaceCacheKey::new(layout.face());
 
         for glyph in layout.glyphs() {
@@ -6648,8 +6643,8 @@ impl TextEngine {
             }
 
             if let Some(primitive) = self.cached_glyph_primitive(
+                layout.face(),
                 face_key,
-                &face,
                 glyph.glyph_id,
                 glyph.scale,
                 raster_scale_factor,
@@ -6698,8 +6693,8 @@ impl TextEngine {
 
     fn cached_glyph_primitive(
         &mut self,
+        face: &ResolvedTextFace,
         face_key: GlyphFaceCacheKey,
-        face: &rustybuzz::Face<'_>,
         glyph_id: u16,
         glyph_scale: f32,
         raster_scale_factor: f32,
@@ -6708,54 +6703,57 @@ impl TextEngine {
         let atlas_physical_scale = glyph_scale * raster_scale_factor.max(1.0);
         let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
         let key = GlyphCacheKey::new(face_key, glyph_id, scale_bucket, feather_width);
-        if self.glyph_cache.contains_key(&key) {
-            if self.diagnostics_enabled {
-                self.glyph_cache_hits += 1;
+        match self.glyph_cache.entry(key) {
+            Entry::Occupied(entry) => {
+                if self.diagnostics_enabled {
+                    self.glyph_cache_hits += 1;
+                }
+                Ok(Some(&*entry.into_mut()))
             }
-            return Ok(self.glyph_cache.get(&key));
+            Entry::Vacant(entry) => {
+                if self.diagnostics_enabled {
+                    self.glyph_cache_misses += 1;
+                }
+                let face = rustybuzz::Face::from_slice(face.bytes(), face.face_index())
+                    .ok_or_else(|| Error::new("failed to parse shaped text face data"))?;
+                let atlas_miss_started = self.diagnostics_enabled.then(Instant::now);
+                let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
+                let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
+                let primitive = if let Some(atlas) = build_cached_glyph_atlas(
+                    &mut self.atlas,
+                    &face,
+                    glyph_id,
+                    bucketed_physical_scale,
+                    raster_scale_factor.max(1.0),
+                    bucketed_logical_scale,
+                )? {
+                    if let Some(started) = atlas_miss_started {
+                        self.frame_stats.atlas_miss_count += 1;
+                        self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
+                    }
+                    CachedGlyphPrimitive::Atlas(atlas)
+                } else {
+                    if let Some(started) = atlas_miss_started {
+                        self.frame_stats.atlas_miss_count += 1;
+                        self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
+                    }
+                    let Some(mesh) = build_cached_glyph_mesh(
+                        &face,
+                        glyph_id,
+                        bucketed_logical_scale,
+                        feather_width,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    if self.diagnostics_enabled {
+                        self.frame_stats.atlas_fallback_count += 1;
+                    }
+                    CachedGlyphPrimitive::Mesh(mesh)
+                };
+                Ok(Some(&*entry.insert(primitive)))
+            }
         }
-
-        if self.diagnostics_enabled {
-            self.glyph_cache_misses += 1;
-        }
-        let atlas_miss_started = self.diagnostics_enabled.then(|| Instant::now());
-        let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
-        let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
-        let primitive = if let Some(atlas) = build_cached_glyph_atlas(
-            &mut self.atlas,
-            face,
-            glyph_id,
-            bucketed_physical_scale,
-            raster_scale_factor.max(1.0),
-            bucketed_logical_scale,
-        )? {
-            if let Some(started) = atlas_miss_started {
-                self.frame_stats.atlas_miss_count += 1;
-                self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
-            }
-            CachedGlyphPrimitive::Atlas(atlas)
-        } else {
-            if let Some(started) = atlas_miss_started {
-                self.frame_stats.atlas_miss_count += 1;
-                self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
-            }
-            let Some(mesh) = build_cached_glyph_mesh(
-                face,
-                glyph_id,
-                bucketed_logical_scale,
-                feather_width,
-            )?
-            else {
-                return Ok(None);
-            };
-            if self.diagnostics_enabled {
-                self.frame_stats.atlas_fallback_count += 1;
-            }
-            CachedGlyphPrimitive::Mesh(mesh)
-        };
-
-        self.glyph_cache.insert(key.clone(), primitive);
-        Ok(self.glyph_cache.get(&key))
     }
 
     fn take_atlas_upload(&mut self) -> Option<TextAtlasUpload> {

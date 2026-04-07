@@ -122,6 +122,14 @@ impl ResolvedTextFace {
         &self.data
     }
 
+    pub fn data_ptr(&self) -> usize {
+        self.data.as_ptr() as usize
+    }
+
+    pub fn data_len(&self) -> usize {
+        self.data.len()
+    }
+
     pub fn shared_bytes(&self) -> Arc<[u8]> {
         Arc::clone(&self.data)
     }
@@ -314,10 +322,9 @@ struct FaceCacheKey {
 
 impl FaceCacheKey {
     fn new(face: &ResolvedTextFace) -> Self {
-        let data = face.shared_bytes();
         Self {
-            data_ptr: data.as_ptr() as usize,
-            data_len: data.len(),
+            data_ptr: face.data_ptr(),
+            data_len: face.data_len(),
             face_index: face.face_index(),
         }
     }
