@@ -263,6 +263,7 @@ pub struct WgpuRenderer {
     text_atlas_texture: Option<CachedTextAtlasTexture>,
     analytic_path_cache: HashMap<u64, CachedAnalyticPathGpu>,
     compositors: HashMap<WindowId, RetainedCompositorState>,
+    retained_tile_arenas: HashMap<WindowId, RetainedTileVertexArena>,
     surfaces: HashMap<WindowId, SurfaceState>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
     frame_resources: FrameResources,
@@ -384,9 +385,29 @@ enum TilePayload {
 
 #[derive(Debug)]
 struct RetainedGpuGeometry {
+    scene_range: PreparedVertices,
+    scene_capacity: u32,
+    clip_range: PreparedVertices,
+    clip_capacity: u32,
+    dirty: bool,
+}
+
+#[derive(Default)]
+struct RetainedTileVertexArena {
     scene_buffer: Option<wgpu::Buffer>,
     clip_buffer: Option<wgpu::Buffer>,
-    dirty: bool,
+    scene_capacity_vertices: usize,
+    clip_capacity_vertices: usize,
+    used_scene_vertices: usize,
+    used_clip_vertices: usize,
+}
+
+#[derive(Debug, Default)]
+struct RetainedTileUploadPlan {
+    in_place_tiles: Vec<TileAddress>,
+    appended_tiles: Vec<TileAddress>,
+    appended_scene_vertices: usize,
+    appended_clip_vertices: usize,
 }
 
 #[derive(Debug)]
@@ -410,36 +431,69 @@ impl TileEntry {
         }
     }
 
-    fn ensure_gpu_geometry(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> u64 {
-        let (scene_vertices, clip_vertices) = match &self.payload {
-            TilePayload::DirectPacket(draw_ops) => (&draw_ops.scene_vertices, &draw_ops.clip_vertices),
-        };
-        let uploaded_vertex_bytes = (scene_vertices.len() as u64 + clip_vertices.len() as u64)
-            * VERTEX_SIZE;
+    fn scene_vertices(&self) -> &[Vertex] {
+        match &self.payload {
+            TilePayload::DirectPacket(draw_ops) => &draw_ops.scene_vertices,
+        }
+    }
 
-        if let Some(gpu_geometry) = self.gpu_geometry.as_mut() {
-            if !gpu_geometry.dirty {
-                return 0;
-            }
+    fn clip_vertices(&self) -> &[Vertex] {
+        match &self.payload {
+            TilePayload::DirectPacket(draw_ops) => &draw_ops.clip_vertices,
+        }
+    }
 
-            if let Some(scene_buffer) = &gpu_geometry.scene_buffer {
-                queue.write_buffer(scene_buffer, 0, bytemuck::cast_slice(scene_vertices));
-            }
-            if let Some(clip_buffer) = &gpu_geometry.clip_buffer {
-                queue.write_buffer(clip_buffer, 0, bytemuck::cast_slice(clip_vertices));
-            }
-            gpu_geometry.dirty = false;
-            return uploaded_vertex_bytes;
+    fn uploaded_vertex_bytes(&self) -> u64 {
+        (self.scene_vertices().len() as u64 + self.clip_vertices().len() as u64) * VERTEX_SIZE
+    }
+}
+
+impl RetainedTileVertexArena {
+    fn has_capacity(&self, scene_vertices: usize, clip_vertices: usize) -> bool {
+        self.scene_capacity_vertices >= scene_vertices && self.clip_capacity_vertices >= clip_vertices
+    }
+
+    fn ensure_capacity(
+        &mut self,
+        device: &wgpu::Device,
+        scene_vertices: usize,
+        clip_vertices: usize,
+    ) {
+        if self.has_capacity(scene_vertices, clip_vertices) {
+            return;
         }
 
-        let scene_buffer = create_static_vertex_buffer(device, "SUI retained tile scene", scene_vertices);
-        let clip_buffer = create_static_vertex_buffer(device, "SUI retained tile clip", clip_vertices);
-        self.gpu_geometry = Some(RetainedGpuGeometry {
-            scene_buffer,
-            clip_buffer,
-            dirty: false,
-        });
-        uploaded_vertex_bytes
+        let scene_capacity = grow_retained_tile_vertex_capacity(
+            self.scene_capacity_vertices,
+            scene_vertices,
+        );
+        let clip_capacity = grow_retained_tile_vertex_capacity(
+            self.clip_capacity_vertices,
+            clip_vertices,
+        );
+
+        self.scene_buffer = create_empty_vertex_buffer(
+            device,
+            "SUI retained tile scene arena",
+            scene_capacity,
+        );
+        self.clip_buffer = create_empty_vertex_buffer(
+            device,
+            "SUI retained tile clip arena",
+            clip_capacity,
+        );
+        self.scene_capacity_vertices = scene_capacity;
+        self.clip_capacity_vertices = clip_capacity;
+    }
+}
+
+impl RetainedTileUploadPlan {
+    fn needs_rebuild(&self, arena: &RetainedTileVertexArena) -> bool {
+        (arena.used_scene_vertices > 0 || arena.used_clip_vertices > 0)
+            && !arena.has_capacity(
+                arena.used_scene_vertices + self.appended_scene_vertices,
+                arena.used_clip_vertices + self.appended_clip_vertices,
+            )
     }
 }
 
@@ -2631,6 +2685,7 @@ impl WgpuRenderer {
         self.last_frames.remove(&window_id);
         self.last_frame_stats.remove(&window_id);
         self.compositors.remove(&window_id);
+        self.retained_tile_arenas.remove(&window_id);
     }
 
     pub fn render(&mut self, frame: &SceneFrame) -> Result<()> {
@@ -3184,6 +3239,16 @@ impl WgpuRenderer {
         let mut batch_prepare_time_us = 0u64;
         let mut gpu_upload_time_us = 0u64;
 
+        let retained_tile_upload_started = diagnostics_enabled.then(|| Instant::now());
+        let retained_tile_uploaded_vertex_bytes =
+            self.prepare_retained_tile_geometry(frame.window_id, &submission)?;
+        if let Some(started) = retained_tile_upload_started {
+            gpu_upload_time_us += started.elapsed().as_micros() as u64;
+        }
+        if diagnostics_enabled {
+            uploaded_vertex_bytes += retained_tile_uploaded_vertex_bytes;
+        }
+
         for fragment in submission.fragments {
             match fragment {
                 RetainedFrameFragment::Transient(draw_ops) => {
@@ -3233,11 +3298,12 @@ impl WgpuRenderer {
                     }
                 }
                 RetainedFrameFragment::Tile(address) => {
-                    let (passes, scene_buffer, clip_buffer, fragment_uploaded_bytes, translation) = {
-                        let shared = self
-                            .shared
-                            .as_ref()
-                            .expect("renderer shared state initialized");
+                    let (passes, scene_buffer, clip_buffer, translation) = {
+                        let (scene_buffer, clip_buffer) = self
+                            .retained_tile_arenas
+                            .get(&frame.window_id)
+                            .map(|arena| (arena.scene_buffer.clone(), arena.clip_buffer.clone()))
+                            .unwrap_or((None, None));
                         let compositor = self
                             .compositors
                             .get_mut(&frame.window_id)
@@ -3250,37 +3316,27 @@ impl WgpuRenderer {
                                 address.tile_y
                             ))
                         })?;
-                        let gpu_upload_started = diagnostics_enabled.then(|| Instant::now());
-                        let uploaded = entry.ensure_gpu_geometry(&shared.device, &shared.queue);
-                        if let Some(started) = gpu_upload_started {
-                            gpu_upload_time_us += started.elapsed().as_micros() as u64;
-                        }
+                        let geometry = entry
+                            .gpu_geometry
+                            .as_ref()
+                            .expect("tile GPU geometry created before retained submission");
                         let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
                         let passes = prepare_cached_passes(
                             &entry.cached_passes,
                             frame.viewport,
                             framebuffer_size,
                             entry.translation,
+                            geometry.scene_range.start,
+                            geometry.clip_range.start,
                         );
                         if let Some(started) = batch_prepare_started {
                             batch_prepare_time_us += started.elapsed().as_micros() as u64;
                         }
-                        let gpu_geometry = entry
-                            .gpu_geometry
-                            .as_ref()
-                            .expect("tile GPU geometry created before retained submission");
-                        (
-                            passes,
-                            gpu_geometry.scene_buffer.clone(),
-                            gpu_geometry.clip_buffer.clone(),
-                            uploaded,
-                            entry.translation,
-                        )
+                        (passes, scene_buffer, clip_buffer, entry.translation)
                     };
                     if diagnostics_enabled {
                         let (_, fragment_draw_count) = prepared_batch_counts(&passes);
                         draw_count += fragment_draw_count;
-                        uploaded_vertex_bytes += fragment_uploaded_bytes;
                     }
 
                     if passes.is_empty() {
@@ -3872,6 +3928,53 @@ impl WgpuRenderer {
         ))
     }
 
+    fn prepare_retained_tile_geometry(
+        &mut self,
+        window_id: WindowId,
+        submission: &RetainedFrameSubmission,
+    ) -> Result<u64> {
+        let WgpuRenderer {
+            shared,
+            compositors,
+            retained_tile_arenas,
+            ..
+        } = self;
+        let shared = shared
+            .as_ref()
+            .expect("renderer shared state initialized before retained tile upload");
+        let compositor = compositors.get_mut(&window_id).ok_or_else(|| {
+            Error::new(format!(
+                "missing compositor state for window {} during retained tile upload",
+                window_id.get()
+            ))
+        })?;
+        let arena = retained_tile_arenas.entry(window_id).or_default();
+
+        let visible_tiles = collect_visible_retained_tiles(submission);
+        if visible_tiles.is_empty() {
+            return Ok(0);
+        }
+
+        let plan = plan_retained_tile_upload(compositor, &visible_tiles)?;
+        if plan.needs_rebuild(arena) {
+            return rebuild_retained_tile_geometry(shared, compositor, arena);
+        }
+
+        let mut uploaded_vertex_bytes = append_retained_tile_geometry(
+            shared,
+            compositor,
+            arena,
+            &plan,
+        )?;
+        uploaded_vertex_bytes += refresh_retained_tile_geometry(
+            shared,
+            compositor,
+            arena,
+            &plan.in_place_tiles,
+        )?;
+        Ok(uploaded_vertex_bytes)
+    }
+
     fn create_surface_state(
         &mut self,
         window: Arc<Window>,
@@ -3915,6 +4018,7 @@ impl Default for WgpuRenderer {
             text_atlas_texture: None,
             analytic_path_cache: HashMap::new(),
             compositors: HashMap::new(),
+            retained_tile_arenas: HashMap::new(),
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
             frame_resources: FrameResources::default(),
@@ -5042,7 +5146,14 @@ fn batch_draw_ops(
     framebuffer_size: (u32, u32),
 ) -> Vec<PreparedPassBatch> {
     let cached_passes = cache_draw_ops(draw_ops);
-    prepare_cached_passes(&cached_passes, viewport, framebuffer_size, Vector::ZERO)
+    prepare_cached_passes(
+        &cached_passes,
+        viewport,
+        framebuffer_size,
+        Vector::ZERO,
+        0,
+        0,
+    )
 }
 
 fn cache_draw_ops(draw_ops: &DrawOpArena) -> Vec<CachedPassBatch> {
@@ -5102,12 +5213,21 @@ fn prepare_cached_passes(
     viewport: Size,
     framebuffer_size: (u32, u32),
     translation: Vector,
+    scene_vertex_offset: u32,
+    clip_vertex_offset: u32,
 ) -> Vec<PreparedPassBatch> {
     cached_passes
         .iter()
         .enumerate()
         .map(|(_, pass)| PreparedPassBatch {
-            clip_paths: pass.clip_paths.clone(),
+            clip_paths: pass
+                .clip_paths
+                .iter()
+                .copied()
+                .map(|clip_path| PreparedClipPath {
+                    vertices: clip_path.vertices.offset(clip_vertex_offset),
+                })
+                .collect(),
             draws: pass
                 .draws
                 .iter()
@@ -5117,7 +5237,7 @@ fn prepare_cached_passes(
                         .clip_rect
                         .map(|rect| rect.translate(translation))
                         .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size)),
-                    vertices: draw.vertices,
+                    vertices: draw.vertices.offset(scene_vertex_offset),
                 })
                 .collect(),
         })
@@ -5185,6 +5305,308 @@ fn create_static_vertex_buffer(
         contents: bytemuck::cast_slice(vertices),
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     }))
+}
+
+fn collect_visible_retained_tiles(submission: &RetainedFrameSubmission) -> Vec<TileAddress> {
+    let mut visible_tiles = Vec::new();
+    let mut seen_tiles = HashSet::new();
+    for fragment in &submission.fragments {
+        if let RetainedFrameFragment::Tile(address) = fragment {
+            if seen_tiles.insert(*address) {
+                visible_tiles.push(*address);
+            }
+        }
+    }
+    visible_tiles
+}
+
+fn retained_tile_error(address: TileAddress) -> Error {
+    Error::new(format!(
+        "missing retained tile for layer {} at ({}, {})",
+        address.layer.get(),
+        address.tile_x,
+        address.tile_y
+    ))
+}
+
+fn plan_retained_tile_upload(
+    compositor: &RetainedCompositorState,
+    visible_tiles: &[TileAddress],
+) -> Result<RetainedTileUploadPlan> {
+    let mut plan = RetainedTileUploadPlan::default();
+
+    for address in visible_tiles {
+        let entry = compositor
+            .tiles
+            .get(address)
+            .ok_or_else(|| retained_tile_error(*address))?;
+        let scene_len = entry.scene_vertices().len() as u32;
+        let clip_len = entry.clip_vertices().len() as u32;
+        match entry.gpu_geometry.as_ref() {
+            Some(geometry)
+                if scene_len <= geometry.scene_capacity
+                    && clip_len <= geometry.clip_capacity =>
+            {
+                if geometry.dirty {
+                    plan.in_place_tiles.push(*address);
+                }
+            }
+            _ => {
+                plan.appended_tiles.push(*address);
+                plan.appended_scene_vertices += scene_len as usize;
+                plan.appended_clip_vertices += clip_len as usize;
+            }
+        }
+    }
+
+    Ok(plan)
+}
+
+fn sorted_retained_tile_addresses(compositor: &RetainedCompositorState) -> Vec<TileAddress> {
+    let mut cached_tiles: Vec<_> = compositor.tiles.keys().copied().collect();
+    cached_tiles.sort_unstable_by_key(|address| {
+        (
+            address.layer.get(),
+            address.scale_bucket,
+            address.tile_y,
+            address.tile_x,
+        )
+    });
+    cached_tiles
+}
+
+fn rebuild_retained_tile_geometry(
+    shared: &SharedRenderer,
+    compositor: &mut RetainedCompositorState,
+    arena: &mut RetainedTileVertexArena,
+) -> Result<u64> {
+    let cached_tiles = sorted_retained_tile_addresses(compositor);
+    let mut total_scene_vertices = 0usize;
+    let mut total_clip_vertices = 0usize;
+    for address in &cached_tiles {
+        let entry = compositor
+            .tiles
+            .get(address)
+            .ok_or_else(|| retained_tile_error(*address))?;
+        total_scene_vertices += entry.scene_vertices().len();
+        total_clip_vertices += entry.clip_vertices().len();
+    }
+
+    arena.ensure_capacity(&shared.device, total_scene_vertices, total_clip_vertices);
+
+    let mut scene_data = Vec::with_capacity(total_scene_vertices);
+    let mut clip_data = Vec::with_capacity(total_clip_vertices);
+    for address in cached_tiles {
+        let entry = compositor
+            .tiles
+            .get_mut(&address)
+            .ok_or_else(|| retained_tile_error(address))?;
+        let scene_start = scene_data.len() as u32;
+        let clip_start = clip_data.len() as u32;
+        let (scene_len, clip_len) = {
+            let scene_vertices = entry.scene_vertices();
+            let clip_vertices = entry.clip_vertices();
+            scene_data.extend_from_slice(scene_vertices);
+            clip_data.extend_from_slice(clip_vertices);
+            (scene_vertices.len() as u32, clip_vertices.len() as u32)
+        };
+        entry.gpu_geometry = Some(RetainedGpuGeometry {
+            scene_range: PreparedVertices {
+                start: scene_start,
+                len: scene_len,
+            },
+            scene_capacity: scene_len,
+            clip_range: PreparedVertices {
+                start: clip_start,
+                len: clip_len,
+            },
+            clip_capacity: clip_len,
+            dirty: false,
+        });
+    }
+
+    upload_retained_tile_bytes(shared, arena.scene_buffer.as_ref(), 0, &scene_data)?;
+    upload_retained_tile_bytes(shared, arena.clip_buffer.as_ref(), 0, &clip_data)?;
+
+    arena.used_scene_vertices = scene_data.len();
+    arena.used_clip_vertices = clip_data.len();
+    Ok((scene_data.len() as u64 + clip_data.len() as u64) * VERTEX_SIZE)
+}
+
+fn append_retained_tile_geometry(
+    shared: &SharedRenderer,
+    compositor: &mut RetainedCompositorState,
+    arena: &mut RetainedTileVertexArena,
+    plan: &RetainedTileUploadPlan,
+) -> Result<u64> {
+    arena.ensure_capacity(
+        &shared.device,
+        arena.used_scene_vertices + plan.appended_scene_vertices,
+        arena.used_clip_vertices + plan.appended_clip_vertices,
+    );
+
+    if plan.appended_tiles.is_empty() {
+        return Ok(0);
+    }
+
+    let base_scene_start = arena.used_scene_vertices as u32;
+    let base_clip_start = arena.used_clip_vertices as u32;
+    let mut scene_data = Vec::with_capacity(plan.appended_scene_vertices);
+    let mut clip_data = Vec::with_capacity(plan.appended_clip_vertices);
+    let mut assignments = Vec::with_capacity(plan.appended_tiles.len());
+
+    for address in &plan.appended_tiles {
+        let entry = compositor
+            .tiles
+            .get(address)
+            .ok_or_else(|| retained_tile_error(*address))?;
+        let scene_start = base_scene_start + scene_data.len() as u32;
+        let clip_start = base_clip_start + clip_data.len() as u32;
+        let scene_vertices = entry.scene_vertices();
+        let clip_vertices = entry.clip_vertices();
+        let scene_len = scene_vertices.len() as u32;
+        let clip_len = clip_vertices.len() as u32;
+        scene_data.extend_from_slice(scene_vertices);
+        clip_data.extend_from_slice(clip_vertices);
+        assignments.push((*address, scene_start, scene_len, clip_start, clip_len));
+    }
+
+    let scene_offset = base_scene_start as u64 * VERTEX_SIZE;
+    let clip_offset = base_clip_start as u64 * VERTEX_SIZE;
+    upload_retained_tile_bytes(shared, arena.scene_buffer.as_ref(), scene_offset, &scene_data)?;
+    upload_retained_tile_bytes(shared, arena.clip_buffer.as_ref(), clip_offset, &clip_data)?;
+
+    arena.used_scene_vertices += scene_data.len();
+    arena.used_clip_vertices += clip_data.len();
+
+    for (address, scene_start, scene_len, clip_start, clip_len) in assignments {
+        let entry = compositor
+            .tiles
+            .get_mut(&address)
+            .ok_or_else(|| retained_tile_error(address))?;
+        entry.gpu_geometry = Some(RetainedGpuGeometry {
+            scene_range: PreparedVertices {
+                start: scene_start,
+                len: scene_len,
+            },
+            scene_capacity: scene_len,
+            clip_range: PreparedVertices {
+                start: clip_start,
+                len: clip_len,
+            },
+            clip_capacity: clip_len,
+            dirty: false,
+        });
+    }
+
+    Ok((scene_data.len() as u64 + clip_data.len() as u64) * VERTEX_SIZE)
+}
+
+fn refresh_retained_tile_geometry(
+    shared: &SharedRenderer,
+    compositor: &mut RetainedCompositorState,
+    arena: &RetainedTileVertexArena,
+    addresses: &[TileAddress],
+) -> Result<u64> {
+    let mut uploaded_vertex_bytes = 0u64;
+
+    for address in addresses {
+        let entry = compositor
+            .tiles
+            .get_mut(address)
+            .ok_or_else(|| retained_tile_error(*address))?;
+        let (scene_start, clip_start, scene_len, clip_len) = {
+            let geometry = entry
+                .gpu_geometry
+                .as_ref()
+                .expect("retained tile geometry exists before in-place upload");
+            let scene_start = geometry.scene_range.start;
+            let clip_start = geometry.clip_range.start;
+            upload_retained_tile_bytes(
+                shared,
+                arena.scene_buffer.as_ref(),
+                scene_start as u64 * VERTEX_SIZE,
+                entry.scene_vertices(),
+            )?;
+            upload_retained_tile_bytes(
+                shared,
+                arena.clip_buffer.as_ref(),
+                clip_start as u64 * VERTEX_SIZE,
+                entry.clip_vertices(),
+            )?;
+            (
+                scene_start,
+                clip_start,
+                entry.scene_vertices().len() as u32,
+                entry.clip_vertices().len() as u32,
+            )
+        };
+        let geometry = entry
+            .gpu_geometry
+            .as_mut()
+            .expect("retained tile geometry exists before in-place update");
+        geometry.scene_range = PreparedVertices {
+            start: scene_start,
+            len: scene_len,
+        };
+        geometry.clip_range = PreparedVertices {
+            start: clip_start,
+            len: clip_len,
+        };
+        geometry.dirty = false;
+        uploaded_vertex_bytes += entry.uploaded_vertex_bytes();
+    }
+
+    Ok(uploaded_vertex_bytes)
+}
+
+fn upload_retained_tile_bytes(
+    shared: &SharedRenderer,
+    buffer: Option<&wgpu::Buffer>,
+    offset: u64,
+    vertices: &[Vertex],
+) -> Result<()> {
+    if vertices.is_empty() {
+        return Ok(());
+    }
+
+    let buffer = buffer.ok_or_else(|| {
+        Error::new("retained tile arena buffer missing before GPU upload")
+    })?;
+    shared
+        .queue
+        .write_buffer(buffer, offset, bytemuck::cast_slice(vertices));
+    Ok(())
+}
+
+fn create_empty_vertex_buffer(
+    device: &wgpu::Device,
+    label: &str,
+    vertex_capacity: usize,
+) -> Option<wgpu::Buffer> {
+    if vertex_capacity == 0 {
+        return None;
+    }
+
+    Some(device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: vertex_capacity as u64 * VERTEX_SIZE,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    }))
+}
+
+fn grow_retained_tile_vertex_capacity(current: usize, required: usize) -> usize {
+    if required == 0 {
+        return current;
+    }
+
+    let target = required.max(1024);
+    if current >= target {
+        current
+    } else {
+        target.checked_next_power_of_two().unwrap_or(target)
+    }
 }
 
 fn flatten_fragment_passes(fragments: &[PreparedFragmentSubmission]) -> Vec<EncodablePassBatch> {
