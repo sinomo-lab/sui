@@ -1928,6 +1928,7 @@ dependencies = [
  "sui-core",
  "sui-scene",
  "sui-text",
+ "tiny-skia",
  "ttf-parser",
  "wgpu",
  "winit",
@@ -2069,6 +2070,7 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
+ "png",
  "tiny-skia-path",
 ]
 

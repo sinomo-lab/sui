@@ -28,6 +28,7 @@ use sui_text::{
     FontRegistry, ResolvedTextFace, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout,
     TextLayoutCacheSnapshot, TextRun, TextStyle, TextSystem,
 };
+use tiny_skia::{FillRule, Paint as TinySkiaPaint, PathBuilder as TinySkiaPathBuilder, Pixmap, Transform as TinySkiaTransform};
 use ttf_parser::GlyphId;
 use winit::window::Window;
 
@@ -112,6 +113,10 @@ struct TextFrameStats {
     glyph_instances: usize,
     glyph_vertices: usize,
 }
+
+const TEXT_ATLAS_WIDTH: usize = 2048;
+const TEXT_ATLAS_HEIGHT: usize = 2048;
+const TEXT_ATLAS_PADDING: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RendererFrameStats {
@@ -198,6 +203,7 @@ pub struct WgpuRenderer {
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
     image_cache: HashMap<ImageHandle, CachedImageTexture>,
+    text_atlas_texture: Option<CachedTextAtlasTexture>,
     analytic_path_cache: HashMap<u64, CachedAnalyticPathGpu>,
     compositors: HashMap<WindowId, RetainedCompositorState>,
     surfaces: HashMap<WindowId, SurfaceState>,
@@ -2970,10 +2976,15 @@ impl WgpuRenderer {
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
         let mut analytic_paths = HashMap::new();
         let mut image_handles = HashSet::new();
+        let mut uses_text_atlas = false;
         for fragment in &submission.fragments {
             match fragment {
                 RetainedFrameFragment::Transient(draw_ops) => {
-                    collect_draw_op_resources(draw_ops, &mut analytic_paths, &mut image_handles);
+                    uses_text_atlas |= collect_draw_op_resources(
+                        draw_ops,
+                        &mut analytic_paths,
+                        &mut image_handles,
+                    );
                 }
                 RetainedFrameFragment::Tile(address) => {
                     let Some(compositor) = self.compositors.get(&frame.window_id) else {
@@ -2982,7 +2993,7 @@ impl WgpuRenderer {
                     let Some(entry) = compositor.tiles.get(address) else {
                         continue;
                     };
-                    collect_draw_op_resources(
+                    uses_text_atlas |= collect_draw_op_resources(
                         entry.draw_ops(),
                         &mut analytic_paths,
                         &mut image_handles,
@@ -3006,6 +3017,17 @@ impl WgpuRenderer {
             })?;
             image_bind_groups.insert(handle, self.ensure_image_bind_group(handle, image)?);
         }
+        let text_atlas_bind_group = if uses_text_atlas {
+            let mut text_engine = self
+                .text_engine
+                .take()
+                .expect("text engine initialized before text atlas upload");
+            let bind_group = self.ensure_text_atlas_bind_group(&mut text_engine)?;
+            self.text_engine = Some(text_engine);
+            Some(bind_group)
+        } else {
+            None
+        };
 
         let mut encoder = {
             let shared = self
@@ -3171,6 +3193,7 @@ impl WgpuRenderer {
                 &encodable_passes,
                 stencil_view,
                 &image_bind_groups,
+                text_atlas_bind_group.as_ref(),
                 &analytic_path_bind_groups,
             )?
         };
@@ -3268,6 +3291,94 @@ impl WgpuRenderer {
         );
 
         Ok(bind_group)
+    }
+
+    fn ensure_text_atlas_bind_group(
+        &mut self,
+        text_engine: &mut TextEngine,
+    ) -> Result<wgpu::BindGroup> {
+        let shared = self
+            .shared
+            .as_ref()
+            .expect("renderer shared state initialized");
+        let upload = text_engine.take_atlas_upload();
+
+        if let Some(upload) = upload {
+            let needs_recreate = self
+                .text_atlas_texture
+                .as_ref()
+                .is_none_or(|cached| cached.size != upload.size);
+            if needs_recreate {
+                let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("SUI text atlas texture"),
+                    size: wgpu::Extent3d {
+                        width: upload.size.0,
+                        height: upload.size.1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("SUI text atlas bind group"),
+                    layout: &shared.image_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Sampler(&shared.image_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                    ],
+                });
+                self.text_atlas_texture = Some(CachedTextAtlasTexture {
+                    texture,
+                    _view: view,
+                    bind_group,
+                    size: upload.size,
+                });
+            }
+
+            let cached = self
+                .text_atlas_texture
+                .as_ref()
+                .expect("text atlas texture cached after creation");
+            shared.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &cached.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: upload.offset.0,
+                        y: upload.offset.1,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &upload.pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(upload.extent.0 * 4),
+                    rows_per_image: Some(upload.extent.1),
+                },
+                wgpu::Extent3d {
+                    width: upload.extent.0,
+                    height: upload.extent.1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        self.text_atlas_texture
+            .as_ref()
+            .map(|cached| cached.bind_group.clone())
+            .ok_or_else(|| Error::new("text atlas bind group requested before any atlas upload"))
     }
 
     fn ensure_analytic_path_bind_group(
@@ -3387,6 +3498,7 @@ impl Default for WgpuRenderer {
             shared: None,
             text_engine: None,
             image_cache: HashMap::new(),
+            text_atlas_texture: None,
             analytic_path_cache: HashMap::new(),
             compositors: HashMap::new(),
             surfaces: HashMap::new(),
@@ -3652,6 +3764,13 @@ struct CachedImageTexture {
     bind_group: wgpu::BindGroup,
 }
 
+struct CachedTextAtlasTexture {
+    texture: wgpu::Texture,
+    _view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    size: (u32, u32),
+}
+
 struct CachedAnalyticPathGpu {
     _meta: wgpu::Buffer,
     _contours: wgpu::Buffer,
@@ -3771,6 +3890,21 @@ struct CachedGlyphVertex {
     coverage: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CachedGlyphAtlas {
+    scale: f32,
+    offset: Vector,
+    size: Size,
+    uv_min: [f32; 2],
+    uv_max: [f32; 2],
+}
+
+#[derive(Debug, Clone)]
+enum CachedGlyphPrimitive {
+    Atlas(CachedGlyphAtlas),
+    Mesh(CachedGlyphMesh),
+}
+
 #[derive(Debug, Default, Clone)]
 struct CachedGlyphMesh {
     scale: f32,
@@ -3787,6 +3921,174 @@ impl CachedGlyphMesh {
 
     fn add_triangle(&mut self, a: u32, b: u32, c: u32) {
         self.indices.extend_from_slice(&[a, b, c]);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AtlasRectU {
+    min_x: usize,
+    min_y: usize,
+    max_x: usize,
+    max_y: usize,
+}
+
+impl AtlasRectU {
+    const NOTHING: Self = Self {
+        min_x: usize::MAX,
+        min_y: usize::MAX,
+        max_x: 0,
+        max_y: 0,
+    };
+
+    const EVERYTHING: Self = Self {
+        min_x: 0,
+        min_y: 0,
+        max_x: usize::MAX,
+        max_y: usize::MAX,
+    };
+
+    fn include_rect(&mut self, x: usize, y: usize, width: usize, height: usize) {
+        self.min_x = self.min_x.min(x);
+        self.min_y = self.min_y.min(y);
+        self.max_x = self.max_x.max(x + width);
+        self.max_y = self.max_y.max(y + height);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TextAtlasPlacement {
+    x: usize,
+    y: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TextAtlasUpload {
+    size: (u32, u32),
+    offset: (u32, u32),
+    extent: (u32, u32),
+    pixels: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct TextAtlas {
+    width: usize,
+    height: usize,
+    pixels: Vec<u8>,
+    dirty: AtlasRectU,
+    full_upload: bool,
+    cursor: (usize, usize),
+    row_height: usize,
+}
+
+impl Default for TextAtlas {
+    fn default() -> Self {
+        Self::new(TEXT_ATLAS_WIDTH, TEXT_ATLAS_HEIGHT)
+    }
+}
+
+impl TextAtlas {
+    fn new(width: usize, height: usize) -> Self {
+        Self {
+            width,
+            height,
+            pixels: vec![0; width * height * 4],
+            dirty: AtlasRectU::EVERYTHING,
+            full_upload: true,
+            cursor: (TEXT_ATLAS_PADDING, TEXT_ATLAS_PADDING),
+            row_height: 0,
+        }
+    }
+
+    fn size(&self) -> (u32, u32) {
+        (self.width as u32, self.height as u32)
+    }
+
+    fn allocate(&mut self, width: usize, height: usize) -> Option<TextAtlasPlacement> {
+        if width == 0 || height == 0 || width > self.width || height > self.height {
+            return None;
+        }
+
+        if self.cursor.0 + width + TEXT_ATLAS_PADDING > self.width {
+            self.cursor.0 = TEXT_ATLAS_PADDING;
+            self.cursor.1 += self.row_height + TEXT_ATLAS_PADDING;
+            self.row_height = 0;
+        }
+
+        if self.cursor.1 + height + TEXT_ATLAS_PADDING > self.height {
+            return None;
+        }
+
+        let placement = TextAtlasPlacement {
+            x: self.cursor.0,
+            y: self.cursor.1,
+        };
+        self.cursor.0 += width + TEXT_ATLAS_PADDING;
+        self.row_height = self.row_height.max(height);
+        Some(placement)
+    }
+
+    fn write_rgba(
+        &mut self,
+        placement: TextAtlasPlacement,
+        width: usize,
+        height: usize,
+        pixels: &[u8],
+    ) {
+        for row in 0..height {
+            let src_start = row * width * 4;
+            let src_end = src_start + (width * 4);
+            let dst_start = ((placement.y + row) * self.width + placement.x) * 4;
+            let dst_end = dst_start + (width * 4);
+            self.pixels[dst_start..dst_end].copy_from_slice(&pixels[src_start..src_end]);
+        }
+        self.dirty
+            .include_rect(placement.x, placement.y, width, height);
+    }
+
+    fn insert_rgba(
+        &mut self,
+        width: usize,
+        height: usize,
+        pixels: &[u8],
+    ) -> Option<TextAtlasPlacement> {
+        let placement = self.allocate(width, height)?;
+        self.write_rgba(placement, width, height, pixels);
+        Some(placement)
+    }
+
+    fn take_upload(&mut self) -> Option<TextAtlasUpload> {
+        let dirty = std::mem::replace(&mut self.dirty, AtlasRectU::NOTHING);
+        if dirty == AtlasRectU::NOTHING {
+            return None;
+        }
+
+        if self.full_upload || dirty == AtlasRectU::EVERYTHING {
+            self.full_upload = false;
+            return Some(TextAtlasUpload {
+                size: self.size(),
+                offset: (0, 0),
+                extent: self.size(),
+                pixels: self.pixels.clone(),
+            });
+        }
+
+        let width = dirty.max_x - dirty.min_x;
+        let height = dirty.max_y - dirty.min_y;
+        let mut pixels = vec![0; width * height * 4];
+        for row in 0..height {
+            let src_start = ((dirty.min_y + row) * self.width + dirty.min_x) * 4;
+            let src_end = src_start + (width * 4);
+            let dst_start = row * width * 4;
+            let dst_end = dst_start + (width * 4);
+            pixels[dst_start..dst_end].copy_from_slice(&self.pixels[src_start..src_end]);
+        }
+
+        Some(TextAtlasUpload {
+            size: self.size(),
+            offset: (dirty.min_x as u32, dirty.min_y as u32),
+            extent: (width as u32, height as u32),
+            pixels,
+        })
     }
 }
 
@@ -3923,6 +4225,7 @@ fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Ve
 enum DrawOpKind {
     Solid,
     Image { handle: ImageHandle },
+    TextAtlas,
     AnalyticPath { id: u64 },
 }
 
@@ -4090,6 +4393,7 @@ struct PreparedClipPath {
 enum PreparedDrawKind {
     Solid,
     Image { handle: ImageHandle },
+    TextAtlas,
     AnalyticPath { resource_signature: u64 },
 }
 
@@ -4255,6 +4559,7 @@ fn prepared_draw_kind(draw_ops: &DrawOpArena, op: &DrawOp) -> PreparedDrawKind {
     match op.kind {
         DrawOpKind::Solid => PreparedDrawKind::Solid,
         DrawOpKind::Image { handle } => PreparedDrawKind::Image { handle },
+        DrawOpKind::TextAtlas => PreparedDrawKind::TextAtlas,
         DrawOpKind::AnalyticPath { id } => PreparedDrawKind::AnalyticPath {
             resource_signature: draw_ops.analytic_paths[&id].resource_signature,
         },
@@ -4265,12 +4570,16 @@ fn collect_draw_op_resources(
     draw_ops: &DrawOpArena,
     analytic_paths: &mut HashMap<u64, AnalyticPathCpuData>,
     image_handles: &mut HashSet<ImageHandle>,
-) {
+) -> bool {
+    let mut uses_text_atlas = false;
     for draw in &draw_ops.draw_ops {
         match draw.kind {
             DrawOpKind::Solid => {}
             DrawOpKind::Image { handle } => {
                 image_handles.insert(handle);
+            }
+            DrawOpKind::TextAtlas => {
+                uses_text_atlas = true;
             }
             DrawOpKind::AnalyticPath { id } => {
                 let path = &draw_ops.analytic_paths[&id];
@@ -4280,6 +4589,7 @@ fn collect_draw_op_resources(
             }
         }
     }
+    uses_text_atlas
 }
 
 fn prepared_batch_counts(passes: &[PreparedPassBatch]) -> (usize, usize) {
@@ -4337,6 +4647,7 @@ fn encode_fragment_passes(
     passes: &[EncodablePassBatch],
     stencil_view: Option<&wgpu::TextureView>,
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
 ) -> Result<usize> {
     let mut cleared = false;
@@ -4358,6 +4669,7 @@ fn encode_fragment_passes(
                 framebuffer_size,
                 &passes[start..index],
                 image_bind_groups,
+                text_atlas_bind_group,
                 analytic_path_bind_groups,
                 &mut cleared,
             )?;
@@ -4373,6 +4685,7 @@ fn encode_fragment_passes(
                 &passes[index],
                 stencil_view,
                 image_bind_groups,
+                text_atlas_bind_group,
                 analytic_path_bind_groups,
                 &mut cleared,
             )?;
@@ -4393,6 +4706,7 @@ fn encode_unclipped_pass_run(
     framebuffer_size: (u32, u32),
     passes: &[EncodablePassBatch],
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
     cleared: &mut bool,
 ) -> Result<()> {
@@ -4427,6 +4741,7 @@ fn encode_unclipped_pass_run(
             batch.translation,
             false,
             image_bind_groups,
+            text_atlas_bind_group,
             analytic_path_bind_groups,
             &mut current_kind,
         )?;
@@ -4445,6 +4760,7 @@ fn encode_clipped_pass(
     batch: &EncodablePassBatch,
     stencil_view: Option<&wgpu::TextureView>,
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
     cleared: &mut bool,
 ) -> Result<()> {
@@ -4498,6 +4814,7 @@ fn encode_clipped_pass(
         batch.translation,
         true,
         image_bind_groups,
+        text_atlas_bind_group,
         analytic_path_bind_groups,
         &mut current_kind,
     )?;
@@ -4530,6 +4847,7 @@ fn encode_draws_for_pass(
     translation: Vector,
     clipped: bool,
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
     current_kind: &mut Option<PreparedDrawKind>,
 ) -> Result<()> {
@@ -4559,6 +4877,10 @@ fn encode_draws_for_pass(
                     shared.clipped_image_pipeline(target_format)
                 }
                 (PreparedDrawKind::Image { .. }, false) => shared.image_pipeline(target_format),
+                (PreparedDrawKind::TextAtlas, true) => {
+                    shared.clipped_image_pipeline(target_format)
+                }
+                (PreparedDrawKind::TextAtlas, false) => shared.image_pipeline(target_format),
                 (PreparedDrawKind::AnalyticPath { .. }, true) => {
                     shared.clipped_analytic_path_pipeline(target_format)
                 }
@@ -4580,6 +4902,11 @@ fn encode_draws_for_pass(
                 let bind_group = image_bind_groups
                     .get(&handle)
                     .expect("image bind group prepared before retained render pass");
+                render_pass.set_bind_group(0, bind_group, &[]);
+            }
+            PreparedDrawKind::TextAtlas => {
+                let bind_group = text_atlas_bind_group
+                    .expect("text atlas bind group prepared before retained render pass");
                 render_pass.set_bind_group(0, bind_group, &[]);
             }
             PreparedDrawKind::AnalyticPath { resource_signature } => {
@@ -4629,6 +4956,7 @@ fn build_direct_packet(
         path_cache,
         feather_width,
         scratch_vertices: Vec::new(),
+        text_fallback_vertices: Vec::new(),
         overlay_scratch_vertices: Vec::new(),
         clip_scratch_vertices: Vec::new(),
     };
@@ -4644,6 +4972,7 @@ struct SceneDrawOpBuilder<'a> {
     scratch_vertices: Vec<Vertex>,
     overlay_scratch_vertices: Vec<Vertex>,
     clip_scratch_vertices: Vec<Vertex>,
+    text_fallback_vertices: Vec<Vertex>,
 }
 
 enum FillPathRenderMode {
@@ -4774,26 +5103,44 @@ impl SceneDrawOpBuilder<'_> {
             }
             SceneCommand::DrawText(text) => {
                 self.scratch_vertices.clear();
+                self.text_fallback_vertices.clear();
                 self.text_engine.append_text_run(
                     &mut self.scratch_vertices,
+                    &mut self.text_fallback_vertices,
                     state,
                     text,
                     self.frame.font_registry.as_ref(),
                     viewport,
+                    self.frame.scale_factor,
                     self.feather_width,
                 )?;
-                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                push_draw_op(draw_ops, DrawOpKind::TextAtlas, &self.scratch_vertices, state);
+                push_draw_op(
+                    draw_ops,
+                    DrawOpKind::Solid,
+                    &self.text_fallback_vertices,
+                    state,
+                );
             }
             SceneCommand::DrawShapedText(text) => {
                 self.scratch_vertices.clear();
+                self.text_fallback_vertices.clear();
                 self.text_engine.append_shaped_text(
                     &mut self.scratch_vertices,
+                    &mut self.text_fallback_vertices,
                     state,
                     text,
                     viewport,
+                    self.frame.scale_factor,
                     self.feather_width,
                 )?;
-                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                push_draw_op(draw_ops, DrawOpKind::TextAtlas, &self.scratch_vertices, state);
+                push_draw_op(
+                    draw_ops,
+                    DrawOpKind::Solid,
+                    &self.text_fallback_vertices,
+                    state,
+                );
             }
             SceneCommand::DrawImage { rect, source } => {
                 self.scratch_vertices.clear();
@@ -4843,8 +5190,10 @@ impl SceneDrawOpBuilder<'_> {
             }
             SceneCommand::Label { rect, text, color } => {
                 self.scratch_vertices.clear();
+                self.text_fallback_vertices.clear();
                 self.text_engine.append_text_run(
                     &mut self.scratch_vertices,
+                    &mut self.text_fallback_vertices,
                     state,
                     &TextRun {
                         rect: *rect,
@@ -4853,9 +5202,16 @@ impl SceneDrawOpBuilder<'_> {
                     },
                     self.frame.font_registry.as_ref(),
                     viewport,
+                    self.frame.scale_factor,
                     self.feather_width,
                 )?;
-                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                push_draw_op(draw_ops, DrawOpKind::TextAtlas, &self.scratch_vertices, state);
+                push_draw_op(
+                    draw_ops,
+                    DrawOpKind::Solid,
+                    &self.text_fallback_vertices,
+                    state,
+                );
             }
         }
 
@@ -5093,7 +5449,8 @@ fn hash_path(path: &ScenePath, transform: Transform) -> u64 {
 #[derive(Debug, Default)]
 struct TextEngine {
     system: TextSystem,
-    glyph_cache: HashMap<GlyphCacheKey, CachedGlyphMesh>,
+    glyph_cache: HashMap<GlyphCacheKey, CachedGlyphPrimitive>,
+    atlas: TextAtlas,
     glyph_cache_hits: usize,
     glyph_cache_misses: usize,
     frame_stats: TextFrameStats,
@@ -5114,11 +5471,13 @@ impl TextEngine {
 
     fn append_text_run(
         &mut self,
-        vertices: &mut Vec<Vertex>,
+        atlas_vertices: &mut Vec<Vertex>,
+        fallback_vertices: &mut Vec<Vertex>,
         state: &SceneRasterState,
         text: &TextRun,
         font_registry: &FontRegistry,
         viewport: Size,
+        raster_scale_factor: f32,
         feather_width: f32,
     ) -> Result<()> {
         if text.rect.is_empty() || text.text.is_empty() || viewport.is_empty() {
@@ -5127,21 +5486,25 @@ impl TextEngine {
 
         let layout = self.shape_text_run(text, font_registry)?;
         self.append_text_layout(
-            vertices,
+            atlas_vertices,
+            fallback_vertices,
             state,
             Point::new(text.rect.x(), text.rect.y()),
             &layout,
             viewport,
+            raster_scale_factor,
             feather_width,
         )
     }
 
     fn append_shaped_text(
         &mut self,
-        vertices: &mut Vec<Vertex>,
+        atlas_vertices: &mut Vec<Vertex>,
+        fallback_vertices: &mut Vec<Vertex>,
         state: &SceneRasterState,
         text: &ShapedText,
         viewport: Size,
+        raster_scale_factor: f32,
         feather_width: f32,
     ) -> Result<()> {
         if viewport.is_empty() {
@@ -5149,22 +5512,26 @@ impl TextEngine {
         }
 
         self.append_text_layout(
-            vertices,
+            atlas_vertices,
+            fallback_vertices,
             state,
             text.origin,
             &text.layout,
             viewport,
+            raster_scale_factor,
             feather_width,
         )
     }
 
     fn append_text_layout(
         &mut self,
-        vertices: &mut Vec<Vertex>,
+        atlas_vertices: &mut Vec<Vertex>,
+        fallback_vertices: &mut Vec<Vertex>,
         state: &SceneRasterState,
         origin: Point,
         layout: &TextLayout,
         viewport: Size,
+        raster_scale_factor: f32,
         feather_width: f32,
     ) -> Result<()> {
         if layout.measurement().width <= 0.0 || layout.measurement().height <= 0.0 {
@@ -5205,20 +5572,41 @@ impl TextEngine {
                 translated_glyph.bounds = Some(bounds.translate(origin.to_vector()));
             }
 
-            if let Some(mesh) =
-                self.cached_glyph_mesh(face_key, &face, glyph.glyph_id, glyph.scale, feather_width)?
-            {
-                let glyph_vertex_count = mesh.indices.len();
-                append_cached_glyph_mesh(
-                    vertices,
-                    mesh,
-                    &translated_glyph,
-                    layout.style().color,
-                    state.current_transform,
-                    viewport,
-                );
-                self.frame_stats.glyph_instances += 1;
-                self.frame_stats.glyph_vertices += glyph_vertex_count;
+            if let Some(primitive) = self.cached_glyph_primitive(
+                face_key,
+                &face,
+                glyph.glyph_id,
+                glyph.scale,
+                raster_scale_factor,
+                feather_width,
+            )? {
+                match primitive {
+                    CachedGlyphPrimitive::Atlas(atlas) => {
+                        append_cached_glyph_atlas(
+                            atlas_vertices,
+                            atlas,
+                            &translated_glyph,
+                            layout.style().color,
+                            state.current_transform,
+                            viewport,
+                        );
+                        self.frame_stats.glyph_instances += 1;
+                        self.frame_stats.glyph_vertices += 6;
+                    }
+                    CachedGlyphPrimitive::Mesh(mesh) => {
+                        let glyph_vertex_count = mesh.indices.len();
+                        append_cached_glyph_mesh(
+                            fallback_vertices,
+                            mesh,
+                            &translated_glyph,
+                            layout.style().color,
+                            state.current_transform,
+                            viewport,
+                        );
+                        self.frame_stats.glyph_instances += 1;
+                        self.frame_stats.glyph_vertices += glyph_vertex_count;
+                    }
+                }
             }
         }
 
@@ -5229,15 +5617,17 @@ impl TextEngine {
         self.system.shape_text_run(text, font_registry)
     }
 
-    fn cached_glyph_mesh(
+    fn cached_glyph_primitive(
         &mut self,
         face_key: GlyphFaceCacheKey,
         face: &rustybuzz::Face<'_>,
         glyph_id: u16,
         glyph_scale: f32,
+        raster_scale_factor: f32,
         feather_width: f32,
-    ) -> Result<Option<&CachedGlyphMesh>> {
-        let scale_bucket = glyph_scale_bucket(glyph_scale);
+    ) -> Result<Option<&CachedGlyphPrimitive>> {
+        let atlas_physical_scale = glyph_scale * raster_scale_factor.max(1.0);
+        let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
         let key = GlyphCacheKey::new(face_key, glyph_id, scale_bucket, feather_width);
         if self.glyph_cache.contains_key(&key) {
             self.glyph_cache_hits += 1;
@@ -5245,18 +5635,36 @@ impl TextEngine {
         }
 
         self.glyph_cache_misses += 1;
-        let Some(mesh) = build_cached_glyph_mesh(
+        let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
+        let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
+        let primitive = if let Some(atlas) = build_cached_glyph_atlas(
+            &mut self.atlas,
             face,
             glyph_id,
-            glyph_scale_from_bucket(scale_bucket),
-            feather_width,
-        )?
-        else {
-            return Ok(None);
+            bucketed_physical_scale,
+            raster_scale_factor.max(1.0),
+            bucketed_logical_scale,
+        )? {
+            CachedGlyphPrimitive::Atlas(atlas)
+        } else {
+            let Some(mesh) = build_cached_glyph_mesh(
+                face,
+                glyph_id,
+                bucketed_logical_scale,
+                feather_width,
+            )?
+            else {
+                return Ok(None);
+            };
+            CachedGlyphPrimitive::Mesh(mesh)
         };
 
-        self.glyph_cache.insert(key.clone(), mesh);
+        self.glyph_cache.insert(key.clone(), primitive);
         Ok(self.glyph_cache.get(&key))
+    }
+
+    fn take_atlas_upload(&mut self) -> Option<TextAtlasUpload> {
+        self.atlas.take_upload()
     }
 
     #[cfg(test)]
@@ -5311,6 +5719,87 @@ fn build_cached_glyph_mesh(
     )?))
 }
 
+fn build_cached_glyph_atlas(
+    atlas: &mut TextAtlas,
+    face: &rustybuzz::Face<'_>,
+    glyph_id: u16,
+    glyph_scale_physical: f32,
+    raster_scale_factor: f32,
+    glyph_scale_logical: f32,
+) -> Result<Option<CachedGlyphAtlas>> {
+    let mut path_builder = TinySkiaPathBuilder::new();
+    {
+        let mut outline = CachedGlyphRasterBuilder {
+            builder: &mut path_builder,
+            contour_open: false,
+            scale: glyph_scale_physical,
+        };
+        if face
+            .outline_glyph(GlyphId(glyph_id), &mut outline)
+            .is_none()
+        {
+            return Ok(None);
+        }
+        outline.finish();
+    }
+
+    let Some(path) = path_builder.finish() else {
+        return Ok(None);
+    };
+
+    let Some(bounds) = path.bounds().to_non_zero_rect() else {
+        return Ok(Some(CachedGlyphAtlas {
+            scale: glyph_scale_logical,
+            offset: Vector::ZERO,
+            size: Size::ZERO,
+            uv_min: [0.0, 0.0],
+            uv_max: [0.0, 0.0],
+        }));
+    };
+
+    let width = bounds.width().ceil() as usize;
+    let height = bounds.height().ceil() as usize;
+    if width == 0 || height == 0 {
+        return Ok(None);
+    }
+
+    let pixels = rasterize_glyph_rgba(&path, bounds)?;
+    let Some(placement) = atlas.insert_rgba(width, height, &pixels) else {
+        return Ok(None);
+    };
+
+    let atlas_size = atlas.size();
+    let inv_width = 1.0 / atlas_size.0 as f32;
+    let inv_height = 1.0 / atlas_size.1 as f32;
+    Ok(Some(CachedGlyphAtlas {
+        scale: glyph_scale_logical,
+        offset: Vector::new(bounds.x() / raster_scale_factor, bounds.y() / raster_scale_factor),
+        size: Size::new(width as f32 / raster_scale_factor, height as f32 / raster_scale_factor),
+        uv_min: [placement.x as f32 * inv_width, placement.y as f32 * inv_height],
+        uv_max: [
+            (placement.x + width) as f32 * inv_width,
+            (placement.y + height) as f32 * inv_height,
+        ],
+    }))
+}
+
+fn rasterize_glyph_rgba(path: &tiny_skia::Path, bounds: tiny_skia::NonZeroRect) -> Result<Vec<u8>> {
+    let width = bounds.width().ceil() as u32;
+    let height = bounds.height().ceil() as u32;
+    let mut pixmap = Pixmap::new(width, height)
+        .ok_or_else(|| Error::new("failed to allocate text atlas pixmap"))?;
+    let mut paint = TinySkiaPaint::default();
+    paint.set_color_rgba8(255, 255, 255, 255);
+    pixmap.fill_path(
+        path,
+        &paint,
+        FillRule::Winding,
+        TinySkiaTransform::from_translate(-bounds.x(), -bounds.y()),
+        None,
+    );
+    Ok(pixmap.data().to_vec())
+}
+
 fn build_local_glyph_mesh(
     path: &LyonPath,
     glyph_scale: f32,
@@ -5347,6 +5836,64 @@ fn append_cached_glyph_mesh(
             tex_coords: [0.0, 0.0],
         });
     }
+}
+
+fn append_cached_glyph_atlas(
+    vertices: &mut Vec<Vertex>,
+    atlas: &CachedGlyphAtlas,
+    glyph: &SceneShapedGlyph,
+    color: Color,
+    transform: Transform,
+    viewport: Size,
+) {
+    if atlas.size.is_empty() || viewport.is_empty() {
+        return;
+    }
+
+    let color = color.clamped().to_array();
+    let residual_scale = glyph.scale / atlas.scale.max(f32::EPSILON);
+    let left = glyph.origin_x + (atlas.offset.x * residual_scale);
+    let top = glyph.origin_y + (atlas.offset.y * residual_scale);
+    let width = atlas.size.width * residual_scale;
+    let height = atlas.size.height * residual_scale;
+    let top_left = transform.transform_point(Point::new(left, top));
+    let top_right = transform.transform_point(Point::new(left + width, top));
+    let bottom_left = transform.transform_point(Point::new(left, top + height));
+    let bottom_right = transform.transform_point(Point::new(left + width, top + height));
+    let rgba = [color[0], color[1], color[2], color[3]];
+
+    vertices.extend_from_slice(&[
+        Vertex {
+            position: to_ndc(top_left.x, top_left.y, viewport),
+            color: rgba,
+            tex_coords: atlas.uv_min,
+        },
+        Vertex {
+            position: to_ndc(top_right.x, top_right.y, viewport),
+            color: rgba,
+            tex_coords: [atlas.uv_max[0], atlas.uv_min[1]],
+        },
+        Vertex {
+            position: to_ndc(bottom_left.x, bottom_left.y, viewport),
+            color: rgba,
+            tex_coords: [atlas.uv_min[0], atlas.uv_max[1]],
+        },
+        Vertex {
+            position: to_ndc(bottom_left.x, bottom_left.y, viewport),
+            color: rgba,
+            tex_coords: [atlas.uv_min[0], atlas.uv_max[1]],
+        },
+        Vertex {
+            position: to_ndc(top_right.x, top_right.y, viewport),
+            color: rgba,
+            tex_coords: [atlas.uv_max[0], atlas.uv_min[1]],
+        },
+        Vertex {
+            position: to_ndc(bottom_right.x, bottom_right.y, viewport),
+            color: rgba,
+            tex_coords: atlas.uv_max,
+        },
+    ]);
 }
 
 fn append_cached_path_mesh(
@@ -5747,6 +6294,63 @@ where
             LyonPathBuilder::end(self.builder, true);
             self.contour_open = false;
         }
+    }
+}
+
+struct CachedGlyphRasterBuilder<'a> {
+    builder: &'a mut TinySkiaPathBuilder,
+    contour_open: bool,
+    scale: f32,
+}
+
+impl CachedGlyphRasterBuilder<'_> {
+    fn finish(&mut self) {
+        if self.contour_open {
+            self.builder.close();
+            self.contour_open = false;
+        }
+    }
+
+    fn point(&self, x: f32, y: f32) -> tiny_skia::Point {
+        tiny_skia::Point::from_xy(x * self.scale, -y * self.scale)
+    }
+}
+
+impl ttf_parser::OutlineBuilder for CachedGlyphRasterBuilder<'_> {
+    fn move_to(&mut self, x: f32, y: f32) {
+        if self.contour_open {
+            self.builder.close();
+        }
+        self.builder.move_to(x * self.scale, -y * self.scale);
+        self.contour_open = true;
+    }
+
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.builder.line_to(x * self.scale, -y * self.scale);
+    }
+
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        let control = self.point(x1, y1);
+        let end = self.point(x, y);
+        self.builder.quad_to(control.x, control.y, end.x, end.y);
+    }
+
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        let control1 = self.point(x1, y1);
+        let control2 = self.point(x2, y2);
+        let end = self.point(x, y);
+        self.builder.cubic_to(
+            control1.x,
+            control1.y,
+            control2.x,
+            control2.y,
+            end.x,
+            end.y,
+        );
+    }
+
+    fn close(&mut self) {
+        self.finish();
     }
 }
 
@@ -7035,6 +7639,8 @@ mod tests {
         let mut text_engine = TextEngine::new().unwrap();
         let first = build_vertices(&frame, &mut text_engine).unwrap();
         assert!(!first.is_empty());
+        assert_eq!(first.len(), 18);
+        assert!(first.iter().any(|vertex| vertex.tex_coords != [0.0, 0.0]));
         assert_eq!(text_engine.glyph_cache_stats(), (3, 0, 3));
 
         let second = build_vertices(&frame, &mut text_engine).unwrap();
