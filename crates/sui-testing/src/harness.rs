@@ -24,7 +24,7 @@ use sui_runtime::{
 };
 use winit::{
     application::ApplicationHandler,
-    dpi::{LogicalSize, PhysicalSize},
+    dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
     error::{EventLoopError, OsError},
     event::WindowEvent as WinitWindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
@@ -1211,14 +1211,43 @@ fn physical_size_to_logical_size(size: PhysicalSize<u32>, scale_factor: f64) -> 
 }
 
 fn apply_ime_composition_rect(window: &Window, rect: Option<sui_core::Rect>) {
-    window.set_ime_allowed(rect.is_some());
+    let cursor_area = rect.and_then(|rect| sanitize_ime_cursor_area(rect, window.scale_factor()));
+    window.set_ime_allowed(cursor_area.is_some());
 
-    if let Some(rect) = rect {
-        window.set_ime_cursor_area(
-            winit::dpi::LogicalPosition::new(rect.x() as f64, rect.y() as f64),
-            LogicalSize::new(rect.width().max(1.0) as f64, rect.height().max(1.0) as f64),
-        );
+    if let Some((position, size)) = cursor_area {
+        window.set_ime_cursor_area(position, size);
     }
+}
+
+fn sanitize_ime_cursor_area(
+    rect: sui_core::Rect,
+    scale_factor: f64,
+) -> Option<(PhysicalPosition<i32>, PhysicalSize<u32>)> {
+    if !rect.x().is_finite()
+        || !rect.y().is_finite()
+        || !rect.width().is_finite()
+        || !rect.height().is_finite()
+    {
+        return None;
+    }
+
+    let scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    let position = LogicalPosition::new(rect.x() as f64, rect.y() as f64);
+    let size = LogicalSize::new(rect.width().max(1.0) as f64, rect.height().max(1.0) as f64);
+    let PhysicalPosition { x, y } = position.to_physical::<i32>(scale_factor);
+    let PhysicalSize { width, height } = size.to_physical::<i32>(scale_factor);
+    let x = x.min(i32::MAX - 1);
+    let y = y.min(i32::MAX - 1);
+    let max_width = ((i32::MAX as i64) - (x as i64)).clamp(1, i32::MAX as i64) as i32;
+    let max_height = ((i32::MAX as i64) - (y as i64)).clamp(1, i32::MAX as i64) as i32;
+    let width = width.clamp(1, max_width) as u32;
+    let height = height.clamp(1, max_height) as u32;
+
+    Some((PhysicalPosition::new(x, y), PhysicalSize::new(width, height)))
 }
 
 fn remove_pointer_button(buttons: PointerButtons, removed: PointerButton) -> PointerButtons {
