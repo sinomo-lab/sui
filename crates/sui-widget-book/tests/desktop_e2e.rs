@@ -13,10 +13,11 @@ use std::{
 };
 
 use sui::{
-    Error, Event, ImeEvent, Modifiers, Point,
+    Application, Background, Color, Error, Event, ImeEvent, Modifiers, Point,
     PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result,
-    ScrollDelta, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WindowEvent,
-    WindowId, window_performance_snapshot, WgpuRenderer,
+    ScrollDelta, ScrollView, SemanticsNode, SemanticsRole, SemanticsValue, Size, SizedBox,
+    SplitView, Stack, Table, TableColumn, TableRow, Vector, WindowBuilder, WindowEvent, WindowId,
+    window_performance_snapshot, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, RendererSubmissionDiagnostics,
@@ -28,6 +29,7 @@ use sui_runtime::{
 use sui_widget_book::{
     BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, BUTTON_GRID_BENCHMARK_TITLE, WidgetBookState,
     build_button_grid_benchmark_application, build_widget_book_application,
+    default_widget_book_state,
 };
 use winit::{
     application::ApplicationHandler,
@@ -1319,6 +1321,229 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     assert!(after_button.bounds.y() < before_button.bounds.y());
     assert!(after_metrics.frame_index > before_metrics.frame_index);
     assert!(after_metrics.total_time_ms >= 0.0);
+
+    Ok(())
+}
+
+#[test]
+fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    const SCROLL_STEP_PX: f32 = -120.0;
+    const MAX_SCROLL_STEPS: usize = 80;
+    const MIN_VISIBLE_AREA_RATIO: f32 = 0.2;
+
+    let harness = DesktopHarness::launch(|| {
+        build_widget_book_application(default_widget_book_state()).build()
+    })?;
+    let window_id = harness.main_window_id();
+
+    harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+    let mut snapshot = harness.snapshot(window_id)?;
+    let gallery = find_node(
+        &snapshot,
+        SemanticsRole::ScrollView,
+        sui_widget_book::GALLERY_SCROLL_NAME,
+    );
+    let scroll_point = gallery_scroll_point(gallery.bounds);
+
+    move_cursor(&harness, window_id, scroll_point)?;
+
+    let mut split_visible = node_is_mostly_visible(
+        &snapshot,
+        gallery.bounds,
+        SemanticsRole::Splitter,
+        sui_widget_book::SPLIT_VIEW_NAME,
+        MIN_VISIBLE_AREA_RATIO,
+    );
+
+    for _ in 0..MAX_SCROLL_STEPS {
+        if split_visible {
+            break;
+        }
+
+        harness.dispatch(
+            window_id,
+            HostInputEvent::MouseWheel {
+                delta: ScrollKind::Pixels(Vector::new(0.0, SCROLL_STEP_PX)),
+            },
+        )?;
+        snapshot = harness.snapshot(window_id)?;
+        split_visible = node_is_mostly_visible(
+            &snapshot,
+            gallery.bounds,
+            SemanticsRole::Splitter,
+            sui_widget_book::SPLIT_VIEW_NAME,
+            MIN_VISIBLE_AREA_RATIO,
+        );
+    }
+
+    assert!(split_visible, "split view story never became visible while scrolling the gallery");
+
+    let before_frame = harness.capture(window_id)?;
+    let before_snapshot = harness.snapshot(window_id)?;
+    let before_split = find_node(
+        &before_snapshot,
+        SemanticsRole::Splitter,
+        sui_widget_book::SPLIT_VIEW_NAME,
+    );
+
+    harness.dispatch(
+        window_id,
+        HostInputEvent::MouseWheel {
+            delta: ScrollKind::Pixels(Vector::new(0.0, SCROLL_STEP_PX)),
+        },
+    )?;
+
+    let after_frame = harness.capture(window_id)?;
+    let after_snapshot = harness.snapshot(window_id)?;
+    let after_split = find_node(
+        &after_snapshot,
+        SemanticsRole::Splitter,
+        sui_widget_book::SPLIT_VIEW_NAME,
+    );
+
+    assert!(
+        frame_pixel_diff_count(&before_frame, &after_frame) > 0,
+        "desktop wheel scroll with the split view visible did not change any rendered pixels"
+    );
+    assert!(after_split.bounds.y() < before_split.bounds.y());
+
+    Ok(())
+}
+
+#[test]
+fn desktop_split_view_table_scroll_repaints_frame() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let harness = DesktopHarness::launch(|| {
+        let table = Table::new("Split table")
+            .columns([
+                TableColumn::new("Name"),
+                TableColumn::new("Passes").width(80.0),
+            ])
+            .rows([
+                TableRow::new(["Glass", "3"]),
+                TableRow::new(["Water", "4"]),
+                TableRow::new(["Cloud", "2"]),
+                TableRow::new(["Foam", "5"]),
+                TableRow::new(["Dust", "1"]),
+                TableRow::new(["Mist", "6"]),
+                TableRow::new(["Lava", "7"]),
+                TableRow::new(["Glow", "2"]),
+            ]);
+
+        Application::new()
+            .window(
+                WindowBuilder::new().title("Split scroll repro").root(
+                    SizedBox::new().size(Size::new(360.0, 220.0)).with_child(
+                        SplitView::horizontal(
+                            table,
+                            SizedBox::new().size(Size::new(120.0, 220.0)),
+                        )
+                        .ratio(0.68),
+                    ),
+                ),
+            )
+            .build()
+    })?;
+    let window_id = harness.main_window_id();
+
+    harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+    let before_snapshot = harness.snapshot(window_id)?;
+    let table = find_node(&before_snapshot, SemanticsRole::Table, "Split table");
+    let scroll_point = Point::new(table.bounds.x() + 48.0, table.bounds.y() + 96.0);
+
+    move_cursor(&harness, window_id, scroll_point)?;
+
+    let before_frame = harness.capture(window_id)?;
+
+    harness.dispatch(
+        window_id,
+        HostInputEvent::MouseWheel {
+            delta: ScrollKind::Pixels(Vector::new(0.0, -72.0)),
+        },
+    )?;
+
+    let after_frame = harness.capture(window_id)?;
+
+    assert!(
+        frame_pixel_diff_count(&before_frame, &after_frame) > 0,
+        "scrolling a table inside a split view did not change any rendered pixels"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn desktop_split_view_scroll_view_scroll_repaints_frame() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let harness = DesktopHarness::launch(|| {
+        let scroll = ScrollView::vertical(
+            Stack::vertical()
+                .with_child(
+                    SizedBox::new().height(120.0).with_child(Background::new(
+                        Color::rgba(0.82, 0.36, 0.18, 1.0),
+                        SizedBox::new().size(Size::new(220.0, 120.0)),
+                    )),
+                )
+                .with_child(
+                    SizedBox::new().height(120.0).with_child(Background::new(
+                        Color::rgba(0.18, 0.54, 0.82, 1.0),
+                        SizedBox::new().size(Size::new(220.0, 120.0)),
+                    )),
+                )
+                .with_child(
+                    SizedBox::new().height(120.0).with_child(Background::new(
+                        Color::rgba(0.24, 0.72, 0.36, 1.0),
+                        SizedBox::new().size(Size::new(220.0, 120.0)),
+                    )),
+                ),
+        )
+        .name("Split scroll");
+
+        Application::new()
+            .window(
+                WindowBuilder::new().title("Split scroll repro").root(
+                    SizedBox::new().size(Size::new(360.0, 220.0)).with_child(
+                        SplitView::horizontal(
+                            scroll,
+                            SizedBox::new().size(Size::new(120.0, 220.0)),
+                        )
+                        .ratio(0.68),
+                    ),
+                ),
+            )
+            .build()
+    })?;
+    let window_id = harness.main_window_id();
+
+    harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+    let before_snapshot = harness.snapshot(window_id)?;
+    let scroll = find_node(&before_snapshot, SemanticsRole::ScrollView, "Split scroll");
+    let scroll_point = Point::new(scroll.bounds.x() + 48.0, scroll.bounds.y() + 96.0);
+
+    move_cursor(&harness, window_id, scroll_point)?;
+
+    let before_frame = harness.capture(window_id)?;
+
+    harness.dispatch(
+        window_id,
+        HostInputEvent::MouseWheel {
+            delta: ScrollKind::Pixels(Vector::new(0.0, -72.0)),
+        },
+    )?;
+
+    let after_frame = harness.capture(window_id)?;
+
+    assert!(
+        frame_pixel_diff_count(&before_frame, &after_frame) > 0,
+        "scrolling a scroll view inside a split view did not change any rendered pixels"
+    );
 
     Ok(())
 }

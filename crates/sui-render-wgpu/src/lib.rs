@@ -7880,6 +7880,104 @@ mod tests {
     }
 
     #[test]
+    fn retained_compositor_routes_descendant_transform_into_cached_parent_tiles() {
+        let parent_id = WidgetId::new(181);
+        let child_id = WidgetId::new(182);
+
+        let parent_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(parent_id),
+            parent_id,
+            Rect::new(0.0, 0.0, 512.0, 128.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
+        .with_cache_policy(LayerCachePolicy::Cached);
+
+        let child_descriptor = |x: f32| {
+            SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(child_id),
+                child_id,
+                Rect::new(x, 24.0, 48.0, 48.0),
+            )
+            .with_content_bounds(Rect::new(x, 24.0, 48.0, 48.0))
+            .with_paint_bounds(Rect::new(x, 24.0, 48.0, 48.0))
+            .with_cache_policy(LayerCachePolicy::Direct)
+        };
+
+        let build_parent_scene = |child_x: f32| {
+            let mut child_scene = Scene::new();
+            child_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(child_x, 24.0, 48.0, 48.0),
+                brush: Color::rgba(0.84, 0.32, 0.18, 1.0).into(),
+            });
+
+            let mut parent_scene = Scene::new();
+            parent_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 512.0, 128.0),
+                brush: Color::rgba(0.1, 0.1, 0.1, 1.0).into(),
+            });
+            parent_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                child_descriptor(child_x),
+                child_scene,
+            )));
+            parent_scene
+        };
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            parent_descriptor.clone(),
+            build_parent_scene(300.0),
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(132),
+            viewport: Size::new(512.0, 128.0),
+            surface_size: Size::new(512.0, 128.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    parent_descriptor.clone(),
+                )
+                .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    child_descriptor(300.0),
+                )
+                .with_damage(Rect::new(300.0, 24.0, 48.0, 48.0)),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
+
+        assert!(frame.scene.replace_layer(
+            parent_id,
+            SceneLayer::from_descriptor(parent_descriptor.clone(), build_parent_scene(340.0)),
+        ));
+        frame.layer_updates = vec![
+            SceneLayerUpdate::from_descriptor(
+                SceneLayerUpdateKind::Transform,
+                child_descriptor(340.0),
+            )
+            .with_damage(Rect::new(300.0, 24.0, 88.0, 48.0)),
+        ];
+
+        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
+        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
+        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
+    }
+
+    #[test]
     fn retained_compositor_routes_nested_cached_descendant_damage_into_tile_owner() {
         let outer_id = WidgetId::new(83);
         let inner_id = WidgetId::new(84);

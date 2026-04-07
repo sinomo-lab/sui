@@ -549,6 +549,7 @@ impl ScrollView {
         if next != self.offset {
             self.offset = next;
             ctx.request_arrange();
+            ctx.request_paint();
             ctx.request_semantics();
             true
         } else {
@@ -634,6 +635,7 @@ impl VirtualScrollView {
         if (next - self.offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
             ctx.request_arrange();
+            ctx.request_paint();
             ctx.request_semantics();
             true
         } else {
@@ -1535,7 +1537,7 @@ mod tests {
     }
 
     #[test]
-    fn scroll_view_does_not_repaint_child_for_translation_only_scroll() {
+    fn scroll_view_repaints_child_after_scroll_offset_changes() {
         let counts = Rc::new(RefCell::new(vec![0usize; 1]));
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().size(Size::new(80.0, 40.0)).with_child(ScrollView::vertical(
@@ -1558,14 +1560,11 @@ mod tests {
             .unwrap();
         let _ = runtime.render(window_id).unwrap();
 
-        assert_eq!(*counts.borrow(), vec![1]);
+        assert_eq!(*counts.borrow(), vec![2]);
     }
 
     #[test]
-    fn virtual_scroll_view_skips_repaint_while_visible_range_is_unchanged() {
-        // Use a wider viewport (80px) so the overdraw buffer (35% = 28px)
-        // is large enough that a small 4px scroll does not bring new items
-        // into the visible range.
+    fn virtual_scroll_view_repaints_visible_children_after_small_scroll() {
         let counts = Rc::new(RefCell::new(vec![0usize; 4]));
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
@@ -1608,9 +1607,7 @@ mod tests {
             .unwrap();
         let _ = runtime.render(window_id).unwrap();
 
-        // A small 4px scroll should not change the visible range when
-        // the overdraw buffer covers all items.
-        assert_eq!(*counts.borrow(), vec![1, 1, 1, 1]);
+        assert_eq!(*counts.borrow(), vec![2, 2, 2, 2]);
     }
 
     #[test]
