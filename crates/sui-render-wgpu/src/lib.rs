@@ -6521,6 +6521,8 @@ struct TextEngine {
     diagnostics_enabled: bool,
     glyph_cache_hits: usize,
     glyph_cache_misses: usize,
+    #[cfg(test)]
+    glyph_face_parse_count: usize,
     frame_stats: TextFrameStats,
 }
 
@@ -6533,6 +6535,8 @@ impl Default for TextEngine {
             diagnostics_enabled: true,
             glyph_cache_hits: 0,
             glyph_cache_misses: 0,
+            #[cfg(test)]
+            glyph_face_parse_count: 0,
             frame_stats: TextFrameStats::default(),
         }
     }
@@ -6633,6 +6637,7 @@ impl TextEngine {
         }
 
         let face_key = GlyphFaceCacheKey::new(layout.face());
+        let mut parsed_face = None;
 
         for glyph in layout.glyphs() {
             let mut translated_glyph = glyph.clone();
@@ -6644,6 +6649,7 @@ impl TextEngine {
 
             if let Some(primitive) = self.cached_glyph_primitive(
                 layout.face(),
+                &mut parsed_face,
                 face_key,
                 glyph.glyph_id,
                 glyph.scale,
@@ -6691,9 +6697,10 @@ impl TextEngine {
         self.system.shape_text_run(text, font_registry)
     }
 
-    fn cached_glyph_primitive(
+    fn cached_glyph_primitive<'face>(
         &mut self,
-        face: &ResolvedTextFace,
+        face: &'face ResolvedTextFace,
+        parsed_face: &mut Option<rustybuzz::Face<'face>>,
         face_key: GlyphFaceCacheKey,
         glyph_id: u16,
         glyph_scale: f32,
@@ -6714,8 +6721,19 @@ impl TextEngine {
                 if self.diagnostics_enabled {
                     self.glyph_cache_misses += 1;
                 }
-                let face = rustybuzz::Face::from_slice(face.bytes(), face.face_index())
-                    .ok_or_else(|| Error::new("failed to parse shaped text face data"))?;
+                if parsed_face.is_none() {
+                    #[cfg(test)]
+                    {
+                        self.glyph_face_parse_count += 1;
+                    }
+                    *parsed_face = Some(
+                        rustybuzz::Face::from_slice(face.bytes(), face.face_index())
+                            .ok_or_else(|| Error::new("failed to parse shaped text face data"))?,
+                    );
+                }
+                let face = parsed_face
+                    .as_ref()
+                    .expect("parsed text face should be cached after initialization");
                 let atlas_miss_started = self.diagnostics_enabled.then(Instant::now);
                 let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
                 let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
@@ -6767,6 +6785,11 @@ impl TextEngine {
             self.glyph_cache_hits,
             self.glyph_cache_misses,
         )
+    }
+
+    #[cfg(test)]
+    fn glyph_face_parse_count(&self) -> usize {
+        self.glyph_face_parse_count
     }
 
     fn cache_snapshot(&self) -> RendererTextCacheSnapshot {
@@ -8873,6 +8896,39 @@ mod tests {
                 && left.tex_coords == right.tex_coords
         }));
         assert_eq!(text_engine.glyph_cache_stats(), (3, 3, 3));
+    }
+
+    #[test]
+    fn text_engine_parses_face_once_per_text_run_when_glyphs_miss() {
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(4.0, 6.0, 120.0, 28.0),
+            text: "abc".to_string(),
+            style: TextStyle::new(Color::WHITE),
+        }));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(15),
+            viewport: Size::new(160.0, 60.0),
+            surface_size: Size::new(160.0, 60.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let first = build_vertices(&frame, &mut text_engine).unwrap();
+        assert!(!first.is_empty());
+        assert_eq!(text_engine.glyph_cache_stats(), (3, 0, 3));
+        assert_eq!(text_engine.glyph_face_parse_count(), 1);
+
+        let second = build_vertices(&frame, &mut text_engine).unwrap();
+        assert_eq!(first.len(), second.len());
+        assert_eq!(text_engine.glyph_cache_stats(), (3, 3, 3));
+        assert_eq!(text_engine.glyph_face_parse_count(), 1);
     }
 
     #[test]
