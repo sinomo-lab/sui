@@ -3570,6 +3570,41 @@ impl WgpuRenderer {
                 .shared
                 .as_ref()
                 .expect("renderer shared state initialized");
+            if !upload.full_texture && !self.text_atlas_textures.is_empty() {
+                let source = self
+                    .text_atlas_textures
+                    .get(self.active_text_atlas_texture_index)
+                    .expect("active text atlas texture exists before partial ring upload");
+                let target = self
+                    .text_atlas_textures
+                    .get(target_index)
+                    .expect("target text atlas texture exists before partial ring upload");
+                let mut encoder = shared
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("SUI text atlas ring copy"),
+                    });
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &source.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &target.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: upload.size.0,
+                        height: upload.size.1,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                shared.queue.submit([encoder.finish()]);
+            }
             let cached = self
                 .text_atlas_textures
                 .get(target_index)
@@ -3640,7 +3675,9 @@ impl WgpuRenderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -4612,6 +4649,7 @@ struct TextAtlasUpload {
     size: (u32, u32),
     offset: (u32, u32),
     extent: (u32, u32),
+    full_texture: bool,
     pixels: Vec<u8>,
 }
 
@@ -4714,6 +4752,7 @@ impl TextAtlas {
                 size: self.size(),
                 offset: (0, 0),
                 extent: self.size(),
+                full_texture: true,
                 pixels: self.pixels.clone(),
             });
         }
@@ -4733,6 +4772,7 @@ impl TextAtlas {
             size: self.size(),
             offset: (dirty.min_x as u32, dirty.min_y as u32),
             extent: (width as u32, height as u32),
+            full_texture: false,
             pixels,
         })
     }
