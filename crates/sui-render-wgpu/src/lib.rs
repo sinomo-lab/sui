@@ -1056,13 +1056,27 @@ impl RetainedCompositorState {
         global_rebuild: bool,
         frame_stats: &mut RetainedCompositorFrameStats,
     ) -> Result<()> {
+        let fractional_scale = (frame.scale_factor - frame.scale_factor.round()).abs() > 0.001;
+        let mut sensitive_layer_cache = HashMap::new();
         let render_modes = snapshot
             .layers
             .iter()
             .map(|(layer_id, layer)| {
+                let contains_sensitive_content = fractional_scale
+                    && layer_snapshot_contains_sensitive_content(
+                        *layer_id,
+                        &snapshot.layers,
+                        &mut sensitive_layer_cache,
+                    );
                 (
                     *layer_id,
-                    resolve_layer_render_mode(&layer.descriptor, frame.scale_factor),
+                    if contains_sensitive_content
+                        && layer_spans_multiple_tiles(&layer.descriptor, frame.scale_factor)
+                    {
+                        RetainedLayerRenderMode::Direct
+                    } else {
+                        resolve_layer_render_mode(&layer.descriptor, frame.scale_factor)
+                    },
                 )
             })
             .collect::<HashMap<_, _>>();
@@ -2293,6 +2307,52 @@ fn scene_has_draw_content(scene: &Scene) -> bool {
                 | SceneCommand::Label { .. }
         )
     })
+}
+
+fn scene_has_sensitive_raster_content(scene: &Scene) -> bool {
+    scene.commands().iter().any(|command| match command {
+        SceneCommand::FillPath { .. }
+        | SceneCommand::StrokePath { .. }
+        | SceneCommand::DrawText(_)
+        | SceneCommand::DrawShapedText(_) => true,
+        SceneCommand::Layer(layer) => scene_has_sensitive_raster_content(&layer.scene),
+        _ => false,
+    })
+}
+
+fn layer_snapshot_contains_sensitive_content(
+    layer_id: SceneLayerId,
+    layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    cache: &mut HashMap<SceneLayerId, bool>,
+) -> bool {
+    if let Some(cached) = cache.get(&layer_id) {
+        return *cached;
+    }
+
+    let contains = layers.get(&layer_id).is_some_and(|layer| {
+        layer
+            .packets
+            .iter()
+            .any(|packet| scene_has_sensitive_raster_content(&packet.scene))
+            || layer
+                .children
+                .iter()
+                .copied()
+                .any(|child_id| layer_snapshot_contains_sensitive_content(child_id, layers, cache))
+    });
+
+    cache.insert(layer_id, contains);
+    contains
+}
+
+fn layer_spans_multiple_tiles(
+    descriptor: &sui_scene::SceneLayerDescriptor,
+    scale_factor: f32,
+) -> bool {
+    let tile_grid = TileGrid::new(descriptor, scale_factor);
+    tile_grid
+        .tile_range_for_rect(rect_to_layer_local(descriptor.paint_bounds, descriptor))
+        .is_some_and(|((min_x, min_y), (max_x, max_y))| min_x != max_x || min_y != max_y)
 }
 
 fn normalize_packet_snapshot(
@@ -6637,26 +6697,9 @@ impl TextEngine {
 
         let face = rustybuzz::Face::from_slice(layout.face().bytes(), layout.face().face_index())
             .ok_or_else(|| Error::new("failed to parse shaped text face data"))?;
-        let layout_rect = Rect::from_origin_size(origin, layout.box_size());
         let face_key = GlyphFaceCacheKey::new(layout.face());
 
         for glyph in layout.glyphs() {
-            if let Some(bounds) = glyph
-                .bounds
-                .map(|bounds| bounds.translate(origin.to_vector()))
-            {
-                if bounds.intersection(layout_rect).is_none() {
-                    continue;
-                }
-
-                if let Some(clip) = state.current_clip_bounds() {
-                    let transformed = state.current_transform.transform_rect_bbox(bounds);
-                    if transformed.intersection(clip).is_none() {
-                        continue;
-                    }
-                }
-            }
-
             let mut translated_glyph = glyph.clone();
             translated_glyph.origin_x += origin.x;
             translated_glyph.origin_y += origin.y;
@@ -6859,7 +6902,7 @@ fn build_cached_glyph_atlas(
         return Ok(None);
     };
 
-    let Some(bounds) = path.bounds().to_non_zero_rect() else {
+    let Some(bounds) = glyph_raster_bounds(&path) else {
         return Ok(Some(CachedGlyphAtlas {
             scale: glyph_scale_logical,
             offset: Vector::ZERO,
@@ -6869,8 +6912,8 @@ fn build_cached_glyph_atlas(
         }));
     };
 
-    let width = bounds.width().ceil() as usize;
-    let height = bounds.height().ceil() as usize;
+    let width = bounds.raster_width;
+    let height = bounds.raster_height;
     if width == 0 || height == 0 {
         return Ok(None);
     }
@@ -6883,21 +6926,67 @@ fn build_cached_glyph_atlas(
     let atlas_size = atlas.size();
     let inv_width = 1.0 / atlas_size.0 as f32;
     let inv_height = 1.0 / atlas_size.1 as f32;
+    let logical_uv_min_x = placement.x as f32 + (bounds.logical_min_x - bounds.raster_min_x);
+    let logical_uv_min_y = placement.y as f32 + (bounds.logical_min_y - bounds.raster_min_y);
+    let logical_uv_max_x = logical_uv_min_x + bounds.logical_width;
+    let logical_uv_max_y = logical_uv_min_y + bounds.logical_height;
     Ok(Some(CachedGlyphAtlas {
         scale: glyph_scale_logical,
-        offset: Vector::new(bounds.x() / raster_scale_factor, bounds.y() / raster_scale_factor),
-        size: Size::new(width as f32 / raster_scale_factor, height as f32 / raster_scale_factor),
-        uv_min: [placement.x as f32 * inv_width, placement.y as f32 * inv_height],
+        offset: Vector::new(
+            bounds.logical_min_x / raster_scale_factor,
+            bounds.logical_min_y / raster_scale_factor,
+        ),
+        size: Size::new(
+            bounds.logical_width / raster_scale_factor,
+            bounds.logical_height / raster_scale_factor,
+        ),
+        uv_min: [logical_uv_min_x * inv_width, logical_uv_min_y * inv_height],
         uv_max: [
-            (placement.x + width) as f32 * inv_width,
-            (placement.y + height) as f32 * inv_height,
+            logical_uv_max_x * inv_width,
+            logical_uv_max_y * inv_height,
         ],
     }))
 }
 
-fn rasterize_glyph_rgba(path: &tiny_skia::Path, bounds: tiny_skia::NonZeroRect) -> Result<Vec<u8>> {
-    let width = bounds.width().ceil() as u32;
-    let height = bounds.height().ceil() as u32;
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct GlyphRasterBounds {
+    logical_min_x: f32,
+    logical_min_y: f32,
+    logical_width: f32,
+    logical_height: f32,
+    raster_min_x: f32,
+    raster_min_y: f32,
+    raster_width: usize,
+    raster_height: usize,
+}
+
+fn glyph_raster_bounds(path: &tiny_skia::Path) -> Option<GlyphRasterBounds> {
+    let bounds = path.bounds().to_non_zero_rect()?;
+    let logical_min_x = bounds.x();
+    let logical_min_y = bounds.y();
+    let logical_width = bounds.width();
+    let logical_height = bounds.height();
+    let raster_min_x = logical_min_x.floor();
+    let raster_min_y = logical_min_y.floor();
+    let raster_max_x = (logical_min_x + logical_width).ceil();
+    let raster_max_y = (logical_min_y + logical_height).ceil();
+    let raster_width = (raster_max_x - raster_min_x).max(0.0) as usize;
+    let raster_height = (raster_max_y - raster_min_y).max(0.0) as usize;
+    Some(GlyphRasterBounds {
+        logical_min_x,
+        logical_min_y,
+        logical_width,
+        logical_height,
+        raster_min_x,
+        raster_min_y,
+        raster_width,
+        raster_height,
+    })
+}
+
+fn rasterize_glyph_rgba(path: &tiny_skia::Path, bounds: GlyphRasterBounds) -> Result<Vec<u8>> {
+    let width = bounds.raster_width as u32;
+    let height = bounds.raster_height as u32;
     let mut pixmap = Pixmap::new(width, height)
         .ok_or_else(|| Error::new("failed to allocate text atlas pixmap"))?;
     let mut paint = TinySkiaPaint::default();
@@ -6906,7 +6995,7 @@ fn rasterize_glyph_rgba(path: &tiny_skia::Path, bounds: tiny_skia::NonZeroRect) 
         path,
         &paint,
         FillRule::Winding,
-        TinySkiaTransform::from_translate(-bounds.x(), -bounds.y()),
+        TinySkiaTransform::from_translate(-bounds.raster_min_x, -bounds.raster_min_y),
         None,
     );
     Ok(pixmap.data().to_vec())
@@ -8338,6 +8427,79 @@ mod tests {
             segment_index: 0,
         }]
             .signature
+    }
+
+    fn assert_rgba_images_match(left: &super::RgbaImage, right: &super::RgbaImage) {
+        assert_eq!(left.width(), right.width(), "image widths differ");
+        assert_eq!(left.height(), right.height(), "image heights differ");
+
+        let mut diff_count = 0usize;
+        let mut diff_bounds: Option<(u32, u32, u32, u32)> = None;
+        let width = left.width();
+        for (index, (left_px, right_px)) in left
+            .pixels()
+            .chunks_exact(4)
+            .zip(right.pixels().chunks_exact(4))
+            .enumerate()
+        {
+            if left_px != right_px {
+                diff_count += 1;
+                let x = (index as u32) % width;
+                let y = (index as u32) / width;
+                diff_bounds = Some(match diff_bounds {
+                    Some((min_x, min_y, max_x, max_y)) => (
+                        min_x.min(x),
+                        min_y.min(y),
+                        max_x.max(x),
+                        max_y.max(y),
+                    ),
+                    None => (x, y, x, y),
+                });
+            }
+        }
+
+        if diff_count != 0 {
+            let (min_x, min_y, max_x, max_y) = diff_bounds.expect("diff bounds present");
+            panic!(
+                "images differ at {} pixels within bounds ({}, {})..({}, {})",
+                diff_count, min_x, min_y, max_x, max_y
+            );
+        }
+    }
+
+    fn rgba_image_diff_count(left: &super::RgbaImage, right: &super::RgbaImage) -> usize {
+        assert_eq!(left.width(), right.width(), "image widths differ");
+        assert_eq!(left.height(), right.height(), "image heights differ");
+
+        left.pixels()
+            .chunks_exact(4)
+            .zip(right.pixels().chunks_exact(4))
+            .filter(|(left_px, right_px)| left_px != right_px)
+            .count()
+    }
+
+    fn ink_pixel_count(image: &super::RgbaImage, rect: Rect) -> usize {
+        let min_x = rect.x().floor().max(0.0) as u32;
+        let min_y = rect.y().floor().max(0.0) as u32;
+        let max_x = rect.max_x().ceil().min(image.width() as f32) as u32;
+        let max_y = rect.max_y().ceil().min(image.height() as f32) as u32;
+        let pixels = image.pixels();
+        let width = image.width() as usize;
+
+        let mut count = 0usize;
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                let index = ((y as usize * width) + x as usize) * 4;
+                let red = pixels[index] as i32;
+                let green = pixels[index + 1] as i32;
+                let blue = pixels[index + 2] as i32;
+                let alpha = pixels[index + 3] as i32;
+                if alpha > 0 && (red + green + blue) < 680 {
+                    count += 1;
+                }
+            }
+        }
+        count
     }
 
     #[test]
@@ -10239,6 +10401,639 @@ mod tests {
                 .keys()
                 .all(|address| address.layer != SceneLayerId::from_widget(removed_id))
         );
+    }
+
+    #[test]
+    fn cached_tiles_match_direct_text_across_tile_boundaries() {
+        let handle = FontHandle::new(27);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let layer_id = WidgetId::new(92);
+        let build_frame = |cache_policy| {
+            let descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(layer_id),
+                layer_id,
+                Rect::new(0.0, 0.0, 512.0, 72.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 72.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 72.0))
+            .with_cache_policy(cache_policy);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 512.0, 72.0),
+                brush: Color::rgba(0.08, 0.09, 0.11, 1.0).into(),
+            });
+            layer_scene.push(SceneCommand::DrawText(TextRun {
+                rect: Rect::new(332.0, 18.0, 156.0, 28.0),
+                text: "boundary glyph sample".to_string(),
+                style: TextStyle {
+                    font: Some(handle),
+                    ..TextStyle::new(Color::WHITE)
+                },
+            }));
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor.clone(),
+                layer_scene,
+            )));
+
+            SceneFrame {
+                window_id: WindowId::new(92),
+                viewport: Size::new(512.0, 72.0),
+                surface_size: Size::new(512.0, 72.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                        .with_damage(Rect::new(0.0, 0.0, 512.0, 72.0)),
+                ],
+                scene,
+                font_registry: Arc::new(fonts.clone()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn cached_ancestors_match_direct_for_child_layer_text_across_tile_boundaries() {
+        let handle = FontHandle::new(28);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let shell_id = WidgetId::new(93);
+        let child_id = WidgetId::new(94);
+        let build_frame = |shell_cache_policy| {
+            let shell_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(shell_id),
+                shell_id,
+                Rect::new(0.0, 0.0, 512.0, 84.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 84.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 84.0))
+            .with_cache_policy(shell_cache_policy);
+
+            let child_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(child_id),
+                child_id,
+                Rect::new(0.0, 0.0, 512.0, 84.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 84.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 84.0))
+            .with_cache_policy(LayerCachePolicy::Direct);
+
+            let mut child_scene = Scene::new();
+            child_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 512.0, 84.0),
+                brush: Color::rgba(0.08, 0.09, 0.11, 1.0).into(),
+            });
+            child_scene.push(SceneCommand::DrawText(TextRun {
+                rect: Rect::new(326.0, 22.0, 164.0, 28.0),
+                text: "tab boundary sample".to_string(),
+                style: TextStyle {
+                    font: Some(handle),
+                    ..TextStyle::new(Color::WHITE)
+                },
+            }));
+
+            let mut shell_scene = Scene::new();
+            shell_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                child_descriptor.clone(),
+                child_scene,
+            )));
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                shell_descriptor.clone(),
+                shell_scene,
+            )));
+
+            SceneFrame {
+                window_id: WindowId::new(93),
+                viewport: Size::new(512.0, 84.0),
+                surface_size: Size::new(512.0, 84.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        shell_descriptor,
+                    )
+                    .with_damage(Rect::new(0.0, 0.0, 512.0, 84.0)),
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        child_descriptor,
+                    )
+                    .with_damage(Rect::new(0.0, 0.0, 512.0, 84.0)),
+                ],
+                scene,
+                font_registry: Arc::new(fonts.clone()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn cached_ancestors_match_direct_for_tab_like_text_at_fractional_scale() {
+        let handle = FontHandle::new(29);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let shell_id = WidgetId::new(95);
+        let child_id = WidgetId::new(96);
+        let build_frame = |shell_cache_policy| {
+            let shell_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(shell_id),
+                shell_id,
+                Rect::new(0.0, 0.0, 780.0, 84.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 780.0, 84.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 780.0, 84.0))
+            .with_cache_policy(shell_cache_policy);
+
+            let child_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(child_id),
+                child_id,
+                Rect::new(0.0, 0.0, 780.0, 84.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 780.0, 84.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 780.0, 84.0))
+            .with_cache_policy(LayerCachePolicy::Direct);
+
+            let mut child_scene = Scene::new();
+            child_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 780.0, 84.0),
+                brush: Color::rgba(0.92, 0.94, 0.97, 1.0).into(),
+            });
+
+            for (rect, text, selected) in [
+                (Rect::new(12.0, 10.0, 248.0, 44.0), "Canvas", true),
+                (Rect::new(266.0, 10.0, 248.0, 44.0), "Inspector", false),
+                (Rect::new(520.0, 10.0, 248.0, 44.0), "Export", false),
+            ] {
+                child_scene.push(SceneCommand::FillRect {
+                    rect,
+                    brush: if selected {
+                        Color::rgba(1.0, 1.0, 1.0, 1.0).into()
+                    } else {
+                        Color::rgba(0.0, 0.0, 0.0, 0.0).into()
+                    },
+                });
+                child_scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(rect.x() + 10.0, rect.y() + 10.0, rect.width() - 20.0, 20.0),
+                    text: text.to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 12.0,
+                        line_height: 16.0,
+                        color: if selected {
+                            Color::rgba(0.18, 0.33, 0.85, 1.0)
+                        } else {
+                            Color::rgba(0.15, 0.19, 0.26, 1.0)
+                        },
+                        ..TextStyle::default()
+                    },
+                }));
+            }
+
+            let mut shell_scene = Scene::new();
+            shell_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                child_descriptor.clone(),
+                child_scene,
+            )));
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                shell_descriptor.clone(),
+                shell_scene,
+            )));
+
+            SceneFrame {
+                window_id: WindowId::new(95),
+                viewport: Size::new(780.0, 84.0),
+                surface_size: Size::new(975.0, 105.0),
+                scale_factor: 1.25,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        shell_descriptor,
+                    )
+                    .with_damage(Rect::new(0.0, 0.0, 780.0, 84.0)),
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        child_descriptor,
+                    )
+                    .with_damage(Rect::new(0.0, 0.0, 780.0, 84.0)),
+                ],
+                scene,
+                font_registry: Arc::new(fonts.clone()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn glyph_raster_bounds_expand_fractional_edges() {
+        let mut builder = super::TinySkiaPathBuilder::new();
+        builder.move_to(0.6, -0.2);
+        builder.line_to(10.2, -0.2);
+        builder.line_to(10.2, 4.4);
+        builder.line_to(0.6, 4.4);
+        builder.close();
+        let path = builder.finish().expect("fractional rectangle path");
+
+        let bounds = super::glyph_raster_bounds(&path)
+            .expect("bounds for fractional rectangle");
+
+        assert!((bounds.logical_min_x - 0.6).abs() < 0.0001);
+        assert!((bounds.logical_min_y + 0.2).abs() < 0.0001);
+        assert!((bounds.logical_width - 9.6).abs() < 0.0001);
+        assert!((bounds.logical_height - 4.6).abs() < 0.0001);
+        assert_eq!(bounds.raster_min_x, 0.0);
+        assert_eq!(bounds.raster_min_y, -1.0);
+        assert_eq!(bounds.raster_width, 11);
+        assert_eq!(bounds.raster_height, 6);
+    }
+
+    #[test]
+    fn atlas_text_keeps_terminal_glyphs_at_fractional_scale() {
+        let handle = FontHandle::new(30);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let build_frame = |text: &str| SceneFrame {
+            window_id: WindowId::new(96),
+            viewport: Size::new(260.0, 52.0),
+            surface_size: Size::new(390.0, 78.0),
+            scale_factor: 1.5,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 260.0, 52.0),
+                    brush: Color::WHITE.into(),
+                });
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 10.0, 220.0, 24.0),
+                    text: text.to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 14.0,
+                        line_height: 18.0,
+                        color: Color::rgba(0.12, 0.16, 0.22, 1.0),
+                        ..TextStyle::default()
+                    },
+                }));
+                scene
+            },
+            font_registry: Arc::new(fonts.clone()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let without_terminal = build_frame("inspecto");
+        renderer.render(&without_terminal).unwrap();
+        let without_terminal_pixels = renderer
+            .capture_last_frame_rgba(without_terminal.window_id)
+            .unwrap();
+
+        let with_terminal = build_frame("inspector");
+        renderer.render(&with_terminal).unwrap();
+        let with_terminal_pixels = renderer
+            .capture_last_frame_rgba(with_terminal.window_id)
+            .unwrap();
+
+        let diff_count = rgba_image_diff_count(&without_terminal_pixels, &with_terminal_pixels);
+
+        assert!(
+            diff_count > 0,
+            "terminal glyph vanished at fractional scale (diff_count={diff_count})"
+        );
+    }
+
+    #[test]
+    fn feathered_stroke_rect_renders_at_fractional_scale() {
+        let frame = SceneFrame {
+            window_id: WindowId::new(97),
+            viewport: Size::new(220.0, 64.0),
+            surface_size: Size::new(330.0, 96.0),
+            scale_factor: 1.5,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 220.0, 64.0),
+                    brush: Color::WHITE.into(),
+                });
+                scene.push(SceneCommand::StrokeRect {
+                    rect: Rect::new(12.0, 12.0, 180.0, 32.0),
+                    brush: Color::rgba(0.18, 0.33, 0.85, 1.0).into(),
+                    stroke: StrokeStyle::new(1.0),
+                });
+                scene
+            },
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        renderer.render(&frame).unwrap();
+        let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        let changed_pixels = pixels
+            .pixels()
+            .chunks_exact(4)
+            .filter(|pixel| *pixel != [255, 255, 255, 255])
+            .count();
+
+        assert!(
+            changed_pixels > 500,
+            "feathered stroke rect disappeared at fractional scale (changed_pixels={changed_pixels})"
+        );
+    }
+
+    #[test]
+    fn feathered_rounded_border_retains_most_ink_at_fractional_scale() {
+        let build_frame = || {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 240.0, 72.0),
+                brush: Color::WHITE.into(),
+            });
+            scene.push(SceneCommand::FillPath {
+                path: Path::rounded_rect(Rect::new(12.0, 16.0, 196.0, 36.0), 8.0),
+                brush: Color::rgba(1.0, 1.0, 1.0, 1.0).into(),
+            });
+            scene.push(SceneCommand::StrokePath {
+                path: Path::rounded_rect(Rect::new(12.0, 16.0, 196.0, 36.0), 8.0),
+                brush: Color::rgba(0.18, 0.33, 0.85, 1.0).into(),
+                stroke: StrokeStyle::new(1.0 / 1.5),
+            });
+
+            SceneFrame {
+                window_id: WindowId::new(99),
+                viewport: Size::new(240.0, 72.0),
+                surface_size: Size::new(360.0, 108.0),
+                scale_factor: 1.5,
+                dirty_regions: Vec::new(),
+                layer_updates: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let frame = build_frame();
+
+        let mut feathered = WgpuRenderer::default();
+        feathered.render(&frame).unwrap();
+        let feathered_pixels = feathered.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        let mut hard = WgpuRenderer::default().with_feathering_enabled(false);
+        hard.render(&frame).unwrap();
+        let hard_pixels = hard.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        let crop = Rect::new(10.0, 14.0, 200.0, 40.0);
+        let feathered_ink = ink_pixel_count(&feathered_pixels, crop);
+        let hard_ink = ink_pixel_count(&hard_pixels, crop);
+
+        assert!(
+            feathered_ink * 5 >= hard_ink * 4,
+            "feathered rounded border lost too much ink at fractional scale (feathered_ink={feathered_ink}, hard_ink={hard_ink})"
+        );
+    }
+
+    #[test]
+    fn cached_layer_matches_direct_for_tight_rounded_border_at_fractional_scale() {
+        let widget_id = WidgetId::new(100);
+        let build_frame = |cache_policy| {
+            let descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(widget_id),
+                widget_id,
+                Rect::new(0.0, 0.0, 220.0, 64.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 220.0, 64.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 220.0, 64.0))
+            .with_cache_policy(cache_policy);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 220.0, 64.0),
+                brush: Color::WHITE.into(),
+            });
+            layer_scene.push(SceneCommand::StrokePath {
+                path: Path::rounded_rect(Rect::new(0.0, 0.0, 220.0, 64.0), 10.0),
+                brush: Color::rgba(0.18, 0.33, 0.85, 1.0).into(),
+                stroke: StrokeStyle::new(1.0 / 1.5),
+            });
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor.clone(),
+                layer_scene,
+            )));
+
+            SceneFrame {
+                window_id: WindowId::new(100),
+                viewport: Size::new(220.0, 64.0),
+                surface_size: Size::new(330.0, 96.0),
+                scale_factor: 1.5,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                        .with_damage(Rect::new(0.0, 0.0, 220.0, 64.0)),
+                ],
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn cached_layer_matches_direct_for_tight_tab_text_at_fractional_scale() {
+        let handle = FontHandle::new(30);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let widget_id = WidgetId::new(101);
+        let build_frame = |cache_policy| {
+            let descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(widget_id),
+                widget_id,
+                Rect::new(0.0, 0.0, 236.0, 44.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 236.0, 44.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 236.0, 44.0))
+            .with_cache_policy(cache_policy);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 236.0, 44.0),
+                brush: Color::rgba(0.96, 0.97, 0.99, 1.0).into(),
+            });
+            layer_scene.push(SceneCommand::DrawText(TextRun {
+                rect: Rect::new(10.0, 10.0, 216.0, 20.0),
+                text: "Inspector".to_string(),
+                style: TextStyle {
+                    font: Some(handle),
+                    font_size: 12.0,
+                    line_height: 16.0,
+                    color: Color::rgba(0.15, 0.19, 0.26, 1.0),
+                    ..TextStyle::default()
+                },
+            }));
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor.clone(),
+                layer_scene,
+            )));
+
+            SceneFrame {
+                window_id: WindowId::new(101),
+                viewport: Size::new(236.0, 44.0),
+                surface_size: Size::new(354.0, 66.0),
+                scale_factor: 1.5,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                        .with_damage(Rect::new(0.0, 0.0, 236.0, 44.0)),
+                ],
+                scene,
+                font_registry: Arc::new(fonts.clone()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn cached_tiles_match_direct_for_wide_rounded_borders_at_fractional_scale() {
+        let widget_id = WidgetId::new(102);
+        let build_frame = |cache_policy| {
+            let descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(widget_id),
+                widget_id,
+                Rect::new(0.0, 0.0, 780.0, 92.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 780.0, 92.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 780.0, 92.0))
+            .with_cache_policy(cache_policy);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 780.0, 92.0),
+                brush: Color::rgba(0.97, 0.98, 1.0, 1.0).into(),
+            });
+
+            for rect in [
+                Rect::new(12.0, 18.0, 236.0, 44.0),
+                Rect::new(266.0, 18.0, 236.0, 44.0),
+                Rect::new(520.0, 18.0, 236.0, 44.0),
+            ] {
+                layer_scene.push(SceneCommand::FillPath {
+                    path: Path::rounded_rect(rect, 8.0),
+                    brush: Color::WHITE.into(),
+                });
+                layer_scene.push(SceneCommand::StrokePath {
+                    path: Path::rounded_rect(rect, 8.0),
+                    brush: Color::rgba(0.18, 0.33, 0.85, 1.0).into(),
+                    stroke: StrokeStyle::new(1.0 / 1.5),
+                });
+            }
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor.clone(),
+                layer_scene,
+            )));
+
+            SceneFrame {
+                window_id: WindowId::new(102),
+                viewport: Size::new(780.0, 92.0),
+                surface_size: Size::new(1170.0, 138.0),
+                scale_factor: 1.5,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                        .with_damage(Rect::new(0.0, 0.0, 780.0, 92.0)),
+                ],
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
     }
 
     #[test]
