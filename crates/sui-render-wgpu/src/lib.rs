@@ -2470,6 +2470,21 @@ fn hash_text_style(style: &TextStyle, hasher: &mut DefaultHasher) {
 #[derive(Default)]
 struct FrameResources {
     stencil: Option<StencilTarget>,
+    analytic_path_arena: AnalyticPathArena,
+}
+
+#[derive(Default)]
+struct AnalyticPathArena {
+    bind_group: Option<wgpu::BindGroup>,
+    meta_buffer: Option<wgpu::Buffer>,
+    contour_buffer: Option<wgpu::Buffer>,
+    point_buffer: Option<wgpu::Buffer>,
+    meta_capacity: usize,
+    contour_capacity: usize,
+    point_capacity: usize,
+    used_slots: usize,
+    used_contours: usize,
+    used_points: usize,
 }
 
 struct StencilTarget {
@@ -2813,7 +2828,7 @@ impl WgpuRenderer {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
@@ -3077,17 +3092,11 @@ impl WgpuRenderer {
         let resource_collection_time_us = resource_collection_started.elapsed().as_micros() as u64;
 
         let bind_group_prepare_started = Instant::now();
-        let mut analytic_path_bind_groups = HashMap::new();
-        let mut analytic_path_bind_group_time_us = 0u64;
-        let mut analytic_path_bind_group_miss_count = 0usize;
-        let mut analytic_path_bind_group_upload_bytes = 0u64;
-        for (signature, path) in analytic_paths {
-            let (bind_group, stats) = self.ensure_analytic_path_bind_group(signature, &path)?;
-            analytic_path_bind_group_time_us += stats.total_time_us;
-            analytic_path_bind_group_miss_count += usize::from(stats.was_miss);
-            analytic_path_bind_group_upload_bytes += stats.upload_bytes;
-            analytic_path_bind_groups.insert(signature, bind_group);
-        }
+        let (analytic_path_resources, analytic_path_stats) =
+            self.prepare_analytic_path_resources(analytic_paths)?;
+        let analytic_path_bind_group_time_us = analytic_path_stats.total_time_us;
+        let analytic_path_bind_group_miss_count = analytic_path_stats.miss_count;
+        let analytic_path_bind_group_upload_bytes = analytic_path_stats.upload_bytes;
 
         let image_bind_group_started = Instant::now();
         let mut image_bind_groups = HashMap::new();
@@ -3299,7 +3308,7 @@ impl WgpuRenderer {
                 stencil_view,
                 &image_bind_groups,
                 text_atlas_bind_group.as_ref(),
-                &analytic_path_bind_groups,
+                analytic_path_resources.as_ref(),
             )?
         };
         let pass_encode_time_us = pass_encode_started.elapsed().as_micros() as u64;
@@ -3512,14 +3521,12 @@ impl WgpuRenderer {
         Ok((bind_group, stats))
     }
 
-    fn ensure_analytic_path_bind_group(
+    fn prepare_analytic_path_resources(
         &mut self,
-        signature: u64,
-        path: &AnalyticPathCpuData,
-    ) -> Result<(wgpu::BindGroup, AnalyticPathBindGroupStats)> {
-        if let Some(cached) = self.analytic_path_cache.get_mut(&signature) {
-            cached.last_used_frame = self.frames_rendered;
-            return Ok((cached.bind_group.clone(), AnalyticPathBindGroupStats::default()));
+        analytic_paths: HashMap<u64, AnalyticPathCpuData>,
+    ) -> Result<(Option<PreparedAnalyticPathResources>, AnalyticPathBindGroupStats)> {
+        if analytic_paths.is_empty() {
+            return Ok((None, AnalyticPathBindGroupStats::default()));
         }
 
         let total_started = Instant::now();
@@ -3527,74 +3534,244 @@ impl WgpuRenderer {
             .shared
             .as_ref()
             .expect("renderer shared state initialized");
-        let meta = path.meta();
-        let meta_buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("SUI analytic path metadata"),
-            size: std::mem::size_of::<AnalyticPathMetaGpu>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        shared
-            .queue
-            .write_buffer(&meta_buffer, 0, bytemuck::bytes_of(&meta));
+        let mut slots = HashMap::with_capacity(analytic_paths.len());
+        let mut pending = Vec::new();
+        let mut visible_signatures = Vec::with_capacity(analytic_paths.len());
+        let mut sorted_paths: Vec<_> = analytic_paths.into_iter().collect();
+        sorted_paths.sort_unstable_by_key(|(signature, _)| *signature);
 
-        let contour_buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("SUI analytic path contours"),
-            size: (path.contours.len() * std::mem::size_of::<AnalyticContourGpu>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        shared
-            .queue
-            .write_buffer(&contour_buffer, 0, bytemuck::cast_slice(&path.contours));
+        for (signature, path) in sorted_paths {
+            visible_signatures.push(signature);
+            if let Some(cached) = self.analytic_path_cache.get_mut(&signature) {
+                cached.last_used_frame = self.frames_rendered;
+                slots.insert(signature, cached.slot);
+            } else {
+                pending.push((signature, path));
+            }
+        }
 
-        let point_buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("SUI analytic path points"),
-            size: (path.points.len() * std::mem::size_of::<AnalyticPointGpu>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        shared
-            .queue
-            .write_buffer(&point_buffer, 0, bytemuck::cast_slice(&path.points));
+        let mut stats = AnalyticPathBindGroupStats {
+            miss_count: pending.len(),
+            ..AnalyticPathBindGroupStats::default()
+        };
+        let needs_rebuild = if self.frame_resources.analytic_path_arena.bind_group.is_none() {
+            true
+        } else if pending.is_empty() {
+            false
+        } else {
+            let required_slots = self.frame_resources.analytic_path_arena.used_slots + pending.len();
+            let required_contours = self.frame_resources.analytic_path_arena.used_contours
+                + pending
+                    .iter()
+                    .map(|(_, path)| path.contours.len())
+                    .sum::<usize>();
+            let required_points = self.frame_resources.analytic_path_arena.used_points
+                + pending.iter().map(|(_, path)| path.points.len()).sum::<usize>();
+            !self.frame_resources.analytic_path_arena.has_capacity(
+                required_slots,
+                required_contours,
+                required_points,
+            )
+        };
 
-        let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("SUI analytic path bind group"),
-            layout: &shared.analytic_path_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: meta_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: contour_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: point_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        if needs_rebuild {
+            let mut cached_entries: Vec<_> = self
+                .analytic_path_cache
+                .iter()
+                .map(|(signature, entry)| {
+                    (*signature, entry.slot, entry.last_used_frame, entry.data.clone())
+                })
+                .collect();
+            cached_entries.sort_unstable_by_key(|(_, slot, _, _)| *slot);
 
-        self.analytic_path_cache.insert(
-            signature,
-            CachedAnalyticPathGpu {
-                _meta: meta_buffer,
-                _contours: contour_buffer,
-                _points: point_buffer,
-                bind_group: bind_group.clone(),
-                last_used_frame: self.frames_rendered,
-            },
-        );
+            let total_slots = cached_entries.len() + pending.len();
+            let total_contours = cached_entries
+                .iter()
+                .map(|(_, _, _, data)| data.contours.len())
+                .sum::<usize>()
+                + pending
+                    .iter()
+                    .map(|(_, data)| data.contours.len())
+                    .sum::<usize>();
+            let total_points = cached_entries
+                .iter()
+                .map(|(_, _, _, data)| data.points.len())
+                .sum::<usize>()
+                + pending.iter().map(|(_, data)| data.points.len()).sum::<usize>();
 
+            self.frame_resources.analytic_path_arena.ensure_capacity(
+                &shared.device,
+                &shared.analytic_path_bind_group_layout,
+                total_slots,
+                total_contours,
+                total_points,
+            );
+
+            let mut meta_data = Vec::with_capacity(total_slots);
+            let mut contour_data = Vec::with_capacity(total_contours);
+            let mut point_data = Vec::with_capacity(total_points);
+            let mut rebuilt_cache = HashMap::with_capacity(total_slots);
+
+            for (signature, _, last_used_frame, data) in cached_entries {
+                let slot = meta_data.len() as u32;
+                let contour_start = contour_data.len() as u32;
+                let point_start = point_data.len() as u32;
+                meta_data.push(data.meta(contour_start, point_start));
+                contour_data.extend_from_slice(&data.contours);
+                point_data.extend_from_slice(&data.points);
+                rebuilt_cache.insert(
+                    signature,
+                    CachedAnalyticPathGpu {
+                        data,
+                        slot,
+                        last_used_frame,
+                    },
+                );
+            }
+
+            for (signature, data) in pending {
+                let slot = meta_data.len() as u32;
+                let contour_start = contour_data.len() as u32;
+                let point_start = point_data.len() as u32;
+                meta_data.push(data.meta(contour_start, point_start));
+                contour_data.extend_from_slice(&data.contours);
+                point_data.extend_from_slice(&data.points);
+                rebuilt_cache.insert(
+                    signature,
+                    CachedAnalyticPathGpu {
+                        data,
+                        slot,
+                        last_used_frame: self.frames_rendered,
+                    },
+                );
+            }
+
+            let meta_buffer = self
+                .frame_resources
+                .analytic_path_arena
+                .meta_buffer
+                .as_ref()
+                .expect("analytic path arena metadata buffer initialized");
+            let contour_buffer = self
+                .frame_resources
+                .analytic_path_arena
+                .contour_buffer
+                .as_ref()
+                .expect("analytic path arena contour buffer initialized");
+            let point_buffer = self
+                .frame_resources
+                .analytic_path_arena
+                .point_buffer
+                .as_ref()
+                .expect("analytic path arena point buffer initialized");
+            if !meta_data.is_empty() {
+                shared
+                    .queue
+                    .write_buffer(meta_buffer, 0, bytemuck::cast_slice(&meta_data));
+            }
+            if !contour_data.is_empty() {
+                shared
+                    .queue
+                    .write_buffer(contour_buffer, 0, bytemuck::cast_slice(&contour_data));
+            }
+            if !point_data.is_empty() {
+                shared
+                    .queue
+                    .write_buffer(point_buffer, 0, bytemuck::cast_slice(&point_data));
+            }
+
+            stats.upload_bytes = (meta_data.len() * std::mem::size_of::<AnalyticPathMetaGpu>()
+                + contour_data.len() * std::mem::size_of::<AnalyticContourGpu>()
+                + point_data.len() * std::mem::size_of::<AnalyticPointGpu>())
+                as u64;
+
+            self.analytic_path_cache = rebuilt_cache;
+            self.frame_resources.analytic_path_arena.used_slots = meta_data.len();
+            self.frame_resources.analytic_path_arena.used_contours = contour_data.len();
+            self.frame_resources.analytic_path_arena.used_points = point_data.len();
+
+            for signature in visible_signatures {
+                let slot = self
+                    .analytic_path_cache
+                    .get(&signature)
+                    .expect("visible analytic path cached after arena rebuild")
+                    .slot;
+                slots.insert(signature, slot);
+            }
+        } else if !pending.is_empty() {
+            let meta_buffer = self
+                .frame_resources
+                .analytic_path_arena
+                .meta_buffer
+                .as_ref()
+                .expect("analytic path arena metadata buffer initialized");
+            let contour_buffer = self
+                .frame_resources
+                .analytic_path_arena
+                .contour_buffer
+                .as_ref()
+                .expect("analytic path arena contour buffer initialized");
+            let point_buffer = self
+                .frame_resources
+                .analytic_path_arena
+                .point_buffer
+                .as_ref()
+                .expect("analytic path arena point buffer initialized");
+            for (signature, data) in pending {
+                let slot = self.frame_resources.analytic_path_arena.used_slots as u32;
+                let contour_start = self.frame_resources.analytic_path_arena.used_contours as u32;
+                let point_start = self.frame_resources.analytic_path_arena.used_points as u32;
+                let meta_offset = slot as u64 * std::mem::size_of::<AnalyticPathMetaGpu>() as u64;
+                let contour_offset = contour_start as u64
+                    * std::mem::size_of::<AnalyticContourGpu>() as u64;
+                let point_offset = point_start as u64 * std::mem::size_of::<AnalyticPointGpu>() as u64;
+                let meta = data.meta(contour_start, point_start);
+
+                shared
+                    .queue
+                    .write_buffer(meta_buffer, meta_offset, bytemuck::bytes_of(&meta));
+                if !data.contours.is_empty() {
+                    shared.queue.write_buffer(
+                        contour_buffer,
+                        contour_offset,
+                        bytemuck::cast_slice(&data.contours),
+                    );
+                }
+                if !data.points.is_empty() {
+                    shared.queue.write_buffer(
+                        point_buffer,
+                        point_offset,
+                        bytemuck::cast_slice(&data.points),
+                    );
+                }
+
+                self.frame_resources.analytic_path_arena.used_slots += 1;
+                self.frame_resources.analytic_path_arena.used_contours += data.contours.len();
+                self.frame_resources.analytic_path_arena.used_points += data.points.len();
+                stats.upload_bytes += data.byte_size() as u64;
+                slots.insert(signature, slot);
+                self.analytic_path_cache.insert(
+                    signature,
+                    CachedAnalyticPathGpu {
+                        data,
+                        slot,
+                        last_used_frame: self.frames_rendered,
+                    },
+                );
+            }
+        }
+
+        let bind_group = self
+            .frame_resources
+            .analytic_path_arena
+            .bind_group
+            .as_ref()
+            .expect("analytic path arena bind group initialized")
+            .clone();
+        stats.total_time_us = total_started.elapsed().as_micros() as u64;
         Ok((
-            bind_group,
-            AnalyticPathBindGroupStats {
-                total_time_us: total_started.elapsed().as_micros() as u64,
-                upload_bytes: path.byte_size() as u64,
-                was_miss: true,
-            },
+            Some(PreparedAnalyticPathResources { bind_group, slots }),
+            stats,
         ))
     }
 
@@ -3693,6 +3870,94 @@ impl FrameResources {
             size,
         });
     }
+}
+
+impl AnalyticPathArena {
+    fn has_capacity(&self, meta_count: usize, contour_count: usize, point_count: usize) -> bool {
+        self.bind_group.is_some()
+            && self.meta_capacity >= meta_count
+            && self.contour_capacity >= contour_count
+            && self.point_capacity >= point_count
+    }
+
+    fn ensure_capacity(
+        &mut self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        meta_count: usize,
+        contour_count: usize,
+        point_count: usize,
+    ) {
+        if self.has_capacity(meta_count, contour_count, point_count) {
+            return;
+        }
+
+        let meta_capacity = grow_analytic_path_capacity(self.meta_capacity, meta_count);
+        let contour_capacity = grow_analytic_path_capacity(self.contour_capacity, contour_count);
+        let point_capacity = grow_analytic_path_capacity(self.point_capacity, point_count);
+
+        let meta_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SUI analytic path metadata arena"),
+            size: analytic_path_buffer_size::<AnalyticPathMetaGpu>(meta_capacity),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let contour_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SUI analytic path contour arena"),
+            size: analytic_path_buffer_size::<AnalyticContourGpu>(contour_capacity),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let point_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SUI analytic path point arena"),
+            size: analytic_path_buffer_size::<AnalyticPointGpu>(point_capacity),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SUI analytic path arena bind group"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: meta_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: contour_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: point_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        self.bind_group = Some(bind_group);
+        self.meta_buffer = Some(meta_buffer);
+        self.contour_buffer = Some(contour_buffer);
+        self.point_buffer = Some(point_buffer);
+        self.meta_capacity = meta_capacity;
+        self.contour_capacity = contour_capacity;
+        self.point_capacity = point_capacity;
+    }
+}
+
+fn grow_analytic_path_capacity(current: usize, required: usize) -> usize {
+    if required == 0 {
+        return current;
+    }
+
+    let target = required.max(16);
+    if current >= target {
+        current
+    } else {
+        target.checked_next_power_of_two().unwrap_or(target)
+    }
+}
+
+fn analytic_path_buffer_size<T>(capacity: usize) -> u64 {
+    capacity.max(1) as u64 * std::mem::size_of::<T>() as u64
 }
 
 struct SharedRenderer {
@@ -3922,14 +4187,12 @@ struct TextAtlasBindGroupStats {
 struct AnalyticPathBindGroupStats {
     total_time_us: u64,
     upload_bytes: u64,
-    was_miss: bool,
+    miss_count: usize,
 }
 
 struct CachedAnalyticPathGpu {
-    _meta: wgpu::Buffer,
-    _contours: wgpu::Buffer,
-    _points: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    data: AnalyticPathCpuData,
+    slot: u32,
     last_used_frame: usize,
 }
 
@@ -4404,10 +4667,13 @@ struct DrawOpArena {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 struct AnalyticPathMetaGpu {
+    contour_start: u32,
     contour_count: u32,
+    point_start: u32,
     mode: u32,
     feather_width: f32,
     stroke_width: f32,
+    _pad0: [f32; 2],
 }
 
 #[repr(C)]
@@ -4473,12 +4739,15 @@ impl AnalyticPathCpuData {
         data
     }
 
-    fn meta(&self) -> AnalyticPathMetaGpu {
+    fn meta(&self, contour_start: u32, point_start: u32) -> AnalyticPathMetaGpu {
         AnalyticPathMetaGpu {
+            contour_start,
             contour_count: self.contours.len() as u32,
+            point_start,
             mode: self.mode.to_gpu(),
             feather_width: self.feather_width,
             stroke_width: self.stroke_width,
+            _pad0: [0.0; 2],
         }
     }
 
@@ -4551,6 +4820,25 @@ enum PreparedDrawKind {
     AnalyticPath { resource_signature: u64 },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreparedDrawPipelineKind {
+    Solid,
+    Image,
+    TextAtlas,
+    AnalyticPath,
+}
+
+impl PreparedDrawKind {
+    const fn pipeline_kind(self) -> PreparedDrawPipelineKind {
+        match self {
+            Self::Solid => PreparedDrawPipelineKind::Solid,
+            Self::Image { .. } => PreparedDrawPipelineKind::Image,
+            Self::TextAtlas => PreparedDrawPipelineKind::TextAtlas,
+            Self::AnalyticPath { .. } => PreparedDrawPipelineKind::AnalyticPath,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct CachedPassBatch {
     clip_paths: Vec<PreparedClipPath>,
@@ -4576,6 +4864,11 @@ struct PreparedFragmentSubmission {
     scene_buffer: Option<wgpu::Buffer>,
     clip_buffer: Option<wgpu::Buffer>,
     translation: Vector,
+}
+
+struct PreparedAnalyticPathResources {
+    bind_group: wgpu::BindGroup,
+    slots: HashMap<u64, u32>,
 }
 
 struct EncodablePassBatch {
@@ -4802,7 +5095,7 @@ fn encode_fragment_passes(
     stencil_view: Option<&wgpu::TextureView>,
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
-    analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
+    analytic_path_resources: Option<&PreparedAnalyticPathResources>,
 ) -> Result<usize> {
     let mut cleared = false;
     let mut index = 0;
@@ -4824,7 +5117,7 @@ fn encode_fragment_passes(
                 &passes[start..index],
                 image_bind_groups,
                 text_atlas_bind_group,
-                analytic_path_bind_groups,
+                analytic_path_resources,
                 &mut cleared,
             )?;
             render_pass_count += 1;
@@ -4840,7 +5133,7 @@ fn encode_fragment_passes(
                 stencil_view,
                 image_bind_groups,
                 text_atlas_bind_group,
-                analytic_path_bind_groups,
+                analytic_path_resources,
                 &mut cleared,
             )?;
             render_pass_count += 1;
@@ -4861,7 +5154,7 @@ fn encode_unclipped_pass_run(
     passes: &[EncodablePassBatch],
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
-    analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
+    analytic_path_resources: Option<&PreparedAnalyticPathResources>,
     cleared: &mut bool,
 ) -> Result<()> {
     let load_op = next_pass_load_op(cleared);
@@ -4896,7 +5189,7 @@ fn encode_unclipped_pass_run(
             false,
             image_bind_groups,
             text_atlas_bind_group,
-            analytic_path_bind_groups,
+            analytic_path_resources,
             &mut current_kind,
         )?;
     }
@@ -4915,7 +5208,7 @@ fn encode_clipped_pass(
     stencil_view: Option<&wgpu::TextureView>,
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
-    analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
+    analytic_path_resources: Option<&PreparedAnalyticPathResources>,
     cleared: &mut bool,
 ) -> Result<()> {
     let load_op = next_pass_load_op(cleared);
@@ -4969,7 +5262,7 @@ fn encode_clipped_pass(
         true,
         image_bind_groups,
         text_atlas_bind_group,
-        analytic_path_bind_groups,
+        analytic_path_resources,
         &mut current_kind,
     )?;
 
@@ -5002,8 +5295,8 @@ fn encode_draws_for_pass(
     clipped: bool,
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
-    analytic_path_bind_groups: &HashMap<u64, wgpu::BindGroup>,
-    current_kind: &mut Option<PreparedDrawKind>,
+    analytic_path_resources: Option<&PreparedAnalyticPathResources>,
+    current_kind: &mut Option<PreparedDrawPipelineKind>,
 ) -> Result<()> {
     let (viewport_x, viewport_y) = translation_to_viewport_origin(translation, viewport, framebuffer_size);
     render_pass.set_viewport(
@@ -5023,27 +5316,36 @@ fn encode_draws_for_pass(
             None => render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1),
         }
 
-        if *current_kind != Some(draw.kind) {
-            let pipeline = match (draw.kind, clipped) {
-                (PreparedDrawKind::Solid, true) => shared.clipped_pipeline(target_format),
-                (PreparedDrawKind::Solid, false) => shared.pipeline(target_format),
-                (PreparedDrawKind::Image { .. }, true) => {
+        let pipeline_kind = draw.kind.pipeline_kind();
+        if *current_kind != Some(pipeline_kind) {
+            let pipeline = match (pipeline_kind, clipped) {
+                (PreparedDrawPipelineKind::Solid, true) => shared.clipped_pipeline(target_format),
+                (PreparedDrawPipelineKind::Solid, false) => shared.pipeline(target_format),
+                (PreparedDrawPipelineKind::Image, true) => {
                     shared.clipped_image_pipeline(target_format)
                 }
-                (PreparedDrawKind::Image { .. }, false) => shared.image_pipeline(target_format),
-                (PreparedDrawKind::TextAtlas, true) => {
+                (PreparedDrawPipelineKind::Image, false) => shared.image_pipeline(target_format),
+                (PreparedDrawPipelineKind::TextAtlas, true) => {
                     shared.clipped_image_pipeline(target_format)
                 }
-                (PreparedDrawKind::TextAtlas, false) => shared.image_pipeline(target_format),
-                (PreparedDrawKind::AnalyticPath { .. }, true) => {
+                (PreparedDrawPipelineKind::TextAtlas, false) => {
+                    shared.image_pipeline(target_format)
+                }
+                (PreparedDrawPipelineKind::AnalyticPath, true) => {
                     shared.clipped_analytic_path_pipeline(target_format)
                 }
-                (PreparedDrawKind::AnalyticPath { .. }, false) => {
+                (PreparedDrawPipelineKind::AnalyticPath, false) => {
                     shared.analytic_path_pipeline(target_format)
                 }
             };
             render_pass.set_pipeline(pipeline);
-            *current_kind = Some(draw.kind);
+            if pipeline_kind == PreparedDrawPipelineKind::AnalyticPath {
+                let bind_group = &analytic_path_resources
+                    .expect("analytic path resources prepared before retained render pass")
+                    .bind_group;
+                render_pass.set_bind_group(0, bind_group, &[]);
+            }
+            *current_kind = Some(pipeline_kind);
         }
 
         if clipped {
@@ -5063,18 +5365,25 @@ fn encode_draws_for_pass(
                     .expect("text atlas bind group prepared before retained render pass");
                 render_pass.set_bind_group(0, bind_group, &[]);
             }
-            PreparedDrawKind::AnalyticPath { resource_signature } => {
-                let bind_group = analytic_path_bind_groups
-                    .get(&resource_signature)
-                    .expect("analytic path bind group prepared before retained render pass");
-                render_pass.set_bind_group(0, bind_group, &[]);
-            }
+            PreparedDrawKind::AnalyticPath { .. } => {}
         }
 
         let scene_buffer = scene_buffer
             .ok_or_else(|| Error::new("prepared render batch is missing a scene vertex buffer"))?;
         render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
-        render_pass.draw(0..draw.vertices.len, 0..1);
+        let instances = match draw.kind {
+            PreparedDrawKind::AnalyticPath { resource_signature } => {
+                let slot = analytic_path_resources
+                    .expect("analytic path resources prepared before retained render pass")
+                    .slots
+                    .get(&resource_signature)
+                    .copied()
+                    .expect("analytic path slot prepared before retained render pass");
+                slot..slot + 1
+            }
+            _ => 0..1,
+        };
+        render_pass.draw(0..draw.vertices.len, instances);
     }
 
     Ok(())
@@ -7171,13 +7480,17 @@ struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) scene_position: vec2<f32>,
+    @location(2) @interpolate(flat) path_index: u32,
 };
 
 struct AnalyticPathMeta {
+    contour_start: u32,
     contour_count: u32,
+    point_start: u32,
     mode: u32,
     feather_width: f32,
     stroke_width: f32,
+    _pad0: vec2<f32>,
 };
 
 struct AnalyticContour {
@@ -7197,7 +7510,7 @@ struct AnalyticPoint {
 };
 
 @group(0) @binding(0)
-var<uniform> path_meta: AnalyticPathMeta;
+var<storage, read> path_metas: array<AnalyticPathMeta>;
 
 @group(0) @binding(1)
 var<storage, read> contours: array<AnalyticContour>;
@@ -7210,11 +7523,13 @@ fn vs_main(
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) scene_position: vec2<f32>,
+    @builtin(instance_index) instance_index: u32,
 ) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(position, 0.0, 1.0);
     out.color = color;
     out.scene_position = scene_position;
+    out.path_index = instance_index;
     return out;
 }
 
@@ -7227,6 +7542,7 @@ fn segment_distance(point: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let path_meta = path_metas[in.path_index];
     if path_meta.contour_count == 0u {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
@@ -7236,20 +7552,21 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var min_distance = 1e9;
 
     for (var contour_index = 0u; contour_index < path_meta.contour_count; contour_index = contour_index + 1u) {
-        let contour = contours[contour_index];
+        let contour = contours[path_meta.contour_start + contour_index];
         if contour.len < 2u {
             continue;
         }
 
         let closed = (contour.flags & ANALYTIC_CONTOUR_FLAG_CLOSED) != 0u;
+        let point_start = path_meta.point_start + contour.start;
         var previous = select(
-            points[contour.start].position,
-            points[contour.start + contour.len - 1u].position,
+            points[point_start].position,
+            points[point_start + contour.len - 1u].position,
             closed,
         );
         var start_index = select(1u, 0u, closed);
         for (var point_index = start_index; point_index < contour.len; point_index = point_index + 1u) {
-            let current = points[contour.start + point_index].position;
+            let current = points[point_start + point_index].position;
                 let denom = previous.y - current.y;
                 let safe_denom = select(
                     denom,
