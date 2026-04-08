@@ -3621,7 +3621,10 @@ fn measure_text_width_estimate(text: &str, font_size: f32) -> f32 {
 
 fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
     let stroke = StrokeStyle::new(physical_pixels(ctx, 1.8).max(1.0));
-    let inset = bounds.inflate(-(bounds.width() * 0.2), -(bounds.height() * 0.2));
+    let inset = bounds.inflate(
+        -((bounds.width() * 0.2) + (stroke.width * 0.5)),
+        -((bounds.height() * 0.2) + (stroke.width * 0.5)),
+    );
 
     match glyph {
         IconGlyph::Add => {
@@ -3840,9 +3843,17 @@ fn draw_control_shape(
     background: Color,
     border: Color,
 ) {
-    let shape = rounded_rect_path(bounds, radius);
-    ctx.fill(shape.clone(), background);
-    ctx.stroke(shape, border, StrokeStyle::new(border_width));
+    let fill_shape = rounded_rect_path(bounds, radius);
+    ctx.fill(fill_shape, background);
+
+    if border_width > 0.0 {
+        let inset = border_width * 0.5;
+        let stroke_shape = rounded_rect_path(
+            bounds.inflate(-inset, -inset),
+            (radius - inset).max(0.0),
+        );
+        ctx.stroke(stroke_shape, border, StrokeStyle::new(border_width));
+    }
 }
 
 fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
@@ -3987,6 +3998,7 @@ mod tests {
         Application, RenderOutput, Runtime, Widget, WindowBuilder, WindowRenderOptions,
         clear_window_render_options, set_window_render_options,
     };
+    use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -4007,6 +4019,43 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).unwrap()
+    }
+
+    fn render_rgba<W>(root: W, feathering_enabled: bool) -> (RenderOutput, RgbaImage)
+    where
+        W: Widget + 'static,
+    {
+        let (mut runtime, window_id) = build_runtime(root);
+        let output = runtime.render(window_id).unwrap();
+        let mut renderer = WgpuRenderer::default().with_feathering_enabled(feathering_enabled);
+        renderer.render(&output.frame).unwrap();
+        let image = renderer.capture_last_frame_rgba(window_id).unwrap();
+        (output, image)
+    }
+
+    fn dark_pixel_count(image: &RgbaImage, rect: Rect, max_channel: u8) -> usize {
+        let min_x = rect.x().floor().max(0.0) as u32;
+        let min_y = rect.y().floor().max(0.0) as u32;
+        let max_x = rect.max_x().ceil().min(image.width() as f32) as u32;
+        let max_y = rect.max_y().ceil().min(image.height() as f32) as u32;
+        let pixels = image.pixels();
+        let width = image.width() as usize;
+
+        let mut count = 0usize;
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                let index = ((y as usize * width) + x as usize) * 4;
+                let red = pixels[index];
+                let green = pixels[index + 1];
+                let blue = pixels[index + 2];
+                let alpha = pixels[index + 3];
+                if alpha != 0 && red <= max_channel && green <= max_channel && blue <= max_channel {
+                    count += 1;
+                }
+            }
+        }
+
+        count
     }
 
     fn first_text_rect(output: &RenderOutput) -> Rect {
@@ -4601,6 +4650,50 @@ mod tests {
     }
 
     #[test]
+    fn number_input_retains_stepper_ink_when_feathering_is_enabled() {
+        let root = crate::Padding::all(
+            12.0,
+            NumberInput::new("Count")
+                .range(0.0, 20.0)
+                .step(1.0)
+                .value(12.0),
+        );
+
+        let (feathered_output, feathered_image) = render_rgba(root, true);
+        let number_input_bounds = feathered_output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::SpinBox)
+            .map(|node| node.bounds)
+            .expect("number input semantics present");
+
+        let (_, hard_image) = render_rgba(
+            crate::Padding::all(
+                12.0,
+                NumberInput::new("Count")
+                    .range(0.0, 20.0)
+                    .step(1.0)
+                    .value(12.0),
+            ),
+            false,
+        );
+
+        let stepper_crop = Rect::new(
+            number_input_bounds.max_x() - 32.0,
+            number_input_bounds.y(),
+            32.0,
+            number_input_bounds.height(),
+        );
+        let feathered_ink = dark_pixel_count(&feathered_image, stepper_crop, 224);
+        let hard_ink = dark_pixel_count(&hard_image, stepper_crop, 224);
+
+        assert!(
+            feathered_ink * 3 >= hard_ink * 2,
+            "feathered number-input stepper lost too much dark ink (feathered={feathered_ink}, hard={hard_ink}, crop={stepper_crop:?})"
+        );
+    }
+
+    #[test]
     fn text_area_supports_multiline_input() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
@@ -4726,5 +4819,49 @@ mod tests {
         assert_eq!(descriptor.cache_policy, LayerCachePolicy::Direct);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
         Ok(())
+    }
+
+    #[test]
+    fn select_retains_chevron_ink_when_feathering_is_enabled() {
+        let root = crate::Padding::all(
+            12.0,
+            Select::new("Mode")
+                .placeholder("Choose mode")
+                .options(["Normal", "Multiply", "Screen"])
+                .selected(0),
+        );
+
+        let (feathered_output, feathered_image) = render_rgba(root, true);
+        let select_bounds = feathered_output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .map(|node| node.bounds)
+            .expect("select semantics present");
+
+        let (_, hard_image) = render_rgba(
+            crate::Padding::all(
+                12.0,
+                Select::new("Mode")
+                    .placeholder("Choose mode")
+                    .options(["Normal", "Multiply", "Screen"])
+                    .selected(0),
+            ),
+            false,
+        );
+
+        let chevron_crop = Rect::new(
+            select_bounds.max_x() - 30.0,
+            select_bounds.y(),
+            30.0,
+            select_bounds.height(),
+        );
+        let feathered_ink = dark_pixel_count(&feathered_image, chevron_crop, 224);
+        let hard_ink = dark_pixel_count(&hard_image, chevron_crop, 224);
+
+        assert!(
+            feathered_ink * 3 >= hard_ink * 2,
+            "feathered select chevron lost too much dark ink (feathered={feathered_ink}, hard={hard_ink}, crop={chevron_crop:?})"
+        );
     }
 }

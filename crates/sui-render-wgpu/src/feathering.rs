@@ -227,7 +227,10 @@ fn append_local_stroke_contour(
         return;
     }
 
-    let thin_line = line_width <= 0.9 * feather_width;
+    // Keep the CPU-side mesh in sync with the shader's thin-stroke branch.
+    // When the opaque core collapses to zero width, the three-band thin-line
+    // mesh preserves visible ink for 1 px control outlines and separators.
+    let thin_line = line_width <= feather_width;
     if thin_line {
         let coverage = (line_width / feather_width).clamp(0.0, 1.0);
         let mut previous_base = 0;

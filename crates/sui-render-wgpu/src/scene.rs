@@ -2268,7 +2268,10 @@ fn append_stroked_path(
     }
 
     let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
-    if feather_width > 0.0 {
+    // The analytic stroke path is efficient for broad strokes, but very thin UI
+    // strokes can lose most of their visible ink once feathering and clipping
+    // are combined. Route thin strokes through the cached mesh path instead.
+    if feather_width > 0.0 && line_width > feather_width * 2.0 {
         let lyon_path = build_lyon_path(path, state.current_transform);
         if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
             append_analytic_path_quad(

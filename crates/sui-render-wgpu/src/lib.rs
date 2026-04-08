@@ -2218,8 +2218,8 @@ mod tests {
     };
     use std::sync::Arc;
     use sui_core::{
-        Color, FontHandle, ImageHandle, Path, Point, Rect, Size, Transform, Vector, WidgetId,
-        WindowId,
+        Color, FontHandle, ImageHandle, Path, PathBuilder, Point, Rect, Size, Transform, Vector,
+        WidgetId, WindowId,
     };
     use sui_scene::{
         ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, RegisteredImage, Scene,
@@ -4892,6 +4892,120 @@ mod tests {
         assert!(
             feathered_ink * 5 >= hard_ink * 4,
             "feathered rounded border lost too much ink at fractional scale (feathered_ink={feathered_ink}, hard_ink={hard_ink})"
+        );
+    }
+
+    #[test]
+    fn feathered_control_border_and_chevrons_retain_visible_ink() {
+        fn line_path(start: Point, end: Point) -> Path {
+            let mut builder = PathBuilder::new();
+            builder.move_to(start).line_to(end);
+            builder.build()
+        }
+
+        fn chevron_path(bounds: Rect, direction: f32) -> Path {
+            let center = Point::new(
+                bounds.x() + (bounds.width() * 0.5),
+                bounds.y() + (bounds.height() * 0.5),
+            );
+            let mut builder = PathBuilder::new();
+            if direction.is_sign_positive() {
+                builder
+                    .move_to(Point::new(bounds.x(), bounds.y() + (bounds.height() * 0.3)))
+                    .line_to(Point::new(center.x, bounds.max_y() - (bounds.height() * 0.3)))
+                    .line_to(Point::new(
+                        bounds.max_x(),
+                        bounds.y() + (bounds.height() * 0.3),
+                    ));
+            } else {
+                builder
+                    .move_to(Point::new(
+                        bounds.x(),
+                        bounds.max_y() - (bounds.height() * 0.3),
+                    ))
+                    .line_to(Point::new(center.x, bounds.y() + (bounds.height() * 0.3)))
+                    .line_to(Point::new(
+                        bounds.max_x(),
+                        bounds.max_y() - (bounds.height() * 0.3),
+                    ));
+            }
+            builder.build()
+        }
+
+        let build_frame = || {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 220.0, 72.0),
+                brush: Color::WHITE.into(),
+            });
+            scene.push(SceneCommand::StrokePath {
+                path: Path::rounded_rect(Rect::new(10.0, 16.0, 170.0, 40.0), 6.0),
+                brush: Color::rgba(0.47, 0.49, 0.53, 1.0).into(),
+                stroke: StrokeStyle::new(1.0),
+            });
+            scene.push(SceneCommand::StrokePath {
+                path: line_path(Point::new(154.0, 22.0), Point::new(154.0, 50.0)),
+                brush: Color::rgba(0.73, 0.73, 0.75, 1.0).into(),
+                stroke: StrokeStyle::new(1.0),
+            });
+            scene.push(SceneCommand::StrokePath {
+                path: chevron_path(Rect::new(156.0, 18.0, 16.0, 14.0), -1.0),
+                brush: Color::rgba(0.12, 0.12, 0.12, 1.0).into(),
+                stroke: StrokeStyle::new(1.8),
+            });
+            scene.push(SceneCommand::StrokePath {
+                path: chevron_path(Rect::new(156.0, 40.0, 16.0, 14.0), 1.0),
+                brush: Color::rgba(0.12, 0.12, 0.12, 1.0).into(),
+                stroke: StrokeStyle::new(1.8),
+            });
+            scene.push(SceneCommand::StrokePath {
+                path: Path::rounded_rect(Rect::new(10.0, 16.0, 196.0, 40.0), 6.0),
+                brush: Color::rgba(0.73, 0.73, 0.75, 1.0).into(),
+                stroke: StrokeStyle::new(1.0),
+            });
+            scene.push(SceneCommand::StrokePath {
+                path: chevron_path(Rect::new(178.0, 27.0, 18.0, 18.0), 1.0),
+                brush: Color::rgba(0.12, 0.12, 0.12, 1.0).into(),
+                stroke: StrokeStyle::new(1.8),
+            });
+
+            SceneFrame {
+                window_id: WindowId::new(102),
+                viewport: Size::new(220.0, 72.0),
+                surface_size: Size::new(220.0, 72.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let frame = build_frame();
+
+        let mut feathered = WgpuRenderer::default();
+        feathered.render(&frame).unwrap();
+        let feathered_pixels = feathered.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        let mut hard = WgpuRenderer::default().with_feathering_enabled(false);
+        hard.render(&frame).unwrap();
+        let hard_pixels = hard.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        let number_input_crop = Rect::new(8.0, 14.0, 172.0, 44.0);
+        let select_crop = Rect::new(8.0, 14.0, 200.0, 44.0);
+        let feathered_number_input_ink = ink_pixel_count(&feathered_pixels, number_input_crop);
+        let hard_number_input_ink = ink_pixel_count(&hard_pixels, number_input_crop);
+        let feathered_select_ink = ink_pixel_count(&feathered_pixels, select_crop);
+        let hard_select_ink = ink_pixel_count(&hard_pixels, select_crop);
+
+        assert!(
+            feathered_number_input_ink * 3 >= hard_number_input_ink,
+            "feathered number-input border or chevrons lost too much ink (feathered={feathered_number_input_ink}, hard={hard_number_input_ink})"
+        );
+        assert!(
+            feathered_select_ink * 3 >= hard_select_ink,
+            "feathered select border or chevron lost too much ink (feathered={feathered_select_ink}, hard={hard_select_ink})"
         );
     }
 
