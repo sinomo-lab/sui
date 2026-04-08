@@ -1786,6 +1786,7 @@ impl TextEngine {
                             layout.style().color,
                             state.current_transform,
                             viewport,
+                            raster_scale_factor,
                         );
                         if self.diagnostics_enabled {
                             self.frame_stats.glyph_instances += 1;
@@ -2128,6 +2129,7 @@ pub(crate) fn append_cached_glyph_atlas(
     color: Color,
     transform: Transform,
     viewport: Size,
+    raster_scale_factor: f32,
 ) {
     if atlas.size.is_empty() || viewport.is_empty() {
         return;
@@ -2139,10 +2141,11 @@ pub(crate) fn append_cached_glyph_atlas(
     let top = glyph.origin_y + (atlas.offset.y * residual_scale);
     let width = atlas.size.width * residual_scale;
     let height = atlas.size.height * residual_scale;
-    let top_left = transform.transform_point(Point::new(left, top));
-    let top_right = transform.transform_point(Point::new(left + width, top));
-    let bottom_left = transform.transform_point(Point::new(left, top + height));
-    let bottom_right = transform.transform_point(Point::new(left + width, top + height));
+    let (top_left, top_right, bottom_left, bottom_right) = snapped_glyph_quad(
+        transform,
+        Rect::new(left, top, width, height),
+        raster_scale_factor,
+    );
 
     vertices.extend_from_slice(&[
         Vertex {
@@ -2176,6 +2179,41 @@ pub(crate) fn append_cached_glyph_atlas(
             tex_coords: atlas.uv_max,
         },
     ]);
+}
+
+fn snapped_glyph_quad(
+    transform: Transform,
+    rect: Rect,
+    raster_scale_factor: f32,
+) -> (Point, Point, Point, Point) {
+    let top_left = transform.transform_point(rect.origin);
+    let top_right = transform.transform_point(Point::new(rect.max_x(), rect.y()));
+    let bottom_left = transform.transform_point(Point::new(rect.x(), rect.max_y()));
+    let bottom_right = transform.transform_point(Point::new(rect.max_x(), rect.max_y()));
+
+    if !transform_is_axis_aligned(transform) || raster_scale_factor <= 0.0 {
+        return (top_left, top_right, bottom_left, bottom_right);
+    }
+
+    let snapped_left = snap_to_physical_pixel(top_left.x, raster_scale_factor);
+    let snapped_top = snap_to_physical_pixel(top_left.y, raster_scale_factor);
+    let width = top_right.x - top_left.x;
+    let height = bottom_left.y - top_left.y;
+
+    (
+        Point::new(snapped_left, snapped_top),
+        Point::new(snapped_left + width, snapped_top),
+        Point::new(snapped_left, snapped_top + height),
+        Point::new(snapped_left + width, snapped_top + height),
+    )
+}
+
+fn transform_is_axis_aligned(transform: Transform) -> bool {
+    transform.xy.abs() <= f32::EPSILON && transform.yx.abs() <= f32::EPSILON
+}
+
+fn snap_to_physical_pixel(value: f32, raster_scale_factor: f32) -> f32 {
+    ((value * raster_scale_factor).round()) / raster_scale_factor
 }
 
 pub(crate) fn append_cached_path_mesh(

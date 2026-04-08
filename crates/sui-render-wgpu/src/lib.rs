@@ -2406,6 +2406,15 @@ mod tests {
         count
     }
 
+    fn logical_x_from_ndc(ndc_x: f32, viewport: Size) -> f32 {
+        ((ndc_x + 1.0) * 0.5) * viewport.width
+    }
+
+    fn is_physically_pixel_aligned(value: f32, scale_factor: f32) -> bool {
+        let physical = value * scale_factor;
+        (physical - physical.round()).abs() < 0.0001
+    }
+
     #[test]
     fn build_vertices_applies_clip_and_transform_to_fill_rects() {
         let mut scene = Scene::new();
@@ -2596,6 +2605,7 @@ mod tests {
             color,
             Transform::IDENTITY,
             Size::new(64.0, 64.0),
+            1.0,
         );
 
         assert_eq!(vertices.len(), 6);
@@ -2619,6 +2629,57 @@ mod tests {
         assert!((premultiplied[1] - 0.00868).abs() < 0.0001);
         assert!((premultiplied[2] - 0.24952).abs() < 0.0001);
         assert!((premultiplied[3] - 0.375).abs() < 0.0001);
+    }
+
+    #[test]
+    fn atlas_text_snaps_repeated_stems_to_physical_pixels() {
+        let handle = FontHandle::new(31);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let viewport = Size::new(260.0, 52.0);
+        let frame = SceneFrame {
+            window_id: WindowId::new(98),
+            viewport,
+            surface_size: Size::new(390.0, 78.0),
+            scale_factor: 1.5,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 10.0, 220.0, 24.0),
+                    text: "scroll".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 14.0,
+                        line_height: 18.0,
+                        color: Color::rgba(0.12, 0.16, 0.22, 1.0),
+                        ..TextStyle::default()
+                    },
+                }));
+                scene
+            },
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let vertices = build_vertices(&frame, &mut text_engine).unwrap();
+
+        assert!(vertices.len() >= 12, "expected atlas vertices for repeated l glyphs");
+
+        let first_l_left = logical_x_from_ndc(vertices[24].position[0], viewport);
+        let second_l_left = logical_x_from_ndc(vertices[30].position[0], viewport);
+
+        assert!(
+            is_physically_pixel_aligned(first_l_left, frame.scale_factor),
+            "first l did not snap to the physical pixel grid: x={first_l_left}"
+        );
+        assert!(
+            is_physically_pixel_aligned(second_l_left, frame.scale_factor),
+            "second l did not snap to the physical pixel grid: x={second_l_left}"
+        );
     }
 
     #[test]
