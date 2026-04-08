@@ -114,8 +114,17 @@ impl ListView {
     }
 
     fn resolved_row_height(&self) -> f32 {
-        self.row_height
-            .max((self.theme.metrics.min_height + 4.0).max(28.0))
+        let base = self
+            .row_height
+            .max((self.theme.metrics.min_height + 4.0).max(28.0));
+        if self.items.iter().any(|item| item.detail.is_some()) {
+            base.max(two_line_row_height(
+                self.theme.body_text_style().line_height,
+                caption_style(self.theme.as_ref()).line_height,
+            ))
+        } else {
+            base
+        }
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
@@ -381,7 +390,17 @@ impl Widget for ListView {
             }
 
             let text_x = row.x() + 14.0;
-            let label_rect = Rect::new(text_x, row.y() + 5.0, row.width() - 22.0, 16.0);
+            let text_bounds = Rect::new(
+                text_x,
+                row.y(),
+                (row.max_x() - text_x - 8.0).max(0.0),
+                row.height(),
+            );
+            let (label_rect, detail_rect) = row_text_rects(
+                text_bounds,
+                label_style.line_height,
+                item.detail.as_ref().map(|_| detail_style.line_height),
+            );
             ctx.draw_text(
                 label_rect,
                 item.label.clone(),
@@ -395,12 +414,7 @@ impl Widget for ListView {
             );
             if let Some(detail) = &item.detail {
                 ctx.draw_text(
-                    Rect::new(
-                        text_x,
-                        row.y() + row.height() - 16.0,
-                        row.width() - 22.0,
-                        14.0,
-                    ),
+                    detail_rect.unwrap_or(text_bounds),
                     detail.clone(),
                     detail_style.clone(),
                 );
@@ -551,8 +565,17 @@ impl TreeView {
     }
 
     fn resolved_row_height(&self) -> f32 {
-        self.row_height
-            .max((self.theme.metrics.min_height + 4.0).max(28.0))
+        let base = self
+            .row_height
+            .max((self.theme.metrics.min_height + 4.0).max(28.0));
+        if self.visible_rows().iter().any(|row| row.detail.is_some()) {
+            base.max(two_line_row_height(
+                self.theme.body_text_style().line_height,
+                caption_style(self.theme.as_ref()).line_height,
+            ))
+        } else {
+            base
+        }
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
@@ -877,13 +900,20 @@ impl Widget for TreeView {
             }
 
             let label_x = row_rect.x() + 16.0 + indent;
+            let text_bounds = Rect::new(
+                label_x,
+                row_rect.y(),
+                (row_rect.max_x() - label_x - 8.0).max(0.0),
+                row_rect.height(),
+            );
+            let detail_style = caption_style(self.theme.as_ref());
+            let (label_rect, detail_rect) = row_text_rects(
+                text_bounds,
+                self.theme.body_text_style().line_height,
+                row.detail.as_ref().map(|_| detail_style.line_height),
+            );
             ctx.draw_text(
-                Rect::new(
-                    label_x,
-                    row_rect.y() + 5.0,
-                    row_rect.width() - label_x,
-                    16.0,
-                ),
+                label_rect,
                 row.label.clone(),
                 if row.disabled {
                     self.theme.text_style(palette.placeholder)
@@ -895,14 +925,9 @@ impl Widget for TreeView {
             );
             if let Some(detail) = &row.detail {
                 ctx.draw_text(
-                    Rect::new(
-                        label_x,
-                        row_rect.y() + row_rect.height() - 16.0,
-                        row_rect.width() - label_x,
-                        14.0,
-                    ),
+                    detail_rect.unwrap_or(text_bounds),
                     detail.clone(),
-                    caption_style(self.theme.as_ref()),
+                    detail_style,
                 );
             }
         }
@@ -1310,7 +1335,7 @@ impl Widget for Table {
             }
             draw_aligned_text(
                 ctx,
-                inset_rect(cell, Insets::all(8.0)),
+                horizontal_inset_rect(cell, 8.0),
                 &column.title,
                 &header_style,
                 column.alignment,
@@ -1357,7 +1382,7 @@ impl Widget for Table {
                 if let Some(value) = self.rows[row_index].cells.get(column_index) {
                     draw_aligned_text(
                         ctx,
-                        inset_rect(cell_rect, Insets::all(8.0)),
+                        horizontal_inset_rect(cell_rect, 8.0),
                         value,
                         &if selected {
                             self.theme.text_style(palette.border_focus)
@@ -1503,9 +1528,15 @@ impl Breadcrumb {
         if index >= widths.len() {
             return None;
         }
+        let vertical_padding = 4.0;
         let mut x = bounds.x() + 10.0;
         for (current, width) in widths.iter().enumerate() {
-            let rect = Rect::new(x, bounds.y() + 8.0, *width, bounds.height() - 16.0);
+            let rect = Rect::new(
+                x,
+                bounds.y() + vertical_padding,
+                *width,
+                (bounds.height() - vertical_padding * 2.0).max(0.0),
+            );
             if current == index {
                 return Some(rect);
             }
@@ -1646,22 +1677,25 @@ impl Widget for Breadcrumb {
                 );
             }
 
-            ctx.draw_text(
-                inset_rect(rect, Insets::all(8.0)),
-                item.label.clone(),
-                if current {
-                    self.theme.text_style(palette.border_focus)
-                } else {
-                    self.theme.body_text_style()
-                },
+            let style = if current {
+                self.theme.text_style(palette.border_focus)
+            } else {
+                self.theme.body_text_style()
+            };
+            draw_aligned_text(
+                ctx,
+                horizontal_inset_rect(rect, 8.0),
+                &item.label,
+                &style,
+                TableColumnAlignment::Start,
             );
 
             if index + 1 < self.items.len() {
                 let separator = chevron_path(Rect::new(
                     rect.max_x() + 6.0,
-                    rect.y() + 8.0,
+                    rect.y() + ((rect.height() - 10.0) * 0.5),
                     10.0,
-                    rect.height() - 16.0,
+                    10.0,
                 ));
                 ctx.stroke(
                     separator,
@@ -1838,11 +1872,53 @@ fn draw_aligned_text(
         TableColumnAlignment::Center => rect.x() + ((rect.width() - estimated) * 0.5).max(0.0),
         TableColumnAlignment::End => rect.max_x() - estimated.max(0.0),
     };
+    let height = style.line_height.min(rect.height());
+    let y = rect.y() + ((rect.height() - height) * 0.5).max(0.0);
     ctx.draw_text(
-        Rect::new(x, rect.y(), width, rect.height()),
+        Rect::new(x, y, width, height),
         text.to_string(),
         style.clone(),
     );
+}
+
+fn row_text_rects(
+    rect: Rect,
+    primary_line_height: f32,
+    secondary_line_height: Option<f32>,
+) -> (Rect, Option<Rect>) {
+    match secondary_line_height {
+        Some(secondary_line_height) => {
+            let total_height = primary_line_height + secondary_line_height + 2.0;
+            let top = rect.y() + ((rect.height() - total_height) * 0.5).max(0.0);
+            (
+                Rect::new(rect.x(), top, rect.width(), primary_line_height),
+                Some(Rect::new(
+                    rect.x(),
+                    top + primary_line_height + 2.0,
+                    rect.width(),
+                    secondary_line_height,
+                )),
+            )
+        }
+        None => {
+            let height = primary_line_height.min(rect.height());
+            let y = rect.y() + ((rect.height() - height) * 0.5).max(0.0);
+            (Rect::new(rect.x(), y, rect.width(), height), None)
+        }
+    }
+}
+
+fn two_line_row_height(primary_line_height: f32, secondary_line_height: f32) -> f32 {
+    primary_line_height + secondary_line_height + 6.0
+}
+
+fn horizontal_inset_rect(rect: Rect, inset: f32) -> Rect {
+    Rect::new(
+        rect.x() + inset,
+        rect.y(),
+        (rect.width() - (inset * 2.0)).max(0.0),
+        rect.height(),
+    )
 }
 
 fn estimate_text_width(text: &str, style: &TextStyle) -> f32 {
@@ -1897,16 +1973,17 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Breadcrumb, BreadcrumbItem, ListItem, ListView, Table, TableColumn, TableRow, TreeItem,
-        TreeView,
+        Breadcrumb, BreadcrumbItem, DefaultTheme, ListItem, ListView, Table, TableColumn,
+        TableRow, TreeItem, TreeView,
     };
     use crate::{ScrollView, SizedBox, Stack};
     use sui_core::{
         Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta, SemanticsRole,
-        SemanticsValue, Size, Vector,
+        PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta,
+        SemanticsRole, SemanticsValue, Size, Vector,
     };
-    use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
+    use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
+    use sui_scene::SceneCommand;
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -1918,6 +1995,26 @@ mod tests {
             .unwrap();
         let window_id = runtime.window_ids()[0];
         (runtime, window_id)
+    }
+
+    fn render<W>(root: W) -> RenderOutput
+    where
+        W: Widget + 'static,
+    {
+        let (mut runtime, window_id) = build_runtime(root);
+        runtime.render(window_id).expect("render should succeed")
+    }
+
+    fn text_rects_for(output: &RenderOutput, text: &str) -> Vec<Rect> {
+        let mut rects = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::DrawText(run) = command {
+                if run.text == text {
+                    rects.push(run.rect);
+                }
+            }
+        });
+        rects
     }
 
     fn primary_pointer(kind: PointerEventKind, position: Point, pressed: bool) -> Event {
@@ -2061,6 +2158,54 @@ mod tests {
     }
 
     #[test]
+    fn list_view_detail_text_does_not_overlap_primary_label() {
+        let output = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                ListView::new("Assets")
+                    .item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
+            ),
+        );
+
+        let label = text_rects_for(&output, "Hero texture")[0];
+        let detail = text_rects_for(&output, "2048 x 2048 RGBA")[0];
+
+        assert!(label.max_y() <= detail.y());
+    }
+
+    #[test]
+    fn tree_view_detail_text_does_not_overlap_primary_label() {
+        let output = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene")
+                    .item(TreeItem::new("Environment").detail("Visible")),
+            ),
+        );
+
+        let label = text_rects_for(&output, "Environment")[0];
+        let detail = text_rects_for(&output, "Visible")[0];
+
+        assert!(label.max_y() <= detail.y());
+    }
+
+    #[test]
+    fn table_text_rect_uses_full_line_height() {
+        let output = render(
+            SizedBox::new().width(320.0).height(140.0).with_child(
+                Table::new("Materials")
+                    .columns([TableColumn::new("Name")])
+                    .rows([TableRow::new(["Glass"])]),
+            ),
+        );
+
+        let header = text_rects_for(&output, "Name")[0];
+        let cell = text_rects_for(&output, "Glass")[0];
+        let line_height = DefaultTheme::default().body_text_style().line_height;
+
+        assert!(header.height() >= line_height);
+        assert!(cell.height() >= line_height);
+    }
+
+    #[test]
     fn non_scrollable_table_allows_wheel_to_bubble_to_parent_scroll_view() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().size(Size::new(220.0, 120.0)).with_child(ScrollView::vertical(
@@ -2147,5 +2292,22 @@ mod tests {
             Some(SemanticsValue::Text("Scene".to_string()))
         );
         Ok(())
+    }
+
+    #[test]
+    fn breadcrumb_paints_segment_labels_with_line_height() {
+        let output = render(
+            Breadcrumb::new("Path").items([
+                BreadcrumbItem::new("Workspace"),
+                BreadcrumbItem::new("Project"),
+                BreadcrumbItem::new("Scene"),
+            ]),
+        );
+
+        let label = text_rects_for(&output, "Workspace")[0];
+        let line_height = DefaultTheme::default().body_text_style().line_height;
+
+        assert!(label.height() >= line_height);
+        assert!(label.width() > 0.0);
     }
 }
