@@ -900,6 +900,9 @@ impl Widget for VirtualScrollView {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let previous_content_height = self.content_height;
+        let previous_item_offsets = std::mem::take(&mut self.item_offsets);
+        let previous_visible_range = self.visible_range.clone();
         let available_width = if constraints.max.width.is_finite() {
             (constraints.max.width - (self.padding.left + self.padding.right)).max(0.0)
         } else {
@@ -917,7 +920,6 @@ impl Widget for VirtualScrollView {
             Size::new(available_width, f32::INFINITY),
         );
 
-        self.item_offsets.clear();
         self.item_offsets.reserve(self.children.len());
         let mut content_width: f32 = 0.0;
         let mut content_height = 0.0;
@@ -953,6 +955,12 @@ impl Widget for VirtualScrollView {
         let viewport = self.viewport_rect(Rect::from_origin_size(Point::ZERO, size));
         self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
         self.update_visible_range(viewport.height());
+        if previous_content_height != self.content_height
+            || previous_item_offsets != self.item_offsets
+            || previous_visible_range != self.visible_range
+        {
+            ctx.request_paint();
+        }
         size
     }
 
@@ -1290,6 +1298,69 @@ mod tests {
         fn paint(&self, ctx: &mut PaintCtx) {
             self.counts.borrow_mut()[self.index] += 1;
             ctx.fill_bounds(self.color);
+        }
+    }
+
+    struct ExpandingLayerBox {
+        collapsed_size: Size,
+        expanded_size: Size,
+        color: Color,
+        counts: Rc<RefCell<Vec<usize>>>,
+        index: usize,
+        expanded: bool,
+    }
+
+    impl ExpandingLayerBox {
+        fn new(
+            collapsed_size: Size,
+            expanded_size: Size,
+            color: Color,
+            counts: Rc<RefCell<Vec<usize>>>,
+            index: usize,
+        ) -> Self {
+            Self {
+                collapsed_size,
+                expanded_size,
+                color,
+                counts,
+                index,
+                expanded: false,
+            }
+        }
+    }
+
+    impl Widget for ExpandingLayerBox {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Down
+                && ctx.bounds().contains(pointer.position)
+                && !self.expanded
+            {
+                self.expanded = true;
+                ctx.request_measure();
+                ctx.request_paint();
+                ctx.set_handled();
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(if self.expanded {
+                self.expanded_size
+            } else {
+                self.collapsed_size
+            })
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.counts.borrow_mut()[self.index] += 1;
+            ctx.fill_bounds(self.color);
+        }
+
+        fn layer_options(&self) -> LayerOptions {
+            LayerOptions {
+                cache_policy: LayerCachePolicy::Direct,
+                composition_mode: LayerCompositionMode::Normal,
+            }
         }
     }
 
@@ -1879,6 +1950,40 @@ mod tests {
         assert!(output.frame.layer_updates.iter().any(|update| {
             update.kind == sui_scene::SceneLayerUpdateKind::Transform
         }));
+    }
+
+    #[test]
+    fn virtual_scroll_view_repaints_when_a_visible_layered_child_changes_height() {
+        let counts = Rc::new(RefCell::new(vec![0usize; 2]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
+                VirtualScrollView::new()
+                    .with_child(ExpandingLayerBox::new(
+                        Size::new(80.0, 30.0),
+                        Size::new(80.0, 60.0),
+                        Color::rgba(0.7, 0.3, 0.2, 1.0),
+                        Rc::clone(&counts),
+                        0,
+                    ))
+                    .with_child(PaintCounterBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.2, 0.5, 0.8, 1.0),
+                        Rc::clone(&counts),
+                        1,
+                    )),
+            ),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        assert_eq!(*counts.borrow(), vec![1, 1]);
+
+        let pointer = PointerEvent::new(PointerEventKind::Down, Point::new(20.0, 20.0));
+        runtime
+            .handle_event(window_id, Event::Pointer(pointer))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+
+        assert_eq!(*counts.borrow(), vec![2, 2]);
     }
 
     #[test]

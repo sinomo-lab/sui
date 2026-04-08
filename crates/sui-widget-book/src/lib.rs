@@ -2144,8 +2144,9 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        GALLERY_SCROLL_NAME, LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL,
-        NUMBER_INPUT_NAME, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
+        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, LivePerformanceDisplay,
+        LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
+        POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
         THEME_PREVIEW_TOGGLE_LABEL,
         build_widget_book_application, default_widget_book_state,
     };
@@ -2194,6 +2195,54 @@ mod tests {
             .click()?;
 
         let after = window.capture_screenshot()?;
+        assert_ne!(before, after);
+
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_popover_click_repaints_gallery() -> Result<()> {
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+
+        scroll_to_story_target(&window, StoryCase::PopoverOpen, 12)?;
+        let before = window.capture_screenshot()?;
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(POPOVER_TRIGGER_LABEL)
+            .click()?;
+
+        window
+            .get_by_role(SemanticsRole::Popover)
+            .with_name(POPOVER_NAME)
+            .capture_screenshot()?;
+        let after = window.capture_screenshot()?;
+
+        assert_ne!(before, after);
+
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_project_settings_click_repaints_gallery() -> Result<()> {
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+
+        scroll_to_story_target(&window, StoryCase::Dialog, 12)?;
+        let before = window.capture_screenshot()?;
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(DIALOG_TRIGGER_LABEL)
+            .click()?;
+
+        window
+            .get_by_role(SemanticsRole::Dialog)
+            .with_name(DIALOG_TITLE)
+            .capture_screenshot()?;
+        let after = window.capture_screenshot()?;
+
         assert_ne!(before, after);
 
         Ok(())
