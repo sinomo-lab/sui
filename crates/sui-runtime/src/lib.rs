@@ -1138,6 +1138,13 @@ impl WindowState {
                     widget_id.get(),
                 )
             });
+
+            composition_only_transforms.retain(|translation| {
+                !dirty_layers.iter().any(|dirty_widget| {
+                    *dirty_widget == translation.widget_id
+                        || self.widget_is_ancestor_of(*dirty_widget, translation.widget_id)
+                })
+            });
         }
 
         let mut scene_changed = false;

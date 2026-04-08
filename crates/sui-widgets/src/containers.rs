@@ -636,11 +636,18 @@ impl VirtualScrollView {
         offset_y.clamp(0.0, max_scroll)
     }
 
-    fn scroll_by(&mut self, viewport_height: f32, delta_y: f32, ctx: &mut EventCtx) -> bool {
-        let next = self.clamp_offset(viewport_height, self.offset_y + delta_y);
+    fn scroll_by(&mut self, viewport: Rect, delta_y: f32, ctx: &mut EventCtx) -> bool {
+        let previous = self.offset_y;
+        let next = self.clamp_offset(viewport.height(), self.offset_y + delta_y);
         if (next - self.offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
             ctx.request_arrange();
+            let effective_delta = self.offset_y - previous;
+            if let Some(rect) = scroll_exposed_rect(viewport, effective_delta) {
+                ctx.request_paint_rect(rect);
+            } else {
+                ctx.request_paint();
+            }
             for child in self.visible_children() {
                 ctx.request(InvalidationRequest::new(
                     InvalidationTarget::Widget(child.id()),
@@ -855,7 +862,7 @@ impl Widget for VirtualScrollView {
                     .scroll_delta
                     .map(scroll_delta_to_offset)
                     .unwrap_or(pointer.delta);
-                if self.scroll_by(viewport.height(), -delta.y, ctx) {
+                if self.scroll_by(viewport, -delta.y, ctx) {
                     ctx.set_handled();
                 }
             }
@@ -877,7 +884,7 @@ impl Widget for VirtualScrollView {
                 };
 
                 if let Some(delta) = delta {
-                    if self.scroll_by(viewport.height(), delta, ctx) {
+                    if self.scroll_by(viewport, delta, ctx) {
                         ctx.set_handled();
                     }
                 }

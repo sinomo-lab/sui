@@ -954,6 +954,16 @@ fn encode_clipped_pass(
     let clip_pipeline = shared.clip_pipeline(target_format);
     render_pass.set_pipeline(clip_pipeline);
     render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1);
+    let (viewport_x, viewport_y) =
+        translation_to_viewport_origin(batch.translation, viewport, framebuffer_size);
+    render_pass.set_viewport(
+        viewport_x,
+        viewport_y,
+        framebuffer_size.0 as f32,
+        framebuffer_size.1 as f32,
+        0.0,
+        1.0,
+    );
     let clip_buffer = batch
         .clip_buffer
         .as_ref()

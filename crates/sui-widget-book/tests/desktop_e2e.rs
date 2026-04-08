@@ -13,10 +13,13 @@ use std::{
 };
 
 use sui::{
-    Application, Background, Color, Error, Event, ImeEvent, Modifiers, Point,
-    PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result,
-    ScrollDelta, ScrollView, SemanticsNode, SemanticsRole, SemanticsValue, Size, SizedBox,
-    SplitView, Stack, Table, TableColumn, TableRow, Vector, WindowBuilder, WindowEvent, WindowId,
+    Alignment, Application, Background, Color, Error, Event, ImeEvent, Insets, Label,
+    Modifiers, NumberInput, Point, PointerButton, PointerButtons, PointerEvent,
+    PointerEventKind, PointerKind, RadioButton, RadioGroup, Rect, Result, ScrollDelta,
+    SceneCommand, ScrollView, Select, SemanticsNode, SemanticsRole, SemanticsValue, Size,
+    SizedBox, Slider,
+    SplitView, Stack, Switch, Table, TableColumn, TableRow, TextArea, Vector,
+    VirtualScrollView, WindowBuilder, WindowEvent, WindowId,
     window_performance_snapshot, WgpuRenderer,
 };
 use sui_runtime::{
@@ -1053,6 +1056,84 @@ fn frame_pixel_diff_count(before: &CapturedFrame, after: &CapturedFrame) -> usiz
         .count()
 }
 
+fn frame_diff_bounds(before: &CapturedFrame, after: &CapturedFrame) -> Option<Rect> {
+    assert_eq!((before.width, before.height), (after.width, after.height));
+
+    let mut min_x = before.width;
+    let mut min_y = before.height;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    let mut has_diff = false;
+
+    for y in 0..before.height {
+        for x in 0..before.width {
+            let index = ((y * before.width + x) * 4) as usize;
+            if before.pixels[index..index + 4] != after.pixels[index..index + 4] {
+                has_diff = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    has_diff.then(|| {
+        Rect::new(
+            min_x as f32,
+            min_y as f32,
+            (max_x - min_x + 1) as f32,
+            (max_y - min_y + 1) as f32,
+        )
+    })
+}
+
+fn normalized_semantics_snapshot(nodes: &[SemanticsNode]) -> Vec<String> {
+    let mut snapshot = nodes
+        .iter()
+        .map(|node| {
+            format!(
+                "{:?}|{:?}|{:?}|{:?}|{:?}",
+                node.role, node.name, node.value, node.bounds, node.state
+            )
+        })
+        .collect::<Vec<_>>();
+    snapshot.sort();
+    snapshot
+}
+
+fn normalized_scene_snapshot(scene: &sui::Scene) -> Vec<String> {
+    let mut snapshot = Vec::new();
+    scene.visit_commands(&mut |command| match command {
+        SceneCommand::Layer(layer) => snapshot.push(format!(
+            "Layer|{:?}|{:?}|{:?}|{:?}|{:?}",
+            layer.descriptor.bounds,
+            layer.descriptor.content_bounds,
+            layer.descriptor.paint_bounds,
+            layer.descriptor.cache_policy,
+            layer.descriptor.composition_mode,
+        )),
+        other => snapshot.push(format!("{:?}", other)),
+    });
+    snapshot
+}
+
+fn normalized_layer_updates_snapshot(output: &RenderOutput) -> Vec<String> {
+    let mut snapshot = output
+        .frame
+        .layer_updates
+        .iter()
+        .map(|update| {
+            format!(
+                "{:?}|{:?}|{:?}|{:?}|{:?}",
+                update.kind, update.bounds, update.content_bounds, update.paint_bounds, update.damage
+            )
+        })
+        .collect::<Vec<_>>();
+    snapshot.sort();
+    snapshot
+}
+
 fn publish_frame_performance(
     window_id: WindowId,
     frame_index: u64,
@@ -1333,6 +1414,114 @@ impl ScrollBenchmarkFrameSample {
 
 fn gallery_scroll_point(bounds: Rect) -> Point {
     Point::new(bounds.max_x() - 40.0, bounds.y() + bounds.height() * 0.5)
+}
+
+fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
+    const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
+    const BLEND_MODES: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
+
+    let choices_panel = SizedBox::new().width(420.0).height(240.0).with_child(
+        Background::new(
+            Color::rgba(0.97, 0.97, 0.98, 1.0),
+            Stack::vertical()
+                .spacing(14.0)
+                .alignment(Alignment::Stretch)
+                .with_child(Label::new("Choices and ranges").font_size(26.0).line_height(30.0))
+                .with_child(Switch::new("Enable snapping").on(true))
+                .with_child(RadioButton::new("Standalone radio sample").selected(false))
+                .with_child(
+                    SizedBox::new().width(280.0).with_child(
+                        RadioGroup::new("Quality")
+                            .options(RADIO_OPTIONS)
+                            .selected(0),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(320.0).with_child(
+                        Slider::new("Blend strength")
+                            .range(0.0, 100.0)
+                            .step(1.0)
+                            .value(72.0),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(220.0).with_child(
+                        NumberInput::new("Sample count")
+                            .range(1.0, 256.0)
+                            .step(1.0)
+                            .precision(0)
+                            .value(12.0),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(260.0).with_child(
+                        Select::new("Blend mode")
+                            .options(BLEND_MODES)
+                            .selected(0),
+                    ),
+                ),
+        ),
+    );
+    let notes_panel = SizedBox::new().width(420.0).height(280.0).with_child(
+        Background::new(
+            Color::rgba(0.99, 0.99, 1.0, 1.0),
+            Stack::vertical()
+                .spacing(14.0)
+                .alignment(Alignment::Stretch)
+                .with_child(Label::new("Multiline and scroll").font_size(26.0).line_height(30.0))
+                .with_child(
+                    SizedBox::new().width(420.0).with_child(
+                        TextArea::new("Notes")
+                            .min_height(160.0)
+                            .value(
+                                "Pinned notes for inspector workflows.\nSupports multiline editing.\nUsed to reproduce scroll history artifacts.",
+                            ),
+                    ),
+                ),
+        ),
+    );
+    let summary_panel = SizedBox::new().width(420.0).height(220.0).with_child(
+        Background::new(
+            Color::rgba(0.96, 0.97, 0.99, 1.0),
+            Stack::vertical()
+                .spacing(12.0)
+                .alignment(Alignment::Stretch)
+                .with_child(Label::new("Summary").font_size(26.0).line_height(30.0))
+                .with_child(Label::new(
+                    "Equivalent final offsets should render the same frame, regardless of how many wheel ticks produced them.",
+                )),
+        ),
+    );
+
+    VirtualScrollView::new()
+        .name(name)
+        .padding(Insets::all(24.0))
+        .spacing(18.0)
+        .with_child(choices_panel)
+        .with_child(notes_panel)
+        .with_child(summary_panel)
+        .with_child(SizedBox::new().width(420.0).height(220.0).with_child(
+            Background::new(
+                Color::rgba(0.95, 0.96, 0.98, 1.0),
+                Stack::vertical()
+                    .spacing(12.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(Label::new("Lower content").font_size(26.0).line_height(30.0))
+                    .with_child(Label::new(
+                        "Extra height keeps the visible range stable during the small scroll sequence.",
+                    )),
+            ),
+        ))
+}
+
+fn build_scroll_history_repro_application() -> Application {
+    Application::new().window(
+        WindowBuilder::new().title("Scroll history repro").root(
+            SizedBox::new().size(Size::new(540.0, 360.0)).with_child(
+                build_scroll_history_repro_scroll("History repro scroll"),
+            ),
+        ),
+    )
 }
 
 fn scroll_benchmark_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
@@ -2203,6 +2392,88 @@ fn desktop_split_view_scroll_view_scroll_repaints_frame() -> Result<()> {
     assert!(
         frame_pixel_diff_count(&before_frame, &after_frame) > 0,
         "scrolling a scroll view inside a split view did not change any rendered pixels"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn desktop_virtual_scroll_render_is_history_independent_for_same_offset() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    fn capture_after_scroll_steps(steps: &[f32]) -> Result<CapturedFrame> {
+        let harness = DesktopHarness::launch(|| build_scroll_history_repro_application().build())?;
+        let window_id = harness.main_window_id();
+
+        harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+        let initial_snapshot = harness.snapshot(window_id)?;
+        let scroll = find_node(&initial_snapshot, SemanticsRole::ScrollView, "History repro scroll");
+        let scroll_point = Point::new(scroll.bounds.max_x() - 12.0, scroll.bounds.y() + 40.0);
+        move_cursor(&harness, window_id, scroll_point)?;
+
+        for step in steps {
+            harness.dispatch(
+                window_id,
+                HostInputEvent::MouseWheel {
+                    delta: ScrollKind::Pixels(Vector::new(0.0, *step)),
+                },
+            )?;
+        }
+
+        harness.capture(window_id)
+    }
+
+    let single_frame = capture_after_scroll_steps(&[-48.0])?;
+    let single_again_frame = capture_after_scroll_steps(&[-48.0])?;
+    let multi_frame = capture_after_scroll_steps(&[-12.0, -12.0, -12.0, -12.0])?;
+
+    assert_eq!(
+        single_frame, single_again_frame,
+        "fresh launches with the same wheel-event history should produce identical pixels"
+    );
+
+    let diff_count = frame_pixel_diff_count(&single_frame, &multi_frame);
+    assert_eq!(
+        single_frame, multi_frame,
+        "the retained renderer produced different pixels for the same final virtual-scroll offset depending on wheel-event history (diff pixels: {diff_count}, diff bounds: {:?})",
+        frame_diff_bounds(&single_frame, &multi_frame),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn virtual_scroll_runtime_scene_is_history_independent_for_same_offset() -> Result<()> {
+    fn render_after_steps(steps: &[f32]) -> Result<RenderOutput> {
+        let mut runtime = build_scroll_history_repro_application().build()?;
+        let window_id = runtime.window_ids()[0];
+        let _ = runtime.render(window_id)?;
+
+        for step in steps {
+            let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(528.0, 40.0));
+            scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, *step)));
+            runtime.handle_event(window_id, Event::Pointer(scroll))?;
+            let _ = runtime.render(window_id)?;
+        }
+
+        runtime.render(window_id)
+    }
+
+    let single = render_after_steps(&[-48.0])?;
+    let multi = render_after_steps(&[-12.0, -12.0, -12.0, -12.0])?;
+
+    assert_eq!(
+        normalized_semantics_snapshot(&single.semantics),
+        normalized_semantics_snapshot(&multi.semantics),
+    );
+    assert_eq!(
+        normalized_scene_snapshot(&single.frame.scene),
+        normalized_scene_snapshot(&multi.frame.scene),
+    );
+    assert_eq!(
+        normalized_layer_updates_snapshot(&single),
+        normalized_layer_updates_snapshot(&multi),
     );
 
     Ok(())
