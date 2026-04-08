@@ -38,8 +38,9 @@ pub use sui_render_wgpu::{RendererCapabilities, RendererInterop, WgpuRenderer};
 pub use sui_runtime::{
     Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta, EventCtx,
     EventPhase, FocusState, FramePhase, FramePhaseSample, FrameSchedule, MeasureCtx,
-    PaintCtx, RenderDiagnostics, RenderOutput, RendererSubmissionDiagnostics, Runtime,
-    SceneStatistics, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
+    PaintCtx, PresentationLatencyDiagnostics, RenderDiagnostics, RenderOutput,
+    RendererSubmissionDiagnostics, Runtime, SceneStatistics, SceneStatisticsDetailMode,
+    SemanticsCtx, SingleChild,
     TextCacheDeltaDiagnostics,
     TextCacheDiagnostics, Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot,
     WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,

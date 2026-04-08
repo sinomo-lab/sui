@@ -23,10 +23,10 @@ use sui::{
     window_performance_snapshot, WgpuRenderer,
 };
 use sui_runtime::{
-    CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, RendererSubmissionDiagnostics,
-    SceneStatistics, SceneStatisticsDetailMode, TextCacheDiagnostics, WindowPerformanceSnapshot,
-    clear_window_performance_snapshots, publish_window_performance_snapshot,
-    set_window_scene_statistics_detail_mode,
+    CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
+    RenderOutput, RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
+    TextCacheDiagnostics, WindowPerformanceSnapshot, clear_window_performance_snapshots,
+    publish_window_performance_snapshot, set_window_scene_statistics_detail_mode,
     window_performance_text_caches, window_scene_statistics_detail_mode,
 };
 use sui_widget_book::{
@@ -349,8 +349,10 @@ impl DesktopHarnessApp {
                 WindowState {
                     title,
                     redraw_requested: false,
+                    redraw_requested_at_ms: None,
                     frame_index: 0,
                     pending_event_time_ms: 0.0,
+                    last_non_redraw_event_at_ms: None,
                     semantics: Vec::new(),
                     pointer: PointerState::default(),
                     scale_factor,
@@ -380,6 +382,10 @@ impl DesktopHarnessApp {
 
     fn update_clock(&mut self) {
         self.frame_clock = self.started_at.elapsed().as_secs_f64();
+    }
+
+    fn current_time_ms(&self) -> f64 {
+        self.started_at.elapsed().as_secs_f64() * 1000.0
     }
 
     fn update_control_flow(&self, event_loop: &ActiveEventLoop) -> Result<()> {
@@ -450,6 +456,8 @@ impl DesktopHarnessApp {
             return Ok(());
         }
 
+        let now_ms = self.current_time_ms();
+
         let Some(window) = self.windows.get_mut(&window_id) else {
             return Ok(());
         };
@@ -459,6 +467,7 @@ impl DesktopHarnessApp {
         }
 
         window.redraw_requested = true;
+        window.redraw_requested_at_ms = Some(now_ms);
         window.window.request_redraw();
         Ok(())
     }
@@ -498,6 +507,8 @@ impl DesktopHarnessApp {
             return Ok(());
         }
 
+        let event_arrived_at_ms = self.current_time_ms();
+
         let is_redraw = matches!(event, Event::Window(WindowEvent::RedrawRequested));
         let is_close = matches!(event, Event::Window(WindowEvent::CloseRequested));
 
@@ -507,6 +518,9 @@ impl DesktopHarnessApp {
 
         if let Some(window) = self.windows.get_mut(&window_id) {
             window.pending_event_time_ms += event_time_ms;
+            if !is_redraw && !is_close {
+                window.last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
+            }
         }
 
         if !is_redraw && !is_close {
@@ -522,6 +536,22 @@ impl DesktopHarnessApp {
                 self.update_clock();
                 self.runtime.tick(self.frame_clock);
 
+                let render_started_at_ms = self.current_time_ms();
+                let mut presentation_latency = PresentationLatencyDiagnostics::default();
+                if let Some(window) = self.windows.get(&window_id) {
+                    presentation_latency = PresentationLatencyDiagnostics::new(
+                        window
+                            .last_non_redraw_event_at_ms
+                            .map(|timestamp| (render_started_at_ms - timestamp).max(0.0))
+                            .unwrap_or(0.0),
+                        0.0,
+                        window
+                            .redraw_requested_at_ms
+                            .map(|timestamp| (render_started_at_ms - timestamp).max(0.0))
+                            .unwrap_or(0.0),
+                    );
+                }
+
                 let runtime_started = Instant::now();
                 let output = self.runtime.render(window_id)?;
                 let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
@@ -531,6 +561,13 @@ impl DesktopHarnessApp {
                     .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
+                let presented_at_ms = self.current_time_ms();
+                if let Some(window) = self.windows.get(&window_id) {
+                    presentation_latency.event_to_present_ms = window
+                        .last_non_redraw_event_at_ms
+                        .map(|timestamp| (presented_at_ms - timestamp).max(0.0))
+                        .unwrap_or(0.0);
+                }
 
                 let mut frame_index = 0;
                 let mut pending_event_time_ms = 0.0;
@@ -539,6 +576,8 @@ impl DesktopHarnessApp {
                     frame_index = window.frame_index + 1;
                     pending_event_time_ms = std::mem::take(&mut window.pending_event_time_ms);
                     window.frame_index = frame_index;
+                    window.last_non_redraw_event_at_ms = None;
+                    window.redraw_requested_at_ms = None;
                     window.semantics = output.semantics.clone();
 
                     if window.title != output.title {
@@ -554,6 +593,7 @@ impl DesktopHarnessApp {
                     frame_index,
                     pending_event_time_ms,
                     runtime_time_ms,
+                    presentation_latency,
                     &output,
                     &self.renderer,
                     renderer_time_ms,
@@ -914,8 +954,10 @@ impl ApplicationHandler<HarnessCommand> for DesktopHarnessApp {
 struct WindowState {
     title: String,
     redraw_requested: bool,
+    redraw_requested_at_ms: Option<f64>,
     frame_index: u64,
     pending_event_time_ms: f64,
+    last_non_redraw_event_at_ms: Option<f64>,
     semantics: Vec<SemanticsNode>,
     pointer: PointerState,
     scale_factor: f64,
@@ -1157,6 +1199,7 @@ fn publish_frame_performance(
     frame_index: u64,
     event_time_ms: f64,
     runtime_time_ms: f64,
+    presentation_latency: PresentationLatencyDiagnostics,
     output: &RenderOutput,
     renderer: &WgpuRenderer,
     renderer_time_ms: f64,
@@ -1174,7 +1217,8 @@ fn publish_frame_performance(
             TextCacheDiagnostics::default(),
             Default::default(),
             SceneStatistics::minimal(&output.frame, detail_mode),
-        ));
+        )
+        .with_presentation_latency(presentation_latency));
         return;
     }
 
@@ -1265,7 +1309,8 @@ fn publish_frame_performance(
         text_caches,
         text_cache_deltas,
         SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
-    ));
+    )
+    .with_presentation_latency(presentation_latency));
 }
 
 fn node_center(bounds: Rect) -> Point {

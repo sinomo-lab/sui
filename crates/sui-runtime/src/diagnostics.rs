@@ -171,6 +171,27 @@ impl RendererSubmissionDiagnostics {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PresentationLatencyDiagnostics {
+    pub event_to_render_start_ms: f64,
+    pub event_to_present_ms: f64,
+    pub redraw_request_to_callback_ms: f64,
+}
+
+impl PresentationLatencyDiagnostics {
+    pub const fn new(
+        event_to_render_start_ms: f64,
+        event_to_present_ms: f64,
+        redraw_request_to_callback_ms: f64,
+    ) -> Self {
+        Self {
+            event_to_render_start_ms,
+            event_to_present_ms,
+            redraw_request_to_callback_ms,
+        }
+    }
+}
+
 impl RenderDiagnostics {
     pub fn push(&mut self, phase: FramePhase, duration: Duration) {
         self.phase_timings
@@ -340,6 +361,7 @@ pub struct WindowPerformanceSummary {
     pub frame_index: u64,
     pub total_time_ms: f64,
     pub slowest_phase: Option<FramePhaseSample>,
+    pub presentation_latency: PresentationLatencyDiagnostics,
     pub renderer_submission: RendererSubmissionDiagnostics,
     pub text_caches: TextCacheDiagnostics,
     pub dirty_region_count: usize,
@@ -494,6 +516,7 @@ pub struct WindowPerformanceSnapshot {
     pub frame_index: u64,
     pub total_time_ms: f64,
     pub phase_timings: Vec<FramePhaseSample>,
+    pub presentation_latency: PresentationLatencyDiagnostics,
     pub renderer_submission: RendererSubmissionDiagnostics,
     pub text_caches: TextCacheDiagnostics,
     pub text_cache_deltas: TextCacheDeltaDiagnostics,
@@ -540,11 +563,20 @@ impl WindowPerformanceSnapshot {
             frame_index,
             total_time_ms,
             phase_timings,
+            presentation_latency: PresentationLatencyDiagnostics::default(),
             renderer_submission,
             text_caches,
             text_cache_deltas,
             scene,
         }
+    }
+
+    pub fn with_presentation_latency(
+        mut self,
+        presentation_latency: PresentationLatencyDiagnostics,
+    ) -> Self {
+        self.presentation_latency = presentation_latency;
+        self
     }
 
     pub fn slowest_phase(&self) -> Option<FramePhaseSample> {
@@ -559,6 +591,7 @@ impl WindowPerformanceSnapshot {
             frame_index: self.frame_index,
             total_time_ms: self.total_time_ms,
             slowest_phase: self.slowest_phase(),
+            presentation_latency: self.presentation_latency,
             renderer_submission: self.renderer_submission,
             text_caches: self.text_caches,
             dirty_region_count: self.scene.dirty_region_count,

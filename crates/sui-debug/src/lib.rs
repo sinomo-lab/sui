@@ -681,6 +681,20 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
                 DebugMetric::new("FPS", fps)
                     .detail("Live overlay detail is off; detailed analytics are disabled")
                     .tone(DebugTone::Neutral),
+                DebugMetric::new(
+                    "Event -> present",
+                    format_latency_ms(snapshot.presentation_latency.event_to_present_ms),
+                )
+                .detail("Time from the latest non-redraw event to the end of the present call")
+                .tone(latency_tone(snapshot.presentation_latency.event_to_present_ms)),
+                DebugMetric::new(
+                    "Redraw wait",
+                    format_latency_ms(snapshot.presentation_latency.redraw_request_to_callback_ms),
+                )
+                .detail("Time spent waiting between request_redraw and RedrawRequested")
+                .tone(latency_tone(
+                    snapshot.presentation_latency.redraw_request_to_callback_ms,
+                )),
             ]))
             .with_child(debug_key_values([
                 DebugKeyValue::new("Frame index", snapshot.frame_index.to_string()),
@@ -699,6 +713,28 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         DebugMetric::new("Frame", format_duration_ms(snapshot.total_time_ms))
             .detail("Wall time across event handling, runtime, and renderer")
             .tone(duration_tone(snapshot.total_time_ms)),
+        DebugMetric::new(
+            "Event -> render",
+            format_latency_ms(snapshot.presentation_latency.event_to_render_start_ms),
+        )
+        .detail("Time from the latest non-redraw event to the start of runtime render work")
+        .tone(latency_tone(
+            snapshot.presentation_latency.event_to_render_start_ms,
+        )),
+        DebugMetric::new(
+            "Event -> present",
+            format_latency_ms(snapshot.presentation_latency.event_to_present_ms),
+        )
+        .detail("Time from the latest non-redraw event to the end of the present call")
+        .tone(latency_tone(snapshot.presentation_latency.event_to_present_ms)),
+        DebugMetric::new(
+            "Redraw wait",
+            format_latency_ms(snapshot.presentation_latency.redraw_request_to_callback_ms),
+        )
+        .detail("Time spent waiting between request_redraw and RedrawRequested")
+        .tone(latency_tone(
+            snapshot.presentation_latency.redraw_request_to_callback_ms,
+        )),
         DebugMetric::new("Slowest phase", slowest_label)
             .detail(format_duration_ms(slowest_duration_ms))
             .tone(duration_tone(slowest_duration_ms)),
@@ -864,6 +900,14 @@ fn duration_tone(duration_ms: f64) -> DebugTone {
     }
 }
 
+fn latency_tone(duration_ms: f64) -> DebugTone {
+    if duration_ms <= 0.0 {
+        DebugTone::Neutral
+    } else {
+        duration_tone(duration_ms)
+    }
+}
+
 fn upload_tone(bytes: u64) -> DebugTone {
     if bytes >= 1_048_576 {
         DebugTone::Danger
@@ -878,6 +922,14 @@ fn upload_tone(bytes: u64) -> DebugTone {
 
 fn format_duration_ms(duration_ms: f64) -> String {
     format!("{duration_ms:.2} ms")
+}
+
+fn format_latency_ms(duration_ms: f64) -> String {
+    if duration_ms <= 0.0 {
+        "n/a".to_string()
+    } else {
+        format_duration_ms(duration_ms)
+    }
 }
 
 fn format_byte_size(bytes: u64) -> String {

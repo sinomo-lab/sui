@@ -1550,7 +1550,7 @@ struct LivePerformanceLineSpec {
 
 impl LivePerformancePanel {
     const WIDTH: f32 = 252.0;
-    const HEIGHT: f32 = 204.0;
+    const HEIGHT: f32 = 244.0;
     const PADDING_X: f32 = 12.0;
     const PADDING_Y: f32 = 10.0;
     const CORNER_RADIUS: f32 = 12.0;
@@ -1627,6 +1627,21 @@ impl LivePerformancePanel {
                     return vec![
                         LivePerformanceLineSpec::title("live performance".to_string()),
                         LivePerformanceLineSpec::headline(headline),
+                        LivePerformanceLineSpec::metric(format!(
+                            "lat present {}  |  redraw {}",
+                            format_optional_duration_ms(
+                                snapshot.presentation_latency.event_to_present_ms,
+                            ),
+                            format_optional_duration_ms(
+                                snapshot.presentation_latency.redraw_request_to_callback_ms,
+                            ),
+                        )),
+                        LivePerformanceLineSpec::metric(format!(
+                            "lat render {}",
+                            format_optional_duration_ms(
+                                snapshot.presentation_latency.event_to_render_start_ms,
+                            ),
+                        )),
                     ];
                 }
 
@@ -1664,6 +1679,24 @@ impl LivePerformancePanel {
                             snapshot.frame_index, slowest_label, slowest_duration,
                         )
                     }),
+                    LivePerformanceLineSpec::metric(format!(
+                        "lat render {}  |  present {}",
+                        format_optional_duration_ms(
+                            snapshot.presentation_latency.event_to_render_start_ms,
+                        ),
+                        format_optional_duration_ms(
+                            snapshot.presentation_latency.event_to_present_ms,
+                        ),
+                    )),
+                    LivePerformanceLineSpec::metric(format!(
+                        "redraw wait {}  |  gpu present {}",
+                        format_optional_duration_ms(
+                            snapshot.presentation_latency.redraw_request_to_callback_ms,
+                        ),
+                        format_optional_duration_ms(
+                            snapshot.renderer_submission.surface_present_time_us as f64 / 1000.0,
+                        ),
+                    )),
                     LivePerformanceLineSpec::metric(format!(
                         "gpu {} passes  |  {} draws  |  {}",
                         snapshot.renderer_submission.pass_count,
@@ -1905,6 +1938,14 @@ fn format_duration_ms(duration_ms: f64) -> String {
     format!("{duration_ms:.1} ms")
 }
 
+fn format_optional_duration_ms(duration_ms: f64) -> String {
+    if duration_ms <= 0.0 {
+        "n/a".to_string()
+    } else {
+        format_duration_ms(duration_ms)
+    }
+}
+
 fn format_byte_size(bytes: u64) -> String {
     const KIB: u64 = 1024;
     const MIB: u64 = KIB * 1024;
@@ -2113,10 +2154,11 @@ mod tests {
     };
     use sui::{
         Application, Event, FramePhase, FramePhaseSample, Point, PointerButton,
-        PointerButtons, PointerEvent, PointerEventKind, RendererSubmissionDiagnostics, Result,
-        SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size,
-        TextCacheDiagnostics, TextCacheDeltaDiagnostics, Vector, Widget, WidgetPod,
-        WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
+        PointerButtons, PointerEvent, PointerEventKind, PresentationLatencyDiagnostics,
+        RendererSubmissionDiagnostics, Result, SceneStatistics, SceneStatisticsDetailMode,
+        SemanticsRole, SemanticsValue, Size, TextCacheDiagnostics,
+        TextCacheDeltaDiagnostics, Vector, Widget, WidgetPod, WidgetPodVisitor,
+        WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
         window_scene_statistics_detail_mode,
     };
     use sui_runtime::publish_window_performance_snapshot;
@@ -2450,7 +2492,7 @@ mod tests {
 
         display.borrow_mut().snapshot = Some(sample_window_performance_snapshot_record(WindowId::new(11)));
 
-        assert_eq!(panel.content_specs(WindowId::new(11)).len(), 2);
+        assert_eq!(panel.content_specs(WindowId::new(11)).len(), 4);
     }
 
     #[test]
@@ -2507,7 +2549,8 @@ mod tests {
 
         let lines = panel.content_specs(WindowId::new(11));
         assert_eq!(lines[1].text, "0 fps  |  idle");
-        assert_eq!(lines.len(), 2);
+    assert!(lines.iter().any(|line| line.text.contains("lat present")));
+    assert_eq!(lines.len(), 4);
     }
 
     #[test]
@@ -2519,6 +2562,8 @@ mod tests {
         let panel = LivePerformancePanel::with_display(display);
 
         let lines = panel.content_specs(WindowId::new(11));
+        assert!(lines.iter().any(|line| line.text.contains("lat render")));
+        assert!(lines.iter().any(|line| line.text.contains("redraw wait")));
         assert!(lines.iter().any(|line| line.text.contains("layers")));
         assert!(lines.iter().any(|line| line.text.contains("cmds txt")));
     }
@@ -2752,6 +2797,7 @@ mod tests {
                 transform_command_count: 0,
             },
         )
+        .with_presentation_latency(PresentationLatencyDiagnostics::new(1.1, 4.8, 3.2))
     }
 
     fn sample_detailed_window_performance_snapshot_record(
@@ -2821,5 +2867,6 @@ mod tests {
                 transform_command_count: 1,
             },
         )
+        .with_presentation_latency(PresentationLatencyDiagnostics::new(2.4, 7.1, 4.5))
     }
 }

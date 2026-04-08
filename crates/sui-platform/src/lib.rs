@@ -10,7 +10,8 @@ use sui_core::WindowId;
 use sui_render_wgpu::WgpuRenderer;
 use sui_runtime::{
 	CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, SceneStatistics,
-	RendererSubmissionDiagnostics, TextCacheDiagnostics, WindowPerformanceSnapshot,
+	PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, TextCacheDiagnostics,
+	WindowPerformanceSnapshot,
 	window_performance_text_caches, window_scene_statistics_detail_mode,
 	clear_window_performance_snapshot, clear_window_performance_snapshots,
 	publish_window_performance_snapshot,
@@ -34,6 +35,7 @@ pub(crate) fn publish_frame_performance(
 	frame_index: u64,
 	event_time_ms: f64,
 	runtime_time_ms: f64,
+	presentation_latency: PresentationLatencyDiagnostics,
 	output: &RenderOutput,
 	renderer: &WgpuRenderer,
 	renderer_time_ms: f64,
@@ -51,7 +53,8 @@ pub(crate) fn publish_frame_performance(
 			TextCacheDiagnostics::default(),
 			Default::default(),
 			SceneStatistics::minimal(&output.frame, detail_mode),
-		));
+		)
+		.with_presentation_latency(presentation_latency));
 		return;
 	}
 
@@ -141,5 +144,6 @@ pub(crate) fn publish_frame_performance(
 		text_caches,
 		text_cache_deltas,
 		SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
-	));
+	)
+	.with_presentation_latency(presentation_latency));
 }

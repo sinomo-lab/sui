@@ -23,7 +23,8 @@ use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
 pub use sui_core::DpiInfo;
 pub use diagnostics::{
-    CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, RenderDiagnostics,
+    CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample,
+    PresentationLatencyDiagnostics, RenderDiagnostics,
     RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
     TextCacheDeltaDiagnostics, TextCacheDiagnostics,
     WindowPerformanceSnapshot, WindowRenderOptions, clear_window_performance_snapshot,

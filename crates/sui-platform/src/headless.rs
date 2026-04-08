@@ -2,7 +2,10 @@ use std::{collections::VecDeque, time::Instant};
 
 use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
 use sui_render_wgpu::{FeatheringOptions, RgbaImage, WgpuRenderer};
-use sui_runtime::{Runtime, window_render_options, window_scene_statistics_detail_mode};
+use sui_runtime::{
+    PresentationLatencyDiagnostics, Runtime, window_render_options,
+    window_scene_statistics_detail_mode,
+};
 
 use crate::{AccessibilityBridge, AccessibilitySnapshot};
 
@@ -191,8 +194,10 @@ impl HeadlessPlatform {
                 open: true,
                 awaiting_performance_bootstrap: true,
                 redraw_requested: false,
+                redraw_requested_at_ms: None,
                 frame_index: 0,
                 pending_event_time_ms: 0.0,
+                last_non_redraw_event_at_ms: None,
                 accessibility: AccessibilityBridge::default(),
             });
             self.pending_events.push_back(QueuedEvent {
@@ -205,12 +210,15 @@ impl HeadlessPlatform {
     }
 
     fn queue_redraw_requests(&mut self, runtime: &Runtime) -> Result<()> {
+        let now_ms = self.current_time() * 1000.0;
+
         for window in &mut self.windows {
             if !window.open || window.redraw_requested || !runtime.needs_render(window.id)? {
                 continue;
             }
 
             window.redraw_requested = true;
+            window.redraw_requested_at_ms = Some(now_ms);
             self.pending_events.push_back(QueuedEvent {
                 window_id: window.id,
                 event: Event::Window(WindowEvent::RedrawRequested),
@@ -238,11 +246,15 @@ impl HeadlessPlatform {
             Event::Window(WindowEvent::CloseRequested)
         );
         let window_id = queued_event.window_id;
+        let event_arrived_at_ms = self.current_time() * 1000.0;
 
         let event_started = Instant::now();
         runtime.handle_event(window_id, queued_event.event)?;
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
         self.windows[window_index].pending_event_time_ms += event_time_ms;
+        if !is_redraw && !is_close {
+            self.windows[window_index].last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
+        }
 
         if is_redraw {
             self.windows[window_index].redraw_requested = false;
@@ -250,6 +262,19 @@ impl HeadlessPlatform {
             if runtime.needs_render(window_id)? {
                 self.frame_clock += 1.0;
                 runtime.tick(self.frame_clock);
+
+                let render_started_at_ms = self.current_time() * 1000.0;
+                let mut presentation_latency = PresentationLatencyDiagnostics::new(
+                    self.windows[window_index]
+                        .last_non_redraw_event_at_ms
+                        .map(|timestamp| (render_started_at_ms - timestamp).max(0.0))
+                        .unwrap_or(0.0),
+                    0.0,
+                    self.windows[window_index]
+                        .redraw_requested_at_ms
+                        .map(|timestamp| (render_started_at_ms - timestamp).max(0.0))
+                        .unwrap_or(0.0),
+                );
 
                 let runtime_started = Instant::now();
                 let output = runtime.render(window_id)?;
@@ -266,17 +291,25 @@ impl HeadlessPlatform {
                 ));
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
+                let presented_at_ms = self.current_time() * 1000.0;
+                presentation_latency.event_to_present_ms = self.windows[window_index]
+                    .last_non_redraw_event_at_ms
+                    .map(|timestamp| (presented_at_ms - timestamp).max(0.0))
+                    .unwrap_or(0.0);
 
                 self.windows[window_index].frame_index += 1;
                 let frame_index = self.windows[window_index].frame_index;
                 let pending_event_time_ms =
                     std::mem::take(&mut self.windows[window_index].pending_event_time_ms);
+                self.windows[window_index].last_non_redraw_event_at_ms = None;
+                self.windows[window_index].redraw_requested_at_ms = None;
 
                 crate::publish_frame_performance(
                     window_id,
                     frame_index,
                     pending_event_time_ms,
                     runtime_time_ms,
+                    presentation_latency,
                     &output,
                     &self.renderer,
                     renderer_time_ms,
@@ -286,6 +319,8 @@ impl HeadlessPlatform {
                     self.windows[window_index].awaiting_performance_bootstrap = false;
                     if !self.windows[window_index].redraw_requested {
                         self.windows[window_index].redraw_requested = true;
+                        self.windows[window_index].redraw_requested_at_ms =
+                            Some(self.current_time() * 1000.0);
                         self.pending_events.push_back(QueuedEvent {
                             window_id,
                             event: Event::Window(WindowEvent::RedrawRequested),
@@ -320,8 +355,10 @@ struct WindowState {
     open: bool,
     awaiting_performance_bootstrap: bool,
     redraw_requested: bool,
+    redraw_requested_at_ms: Option<f64>,
     frame_index: u64,
     pending_event_time_ms: f64,
+    last_non_redraw_event_at_ms: Option<f64>,
     accessibility: AccessibilityBridge,
 }
 
