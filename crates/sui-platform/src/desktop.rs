@@ -220,16 +220,30 @@ impl<'a> DesktopApp<'a> {
 
         self.sync_windows(event_loop)?;
 
-        for (window_id, window) in &mut self.windows {
-            if window.redraw_requested || !self.runtime.needs_render(*window_id)? {
-                continue;
-            }
-
-            window.redraw_requested = true;
-            window.window.request_redraw();
+        let window_ids: Vec<_> = self.windows.keys().copied().collect();
+        for window_id in window_ids {
+            self.request_redraw_if_needed(window_id)?;
         }
 
         self.update_control_flow(event_loop)?;
+        Ok(())
+    }
+
+    fn request_redraw_if_needed(&mut self, window_id: WindowId) -> Result<()> {
+        if !self.runtime.needs_render(window_id)? {
+            return Ok(());
+        }
+
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return Ok(());
+        };
+
+        if window.redraw_requested {
+            return Ok(());
+        }
+
+        window.redraw_requested = true;
+        window.window.request_redraw();
         Ok(())
     }
 
@@ -287,6 +301,10 @@ impl<'a> DesktopApp<'a> {
 
         if let Some(window) = self.windows.get_mut(&window_id) {
             window.pending_event_time_ms += event_time_ms;
+        }
+
+        if !is_redraw && !is_close {
+            self.request_redraw_if_needed(window_id)?;
         }
 
         if is_redraw {
