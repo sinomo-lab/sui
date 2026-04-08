@@ -636,16 +636,39 @@ impl VirtualScrollView {
         offset_y.clamp(0.0, max_scroll)
     }
 
+    fn visible_range_for_offset(&self, viewport_height: f32, offset_y: f32) -> Range<usize> {
+        let overdraw = viewport_height * 0.75;
+        let visible_top = (offset_y - overdraw).max(0.0);
+        let visible_bottom = offset_y + viewport_height + overdraw;
+        let child_count = self.children.len();
+        let mut start = 0;
+        while start < child_count {
+            let row_top = self.item_offsets[start];
+            let row_bottom = row_top + self.children.as_slice()[start].measured_size().height;
+            if row_bottom >= visible_top {
+                break;
+            }
+            start += 1;
+        }
+
+        let mut end = start;
+        while end < child_count {
+            if self.item_offsets[end] > visible_bottom {
+                break;
+            }
+            end += 1;
+        }
+
+        start..end
+    }
+
     fn scroll_by(&mut self, viewport: Rect, delta_y: f32, ctx: &mut EventCtx) -> bool {
-        let previous = self.offset_y;
         let next = self.clamp_offset(viewport.height(), self.offset_y + delta_y);
         if (next - self.offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
             ctx.request_arrange();
-            let effective_delta = self.offset_y - previous;
-            if let Some(rect) = scroll_exposed_rect(viewport, effective_delta) {
-                ctx.request_paint_rect(rect);
-            } else {
+            let next_visible_range = self.visible_range_for_offset(viewport.height(), self.offset_y);
+            if next_visible_range != self.visible_range {
                 ctx.request_paint();
             }
             for child in self.visible_children() {
@@ -666,29 +689,7 @@ impl VirtualScrollView {
         // do not change the set of painted children.  This keeps the scene
         // content stable, allowing the tile cache to reuse previously
         // generated tiles instead of regenerating them from scratch.
-        let overdraw = viewport_height * 0.75;
-        let visible_top = (self.offset_y - overdraw).max(0.0);
-        let visible_bottom = self.offset_y + viewport_height + overdraw;
-        let child_count = self.children.len();
-        let mut start = 0;
-        while start < child_count {
-            let row_top = self.item_offsets[start];
-            let row_bottom = row_top + self.children.as_slice()[start].measured_size().height;
-            if row_bottom >= visible_top {
-                break;
-            }
-            start += 1;
-        }
-
-        let mut end = start;
-        while end < child_count {
-            if self.item_offsets[end] > visible_bottom {
-                break;
-            }
-            end += 1;
-        }
-
-        self.visible_range = start..end;
+        self.visible_range = self.visible_range_for_offset(viewport_height, self.offset_y);
     }
 
     fn visible_children(&self) -> &[WidgetPod] {
@@ -967,21 +968,10 @@ impl Widget for VirtualScrollView {
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let viewport = self.viewport_rect(bounds);
         self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
-        let scroll_delta_y = self.offset_y - self.last_arranged_offset_y;
         let previous_visible_range = self.visible_range.clone();
         self.update_visible_range(viewport.height());
         if self.visible_range != previous_visible_range {
-            if let Some(rect) = scroll_exposed_rect(viewport, scroll_delta_y) {
-                ctx.request(
-                    InvalidationRequest::new(
-                        InvalidationTarget::Widget(ctx.widget_id()),
-                        InvalidationKind::Paint,
-                    )
-                    .with_region(rect),
-                );
-            } else {
-                ctx.request_paint();
-            }
+            ctx.request_paint();
         }
         self.last_arranged_offset_y = self.offset_y;
         let viewport_width = viewport.width();
@@ -1058,33 +1048,6 @@ fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {
     match delta {
         ScrollDelta::Lines(delta) => Vector::new(delta.x * 40.0, delta.y * 40.0),
         ScrollDelta::Pixels(delta) => delta,
-    }
-}
-
-fn scroll_exposed_rect(viewport: Rect, delta_y: f32) -> Option<Rect> {
-    if delta_y.abs() <= f32::EPSILON {
-        return None;
-    }
-
-    let height = viewport.height();
-    if delta_y.abs() >= height {
-        return Some(viewport);
-    }
-
-    if delta_y > 0.0 {
-        Some(Rect::new(
-            viewport.x(),
-            viewport.max_y() - delta_y,
-            viewport.width(),
-            delta_y,
-        ))
-    } else {
-        Some(Rect::new(
-            viewport.x(),
-            viewport.y(),
-            viewport.width(),
-            -delta_y,
-        ))
     }
 }
 
@@ -1949,6 +1912,9 @@ mod tests {
         assert_eq!(*counts.borrow(), vec![1, 1, 1, 1]);
         assert!(output.frame.layer_updates.iter().any(|update| {
             update.kind == sui_scene::SceneLayerUpdateKind::Transform
+        }));
+        assert!(output.frame.layer_updates.iter().all(|update| {
+            update.kind != sui_scene::SceneLayerUpdateKind::Content
         }));
     }
 

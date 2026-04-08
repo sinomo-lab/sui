@@ -4487,6 +4487,242 @@ mod tests {
     }
 
     #[test]
+    fn cached_scroll_layer_matches_direct_at_fractional_tile_boundaries() {
+        let widget_id = WidgetId::new(95);
+        let build_frame = |window_id, cache_policy| {
+            let descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(widget_id),
+                widget_id,
+                Rect::new(0.0, -150.5, 420.0, 700.0),
+            )
+            .with_content_bounds(Rect::new(0.0, -150.5, 420.0, 700.0))
+            .with_paint_bounds(Rect::new(0.0, -150.5, 420.0, 700.0))
+            .with_cache_policy(cache_policy)
+            .with_composition_mode(LayerCompositionMode::Scroll);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, -150.5, 420.0, 700.0),
+                brush: Color::WHITE.into(),
+            });
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(32.0, 372.0, 340.0, 18.0),
+                brush: Color::rgba(0.18, 0.24, 0.34, 1.0).into(),
+            });
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(350.0, 356.0, 44.0, 58.0),
+                brush: Color::rgba(0.12, 0.35, 0.78, 1.0).into(),
+            });
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(334.0, 392.0, 64.0, 16.0),
+                brush: Color::rgba(0.88, 0.52, 0.18, 1.0).into(),
+            });
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor.clone(),
+                layer_scene,
+            )));
+
+            SceneFrame {
+                window_id,
+                viewport: Size::new(420.0, 240.0),
+                surface_size: Size::new(420.0, 240.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                        .with_damage(Rect::new(0.0, -150.5, 420.0, 700.0)),
+                ],
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(WindowId::new(94), LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(WindowId::new(95), LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn cached_scroll_layer_matches_direct_for_clipped_rows_across_tile_boundary() {
+        let widget_id = WidgetId::new(96);
+        let clip_rect = Rect::new(42.0, 628.0, 360.0, 220.0);
+        let build_frame = |window_id, cache_policy| {
+            let descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(widget_id),
+                widget_id,
+                Rect::new(24.0, -478.0, 1232.0, 2046.0),
+            )
+            .with_content_bounds(Rect::new(24.0, -478.0, 1232.0, 2046.0))
+            .with_paint_bounds(Rect::new(24.0, -478.0, 1232.0, 2046.0))
+            .with_cache_policy(cache_policy)
+            .with_composition_mode(LayerCompositionMode::Scroll);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(24.0, -478.0, 1232.0, 2046.0),
+                brush: Color::WHITE.into(),
+            });
+            layer_scene.push(SceneCommand::PushClip { rect: clip_rect });
+            for (index, y) in [636.0, 668.0, 700.0, 732.0].into_iter().enumerate() {
+                let brush = if index == 1 {
+                    Color::rgba(0.79, 0.86, 0.98, 1.0)
+                } else {
+                    Color::rgba(0.90, 0.93, 0.97, 1.0)
+                };
+                layer_scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(42.0, y, 360.0, 28.0),
+                    brush: brush.into(),
+                });
+                layer_scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(58.0, y + 8.0, 172.0, 12.0),
+                    brush: Color::rgba(0.17, 0.21, 0.29, 1.0).into(),
+                });
+                layer_scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(248.0, y + 8.0, 96.0, 12.0),
+                    brush: Color::rgba(0.41, 0.48, 0.58, 1.0).into(),
+                });
+            }
+            layer_scene.push(SceneCommand::PopClip);
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor.clone(),
+                layer_scene,
+            )));
+
+            SceneFrame {
+                window_id,
+                viewport: Size::new(430.0, 900.0),
+                surface_size: Size::new(430.0, 900.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                        .with_damage(Rect::new(24.0, -478.0, 1232.0, 2046.0)),
+                ],
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(WindowId::new(96), LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(WindowId::new(97), LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn cached_scroll_ancestor_matches_direct_for_clipped_child_layer_rows() {
+        let shell_id = WidgetId::new(97);
+        let child_id = WidgetId::new(98);
+        let clip_rect = Rect::new(42.0, 628.0, 360.0, 220.0);
+        let build_frame = |window_id, shell_cache_policy| {
+            let shell_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(shell_id),
+                shell_id,
+                Rect::new(24.0, -478.0, 1232.0, 2046.0),
+            )
+            .with_content_bounds(Rect::new(24.0, -478.0, 1232.0, 2046.0))
+            .with_paint_bounds(Rect::new(24.0, -478.0, 1232.0, 2046.0))
+            .with_cache_policy(shell_cache_policy)
+            .with_composition_mode(LayerCompositionMode::Scroll);
+
+            let child_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(child_id),
+                child_id,
+                Rect::new(41.5, 627.5, 361.0, 221.0),
+            )
+            .with_content_bounds(Rect::new(41.5, 627.5, 361.0, 221.0))
+            .with_paint_bounds(Rect::new(41.5, 627.5, 361.0, 221.0))
+            .with_cache_policy(LayerCachePolicy::Direct);
+
+            let mut child_scene = Scene::new();
+            child_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(41.5, 627.5, 361.0, 221.0),
+                brush: Color::WHITE.into(),
+            });
+            child_scene.push(SceneCommand::PushClip { rect: clip_rect });
+            for (index, y) in [636.0, 668.0, 700.0, 732.0].into_iter().enumerate() {
+                let brush = if index == 1 {
+                    Color::rgba(0.79, 0.86, 0.98, 1.0)
+                } else {
+                    Color::rgba(0.90, 0.93, 0.97, 1.0)
+                };
+                child_scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(42.0, y, 360.0, 28.0),
+                    brush: brush.into(),
+                });
+                child_scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(58.0, y + 8.0, 172.0, 12.0),
+                    brush: Color::rgba(0.17, 0.21, 0.29, 1.0).into(),
+                });
+                child_scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(248.0, y + 8.0, 96.0, 12.0),
+                    brush: Color::rgba(0.41, 0.48, 0.58, 1.0).into(),
+                });
+            }
+            child_scene.push(SceneCommand::PopClip);
+
+            let mut shell_scene = Scene::new();
+            shell_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                child_descriptor.clone(),
+                child_scene,
+            )));
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                shell_descriptor.clone(),
+                shell_scene,
+            )));
+
+            SceneFrame {
+                window_id,
+                viewport: Size::new(430.0, 900.0),
+                surface_size: Size::new(430.0, 900.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, shell_descriptor)
+                        .with_damage(Rect::new(24.0, -478.0, 1232.0, 2046.0)),
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, child_descriptor)
+                        .with_damage(Rect::new(41.5, 627.5, 361.0, 221.0)),
+                ],
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(WindowId::new(98), LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(WindowId::new(99), LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
     fn glyph_raster_bounds_expand_fractional_edges() {
         let mut builder = super::TinySkiaPathBuilder::new();
         builder.move_to(0.6, -0.2);

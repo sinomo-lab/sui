@@ -809,17 +809,6 @@ impl RetainedCompositorState {
                     .is_none()
             })
             .collect::<HashSet<_>>();
-        let cached_coverage = snapshot
-            .layers
-            .keys()
-            .copied()
-            .map(|layer_id| {
-                (
-                    layer_id,
-                    nearest_cached_root(Some(layer_id), &snapshot.layers, &render_modes),
-                )
-            })
-            .collect::<HashMap<_, _>>();
         let cached_tile_owners = snapshot
             .layers
             .keys()
@@ -1056,10 +1045,7 @@ impl RetainedCompositorState {
 
             let packet_dirty =
                 global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
-            let cached_owner = cached_coverage.get(&layer_id).copied().flatten();
-            let coordinate_space = if cached_owner.is_some() {
-                PacketCoordinateSpace::World
-            } else if render_modes[&layer_id] == RetainedLayerRenderMode::Direct {
+            let coordinate_space = if render_modes[&layer_id] == RetainedLayerRenderMode::Direct {
                 PacketCoordinateSpace::LayerLocal
             } else {
                 PacketCoordinateSpace::World
@@ -1867,26 +1853,47 @@ fn build_cached_tile_fragment(
     feather_width: f32,
 ) -> Result<DrawOpArena> {
     let mut draw_ops = DrawOpArena::default();
-    let tile_clip = [ResolvedClipPrimitive::Rect(tile_scene_rect)];
+    let tile_clip = [ResolvedClipPrimitive::Rect(snap_rect_to_device_pixels(
+        tile_scene_rect,
+        frame.scale_factor,
+    ))];
 
     for item in &layer_snapshot.items {
         match item {
             CompositionItem::Packet(packet_id) => {
-                if let Some(packet) = packets.get(packet_id) {
-                    draw_ops.append_composed_fragment(
-                        &packet.draw_ops,
-                        Vector::ZERO,
-                        &tile_clip,
-                        frame.viewport,
-                    )?;
-                    continue;
-                }
-
-                let Some(packet_snapshot) = layer_snapshot
+                let packet_snapshot = layer_snapshot
                     .packets
                     .iter()
-                    .find(|packet| packet.id == *packet_id)
-                else {
+                    .find(|packet| packet.id == *packet_id);
+                if let Some(packet) = packets.get(packet_id) {
+                    if packet.coordinate_space == PacketCoordinateSpace::LayerLocal {
+                        let mut external_clips = packet_snapshot
+                            .map(|snapshot| snapshot.initial_state.clip_stack.clone())
+                            .unwrap_or_default();
+                        external_clips.push(tile_clip[0].clone());
+                        draw_ops.append_composed_fragment(
+                            &packet.draw_ops,
+                            layer_snapshot.descriptor.bounds.origin.to_vector(),
+                            &external_clips,
+                            frame.viewport,
+                        )?;
+                        continue;
+                    }
+
+                    if !packet_snapshot
+                        .is_some_and(|snapshot| scene_contains_clip_commands(&snapshot.scene))
+                    {
+                        draw_ops.append_composed_fragment(
+                            &packet.draw_ops,
+                            Vector::ZERO,
+                            &tile_clip,
+                            frame.viewport,
+                        )?;
+                        continue;
+                    }
+                }
+
+                let Some(packet_snapshot) = packet_snapshot else {
                     continue;
                 };
                 let mut tile_state = packet_snapshot.initial_state.clone();
@@ -1930,6 +1937,29 @@ fn build_cached_tile_fragment(
     }
 
     Ok(draw_ops)
+}
+
+fn snap_rect_to_device_pixels(rect: Rect, scale_factor: f32) -> Rect {
+    if rect.is_empty() {
+        return rect;
+    }
+
+    let scale = scale_factor.max(0.001);
+    let min_x = (rect.x() * scale).round() / scale;
+    let min_y = (rect.y() * scale).round() / scale;
+    let max_x = ((rect.x() + rect.width()) * scale).round() / scale;
+    let max_y = ((rect.y() + rect.height()) * scale).round() / scale;
+
+    Rect::from_points(Point::new(min_x, min_y), Point::new(max_x, max_y))
+}
+
+fn scene_contains_clip_commands(scene: &Scene) -> bool {
+    scene.commands().iter().any(|command| {
+        matches!(
+            command,
+            SceneCommand::PushClip { .. } | SceneCommand::PushClipPath { .. }
+        )
+    })
 }
 
 impl RetainedCompositorState {

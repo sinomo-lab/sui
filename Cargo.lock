@@ -1980,9 +1980,12 @@ dependencies = [
 name = "sui-widget-book"
 version = "0.1.0"
 dependencies = [
+ "png",
  "sui",
  "sui-debug",
+ "sui-render-wgpu",
  "sui-runtime",
+ "sui-scene",
  "sui-testing",
  "winit",
 ]

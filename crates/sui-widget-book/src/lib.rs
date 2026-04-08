@@ -2141,13 +2141,13 @@ fn option_index(options: &[&str], value: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, fs::File, io::BufWriter, path::Path, rc::Rc};
 
     use super::{
         DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, LivePerformanceDisplay,
-        LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
+        LIST_VIEW_NAME, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
         POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
-        THEME_PREVIEW_TOGGLE_LABEL,
+        THEME_PREVIEW_TOGGLE_LABEL, TREE_VIEW_NAME,
         build_widget_book_application, default_widget_book_state,
     };
     use super::visual_artifacts::{
@@ -2162,7 +2162,9 @@ mod tests {
         WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
         window_scene_statistics_detail_mode,
     };
+    use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::publish_window_performance_snapshot;
+    use sui_scene::{LayerCachePolicy, LayerCompositionMode, Scene, SceneCommand, SceneLayer};
     use sui_testing::prelude::*;
 
     fn build_default_widget_book_app() -> Result<TestApp> {
@@ -2171,6 +2173,181 @@ mod tests {
 
     fn build_configured_widget_book_app() -> Result<TestApp> {
         TestApp::new(|| build_widget_book_application(configured_widget_book_state()).build())
+    }
+
+    fn force_direct_scene(scene: &Scene) -> Scene {
+        force_direct_scene_matching(scene, &|_| true)
+    }
+
+    fn force_direct_scene_matching(
+        scene: &Scene,
+        predicate: &dyn Fn(&sui_scene::SceneLayerDescriptor) -> bool,
+    ) -> Scene {
+        let mut direct = Scene::new();
+        for command in scene.commands() {
+            direct.push(match command {
+                SceneCommand::Layer(layer) => SceneCommand::Layer(SceneLayer::from_descriptor(
+                    if predicate(&layer.descriptor) {
+                        layer.descriptor.clone().with_cache_policy(LayerCachePolicy::Direct)
+                    } else {
+                        layer.descriptor.clone()
+                    },
+                    force_direct_scene_matching(&layer.scene, predicate),
+                )),
+                _ => command.clone(),
+            });
+        }
+        direct
+    }
+
+    fn gallery_scroll_point(output: &sui_runtime::RenderOutput) -> Point {
+        let gallery = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(GALLERY_SCROLL_NAME)
+            })
+            .expect("widget-book gallery scroll view present");
+        Point::new(gallery.bounds.x() + 32.0, gallery.bounds.y() + 120.0)
+    }
+
+    fn story_visible(output: &sui_runtime::RenderOutput, role: SemanticsRole, name: &str) -> bool {
+        let viewport = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(GALLERY_SCROLL_NAME)
+            })
+            .map(|node| node.bounds)
+            .unwrap_or_default();
+
+        output.semantics.iter().any(|node| {
+            node.role == role
+                && node.name.as_deref() == Some(name)
+                && node.bounds.intersection(viewport).is_some()
+        })
+    }
+
+    fn intersecting_layers(scene: &Scene, rect: sui::Rect) -> Vec<String> {
+        let mut layers = Vec::new();
+        scene.visit_layers(&mut |layer| {
+            if layer.descriptor.paint_bounds.intersection(rect).is_some() {
+                layers.push(format!(
+                    "owner={} bounds={:?} content={:?} paint={:?} cache={:?} mode={:?}",
+                    layer.descriptor.owner.get(),
+                    layer.descriptor.bounds,
+                    layer.descriptor.content_bounds,
+                    layer.descriptor.paint_bounds,
+                    layer.descriptor.cache_policy,
+                    layer.descriptor.composition_mode,
+                ));
+            }
+        });
+        layers
+    }
+
+    fn diff_stats_in_rect(
+        left: &RgbaImage,
+        right: &RgbaImage,
+        rect: sui::Rect,
+    ) -> (usize, Option<(u32, u32, u32, u32)>) {
+        let min_x = rect.x().floor().max(0.0) as u32;
+        let min_y = rect.y().floor().max(0.0) as u32;
+        let max_x = rect.max_x().ceil().min(left.width() as f32) as u32;
+        let max_y = rect.max_y().ceil().min(left.height() as f32) as u32;
+        let width = left.width() as usize;
+        let left_pixels = left.pixels();
+        let right_pixels = right.pixels();
+        let mut diff_count = 0usize;
+        let mut diff_bounds: Option<(u32, u32, u32, u32)> = None;
+
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                let index = ((y as usize * width) + x as usize) * 4;
+                if left_pixels[index..index + 4] != right_pixels[index..index + 4] {
+                    diff_count += 1;
+                    diff_bounds = Some(match diff_bounds {
+                        Some((left, top, right, bottom)) => {
+                            (left.min(x), top.min(y), right.max(x), bottom.max(y))
+                        }
+                        None => (x, y, x, y),
+                    });
+                }
+            }
+        }
+
+        (diff_count, diff_bounds)
+    }
+
+    fn crop_rgba_image(image: &RgbaImage, rect: sui::Rect) -> (u32, u32, Vec<u8>) {
+        let min_x = rect.x().floor().max(0.0) as u32;
+        let min_y = rect.y().floor().max(0.0) as u32;
+        let max_x = rect.max_x().ceil().min(image.width() as f32) as u32;
+        let max_y = rect.max_y().ceil().min(image.height() as f32) as u32;
+        let width = max_x.saturating_sub(min_x);
+        let height = max_y.saturating_sub(min_y);
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        let stride = image.width() as usize * 4;
+        for y in min_y..max_y {
+            let row_start = y as usize * stride + min_x as usize * 4;
+            let row_end = row_start + width as usize * 4;
+            pixels.extend_from_slice(&image.pixels()[row_start..row_end]);
+        }
+        (width, height, pixels)
+    }
+
+    fn write_png(path: impl AsRef<Path>, width: u32, height: u32, pixels: &[u8]) {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create debug artifact directory");
+        }
+        let file = File::create(path).expect("create debug png");
+        let writer = BufWriter::new(file);
+        let mut encoder = png::Encoder::new(writer, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("write png header");
+        writer.write_image_data(pixels).expect("write png data");
+    }
+
+    fn write_debug_diff_artifacts(
+        cached: &RgbaImage,
+        direct: &RgbaImage,
+        rect: sui::Rect,
+        stem: &str,
+    ) {
+        let (width, height, cached_pixels) = crop_rgba_image(cached, rect);
+        let (_, _, direct_pixels) = crop_rgba_image(direct, rect);
+        let mut diff_pixels = vec![0; cached_pixels.len()];
+        for (index, (cached_px, direct_px)) in cached_pixels
+            .chunks_exact(4)
+            .zip(direct_pixels.chunks_exact(4))
+            .enumerate()
+        {
+            let offset = index * 4;
+            if cached_px == direct_px {
+                diff_pixels[offset..offset + 4].copy_from_slice(&[
+                    cached_px[0] / 2,
+                    cached_px[1] / 2,
+                    cached_px[2] / 2,
+                    255,
+                ]);
+            } else {
+                diff_pixels[offset..offset + 4].copy_from_slice(&[255, 0, 0, 255]);
+            }
+        }
+
+        let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("ui-artifacts")
+            .join("sui-widget-book-debug");
+        write_png(base.join(format!("{stem}.cached.png")), width, height, &cached_pixels);
+        write_png(base.join(format!("{stem}.direct.png")), width, height, &direct_pixels);
+        write_png(base.join(format!("{stem}.diff.png")), width, height, &diff_pixels);
     }
 
     fn build_overlay_placeholder_app() -> Result<TestApp> {
@@ -2370,6 +2547,129 @@ mod tests {
         assert_ne!(before, after);
 
         Ok(())
+    }
+
+    #[test]
+    fn widget_book_list_view_matches_forced_direct_render_after_scroll() {
+        const LIST_DIFF_TOLERANCE: usize = 8;
+
+        let mut runtime = build_widget_book_application(default_widget_book_state())
+            .build()
+            .expect("runtime should build");
+        let window_id = runtime.window_ids()[0];
+
+        let mut output = runtime.render(window_id).expect("initial render succeeds");
+        for _ in 0..24 {
+            if story_visible(&output, SemanticsRole::List, LIST_VIEW_NAME) {
+                break;
+            }
+
+            let point = gallery_scroll_point(&output);
+            let mut scroll = PointerEvent::new(PointerEventKind::Scroll, point);
+            scroll.scroll_delta = Some(sui::ScrollDelta::Pixels(Vector::new(0.0, -180.0)));
+            runtime
+                .handle_event(window_id, Event::Pointer(scroll))
+                .expect("scroll event should succeed");
+            output = runtime.render(window_id).expect("scroll render succeeds");
+        }
+
+        assert!(
+            story_visible(&output, SemanticsRole::List, LIST_VIEW_NAME),
+            "list view story should be visible after scrolling"
+        );
+
+        let list_bounds = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::List && node.name.as_deref() == Some(LIST_VIEW_NAME))
+            .map(|node| node.bounds)
+            .expect("list view semantics present");
+        let tree_bounds = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Tree && node.name.as_deref() == Some(TREE_VIEW_NAME))
+            .map(|node| node.bounds)
+            .expect("tree view semantics present");
+
+        let cached_frame = output.frame.clone();
+        let scale_factor = cached_frame.scale_factor;
+        let list_layers = intersecting_layers(&cached_frame.scene, list_bounds);
+        let mut direct_frame = cached_frame.clone();
+        direct_frame.window_id = WindowId::new(9001);
+        direct_frame.scene = force_direct_scene(&cached_frame.scene);
+
+        let mut scroll_direct_frame = cached_frame.clone();
+        scroll_direct_frame.window_id = WindowId::new(9002);
+        scroll_direct_frame.scene = force_direct_scene_matching(&cached_frame.scene, &|descriptor| {
+            descriptor.composition_mode == LayerCompositionMode::Scroll
+        });
+
+        let mut non_scroll_direct_frame = cached_frame.clone();
+        non_scroll_direct_frame.window_id = WindowId::new(9003);
+        non_scroll_direct_frame.scene = force_direct_scene_matching(&cached_frame.scene, &|descriptor| {
+            descriptor.composition_mode != LayerCompositionMode::Scroll
+                && descriptor.cache_policy != LayerCachePolicy::Direct
+        });
+
+        let mut cached_renderer = WgpuRenderer::default();
+        cached_renderer
+            .render(&cached_frame)
+            .expect("cached frame render succeeds");
+        let cached_pixels = cached_renderer
+            .capture_last_frame_rgba(cached_frame.window_id)
+            .expect("cached frame capture succeeds");
+
+        let mut direct_renderer = WgpuRenderer::default();
+        direct_renderer
+            .render(&direct_frame)
+            .expect("direct frame render succeeds");
+        let direct_pixels = direct_renderer
+            .capture_last_frame_rgba(direct_frame.window_id)
+            .expect("direct frame capture succeeds");
+
+        let mut scroll_direct_renderer = WgpuRenderer::default();
+        scroll_direct_renderer
+            .render(&scroll_direct_frame)
+            .expect("scroll-direct frame render succeeds");
+        let scroll_direct_pixels = scroll_direct_renderer
+            .capture_last_frame_rgba(scroll_direct_frame.window_id)
+            .expect("scroll-direct frame capture succeeds");
+
+        let mut non_scroll_direct_renderer = WgpuRenderer::default();
+        non_scroll_direct_renderer
+            .render(&non_scroll_direct_frame)
+            .expect("non-scroll-direct frame render succeeds");
+        let non_scroll_direct_pixels = non_scroll_direct_renderer
+            .capture_last_frame_rgba(non_scroll_direct_frame.window_id)
+            .expect("non-scroll-direct frame capture succeeds");
+
+        let (list_diff, list_bounds_diff) = diff_stats_in_rect(&cached_pixels, &direct_pixels, list_bounds);
+        let (tree_diff, tree_bounds_diff) = diff_stats_in_rect(&cached_pixels, &direct_pixels, tree_bounds);
+        let (scroll_only_list_diff, _) = diff_stats_in_rect(&scroll_direct_pixels, &direct_pixels, list_bounds);
+        let (scroll_only_tree_diff, _) = diff_stats_in_rect(&scroll_direct_pixels, &direct_pixels, tree_bounds);
+        let (non_scroll_only_list_diff, _) =
+            diff_stats_in_rect(&non_scroll_direct_pixels, &direct_pixels, list_bounds);
+
+        if list_diff > LIST_DIFF_TOLERANCE {
+            write_debug_diff_artifacts(&cached_pixels, &direct_pixels, list_bounds, "list-view");
+        }
+        if tree_diff != 0 {
+            write_debug_diff_artifacts(&cached_pixels, &direct_pixels, tree_bounds, "tree-view");
+        }
+
+        assert!(
+            list_diff <= LIST_DIFF_TOLERANCE,
+            "cached widget-book list view diverged from forced direct render inside the list region by {list_diff} pixels (tolerance {LIST_DIFF_TOLERANCE}); list bounds: {:?}; diff bounds: {:?}; scale factor: {scale_factor}; scroll-only diff: {scroll_only_list_diff}; scroll-only tree diff: {scroll_only_tree_diff}; non-scroll-only list diff: {non_scroll_only_list_diff}; intersecting layers: {:?}",
+            list_bounds,
+            list_bounds_diff,
+            list_layers,
+        );
+        assert_eq!(
+            tree_diff,
+            0,
+            "cached widget-book tree view diverged from forced direct render inside the tree region by {tree_diff} pixels; diff bounds: {:?}",
+            tree_bounds_diff,
+        );
     }
 
     #[test]
