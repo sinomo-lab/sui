@@ -25,6 +25,7 @@ pub(crate) struct SharedRenderer {
     pub(crate) image_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) analytic_path_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) image_sampler: wgpu::Sampler,
+    pub(crate) text_atlas_sampler: wgpu::Sampler,
 }
 
 impl SharedRenderer {
@@ -46,6 +47,17 @@ impl SharedRenderer {
 
     pub(crate) fn clipped_image_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
         self.pipeline_for(format, PipelineKind::TexturedClipped)
+    }
+
+    pub(crate) fn text_atlas_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::TextAtlas)
+    }
+
+    pub(crate) fn clipped_text_atlas_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::TextAtlasClipped)
     }
 
     pub(crate) fn analytic_path_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
@@ -72,6 +84,9 @@ impl SharedRenderer {
                 PipelineKind::Textured | PipelineKind::TexturedClipped => {
                     "SUI textured scene shader"
                 }
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
+                    "SUI text atlas shader"
+                }
                 PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
                     "SUI analytic path shader"
                 }
@@ -81,6 +96,9 @@ impl SharedRenderer {
                     SHADER_SOURCE
                 }
                 PipelineKind::Textured | PipelineKind::TexturedClipped => TEXTURED_SHADER_SOURCE,
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
+                    TEXT_ATLAS_SHADER_SOURCE
+                }
                 PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
                     ANALYTIC_PATH_SHADER_SOURCE
                 }
@@ -93,9 +111,13 @@ impl SharedRenderer {
                 });
 
             let depth_stencil = match kind {
-                PipelineKind::Solid | PipelineKind::Textured | PipelineKind::AnalyticPath => None,
+                PipelineKind::Solid
+                | PipelineKind::Textured
+                | PipelineKind::TextAtlas
+                | PipelineKind::AnalyticPath => None,
                 PipelineKind::Clipped
                 | PipelineKind::TexturedClipped
+                | PipelineKind::TextAtlasClipped
                 | PipelineKind::AnalyticPathClipped => Some(wgpu::DepthStencilState {
                     format: STENCIL_FORMAT,
                     depth_write_enabled: Some(false),
@@ -141,16 +163,45 @@ impl SharedRenderer {
                     bias: wgpu::DepthBiasState::default(),
                 }),
             };
+            let blend = match kind {
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                },
+                PipelineKind::Solid
+                | PipelineKind::Clipped
+                | PipelineKind::Textured
+                | PipelineKind::TexturedClipped
+                | PipelineKind::AnalyticPath
+                | PipelineKind::AnalyticPathClipped
+                | PipelineKind::ClipMask => wgpu::BlendState::ALPHA_BLENDING,
+            };
             let fragment_targets = [Some(wgpu::ColorTargetState {
                 format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                blend: Some(blend),
                 write_mask: wgpu::ColorWrites::ALL,
             })];
             let layout = match kind {
-                PipelineKind::Textured | PipelineKind::TexturedClipped => Some(
+                PipelineKind::Textured
+                | PipelineKind::TexturedClipped
+                | PipelineKind::TextAtlas
+                | PipelineKind::TextAtlasClipped => Some(
                     self.device
                         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                            label: Some("SUI textured scene pipeline layout"),
+                            label: Some(match kind {
+                                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
+                                    "SUI text atlas pipeline layout"
+                                }
+                                _ => "SUI textured scene pipeline layout",
+                            }),
                             bind_group_layouts: &[Some(&self.image_bind_group_layout)],
                             immediate_size: 0,
                         }),
@@ -173,6 +224,8 @@ impl SharedRenderer {
                         PipelineKind::Clipped => "SUI clipped scene pipeline",
                         PipelineKind::Textured => "SUI textured scene pipeline",
                         PipelineKind::TexturedClipped => "SUI clipped textured scene pipeline",
+                        PipelineKind::TextAtlas => "SUI text atlas pipeline",
+                        PipelineKind::TextAtlasClipped => "SUI clipped text atlas pipeline",
                         PipelineKind::AnalyticPath => "SUI analytic path pipeline",
                         PipelineKind::AnalyticPathClipped => "SUI clipped analytic path pipeline",
                         PipelineKind::ClipMask => "SUI clip mask pipeline",
@@ -193,6 +246,8 @@ impl SharedRenderer {
                         | PipelineKind::Clipped
                         | PipelineKind::Textured
                         | PipelineKind::TexturedClipped
+                        | PipelineKind::TextAtlas
+                        | PipelineKind::TextAtlasClipped
                         | PipelineKind::AnalyticPath
                         | PipelineKind::AnalyticPathClipped => Some(wgpu::FragmentState {
                             module: &shader,
@@ -214,6 +269,8 @@ pub(crate) enum PipelineKind {
     Clipped,
     Textured,
     TexturedClipped,
+    TextAtlas,
+    TextAtlasClipped,
     AnalyticPath,
     AnalyticPathClipped,
     ClipMask,

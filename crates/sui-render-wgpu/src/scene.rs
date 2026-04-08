@@ -1051,10 +1051,10 @@ fn encode_draws_for_pass(
                 }
                 (PreparedDrawPipelineKind::Image, false) => shared.image_pipeline(target_format),
                 (PreparedDrawPipelineKind::TextAtlas, true) => {
-                    shared.clipped_image_pipeline(target_format)
+                    shared.clipped_text_atlas_pipeline(target_format)
                 }
                 (PreparedDrawPipelineKind::TextAtlas, false) => {
-                    shared.image_pipeline(target_format)
+                    shared.text_atlas_pipeline(target_format)
                 }
                 (PreparedDrawPipelineKind::AnalyticPath, true) => {
                     shared.clipped_analytic_path_pipeline(target_format)
@@ -2121,7 +2121,7 @@ fn append_cached_glyph_mesh(
     }
 }
 
-fn append_cached_glyph_atlas(
+pub(crate) fn append_cached_glyph_atlas(
     vertices: &mut Vec<Vertex>,
     atlas: &CachedGlyphAtlas,
     glyph: &SceneShapedGlyph,
@@ -2133,7 +2133,7 @@ fn append_cached_glyph_atlas(
         return;
     }
 
-    let color = color.clamped().to_array();
+    let rgba = shader_color(color);
     let residual_scale = glyph.scale / atlas.scale.max(f32::EPSILON);
     let left = glyph.origin_x + (atlas.offset.x * residual_scale);
     let top = glyph.origin_y + (atlas.offset.y * residual_scale);
@@ -2143,7 +2143,6 @@ fn append_cached_glyph_atlas(
     let top_right = transform.transform_point(Point::new(left + width, top));
     let bottom_left = transform.transform_point(Point::new(left, top + height));
     let bottom_right = transform.transform_point(Point::new(left + width, top + height));
-    let rgba = [color[0], color[1], color[2], color[3]];
 
     vertices.extend_from_slice(&[
         Vertex {

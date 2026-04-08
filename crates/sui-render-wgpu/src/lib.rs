@@ -658,6 +658,13 @@ impl WgpuRenderer {
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
+        let text_atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SUI text atlas sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
         let analytic_path_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("SUI analytic path bind group layout"),
@@ -703,6 +710,7 @@ impl WgpuRenderer {
             image_bind_group_layout,
             analytic_path_bind_group_layout,
             image_sampler,
+            text_atlas_sampler,
         });
 
         Ok(())
@@ -1472,7 +1480,7 @@ impl WgpuRenderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::COPY_SRC,
@@ -1485,7 +1493,7 @@ impl WgpuRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&shared.image_sampler),
+                    resource: wgpu::BindingResource::Sampler(&shared.text_atlas_sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -2069,6 +2077,40 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+const TEXT_ATLAS_SHADER_SOURCE: &str = r#"
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) tex_coords: vec2<f32>,
+};
+
+@group(0) @binding(0)
+var text_atlas_sampler: sampler;
+
+@group(0) @binding(1)
+var text_atlas_texture: texture_2d<f32>;
+
+@vertex
+fn vs_main(
+    @location(0) position: vec2<f32>,
+    @location(1) color: vec4<f32>,
+    @location(2) tex_coords: vec2<f32>,
+) -> VsOut {
+    var out: VsOut;
+    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.color = color;
+    out.tex_coords = tex_coords;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let coverage = textureSample(text_atlas_texture, text_atlas_sampler, in.tex_coords).a;
+    let alpha = in.color.a * coverage;
+    return vec4<f32>(in.color.rgb * alpha, alpha);
+}
+"#;
+
 const ANALYTIC_PATH_SHADER_SOURCE: &str = r#"
 struct VsOut {
     @builtin(position) position: vec4<f32>,
@@ -2208,13 +2250,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        scene::{CachedDrawBatch, CachedPassBatch, prepare_cached_passes},
-        CachedGlyphMesh, ClipState, CompositionContainerId, DEFAULT_FEATHER_WIDTH, DrawOp,
-        DrawOpArena, DrawOpKind, PreparedClipPath, PreparedDrawBatch, PreparedDrawKind,
-        PreparedFrameBatches, PreparedPassBatch, PreparedVertices, RendererFrameStats,
-        RetainedCompositorState, RetainedFrameFragment, RetainedLayerRenderMode, RetainedPacketId,
-        ScissorRect, TextEngine, VERTEX_SIZE, Vertex, WgpuRenderer, append_cached_path_mesh,
-        batch_draw_ops, build_vertices, prepare_frame_batches, shader_color, to_ndc,
+        scene::{CachedDrawBatch, CachedPassBatch, append_cached_glyph_atlas, prepare_cached_passes},
+        CachedGlyphAtlas, CachedGlyphMesh, ClipState, CompositionContainerId,
+        DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedClipPath,
+        PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
+        PreparedVertices, RendererFrameStats, RetainedCompositorState, RetainedFrameFragment,
+        RetainedLayerRenderMode, RetainedPacketId, ScissorRect, TextEngine, VERTEX_SIZE,
+        Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
+        prepare_frame_batches, shader_color, to_ndc,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -2226,7 +2269,7 @@ mod tests {
         SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
         SceneLayerUpdateKind, StrokeStyle,
     };
-    use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
+    use sui_text::{FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, TextRun, TextStyle, TextSystem};
 
     fn load_test_font() -> RegisteredFont {
         let mut font_db = fontdb::Database::new();
@@ -2522,6 +2565,60 @@ mod tests {
             assert!((vertex.color[2] - expected[2]).abs() < 0.0001);
             assert_eq!(vertex.color[3], 1.0);
         }
+    }
+
+    #[test]
+    fn cached_glyph_atlas_linearizes_srgb_inputs() {
+        let atlas = CachedGlyphAtlas {
+            scale: 12.0,
+            offset: Vector::new(1.0, 2.0),
+            size: Size::new(8.0, 10.0),
+            uv_min: [0.25, 0.5],
+            uv_max: [0.5, 0.75],
+        };
+        let glyph = ShapedGlyph {
+            glyph_id: 42,
+            cluster: 0,
+            line_index: 0,
+            origin_x: 12.0,
+            origin_y: 20.0,
+            advance: Vector::new(8.0, 0.0),
+            scale: 12.0,
+            bounds: Some(Rect::new(13.0, 22.0, 8.0, 10.0)),
+        };
+
+        let color = Color::srgba(66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0, 0.75);
+        let mut vertices = Vec::new();
+        append_cached_glyph_atlas(
+            &mut vertices,
+            &atlas,
+            &glyph,
+            color,
+            Transform::IDENTITY,
+            Size::new(64.0, 64.0),
+        );
+
+        assert_eq!(vertices.len(), 6);
+        let expected = shader_color(color);
+        for vertex in vertices {
+            assert!((vertex.color[0] - expected[0]).abs() < 0.0001);
+            assert!((vertex.color[1] - expected[1]).abs() < 0.0001);
+            assert!((vertex.color[2] - expected[2]).abs() < 0.0001);
+            assert!((vertex.color[3] - expected[3]).abs() < 0.0001);
+        }
+    }
+
+    #[test]
+    fn text_atlas_shader_outputs_premultiplied_alpha() {
+        let color = shader_color(Color::srgba(66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0, 0.75));
+        let coverage = 0.5;
+        let alpha = color[3] * coverage;
+        let premultiplied = [color[0] * alpha, color[1] * alpha, color[2] * alpha, alpha];
+
+        assert!((premultiplied[0] - 0.02043).abs() < 0.0001);
+        assert!((premultiplied[1] - 0.00868).abs() < 0.0001);
+        assert!((premultiplied[2] - 0.24952).abs() < 0.0001);
+        assert!((premultiplied[3] - 0.375).abs() < 0.0001);
     }
 
     #[test]
