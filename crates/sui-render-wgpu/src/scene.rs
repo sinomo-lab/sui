@@ -3122,18 +3122,16 @@ fn rect_to_scissor(
     let scale_x = framebuffer_width as f32 / viewport.width.max(1.0);
     let scale_y = framebuffer_height as f32 / viewport.height.max(1.0);
 
-    let min_x = (rect.x().max(0.0) * scale_x)
-        .floor()
-        .clamp(0.0, framebuffer_width as f32) as u32;
-    let min_y = (rect.y().max(0.0) * scale_y)
-        .floor()
-        .clamp(0.0, framebuffer_height as f32) as u32;
-    let max_x = ((rect.x() + rect.width()).min(viewport.width) * scale_x)
-        .ceil()
-        .clamp(0.0, framebuffer_width as f32) as u32;
-    let max_y = ((rect.y() + rect.height()).min(viewport.height) * scale_y)
-        .ceil()
-        .clamp(0.0, framebuffer_height as f32) as u32;
+    let min_x = quantize_scissor_edge(rect.x().max(0.0) * scale_x, framebuffer_width);
+    let min_y = quantize_scissor_edge(rect.y().max(0.0) * scale_y, framebuffer_height);
+    let max_x = quantize_scissor_edge(
+        (rect.x() + rect.width()).min(viewport.width) * scale_x,
+        framebuffer_width,
+    );
+    let max_y = quantize_scissor_edge(
+        (rect.y() + rect.height()).min(viewport.height) * scale_y,
+        framebuffer_height,
+    );
 
     if max_x <= min_x || max_y <= min_y {
         return None;
@@ -3154,6 +3152,10 @@ fn rect_to_scissor(
     } else {
         Some(scissor)
     }
+}
+
+fn quantize_scissor_edge(edge: f32, limit: u32) -> u32 {
+    edge.round().clamp(0.0, limit as f32) as u32
 }
 
 pub(crate) fn to_ndc(x: f32, y: f32, viewport: Size) -> [f32; 2] {

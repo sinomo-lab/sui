@@ -2208,6 +2208,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
+        scene::{CachedDrawBatch, CachedPassBatch, prepare_cached_passes},
         CachedGlyphMesh, ClipState, CompositionContainerId, DEFAULT_FEATHER_WIDTH, DrawOp,
         DrawOpArena, DrawOpKind, PreparedClipPath, PreparedDrawBatch, PreparedDrawKind,
         PreparedFrameBatches, PreparedPassBatch, PreparedVertices, RendererFrameStats,
@@ -2647,6 +2648,41 @@ mod tests {
                 height: 20,
             })
         );
+    }
+
+    #[test]
+    fn prepare_cached_passes_snap_translated_adjacent_clip_edges_without_overlap() {
+        let passes = prepare_cached_passes(
+            &[
+                CachedPassBatch {
+                    clip_paths: Vec::new(),
+                    draws: vec![CachedDrawBatch {
+                        kind: PreparedDrawKind::Solid,
+                        clip_rect: Some(Rect::new(0.0, 0.0, 384.0, 128.0)),
+                        vertices: PreparedVertices { start: 0, len: 6 },
+                    }],
+                },
+                CachedPassBatch {
+                    clip_paths: Vec::new(),
+                    draws: vec![CachedDrawBatch {
+                        kind: PreparedDrawKind::Solid,
+                        clip_rect: Some(Rect::new(384.0, 0.0, 128.0, 128.0)),
+                        vertices: PreparedVertices { start: 6, len: 6 },
+                    }],
+                },
+            ],
+            Size::new(512.0, 128.0),
+            (768, 192),
+            Vector::new(0.25, 0.0),
+            0,
+            0,
+        );
+
+        let first = passes[0].draws[0].clip_rect.expect("first scissor");
+        let second = passes[1].draws[0].clip_rect.expect("second scissor");
+
+        assert_eq!(first.x + first.width, second.x);
+        assert!(first.x + first.width <= second.x);
     }
 
     #[test]
