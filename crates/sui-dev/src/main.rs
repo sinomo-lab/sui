@@ -18,6 +18,7 @@ const BUTTON_GRID_TAB_LABEL: &str = "64 buttons";
 const SETTINGS_TAB_LABEL: &str = "Settings";
 const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
 const FEATHER_WIDTH_NAME: &str = "Feather width";
+const OPTICAL_TEXT_CENTERING_TOGGLE_LABEL: &str = "Enable optical vertical text centering";
 
 struct RenderSettingsTab {
     content: SingleChild,
@@ -35,6 +36,7 @@ impl RenderSettingsTab {
         let state = Rc::new(RefCell::new(initial));
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
+        let text_centering_state = Rc::clone(&state);
 
         let content = Padding::all(
             28.0,
@@ -49,7 +51,7 @@ impl RenderSettingsTab {
                 )
                 .with_child(
                     Label::new(
-                        "These controls update the active window's runtime renderer options on the next redraw. Disabling feathering preserves the configured width so you can compare both states quickly.",
+                        "These controls update the active window's runtime presentation and text-alignment options on the next redraw. The optical centering toggle lets you compare the visual baseline shift against geometric centering without rebuilding.",
                     )
                     .font_size(14.0)
                     .line_height(20.0)
@@ -60,6 +62,15 @@ impl RenderSettingsTab {
                         .checked(initial.feathering_enabled)
                         .on_toggle(move |checked| {
                             toggle_state.borrow_mut().feathering_enabled = checked;
+                        }),
+                )
+                .with_child(
+                    Checkbox::new(OPTICAL_TEXT_CENTERING_TOGGLE_LABEL)
+                        .checked(initial.optical_vertical_text_alignment_enabled)
+                        .on_toggle(move |checked| {
+                            text_centering_state
+                                .borrow_mut()
+                                .optical_vertical_text_alignment_enabled = checked;
                         }),
                 )
                 .with_child(
@@ -76,7 +87,7 @@ impl RenderSettingsTab {
                 )
                 .with_child(
                     Label::new(
-                        "A width around 1.0 matches the current default. Larger values exaggerate the fringe to make behavior differences obvious during visual checks.",
+                        "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. A feather width around 1.0 matches the current renderer default; larger values exaggerate edge behavior for visual checks.",
                     )
                     .font_size(13.0)
                     .line_height(18.0)

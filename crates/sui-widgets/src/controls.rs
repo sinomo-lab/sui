@@ -4,7 +4,9 @@ use sui_core::{
     Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{
+    EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, Widget, window_render_options,
+};
 use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
 use sui_text::{TextLayout, TextMeasurement, TextStyle};
 
@@ -683,8 +685,15 @@ impl Widget for Button {
             border,
             ctx.is_focused().then_some(palette.focus_ring),
         );
+        let label_rect = centered_text_rect(
+            ctx,
+            ctx.bounds(),
+            padding,
+            self.label_measurement,
+            text_style.line_height,
+        );
         ctx.draw_text(
-            inset_rect(ctx.bounds(), padding),
+            label_rect,
             self.label.clone(),
             text_style,
         );
@@ -976,7 +985,11 @@ impl Widget for Checkbox {
                 StrokeStyle::new(physical_pixels(ctx, 2.0)),
             );
         }
-        ctx.draw_text(label_rect, self.label.clone(), text_style);
+        ctx.draw_text(
+            vertically_centered_text_rect(ctx, label_rect, self.label_measurement, text_style.line_height),
+            self.label.clone(),
+            text_style,
+        );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1012,6 +1025,7 @@ pub struct Switch {
     gap: Option<f32>,
     hovered: bool,
     pressed: bool,
+    label_measurement: Option<TextMeasurement>,
     on_toggle: Option<Box<dyn FnMut(bool)>>,
 }
 
@@ -1026,6 +1040,7 @@ impl Switch {
             gap: None,
             hovered: false,
             pressed: false,
+            label_measurement: None,
             on_toggle: None,
         }
     }
@@ -1170,6 +1185,7 @@ impl Widget for Switch {
         let padding = self.resolved_padding();
         let gap = self.resolved_gap();
         let measurement = measure_text(ctx, &self.label, &text_style);
+        self.label_measurement = Some(measurement);
         let track_width = self.theme.metrics.switch_track_width;
         let track_height = self.theme.metrics.switch_track_height;
 
@@ -1254,7 +1270,11 @@ impl Widget for Switch {
             Path::circle(rect_center(thumb), thumb.width() * 0.5),
             palette.accent_text,
         );
-        ctx.draw_text(label_rect, self.label.clone(), text_style);
+        ctx.draw_text(
+            vertically_centered_text_rect(ctx, label_rect, self.label_measurement, text_style.line_height),
+            self.label.clone(),
+            text_style,
+        );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1291,6 +1311,7 @@ pub struct RadioButton {
     gap: Option<f32>,
     hovered: bool,
     pressed: bool,
+    label_measurement: Option<TextMeasurement>,
     on_select: Option<Box<dyn FnMut()>>,
 }
 
@@ -1306,6 +1327,7 @@ impl RadioButton {
             gap: None,
             hovered: false,
             pressed: false,
+            label_measurement: None,
             on_select: None,
         }
     }
@@ -1461,6 +1483,7 @@ impl Widget for RadioButton {
         let indicator_size = self.resolved_indicator_size();
         let gap = self.resolved_gap();
         let measurement = measure_text(ctx, &self.label, &text_style);
+        self.label_measurement = Some(measurement);
 
         constraints.clamp(Size::new(
             padding.left + indicator_size + gap + measurement.width + padding.right,
@@ -1534,7 +1557,11 @@ impl Widget for RadioButton {
                 palette.accent_text,
             );
         }
-        ctx.draw_text(label_rect, self.label.clone(), text_style);
+        ctx.draw_text(
+            vertically_centered_text_rect(ctx, label_rect, self.label_measurement, text_style.line_height),
+            self.label.clone(),
+            text_style,
+        );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1565,6 +1592,7 @@ pub struct RadioGroup {
     selected: Option<usize>,
     hovered: Option<usize>,
     pressed: Option<usize>,
+    label_measurements: Vec<TextMeasurement>,
     spacing: f32,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
 }
@@ -1578,6 +1606,7 @@ impl RadioGroup {
             selected: None,
             hovered: None,
             pressed: None,
+            label_measurements: Vec::new(),
             spacing: 6.0,
             on_change: None,
         }
@@ -1729,9 +1758,11 @@ impl Widget for RadioGroup {
         let indicator = self.theme.metrics.checkbox_indicator_size;
         let gap = self.theme.metrics.checkbox_gap;
         let mut width: f32 = 0.0;
+        self.label_measurements.clear();
 
         for option in &self.options {
             let measurement = measure_text(ctx, option, &text_style);
+            self.label_measurements.push(measurement);
             width = width.max(padding.left + indicator + gap + measurement.width + padding.right);
         }
 
@@ -1809,7 +1840,17 @@ impl Widget for RadioGroup {
                     self.theme.palette.accent_text,
                 );
             }
-            ctx.draw_text(label_rect, option.clone(), self.theme.body_text_style());
+            let text_style = self.theme.body_text_style();
+            ctx.draw_text(
+                vertically_centered_text_rect(
+                    ctx,
+                    label_rect,
+                    self.label_measurements.get(index).copied(),
+                    text_style.line_height,
+                ),
+                option.clone(),
+                text_style,
+            );
         }
     }
 
@@ -3357,6 +3398,9 @@ impl Widget for TextInput {
                 width: 0.0,
                 height: visible_measurement.height,
                 bounds: Rect::new(0.0, 0.0, 0.0, visible_measurement.height),
+                ascent: visible_measurement.ascent,
+                descent: visible_measurement.descent,
+                cap_height: visible_measurement.cap_height,
             }
         } else {
             measure_text(ctx, &input_text, &text_style)
@@ -3466,6 +3510,9 @@ fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeas
             width: 0.0,
             height: style.line_height,
             bounds: Rect::new(0.0, 0.0, 0.0, style.line_height),
+            ascent: style.font_size,
+            descent: 0.0,
+            cap_height: Some(style.font_size),
         })
 }
 
@@ -3854,20 +3901,92 @@ fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
     ctx.dpi().physical_pixels_to_logical(value)
 }
 
+fn centered_text_rect(
+    ctx: &PaintCtx,
+    bounds: Rect,
+    padding: Insets,
+    measurement: Option<TextMeasurement>,
+    line_height: f32,
+) -> Rect {
+    let rect = Rect::new(
+        bounds.x() + padding.left,
+        bounds.y(),
+        (bounds.width() - padding.left - padding.right).max(0.0),
+        bounds.height(),
+    );
+    let Some(measurement) = measurement else {
+        return rect;
+    };
+
+    let width = measurement.width.min(rect.width());
+    let height = line_height.max(measurement.height).min(rect.height());
+
+    Rect::new(
+        rect.x() + ((rect.width() - width) * 0.5),
+        vertically_centered_text_rect_y(ctx, rect, measurement),
+        width,
+        height,
+    )
+}
+
+fn vertically_centered_text_rect(
+    ctx: &PaintCtx,
+    rect: Rect,
+    measurement: Option<TextMeasurement>,
+    line_height: f32,
+) -> Rect {
+    let Some(measurement) = measurement else {
+        return rect;
+    };
+
+    Rect::new(
+        rect.x(),
+        vertically_centered_text_rect_y(ctx, rect, measurement),
+        rect.width(),
+        line_height.max(measurement.height).min(rect.height()),
+    )
+}
+
+fn vertically_centered_text_rect_y(
+    ctx: &PaintCtx,
+    rect: Rect,
+    measurement: TextMeasurement,
+) -> f32 {
+    let optical_centering = window_render_options(ctx.window_id())
+        .map(|options| options.optical_vertical_text_alignment_enabled)
+        .unwrap_or(true);
+    let top = if optical_centering {
+        -measurement.cap_height.unwrap_or(measurement.ascent)
+    } else {
+        -measurement.ascent
+    };
+    let bottom = if optical_centering {
+        measurement.descent * 0.5
+    } else {
+        measurement.descent
+    };
+    let visual_center = (top + bottom) * 0.5;
+    let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
+    baseline - measurement.ascent
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Button, Checkbox, DefaultTheme, Label, NumberInput, Select, Slider, Switch, TextArea,
-        TextInput,
+        Button, Checkbox, DefaultTheme, Label, NumberInput, RadioButton, RadioGroup, Select,
+        Slider, Switch, TextArea, TextInput,
     };
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, SemanticsRole,
-        SemanticsValue, Size, Vector, WidgetId, WindowEvent,
+        SemanticsValue, Rect, Size, Vector, WidgetId, WindowEvent,
     };
-    use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
+    use sui_runtime::{
+        Application, RenderOutput, Runtime, Widget, WindowBuilder, WindowRenderOptions,
+        clear_window_render_options, set_window_render_options,
+    };
     use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -3888,6 +4007,40 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).unwrap()
+    }
+
+    fn first_text_rect(output: &RenderOutput) -> Rect {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(text) => Some(text.rect),
+                _ => None,
+            })
+            .expect("text draw command present")
+    }
+
+    fn optical_and_geometric_first_text_rects<W, F>(build: F) -> (Rect, Rect)
+    where
+        W: Widget + 'static,
+        F: Fn() -> W,
+    {
+        let optical = render(build());
+        let optical_rect = first_text_rect(&optical);
+
+        let (mut runtime, window_id) = build_runtime(build());
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(true, 1.0)
+                .with_optical_vertical_text_alignment_enabled(false),
+        );
+        let geometric = runtime.render(window_id).unwrap();
+        clear_window_render_options(window_id);
+        let geometric_rect = first_text_rect(&geometric);
+
+        (optical_rect, geometric_rect)
     }
 
     fn layer_descriptor_for(output: &RenderOutput, owner: WidgetId) -> Option<SceneLayerDescriptor> {
@@ -4095,6 +4248,119 @@ mod tests {
     fn button_obeys_minimum_size() {
         let output = render(Button::new("Go").min_width(140.0).min_height(24.0));
         assert_eq!(output.frame.viewport, Size::new(140.0, 24.0));
+    }
+
+    #[test]
+    fn button_centers_label_within_available_content_width() {
+        let theme = DefaultTheme::default();
+        let optical = render(Button::new("Go").min_width(140.0));
+        let optical_label = optical
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(text) => Some(text.rect),
+                _ => None,
+            })
+            .expect("button label draw command present");
+
+        let (mut runtime, window_id) = build_runtime(Button::new("Go").min_width(140.0));
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(true, 1.0)
+                .with_optical_vertical_text_alignment_enabled(false),
+        );
+        let geometric = runtime.render(window_id).unwrap();
+        clear_window_render_options(window_id);
+        let geometric_label = geometric
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(text) => Some(text.rect),
+                _ => None,
+            })
+            .expect("geometric button label draw command present");
+
+        assert!(optical_label.x() > theme.metrics.button_padding.left);
+        assert!(optical_label.y() < geometric_label.y());
+        assert!(optical_label.max_y() <= theme.metrics.min_height);
+    }
+
+    #[test]
+    fn button_window_option_can_disable_optical_vertical_centering() {
+        let optical = render(Button::new("Go").min_width(140.0));
+        let optical_label = optical
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(text) => Some(text.rect),
+                _ => None,
+            })
+            .expect("optical button label draw command present");
+
+        let (mut runtime, window_id) = build_runtime(Button::new("Go").min_width(140.0));
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(true, 1.0)
+                .with_optical_vertical_text_alignment_enabled(false),
+        );
+        let geometric = runtime.render(window_id).unwrap();
+        clear_window_render_options(window_id);
+        let geometric_label = geometric
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(text) => Some(text.rect),
+                _ => None,
+            })
+            .expect("geometric button label draw command present");
+
+        assert!(optical_label.y() < geometric_label.y());
+        assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
+    }
+
+    #[test]
+    fn checkbox_label_uses_optical_vertical_centering() {
+        let (optical_label, geometric_label) =
+            optical_and_geometric_first_text_rects(|| Checkbox::new("Subscribe"));
+
+        assert!(optical_label.y() < geometric_label.y());
+        assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
+    }
+
+    #[test]
+    fn switch_label_uses_optical_vertical_centering() {
+        let (optical_label, geometric_label) =
+            optical_and_geometric_first_text_rects(|| Switch::new("Airplane mode"));
+
+        assert!(optical_label.y() < geometric_label.y());
+        assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
+    }
+
+    #[test]
+    fn radio_button_label_uses_optical_vertical_centering() {
+        let (optical_label, geometric_label) =
+            optical_and_geometric_first_text_rects(|| RadioButton::new("Option A"));
+
+        assert!(optical_label.y() < geometric_label.y());
+        assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
+    }
+
+    #[test]
+    fn radio_group_labels_use_optical_vertical_centering() {
+        let (optical_label, geometric_label) = optical_and_geometric_first_text_rects(|| {
+            RadioGroup::new("Choices").options(["Alpha", "Beta"])
+        });
+
+        assert!(optical_label.y() < geometric_label.y());
+        assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
     }
 
     #[test]

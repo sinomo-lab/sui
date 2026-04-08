@@ -1855,6 +1855,9 @@ fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeas
             width: estimate_text_width(text, style),
             height: style.line_height,
             bounds: Rect::ZERO,
+            ascent: style.font_size,
+            descent: 0.0,
+            cap_height: Some(style.font_size),
         })
 }
 

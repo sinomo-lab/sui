@@ -305,6 +305,7 @@ impl SceneStatisticsDetailMode {
 pub struct WindowRenderOptions {
     pub feathering_enabled: bool,
     pub feather_width: f32,
+    pub optical_vertical_text_alignment_enabled: bool,
 }
 
 impl WindowRenderOptions {
@@ -312,13 +313,23 @@ impl WindowRenderOptions {
         Self {
             feathering_enabled,
             feather_width,
+            optical_vertical_text_alignment_enabled: true,
         }
+    }
+
+    pub const fn with_optical_vertical_text_alignment_enabled(
+        mut self,
+        enabled: bool,
+    ) -> Self {
+        self.optical_vertical_text_alignment_enabled = enabled;
+        self
     }
 
     pub fn clamped(self) -> Self {
         Self {
             feathering_enabled: self.feathering_enabled,
             feather_width: self.feather_width.max(0.0),
+            optical_vertical_text_alignment_enabled: self.optical_vertical_text_alignment_enabled,
         }
     }
 }
@@ -913,6 +924,20 @@ mod tests {
         assert_eq!(
             window_render_options(window_id),
             Some(WindowRenderOptions::new(false, 0.0))
+        );
+
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(true, 1.0)
+                .with_optical_vertical_text_alignment_enabled(false),
+        );
+
+        assert_eq!(
+            window_render_options(window_id),
+            Some(
+                WindowRenderOptions::new(true, 1.0)
+                    .with_optical_vertical_text_alignment_enabled(false)
+            )
         );
 
         clear_window_performance_snapshot(window_id);

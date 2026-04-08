@@ -5,7 +5,7 @@ use sui_core::{
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
     ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
-    WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
+    WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor, window_render_options,
 };
 use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
 use sui_text::{TextMeasurement, TextStyle};
@@ -81,6 +81,7 @@ pub struct TabBar {
     hovered: Option<usize>,
     pressed: Option<usize>,
     gap: f32,
+    label_measurements: Vec<TextMeasurement>,
     widths: Vec<f32>,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
 }
@@ -95,6 +96,7 @@ impl TabBar {
             hovered: None,
             pressed: None,
             gap: 6.0,
+            label_measurements: Vec::new(),
             widths: Vec::new(),
             on_change: None,
         }
@@ -300,13 +302,15 @@ impl Widget for TabBar {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let style = self.theme.body_text_style();
-        self.widths = self
+        self.label_measurements = self
             .tabs
             .iter()
-            .map(|tab| {
-                let measurement = measure_text(ctx, tab, &style);
-                (measurement.width + 28.0).max(96.0)
-            })
+            .map(|tab| measure_text(ctx, tab, &style))
+            .collect();
+        self.widths = self
+            .label_measurements
+            .iter()
+            .map(|measurement| (measurement.width + 28.0).max(96.0))
             .collect();
 
         let width =
@@ -359,7 +363,17 @@ impl Widget for TabBar {
             }
 
             ctx.draw_text(
-                inset_rect(rect, Insets::all(10.0)),
+                centered_text_rect(
+                    ctx,
+                    rect,
+                    Insets::all(10.0),
+                    self.label_measurements.get(index).copied(),
+                    if selected {
+                        self.theme.text_style(palette.border_focus).line_height
+                    } else {
+                        self.theme.body_text_style().line_height
+                    },
+                ),
                 tab.clone(),
                 if selected {
                     self.theme.text_style(palette.border_focus)
@@ -409,6 +423,7 @@ pub struct Tabs {
     selected: usize,
     hovered: Option<usize>,
     pressed: Option<usize>,
+    label_measurements: Vec<TextMeasurement>,
     widths: Vec<f32>,
     gap: f32,
     panel_gap: f32,
@@ -426,6 +441,7 @@ impl Tabs {
             selected: 0,
             hovered: None,
             pressed: None,
+            label_measurements: Vec::new(),
             widths: Vec::new(),
             gap: 6.0,
             panel_gap: 12.0,
@@ -637,10 +653,15 @@ impl Widget for Tabs {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.theme.body_text_style();
-        self.widths = self
+        self.label_measurements = self
             .labels
             .iter()
-            .map(|label| (measure_text(ctx, label, &text_style).width + 28.0).max(96.0))
+            .map(|label| measure_text(ctx, label, &text_style))
+            .collect();
+        self.widths = self
+            .label_measurements
+            .iter()
+            .map(|measurement| (measurement.width + 28.0).max(96.0))
             .collect();
 
         let header_width = self.widths.iter().sum::<f32>()
@@ -749,7 +770,17 @@ impl Widget for Tabs {
             }
 
             ctx.draw_text(
-                inset_rect(rect, Insets::all(10.0)),
+                centered_text_rect(
+                    ctx,
+                    rect,
+                    Insets::all(10.0),
+                    self.label_measurements.get(index).copied(),
+                    if selected {
+                        self.theme.text_style(palette.border_focus).line_height
+                    } else {
+                        self.theme.body_text_style().line_height
+                    },
+                ),
                 label.clone(),
                 if selected {
                     self.theme.text_style(palette.border_focus)
@@ -1145,6 +1176,9 @@ impl Tooltip {
             width: 120.0,
             height: self.theme.typography.body_line_height,
             bounds: Rect::new(0.0, 0.0, 120.0, self.theme.typography.body_line_height),
+            ascent: self.theme.typography.body_font_size,
+            descent: 0.0,
+            cap_height: Some(self.theme.typography.body_font_size),
         });
         let width = (measurement.width + 24.0).max(96.0);
         let height = measurement
@@ -2475,6 +2509,9 @@ fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeas
             width: 0.0,
             height: style.line_height,
             bounds: Rect::new(0.0, 0.0, 0.0, style.line_height),
+            ascent: style.font_size,
+            descent: 0.0,
+            cap_height: Some(style.font_size),
         })
 }
 
@@ -2571,6 +2608,49 @@ fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
     ctx.dpi().physical_pixels_to_logical(value)
 }
 
+fn centered_text_rect(
+    ctx: &PaintCtx,
+    bounds: Rect,
+    padding: Insets,
+    measurement: Option<TextMeasurement>,
+    line_height: f32,
+) -> Rect {
+    let rect = Rect::new(
+        bounds.x() + padding.left,
+        bounds.y(),
+        (bounds.width() - padding.left - padding.right).max(0.0),
+        bounds.height(),
+    );
+    let Some(measurement) = measurement else {
+        return rect;
+    };
+
+    let width = measurement.width.min(rect.width());
+    let height = line_height.max(measurement.height).min(rect.height());
+    let optical_centering = window_render_options(ctx.window_id())
+        .map(|options| options.optical_vertical_text_alignment_enabled)
+        .unwrap_or(true);
+    let top = if optical_centering {
+        -measurement.cap_height.unwrap_or(measurement.ascent)
+    } else {
+        -measurement.ascent
+    };
+    let bottom = if optical_centering {
+        measurement.descent * 0.5
+    } else {
+        measurement.descent
+    };
+    let visual_center = (top + bottom) * 0.5;
+    let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
+
+    Rect::new(
+        rect.x() + ((rect.width() - width) * 0.5),
+        baseline - measurement.ascent,
+        width,
+        height,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
@@ -2585,7 +2665,8 @@ mod tests {
     use sui_layout::Constraints;
     use sui_runtime::{
         Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx,
-        Widget, WindowBuilder,
+        Widget, WindowBuilder, WindowRenderOptions, clear_window_render_options,
+        set_window_render_options,
     };
     use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneLayerDescriptor};
 
@@ -2681,6 +2762,45 @@ mod tests {
     }
 
     #[test]
+    fn tab_bar_centers_tab_labels_within_each_tab() {
+        let theme = crate::DefaultTheme::default();
+        let optical = render(TabBar::new("Main tabs").tabs(["A", "B"]));
+        let optical_label = optical
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                sui_scene::SceneCommand::DrawText(text) => Some(text.rect),
+                _ => None,
+            })
+            .expect("tab bar label draw command present");
+
+        let (mut runtime, window_id) = build_runtime(TabBar::new("Main tabs").tabs(["A", "B"]));
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(true, 1.0)
+                .with_optical_vertical_text_alignment_enabled(false),
+        );
+        let geometric = runtime.render(window_id).unwrap();
+        clear_window_render_options(window_id);
+        let geometric_label = geometric
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                sui_scene::SceneCommand::DrawText(text) => Some(text.rect),
+                _ => None,
+            })
+            .expect("geometric tab bar label draw command present");
+
+        assert!(optical_label.x() > 10.0);
+        assert!(optical_label.y() < geometric_label.y());
+        assert!(optical_label.max_y() <= theme.metrics.min_height);
+    }
+
+    #[test]
     fn tabs_render_only_the_active_panel_after_switching() {
         let first = Rc::new(RefCell::new(PanelCounters::default()));
         let second = Rc::new(RefCell::new(PanelCounters::default()));
@@ -2724,6 +2844,65 @@ mod tests {
         assert_eq!(second.borrow().semantics, second_before_switch.semantics + 1);
         assert!(!after_switch.semantics.iter().any(|node| node.name.as_deref() == Some("first-panel")));
         assert!(after_switch.semantics.iter().any(|node| node.name.as_deref() == Some("second-panel")));
+    }
+
+    #[test]
+    fn tabs_center_header_labels_within_each_tab() {
+        let theme = crate::DefaultTheme::default();
+        let optical = render(
+            Tabs::new("Main tabs")
+                .tab(
+                    "A",
+                    SpyPanel::new("first-panel", Rc::new(RefCell::new(PanelCounters::default()))),
+                )
+                .tab(
+                    "B",
+                    SpyPanel::new("second-panel", Rc::new(RefCell::new(PanelCounters::default()))),
+                ),
+        );
+        let optical_label = optical
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                sui_scene::SceneCommand::DrawText(text) => Some(text.rect),
+                _ => None,
+            })
+            .expect("tabs header label draw command present");
+
+        let (mut runtime, window_id) = build_runtime(
+            Tabs::new("Main tabs")
+                .tab(
+                    "A",
+                    SpyPanel::new("first-panel", Rc::new(RefCell::new(PanelCounters::default()))),
+                )
+                .tab(
+                    "B",
+                    SpyPanel::new("second-panel", Rc::new(RefCell::new(PanelCounters::default()))),
+                ),
+        );
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(true, 1.0)
+                .with_optical_vertical_text_alignment_enabled(false),
+        );
+        let geometric = runtime.render(window_id).unwrap();
+        clear_window_render_options(window_id);
+        let geometric_label = geometric
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                sui_scene::SceneCommand::DrawText(text) => Some(text.rect),
+                _ => None,
+            })
+            .expect("geometric tabs header label draw command present");
+
+        assert!(optical_label.x() > 10.0);
+        assert!(optical_label.y() < geometric_label.y());
+        assert!(optical_label.max_y() <= theme.metrics.min_height);
     }
 
     #[test]

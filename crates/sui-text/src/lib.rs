@@ -144,6 +144,9 @@ pub struct TextMeasurement {
     pub width: f32,
     pub height: f32,
     pub bounds: Rect,
+    pub ascent: f32,
+    pub descent: f32,
+    pub cap_height: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -507,6 +510,10 @@ impl TextSystem {
         let scale = style.font_size / units_per_em;
         let ascent = f32::from(rustybuzz_face.ascender()) * scale;
         let descent = f32::from(rustybuzz_face.descender().abs()) * scale;
+        let cap_height = ttf_parser::Face::parse(face.bytes(), face.face_index())
+            .ok()
+            .and_then(|face| face.capital_height())
+            .map(|height| f32::from(height) * scale);
         let natural_line_height = f32::from(rustybuzz_face.height().abs()) * scale;
         let line_height = style
             .line_height
@@ -630,6 +637,9 @@ impl TextSystem {
                     width: measured_width,
                     height: block_height.max(ascent + descent),
                     bounds,
+                    ascent,
+                    descent,
+                    cap_height,
                 },
                 glyphs,
                 lines,
