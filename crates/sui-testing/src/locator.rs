@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
-    PointerEvent, PointerEventKind, Rect, Result, ScrollDelta, SemanticsNode, Vector,
-    WidgetId, WindowId,
+    PointerEvent, PointerEventKind, Rect, Result, ScrollDelta, SemanticsNode, Vector, WidgetId,
+    WindowId,
 };
 use sui_platform::AccessibilitySnapshot;
 
@@ -290,7 +290,7 @@ impl Locator {
                 return Err(Error::new(format!(
                     "locator matched {} nodes instead of exactly one",
                     nodes.len()
-                )))
+                )));
             }
         };
         let screenshot = harness.capture_screenshot(self.window_id)?;

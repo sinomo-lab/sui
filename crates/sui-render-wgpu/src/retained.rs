@@ -181,7 +181,8 @@ impl TileEntry {
 
 impl RetainedTileVertexArena {
     pub(crate) fn has_capacity(&self, scene_vertices: usize, clip_vertices: usize) -> bool {
-        self.scene_capacity_vertices >= scene_vertices && self.clip_capacity_vertices >= clip_vertices
+        self.scene_capacity_vertices >= scene_vertices
+            && self.clip_capacity_vertices >= clip_vertices
     }
 
     pub(crate) fn ensure_capacity(
@@ -194,25 +195,15 @@ impl RetainedTileVertexArena {
             return;
         }
 
-        let scene_capacity = grow_retained_tile_vertex_capacity(
-            self.scene_capacity_vertices,
-            scene_vertices,
-        );
-        let clip_capacity = grow_retained_tile_vertex_capacity(
-            self.clip_capacity_vertices,
-            clip_vertices,
-        );
+        let scene_capacity =
+            grow_retained_tile_vertex_capacity(self.scene_capacity_vertices, scene_vertices);
+        let clip_capacity =
+            grow_retained_tile_vertex_capacity(self.clip_capacity_vertices, clip_vertices);
 
-        self.scene_buffer = create_empty_vertex_buffer(
-            device,
-            "SUI retained tile scene arena",
-            scene_capacity,
-        );
-        self.clip_buffer = create_empty_vertex_buffer(
-            device,
-            "SUI retained tile clip arena",
-            clip_capacity,
-        );
+        self.scene_buffer =
+            create_empty_vertex_buffer(device, "SUI retained tile scene arena", scene_capacity);
+        self.clip_buffer =
+            create_empty_vertex_buffer(device, "SUI retained tile clip arena", clip_capacity);
         self.scene_capacity_vertices = scene_capacity;
         self.clip_capacity_vertices = clip_capacity;
     }
@@ -860,10 +851,8 @@ impl RetainedCompositorState {
             }
 
             if let Some(cached_root) = cached_tile_owners.get(&update.layer_id).copied().flatten() {
-                let cached_root_is_scroll = snapshot
-                    .layers
-                    .get(&cached_root)
-                    .is_some_and(|layer| {
+                let cached_root_is_scroll =
+                    snapshot.layers.get(&cached_root).is_some_and(|layer| {
                         layer.descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
                     });
                 if update.kind == SceneLayerUpdateKind::Transform
@@ -871,9 +860,8 @@ impl RetainedCompositorState {
                     && cached_root_is_scroll
                     && !packet_dirty_layers.contains(&cached_root)
                 {
-                    let translation_delta = previous_layers
-                        .get(&update.layer_id)
-                        .and_then(|previous| {
+                    let translation_delta =
+                        previous_layers.get(&update.layer_id).and_then(|previous| {
                             snapshot.layers.get(&update.layer_id).and_then(|current| {
                                 descriptor_translation_delta(
                                     &previous.descriptor,
@@ -934,7 +922,10 @@ impl RetainedCompositorState {
             }
 
             translate_cached_layer_tiles(&mut self.tiles, cached_root, delta, frame.viewport);
-            if let Some(descriptor) = snapshot.layers.get(&cached_root).map(|layer| &layer.descriptor)
+            if let Some(descriptor) = snapshot
+                .layers
+                .get(&cached_root)
+                .map(|layer| &layer.descriptor)
             {
                 merge_damage_rect(
                     &mut tiled_damage,
@@ -1214,8 +1205,10 @@ impl RetainedCompositorState {
             match item {
                 CompositionItem::Packet(packet_id) => {
                     if let Some(packet) = self.packets.get(packet_id) {
-                        if composition_phase_for_effect_node(packet.initial_state.effect_node, &self.effects)
-                            != phase
+                        if composition_phase_for_effect_node(
+                            packet.initial_state.effect_node,
+                            &self.effects,
+                        ) != phase
                         {
                             continue;
                         }
@@ -1265,8 +1258,10 @@ impl RetainedCompositorState {
                                 )?;
                             }
                             RetainedLayerRenderMode::CachedTiles => {
-                                let layer_phase =
-                                    composition_phase_for_effect_node(layer.effect_node, &self.effects);
+                                let layer_phase = composition_phase_for_effect_node(
+                                    layer.effect_node,
+                                    &self.effects,
+                                );
                                 if layer_phase != phase {
                                     self.append_items_for_phase(
                                         &layer.items,
@@ -1310,8 +1305,10 @@ impl RetainedCompositorState {
             match item {
                 CompositionItem::Packet(packet_id) => {
                     if let Some(packet) = self.packets.get(packet_id) {
-                        if composition_phase_for_effect_node(packet.initial_state.effect_node, &self.effects)
-                            != phase
+                        if composition_phase_for_effect_node(
+                            packet.initial_state.effect_node,
+                            &self.effects,
+                        ) != phase
                         {
                             continue;
                         }
@@ -1362,8 +1359,10 @@ impl RetainedCompositorState {
                                 )?;
                             }
                             RetainedLayerRenderMode::CachedTiles => {
-                                let layer_phase =
-                                    composition_phase_for_effect_node(layer.effect_node, &self.effects);
+                                let layer_phase = composition_phase_for_effect_node(
+                                    layer.effect_node,
+                                    &self.effects,
+                                );
                                 if layer_phase != phase {
                                     self.append_items_to_submission_for_phase(
                                         &layer.items,
@@ -1652,8 +1651,9 @@ fn composition_phase_for_effect_node(
             (CompositionPhase::Effect, _) | (_, sui_scene::LayerCompositionMode::Effect) => {
                 CompositionPhase::Effect
             }
-            (CompositionPhase::Overlay, _)
-            | (_, sui_scene::LayerCompositionMode::Overlay) => CompositionPhase::Overlay,
+            (CompositionPhase::Overlay, _) | (_, sui_scene::LayerCompositionMode::Overlay) => {
+                CompositionPhase::Overlay
+            }
             _ => phase,
         };
 

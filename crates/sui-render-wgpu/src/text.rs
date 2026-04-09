@@ -389,7 +389,8 @@ impl PathMeshCache {
                     self.misses += 1;
                 }
                 let lyon_path = build_lyon_path(path, transform);
-                let mesh = feathering::build_local_stroke_mesh(&lyon_path, line_width, feather_width)?;
+                let mesh =
+                    feathering::build_local_stroke_mesh(&lyon_path, line_width, feather_width)?;
                 Ok(entry.insert(mesh))
             }
         }

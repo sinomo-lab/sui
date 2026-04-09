@@ -1,9 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui::{
-    InvalidationKind, InvalidationRequest, InvalidationTarget, WidgetPodMutVisitor,
-    WidgetPodVisitor, TextCoveragePolicy, WgpuRenderer, WindowEvent,
-    WindowTextRenderPolicy, prelude::*,
+    InvalidationKind, InvalidationRequest, InvalidationTarget, TextCoveragePolicy, WgpuRenderer,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowTextRenderPolicy, prelude::*,
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_widget_book_gallery,
@@ -23,12 +22,8 @@ const OPTICAL_TEXT_CENTERING_TOGGLE_LABEL: &str = "Enable optical vertical text 
 const GLYPH_PIXEL_ALIGNMENT_TOGGLE_LABEL: &str = "Snap atlas glyphs to physical pixels";
 const TEXT_RENDER_POLICY_NAME: &str = "Text render policy";
 const TEXT_RENDER_GAMMA_NAME: &str = "Gamma exponent";
-const TEXT_RENDER_POLICY_OPTIONS: [&str; 4] = [
-    "Automatic",
-    "Linear",
-    "Gamma",
-    "TwoCoverageMinusCoverageSq",
-];
+const TEXT_RENDER_POLICY_OPTIONS: [&str; 4] =
+    ["Automatic", "Linear", "Gamma", "TwoCoverageMinusCoverageSq"];
 
 fn window_text_render_policy_from_renderer(policy: TextCoveragePolicy) -> WindowTextRenderPolicy {
     match policy.normalized() {
@@ -74,14 +69,12 @@ struct RenderSettingsTab {
 impl RenderSettingsTab {
     fn new() -> Self {
         let renderer = WgpuRenderer::new();
-        let initial = WindowRenderOptions::new(
-            renderer.feathering_enabled(),
-            renderer.feather_width(),
-        )
-        .with_glyph_pixel_alignment_enabled(renderer.glyph_pixel_alignment_enabled())
-        .with_text_render_policy(window_text_render_policy_from_renderer(
-            renderer.text_coverage_policy(),
-        ));
+        let initial =
+            WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
+                .with_glyph_pixel_alignment_enabled(renderer.glyph_pixel_alignment_enabled())
+                .with_text_render_policy(window_text_render_policy_from_renderer(
+                    renderer.text_coverage_policy(),
+                ));
         let state = Rc::new(RefCell::new(initial));
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
@@ -253,18 +246,20 @@ fn build_dev_application() -> Application {
     let mut app = Application::new();
     register_widget_book_images(&mut app);
     app.window(
-        WindowBuilder::new().title(WINDOW_TITLE).root(LivePerformanceRoot::new(
-            WINDOW_TITLE,
-            WINDOW_DESCRIPTION,
-            Tabs::new(DEV_TABS_NAME)
-                .selected(0)
-                .tab(
-                    WIDGET_BOOK_TAB_LABEL,
-                    build_widget_book_gallery(widget_book_state),
-                )
-                .tab(BUTTON_GRID_TAB_LABEL, build_button_grid_benchmark())
-                .tab(SETTINGS_TAB_LABEL, build_render_settings_tab()),
-        )),
+        WindowBuilder::new()
+            .title(WINDOW_TITLE)
+            .root(LivePerformanceRoot::new(
+                WINDOW_TITLE,
+                WINDOW_DESCRIPTION,
+                Tabs::new(DEV_TABS_NAME)
+                    .selected(0)
+                    .tab(
+                        WIDGET_BOOK_TAB_LABEL,
+                        build_widget_book_gallery(widget_book_state),
+                    )
+                    .tab(BUTTON_GRID_TAB_LABEL, build_button_grid_benchmark())
+                    .tab(SETTINGS_TAB_LABEL, build_render_settings_tab()),
+            )),
     )
 }
 

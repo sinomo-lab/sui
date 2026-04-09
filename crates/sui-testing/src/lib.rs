@@ -37,13 +37,13 @@ mod tests {
 
     use crate::TestApp;
     use sui_core::{
-        Color, Event, ImeEvent, KeyState, PointerEventKind, Result, SemanticsAction,
-        SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken, Vector, WakeEvent,
+        Color, Event, ImeEvent, KeyState, PointerEventKind, Result, SemanticsAction, SemanticsNode,
+        SemanticsRole, SemanticsValue, Size, TimerToken, Vector, WakeEvent,
     };
     use sui_layout::Constraints;
     use sui_runtime::{
-        Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
-        Widget, WidgetChildren, WidgetPodVisitor, WindowBuilder,
+        Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+        WidgetChildren, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::StrokeStyle;
 
@@ -570,7 +570,9 @@ mod tests {
                     let delta = pointer
                         .scroll_delta
                         .map(|delta| match delta {
-                            sui_core::ScrollDelta::Lines(delta) => Vector::new(delta.x * 40.0, delta.y * 40.0),
+                            sui_core::ScrollDelta::Lines(delta) => {
+                                Vector::new(delta.x * 40.0, delta.y * 40.0)
+                            }
                             sui_core::ScrollDelta::Pixels(delta) => delta,
                         })
                         .unwrap_or(pointer.delta);
@@ -601,12 +603,7 @@ mod tests {
         fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: sui_core::Rect) {
             self.child.arrange(
                 ctx,
-                sui_core::Rect::new(
-                    bounds.x(),
-                    bounds.y() - self.offset_y,
-                    160.0,
-                    200.0,
-                ),
+                sui_core::Rect::new(bounds.x(), bounds.y() - self.offset_y, 160.0, 200.0),
             );
         }
 
@@ -618,7 +615,8 @@ mod tests {
         }
 
         fn semantics(&self, ctx: &mut SemanticsCtx) {
-            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
+            let mut node =
+                SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
             node.name = Some("Scroll Harness".to_string());
             node.actions = vec![SemanticsAction::Focus];
             node.state.focused = ctx.is_focused();
@@ -658,7 +656,11 @@ mod tests {
         }
 
         fn semantics(&self, ctx: &mut SemanticsCtx) {
-            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::GenericContainer, ctx.bounds());
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
             node.name = Some("Scroll Content".to_string());
             ctx.push(node);
         }
@@ -721,7 +723,9 @@ mod tests {
     fn locator_scroll_updates_child_layout_and_screenshot() -> Result<()> {
         let app = build_scroll_app()?;
         let window = app.main_window()?;
-        let scroll = window.get_by_role(SemanticsRole::ScrollView).with_name("Scroll Harness");
+        let scroll = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name("Scroll Harness");
 
         let before = scroll.capture_screenshot()?;
         let before_snapshot = window.snapshot()?;

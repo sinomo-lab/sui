@@ -1203,8 +1203,7 @@ impl Widget for Table {
                 }
             }
             Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Scroll
-                    && body.contains(pointer.position) =>
+                if pointer.kind == PointerEventKind::Scroll && body.contains(pointer.position) =>
             {
                 let delta = pointer
                     .scroll_delta
@@ -1822,7 +1821,10 @@ fn chevron_path(rect: Rect) -> Path {
 
 fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focused: bool) {
     let palette = theme.palette;
-    ctx.fill(rounded_rect_path(rect, theme.metrics.corner_radius), palette.surface);
+    ctx.fill(
+        rounded_rect_path(rect, theme.metrics.corner_radius),
+        palette.surface,
+    );
     ctx.stroke(
         rounded_rect_path(rect, theme.metrics.corner_radius),
         if focused {
@@ -1973,14 +1975,14 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Breadcrumb, BreadcrumbItem, DefaultTheme, ListItem, ListView, Table, TableColumn,
-        TableRow, TreeItem, TreeView,
+        Breadcrumb, BreadcrumbItem, DefaultTheme, ListItem, ListView, Table, TableColumn, TableRow,
+        TreeItem, TreeView,
     };
     use crate::{ScrollView, SizedBox, Stack};
     use sui_core::{
         Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta,
-        SemanticsRole, SemanticsValue, Size, Vector,
+        PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsRole,
+        SemanticsValue, Size, Vector,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
     use sui_scene::SceneCommand;
@@ -2159,12 +2161,9 @@ mod tests {
 
     #[test]
     fn list_view_detail_text_does_not_overlap_primary_label() {
-        let output = render(
-            SizedBox::new().width(320.0).height(120.0).with_child(
-                ListView::new("Assets")
-                    .item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
-            ),
-        );
+        let output = render(SizedBox::new().width(320.0).height(120.0).with_child(
+            ListView::new("Assets").item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
+        ));
 
         let label = text_rects_for(&output, "Hero texture")[0];
         let detail = text_rects_for(&output, "2048 x 2048 RGBA")[0];
@@ -2174,12 +2173,9 @@ mod tests {
 
     #[test]
     fn tree_view_detail_text_does_not_overlap_primary_label() {
-        let output = render(
-            SizedBox::new().width(320.0).height(120.0).with_child(
-                TreeView::new("Scene")
-                    .item(TreeItem::new("Environment").detail("Visible")),
-            ),
-        );
+        let output = render(SizedBox::new().width(320.0).height(120.0).with_child(
+            TreeView::new("Scene").item(TreeItem::new("Environment").detail("Visible")),
+        ));
 
         let label = text_rects_for(&output, "Environment")[0];
         let detail = text_rects_for(&output, "Visible")[0];
@@ -2208,24 +2204,26 @@ mod tests {
     #[test]
     fn non_scrollable_table_allows_wheel_to_bubble_to_parent_scroll_view() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(220.0, 120.0)).with_child(ScrollView::vertical(
-                Stack::vertical()
-                    .with_child(SizedBox::new().width(220.0).height(80.0))
-                    .with_child(
-                        SizedBox::new().width(220.0).height(120.0).with_child(
-                            Table::new("Materials")
-                                .columns([
-                                    TableColumn::new("Name"),
-                                    TableColumn::new("Passes").width(80.0),
-                                ])
-                                .rows([
-                                    TableRow::new(["Glass", "3"]),
-                                    TableRow::new(["Water", "4"]),
-                                ]),
-                        ),
-                    )
-                    .with_child(SizedBox::new().width(220.0).height(160.0)),
-            )),
+            SizedBox::new()
+                .size(Size::new(220.0, 120.0))
+                .with_child(ScrollView::vertical(
+                    Stack::vertical()
+                        .with_child(SizedBox::new().width(220.0).height(80.0))
+                        .with_child(
+                            SizedBox::new().width(220.0).height(120.0).with_child(
+                                Table::new("Materials")
+                                    .columns([
+                                        TableColumn::new("Name"),
+                                        TableColumn::new("Passes").width(80.0),
+                                    ])
+                                    .rows([
+                                        TableRow::new(["Glass", "3"]),
+                                        TableRow::new(["Water", "4"]),
+                                    ]),
+                            ),
+                        )
+                        .with_child(SizedBox::new().width(220.0).height(160.0)),
+                )),
         );
 
         let _ = runtime.render(window_id)?;
@@ -2296,13 +2294,11 @@ mod tests {
 
     #[test]
     fn breadcrumb_paints_segment_labels_with_line_height() {
-        let output = render(
-            Breadcrumb::new("Path").items([
-                BreadcrumbItem::new("Workspace"),
-                BreadcrumbItem::new("Project"),
-                BreadcrumbItem::new("Scene"),
-            ]),
-        );
+        let output = render(Breadcrumb::new("Path").items([
+            BreadcrumbItem::new("Workspace"),
+            BreadcrumbItem::new("Project"),
+            BreadcrumbItem::new("Scene"),
+        ]));
 
         let label = text_rects_for(&output, "Workspace")[0];
         let line_height = DefaultTheme::default().body_text_style().line_height;

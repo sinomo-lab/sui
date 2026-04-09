@@ -280,21 +280,22 @@ impl HeadlessPlatform {
                 let output = runtime.render(window_id)?;
                 let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
                 let renderer_started = Instant::now();
-                let diagnostics_enabled = window_scene_statistics_detail_mode(window_id).is_detailed();
+                let diagnostics_enabled =
+                    window_scene_statistics_detail_mode(window_id).is_detailed();
                 self.renderer
                     .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 let render_options = window_render_options(window_id);
-                self.renderer.set_runtime_feathering_override(render_options.map(|options| {
-                    FeatheringOptions::new(options.feathering_enabled, options.feather_width)
-                }));
                 self.renderer
-                    .set_runtime_text_coverage_policy_override(render_options.map(|options| {
-                        map_window_text_render_policy(options.text_render_policy)
+                    .set_runtime_feathering_override(render_options.map(|options| {
+                        FeatheringOptions::new(options.feathering_enabled, options.feather_width)
                     }));
-                self.renderer
-                    .set_runtime_glyph_pixel_alignment_override(render_options.map(|options| {
-                        options.glyph_pixel_alignment_enabled
-                    }));
+                self.renderer.set_runtime_text_coverage_policy_override(
+                    render_options
+                        .map(|options| map_window_text_render_policy(options.text_render_policy)),
+                );
+                self.renderer.set_runtime_glyph_pixel_alignment_override(
+                    render_options.map(|options| options.glyph_pixel_alignment_enabled),
+                );
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
                 let presented_at_ms = self.current_time() * 1000.0;
@@ -500,7 +501,7 @@ mod tests {
         let _ = platform.run(&mut runtime)?;
 
         assert_eq!(counters.borrow().events, 1);
-    assert_eq!(counters.borrow().paints, 2);
+        assert_eq!(counters.borrow().paints, 2);
         assert_eq!(platform.renderer().frames_rendered(), 3);
         assert!(!platform.has_pending_events());
         assert!(!runtime.needs_render(window_id)?);

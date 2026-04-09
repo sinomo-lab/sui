@@ -10,18 +10,17 @@ use std::{
 
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
-    PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta, Size,
-    Vector, WindowEvent, WindowId,
+    PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta, Size, Vector,
+    WindowEvent, WindowId,
 };
 use sui_platform::{AccessibilitySnapshot, HeadlessPlatform};
 use sui_render_wgpu::WgpuRenderer;
 use sui_runtime::{
-    CacheMetrics, FocusState, FramePhase, FramePhaseSample, RenderOutput,
-    PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, Runtime, SceneStatistics,
-    TextCacheDiagnostics, WidgetGraphSnapshot, WindowPerformanceSnapshot,
-    clear_window_performance_snapshots, publish_window_performance_snapshot,
-    window_performance_text_caches, window_performance_snapshot,
-    window_scene_statistics_detail_mode,
+    CacheMetrics, FocusState, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
+    RenderOutput, RendererSubmissionDiagnostics, Runtime, SceneStatistics, TextCacheDiagnostics,
+    WidgetGraphSnapshot, WindowPerformanceSnapshot, clear_window_performance_snapshots,
+    publish_window_performance_snapshot, window_performance_snapshot,
+    window_performance_text_caches, window_scene_statistics_detail_mode,
 };
 use winit::{
     application::ApplicationHandler,
@@ -64,12 +63,21 @@ struct LiveHarness {
 #[derive(Debug, Clone)]
 enum HostInputEvent {
     Focused(bool),
-    Resized { size: Size },
+    Resized {
+        size: Size,
+    },
     CursorEntered,
     CursorLeft,
-    CursorMoved { position: Point },
-    MouseInput { pressed: bool, button: PointerButton },
-    MouseWheel { delta: ScrollDelta },
+    CursorMoved {
+        position: Point,
+    },
+    MouseInput {
+        pressed: bool,
+        button: PointerButton,
+    },
+    MouseWheel {
+        delta: ScrollDelta,
+    },
     Keyboard {
         key: String,
         code: String,
@@ -174,14 +182,17 @@ impl Harness {
     where
         F: FnOnce() -> Result<Runtime> + Send + 'static,
     {
-        let guard = LIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = LIVE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let proxy = harness_service().proxy.clone();
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        proxy.send_event(HarnessCommand::Launch {
-            build_runtime: Box::new(build_runtime),
-            reply: reply_tx,
-        })
-        .map_err(|_| Error::new("live test harness service is unavailable"))?;
+        proxy
+            .send_event(HarnessCommand::Launch {
+                build_runtime: Box::new(build_runtime),
+                reply: reply_tx,
+            })
+            .map_err(|_| Error::new("live test harness service is unavailable"))?;
         recv_result(&reply_rx, "live harness launch", Duration::from_secs(5))?;
 
         Ok(Self {
@@ -206,28 +217,32 @@ impl Harness {
             HarnessBackend::Headless(harness) => harness.runtime.window_ids(),
             HarnessBackend::Live(harness) => harness
                 .list_windows()
-                .map(|windows| windows.into_iter().map(|(window_id, _)| window_id).collect())
+                .map(|windows| {
+                    windows
+                        .into_iter()
+                        .map(|(window_id, _)| window_id)
+                        .collect()
+                })
                 .unwrap_or_default(),
         }
     }
 
     pub(crate) fn window_id_by_title(&self, title: &str) -> Option<WindowId> {
         match &self.backend {
-            HarnessBackend::Headless(harness) => harness.runtime.window_ids().into_iter().find(|window_id| {
-                harness
-                    .runtime
-                    .window_title(*window_id)
-                    .is_ok_and(|window_title| window_title == title)
+            HarnessBackend::Headless(harness) => {
+                harness.runtime.window_ids().into_iter().find(|window_id| {
+                    harness
+                        .runtime
+                        .window_title(*window_id)
+                        .is_ok_and(|window_title| window_title == title)
+                })
+            }
+            HarnessBackend::Live(harness) => harness.list_windows().ok().and_then(|windows| {
+                windows
+                    .into_iter()
+                    .find(|(_, window_title)| window_title == title)
+                    .map(|(window_id, _)| window_id)
             }),
-            HarnessBackend::Live(harness) => harness
-                .list_windows()
-                .ok()
-                .and_then(|windows| {
-                    windows
-                        .into_iter()
-                        .find(|(_, window_title)| window_title == title)
-                        .map(|(window_id, _)| window_id)
-                }),
         }
     }
 
@@ -361,14 +376,13 @@ impl Harness {
                     focused_widget: None,
                     nodes: Vec::new(),
                 },
-                widget_graph: harness
-                    .runtime
-                    .widget_graph(window_id)
-                    .unwrap_or(WidgetGraphSnapshot {
+                widget_graph: harness.runtime.widget_graph(window_id).unwrap_or(
+                    WidgetGraphSnapshot {
                         root: Default::default(),
                         nodes: Vec::new(),
                         stack_hosts: Vec::new(),
-                    }),
+                    },
+                ),
                 focus_state: harness
                     .runtime
                     .focus_state(window_id)
@@ -387,7 +401,9 @@ impl Harness {
                 };
                 let now = harness.platform.current_time();
                 let delta = (next_wakeup - now).max(0.0);
-                harness.platform.advance_time(delta.min(remaining.as_secs_f64()));
+                harness
+                    .platform
+                    .advance_time(delta.min(remaining.as_secs_f64()));
                 Ok(true)
             }
             HarnessBackend::Live(_) => {
@@ -427,7 +443,11 @@ impl LiveHarness {
         self.proxy
             .send_event(HarnessCommand::ListWindows { reply: reply_tx })
             .map_err(|_| Error::new("live harness service is unavailable"))?;
-        recv_result(&reply_rx, "live harness window listing", Duration::from_secs(5))
+        recv_result(
+            &reply_rx,
+            "live harness window listing",
+            Duration::from_secs(5),
+        )
     }
 
     fn snapshot(&self, window_id: WindowId) -> Result<WindowSnapshot> {
@@ -575,7 +595,8 @@ impl LiveHarnessApp {
             let host_id = window.id();
             let scale_factor = window.scale_factor();
             let size = physical_size_to_logical_size(window.inner_size(), scale_factor);
-            self.renderer.register_window(window_id, Arc::clone(&window))?;
+            self.renderer
+                .register_window(window_id, Arc::clone(&window))?;
 
             self.host_to_runtime.insert(host_id, window_id);
             self.windows.insert(
@@ -603,7 +624,11 @@ impl LiveHarnessApp {
                 }),
             )?;
 
-            self.process_event(event_loop, window_id, Event::Window(WindowEvent::Resized(size)))?;
+            self.process_event(
+                event_loop,
+                window_id,
+                Event::Window(WindowEvent::Resized(size)),
+            )?;
         }
 
         Ok(())
@@ -785,7 +810,8 @@ impl LiveHarnessApp {
                 let output = self.runtime.render(window_id)?;
                 let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
                 let renderer_started = Instant::now();
-                let diagnostics_enabled = window_scene_statistics_detail_mode(window_id).is_detailed();
+                let diagnostics_enabled =
+                    window_scene_statistics_detail_mode(window_id).is_detailed();
                 self.renderer
                     .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 self.renderer.render(&output.frame)?;
@@ -902,7 +928,11 @@ impl LiveHarnessApp {
     ) -> Result<()> {
         match event {
             HostInputEvent::Resized { size } => {
-                self.process_event(event_loop, window_id, Event::Window(WindowEvent::Resized(size)))?;
+                self.process_event(
+                    event_loop,
+                    window_id,
+                    Event::Window(WindowEvent::Resized(size)),
+                )?;
             }
             HostInputEvent::Focused(focused) => self.process_event(
                 event_loop,
@@ -914,7 +944,9 @@ impl LiveHarnessApp {
                     .windows
                     .get(&window_id)
                     .map(|window| window.pointer)
-                    .ok_or_else(|| Error::new(format!("window {} is not registered", window_id.get())))?;
+                    .ok_or_else(|| {
+                        Error::new(format!("window {} is not registered", window_id.get()))
+                    })?;
                 self.process_event(
                     event_loop,
                     window_id,
@@ -937,7 +969,9 @@ impl LiveHarnessApp {
                     .windows
                     .get(&window_id)
                     .map(|window| window.pointer)
-                    .ok_or_else(|| Error::new(format!("window {} is not registered", window_id.get())))?;
+                    .ok_or_else(|| {
+                        Error::new(format!("window {} is not registered", window_id.get()))
+                    })?;
                 self.process_event(
                     event_loop,
                     window_id,
@@ -956,10 +990,9 @@ impl LiveHarnessApp {
                 )?;
             }
             HostInputEvent::CursorMoved { position } => {
-                let window = self
-                    .windows
-                    .get_mut(&window_id)
-                    .ok_or_else(|| Error::new(format!("window {} is not registered", window_id.get())))?;
+                let window = self.windows.get_mut(&window_id).ok_or_else(|| {
+                    Error::new(format!("window {} is not registered", window_id.get()))
+                })?;
                 let delta = Vector::new(
                     position.x - window.pointer.position.x,
                     position.y - window.pointer.position.y,
@@ -986,10 +1019,9 @@ impl LiveHarnessApp {
                 )?;
             }
             HostInputEvent::MouseInput { pressed, button } => {
-                let window = self
-                    .windows
-                    .get_mut(&window_id)
-                    .ok_or_else(|| Error::new(format!("window {} is not registered", window_id.get())))?;
+                let window = self.windows.get_mut(&window_id).ok_or_else(|| {
+                    Error::new(format!("window {} is not registered", window_id.get()))
+                })?;
                 if pressed {
                     window.pointer.buttons.insert(button);
                 } else {
@@ -1021,10 +1053,9 @@ impl LiveHarnessApp {
                 )?;
             }
             HostInputEvent::MouseWheel { delta } => {
-                let window = self
-                    .windows
-                    .get(&window_id)
-                    .ok_or_else(|| Error::new(format!("window {} is not registered", window_id.get())))?;
+                let window = self.windows.get(&window_id).ok_or_else(|| {
+                    Error::new(format!("window {} is not registered", window_id.get()))
+                })?;
                 self.process_event(
                     event_loop,
                     window_id,
@@ -1094,13 +1125,20 @@ impl LiveHarnessApp {
             .collect())
     }
 
-    fn snapshot(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) -> Result<WindowSnapshot> {
+    fn snapshot(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+    ) -> Result<WindowSnapshot> {
         self.flush_pending_frames(event_loop)?;
 
         let semantics = self.runtime.semantics(window_id)?.to_vec();
         let accessibility = AccessibilitySnapshot {
             window_id,
-            root: semantics.iter().find(|node| node.parent.is_none()).map(|node| node.id),
+            root: semantics
+                .iter()
+                .find(|node| node.parent.is_none())
+                .map(|node| node.id),
             focused_widget: self.runtime.focused_widget(window_id)?,
             nodes: semantics,
         };
@@ -1133,7 +1171,10 @@ impl LiveHarnessApp {
                 let _ = reply.send(self.launch_runtime(event_loop, build_runtime));
             }
             HarnessCommand::Flush { reply } => {
-                let _ = reply.send(self.take_last_error().and_then(|()| self.flush_pending_frames(event_loop)));
+                let _ = reply.send(
+                    self.take_last_error()
+                        .and_then(|()| self.flush_pending_frames(event_loop)),
+                );
             }
             HarnessCommand::Dispatch {
                 window_id,
@@ -1146,13 +1187,22 @@ impl LiveHarnessApp {
                 );
             }
             HarnessCommand::ListWindows { reply } => {
-                let _ = reply.send(self.take_last_error().and_then(|()| self.list_windows(event_loop)));
+                let _ = reply.send(
+                    self.take_last_error()
+                        .and_then(|()| self.list_windows(event_loop)),
+                );
             }
             HarnessCommand::Snapshot { window_id, reply } => {
-                let _ = reply.send(self.take_last_error().and_then(|()| self.snapshot(event_loop, window_id)));
+                let _ = reply.send(
+                    self.take_last_error()
+                        .and_then(|()| self.snapshot(event_loop, window_id)),
+                );
             }
             HarnessCommand::Capture { window_id, reply } => {
-                let _ = reply.send(self.take_last_error().and_then(|()| self.capture(event_loop, window_id)));
+                let _ = reply.send(
+                    self.take_last_error()
+                        .and_then(|()| self.capture(event_loop, window_id)),
+                );
             }
         }
     }
@@ -1261,8 +1311,12 @@ fn harness_service() -> &'static HarnessService {
             }
         });
 
-        let proxy = recv_result(&setup_rx, "live harness service setup", Duration::from_secs(5))
-            .expect("live harness service should start exactly once");
+        let proxy = recv_result(
+            &setup_rx,
+            "live harness service setup",
+            Duration::from_secs(5),
+        )
+        .expect("live harness service should start exactly once");
 
         HarnessService { proxy }
     })
@@ -1316,7 +1370,10 @@ fn sanitize_ime_cursor_area(
     let width = width.clamp(1, max_width) as u32;
     let height = height.clamp(1, max_height) as u32;
 
-    Some((PhysicalPosition::new(x, y), PhysicalSize::new(width, height)))
+    Some((
+        PhysicalPosition::new(x, y),
+        PhysicalSize::new(width, height),
+    ))
 }
 
 fn remove_pointer_button(buttons: PointerButtons, removed: PointerButton) -> PointerButtons {
@@ -1369,7 +1426,9 @@ fn map_runtime_event_to_host_inputs(event: Event) -> Result<Vec<HostInputEvent>>
                         position: pointer.position,
                     });
                     events.push(HostInputEvent::MouseWheel {
-                        delta: pointer.scroll_delta.unwrap_or(ScrollDelta::Pixels(pointer.delta)),
+                        delta: pointer
+                            .scroll_delta
+                            .unwrap_or(ScrollDelta::Pixels(pointer.delta)),
                     });
                 }
                 PointerEventKind::Cancel => events.push(HostInputEvent::CursorLeft),
@@ -1408,17 +1467,19 @@ fn publish_frame_performance(
     let total_time_ms = event_time_ms + runtime_time_ms + renderer_time_ms;
 
     if !detail_mode.is_detailed() {
-        publish_window_performance_snapshot(WindowPerformanceSnapshot::with_total_time_ms(
-            window_id,
-            frame_index,
-            total_time_ms,
-            Vec::new(),
-            RendererSubmissionDiagnostics::default(),
-            TextCacheDiagnostics::default(),
-            Default::default(),
-            SceneStatistics::minimal(&output.frame, detail_mode),
-        )
-        .with_presentation_latency(presentation_latency));
+        publish_window_performance_snapshot(
+            WindowPerformanceSnapshot::with_total_time_ms(
+                window_id,
+                frame_index,
+                total_time_ms,
+                Vec::new(),
+                RendererSubmissionDiagnostics::default(),
+                TextCacheDiagnostics::default(),
+                Default::default(),
+                SceneStatistics::minimal(&output.frame, detail_mode),
+            )
+            .with_presentation_latency(presentation_latency),
+        );
         return;
     }
 
@@ -1453,7 +1514,10 @@ fn publish_frame_performance(
     }
 
     phase_timings.extend(output.diagnostics.phase_timings.iter().copied());
-    phase_timings.push(FramePhaseSample::new(FramePhase::Renderer, renderer_time_ms));
+    phase_timings.push(FramePhaseSample::new(
+        FramePhase::Renderer,
+        renderer_time_ms,
+    ));
     phase_timings.push(FramePhaseSample::new(
         FramePhase::Diagnostics,
         diagnostics_started.elapsed().as_secs_f64() * 1000.0,
@@ -1464,53 +1528,55 @@ fn publish_frame_performance(
         + renderer_time_ms
         + diagnostics_started.elapsed().as_secs_f64() * 1000.0;
 
-    publish_window_performance_snapshot(WindowPerformanceSnapshot::with_total_time_ms(
-        window_id,
-        frame_index,
-        total_time_ms,
-        phase_timings,
-        RendererSubmissionDiagnostics::new(
-            renderer_stats.pass_count,
-            renderer_stats.draw_count,
-            renderer_stats.uploaded_vertex_bytes,
-            renderer_stats.text_glyph_instance_count,
-            renderer_stats.text_vertex_bytes,
-            renderer_stats.visible_layer_count,
-            renderer_stats.visible_tile_count,
-            renderer_stats.reused_tile_count,
-            renderer_stats.regenerated_tile_count,
-            renderer_stats.direct_packet_count,
-            renderer_stats.tile_memory_bytes,
-            renderer_stats.tile_generation_time_us,
-            renderer_stats.composition_time_us,
-            renderer_stats.retained_scene_traversal_time_us,
-            renderer_stats.retained_packet_build_time_us,
-            renderer_stats.retained_packet_build_count,
-            renderer_stats.text_atlas_miss_count,
-            renderer_stats.text_atlas_miss_time_us,
-            renderer_stats.text_atlas_fallback_count,
-            renderer_stats.surface_acquire_time_us,
-            renderer_stats.resource_collection_time_us,
-            renderer_stats.bind_group_prepare_time_us,
-            renderer_stats.image_bind_group_time_us,
-            renderer_stats.analytic_path_bind_group_time_us,
-            renderer_stats.analytic_path_bind_group_miss_count,
-            renderer_stats.analytic_path_bind_group_upload_bytes,
-            renderer_stats.text_atlas_bind_group_time_us,
-            renderer_stats.text_atlas_upload_copy_time_us,
-            renderer_stats.text_atlas_upload_write_time_us,
-            renderer_stats.text_atlas_upload_bytes,
-            renderer_stats.batch_prepare_time_us,
-            renderer_stats.gpu_upload_time_us,
-            renderer_stats.pass_encode_time_us,
-            renderer_stats.queue_submit_time_us,
-            renderer_stats.surface_present_time_us,
-        ),
-        text_caches,
-        text_cache_deltas,
-        SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
-    )
-    .with_presentation_latency(presentation_latency));
+    publish_window_performance_snapshot(
+        WindowPerformanceSnapshot::with_total_time_ms(
+            window_id,
+            frame_index,
+            total_time_ms,
+            phase_timings,
+            RendererSubmissionDiagnostics::new(
+                renderer_stats.pass_count,
+                renderer_stats.draw_count,
+                renderer_stats.uploaded_vertex_bytes,
+                renderer_stats.text_glyph_instance_count,
+                renderer_stats.text_vertex_bytes,
+                renderer_stats.visible_layer_count,
+                renderer_stats.visible_tile_count,
+                renderer_stats.reused_tile_count,
+                renderer_stats.regenerated_tile_count,
+                renderer_stats.direct_packet_count,
+                renderer_stats.tile_memory_bytes,
+                renderer_stats.tile_generation_time_us,
+                renderer_stats.composition_time_us,
+                renderer_stats.retained_scene_traversal_time_us,
+                renderer_stats.retained_packet_build_time_us,
+                renderer_stats.retained_packet_build_count,
+                renderer_stats.text_atlas_miss_count,
+                renderer_stats.text_atlas_miss_time_us,
+                renderer_stats.text_atlas_fallback_count,
+                renderer_stats.surface_acquire_time_us,
+                renderer_stats.resource_collection_time_us,
+                renderer_stats.bind_group_prepare_time_us,
+                renderer_stats.image_bind_group_time_us,
+                renderer_stats.analytic_path_bind_group_time_us,
+                renderer_stats.analytic_path_bind_group_miss_count,
+                renderer_stats.analytic_path_bind_group_upload_bytes,
+                renderer_stats.text_atlas_bind_group_time_us,
+                renderer_stats.text_atlas_upload_copy_time_us,
+                renderer_stats.text_atlas_upload_write_time_us,
+                renderer_stats.text_atlas_upload_bytes,
+                renderer_stats.batch_prepare_time_us,
+                renderer_stats.gpu_upload_time_us,
+                renderer_stats.pass_encode_time_us,
+                renderer_stats.queue_submit_time_us,
+                renderer_stats.surface_present_time_us,
+            ),
+            text_caches,
+            text_cache_deltas,
+            SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
+        )
+        .with_presentation_latency(presentation_latency),
+    );
 }
 
 fn map_event_loop_error(error: EventLoopError) -> Error {

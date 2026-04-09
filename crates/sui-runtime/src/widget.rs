@@ -10,8 +10,8 @@ use sui_core::{
 };
 use sui_layout::Constraints;
 use sui_scene::{
-    Brush, ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, Scene,
-    SceneCommand, SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle,
+    Brush, ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, Scene, SceneCommand,
+    SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle,
 };
 use sui_text::{
     FontRegistry, ShapedText, TextLayout, TextMeasurement, TextRun, TextStyle, TextSystem,
@@ -523,8 +523,16 @@ impl WidgetPod {
             self.id,
             self.layout_state.arranged_bounds,
         )
-        .with_content_bounds(scene.content_bounds().unwrap_or(self.layout_state.arranged_bounds))
-        .with_paint_bounds(scene.paint_bounds().unwrap_or(self.layout_state.arranged_bounds))
+        .with_content_bounds(
+            scene
+                .content_bounds()
+                .unwrap_or(self.layout_state.arranged_bounds),
+        )
+        .with_paint_bounds(
+            scene
+                .paint_bounds()
+                .unwrap_or(self.layout_state.arranged_bounds),
+        )
         .with_cache_policy(options.cache_policy)
         .with_composition_mode(options.composition_mode)
     }
@@ -545,7 +553,9 @@ impl WidgetPod {
         &mut self,
         target: WidgetId,
     ) -> Option<LayerCompositionMode> {
-        self.find_mut(target, &mut |pod| pod.current_layer_options().composition_mode)
+        self.find_mut(target, &mut |pod| {
+            pod.current_layer_options().composition_mode
+        })
     }
 }
 
@@ -1211,7 +1221,9 @@ impl PaintCtx {
 
     pub(crate) fn push_layer(&mut self, descriptor: SceneLayerDescriptor, scene: Scene) {
         self.scene
-            .push(SceneCommand::Layer(SceneLayer::from_descriptor(descriptor, scene)));
+            .push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor, scene,
+            )));
     }
 
     pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {
@@ -1308,8 +1320,8 @@ impl SemanticsCtx {
 #[cfg(test)]
 mod tests {
     use super::{
-        ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
-        Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+        ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+        WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
     };
     use sui_core::{
         Color, DpiInfo, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole, Vector,
@@ -1413,7 +1425,10 @@ mod tests {
         pod.set_bounds(Rect::new(4.0, 6.0, 0.0, 0.0));
 
         let mut measure = measure_ctx(WindowId::new(3), WidgetId::new(4));
-        let size = pod.measure(&mut measure, Constraints::tight(sui_core::Size::new(64.0, 32.0)));
+        let size = pod.measure(
+            &mut measure,
+            Constraints::tight(sui_core::Size::new(64.0, 32.0)),
+        );
         let mut arrange = ArrangeCtx::new(WindowId::new(3), WidgetId::new(4), DpiInfo::default());
         pod.arrange(&mut arrange, Rect::new(4.0, 6.0, 64.0, 32.0));
 
@@ -1461,7 +1476,10 @@ mod tests {
 
         let mut child = SingleChild::new(LabelWidget);
         let mut measure = measure_ctx(WindowId::new(7), WidgetId::new(8));
-        let size = child.measure(&mut measure, Constraints::tight(sui_core::Size::new(80.0, 24.0)));
+        let size = child.measure(
+            &mut measure,
+            Constraints::tight(sui_core::Size::new(80.0, 24.0)),
+        );
         let mut arrange = ArrangeCtx::new(WindowId::new(7), WidgetId::new(8), DpiInfo::default());
         child.arrange(&mut arrange, Rect::new(12.0, 18.0, 80.0, 24.0));
 
@@ -1481,8 +1499,16 @@ mod tests {
         children.push(LabelWidget);
 
         let mut measure = measure_ctx(WindowId::new(9), WidgetId::new(10));
-        children.measure_child(0, &mut measure, Constraints::tight(sui_core::Size::new(40.0, 18.0)));
-        children.measure_child(1, &mut measure, Constraints::tight(sui_core::Size::new(60.0, 18.0)));
+        children.measure_child(
+            0,
+            &mut measure,
+            Constraints::tight(sui_core::Size::new(40.0, 18.0)),
+        );
+        children.measure_child(
+            1,
+            &mut measure,
+            Constraints::tight(sui_core::Size::new(60.0, 18.0)),
+        );
         let mut arrange = ArrangeCtx::new(WindowId::new(9), WidgetId::new(10), DpiInfo::default());
         children.arrange_child(0, &mut arrange, Rect::new(0.0, 0.0, 40.0, 18.0));
         children.arrange_child(1, &mut arrange, Rect::new(44.0, 0.0, 60.0, 18.0));

@@ -196,22 +196,14 @@ impl StoryCase {
             Self::ListView => "List view crop for asset browser and inspector collections.",
             Self::TreeView => "Tree view crop for layers, files, and scene hierarchies.",
             Self::Table => "Table crop for structured tool data and data-grid layouts.",
-            Self::SplitView => {
-                "Split view crop with the resizable divider in an editor shell."
-            }
+            Self::SplitView => "Split view crop with the resizable divider in an editor shell.",
             Self::Breadcrumb => "Breadcrumb crop for path and project navigation surfaces.",
-            Self::ColorSwatch => {
-                "Color swatch crop for palette chips and compact property rows."
-            }
-            Self::ColorPicker => {
-                "Color picker crop for interactive color adjustment workflows."
-            }
+            Self::ColorSwatch => "Color swatch crop for palette chips and compact property rows.",
+            Self::ColorPicker => "Color picker crop for interactive color adjustment workflows.",
             Self::ThemePreview => {
                 "Theme preview panel with the light and dark comparison cards visible."
             }
-            Self::ImageWidget => {
-                "Image widget crop for previews, thumbnails, and asset panels."
-            }
+            Self::ImageWidget => "Image widget crop for previews, thumbnails, and asset panels.",
         }
     }
 
@@ -301,7 +293,9 @@ impl StoryCase {
             | Self::ImageWidget
             | Self::TextArea => Ok(()),
             Self::ButtonHover => self.target(window).hover(),
-            Self::ButtonPressed => press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL),
+            Self::ButtonPressed => {
+                press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL)
+            }
             Self::EmptyInputFocused => self.target(window).focus(),
             Self::SelectExpanded => {
                 self.target(window).click()?;
@@ -309,9 +303,11 @@ impl StoryCase {
             }
             Self::ContextMenuOpen | Self::TooltipVisible | Self::PopoverOpen | Self::Dialog => {
                 match self {
-                    Self::ContextMenuOpen => {
-                        secondary_click_target(window, SemanticsRole::ContextMenu, CONTEXT_MENU_NAME)
-                    }
+                    Self::ContextMenuOpen => secondary_click_target(
+                        window,
+                        SemanticsRole::ContextMenu,
+                        CONTEXT_MENU_NAME,
+                    ),
                     Self::TooltipVisible => window
                         .get_by_role(SemanticsRole::Button)
                         .with_name(TOOLTIP_TRIGGER_LABEL)
@@ -335,85 +331,101 @@ impl StoryCase {
     pub(crate) fn target(self, window: &TestWindow) -> Locator {
         match self {
             Self::Overview | Self::OverviewConfigured => window.root(),
-            Self::Button | Self::ButtonHover | Self::ButtonPressed => {
-                window.get_by_role(SemanticsRole::Button).with_name(PRIMARY_BUTTON_LABEL)
-            }
-            Self::Checkbox | Self::CheckboxUnchecked => {
-                window.get_by_role(SemanticsRole::CheckBox).with_name(SUBSCRIBE_LABEL)
-            }
-            Self::FilledInput | Self::EmptyInputFocused => {
-                window.get_by_role(SemanticsRole::TextInput).with_name(NAME_INPUT_LABEL)
-            }
-            Self::Icon => window.get_by_role(SemanticsRole::Image).with_name(ICON_LABEL),
-            Self::IconButton => {
-                window.get_by_role(SemanticsRole::Button).with_name(ICON_BUTTON_LABEL)
-            }
-            Self::Separator => {
-                window.get_by_role(SemanticsRole::Separator).with_name(TOOLBAR_SEPARATOR_NAME)
-            }
-            Self::Switch => window.get_by_role(SemanticsRole::Switch).with_name(SWITCH_LABEL),
-            Self::RadioButton => {
-                window.get_by_role(SemanticsRole::RadioButton).with_name(RADIO_BUTTON_LABEL)
-            }
-            Self::RadioGroup => {
-                window.get_by_role(SemanticsRole::RadioGroup).with_name(RADIO_GROUP_NAME)
-            }
-            Self::Slider => window.get_by_role(SemanticsRole::Slider).with_name(SLIDER_NAME),
-            Self::NumberInput => {
-                window.get_by_role(SemanticsRole::SpinBox).with_name(NUMBER_INPUT_NAME)
-            }
-            Self::TextArea => {
-                window.get_by_role(SemanticsRole::TextInput).with_name(TEXT_AREA_LABEL)
-            }
-            Self::SelectExpanded => {
-                window.get_by_role(SemanticsRole::ComboBox).with_name(SELECT_NAME)
-            }
-            Self::TabBar => window.get_by_role(SemanticsRole::TabBar).with_name(TAB_BAR_NAME),
+            Self::Button | Self::ButtonHover | Self::ButtonPressed => window
+                .get_by_role(SemanticsRole::Button)
+                .with_name(PRIMARY_BUTTON_LABEL),
+            Self::Checkbox | Self::CheckboxUnchecked => window
+                .get_by_role(SemanticsRole::CheckBox)
+                .with_name(SUBSCRIBE_LABEL),
+            Self::FilledInput | Self::EmptyInputFocused => window
+                .get_by_role(SemanticsRole::TextInput)
+                .with_name(NAME_INPUT_LABEL),
+            Self::Icon => window
+                .get_by_role(SemanticsRole::Image)
+                .with_name(ICON_LABEL),
+            Self::IconButton => window
+                .get_by_role(SemanticsRole::Button)
+                .with_name(ICON_BUTTON_LABEL),
+            Self::Separator => window
+                .get_by_role(SemanticsRole::Separator)
+                .with_name(TOOLBAR_SEPARATOR_NAME),
+            Self::Switch => window
+                .get_by_role(SemanticsRole::Switch)
+                .with_name(SWITCH_LABEL),
+            Self::RadioButton => window
+                .get_by_role(SemanticsRole::RadioButton)
+                .with_name(RADIO_BUTTON_LABEL),
+            Self::RadioGroup => window
+                .get_by_role(SemanticsRole::RadioGroup)
+                .with_name(RADIO_GROUP_NAME),
+            Self::Slider => window
+                .get_by_role(SemanticsRole::Slider)
+                .with_name(SLIDER_NAME),
+            Self::NumberInput => window
+                .get_by_role(SemanticsRole::SpinBox)
+                .with_name(NUMBER_INPUT_NAME),
+            Self::TextArea => window
+                .get_by_role(SemanticsRole::TextInput)
+                .with_name(TEXT_AREA_LABEL),
+            Self::SelectExpanded => window
+                .get_by_role(SemanticsRole::ComboBox)
+                .with_name(SELECT_NAME),
+            Self::TabBar => window
+                .get_by_role(SemanticsRole::TabBar)
+                .with_name(TAB_BAR_NAME),
             Self::Tabs => window.get_by_role(SemanticsRole::Tabs).with_name(TABS_NAME),
             Self::Menu => window.get_by_role(SemanticsRole::Menu).with_name(MENU_NAME),
-            Self::ContextMenuOpen => {
-                window.get_by_role(SemanticsRole::ContextMenu).with_name(CONTEXT_MENU_NAME)
-            }
-            Self::TooltipVisible => {
-                window.get_by_role(SemanticsRole::Tooltip).with_name(TOOLTIP_TEXT)
-            }
-            Self::PopoverOpen => {
-                window.get_by_role(SemanticsRole::Popover).with_name(POPOVER_NAME)
-            }
-            Self::Dialog => window.get_by_role(SemanticsRole::Dialog).with_name(DIALOG_TITLE),
-            Self::ProgressBar => {
-                window.get_by_role(SemanticsRole::ProgressBar).with_name(PROGRESS_NAME)
-            }
-            Self::Spinner => {
-                window.get_by_role(SemanticsRole::BusyIndicator).with_name(SPINNER_NAME)
-            }
-            Self::ScrollViewScrolled => {
-                window.get_by_role(SemanticsRole::ScrollView).with_name(GALLERY_SCROLL_NAME)
-            }
-            Self::Summary => {
-                window.get_by_role(SemanticsRole::GenericContainer).with_name(SUMMARY_NAME)
-            }
-            Self::ListView => window.get_by_role(SemanticsRole::List).with_name(LIST_VIEW_NAME),
-            Self::TreeView => window.get_by_role(SemanticsRole::Tree).with_name(TREE_VIEW_NAME),
-            Self::Table => window.get_by_role(SemanticsRole::Table).with_name(TABLE_NAME),
-            Self::SplitView => {
-                window.get_by_role(SemanticsRole::Splitter).with_name(SPLIT_VIEW_NAME)
-            }
-            Self::Breadcrumb => {
-                window.get_by_role(SemanticsRole::Breadcrumb).with_name(BREADCRUMB_NAME)
-            }
-            Self::ColorSwatch => {
-                window.get_by_role(SemanticsRole::ColorSwatch).with_name(COLOR_SWATCH_NAME)
-            }
-            Self::ColorPicker => {
-                window.get_by_role(SemanticsRole::ColorPicker).with_name(COLOR_PICKER_NAME)
-            }
+            Self::ContextMenuOpen => window
+                .get_by_role(SemanticsRole::ContextMenu)
+                .with_name(CONTEXT_MENU_NAME),
+            Self::TooltipVisible => window
+                .get_by_role(SemanticsRole::Tooltip)
+                .with_name(TOOLTIP_TEXT),
+            Self::PopoverOpen => window
+                .get_by_role(SemanticsRole::Popover)
+                .with_name(POPOVER_NAME),
+            Self::Dialog => window
+                .get_by_role(SemanticsRole::Dialog)
+                .with_name(DIALOG_TITLE),
+            Self::ProgressBar => window
+                .get_by_role(SemanticsRole::ProgressBar)
+                .with_name(PROGRESS_NAME),
+            Self::Spinner => window
+                .get_by_role(SemanticsRole::BusyIndicator)
+                .with_name(SPINNER_NAME),
+            Self::ScrollViewScrolled => window
+                .get_by_role(SemanticsRole::ScrollView)
+                .with_name(GALLERY_SCROLL_NAME),
+            Self::Summary => window
+                .get_by_role(SemanticsRole::GenericContainer)
+                .with_name(SUMMARY_NAME),
+            Self::ListView => window
+                .get_by_role(SemanticsRole::List)
+                .with_name(LIST_VIEW_NAME),
+            Self::TreeView => window
+                .get_by_role(SemanticsRole::Tree)
+                .with_name(TREE_VIEW_NAME),
+            Self::Table => window
+                .get_by_role(SemanticsRole::Table)
+                .with_name(TABLE_NAME),
+            Self::SplitView => window
+                .get_by_role(SemanticsRole::Splitter)
+                .with_name(SPLIT_VIEW_NAME),
+            Self::Breadcrumb => window
+                .get_by_role(SemanticsRole::Breadcrumb)
+                .with_name(BREADCRUMB_NAME),
+            Self::ColorSwatch => window
+                .get_by_role(SemanticsRole::ColorSwatch)
+                .with_name(COLOR_SWATCH_NAME),
+            Self::ColorPicker => window
+                .get_by_role(SemanticsRole::ColorPicker)
+                .with_name(COLOR_PICKER_NAME),
             Self::ThemePreview => window
                 .get_by_role(SemanticsRole::GenericContainer)
                 .with_name(THEME_PREVIEW_NAME),
-            Self::ImageWidget => {
-                window.get_by_role(SemanticsRole::Image).with_name(DEMO_IMAGE_LABEL)
-            }
+            Self::ImageWidget => window
+                .get_by_role(SemanticsRole::Image)
+                .with_name(DEMO_IMAGE_LABEL),
         }
     }
 
@@ -489,9 +501,7 @@ impl StoryCase {
             Self::Tabs => Some((SemanticsRole::Tabs, Some(TABS_NAME))),
             Self::Menu => Some((SemanticsRole::Menu, Some(MENU_NAME))),
             Self::ContextMenuOpen => Some((SemanticsRole::ContextMenu, Some(CONTEXT_MENU_NAME))),
-            Self::TooltipVisible => {
-                Some((SemanticsRole::Button, Some(TOOLTIP_TRIGGER_LABEL)))
-            }
+            Self::TooltipVisible => Some((SemanticsRole::Button, Some(TOOLTIP_TRIGGER_LABEL))),
             Self::PopoverOpen => Some((SemanticsRole::Button, Some(POPOVER_TRIGGER_LABEL))),
             Self::Dialog => Some((SemanticsRole::Button, Some(DIALOG_TRIGGER_LABEL))),
             Self::ProgressBar => Some((SemanticsRole::ProgressBar, Some(PROGRESS_NAME))),
@@ -605,7 +615,11 @@ pub(crate) fn scroll_to_story_target(
         .accessibility
         .nodes
         .iter()
-        .filter_map(|node| node.name.as_deref().map(|name| format!("{:?}:{name}", node.role)))
+        .filter_map(|node| {
+            node.name
+                .as_deref()
+                .map(|name| format!("{:?}:{name}", node.role))
+        })
         .collect::<Vec<_>>()
         .join(", ");
 
@@ -661,16 +675,18 @@ fn rename_if_exists(dir: &Path, from: &str, to: &str) -> Result<()> {
         })?;
     }
 
-    fs::rename(&from_path, &to_path).map_err(|error| {
-        Error::new(format!("failed to rename {}: {error}", from_path.display()))
-    })
+    fs::rename(&from_path, &to_path)
+        .map_err(|error| Error::new(format!("failed to rename {}: {error}", from_path.display())))
 }
 
 fn press_target(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<()> {
     let locator = window.get_by_role(role.clone()).with_name(name);
     let point = node_center(window, role, name)?;
 
-    locator.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)))?;
+    locator.dispatch_event(Event::Pointer(PointerEvent::new(
+        PointerEventKind::Move,
+        point,
+    )))?;
 
     let mut down = PointerEvent::new(PointerEventKind::Down, point);
     down.button = Some(PointerButton::Primary);
@@ -682,7 +698,10 @@ fn secondary_click_target(window: &TestWindow, role: SemanticsRole, name: &str) 
     let locator = window.get_by_role(role.clone()).with_name(name);
     let point = node_center(window, role, name)?;
 
-    locator.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)))?;
+    locator.dispatch_event(Event::Pointer(PointerEvent::new(
+        PointerEventKind::Move,
+        point,
+    )))?;
 
     let mut down = PointerEvent::new(PointerEventKind::Down, point);
     down.button = Some(PointerButton::Secondary);
@@ -705,7 +724,10 @@ fn scroll_gallery_by(window: &TestWindow, delta_y: f32) -> Result<()> {
     let point = gallery_scroll_point(window)?;
     let root = window.root();
 
-    root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)))?;
+    root.dispatch_event(Event::Pointer(PointerEvent::new(
+        PointerEventKind::Move,
+        point,
+    )))?;
 
     let mut scroll = PointerEvent::new(PointerEventKind::Scroll, point);
     scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, delta_y)));
@@ -730,7 +752,11 @@ fn gallery_scroll_point(window: &TestWindow) -> Result<Point> {
     ))
 }
 
-fn story_node_is_visible(window: &TestWindow, role: SemanticsRole, name: Option<&str>) -> Result<bool> {
+fn story_node_is_visible(
+    window: &TestWindow,
+    role: SemanticsRole,
+    name: Option<&str>,
+) -> Result<bool> {
     let snapshot = window.snapshot()?;
     let viewport = snapshot
         .accessibility
@@ -779,7 +805,10 @@ fn node_center(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<P
     ))
 }
 
-fn capture_story_screenshot(story: StoryCase, window: &TestWindow) -> Result<sui_testing::Screenshot> {
+fn capture_story_screenshot(
+    story: StoryCase,
+    window: &TestWindow,
+) -> Result<sui_testing::Screenshot> {
     let snapshot = window.snapshot()?;
     let screenshot = window.capture_screenshot()?;
     let (role, name) = story.capture_target();

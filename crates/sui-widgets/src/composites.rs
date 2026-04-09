@@ -1402,9 +1402,7 @@ impl Widget for Popover {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let trigger_size = self
-            .trigger
-            .measure(ctx, constraints.loosen());
+        let trigger_size = self.trigger.measure(ctx, constraints.loosen());
         let mut size = trigger_size;
         if self.open {
             let content_constraints = Constraints::new(
@@ -1783,9 +1781,7 @@ impl Widget for ContextMenu {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let trigger_size = self
-            .trigger
-            .measure(ctx, constraints.loosen());
+        let trigger_size = self.trigger.measure(ctx, constraints.loosen());
         let mut size = trigger_size;
         if self.open {
             let width = self.measured_menu_width(ctx).max(trigger_size.width);
@@ -2161,12 +2157,7 @@ impl Widget for Dialog {
         let dialog_x = ((viewport.width - dialog_width) * 0.5).max(outer_margin);
         let dialog_y = ((viewport.height - dialog_height) * 0.5).max(outer_margin);
         self.dialog_frame = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
-        self.body_frame = Rect::new(
-            padding.left,
-            body_top,
-            body_size.width,
-            body_size.height,
-        );
+        self.body_frame = Rect::new(padding.left, body_top, body_size.width, body_size.height);
 
         viewport
     }
@@ -2684,19 +2675,17 @@ fn centered_text_rect(
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use super::{Dialog, Popover, ProgressBar, Spinner, TabBar};
     use super::Tabs;
+    use super::{Dialog, Popover, ProgressBar, Spinner, TabBar};
     use crate::FloatingStack;
     use sui_core::{
-        Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, SemanticsNode, SemanticsRole, SemanticsValue, Size,
-        WidgetId,
+        Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
+        PointerEventKind, SemanticsNode, SemanticsRole, SemanticsValue, Size, WidgetId,
     };
     use sui_layout::Constraints;
     use sui_runtime::{
-        Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx,
-        Widget, WindowBuilder, WindowRenderOptions, clear_window_render_options,
-        set_window_render_options,
+        Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
+        WindowBuilder, WindowRenderOptions, clear_window_render_options, set_window_render_options,
     };
     use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneLayerDescriptor};
 
@@ -2720,7 +2709,10 @@ mod tests {
         runtime.render(window_id).unwrap()
     }
 
-    fn layer_descriptor_for(output: &RenderOutput, owner: WidgetId) -> Option<SceneLayerDescriptor> {
+    fn layer_descriptor_for(
+        output: &RenderOutput,
+        owner: WidgetId,
+    ) -> Option<SceneLayerDescriptor> {
         let mut descriptor = None;
         output.frame.scene.visit_layers(&mut |layer| {
             if layer.widget_id() == owner {
@@ -2766,7 +2758,11 @@ mod tests {
 
         fn semantics(&self, ctx: &mut SemanticsCtx) {
             self.counters.borrow_mut().semantics += 1;
-            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::GenericContainer, ctx.bounds());
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
             node.name = Some(self.name.to_string());
             ctx.push(node);
         }
@@ -2809,8 +2805,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(TabBar::new("Main tabs").tabs(["A", "B"]));
         set_window_render_options(
             window_id,
-            WindowRenderOptions::new(true, 1.0)
-                .with_optical_vertical_text_alignment_enabled(false),
+            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
         );
         let geometric = runtime.render(window_id).unwrap();
         clear_window_render_options(window_id);
@@ -2841,16 +2836,36 @@ mod tests {
         );
 
         let initial = runtime.render(window_id).unwrap();
-        assert_eq!(*first.borrow(), PanelCounters { measure: 1, arrange: 1, paint: 1, semantics: 1 });
+        assert_eq!(
+            *first.borrow(),
+            PanelCounters {
+                measure: 1,
+                arrange: 1,
+                paint: 1,
+                semantics: 1
+            }
+        );
         assert_eq!(*second.borrow(), PanelCounters::default());
-        assert!(initial.semantics.iter().any(|node| node.name.as_deref() == Some("first-panel")));
-        assert!(!initial.semantics.iter().any(|node| node.name.as_deref() == Some("second-panel")));
+        assert!(
+            initial
+                .semantics
+                .iter()
+                .any(|node| node.name.as_deref() == Some("first-panel"))
+        );
+        assert!(
+            !initial
+                .semantics
+                .iter()
+                .any(|node| node.name.as_deref() == Some("second-panel"))
+        );
 
         let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 20.0));
         down.pointer_id = 1;
         down.button = Some(PointerButton::Primary);
         down.buttons = PointerButtons::new(1);
-        runtime.handle_event(window_id, Event::Pointer(down)).unwrap();
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
 
         let mut up = PointerEvent::new(PointerEventKind::Up, Point::new(48.0, 20.0));
         up.pointer_id = 1;
@@ -2871,9 +2886,22 @@ mod tests {
         assert_eq!(first.borrow().paint, first_before_switch.paint);
         assert_eq!(first.borrow().semantics, first_before_switch.semantics);
         assert_eq!(second.borrow().paint, second_before_switch.paint + 1);
-        assert_eq!(second.borrow().semantics, second_before_switch.semantics + 1);
-        assert!(!after_switch.semantics.iter().any(|node| node.name.as_deref() == Some("first-panel")));
-        assert!(after_switch.semantics.iter().any(|node| node.name.as_deref() == Some("second-panel")));
+        assert_eq!(
+            second.borrow().semantics,
+            second_before_switch.semantics + 1
+        );
+        assert!(
+            !after_switch
+                .semantics
+                .iter()
+                .any(|node| node.name.as_deref() == Some("first-panel"))
+        );
+        assert!(
+            after_switch
+                .semantics
+                .iter()
+                .any(|node| node.name.as_deref() == Some("second-panel"))
+        );
     }
 
     #[test]
@@ -2883,11 +2911,17 @@ mod tests {
             Tabs::new("Main tabs")
                 .tab(
                     "A",
-                    SpyPanel::new("first-panel", Rc::new(RefCell::new(PanelCounters::default()))),
+                    SpyPanel::new(
+                        "first-panel",
+                        Rc::new(RefCell::new(PanelCounters::default())),
+                    ),
                 )
                 .tab(
                     "B",
-                    SpyPanel::new("second-panel", Rc::new(RefCell::new(PanelCounters::default()))),
+                    SpyPanel::new(
+                        "second-panel",
+                        Rc::new(RefCell::new(PanelCounters::default())),
+                    ),
                 ),
         );
         let optical_label = optical
@@ -2905,17 +2939,22 @@ mod tests {
             Tabs::new("Main tabs")
                 .tab(
                     "A",
-                    SpyPanel::new("first-panel", Rc::new(RefCell::new(PanelCounters::default()))),
+                    SpyPanel::new(
+                        "first-panel",
+                        Rc::new(RefCell::new(PanelCounters::default())),
+                    ),
                 )
                 .tab(
                     "B",
-                    SpyPanel::new("second-panel", Rc::new(RefCell::new(PanelCounters::default()))),
+                    SpyPanel::new(
+                        "second-panel",
+                        Rc::new(RefCell::new(PanelCounters::default())),
+                    ),
                 ),
         );
         set_window_render_options(
             window_id,
-            WindowRenderOptions::new(true, 1.0)
-                .with_optical_vertical_text_alignment_enabled(false),
+            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
         );
         let geometric = runtime.render(window_id).unwrap();
         clear_window_render_options(window_id);
@@ -3013,7 +3052,8 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::Popover)
             .expect("popover semantics present");
-        let descriptor = layer_descriptor_for(&output, popover.id).expect("popover layer descriptor present");
+        let descriptor =
+            layer_descriptor_for(&output, popover.id).expect("popover layer descriptor present");
         let node = graph
             .nodes
             .iter()
@@ -3039,7 +3079,10 @@ mod tests {
         let output = render(
             crate::SizedBox::new()
                 .size(Size::new(640.0, 420.0))
-                .with_child(Dialog::new("Confirm", crate::Label::new("Apply the change?"))),
+                .with_child(Dialog::new(
+                    "Confirm",
+                    crate::Label::new("Apply the change?"),
+                )),
         );
 
         let dialog = output

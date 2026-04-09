@@ -4,11 +4,11 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui::prelude::*;
 use sui::{
-    InvalidationKind, InvalidationRequest, InvalidationTarget, Rect,
-    SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, SemanticsValue,
-    TextStyle, TimerToken, Vector, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
-    WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
-    window_performance_snapshot, window_scene_statistics_detail_mode,
+    InvalidationKind, InvalidationRequest, InvalidationTarget, Rect, SceneStatisticsDetailMode,
+    SemanticsNode, SemanticsRole, SemanticsValue, TextStyle, TimerToken, Vector,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId, WindowPerformanceSnapshot,
+    set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    window_scene_statistics_detail_mode,
 };
 
 mod visual_artifacts;
@@ -120,9 +120,9 @@ impl LivePerformanceRoot {
         let performance_display = Rc::new(RefCell::new(LivePerformanceDisplay::default()));
         Self {
             content: SingleChild::new(content),
-            performance_overlay: SingleChild::new(LivePerformancePanel::with_display(
-                Rc::clone(&performance_display),
-            )),
+            performance_overlay: SingleChild::new(LivePerformancePanel::with_display(Rc::clone(
+                &performance_display,
+            ))),
             performance_display,
             watched_state: None,
             last_seen_state: None,
@@ -200,14 +200,14 @@ pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> App
     register_widget_book_images(&mut application);
 
     application.window(
-        WindowBuilder::new()
-            .title(WINDOW_TITLE)
-            .root(LivePerformanceRoot::new(
+        WindowBuilder::new().title(WINDOW_TITLE).root(
+            LivePerformanceRoot::new(
                 WINDOW_TITLE,
                 WINDOW_DESCRIPTION,
                 build_widget_book_gallery(Rc::clone(&state)),
             )
-            .watch_widget_book_state(state)),
+            .watch_widget_book_state(state),
+        ),
     )
 }
 
@@ -365,9 +365,7 @@ impl Widget for ProjectSettingsPreview {
         }
 
         match event {
-            Event::Window(WindowEvent::RedrawRequested) => {
-
-            }
+            Event::Window(WindowEvent::RedrawRequested) => {}
             Event::Pointer(pointer)
                 if pointer.kind == sui::PointerEventKind::Down
                     && pointer.button == Some(sui::PointerButton::Primary) =>
@@ -396,9 +394,7 @@ impl Widget for ProjectSettingsPreview {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let trigger_size = self
-            .trigger
-            .measure(ctx, constraints.loosen());
+        let trigger_size = self.trigger.measure(ctx, constraints.loosen());
 
         if !self.dialog_open {
             return constraints.clamp(trigger_size);
@@ -1322,10 +1318,14 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
 }
 
 pub fn build_button_grid_benchmark() -> impl Widget {
-    let mut grid = Stack::vertical().spacing(12.0).alignment(Alignment::Stretch);
+    let mut grid = Stack::vertical()
+        .spacing(12.0)
+        .alignment(Alignment::Stretch);
 
     for row in 0..BUTTON_GRID_ROWS {
-        let mut line = Stack::horizontal().spacing(12.0).alignment(Alignment::Start);
+        let mut line = Stack::horizontal()
+            .spacing(12.0)
+            .alignment(Alignment::Start);
         for column in 0..BUTTON_GRID_COLUMNS {
             line = line.with_child(
                 Button::new(format!("Button {row}:{column}"))
@@ -1458,10 +1458,12 @@ fn theme_preview_card(
                 .alignment(Alignment::Center)
                 .with_child(Button::new(action_label).theme(theme))
                 .with_child(
-                    Label::new("Reusable controls should stay coherent across both theme variants.")
-                        .font_size(13.0)
-                        .line_height(18.0)
-                        .color(theme.palette.placeholder),
+                    Label::new(
+                        "Reusable controls should stay coherent across both theme variants.",
+                    )
+                    .font_size(13.0)
+                    .line_height(18.0)
+                    .color(theme.palette.placeholder),
                 ),
         )
         .with_child(
@@ -1479,25 +1481,16 @@ fn theme_preview_card(
                 .spacing(10.0)
                 .alignment(Alignment::Center)
                 .with_child(
-                    ColorSwatch::new(
-                        format!("{title} base swatch"),
-                        theme.colors.base_200,
-                    )
-                    .size(Size::new(58.0, 28.0)),
+                    ColorSwatch::new(format!("{title} base swatch"), theme.colors.base_200)
+                        .size(Size::new(58.0, 28.0)),
                 )
                 .with_child(
-                    ColorSwatch::new(
-                        format!("{title} primary swatch"),
-                        theme.colors.primary,
-                    )
-                    .size(Size::new(58.0, 28.0)),
+                    ColorSwatch::new(format!("{title} primary swatch"), theme.colors.primary)
+                        .size(Size::new(58.0, 28.0)),
                 )
                 .with_child(
-                    ColorSwatch::new(
-                        format!("{title} secondary swatch"),
-                        theme.colors.secondary,
-                    )
-                    .size(Size::new(58.0, 28.0)),
+                    ColorSwatch::new(format!("{title} secondary swatch"), theme.colors.secondary)
+                        .size(Size::new(58.0, 28.0)),
                 ),
         );
 
@@ -1505,10 +1498,7 @@ fn theme_preview_card(
         theme.palette.border,
         Padding::all(
             1.0,
-            Background::new(
-                theme.palette.surface,
-                Padding::all(18.0, body),
-            ),
+            Background::new(theme.palette.surface, Padding::all(18.0, body)),
         ),
     )
 }
@@ -1587,7 +1577,11 @@ impl LivePerformancePanel {
         }
     }
 
-    fn rebuild_lines(&self, width: f32, specs: &[LivePerformanceLineSpec]) -> Vec<LivePerformanceLine> {
+    fn rebuild_lines(
+        &self,
+        width: f32,
+        specs: &[LivePerformanceLineSpec],
+    ) -> Vec<LivePerformanceLine> {
         let _text_width = (width - Self::PADDING_X * 2.0).max(1.0);
         let mut y = Self::PADDING_Y;
         let mut lines = Vec::new();
@@ -1717,8 +1711,12 @@ impl LivePerformancePanel {
                     )),
                     LivePerformanceLineSpec::metric(format!(
                         "tile gen {}  |  compose {}",
-                        format_duration_ms(snapshot.renderer_submission.tile_generation_time_us as f64 / 1000.0),
-                        format_duration_ms(snapshot.renderer_submission.composition_time_us as f64 / 1000.0),
+                        format_duration_ms(
+                            snapshot.renderer_submission.tile_generation_time_us as f64 / 1000.0
+                        ),
+                        format_duration_ms(
+                            snapshot.renderer_submission.composition_time_us as f64 / 1000.0
+                        ),
                     )),
                     LivePerformanceLineSpec::metric(scene_metric),
                     LivePerformanceLineSpec::metric(trailing_metric),
@@ -1769,7 +1767,10 @@ impl LivePerformanceLineSpec {
 
 impl Widget for LivePerformancePanel {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if !matches!(ctx.phase(), sui::EventPhase::Capture | sui::EventPhase::Target) {
+        if !matches!(
+            ctx.phase(),
+            sui::EventPhase::Capture | sui::EventPhase::Target
+        ) {
             return;
         }
 
@@ -1903,8 +1904,11 @@ impl Widget for LivePerformancePanel {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node =
-            SemanticsNode::new(ctx.widget_id(), SemanticsRole::GenericContainer, ctx.bounds());
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
         node.name = Some("Live performance overlay".to_string());
         node.description =
             Some("Compact floating renderer and scene performance statistics with a scene detail toggle.".to_string());
@@ -2143,24 +2147,23 @@ fn option_index(options: &[&str], value: &str) -> Option<usize> {
 mod tests {
     use std::{cell::RefCell, fs::File, io::BufWriter, path::Path, rc::Rc};
 
-    use super::{
-        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, LivePerformanceDisplay,
-        LIST_VIEW_NAME, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
-        POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
-        THEME_PREVIEW_TOGGLE_LABEL, TREE_VIEW_NAME,
-        build_widget_book_application, default_widget_book_state,
-    };
     use super::visual_artifacts::{
         StoryCase, configured_widget_book_state, scroll_to_story_target,
     };
+    use super::{
+        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, LIST_VIEW_NAME,
+        LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
+        POPOVER_NAME, POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
+        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME,
+        build_widget_book_application, default_widget_book_state,
+    };
     use sui::{
-        Application, Event, FramePhase, FramePhaseSample, Point, PointerButton,
-        PointerButtons, PointerEvent, PointerEventKind, PresentationLatencyDiagnostics,
+        Application, Event, FramePhase, FramePhaseSample, Point, PointerButton, PointerButtons,
+        PointerEvent, PointerEventKind, PresentationLatencyDiagnostics,
         RendererSubmissionDiagnostics, Result, SceneStatistics, SceneStatisticsDetailMode,
-        SemanticsRole, SemanticsValue, Size, TextCacheDiagnostics,
-        TextCacheDeltaDiagnostics, Vector, Widget, WidgetPod, WidgetPodVisitor,
-        WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
-        window_scene_statistics_detail_mode,
+        SemanticsRole, SemanticsValue, Size, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
+        Vector, Widget, WidgetPod, WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId,
+        WindowPerformanceSnapshot, window_scene_statistics_detail_mode,
     };
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::publish_window_performance_snapshot;
@@ -2188,7 +2191,10 @@ mod tests {
             direct.push(match command {
                 SceneCommand::Layer(layer) => SceneCommand::Layer(SceneLayer::from_descriptor(
                     if predicate(&layer.descriptor) {
-                        layer.descriptor.clone().with_cache_policy(LayerCachePolicy::Direct)
+                        layer
+                            .descriptor
+                            .clone()
+                            .with_cache_policy(LayerCachePolicy::Direct)
                     } else {
                         layer.descriptor.clone()
                     },
@@ -2345,15 +2351,34 @@ mod tests {
             .join("target")
             .join("ui-artifacts")
             .join("sui-widget-book-debug");
-        write_png(base.join(format!("{stem}.cached.png")), width, height, &cached_pixels);
-        write_png(base.join(format!("{stem}.direct.png")), width, height, &direct_pixels);
-        write_png(base.join(format!("{stem}.diff.png")), width, height, &diff_pixels);
+        write_png(
+            base.join(format!("{stem}.cached.png")),
+            width,
+            height,
+            &cached_pixels,
+        );
+        write_png(
+            base.join(format!("{stem}.direct.png")),
+            width,
+            height,
+            &direct_pixels,
+        );
+        write_png(
+            base.join(format!("{stem}.diff.png")),
+            width,
+            height,
+            &diff_pixels,
+        );
     }
 
     fn build_overlay_placeholder_app() -> Result<TestApp> {
         TestApp::new(|| {
             Application::new()
-                .window(WindowBuilder::new().title("Overlay").root(LivePerformancePanel::new()))
+                .window(
+                    WindowBuilder::new()
+                        .title("Overlay")
+                        .root(LivePerformancePanel::new()),
+                )
                 .build()
         })
     }
@@ -2421,6 +2446,40 @@ mod tests {
         let after = window.capture_screenshot()?;
 
         assert_ne!(before, after);
+
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_tooltip_hides_after_pointer_moves_to_another_control() -> Result<()> {
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+
+        scroll_to_story_target(&window, StoryCase::TooltipVisible, 12)?;
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(TOOLTIP_TRIGGER_LABEL)
+            .hover()?;
+        assert_eq!(
+            window
+                .get_by_role(SemanticsRole::Tooltip)
+                .with_name(TOOLTIP_TEXT)
+                .count()?,
+            1
+        );
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(POPOVER_TRIGGER_LABEL)
+            .hover()?;
+        assert_eq!(
+            window
+                .get_by_role(SemanticsRole::Tooltip)
+                .with_name(TOOLTIP_TEXT)
+                .count()?,
+            0
+        );
 
         Ok(())
     }
@@ -2581,13 +2640,17 @@ mod tests {
         let list_bounds = output
             .semantics
             .iter()
-            .find(|node| node.role == SemanticsRole::List && node.name.as_deref() == Some(LIST_VIEW_NAME))
+            .find(|node| {
+                node.role == SemanticsRole::List && node.name.as_deref() == Some(LIST_VIEW_NAME)
+            })
             .map(|node| node.bounds)
             .expect("list view semantics present");
         let tree_bounds = output
             .semantics
             .iter()
-            .find(|node| node.role == SemanticsRole::Tree && node.name.as_deref() == Some(TREE_VIEW_NAME))
+            .find(|node| {
+                node.role == SemanticsRole::Tree && node.name.as_deref() == Some(TREE_VIEW_NAME)
+            })
             .map(|node| node.bounds)
             .expect("tree view semantics present");
 
@@ -2600,16 +2663,18 @@ mod tests {
 
         let mut scroll_direct_frame = cached_frame.clone();
         scroll_direct_frame.window_id = WindowId::new(9002);
-        scroll_direct_frame.scene = force_direct_scene_matching(&cached_frame.scene, &|descriptor| {
-            descriptor.composition_mode == LayerCompositionMode::Scroll
-        });
+        scroll_direct_frame.scene =
+            force_direct_scene_matching(&cached_frame.scene, &|descriptor| {
+                descriptor.composition_mode == LayerCompositionMode::Scroll
+            });
 
         let mut non_scroll_direct_frame = cached_frame.clone();
         non_scroll_direct_frame.window_id = WindowId::new(9003);
-        non_scroll_direct_frame.scene = force_direct_scene_matching(&cached_frame.scene, &|descriptor| {
-            descriptor.composition_mode != LayerCompositionMode::Scroll
-                && descriptor.cache_policy != LayerCachePolicy::Direct
-        });
+        non_scroll_direct_frame.scene =
+            force_direct_scene_matching(&cached_frame.scene, &|descriptor| {
+                descriptor.composition_mode != LayerCompositionMode::Scroll
+                    && descriptor.cache_policy != LayerCachePolicy::Direct
+            });
 
         let mut cached_renderer = WgpuRenderer::default();
         cached_renderer
@@ -2643,10 +2708,14 @@ mod tests {
             .capture_last_frame_rgba(non_scroll_direct_frame.window_id)
             .expect("non-scroll-direct frame capture succeeds");
 
-        let (list_diff, list_bounds_diff) = diff_stats_in_rect(&cached_pixels, &direct_pixels, list_bounds);
-        let (tree_diff, tree_bounds_diff) = diff_stats_in_rect(&cached_pixels, &direct_pixels, tree_bounds);
-        let (scroll_only_list_diff, _) = diff_stats_in_rect(&scroll_direct_pixels, &direct_pixels, list_bounds);
-        let (scroll_only_tree_diff, _) = diff_stats_in_rect(&scroll_direct_pixels, &direct_pixels, tree_bounds);
+        let (list_diff, list_bounds_diff) =
+            diff_stats_in_rect(&cached_pixels, &direct_pixels, list_bounds);
+        let (tree_diff, tree_bounds_diff) =
+            diff_stats_in_rect(&cached_pixels, &direct_pixels, tree_bounds);
+        let (scroll_only_list_diff, _) =
+            diff_stats_in_rect(&scroll_direct_pixels, &direct_pixels, list_bounds);
+        let (scroll_only_tree_diff, _) =
+            diff_stats_in_rect(&scroll_direct_pixels, &direct_pixels, tree_bounds);
         let (non_scroll_only_list_diff, _) =
             diff_stats_in_rect(&non_scroll_direct_pixels, &direct_pixels, list_bounds);
 
@@ -2665,8 +2734,7 @@ mod tests {
             list_layers,
         );
         assert_eq!(
-            tree_diff,
-            0,
+            tree_diff, 0,
             "cached widget-book tree view diverged from forced direct render inside the tree region by {tree_diff} pixels; diff bounds: {:?}",
             tree_bounds_diff,
         );
@@ -2711,8 +2779,7 @@ mod tests {
                 .nodes
                 .into_iter()
                 .find(|node| {
-                    node.role == SemanticsRole::Slider
-                        && node.name.as_deref() == Some(SLIDER_NAME)
+                    node.role == SemanticsRole::Slider && node.name.as_deref() == Some(SLIDER_NAME)
                 })
                 .and_then(|node| match node.value {
                     Some(SemanticsValue::Range { value, .. }) => Some(value),
@@ -2773,8 +2840,7 @@ mod tests {
                 .nodes
                 .into_iter()
                 .find(|node| {
-                    node.role == SemanticsRole::Slider
-                        && node.name.as_deref() == Some(SLIDER_NAME)
+                    node.role == SemanticsRole::Slider && node.name.as_deref() == Some(SLIDER_NAME)
                 })
                 .and_then(|node| match node.value {
                     Some(SemanticsValue::Range { value, .. }) => Some(value),
@@ -2839,7 +2905,8 @@ mod tests {
 
         assert_eq!(panel.content_specs(WindowId::new(11)).len(), 3);
 
-        display.borrow_mut().snapshot = Some(sample_window_performance_snapshot_record(WindowId::new(11)));
+        display.borrow_mut().snapshot =
+            Some(sample_window_performance_snapshot_record(WindowId::new(11)));
 
         assert_eq!(panel.content_specs(WindowId::new(11)).len(), 4);
     }
@@ -2862,7 +2929,8 @@ mod tests {
         Widget::visit_children(&panel, &mut visitor);
         assert_eq!(visitor.count, 0);
 
-        display.borrow_mut().snapshot = Some(sample_window_performance_snapshot_record(WindowId::new(11)));
+        display.borrow_mut().snapshot =
+            Some(sample_window_performance_snapshot_record(WindowId::new(11)));
 
         let mut visitor = CountingVisitor { count: 0 };
         Widget::visit_children(&panel, &mut visitor);
@@ -2872,12 +2940,18 @@ mod tests {
     #[test]
     fn live_performance_panel_measures_to_compact_width() {
         let mut runtime = Application::new()
-            .window(WindowBuilder::new().title("Overlay").root(LivePerformancePanel::new()))
+            .window(
+                WindowBuilder::new()
+                    .title("Overlay")
+                    .root(LivePerformancePanel::new()),
+            )
             .build()
             .expect("runtime should build");
         let window_id = runtime.window_ids()[0];
         runtime.render(window_id).expect("panel should render");
-        let graph = runtime.widget_graph(window_id).expect("widget graph should exist");
+        let graph = runtime
+            .widget_graph(window_id)
+            .expect("widget graph should exist");
         let root = graph
             .nodes
             .iter()
@@ -2898,14 +2972,16 @@ mod tests {
 
         let lines = panel.content_specs(WindowId::new(11));
         assert_eq!(lines[1].text, "0 fps  |  idle");
-    assert!(lines.iter().any(|line| line.text.contains("lat present")));
-    assert_eq!(lines.len(), 4);
+        assert!(lines.iter().any(|line| line.text.contains("lat present")));
+        assert_eq!(lines.len(), 4);
     }
 
     #[test]
     fn live_performance_panel_renders_detailed_scene_metrics() {
         let display = Rc::new(RefCell::new(LivePerformanceDisplay {
-            snapshot: Some(sample_detailed_window_performance_snapshot_record(WindowId::new(11))),
+            snapshot: Some(sample_detailed_window_performance_snapshot_record(
+                WindowId::new(11),
+            )),
             idle: false,
         }));
         let panel = LivePerformancePanel::with_display(display);
@@ -2924,9 +3000,13 @@ mod tests {
             .expect("runtime should build");
         let window_id = runtime.window_ids()[0];
 
-        runtime.render(window_id).expect("initial render should succeed");
+        runtime
+            .render(window_id)
+            .expect("initial render should succeed");
         assert!(
-            !runtime.needs_render(window_id).expect("window should be idle after initial render")
+            !runtime
+                .needs_render(window_id)
+                .expect("window should be idle after initial render")
         );
 
         publish_window_performance_snapshot(sample_window_performance_snapshot_record(window_id));
@@ -2988,9 +3068,7 @@ mod tests {
             overlay_node.bounds.max_x()
                 - LivePerformancePanel::PADDING_X
                 - LivePerformancePanel::TOGGLE_WIDTH * 0.5,
-            overlay_node.bounds.y()
-                + LivePerformancePanel::PADDING_Y
-                - 1.0
+            overlay_node.bounds.y() + LivePerformancePanel::PADDING_Y - 1.0
                 + LivePerformancePanel::TOGGLE_HEIGHT * 0.5,
         );
 
@@ -3066,7 +3144,9 @@ mod tests {
             .build()
             .expect("runtime should build");
         let window_id = runtime.window_ids()[0];
-        runtime.render(window_id).expect("widget book should render");
+        runtime
+            .render(window_id)
+            .expect("widget book should render");
         let semantics = runtime
             .semantics(window_id)
             .expect("semantics snapshot should exist");
@@ -3090,41 +3170,8 @@ mod tests {
             7,
             vec![FramePhaseSample::new(FramePhase::Renderer, 1.5)],
             RendererSubmissionDiagnostics::new(
-                2,
-                6,
-                2048,
-                24,
-                1536,
-                3,
-                18,
-                15,
-                3,
-                6,
-                65536,
-                420,
-                160,
-                210,
-                120,
-                3,
-                4,
-                90,
-                1,
-                440,
-                210,
-                130,
-                15,
-                95,
-                4,
-                32768,
-                115,
-                85,
-                22,
-                16384,
-                920,
-                640,
-                180,
-                70,
-                560,
+                2, 6, 2048, 24, 1536, 3, 18, 15, 3, 6, 65536, 420, 160, 210, 120, 3, 4, 90, 1, 440,
+                210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -3160,41 +3207,8 @@ mod tests {
                 FramePhaseSample::new(FramePhase::Renderer, 1.9),
             ],
             RendererSubmissionDiagnostics::new(
-                2,
-                6,
-                2048,
-                24,
-                1536,
-                3,
-                18,
-                15,
-                3,
-                6,
-                65536,
-                420,
-                160,
-                210,
-                120,
-                3,
-                4,
-                90,
-                1,
-                440,
-                210,
-                130,
-                15,
-                95,
-                4,
-                32768,
-                115,
-                85,
-                22,
-                16384,
-                920,
-                640,
-                180,
-                70,
-                560,
+                2, 6, 2048, 24, 1536, 3, 18, 15, 3, 6, 65536, 420, 160, 210, 120, 3, 4, 90, 1, 440,
+                210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),

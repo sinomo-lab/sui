@@ -11,8 +11,8 @@ use sui_runtime::{
 };
 use sui_scene::{SceneCommand, SceneFrame};
 use sui_widgets::{
-    Background, Label, ListItem, ListView, Padding, ScrollView, Separator, SizedBox, Stack,
-    Table, TableColumn, TableRow, TreeItem, TreeView,
+    Background, Label, ListItem, ListView, Padding, ScrollView, Separator, SizedBox, Stack, Table,
+    TableColumn, TableRow, TreeItem, TreeView,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,10 +231,14 @@ where
     I: IntoIterator<Item = DebugMetric>,
 {
     let metrics: Vec<_> = metrics.into_iter().collect();
-    let mut column = Stack::vertical().spacing(10.0).alignment(Alignment::Stretch);
+    let mut column = Stack::vertical()
+        .spacing(10.0)
+        .alignment(Alignment::Stretch);
 
     for chunk in metrics.chunks(4) {
-        let mut row = Stack::horizontal().spacing(10.0).alignment(Alignment::Stretch);
+        let mut row = Stack::horizontal()
+            .spacing(10.0)
+            .alignment(Alignment::Stretch);
         for metric in chunk {
             row = row.with_child(
                 SizedBox::new()
@@ -309,7 +313,8 @@ pub fn accessibility_snapshot_view(snapshot: AccessibilitySnapshot) -> impl Widg
                 detail.push_str(&format!(" value={}", format_semantics_value(value)));
             }
 
-            let mut item = ListItem::new(format!("#{} {:?}", node.id.get(), node.role)).detail(detail);
+            let mut item =
+                ListItem::new(format!("#{} {:?}", node.id.get(), node.role)).detail(detail);
             if node.state.focused {
                 item = item.accent(Color::rgba(0.88, 0.33, 0.19, 1.0));
             } else if node.state.hidden {
@@ -321,12 +326,16 @@ pub fn accessibility_snapshot_view(snapshot: AccessibilitySnapshot) -> impl Widg
         })
         .collect::<Vec<_>>();
 
-    SizedBox::new().height(220.0).with_child(ListView::new("Accessibility snapshot").items(items))
+    SizedBox::new()
+        .height(220.0)
+        .with_child(ListView::new("Accessibility snapshot").items(items))
 }
 
 pub fn widget_graph_snapshot_view(graph: WidgetGraphSnapshot) -> impl Widget {
     let items = build_graph_tree_items(&graph);
-    SizedBox::new().height(240.0).with_child(TreeView::new("Widget graph").items(items))
+    SizedBox::new()
+        .height(240.0)
+        .with_child(TreeView::new("Widget graph").items(items))
 }
 
 pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
@@ -393,7 +402,10 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
         .map(|(kind, count)| TableRow::new([kind.clone(), count.to_string()]))
         .collect::<Vec<_>>();
     let rows = if rows.is_empty() && !scene.detail_collected {
-        vec![TableRow::new(["detail disabled".to_string(), "n/a".to_string()])]
+        vec![TableRow::new([
+            "detail disabled".to_string(),
+            "n/a".to_string(),
+        ])]
     } else {
         rows
     };
@@ -404,7 +416,10 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
         .map(|(kind, count)| TableRow::new([kind.clone(), count.to_string()]))
         .collect::<Vec<_>>();
     let layer_update_rows = if layer_update_rows.is_empty() && !scene.detail_collected {
-        vec![TableRow::new(["detail disabled".to_string(), "n/a".to_string()])]
+        vec![TableRow::new([
+            "detail disabled".to_string(),
+            "n/a".to_string(),
+        ])]
     } else if layer_update_rows.is_empty() {
         vec![TableRow::new(["none".to_string(), "0".to_string()])]
     } else {
@@ -466,7 +481,10 @@ pub fn window_snapshot_view(snapshot: WindowDebugSnapshot) -> impl Widget {
                 .detail(format!("window id #{}", window_id.get()))
                 .tone(DebugTone::Info),
             DebugMetric::new("Focused widget", focused_name)
-                .detail(format!("window focused={}", yes_no(focus_state.window_focused)))
+                .detail(format!(
+                    "window focused={}",
+                    yes_no(focus_state.window_focused)
+                ))
                 .tone(if focus_state.focused_widget.is_some() {
                     DebugTone::Warning
                 } else {
@@ -483,7 +501,11 @@ pub fn window_snapshot_view(snapshot: WindowDebugSnapshot) -> impl Widget {
                 .tone(DebugTone::Info),
             DebugMetric::new(
                 "Scene frame",
-                if scene_summary.is_some() { "available" } else { "missing" },
+                if scene_summary.is_some() {
+                    "available"
+                } else {
+                    "missing"
+                },
             )
             .detail("Present when a captured render summary exists")
             .tone(if scene_summary.is_some() {
@@ -494,7 +516,9 @@ pub fn window_snapshot_view(snapshot: WindowDebugSnapshot) -> impl Widget {
         ]),
     );
 
-    let mut body = Stack::vertical().spacing(12.0).alignment(Alignment::Stretch);
+    let mut body = Stack::vertical()
+        .spacing(12.0)
+        .alignment(Alignment::Stretch);
     body.push(summary);
     body.push(debug_panel(
         "Focus and scheduling",
@@ -736,11 +760,16 @@ mod tests {
     #[test]
     fn scene_summary_counts_commands_and_dirty_regions() {
         let mut frame = SceneFrame::new(WindowId::new(7), sui_core::Size::new(640.0, 360.0));
+        frame.dirty_regions.push(DirtyRegion::new(
+            Rect::new(12.0, 24.0, 100.0, 80.0),
+            InvalidationKind::Paint,
+        ));
         frame
-            .dirty_regions
-            .push(DirtyRegion::new(Rect::new(12.0, 24.0, 100.0, 80.0), InvalidationKind::Paint));
-        frame.scene.push(SceneCommand::Clear(Color::rgba(1.0, 1.0, 1.0, 1.0)));
-        frame.scene.push(SceneCommand::Clear(Color::rgba(0.0, 0.0, 0.0, 1.0)));
+            .scene
+            .push(SceneCommand::Clear(Color::rgba(1.0, 1.0, 1.0, 1.0)));
+        frame
+            .scene
+            .push(SceneCommand::Clear(Color::rgba(0.0, 0.0, 0.0, 1.0)));
         frame.scene.push(SceneCommand::Label {
             rect: Rect::new(0.0, 0.0, 120.0, 24.0),
             text: "stats".to_string(),
@@ -752,8 +781,16 @@ mod tests {
         assert_eq!(summary.viewport, sui_core::Size::new(640.0, 360.0));
         assert_eq!(summary.command_count, 3);
         assert_eq!(summary.dirty_regions.len(), 1);
-        assert!(summary.command_breakdown.contains(&("Clear".to_string(), 2)));
-        assert!(summary.command_breakdown.contains(&("Label".to_string(), 1)));
+        assert!(
+            summary
+                .command_breakdown
+                .contains(&("Clear".to_string(), 2))
+        );
+        assert!(
+            summary
+                .command_breakdown
+                .contains(&("Label".to_string(), 1))
+        );
     }
 }
 
@@ -780,7 +817,9 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
                     format_latency_ms(snapshot.presentation_latency.event_to_present_ms),
                 )
                 .detail("Time from the latest non-redraw event to the end of the present call")
-                .tone(latency_tone(snapshot.presentation_latency.event_to_present_ms)),
+                .tone(latency_tone(
+                    snapshot.presentation_latency.event_to_present_ms,
+                )),
                 DebugMetric::new(
                     "Redraw wait",
                     format_latency_ms(snapshot.presentation_latency.redraw_request_to_callback_ms),
@@ -800,7 +839,9 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
     let slowest_label = slowest_phase
         .map(|sample| sample.phase.label())
         .unwrap_or("No measured work");
-    let slowest_duration_ms = slowest_phase.map(|sample| sample.duration_ms).unwrap_or(0.0);
+    let slowest_duration_ms = slowest_phase
+        .map(|sample| sample.duration_ms)
+        .unwrap_or(0.0);
     let renderer_submission = snapshot.renderer_submission;
 
     let metrics = debug_metric_grid([
@@ -820,7 +861,9 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             format_latency_ms(snapshot.presentation_latency.event_to_present_ms),
         )
         .detail("Time from the latest non-redraw event to the end of the present call")
-        .tone(latency_tone(snapshot.presentation_latency.event_to_present_ms)),
+        .tone(latency_tone(
+            snapshot.presentation_latency.event_to_present_ms,
+        )),
         DebugMetric::new(
             "Redraw wait",
             format_latency_ms(snapshot.presentation_latency.redraw_request_to_callback_ms),
@@ -835,13 +878,19 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         DebugMetric::new("Commands", snapshot.scene.command_count.to_string())
             .detail("Renderer-neutral draw commands in the current scene")
             .tone(DebugTone::Neutral),
-        DebugMetric::new("Dirty coverage", format!("{:.1}%", snapshot.scene.dirty_coverage))
-            .detail(format!("{:.0} px^2 invalidated in this frame", snapshot.scene.dirty_area))
-            .tone(if snapshot.scene.dirty_regions.is_empty() {
-                DebugTone::Success
-            } else {
-                DebugTone::Warning
-            }),
+        DebugMetric::new(
+            "Dirty coverage",
+            format!("{:.1}%", snapshot.scene.dirty_coverage),
+        )
+        .detail(format!(
+            "{:.0} px^2 invalidated in this frame",
+            snapshot.scene.dirty_area
+        ))
+        .tone(if snapshot.scene.dirty_regions.is_empty() {
+            DebugTone::Success
+        } else {
+            DebugTone::Warning
+        }),
         DebugMetric::new("Render passes", renderer_submission.pass_count.to_string())
             .detail("Render passes submitted for the frame")
             .tone(DebugTone::Neutral),
@@ -857,19 +906,20 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             renderer_submission.uploaded_vertex_bytes,
         ))
         .tone(upload_tone(renderer_submission.uploaded_vertex_bytes)),
-        DebugMetric::new("Visible tiles", renderer_submission.visible_tile_count.to_string())
-            .detail(format!(
-                "{} visible layers and {} retained direct packets composed this frame",
-                renderer_submission.visible_layer_count,
-                renderer_submission.direct_packet_count,
-            ))
-            .tone(DebugTone::Neutral),
+        DebugMetric::new(
+            "Visible tiles",
+            renderer_submission.visible_tile_count.to_string(),
+        )
+        .detail(format!(
+            "{} visible layers and {} retained direct packets composed this frame",
+            renderer_submission.visible_layer_count, renderer_submission.direct_packet_count,
+        ))
+        .tone(DebugTone::Neutral),
         DebugMetric::new(
             "Tile reuse",
             format!(
                 "{} reused / {} regen",
-                renderer_submission.reused_tile_count,
-                renderer_submission.regenerated_tile_count,
+                renderer_submission.reused_tile_count, renderer_submission.regenerated_tile_count,
             ),
         )
         .detail("Retained tile reuse versus regeneration for the current frame")
@@ -889,13 +939,17 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             format_duration_ms(renderer_submission.tile_generation_time_us as f64 / 1000.0),
         )
         .detail("Time spent regenerating dirty or newly visible tiles")
-        .tone(duration_tone(renderer_submission.tile_generation_time_us as f64 / 1000.0)),
+        .tone(duration_tone(
+            renderer_submission.tile_generation_time_us as f64 / 1000.0,
+        )),
         DebugMetric::new(
             "Compose",
             format_duration_ms(renderer_submission.composition_time_us as f64 / 1000.0),
         )
         .detail("Time spent assembling the final retained composition draw list")
-        .tone(duration_tone(renderer_submission.composition_time_us as f64 / 1000.0)),
+        .tone(duration_tone(
+            renderer_submission.composition_time_us as f64 / 1000.0,
+        )),
     ]);
 
     let phase_rows = snapshot
@@ -922,11 +976,23 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         .with_child(metrics)
         .with_child(debug_key_values([
             DebugKeyValue::new("Frame index", snapshot.frame_index.to_string()),
-            DebugKeyValue::new("Dirty regions", snapshot.scene.dirty_region_count.to_string()),
+            DebugKeyValue::new(
+                "Dirty regions",
+                snapshot.scene.dirty_region_count.to_string(),
+            ),
             DebugKeyValue::new("Scene detail", snapshot.scene.detail_mode.label()),
-            DebugKeyValue::new("Text commands", snapshot.scene.text_command_count.to_string()),
-            DebugKeyValue::new("Image commands", snapshot.scene.image_command_count.to_string()),
-            DebugKeyValue::new("Clip commands", snapshot.scene.clip_command_count.to_string()),
+            DebugKeyValue::new(
+                "Text commands",
+                snapshot.scene.text_command_count.to_string(),
+            ),
+            DebugKeyValue::new(
+                "Image commands",
+                snapshot.scene.image_command_count.to_string(),
+            ),
+            DebugKeyValue::new(
+                "Clip commands",
+                snapshot.scene.clip_command_count.to_string(),
+            ),
             DebugKeyValue::new(
                 "Transform commands",
                 snapshot.scene.transform_command_count.to_string(),

@@ -4,8 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use sui_core::{
     Color, DirtyRegion, Error, ImageHandle, Path, PathElement, Rect, Result, Size, Transform,
-    Vector, WidgetId,
-    WindowId,
+    Vector, WidgetId, WindowId,
 };
 use sui_text::{FontRegistry, ShapedText, TextRun};
 
@@ -196,9 +195,13 @@ impl SceneLayer {
         let content_bounds = scene.content_bounds().unwrap_or(bounds);
         let paint_bounds = scene.paint_bounds().unwrap_or(bounds);
         Self {
-            descriptor: SceneLayerDescriptor::new(SceneLayerId::from_widget(widget_id), widget_id, bounds)
-                .with_content_bounds(content_bounds)
-                .with_paint_bounds(paint_bounds),
+            descriptor: SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(widget_id),
+                widget_id,
+                bounds,
+            )
+            .with_content_bounds(content_bounds)
+            .with_paint_bounds(paint_bounds),
             scene: Box::new(scene),
         }
     }
@@ -472,17 +475,23 @@ impl SceneBoundsState {
         match command {
             SceneCommand::Clear(_) => self.current_clip(),
             SceneCommand::FillRect { rect, .. } => self.apply_rect(*rect, clipped),
-            SceneCommand::StrokeRect { rect, stroke, .. } => {
-                self.apply_rect(rect.inflate(stroke.width * 0.5, stroke.width * 0.5), clipped)
-            }
+            SceneCommand::StrokeRect { rect, stroke, .. } => self.apply_rect(
+                rect.inflate(stroke.width * 0.5, stroke.width * 0.5),
+                clipped,
+            ),
             SceneCommand::FillPath { path, .. } => self.apply_rect(path.bounds(), clipped),
             SceneCommand::StrokePath { path, stroke, .. } => self.apply_rect(
-                path.bounds().inflate(stroke.width * 0.5, stroke.width * 0.5),
+                path.bounds()
+                    .inflate(stroke.width * 0.5, stroke.width * 0.5),
                 clipped,
             ),
             SceneCommand::DrawText(text) => self.apply_rect(text.rect, clipped),
             SceneCommand::DrawShapedText(text) => {
-                let bounds = text.layout.measurement().bounds.translate(text.origin.to_vector());
+                let bounds = text
+                    .layout
+                    .measurement()
+                    .bounds
+                    .translate(text.origin.to_vector());
                 self.apply_rect(bounds, clipped)
             }
             SceneCommand::DrawImage { rect, .. } => self.apply_rect(*rect, clipped),
@@ -747,9 +756,9 @@ impl SceneFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode,
-        RegisteredImage, Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor,
-        SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
+        Brush, ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, RegisteredImage,
+        Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId,
+        SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -898,7 +907,11 @@ mod tests {
 
         assert!(root.replace_layer(
             WidgetId::new(2),
-            SceneLayer::new(WidgetId::new(2), Rect::new(1.0, 1.0, 10.0, 10.0), replacement),
+            SceneLayer::new(
+                WidgetId::new(2),
+                Rect::new(1.0, 1.0, 10.0, 10.0),
+                replacement
+            ),
         ));
 
         let mut command_count = 0usize;

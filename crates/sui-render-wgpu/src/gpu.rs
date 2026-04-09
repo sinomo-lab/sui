@@ -33,7 +33,10 @@ impl SharedRenderer {
         self.pipeline_for(format, PipelineKind::Solid)
     }
 
-    pub(crate) fn clipped_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+    pub(crate) fn clipped_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
         self.pipeline_for(format, PipelineKind::Clipped)
     }
 
@@ -45,11 +48,17 @@ impl SharedRenderer {
         self.pipeline_for(format, PipelineKind::Textured)
     }
 
-    pub(crate) fn clipped_image_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+    pub(crate) fn clipped_image_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
         self.pipeline_for(format, PipelineKind::TexturedClipped)
     }
 
-    pub(crate) fn text_atlas_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+    pub(crate) fn text_atlas_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
         self.pipeline_for(format, PipelineKind::TextAtlas)
     }
 
@@ -60,7 +69,10 @@ impl SharedRenderer {
         self.pipeline_for(format, PipelineKind::TextAtlasClipped)
     }
 
-    pub(crate) fn analytic_path_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+    pub(crate) fn analytic_path_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
         self.pipeline_for(format, PipelineKind::AnalyticPath)
     }
 
@@ -84,9 +96,7 @@ impl SharedRenderer {
                 PipelineKind::Textured | PipelineKind::TexturedClipped => {
                     "SUI textured scene shader"
                 }
-                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
-                    "SUI text atlas shader"
-                }
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => "SUI text atlas shader",
                 PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
                     "SUI analytic path shader"
                 }
@@ -193,19 +203,18 @@ impl SharedRenderer {
                 PipelineKind::Textured
                 | PipelineKind::TexturedClipped
                 | PipelineKind::TextAtlas
-                | PipelineKind::TextAtlasClipped => Some(
-                    self.device
-                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                            label: Some(match kind {
-                                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
-                                    "SUI text atlas pipeline layout"
-                                }
-                                _ => "SUI textured scene pipeline layout",
-                            }),
-                            bind_group_layouts: &[Some(&self.image_bind_group_layout)],
-                            immediate_size: 0,
+                | PipelineKind::TextAtlasClipped => Some(self.device.create_pipeline_layout(
+                    &wgpu::PipelineLayoutDescriptor {
+                        label: Some(match kind {
+                            PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
+                                "SUI text atlas pipeline layout"
+                            }
+                            _ => "SUI textured scene pipeline layout",
                         }),
-                ),
+                        bind_group_layouts: &[Some(&self.image_bind_group_layout)],
+                        immediate_size: 0,
+                    },
+                )),
                 PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => Some(
                     self.device
                         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

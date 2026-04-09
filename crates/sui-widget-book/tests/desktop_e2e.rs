@@ -13,24 +13,22 @@ use std::{
 };
 
 use sui::{
-    Alignment, Application, Background, Color, Error, Event, ImeEvent, Insets, Label,
-    Modifiers, NumberInput, Point, PointerButton, PointerButtons, PointerEvent,
-    PointerEventKind, PointerKind, RadioButton, RadioGroup, Rect, Result, ScrollDelta,
-    SceneCommand, ScrollView, Select, SemanticsNode, SemanticsRole, SemanticsValue, Size,
-    SizedBox, Slider,
-    SplitView, Stack, Switch, Table, TableColumn, TableRow, TextArea, Vector,
-    VirtualScrollView, WindowBuilder, WindowEvent, WindowId,
-    window_performance_snapshot, WgpuRenderer,
+    Alignment, Application, Background, Color, Error, Event, ImeEvent, Insets, Label, Modifiers,
+    NumberInput, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind,
+    RadioButton, RadioGroup, Rect, Result, SceneCommand, ScrollDelta, ScrollView, Select,
+    SemanticsNode, SemanticsRole, SemanticsValue, Size, SizedBox, Slider, SplitView, Stack, Switch,
+    Table, TableColumn, TableRow, TextArea, Vector, VirtualScrollView, WgpuRenderer, WindowBuilder,
+    WindowEvent, WindowId, window_performance_snapshot,
 };
 use sui_runtime::{
-    CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
-    RenderOutput, RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
+    CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
+    RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
     TextCacheDiagnostics, WindowPerformanceSnapshot, clear_window_performance_snapshots,
     publish_window_performance_snapshot, set_window_scene_statistics_detail_mode,
     window_performance_text_caches, window_scene_statistics_detail_mode,
 };
 use sui_widget_book::{
-    BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, BUTTON_GRID_BENCHMARK_TITLE, WidgetBookState,
+    BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, WidgetBookState,
     build_button_grid_benchmark_application, build_widget_book_application,
     build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
 };
@@ -74,10 +72,19 @@ enum ScrollKind {
 enum HostInputEvent {
     Focused(bool),
     CursorEntered,
-    CursorMoved { position: Point },
-    MouseInput { state: ElementState, button: MouseButton },
-    MouseWheel { delta: ScrollKind },
-    ImeCommit { text: String },
+    CursorMoved {
+        position: Point,
+    },
+    MouseInput {
+        state: ElementState,
+        button: MouseButton,
+    },
+    MouseWheel {
+        delta: ScrollKind,
+    },
+    ImeCommit {
+        text: String,
+    },
 }
 
 enum HarnessCommand {
@@ -143,8 +150,12 @@ fn desktop_harness_service() -> &'static DesktopHarnessService {
             }
         });
 
-        let proxy = recv_result(&setup_rx, "desktop harness service setup", Duration::from_secs(3))
-            .expect("desktop harness service should start exactly once");
+        let proxy = recv_result(
+            &setup_rx,
+            "desktop harness service setup",
+            Duration::from_secs(3),
+        )
+        .expect("desktop harness service should start exactly once");
 
         DesktopHarnessService { proxy }
     })
@@ -169,13 +180,15 @@ impl DesktopHarness {
     {
         let proxy = desktop_harness_service().proxy.clone();
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        proxy.send_event(HarnessCommand::Launch {
-            build_runtime: Box::new(build_runtime),
-            vsync_enabled,
-            reply: reply_tx,
-        })
-        .map_err(|_| Error::new("desktop harness service is unavailable"))?;
-        let main_window_id = recv_result(&reply_rx, "desktop harness launch", Duration::from_secs(3))?;
+        proxy
+            .send_event(HarnessCommand::Launch {
+                build_runtime: Box::new(build_runtime),
+                vsync_enabled,
+                reply: reply_tx,
+            })
+            .map_err(|_| Error::new("desktop harness service is unavailable"))?;
+        let main_window_id =
+            recv_result(&reply_rx, "desktop harness launch", Duration::from_secs(3))?;
 
         Ok(Self {
             proxy,
@@ -225,7 +238,9 @@ impl DesktopHarness {
 impl Drop for DesktopHarness {
     fn drop(&mut self) {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        let _ = self.proxy.send_event(HarnessCommand::Reset { reply: reply_tx });
+        let _ = self
+            .proxy
+            .send_event(HarnessCommand::Reset { reply: reply_tx });
         let _ = reply_rx.recv_timeout(Duration::from_secs(1));
     }
 }
@@ -556,7 +571,8 @@ impl DesktopHarnessApp {
                 let output = self.runtime.render(window_id)?;
                 let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
                 let renderer_started = Instant::now();
-                let diagnostics_enabled = window_scene_statistics_detail_mode(window_id).is_detailed();
+                let diagnostics_enabled =
+                    window_scene_statistics_detail_mode(window_id).is_detailed();
                 self.renderer
                     .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 self.renderer.render(&output.frame)?;
@@ -817,11 +833,17 @@ impl DesktopHarnessApp {
         self.flush_pending_frames(event_loop)
     }
 
-    fn map_host_event(&self, window_id: WindowId, event: HostInputEvent) -> Result<WinitWindowEvent> {
-        let window = self
-            .windows
-            .get(&window_id)
-            .ok_or_else(|| Error::new(format!("window {} is not registered in the desktop harness", window_id.get())))?;
+    fn map_host_event(
+        &self,
+        window_id: WindowId,
+        event: HostInputEvent,
+    ) -> Result<WinitWindowEvent> {
+        let window = self.windows.get(&window_id).ok_or_else(|| {
+            Error::new(format!(
+                "window {} is not registered in the desktop harness",
+                window_id.get()
+            ))
+        })?;
         let scale_factor = window.scale_factor;
         let device_id = DeviceId::dummy();
 
@@ -832,9 +854,11 @@ impl DesktopHarnessApp {
                 device_id,
                 position: logical_point_to_physical_position(position, scale_factor),
             },
-            HostInputEvent::MouseInput { state, button } => {
-                WinitWindowEvent::MouseInput { device_id, state, button }
-            }
+            HostInputEvent::MouseInput { state, button } => WinitWindowEvent::MouseInput {
+                device_id,
+                state,
+                button,
+            },
             HostInputEvent::MouseWheel { delta } => WinitWindowEvent::MouseWheel {
                 device_id,
                 delta: match delta {
@@ -854,14 +878,26 @@ impl DesktopHarnessApp {
         self.windows
             .get(&window_id)
             .map(|window| window.window.id())
-            .ok_or_else(|| Error::new(format!("window {} is not registered in the desktop harness", window_id.get())))
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "window {} is not registered in the desktop harness",
+                    window_id.get()
+                ))
+            })
     }
 
-    fn snapshot(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) -> Result<DesktopWindowSnapshot> {
+    fn snapshot(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+    ) -> Result<DesktopWindowSnapshot> {
         self.flush_pending_frames(event_loop)?;
 
         let window = self.windows.get(&window_id).ok_or_else(|| {
-            Error::new(format!("window {} is not registered in the desktop harness", window_id.get()))
+            Error::new(format!(
+                "window {} is not registered in the desktop harness",
+                window_id.get()
+            ))
         })?;
 
         Ok(DesktopWindowSnapshot {
@@ -871,7 +907,11 @@ impl DesktopHarnessApp {
         })
     }
 
-    fn capture(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) -> Result<CapturedFrame> {
+    fn capture(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+    ) -> Result<CapturedFrame> {
         self.flush_pending_frames(event_loop)?;
 
         let image = self.renderer.capture_last_frame_rgba(window_id)?;
@@ -924,7 +964,7 @@ impl DesktopHarnessApp {
 impl ApplicationHandler<HarnessCommand> for DesktopHarnessApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Err(error) = self.flush_pending_frames(event_loop) {
-                self.report_error(error);
+            self.report_error(error);
         }
     }
 
@@ -1052,7 +1092,10 @@ fn sanitize_ime_cursor_area(
     let width = width.clamp(1, max_width) as u32;
     let height = height.clamp(1, max_height) as u32;
 
-    Some((PhysicalPosition::new(x, y), PhysicalSize::new(width, height)))
+    Some((
+        PhysicalPosition::new(x, y),
+        PhysicalSize::new(width, height),
+    ))
 }
 
 fn map_mouse_button(button: MouseButton) -> Option<PointerButton> {
@@ -1186,7 +1229,11 @@ fn normalized_layer_updates_snapshot(output: &RenderOutput) -> Vec<String> {
         .map(|update| {
             format!(
                 "{:?}|{:?}|{:?}|{:?}|{:?}",
-                update.kind, update.bounds, update.content_bounds, update.paint_bounds, update.damage
+                update.kind,
+                update.bounds,
+                update.content_bounds,
+                update.paint_bounds,
+                update.damage
             )
         })
         .collect::<Vec<_>>();
@@ -1208,17 +1255,19 @@ fn publish_frame_performance(
     let total_time_ms = event_time_ms + runtime_time_ms + renderer_time_ms;
 
     if !detail_mode.is_detailed() {
-        publish_window_performance_snapshot(WindowPerformanceSnapshot::with_total_time_ms(
-            window_id,
-            frame_index,
-            total_time_ms,
-            Vec::new(),
-            RendererSubmissionDiagnostics::default(),
-            TextCacheDiagnostics::default(),
-            Default::default(),
-            SceneStatistics::minimal(&output.frame, detail_mode),
-        )
-        .with_presentation_latency(presentation_latency));
+        publish_window_performance_snapshot(
+            WindowPerformanceSnapshot::with_total_time_ms(
+                window_id,
+                frame_index,
+                total_time_ms,
+                Vec::new(),
+                RendererSubmissionDiagnostics::default(),
+                TextCacheDiagnostics::default(),
+                Default::default(),
+                SceneStatistics::minimal(&output.frame, detail_mode),
+            )
+            .with_presentation_latency(presentation_latency),
+        );
         return;
     }
 
@@ -1253,7 +1302,10 @@ fn publish_frame_performance(
     }
 
     phase_timings.extend(output.diagnostics.phase_timings.iter().copied());
-    phase_timings.push(FramePhaseSample::new(FramePhase::Renderer, renderer_time_ms));
+    phase_timings.push(FramePhaseSample::new(
+        FramePhase::Renderer,
+        renderer_time_ms,
+    ));
     phase_timings.push(FramePhaseSample::new(
         FramePhase::Diagnostics,
         diagnostics_started.elapsed().as_secs_f64() * 1000.0,
@@ -1264,53 +1316,55 @@ fn publish_frame_performance(
         + renderer_time_ms
         + diagnostics_started.elapsed().as_secs_f64() * 1000.0;
 
-    publish_window_performance_snapshot(WindowPerformanceSnapshot::with_total_time_ms(
-        window_id,
-        frame_index,
-        total_time_ms,
-        phase_timings,
-        RendererSubmissionDiagnostics::new(
-            renderer_stats.pass_count,
-            renderer_stats.draw_count,
-            renderer_stats.uploaded_vertex_bytes,
-            renderer_stats.text_glyph_instance_count,
-            renderer_stats.text_vertex_bytes,
-            renderer_stats.visible_layer_count,
-            renderer_stats.visible_tile_count,
-            renderer_stats.reused_tile_count,
-            renderer_stats.regenerated_tile_count,
-            renderer_stats.direct_packet_count,
-            renderer_stats.tile_memory_bytes,
-            renderer_stats.tile_generation_time_us,
-            renderer_stats.composition_time_us,
-            renderer_stats.retained_scene_traversal_time_us,
-            renderer_stats.retained_packet_build_time_us,
-            renderer_stats.retained_packet_build_count,
-            renderer_stats.text_atlas_miss_count,
-            renderer_stats.text_atlas_miss_time_us,
-            renderer_stats.text_atlas_fallback_count,
-            renderer_stats.surface_acquire_time_us,
-            renderer_stats.resource_collection_time_us,
-            renderer_stats.bind_group_prepare_time_us,
-            renderer_stats.image_bind_group_time_us,
-            renderer_stats.analytic_path_bind_group_time_us,
-            renderer_stats.analytic_path_bind_group_miss_count,
-            renderer_stats.analytic_path_bind_group_upload_bytes,
-            renderer_stats.text_atlas_bind_group_time_us,
-            renderer_stats.text_atlas_upload_copy_time_us,
-            renderer_stats.text_atlas_upload_write_time_us,
-            renderer_stats.text_atlas_upload_bytes,
-            renderer_stats.batch_prepare_time_us,
-            renderer_stats.gpu_upload_time_us,
-            renderer_stats.pass_encode_time_us,
-            renderer_stats.queue_submit_time_us,
-            renderer_stats.surface_present_time_us,
-        ),
-        text_caches,
-        text_cache_deltas,
-        SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
-    )
-    .with_presentation_latency(presentation_latency));
+    publish_window_performance_snapshot(
+        WindowPerformanceSnapshot::with_total_time_ms(
+            window_id,
+            frame_index,
+            total_time_ms,
+            phase_timings,
+            RendererSubmissionDiagnostics::new(
+                renderer_stats.pass_count,
+                renderer_stats.draw_count,
+                renderer_stats.uploaded_vertex_bytes,
+                renderer_stats.text_glyph_instance_count,
+                renderer_stats.text_vertex_bytes,
+                renderer_stats.visible_layer_count,
+                renderer_stats.visible_tile_count,
+                renderer_stats.reused_tile_count,
+                renderer_stats.regenerated_tile_count,
+                renderer_stats.direct_packet_count,
+                renderer_stats.tile_memory_bytes,
+                renderer_stats.tile_generation_time_us,
+                renderer_stats.composition_time_us,
+                renderer_stats.retained_scene_traversal_time_us,
+                renderer_stats.retained_packet_build_time_us,
+                renderer_stats.retained_packet_build_count,
+                renderer_stats.text_atlas_miss_count,
+                renderer_stats.text_atlas_miss_time_us,
+                renderer_stats.text_atlas_fallback_count,
+                renderer_stats.surface_acquire_time_us,
+                renderer_stats.resource_collection_time_us,
+                renderer_stats.bind_group_prepare_time_us,
+                renderer_stats.image_bind_group_time_us,
+                renderer_stats.analytic_path_bind_group_time_us,
+                renderer_stats.analytic_path_bind_group_miss_count,
+                renderer_stats.analytic_path_bind_group_upload_bytes,
+                renderer_stats.text_atlas_bind_group_time_us,
+                renderer_stats.text_atlas_upload_copy_time_us,
+                renderer_stats.text_atlas_upload_write_time_us,
+                renderer_stats.text_atlas_upload_bytes,
+                renderer_stats.batch_prepare_time_us,
+                renderer_stats.gpu_upload_time_us,
+                renderer_stats.pass_encode_time_us,
+                renderer_stats.queue_submit_time_us,
+                renderer_stats.surface_present_time_us,
+            ),
+            text_caches,
+            text_cache_deltas,
+            SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
+        )
+        .with_presentation_latency(presentation_latency),
+    );
 }
 
 fn node_center(bounds: Rect) -> Point {
@@ -1433,14 +1487,10 @@ impl ScrollBenchmarkFrameSample {
             retained_packet_build_time_us: snapshot
                 .renderer_submission
                 .retained_packet_build_time_us,
-            retained_packet_build_count: snapshot
-                .renderer_submission
-                .retained_packet_build_count,
+            retained_packet_build_count: snapshot.renderer_submission.retained_packet_build_count,
             text_atlas_miss_count: snapshot.renderer_submission.text_atlas_miss_count,
             text_atlas_miss_time_us: snapshot.renderer_submission.text_atlas_miss_time_us,
-            text_atlas_fallback_count: snapshot
-                .renderer_submission
-                .text_atlas_fallback_count,
+            text_atlas_fallback_count: snapshot.renderer_submission.text_atlas_fallback_count,
             surface_acquire_time_us: snapshot.renderer_submission.surface_acquire_time_us,
             resource_collection_time_us: snapshot.renderer_submission.resource_collection_time_us,
             bind_group_prepare_time_us: snapshot.renderer_submission.bind_group_prepare_time_us,
@@ -1483,13 +1533,19 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
     const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
     const BLEND_MODES: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
 
-    let choices_panel = SizedBox::new().width(420.0).height(240.0).with_child(
-        Background::new(
+    let choices_panel = SizedBox::new()
+        .width(420.0)
+        .height(240.0)
+        .with_child(Background::new(
             Color::rgba(0.97, 0.97, 0.98, 1.0),
             Stack::vertical()
                 .spacing(14.0)
                 .alignment(Alignment::Stretch)
-                .with_child(Label::new("Choices and ranges").font_size(26.0).line_height(30.0))
+                .with_child(
+                    Label::new("Choices and ranges")
+                        .font_size(26.0)
+                        .line_height(30.0),
+                )
                 .with_child(Switch::new("Enable snapping").on(true))
                 .with_child(RadioButton::new("Standalone radio sample").selected(false))
                 .with_child(
@@ -1517,14 +1573,11 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
                     ),
                 )
                 .with_child(
-                    SizedBox::new().width(260.0).with_child(
-                        Select::new("Blend mode")
-                            .options(BLEND_MODES)
-                            .selected(0),
-                    ),
+                    SizedBox::new()
+                        .width(260.0)
+                        .with_child(Select::new("Blend mode").options(BLEND_MODES).selected(0)),
                 ),
-        ),
-    );
+        ));
     let notes_panel = SizedBox::new().width(420.0).height(280.0).with_child(
         Background::new(
             Color::rgba(0.99, 0.99, 1.0, 1.0),
@@ -1580,9 +1633,9 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
 fn build_scroll_history_repro_application() -> Application {
     Application::new().window(
         WindowBuilder::new().title("Scroll history repro").root(
-            SizedBox::new().size(Size::new(540.0, 360.0)).with_child(
-                build_scroll_history_repro_scroll("History repro scroll"),
-            ),
+            SizedBox::new()
+                .size(Size::new(540.0, 360.0))
+                .with_child(build_scroll_history_repro_scroll("History repro scroll")),
         ),
     )
 }
@@ -1699,9 +1752,7 @@ fn run_widget_book_scroll_benchmark(
         frame_samples.push(ScrollBenchmarkFrameSample::from_snapshot(performance));
 
         for sample in &performance.phase_timings {
-            *phase_totals
-                .entry(sample.phase.label())
-                .or_insert(0.0) += sample.duration_ms;
+            *phase_totals.entry(sample.phase.label()).or_insert(0.0) += sample.duration_ms;
         }
     }
 
@@ -1723,7 +1774,10 @@ fn run_widget_book_scroll_benchmark(
         "expected at least one measured scroll frame",
     );
 
-    let frame_times_ms: Vec<_> = frame_samples.iter().map(|sample| sample.total_time_ms).collect();
+    let frame_times_ms: Vec<_> = frame_samples
+        .iter()
+        .map(|sample| sample.total_time_ms)
+        .collect();
     let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
     let avg_ms: f64 = total_frame_time_ms / valid_count as f64;
     let max_ms: f64 = frame_times_ms
@@ -1740,9 +1794,15 @@ fn run_widget_book_scroll_benchmark(
     let mut sorted_times = frame_times_ms.clone();
     sorted_times.sort_by(|a, b| a.total_cmp(b));
     let p95_ms = sorted_times[p95_index];
-    let avg_draws = frame_samples.iter().map(|sample| sample.draw_count as f64).sum::<f64>()
+    let avg_draws = frame_samples
+        .iter()
+        .map(|sample| sample.draw_count as f64)
+        .sum::<f64>()
         / valid_count as f64;
-    let avg_passes = frame_samples.iter().map(|sample| sample.pass_count as f64).sum::<f64>()
+    let avg_passes = frame_samples
+        .iter()
+        .map(|sample| sample.pass_count as f64)
+        .sum::<f64>()
         / valid_count as f64;
     let avg_visible_tiles = frame_samples
         .iter()
@@ -1908,12 +1968,21 @@ fn run_widget_book_scroll_benchmark(
     println!("scroll direction: downward");
     println!("scroll step:      {:.0} px/frame", SCROLL_STEP_PX.abs());
     println!("frames measured:  {valid_count}");
-    println!("scroll distance:  {:.0} px", valid_count as f32 * SCROLL_STEP_PX.abs());
+    println!(
+        "scroll distance:  {:.0} px",
+        valid_count as f32 * SCROLL_STEP_PX.abs()
+    );
     println!("wall-clock time:  {benchmark_elapsed_ms:.1} ms");
-    println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+    println!(
+        "avg frame time:   {avg_ms:.3} ms ({:.0} fps)",
+        1000.0 / avg_ms
+    );
     println!("min frame time:   {min_ms:.3} ms");
     println!("max frame time:   {max_ms:.3} ms");
-    println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+    println!(
+        "p95 frame time:   {p95_ms:.3} ms ({:.0} fps)",
+        1000.0 / p95_ms
+    );
     println!("avg gpu passes:   {avg_passes:.2}");
     println!("avg gpu draws:    {avg_draws:.2}");
     println!("avg visible tiles:{avg_visible_tiles:.2}");
@@ -1922,9 +1991,7 @@ fn run_widget_book_scroll_benchmark(
     println!("avg vertex bytes: {:.0}", avg_uploaded_vertex_bytes);
     println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
     println!("avg tile memory:  {:.0}", avg_tile_memory_bytes);
-    println!(
-        "avg traverse:     {avg_retained_scene_traversal_ms:.3} ms"
-    );
+    println!("avg traverse:     {avg_retained_scene_traversal_ms:.3} ms");
     println!(
         "avg packet build: {avg_retained_packet_build_ms:.3} ms ({avg_retained_packet_build_count:.2} packets)"
     );
@@ -1941,9 +2008,7 @@ fn run_widget_book_scroll_benchmark(
         "avg atlas upload: bind {avg_text_atlas_bind_group_ms:.3} ms  copy {avg_text_atlas_upload_copy_ms:.3} ms  write {avg_text_atlas_upload_write_ms:.3} ms  bytes {:.0}",
         avg_text_atlas_upload_bytes,
     );
-    println!(
-        "avg image bind:   {avg_image_bind_group_ms:.3} ms"
-    );
+    println!("avg image bind:   {avg_image_bind_group_ms:.3} ms");
     println!(
         "avg analytic bg:  {avg_analytic_path_bind_group_ms:.3} ms  misses {avg_analytic_path_bind_group_misses:.2}  bytes {:.0}",
         avg_analytic_path_bind_group_bytes,
@@ -2022,17 +2087,44 @@ fn run_widget_book_scroll_benchmark(
         println!("  text commands:   {}", snapshot.scene.text_command_count);
         println!("  dirty regions:   {}", snapshot.scene.dirty_region_count);
         println!("  dirty coverage:  {:.1}%", snapshot.scene.dirty_coverage);
-        println!("  gpu draws:       {}", snapshot.renderer_submission.draw_count);
-        println!("  gpu passes:      {}", snapshot.renderer_submission.pass_count);
-        println!("  tiles visible:   {}", snapshot.renderer_submission.visible_tile_count);
-        println!("  tiles reused:    {}", snapshot.renderer_submission.reused_tile_count);
-        println!("  tiles regen:     {}", snapshot.renderer_submission.regenerated_tile_count);
-        println!("  glyph instances: {}", snapshot.renderer_submission.text_glyph_instance_count);
-        println!("  vertex bytes:    {}", snapshot.renderer_submission.uploaded_vertex_bytes);
-        println!("  text bytes:      {}", snapshot.renderer_submission.text_vertex_bytes);
+        println!(
+            "  gpu draws:       {}",
+            snapshot.renderer_submission.draw_count
+        );
+        println!(
+            "  gpu passes:      {}",
+            snapshot.renderer_submission.pass_count
+        );
+        println!(
+            "  tiles visible:   {}",
+            snapshot.renderer_submission.visible_tile_count
+        );
+        println!(
+            "  tiles reused:    {}",
+            snapshot.renderer_submission.reused_tile_count
+        );
+        println!(
+            "  tiles regen:     {}",
+            snapshot.renderer_submission.regenerated_tile_count
+        );
+        println!(
+            "  glyph instances: {}",
+            snapshot.renderer_submission.text_glyph_instance_count
+        );
+        println!(
+            "  vertex bytes:    {}",
+            snapshot.renderer_submission.uploaded_vertex_bytes
+        );
+        println!(
+            "  text bytes:      {}",
+            snapshot.renderer_submission.text_vertex_bytes
+        );
         println!(
             "  traverse:        {:.3} ms",
-            snapshot.renderer_submission.retained_scene_traversal_time_us as f64 / 1000.0,
+            snapshot
+                .renderer_submission
+                .retained_scene_traversal_time_us as f64
+                / 1000.0,
         );
         println!(
             "  packet build:    {} packets / {:.3} ms",
@@ -2069,9 +2161,16 @@ fn run_widget_book_scroll_benchmark(
         );
         println!(
             "  analytic bind:   {:.3} ms / {} misses / {} bytes",
-            snapshot.renderer_submission.analytic_path_bind_group_time_us as f64 / 1000.0,
-            snapshot.renderer_submission.analytic_path_bind_group_miss_count,
-            snapshot.renderer_submission.analytic_path_bind_group_upload_bytes,
+            snapshot
+                .renderer_submission
+                .analytic_path_bind_group_time_us as f64
+                / 1000.0,
+            snapshot
+                .renderer_submission
+                .analytic_path_bind_group_miss_count,
+            snapshot
+                .renderer_submission
+                .analytic_path_bind_group_upload_bytes,
         );
         println!(
             "  submit path:     {:.3} ms upload / {:.3} ms encode / {:.3} ms submit",
@@ -2126,7 +2225,9 @@ fn node_is_mostly_visible(
 
 #[test]
 fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Result<()> {
-    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let harness = DesktopHarness::launch(|| {
         build_widget_book_application(Rc::new(RefCell::new(WidgetBookState {
@@ -2157,7 +2258,10 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     let before_frame = harness.capture(window_id)?;
     let before_snapshot = harness.snapshot(window_id)?;
     assert_eq!(before_snapshot.title, sui_widget_book::WINDOW_TITLE);
-    assert_eq!(text_input_value(&before_snapshot, sui_widget_book::NAME_INPUT_LABEL), "");
+    assert_eq!(
+        text_input_value(&before_snapshot, sui_widget_book::NAME_INPUT_LABEL),
+        ""
+    );
 
     let input = find_node(
         &before_snapshot,
@@ -2176,7 +2280,10 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     let after_frame = harness.capture(window_id)?;
     let after_snapshot = harness.snapshot(window_id)?;
 
-    assert_eq!(text_input_value(&after_snapshot, sui_widget_book::NAME_INPUT_LABEL), "Ada");
+    assert_eq!(
+        text_input_value(&after_snapshot, sui_widget_book::NAME_INPUT_LABEL),
+        "Ada"
+    );
     assert!(
         frame_pixel_diff_count(&before_frame, &after_frame) > 0,
         "desktop IME commit should repaint the real renderer output"
@@ -2239,7 +2346,9 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
 
 #[test]
 fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Result<()> {
-    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     const SCROLL_STEP_PX: f32 = -120.0;
     const MAX_SCROLL_STEPS: usize = 80;
@@ -2291,7 +2400,10 @@ fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Resu
         );
     }
 
-    assert!(split_visible, "split view story never became visible while scrolling the gallery");
+    assert!(
+        split_visible,
+        "split view story never became visible while scrolling the gallery"
+    );
 
     let before_frame = harness.capture(window_id)?;
     let before_snapshot = harness.snapshot(window_id)?;
@@ -2327,7 +2439,9 @@ fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Resu
 
 #[test]
 fn desktop_split_view_table_scroll_repaints_frame() -> Result<()> {
-    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let harness = DesktopHarness::launch(|| {
         let table = Table::new("Split table")
@@ -2350,11 +2464,8 @@ fn desktop_split_view_table_scroll_repaints_frame() -> Result<()> {
             .window(
                 WindowBuilder::new().title("Split scroll repro").root(
                     SizedBox::new().size(Size::new(360.0, 220.0)).with_child(
-                        SplitView::horizontal(
-                            table,
-                            SizedBox::new().size(Size::new(120.0, 220.0)),
-                        )
-                        .ratio(0.68),
+                        SplitView::horizontal(table, SizedBox::new().size(Size::new(120.0, 220.0)))
+                            .ratio(0.68),
                     ),
                 ),
             )
@@ -2391,29 +2502,25 @@ fn desktop_split_view_table_scroll_repaints_frame() -> Result<()> {
 
 #[test]
 fn desktop_split_view_scroll_view_scroll_repaints_frame() -> Result<()> {
-    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let harness = DesktopHarness::launch(|| {
         let scroll = ScrollView::vertical(
             Stack::vertical()
-                .with_child(
-                    SizedBox::new().height(120.0).with_child(Background::new(
-                        Color::rgba(0.82, 0.36, 0.18, 1.0),
-                        SizedBox::new().size(Size::new(220.0, 120.0)),
-                    )),
-                )
-                .with_child(
-                    SizedBox::new().height(120.0).with_child(Background::new(
-                        Color::rgba(0.18, 0.54, 0.82, 1.0),
-                        SizedBox::new().size(Size::new(220.0, 120.0)),
-                    )),
-                )
-                .with_child(
-                    SizedBox::new().height(120.0).with_child(Background::new(
-                        Color::rgba(0.24, 0.72, 0.36, 1.0),
-                        SizedBox::new().size(Size::new(220.0, 120.0)),
-                    )),
-                ),
+                .with_child(SizedBox::new().height(120.0).with_child(Background::new(
+                    Color::rgba(0.82, 0.36, 0.18, 1.0),
+                    SizedBox::new().size(Size::new(220.0, 120.0)),
+                )))
+                .with_child(SizedBox::new().height(120.0).with_child(Background::new(
+                    Color::rgba(0.18, 0.54, 0.82, 1.0),
+                    SizedBox::new().size(Size::new(220.0, 120.0)),
+                )))
+                .with_child(SizedBox::new().height(120.0).with_child(Background::new(
+                    Color::rgba(0.24, 0.72, 0.36, 1.0),
+                    SizedBox::new().size(Size::new(220.0, 120.0)),
+                ))),
         )
         .name("Split scroll");
 
@@ -2462,7 +2569,9 @@ fn desktop_split_view_scroll_view_scroll_repaints_frame() -> Result<()> {
 
 #[test]
 fn desktop_virtual_scroll_render_is_history_independent_for_same_offset() -> Result<()> {
-    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     fn capture_after_scroll_steps(steps: &[f32]) -> Result<CapturedFrame> {
         let harness = DesktopHarness::launch(|| build_scroll_history_repro_application().build())?;
@@ -2471,7 +2580,11 @@ fn desktop_virtual_scroll_render_is_history_independent_for_same_offset() -> Res
         harness.dispatch(window_id, HostInputEvent::Focused(true))?;
 
         let initial_snapshot = harness.snapshot(window_id)?;
-        let scroll = find_node(&initial_snapshot, SemanticsRole::ScrollView, "History repro scroll");
+        let scroll = find_node(
+            &initial_snapshot,
+            SemanticsRole::ScrollView,
+            "History repro scroll",
+        );
         let scroll_point = Point::new(scroll.bounds.max_x() - 12.0, scroll.bounds.y() + 40.0);
         move_cursor(&harness, window_id, scroll_point)?;
 
@@ -2498,7 +2611,8 @@ fn desktop_virtual_scroll_render_is_history_independent_for_same_offset() -> Res
 
     let diff_count = frame_pixel_diff_count(&single_frame, &multi_frame);
     assert_eq!(
-        single_frame, multi_frame,
+        single_frame,
+        multi_frame,
         "the retained renderer produced different pixels for the same final virtual-scroll offset depending on wheel-event history (diff pixels: {diff_count}, diff bounds: {:?})",
         frame_diff_bounds(&single_frame, &multi_frame),
     );
@@ -2544,7 +2658,9 @@ fn virtual_scroll_runtime_scene_is_history_independent_for_same_offset() -> Resu
 
 #[test]
 fn widget_book_scroll_fps_benchmark() -> Result<()> {
-    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     run_widget_book_scroll_benchmark(|| {
         build_widget_book_application(scroll_benchmark_widget_book_state())
@@ -2554,7 +2670,9 @@ fn widget_book_scroll_fps_benchmark() -> Result<()> {
 #[test]
 #[ignore = "diagnostic benchmark for isolating live-overlay cost"]
 fn widget_book_scroll_fps_benchmark_without_live_overlay() -> Result<()> {
-    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     run_widget_book_scroll_benchmark(|| {
         build_widget_book_gallery_application(scroll_benchmark_widget_book_state())
@@ -2563,7 +2681,9 @@ fn widget_book_scroll_fps_benchmark_without_live_overlay() -> Result<()> {
 
 #[test]
 fn desktop_button_grid_64_reports_initial_render_time() -> Result<()> {
-    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let harness = DesktopHarness::launch(|| build_button_grid_benchmark_application().build())?;
     let snapshot = harness.snapshot(harness.main_window_id())?;
@@ -2601,7 +2721,9 @@ fn desktop_button_grid_64_reports_initial_render_time() -> Result<()> {
         slowest_phase
             .map(|sample| sample.phase.label())
             .unwrap_or("none"),
-        slowest_phase.map(|sample| sample.duration_ms).unwrap_or(0.0),
+        slowest_phase
+            .map(|sample| sample.duration_ms)
+            .unwrap_or(0.0),
     );
 
     Ok(())
@@ -2609,7 +2731,9 @@ fn desktop_button_grid_64_reports_initial_render_time() -> Result<()> {
 
 #[test]
 fn desktop_widget_book_overlay_toggle_publishes_detailed_scene_stats() -> Result<()> {
-    let _guard = DESKTOP_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let harness = DesktopHarness::launch(|| {
         build_widget_book_application(Rc::new(RefCell::new(WidgetBookState {
@@ -2646,7 +2770,10 @@ fn desktop_widget_book_overlay_toggle_publishes_detailed_scene_stats() -> Result
 
     assert!(!before_performance.scene.detail_mode.is_detailed());
     assert!(before_performance.phase_timings.is_empty());
-    assert_eq!(before_performance.renderer_submission, RendererSubmissionDiagnostics::default());
+    assert_eq!(
+        before_performance.renderer_submission,
+        RendererSubmissionDiagnostics::default()
+    );
 
     click_at(
         &harness,
@@ -2656,10 +2783,9 @@ fn desktop_widget_book_overlay_toggle_publishes_detailed_scene_stats() -> Result
 
     let after_frame = harness.capture(window_id)?;
     let after_snapshot = harness.snapshot(window_id)?;
-    let after_performance = after_snapshot
-        .performance
-        .clone()
-        .expect("desktop widget book should publish a performance snapshot after toggling detail mode");
+    let after_performance = after_snapshot.performance.clone().expect(
+        "desktop widget book should publish a performance snapshot after toggling detail mode",
+    );
     let overlay = find_node(
         &after_snapshot,
         SemanticsRole::GenericContainer,

@@ -667,7 +667,8 @@ impl VirtualScrollView {
         if (next - self.offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
             ctx.request_arrange();
-            let next_visible_range = self.visible_range_for_offset(viewport.height(), self.offset_y);
+            let next_visible_range =
+                self.visible_range_for_offset(viewport.height(), self.offset_y);
             if next_visible_range != self.visible_range {
                 ctx.request_paint();
             }
@@ -978,12 +979,18 @@ impl Widget for VirtualScrollView {
         let visible_range = self.visible_range.clone();
         let offset_y = self.offset_y;
         let item_offsets = self.item_offsets[visible_range.clone()].to_vec();
-        for (relative_index, child) in self.children.as_mut_slice()[visible_range].iter_mut().enumerate() {
+        for (relative_index, child) in self.children.as_mut_slice()[visible_range]
+            .iter_mut()
+            .enumerate()
+        {
             let child_size = child.measured_size();
             child.arrange(
                 ctx,
                 Rect::from_origin_size(
-                    Point::new(viewport.x(), viewport.y() + item_offsets[relative_index] - offset_y),
+                    Point::new(
+                        viewport.x(),
+                        viewport.y() + item_offsets[relative_index] - offset_y,
+                    ),
                     Size::new(
                         if viewport_width.is_finite() {
                             viewport_width
@@ -1188,7 +1195,10 @@ fn stack_child_constraints(
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use super::{Align, Background, Padding, ScrollAxes, ScrollView, SizedBox, Stack, VirtualScrollView};
+    use super::{
+        Align, Background, Padding, ScrollAxes, ScrollView, SizedBox, Stack, VirtualScrollView,
+    };
+    use crate::SplitView;
     use sui_core::{
         Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
         PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode, SemanticsRole, Size,
@@ -1204,7 +1214,6 @@ mod tests {
         Brush, LayerCachePolicy, LayerCompositionMode, Scene, SceneCommand, SceneLayer,
         SceneLayerDescriptor,
     };
-    use crate::SplitView;
 
     struct FixedBox {
         size: Size,
@@ -1387,7 +1396,8 @@ mod tests {
                         .scroll_delta
                         .map(super::scroll_delta_to_offset)
                         .unwrap_or(pointer.delta);
-                    let next = self.clamp_offset(viewport, self.offset + Vector::new(-delta.x, -delta.y));
+                    let next =
+                        self.clamp_offset(viewport, self.offset + Vector::new(-delta.x, -delta.y));
                     if next != self.offset {
                         self.offset = next;
                         ctx.request_arrange();
@@ -1463,7 +1473,8 @@ mod tests {
         }
 
         fn semantics(&self, ctx: &mut SemanticsCtx) {
-            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
+            let mut node =
+                SemanticsNode::new(ctx.widget_id(), SemanticsRole::ScrollView, ctx.bounds());
             node.name = self.name.clone();
             node.actions = vec![sui_core::SemanticsAction::Focus];
             node.state.focused = ctx.is_focused();
@@ -1498,7 +1509,10 @@ mod tests {
         (output, graph)
     }
 
-    fn layer_descriptor_for(output: &RenderOutput, owner: WidgetId) -> Option<SceneLayerDescriptor> {
+    fn layer_descriptor_for(
+        output: &RenderOutput,
+        owner: WidgetId,
+    ) -> Option<SceneLayerDescriptor> {
         let mut descriptor = None;
         output.frame.scene.visit_layers(&mut |layer| {
             if layer.widget_id() == owner {
@@ -1689,11 +1703,12 @@ mod tests {
 
     #[test]
     fn scroll_view_uses_cached_scroll_layer_metadata() {
-        let (output, _) = render_root(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(ScrollView::vertical(
-                FixedBox::new(Size::new(80.0, 120.0), Color::rgba(0.2, 0.3, 0.7, 1.0)),
+        let (output, _) = render_root(SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            ScrollView::vertical(FixedBox::new(
+                Size::new(80.0, 120.0),
+                Color::rgba(0.2, 0.3, 0.7, 1.0),
             )),
-        );
+        ));
 
         let scroll_id = output
             .semantics
@@ -1701,7 +1716,8 @@ mod tests {
             .find(|node| node.role == SemanticsRole::ScrollView)
             .expect("scroll view semantics present")
             .id;
-        let descriptor = layer_descriptor_for(&output, scroll_id).expect("scroll view layer present");
+        let descriptor =
+            layer_descriptor_for(&output, scroll_id).expect("scroll view layer present");
 
         assert_eq!(descriptor.cache_policy, LayerCachePolicy::Cached);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
@@ -1729,8 +1745,8 @@ mod tests {
             .find(|node| node.role == SemanticsRole::ScrollView)
             .expect("virtual scroll view semantics present")
             .id;
-        let descriptor = layer_descriptor_for(&output, scroll_id)
-            .expect("virtual scroll view layer present");
+        let descriptor =
+            layer_descriptor_for(&output, scroll_id).expect("virtual scroll view layer present");
 
         assert_eq!(descriptor.cache_policy, LayerCachePolicy::Cached);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
@@ -1790,16 +1806,15 @@ mod tests {
     #[test]
     fn scroll_view_emits_transform_updates_after_scroll_offset_changes() {
         let counts = Rc::new(RefCell::new(vec![0usize; 1]));
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(ScrollView::vertical(
-                PaintCounterBox::new(
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(PaintCounterBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
                     Rc::clone(&counts),
                     0,
-                ),
-            )),
-        );
+                )),
+            ));
 
         let _ = runtime.render(window_id).unwrap();
         assert_eq!(*counts.borrow(), vec![1]);
@@ -1855,9 +1870,13 @@ mod tests {
 
         assert!(graph.nodes.iter().any(|node| node.bounds.y() < 0.0));
         assert_ne!(before.frame.scene, after.frame.scene);
-        assert!(after.frame.layer_updates.iter().any(|update| {
-            update.kind == sui_scene::SceneLayerUpdateKind::Transform
-        }));
+        assert!(
+            after
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| { update.kind == sui_scene::SceneLayerUpdateKind::Transform })
+        );
     }
 
     #[test]
@@ -1910,12 +1929,20 @@ mod tests {
         // A small 4px scroll should not change the visible range when
         // the overdraw buffer covers all items.
         assert_eq!(*counts.borrow(), vec![1, 1, 1, 1]);
-        assert!(output.frame.layer_updates.iter().any(|update| {
-            update.kind == sui_scene::SceneLayerUpdateKind::Transform
-        }));
-        assert!(output.frame.layer_updates.iter().all(|update| {
-            update.kind != sui_scene::SceneLayerUpdateKind::Content
-        }));
+        assert!(
+            output
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| { update.kind == sui_scene::SceneLayerUpdateKind::Transform })
+        );
+        assert!(
+            output
+                .frame
+                .layer_updates
+                .iter()
+                .all(|update| { update.kind != sui_scene::SceneLayerUpdateKind::Content })
+        );
     }
 
     #[test]
@@ -1954,30 +1981,29 @@ mod tests {
 
     #[test]
     fn nested_scroll_views_scroll_the_inner_region_first() {
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
-                ScrollView::vertical(
-                    Stack::vertical()
-                        .spacing(8.0)
-                        .with_child(FixedBox::new(
-                            Size::new(80.0, 32.0),
-                            Color::rgba(0.8, 0.2, 0.2, 1.0),
-                        ))
-                        .with_child(
-                            SizedBox::new().height(40.0).with_child(ScrollView::vertical(
-                                FixedBox::new(
+        let (mut runtime, window_id) =
+            build_runtime(
+                SizedBox::new()
+                    .size(Size::new(80.0, 80.0))
+                    .with_child(ScrollView::vertical(
+                        Stack::vertical()
+                            .spacing(8.0)
+                            .with_child(FixedBox::new(
+                                Size::new(80.0, 32.0),
+                                Color::rgba(0.8, 0.2, 0.2, 1.0),
+                            ))
+                            .with_child(SizedBox::new().height(40.0).with_child(
+                                ScrollView::vertical(FixedBox::new(
                                     Size::new(80.0, 120.0),
                                     Color::rgba(0.2, 0.7, 0.3, 1.0),
-                                ),
+                                )),
+                            ))
+                            .with_child(FixedBox::new(
+                                Size::new(80.0, 140.0),
+                                Color::rgba(0.2, 0.3, 0.8, 1.0),
                             )),
-                        )
-                        .with_child(FixedBox::new(
-                            Size::new(80.0, 140.0),
-                            Color::rgba(0.2, 0.3, 0.8, 1.0),
-                        )),
-                ),
-            ),
-        );
+                    )),
+            );
 
         let _ = runtime.render(window_id).unwrap();
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 52.0));
@@ -2001,39 +2027,40 @@ mod tests {
 
         assert_eq!(outer_content.bounds.y(), 0.0);
         assert_eq!(inner_content.bounds.y(), 16.0);
-        assert!(output
-            .frame
-            .layer_updates
-            .iter()
-            .any(|update| update.owner == inner_content.id));
+        assert!(
+            output
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| update.owner == inner_content.id)
+        );
     }
 
     #[test]
     fn nested_scroll_views_fall_back_to_parent_at_inner_limit() {
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
-                ScrollView::vertical(
-                    Stack::vertical()
-                        .spacing(8.0)
-                        .with_child(FixedBox::new(
-                            Size::new(80.0, 32.0),
-                            Color::rgba(0.8, 0.2, 0.2, 1.0),
-                        ))
-                        .with_child(
-                            SizedBox::new().height(40.0).with_child(ScrollView::vertical(
-                                FixedBox::new(
+        let (mut runtime, window_id) =
+            build_runtime(
+                SizedBox::new()
+                    .size(Size::new(80.0, 80.0))
+                    .with_child(ScrollView::vertical(
+                        Stack::vertical()
+                            .spacing(8.0)
+                            .with_child(FixedBox::new(
+                                Size::new(80.0, 32.0),
+                                Color::rgba(0.8, 0.2, 0.2, 1.0),
+                            ))
+                            .with_child(SizedBox::new().height(40.0).with_child(
+                                ScrollView::vertical(FixedBox::new(
                                     Size::new(80.0, 120.0),
                                     Color::rgba(0.2, 0.7, 0.3, 1.0),
-                                ),
+                                )),
+                            ))
+                            .with_child(FixedBox::new(
+                                Size::new(80.0, 140.0),
+                                Color::rgba(0.2, 0.3, 0.8, 1.0),
                             )),
-                        )
-                        .with_child(FixedBox::new(
-                            Size::new(80.0, 140.0),
-                            Color::rgba(0.2, 0.3, 0.8, 1.0),
-                        )),
-                ),
-            ),
-        );
+                    )),
+            );
 
         let _ = runtime.render(window_id).unwrap();
 

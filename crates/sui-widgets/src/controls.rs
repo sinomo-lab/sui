@@ -693,11 +693,7 @@ impl Widget for Button {
             self.label_measurement,
             text_style.line_height,
         );
-        ctx.draw_text(
-            label_rect,
-            self.label.clone(),
-            text_style,
-        );
+        ctx.draw_text(label_rect, self.label.clone(), text_style);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -987,7 +983,12 @@ impl Widget for Checkbox {
             );
         }
         ctx.draw_text(
-            vertically_centered_text_rect(ctx, label_rect, self.label_measurement, text_style.line_height),
+            vertically_centered_text_rect(
+                ctx,
+                label_rect,
+                self.label_measurement,
+                text_style.line_height,
+            ),
             self.label.clone(),
             text_style,
         );
@@ -1272,7 +1273,12 @@ impl Widget for Switch {
             palette.accent_text,
         );
         ctx.draw_text(
-            vertically_centered_text_rect(ctx, label_rect, self.label_measurement, text_style.line_height),
+            vertically_centered_text_rect(
+                ctx,
+                label_rect,
+                self.label_measurement,
+                text_style.line_height,
+            ),
             self.label.clone(),
             text_style,
         );
@@ -1559,7 +1565,12 @@ impl Widget for RadioButton {
             );
         }
         ctx.draw_text(
-            vertically_centered_text_rect(ctx, label_rect, self.label_measurement, text_style.line_height),
+            vertically_centered_text_rect(
+                ctx,
+                label_rect,
+                self.label_measurement,
+                text_style.line_height,
+            ),
             self.label.clone(),
             text_style,
         );
@@ -3847,10 +3858,8 @@ fn draw_control_shape(
 
     if border_width > 0.0 {
         let inset = border_width * 0.5;
-        let stroke_shape = rounded_rect_path(
-            bounds.inflate(-inset, -inset),
-            (radius - inset).max(0.0),
-        );
+        let stroke_shape =
+            rounded_rect_path(bounds.inflate(-inset, -inset), (radius - inset).max(0.0));
         ctx.stroke(stroke_shape, border, StrokeStyle::new(border_width));
     }
 }
@@ -3990,14 +3999,14 @@ mod tests {
     };
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
-        PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, SemanticsRole,
-        SemanticsValue, Rect, Size, Vector, WidgetId, WindowEvent,
+        PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsRole,
+        SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
+    use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
         Application, RenderOutput, Runtime, Widget, WindowBuilder, WindowRenderOptions,
         clear_window_render_options, set_window_render_options,
     };
-    use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -4081,8 +4090,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(build());
         set_window_render_options(
             window_id,
-            WindowRenderOptions::new(true, 1.0)
-                .with_optical_vertical_text_alignment_enabled(false),
+            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
         );
         let geometric = runtime.render(window_id).unwrap();
         clear_window_render_options(window_id);
@@ -4091,7 +4099,10 @@ mod tests {
         (optical_rect, geometric_rect)
     }
 
-    fn layer_descriptor_for(output: &RenderOutput, owner: WidgetId) -> Option<SceneLayerDescriptor> {
+    fn layer_descriptor_for(
+        output: &RenderOutput,
+        owner: WidgetId,
+    ) -> Option<SceneLayerDescriptor> {
         let mut descriptor = None;
         output.frame.scene.visit_layers(&mut |layer| {
             if layer.widget_id() == owner {
@@ -4316,8 +4327,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(Button::new("Go").min_width(140.0));
         set_window_render_options(
             window_id,
-            WindowRenderOptions::new(true, 1.0)
-                .with_optical_vertical_text_alignment_enabled(false),
+            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
         );
         let geometric = runtime.render(window_id).unwrap();
         clear_window_render_options(window_id);
@@ -4354,8 +4364,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(Button::new("Go").min_width(140.0));
         set_window_render_options(
             window_id,
-            WindowRenderOptions::new(true, 1.0)
-                .with_optical_vertical_text_alignment_enabled(false),
+            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
         );
         let geometric = runtime.render(window_id).unwrap();
         clear_window_render_options(window_id);
@@ -4786,14 +4795,12 @@ mod tests {
 
     #[test]
     fn expanded_select_uses_direct_overlay_layer_metadata() -> Result<()> {
-        let (mut runtime, window_id) = build_runtime(
-            crate::Padding::all(
-                12.0,
-                Select::new("Mode")
-                    .placeholder("Choose mode")
-                    .options(["Draft", "Final", "Review"]),
-            ),
-        );
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            12.0,
+            Select::new("Mode")
+                .placeholder("Choose mode")
+                .options(["Draft", "Final", "Review"]),
+        ));
 
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
@@ -4826,11 +4833,11 @@ mod tests {
             12.0,
             crate::Stack::vertical()
                 .spacing(10.0)
-                .with_child(
-                    Select::new("Mode")
-                        .placeholder("Choose mode")
-                        .options(["Automatic", "Linear", "Gamma"]),
-                )
+                .with_child(Select::new("Mode").placeholder("Choose mode").options([
+                    "Automatic",
+                    "Linear",
+                    "Gamma",
+                ]))
                 .with_child(NumberInput::new("Gamma").value(1.4)),
         ));
 
@@ -4941,17 +4948,13 @@ mod tests {
             12.0,
             crate::Stack::vertical()
                 .spacing(4.0)
-                .with_child(
-                    Select::new("Mode")
-                        .placeholder("Choose mode")
-                        .options([
-                            "Automatic",
-                            "Linear",
-                            "Gamma",
-                            "Display P3",
-                            "HDR",
-                        ]),
-                )
+                .with_child(Select::new("Mode").placeholder("Choose mode").options([
+                    "Automatic",
+                    "Linear",
+                    "Gamma",
+                    "Display P3",
+                    "HDR",
+                ]))
                 .with_child(Button::new("Apply").on_press(move || {
                     *on_press.borrow_mut() += 1;
                 })),
@@ -5018,17 +5021,13 @@ mod tests {
             12.0,
             crate::Stack::vertical()
                 .spacing(4.0)
-                .with_child(
-                    Select::new("Mode")
-                        .placeholder("Choose mode")
-                        .options([
-                            "Automatic",
-                            "Linear",
-                            "Gamma",
-                            "Display P3",
-                            "HDR",
-                        ]),
-                )
+                .with_child(Select::new("Mode").placeholder("Choose mode").options([
+                    "Automatic",
+                    "Linear",
+                    "Gamma",
+                    "Display P3",
+                    "HDR",
+                ]))
                 .with_child(Button::new("Apply").on_press(move || {
                     *on_press.borrow_mut() += 1;
                 })),

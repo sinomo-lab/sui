@@ -32,7 +32,10 @@ use sui_text::{
     FontRegistry, ResolvedTextFace, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout,
     TextLayoutCacheSnapshot, TextRun, TextStyle, TextSystem,
 };
-use tiny_skia::{FillRule, Paint as TinySkiaPaint, PathBuilder as TinySkiaPathBuilder, Pixmap, Transform as TinySkiaTransform};
+use tiny_skia::{
+    FillRule, Paint as TinySkiaPaint, PathBuilder as TinySkiaPathBuilder, Pixmap,
+    Transform as TinySkiaTransform,
+};
 use ttf_parser::GlyphId;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
@@ -118,8 +121,8 @@ impl TextCoveragePolicy {
         match self.normalized() {
             Self::AutomaticByTextLuminance => {
                 let rgba = shader_color(color);
-                let luminance = ((rgba[0] * 0.2126) + (rgba[1] * 0.7152) + (rgba[2] * 0.0722))
-                    .clamp(0.0, 1.0);
+                let luminance =
+                    ((rgba[0] * 0.2126) + (rgba[1] * 0.7152) + (rgba[2] * 0.0722)).clamp(0.0, 1.0);
                 if luminance >= 0.5 {
                     Self::TwoCoverageMinusCoverageSq
                 } else {
@@ -293,8 +296,7 @@ impl RendererFrameStats {
         self.composition_time_us = (stats.composition_time_ms * 1000.0).round() as u64;
         self.retained_scene_traversal_time_us =
             (stats.scene_traversal_time_ms * 1000.0).round() as u64;
-        self.retained_packet_build_time_us =
-            (stats.packet_build_time_ms * 1000.0).round() as u64;
+        self.retained_packet_build_time_us = (stats.packet_build_time_ms * 1000.0).round() as u64;
         self.retained_packet_build_count = stats.packet_build_count;
         self
     }
@@ -520,7 +522,7 @@ impl WgpuRenderer {
     pub fn set_runtime_glyph_pixel_alignment_override(&mut self, enabled: Option<bool>) {
         self.runtime_glyph_pixel_alignment_override = enabled;
     }
-    
+
     pub fn set_runtime_diagnostics_enabled(&mut self, enabled: bool) {
         self.runtime_diagnostics_enabled = enabled;
         if let Some(text_engine) = self.text_engine.as_mut() {
@@ -971,12 +973,15 @@ impl WgpuRenderer {
 
         let prepared = self.prepare_scene_submission(frame)?;
         let (format, view) = {
-            let target = self.offscreen_targets.get(&frame.window_id).ok_or_else(|| {
-                Error::new(format!(
-                    "missing offscreen target for window {}",
-                    frame.window_id.get()
-                ))
-            })?;
+            let target = self
+                .offscreen_targets
+                .get(&frame.window_id)
+                .ok_or_else(|| {
+                    Error::new(format!(
+                        "missing offscreen target for window {}",
+                        frame.window_id.get()
+                    ))
+                })?;
             (
                 target.format,
                 target
@@ -1279,13 +1284,9 @@ impl WgpuRenderer {
             batch_prepare_time_us += started.elapsed().as_micros() as u64;
         }
         let mut frame_stats = if diagnostics_enabled {
-            RendererFrameStats::from_prepared_counts(
-                0,
-                draw_count,
-                uploaded_vertex_bytes,
-            )
-            .with_text_stats(text_frame_stats)
-            .with_compositor_stats(compositor_stats)
+            RendererFrameStats::from_prepared_counts(0, draw_count, uploaded_vertex_bytes)
+                .with_text_stats(text_frame_stats)
+                .with_compositor_stats(compositor_stats)
         } else {
             RendererFrameStats::default()
         };
@@ -1488,7 +1489,9 @@ impl WgpuRenderer {
                 .map(|started| started.elapsed().as_micros() as u64)
                 .unwrap_or(0),
             upload_bytes: if collect_stats {
-                upload.as_ref().map_or(0, |upload| upload.pixels.len() as u64)
+                upload
+                    .as_ref()
+                    .map_or(0, |upload| upload.pixels.len() as u64)
             } else {
                 0
             },
@@ -1515,11 +1518,12 @@ impl WgpuRenderer {
                     .text_atlas_textures
                     .get(target_index)
                     .expect("target text atlas texture exists before partial ring upload");
-                let mut encoder = shared
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("SUI text atlas ring copy"),
-                    });
+                let mut encoder =
+                    shared
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("SUI text atlas ring copy"),
+                        });
                 encoder.copy_texture_to_texture(
                     wgpu::TexelCopyTextureInfo {
                         texture: &source.texture,
@@ -1651,7 +1655,10 @@ impl WgpuRenderer {
         &mut self,
         analytic_paths: HashMap<u64, Arc<AnalyticPathCpuData>>,
         collect_stats: bool,
-    ) -> Result<(Option<PreparedAnalyticPathResources>, AnalyticPathBindGroupStats)> {
+    ) -> Result<(
+        Option<PreparedAnalyticPathResources>,
+        AnalyticPathBindGroupStats,
+    )> {
         if analytic_paths.is_empty() {
             return Ok((None, AnalyticPathBindGroupStats::default()));
         }
@@ -1681,19 +1688,28 @@ impl WgpuRenderer {
             miss_count: if collect_stats { pending.len() } else { 0 },
             ..AnalyticPathBindGroupStats::default()
         };
-        let needs_rebuild = if self.frame_resources.analytic_path_arena.bind_group.is_none() {
+        let needs_rebuild = if self
+            .frame_resources
+            .analytic_path_arena
+            .bind_group
+            .is_none()
+        {
             true
         } else if pending.is_empty() {
             false
         } else {
-            let required_slots = self.frame_resources.analytic_path_arena.used_slots + pending.len();
+            let required_slots =
+                self.frame_resources.analytic_path_arena.used_slots + pending.len();
             let required_contours = self.frame_resources.analytic_path_arena.used_contours
                 + pending
                     .iter()
                     .map(|(_, path)| path.contours.len())
                     .sum::<usize>();
             let required_points = self.frame_resources.analytic_path_arena.used_points
-                + pending.iter().map(|(_, path)| path.points.len()).sum::<usize>();
+                + pending
+                    .iter()
+                    .map(|(_, path)| path.points.len())
+                    .sum::<usize>();
             !self.frame_resources.analytic_path_arena.has_capacity(
                 required_slots,
                 required_contours,
@@ -1706,7 +1722,12 @@ impl WgpuRenderer {
                 .analytic_path_cache
                 .iter()
                 .map(|(signature, entry)| {
-                    (*signature, entry.slot, entry.last_used_frame, entry.data.clone())
+                    (
+                        *signature,
+                        entry.slot,
+                        entry.last_used_frame,
+                        entry.data.clone(),
+                    )
                 })
                 .collect();
             cached_entries.sort_unstable_by_key(|(_, slot, _, _)| *slot);
@@ -1724,7 +1745,10 @@ impl WgpuRenderer {
                 .iter()
                 .map(|(_, _, _, data)| data.points.len())
                 .sum::<usize>()
-                + pending.iter().map(|(_, data)| data.points.len()).sum::<usize>();
+                + pending
+                    .iter()
+                    .map(|(_, data)| data.points.len())
+                    .sum::<usize>();
 
             self.frame_resources.analytic_path_arena.ensure_capacity(
                 &shared.device,
@@ -1883,10 +1907,13 @@ impl WgpuRenderer {
             }
 
             if !meta_data.is_empty() {
-                let meta_offset = base_slot as u64 * std::mem::size_of::<AnalyticPathMetaGpu>() as u64;
-                shared
-                    .queue
-                    .write_buffer(meta_buffer, meta_offset, bytemuck::cast_slice(&meta_data));
+                let meta_offset =
+                    base_slot as u64 * std::mem::size_of::<AnalyticPathMetaGpu>() as u64;
+                shared.queue.write_buffer(
+                    meta_buffer,
+                    meta_offset,
+                    bytemuck::cast_slice(&meta_data),
+                );
             }
             if !contour_data.is_empty() {
                 let contour_offset =
@@ -1898,7 +1925,8 @@ impl WgpuRenderer {
                 );
             }
             if !point_data.is_empty() {
-                let point_offset = base_point as u64 * std::mem::size_of::<AnalyticPointGpu>() as u64;
+                let point_offset =
+                    base_point as u64 * std::mem::size_of::<AnalyticPointGpu>() as u64;
                 shared.queue.write_buffer(
                     point_buffer,
                     point_offset,
@@ -1959,18 +1987,10 @@ impl WgpuRenderer {
             return rebuild_retained_tile_geometry(shared, compositor, arena);
         }
 
-        let mut uploaded_vertex_bytes = append_retained_tile_geometry(
-            shared,
-            compositor,
-            arena,
-            &plan,
-        )?;
-        uploaded_vertex_bytes += refresh_retained_tile_geometry(
-            shared,
-            compositor,
-            arena,
-            &plan.in_place_tiles,
-        )?;
+        let mut uploaded_vertex_bytes =
+            append_retained_tile_geometry(shared, compositor, arena, &plan)?;
+        uploaded_vertex_bytes +=
+            refresh_retained_tile_geometry(shared, compositor, arena, &plan.in_place_tiles)?;
         Ok(uploaded_vertex_bytes)
     }
 
@@ -2389,14 +2409,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        scene::{CachedDrawBatch, CachedPassBatch, append_cached_glyph_atlas, prepare_cached_passes},
         CachedGlyphAtlas, CachedGlyphMesh, ClipState, CompositionContainerId,
         DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedClipPath,
         PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
         PreparedVertices, RendererFrameStats, RetainedCompositorState, RetainedFrameFragment,
-        RetainedLayerRenderMode, RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine, VERTEX_SIZE,
-        Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
-        prepare_frame_batches, shader_color, to_ndc,
+        RetainedLayerRenderMode, RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine,
+        VERTEX_SIZE, Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
+        prepare_frame_batches,
+        scene::{
+            CachedDrawBatch, CachedPassBatch, append_cached_glyph_atlas, prepare_cached_passes,
+        },
+        shader_color, to_ndc,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -2408,7 +2431,9 @@ mod tests {
         SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
         SceneLayerUpdateKind, StrokeStyle,
     };
-    use sui_text::{FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, TextRun, TextStyle, TextSystem};
+    use sui_text::{
+        FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, TextRun, TextStyle, TextSystem,
+    };
 
     fn load_test_font() -> RegisteredFont {
         let mut font_db = fontdb::Database::new();
@@ -2490,12 +2515,9 @@ mod tests {
                 let x = (index as u32) % width;
                 let y = (index as u32) / width;
                 diff_bounds = Some(match diff_bounds {
-                    Some((min_x, min_y, max_x, max_y)) => (
-                        min_x.min(x),
-                        min_y.min(y),
-                        max_x.max(x),
-                        max_y.max(y),
-                    ),
+                    Some((min_x, min_y, max_x, max_y)) => {
+                        (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
+                    }
                     None => (x, y, x, y),
                 });
             }
@@ -2772,7 +2794,12 @@ mod tests {
 
     #[test]
     fn text_atlas_shader_outputs_premultiplied_alpha() {
-        let color = shader_color(Color::srgba(66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0, 0.75));
+        let color = shader_color(Color::srgba(
+            66.0 / 255.0,
+            42.0 / 255.0,
+            213.0 / 255.0,
+            0.75,
+        ));
         let coverage = 0.5;
         let alpha = color[3] * coverage;
         let premultiplied = [color[0] * alpha, color[1] * alpha, color[2] * alpha, alpha];
@@ -2787,9 +2814,7 @@ mod tests {
     fn text_coverage_policy_matches_egui_reference_formulas() {
         assert!((TextCoveragePolicy::Linear.apply(0.5) - 0.5).abs() < 0.0001);
         assert!((TextCoveragePolicy::Gamma(2.0).apply(0.5) - 0.25).abs() < 0.0001);
-        assert!(
-            (TextCoveragePolicy::TwoCoverageMinusCoverageSq.apply(0.5) - 0.75).abs() < 0.0001
-        );
+        assert!((TextCoveragePolicy::TwoCoverageMinusCoverageSq.apply(0.5) - 0.75).abs() < 0.0001);
     }
 
     #[test]
@@ -2840,7 +2865,10 @@ mod tests {
         let mut text_engine = TextEngine::new().unwrap();
         let vertices = build_vertices(&frame, &mut text_engine).unwrap();
 
-        assert!(vertices.len() >= 12, "expected atlas vertices for repeated l glyphs");
+        assert!(
+            vertices.len() >= 12,
+            "expected atlas vertices for repeated l glyphs"
+        );
 
         let first_l_left = logical_x_from_ndc(vertices[24].position[0], viewport);
         let second_l_left = logical_x_from_ndc(vertices[30].position[0], viewport);
@@ -2891,7 +2919,8 @@ mod tests {
             image_registry: Arc::new(ImageRegistry::new()),
         };
 
-        let mut linear = WgpuRenderer::default().with_text_coverage_policy(TextCoveragePolicy::Linear);
+        let mut linear =
+            WgpuRenderer::default().with_text_coverage_policy(TextCoveragePolicy::Linear);
         linear.render(&frame).unwrap();
         let linear_pixels = linear.capture_last_frame_rgba(frame.window_id).unwrap();
 
@@ -4117,7 +4146,10 @@ mod tests {
         assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
         assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
         assert_eq!(first_clip_rect, Some(Rect::new(0.0, 0.0, 384.0, 128.0)));
-        assert_eq!(translated_clip_rect, Some(Rect::new(0.0, 0.0, 384.0, 128.0)));
+        assert_eq!(
+            translated_clip_rect,
+            Some(Rect::new(0.0, 0.0, 384.0, 128.0))
+        );
         assert_eq!(translated_offset, Vector::new(64.0, 0.0));
     }
 
@@ -4838,9 +4870,11 @@ mod tests {
         let first_frame = frame.clone();
         let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
-        assert!(frame
-            .scene
-            .translate_layer(content_id, Vector::new(0.0, -72.0)));
+        assert!(
+            frame
+                .scene
+                .translate_layer(content_id, Vector::new(0.0, -72.0))
+        );
         frame.layer_updates = vec![
             SceneLayerUpdate::from_descriptor(
                 SceneLayerUpdateKind::Transform,
@@ -5426,10 +5460,16 @@ mod tests {
                 scale_factor: 1.0,
                 dirty_regions: Vec::new(),
                 layer_updates: vec![
-                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, shell_descriptor)
-                        .with_damage(Rect::new(24.0, -478.0, 1232.0, 2046.0)),
-                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, child_descriptor)
-                        .with_damage(Rect::new(41.5, 627.5, 361.0, 221.0)),
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        shell_descriptor,
+                    )
+                    .with_damage(Rect::new(24.0, -478.0, 1232.0, 2046.0)),
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        child_descriptor,
+                    )
+                    .with_damage(Rect::new(41.5, 627.5, 361.0, 221.0)),
                 ],
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
@@ -5459,8 +5499,7 @@ mod tests {
         builder.close();
         let path = builder.finish().expect("fractional rectangle path");
 
-        let bounds = super::glyph_raster_bounds(&path)
-            .expect("bounds for fractional rectangle");
+        let bounds = super::glyph_raster_bounds(&path).expect("bounds for fractional rectangle");
 
         assert!((bounds.logical_min_x - 0.6).abs() < 0.0001);
         assert!((bounds.logical_min_y + 0.2).abs() < 0.0001);
@@ -5639,7 +5678,10 @@ mod tests {
             if direction.is_sign_positive() {
                 builder
                     .move_to(Point::new(bounds.x(), bounds.y() + (bounds.height() * 0.3)))
-                    .line_to(Point::new(center.x, bounds.max_y() - (bounds.height() * 0.3)))
+                    .line_to(Point::new(
+                        center.x,
+                        bounds.max_y() - (bounds.height() * 0.3),
+                    ))
                     .line_to(Point::new(
                         bounds.max_x(),
                         bounds.y() + (bounds.height() * 0.3),

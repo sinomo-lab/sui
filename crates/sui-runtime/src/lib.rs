@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
-mod widget;
 mod diagnostics;
+mod widget;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -11,8 +11,8 @@ use std::{
 
 use sui_core::{
     AsyncWakeToken, DirtyRegion, Error, Event, FontHandle, ImageHandle, InvalidationKind,
-    InvalidationRequest, InvalidationTarget, KeyState, Point, PointerEventKind, Rect, Result,
-    SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
+    InvalidationRequest, InvalidationTarget, KeyState, Point, PointerEvent, PointerEventKind, Rect,
+    Result, SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -21,25 +21,22 @@ use sui_scene::{
 };
 use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
-pub use sui_core::DpiInfo;
 pub use diagnostics::{
-    CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample,
-    PresentationLatencyDiagnostics, RenderDiagnostics,
-    RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
-    TextCacheDeltaDiagnostics, TextCacheDiagnostics,
-    WindowPerformanceSnapshot, WindowRenderOptions, WindowTextRenderPolicy,
-    clear_window_performance_snapshot,
-    clear_window_render_options,
-    clear_window_performance_snapshots, publish_window_performance_snapshot,
-    set_window_render_options,
+    CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
+    RenderDiagnostics, RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
+    TextCacheDeltaDiagnostics, TextCacheDiagnostics, WindowPerformanceSnapshot,
+    WindowPerformanceSummary, WindowRenderOptions, WindowTextRenderPolicy,
+    clear_window_performance_snapshot, clear_window_performance_snapshots,
+    clear_window_render_options, publish_window_performance_snapshot, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_performance_summary, window_performance_text_caches, window_render_options,
-    window_scene_statistics_detail_mode, WindowPerformanceSummary,
+    window_scene_statistics_detail_mode,
 };
+pub use sui_core::DpiInfo;
 pub use widget::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx,
-    SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
-    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget, WidgetChildren,
+    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
 
@@ -618,6 +615,7 @@ struct WindowState {
     last_semantics: Vec<SemanticsNode>,
     pending_invalidations: Vec<InvalidationRequest>,
     pointer_capture: HashMap<u64, WidgetId>,
+    pointer_hover_paths: HashMap<u64, Vec<WidgetId>>,
     scheduled_timers: Vec<ScheduledTimer>,
     delivering_timers: HashMap<TimerToken, WidgetId>,
     async_wake_targets: HashMap<AsyncWakeToken, WidgetId>,
@@ -648,6 +646,7 @@ impl WindowState {
             last_semantics: Vec::new(),
             pending_invalidations: Vec::new(),
             pointer_capture: HashMap::new(),
+            pointer_hover_paths: HashMap::new(),
             scheduled_timers: Vec::new(),
             delivering_timers: HashMap::new(),
             async_wake_targets: HashMap::new(),
@@ -686,10 +685,35 @@ impl WindowState {
             _ => None,
         };
 
+        let mut invalidations = Vec::new();
+        let mut skip_primary_route = false;
+        if let Event::Pointer(pointer) = &event {
+            let hover_route = self.update_pointer_hover_path(pointer, hit_target);
+            invalidations.extend(hover_route.effects.invalidations);
+
+            if let Some(request) = hover_route.focus_request {
+                let focus_effects = self.apply_focus_request(request);
+                invalidations.extend(focus_effects.invalidations);
+                self.apply_wake_requests(focus_effects.wake_requests);
+                self.apply_pointer_capture_requests(focus_effects.pointer_capture_requests);
+            }
+
+            self.apply_wake_requests(hover_route.effects.wake_requests);
+            self.apply_pointer_capture_requests(hover_route.effects.pointer_capture_requests);
+            skip_primary_route = hover_route.skip_primary_route;
+        }
+
+        if skip_primary_route {
+            self.finish_event(&event);
+            self.schedule.extend(&invalidations);
+            self.pending_invalidations.extend(invalidations);
+            return;
+        }
+
         let target = self.resolve_event_target(&event, hit_target);
 
         let route = self.route_event(target, &event);
-        let mut invalidations = route.effects.invalidations;
+        invalidations.extend(route.effects.invalidations);
 
         let focus_request = route
             .focus_request
@@ -709,6 +733,110 @@ impl WindowState {
         self.pending_invalidations.extend(invalidations);
     }
 
+    fn update_pointer_hover_path(
+        &mut self,
+        pointer: &PointerEvent,
+        hit_target: Option<WidgetId>,
+    ) -> HoverTransitionResult {
+        let skip_primary_route = matches!(
+            pointer.kind,
+            PointerEventKind::Enter | PointerEventKind::Leave
+        );
+
+        let next_path = match pointer.kind {
+            PointerEventKind::Move | PointerEventKind::Enter
+                if pointer.buttons.is_empty()
+                    && !self.pointer_capture.contains_key(&pointer.pointer_id) =>
+            {
+                self.hover_transition_path(hit_target)
+            }
+            PointerEventKind::Leave | PointerEventKind::Cancel => Vec::new(),
+            _ => {
+                return HoverTransitionResult {
+                    skip_primary_route,
+                    ..HoverTransitionResult::default()
+                };
+            }
+        };
+
+        let previous_path = self
+            .pointer_hover_paths
+            .remove(&pointer.pointer_id)
+            .unwrap_or_default();
+        if previous_path == next_path {
+            if !next_path.is_empty() {
+                self.pointer_hover_paths
+                    .insert(pointer.pointer_id, next_path);
+            }
+            return HoverTransitionResult {
+                skip_primary_route,
+                ..HoverTransitionResult::default()
+            };
+        }
+
+        let shared_prefix_len = previous_path
+            .iter()
+            .zip(next_path.iter())
+            .take_while(|(left, right)| left == right)
+            .count();
+
+        let mut result = HoverTransitionResult {
+            skip_primary_route,
+            ..HoverTransitionResult::default()
+        };
+
+        let mut leave_pointer = pointer.clone();
+        leave_pointer.kind = PointerEventKind::Leave;
+        let leave_event = Event::Pointer(leave_pointer);
+        for widget_id in previous_path[shared_prefix_len..].iter().rev().copied() {
+            let dispatch = self.dispatch_direct_event(widget_id, &leave_event);
+            let dispatch_focus_request = dispatch.focus_request;
+            result.effects.extend(dispatch);
+            if dispatch_focus_request.is_some() {
+                result.focus_request = dispatch_focus_request;
+            }
+        }
+
+        let mut enter_pointer = pointer.clone();
+        enter_pointer.kind = PointerEventKind::Enter;
+        let enter_event = Event::Pointer(enter_pointer);
+        for widget_id in next_path[shared_prefix_len..].iter().copied() {
+            let dispatch = self.dispatch_direct_event(widget_id, &enter_event);
+            let dispatch_focus_request = dispatch.focus_request;
+            result.effects.extend(dispatch);
+            if dispatch_focus_request.is_some() {
+                result.focus_request = dispatch_focus_request;
+            }
+        }
+
+        if !next_path.is_empty() {
+            self.pointer_hover_paths
+                .insert(pointer.pointer_id, next_path);
+        }
+
+        result
+    }
+
+    fn hover_transition_path(&self, hit_target: Option<WidgetId>) -> Vec<WidgetId> {
+        hit_target
+            .and_then(|target| self.graph.path_to(target))
+            .map(|path| path.into_iter().skip(1).collect())
+            .unwrap_or_default()
+    }
+
+    fn dispatch_direct_event(&mut self, target: WidgetId, event: &Event) -> widget::EventDispatch {
+        self.root
+            .dispatch_event_for(
+                target,
+                self.id,
+                self.last_tick_time,
+                EventPhase::Target,
+                self.focus.focused_widget,
+                event,
+            )
+            .unwrap_or_else(empty_dispatch)
+    }
+
     fn floating_layer_hit_test(&mut self, point: Point) -> Option<WidgetId> {
         let effect_hit = {
             let scene = self.last_frame.as_ref().map(|frame| &frame.scene)?;
@@ -720,7 +848,8 @@ impl WindowState {
             )
         };
         if let Some(widget_id) = effect_hit {
-            if self.current_widget_matches_hit_test_phase(widget_id, HitTestCompositionPhase::Effect)
+            if self
+                .current_widget_matches_hit_test_phase(widget_id, HitTestCompositionPhase::Effect)
             {
                 return Some(widget_id);
             }
@@ -1187,11 +1316,12 @@ impl WindowState {
         let mut repaint_layers = Vec::new();
         let mut dirty_layers = Vec::new();
         let mut layer_updates = Vec::new();
-        let previous_graph = if (self.schedule.measure || self.schedule.arrange) && !self.graph.is_empty() {
-            Some(self.graph.snapshot())
-        } else {
-            None
-        };
+        let previous_graph =
+            if (self.schedule.measure || self.schedule.arrange) && !self.graph.is_empty() {
+                Some(self.graph.snapshot())
+            } else {
+                None
+            };
         let mut graph_changes = GraphChangeSet::default();
 
         if self.last_frame.is_none() {
@@ -1300,25 +1430,22 @@ impl WindowState {
                 None
             };
 
-            let (scene, paint_invalidations, ime_composition_rect) =
-                if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
-                    self.paint_full_scene(dpi_info)
-                } else if repaint_layers.is_empty() {
-                    (
-                        self.last_frame
-                            .as_ref()
-                            .map(|frame| frame.scene.clone())
-                            .unwrap_or_default(),
-                        Vec::new(),
-                        baseline_ime_composition_rect,
-                    )
-                } else {
-                    self.repaint_dirty_layers(
-                        dpi_info,
-                        &repaint_layers,
-                        baseline_ime_composition_rect,
-                    )
-                };
+            let (scene, paint_invalidations, ime_composition_rect) = if self.last_frame.is_none()
+                || repaint_layers.contains(&self.root.id())
+            {
+                self.paint_full_scene(dpi_info)
+            } else if repaint_layers.is_empty() {
+                (
+                    self.last_frame
+                        .as_ref()
+                        .map(|frame| frame.scene.clone())
+                        .unwrap_or_default(),
+                    Vec::new(),
+                    baseline_ime_composition_rect,
+                )
+            } else {
+                self.repaint_dirty_layers(dpi_info, &repaint_layers, baseline_ime_composition_rect)
+            };
             let mut scene = scene;
             for translation in &composition_only_transforms {
                 let _ = scene.translate_layer(translation.widget_id, translation.delta);
@@ -1401,11 +1528,8 @@ impl WindowState {
 
         if diagnostics_enabled {
             let layout_cache = text_system.layout_cache_snapshot();
-            diagnostics.text_caches.runtime_layout = CacheMetrics::new(
-                layout_cache.entries,
-                layout_cache.hits,
-                layout_cache.misses,
-            );
+            diagnostics.text_caches.runtime_layout =
+                CacheMetrics::new(layout_cache.entries, layout_cache.hits, layout_cache.misses);
         }
 
         self.schedule.clear();
@@ -1419,7 +1543,10 @@ impl WindowState {
         }
     }
 
-    fn paint_full_scene(&mut self, dpi_info: DpiInfo) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
+    fn paint_full_scene(
+        &mut self,
+        dpi_info: DpiInfo,
+    ) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
         let mut paint_ctx = PaintCtx::new(
             self.id,
             self.root.id(),
@@ -1427,7 +1554,9 @@ impl WindowState {
             self.focus.focused_widget,
             dpi_info,
         );
-        let _ = self.root.paint_layer_contents_for(self.root.id(), &mut paint_ctx);
+        let _ = self
+            .root
+            .paint_layer_contents_for(self.root.id(), &mut paint_ctx);
         paint_ctx.into_parts()
     }
 
@@ -1461,11 +1590,15 @@ impl WindowState {
                 self.focus.focused_widget,
                 dpi_info,
             );
-            if !self.root.paint_layer_contents_for(widget_id, &mut paint_ctx) {
+            if !self
+                .root
+                .paint_layer_contents_for(widget_id, &mut paint_ctx)
+            {
                 return self.paint_full_scene(dpi_info);
             }
 
-            let (layer_scene, layer_invalidations, layer_ime_composition_rect) = paint_ctx.into_parts();
+            let (layer_scene, layer_invalidations, layer_ime_composition_rect) =
+                paint_ctx.into_parts();
             let Some(descriptor) = self.root.layer_descriptor_for(widget_id, &layer_scene) else {
                 return self.paint_full_scene(dpi_info);
             };
@@ -1487,10 +1620,7 @@ impl WindowState {
         (scene, invalidations, ime_composition_rect)
     }
 
-    fn collect_dirty_layers(
-        &self,
-        invalidations: &[InvalidationRequest],
-    ) -> Vec<WidgetId> {
+    fn collect_dirty_layers(&self, invalidations: &[InvalidationRequest]) -> Vec<WidgetId> {
         let candidates: HashSet<WidgetId> = invalidations
             .iter()
             .filter(|request| {
@@ -1506,7 +1636,9 @@ impl WindowState {
                 )
             })
             .map(|request| match request.target {
-                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => widget_id,
+                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => {
+                    widget_id
+                }
                 InvalidationTarget::Widget(_) => self.root.id(),
                 InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
             })
@@ -1555,7 +1687,8 @@ impl WindowState {
         };
 
         let current_snapshot = self.graph.snapshot();
-        let previous_nodes: HashMap<_, _> = previous.nodes.iter().map(|node| (node.id, node)).collect();
+        let previous_nodes: HashMap<_, _> =
+            previous.nodes.iter().map(|node| (node.id, node)).collect();
         let current_nodes: HashMap<_, _> = current_snapshot
             .nodes
             .iter()
@@ -1570,7 +1703,10 @@ impl WindowState {
         let mut transform_candidates = Vec::new();
 
         for widget_id in widget_ids {
-            match (previous_nodes.get(&widget_id), current_nodes.get(&widget_id)) {
+            match (
+                previous_nodes.get(&widget_id),
+                current_nodes.get(&widget_id),
+            ) {
                 (Some(previous_node), Some(current_node)) => {
                     if previous_node.measured_size != current_node.measured_size
                         || previous_node.geometry.layout_bounds.size
@@ -1629,7 +1765,9 @@ impl WindowState {
                 .filter(|translation: &&LayerTranslation| {
                     self.widget_is_ancestor_of(translation.widget_id, candidate.widget_id)
                 })
-                .fold(Vector::ZERO, |current, translation| current + translation.delta);
+                .fold(Vector::ZERO, |current, translation| {
+                    current + translation.delta
+                });
             let residual = candidate.delta - inherited_delta;
             if residual == Vector::ZERO {
                 continue;
@@ -1757,7 +1895,9 @@ impl WindowState {
                 continue;
             };
             let widget_id = match request.target {
-                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => widget_id,
+                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => {
+                    widget_id
+                }
                 InvalidationTarget::Widget(_) => self.root.id(),
                 InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
             };
@@ -1851,8 +1991,10 @@ impl WindowState {
         let viewport = constraints.clamp(measured_root);
 
         let mut arrange_ctx = ArrangeCtx::new(self.id, self.root.id(), self.current_dpi_info());
-        self.root
-            .arrange(&mut arrange_ctx, Rect::from_origin_size(Point::ZERO, viewport));
+        self.root.arrange(
+            &mut arrange_ctx,
+            Rect::from_origin_size(Point::ZERO, viewport),
+        );
         self.viewport = Some(viewport);
         self.schedule.measure = false;
         self.schedule.arrange = false;
@@ -2190,7 +2332,11 @@ impl WidgetGraph {
         let surface_options = pod.current_stack_surface_options();
         let is_direct_child_of_host = parent == Some(resolved_host);
         let is_stack_surface = surface_options.is_some() || is_direct_child_of_host;
-        let resolved_surface = if is_stack_surface { id } else { inherited_surface };
+        let resolved_surface = if is_stack_surface {
+            id
+        } else {
+            inherited_surface
+        };
         let transient_owner_surface = surface_options
             .filter(|options| options.transient && inherited_surface != id)
             .map(|_| inherited_surface);
@@ -2203,7 +2349,11 @@ impl WidgetGraph {
         let stack_surface_order = self
             .host_surface_order
             .get(&resolved_host)
-            .and_then(|surfaces| surfaces.iter().position(|surface| *surface == resolved_surface))
+            .and_then(|surfaces| {
+                surfaces
+                    .iter()
+                    .position(|surface| *surface == resolved_surface)
+            })
             .unwrap_or(0);
 
         let children = {
@@ -2267,10 +2417,9 @@ impl WidgetGraph {
             }
 
             for child_id in node.children.iter().rev() {
-                if self
-                    .node(*child_id)
-                    .is_some_and(|child| child.is_stack_surface || tested_surfaces.contains(child_id))
-                {
+                if self.node(*child_id).is_some_and(|child| {
+                    child.is_stack_surface || tested_surfaces.contains(child_id)
+                }) {
                     continue;
                 }
                 if let Some(hit) = self.hit_test_node(*child_id, point) {
@@ -2319,6 +2468,13 @@ struct EventRouteResult {
     path: Vec<WidgetId>,
     effects: EventEffects,
     focus_request: Option<FocusRequest>,
+}
+
+#[derive(Default)]
+struct HoverTransitionResult {
+    effects: EventEffects,
+    focus_request: Option<FocusRequest>,
+    skip_primary_route: bool,
 }
 
 #[derive(Default)]
@@ -2448,13 +2604,11 @@ fn next_hit_test_phase(
     }
 }
 
-fn invalidation_to_layer_update_kind(
-    kind: InvalidationKind,
-) -> Option<SceneLayerUpdateKind> {
+fn invalidation_to_layer_update_kind(kind: InvalidationKind) -> Option<SceneLayerUpdateKind> {
     match kind {
-        InvalidationKind::Measure
-        | InvalidationKind::Arrange
-        | InvalidationKind::Transform => Some(SceneLayerUpdateKind::Transform),
+        InvalidationKind::Measure | InvalidationKind::Arrange | InvalidationKind::Transform => {
+            Some(SceneLayerUpdateKind::Transform)
+        }
         InvalidationKind::Ordering => Some(SceneLayerUpdateKind::Ordering),
         InvalidationKind::Clip => Some(SceneLayerUpdateKind::Clip),
         InvalidationKind::Effect => Some(SceneLayerUpdateKind::Effect),
@@ -2507,14 +2661,14 @@ mod tests {
 
     use super::{
         Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
-        PaintCtx, Runtime, SemanticsCtx, SingleChild, Widget, WidgetChildren,
-        WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
-        WindowBuilder, set_window_scene_statistics_detail_mode, SceneStatisticsDetailMode,
+        PaintCtx, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild, Widget,
+        WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor,
+        WidgetPodVisitor, WindowBuilder, set_window_scene_statistics_detail_mode,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
-        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        Rect, SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent, WindowEvent,
+        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
+        SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent, WindowEvent,
     };
     use sui_layout::Constraints;
     use sui_scene::{RegisteredImage, SceneCommand, SceneLayerUpdateKind};
@@ -2583,10 +2737,8 @@ mod tests {
 
         fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            self.child.measure(
-                ctx,
-                Constraints::tight(Size::new(120.0, 40.0)),
-            );
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
             size
         }
 
@@ -2677,17 +2829,20 @@ mod tests {
 
         fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            self.child.measure(
-                ctx,
-                Constraints::tight(Size::new(140.0, 48.0)),
-            );
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(140.0, 48.0)));
             size
         }
 
         fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
             self.child.arrange(
                 ctx,
-                Rect::new(bounds.x() + 28.0 + self.offset_x, bounds.y() + 32.0, 140.0, 48.0),
+                Rect::new(
+                    bounds.x() + 28.0 + self.offset_x,
+                    bounds.y() + 32.0,
+                    140.0,
+                    48.0,
+                ),
             );
         }
 
@@ -2724,17 +2879,20 @@ mod tests {
 
         fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            self.child.measure(
-                ctx,
-                Constraints::tight(Size::new(220.0, 72.0)),
-            );
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(220.0, 72.0)));
             size
         }
 
         fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
             self.child.arrange(
                 ctx,
-                Rect::new(bounds.x() + 24.0 + self.offset_x, bounds.y() + 28.0, 220.0, 72.0),
+                Rect::new(
+                    bounds.x() + 24.0 + self.offset_x,
+                    bounds.y() + 28.0,
+                    220.0,
+                    72.0,
+                ),
             );
         }
 
@@ -2769,16 +2927,10 @@ mod tests {
     impl Widget for FocusTraversalRoot {
         fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            self.children.measure_child(
-                0,
-                ctx,
-                Constraints::tight(Size::new(120.0, 40.0)),
-            );
-            self.children.measure_child(
-                1,
-                ctx,
-                Constraints::tight(Size::new(120.0, 40.0)),
-            );
+            self.children
+                .measure_child(0, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            self.children
+                .measure_child(1, ctx, Constraints::tight(Size::new(120.0, 40.0)));
             size
         }
 
@@ -2818,14 +2970,94 @@ mod tests {
         }
     }
 
+    struct HoverTransitionRoot {
+        children: WidgetChildren,
+    }
+
+    impl HoverTransitionRoot {
+        fn new(
+            first: Rc<RefCell<HoverTransitionState>>,
+            second: Rc<RefCell<HoverTransitionState>>,
+        ) -> Self {
+            let mut children = WidgetChildren::with_capacity(2);
+            children.push(HoverTransitionLeaf {
+                name: "hover-first",
+                state: first,
+            });
+            children.push(HoverTransitionLeaf {
+                name: "hover-second",
+                state: second,
+            });
+            Self { children }
+        }
+    }
+
+    impl Widget for HoverTransitionRoot {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.children
+                .measure_child(0, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            self.children
+                .measure_child(1, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.children.arrange_child(
+                0,
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
+            self.children.arrange_child(
+                1,
+                ctx,
+                Rect::new(bounds.x() + 172.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            self.children.paint(ctx);
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            ctx.push(SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::Window,
+                ctx.bounds(),
+            ));
+            self.children.semantics(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.children.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.children.visit_children_mut(visitor);
+        }
+    }
+
     #[derive(Default)]
     struct PointerCaptureState {
         moves: usize,
         ups: usize,
     }
 
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+    struct HoverTransitionState {
+        enters: usize,
+        leaves: usize,
+        hovered: bool,
+    }
+
     struct PointerCaptureLeaf {
         state: Rc<RefCell<PointerCaptureState>>,
+    }
+
+    struct HoverTransitionLeaf {
+        name: &'static str,
+        state: Rc<RefCell<HoverTransitionState>>,
     }
 
     impl Widget for PointerCaptureLeaf {
@@ -2853,6 +3085,51 @@ mod tests {
 
         fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(120.0, 40.0))
+        }
+    }
+
+    impl Widget for HoverTransitionLeaf {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            let Event::Pointer(pointer) = event else {
+                return;
+            };
+
+            let mut state = self.state.borrow_mut();
+            match pointer.kind {
+                PointerEventKind::Enter => {
+                    state.enters += 1;
+                    state.hovered = true;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+                PointerEventKind::Leave => {
+                    state.leaves += 1;
+                    state.hovered = false;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            let color = if self.state.borrow().hovered {
+                Color::rgba(0.28, 0.45, 0.68, 1.0)
+            } else {
+                Color::rgba(0.20, 0.28, 0.38, 1.0)
+            };
+            ctx.fill_bounds(color);
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+            node.name = Some(self.name.to_string());
+            node.state.hovered = self.state.borrow().hovered;
+            ctx.push(node);
         }
     }
 
@@ -2954,10 +3231,8 @@ mod tests {
     {
         fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            self.child.measure(
-                ctx,
-                Constraints::tight(Size::new(120.0, 40.0)),
-            );
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
             size
         }
 
@@ -3004,10 +3279,8 @@ mod tests {
     {
         fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(320.0, 180.0));
-            self.child.measure(
-                ctx,
-                Constraints::tight(Size::new(160.0, 32.0)),
-            );
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(160.0, 32.0)));
             size
         }
 
@@ -3064,13 +3337,17 @@ mod tests {
         let leaf_counters = Rc::new(RefCell::new(Counters::default()));
 
         let runtime = Application::new()
-            .window(WindowBuilder::new().title("Cached move").root(CachedMoveRoot {
-                counters: Rc::clone(&root_counters),
-                child: SingleChild::new(CachedMoveLeaf {
-                    counters: Rc::clone(&leaf_counters),
-                }),
-                offset_x: 0.0,
-            }))
+            .window(
+                WindowBuilder::new()
+                    .title("Cached move")
+                    .root(CachedMoveRoot {
+                        counters: Rc::clone(&root_counters),
+                        child: SingleChild::new(CachedMoveLeaf {
+                            counters: Rc::clone(&leaf_counters),
+                        }),
+                        offset_x: 0.0,
+                    }),
+            )
             .build()
             .unwrap();
 
@@ -3088,13 +3365,17 @@ mod tests {
         let leaf_counters = Rc::new(RefCell::new(Counters::default()));
 
         let runtime = Application::new()
-            .window(WindowBuilder::new().title("Direct move").root(DirectMoveRoot {
-                counters: Rc::clone(&root_counters),
-                child: SingleChild::new(DirectMoveLeaf {
-                    counters: Rc::clone(&leaf_counters),
-                }),
-                offset_x: 0.0,
-            }))
+            .window(
+                WindowBuilder::new()
+                    .title("Direct move")
+                    .root(DirectMoveRoot {
+                        counters: Rc::clone(&root_counters),
+                        child: SingleChild::new(DirectMoveLeaf {
+                            counters: Rc::clone(&leaf_counters),
+                        }),
+                        offset_x: 0.0,
+                    }),
+            )
             .build()
             .unwrap();
 
@@ -3149,6 +3430,27 @@ mod tests {
         (runtime, window_id, state)
     }
 
+    fn build_hover_transition_runtime() -> (
+        Runtime,
+        sui_core::WindowId,
+        Rc<RefCell<HoverTransitionState>>,
+        Rc<RefCell<HoverTransitionState>>,
+    ) {
+        let first = Rc::new(RefCell::new(HoverTransitionState::default()));
+        let second = Rc::new(RefCell::new(HoverTransitionState::default()));
+
+        let runtime =
+            Application::new()
+                .window(WindowBuilder::new().title("Hover transitions").root(
+                    HoverTransitionRoot::new(Rc::clone(&first), Rc::clone(&second)),
+                ))
+                .build()
+                .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id, first, second)
+    }
+
     fn build_wake_runtime() -> (Runtime, sui_core::WindowId, Rc<RefCell<WakeState>>) {
         let state = Rc::new(RefCell::new(WakeState::default()));
 
@@ -3200,7 +3502,10 @@ mod tests {
         assert_eq!(graph.stack_hosts.len(), 1);
         assert_eq!(graph.stack_hosts[0].host, graph.root);
         assert!(graph_child(&graph).accepts_focus);
-        assert_eq!(graph_child(&graph).geometry.layout_bounds, graph_child(&graph).bounds);
+        assert_eq!(
+            graph_child(&graph).geometry.layout_bounds,
+            graph_child(&graph).bounds
+        );
         assert_eq!(
             graph_child(&graph).geometry.input_bounds,
             graph_child(&graph).geometry.layout_bounds
@@ -3347,7 +3652,10 @@ mod tests {
         assert_eq!(leaf_counters.borrow().paint, leaf_paint_before);
         assert_eq!(second.frame.layer_updates.len(), 1);
         assert_eq!(second.frame.layer_updates[0].owner, layer_id);
-        assert_eq!(second.frame.layer_updates[0].kind, SceneLayerUpdateKind::Transform);
+        assert_eq!(
+            second.frame.layer_updates[0].kind,
+            SceneLayerUpdateKind::Transform
+        );
 
         let translated_bounds = second
             .frame
@@ -3393,7 +3701,10 @@ mod tests {
         assert_eq!(leaf_counters.borrow().paint, leaf_paint_before);
         assert_eq!(second.frame.layer_updates.len(), 1);
         assert_eq!(second.frame.layer_updates[0].owner, layer_id);
-        assert_eq!(second.frame.layer_updates[0].kind, SceneLayerUpdateKind::Transform);
+        assert_eq!(
+            second.frame.layer_updates[0].kind,
+            SceneLayerUpdateKind::Transform
+        );
 
         let translated_bounds = second
             .frame
@@ -3543,6 +3854,71 @@ mod tests {
         assert_eq!(state.borrow().moves, 1);
         assert_eq!(state.borrow().ups, 1);
         assert_eq!(runtime.pointer_capture_target(window_id, 7).unwrap(), None);
+    }
+
+    #[test]
+    fn pointer_move_synthesizes_widget_leave_and_enter_transitions() {
+        let (mut runtime, window_id, first, second) = build_hover_transition_runtime();
+
+        let _ = runtime.render(window_id).unwrap();
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(
+                    PointerEventKind::Move,
+                    Point::new(48.0, 40.0),
+                )),
+            )
+            .unwrap();
+
+        assert_eq!(
+            *first.borrow(),
+            HoverTransitionState {
+                enters: 1,
+                leaves: 0,
+                hovered: true,
+            }
+        );
+        assert_eq!(*second.borrow(), HoverTransitionState::default());
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(
+                    PointerEventKind::Move,
+                    Point::new(280.0, 140.0),
+                )),
+            )
+            .unwrap();
+
+        assert_eq!(
+            *first.borrow(),
+            HoverTransitionState {
+                enters: 1,
+                leaves: 1,
+                hovered: false,
+            }
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(
+                    PointerEventKind::Move,
+                    Point::new(188.0, 40.0),
+                )),
+            )
+            .unwrap();
+
+        assert_eq!(
+            *second.borrow(),
+            HoverTransitionState {
+                enters: 1,
+                leaves: 0,
+                hovered: true,
+            }
+        );
     }
 
     #[test]

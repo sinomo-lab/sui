@@ -6,8 +6,7 @@ use sui_core::{
 };
 use sui_layout::Constraints;
 use sui_runtime::{
-    Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget,
-    WidgetChildren,
+    Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget, WidgetChildren,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
 };
 use sui_testing::prelude::*;

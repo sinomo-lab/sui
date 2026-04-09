@@ -199,7 +199,10 @@ impl RenderDiagnostics {
     }
 
     pub fn total_time_ms(&self) -> f64 {
-        self.phase_timings.iter().map(|sample| sample.duration_ms).sum()
+        self.phase_timings
+            .iter()
+            .map(|sample| sample.duration_ms)
+            .sum()
     }
 }
 
@@ -368,10 +371,7 @@ impl WindowRenderOptions {
         }
     }
 
-    pub const fn with_optical_vertical_text_alignment_enabled(
-        mut self,
-        enabled: bool,
-    ) -> Self {
+    pub const fn with_optical_vertical_text_alignment_enabled(mut self, enabled: bool) -> Self {
         self.optical_vertical_text_alignment_enabled = enabled;
         self
     }
@@ -471,7 +471,9 @@ impl SceneStatistics {
         frame.scene.visit_commands(&mut |command| {
             command_count += 1;
             if let Some(breakdown) = &mut command_breakdown {
-                *breakdown.entry(command_kind(command).to_string()).or_default() += 1;
+                *breakdown
+                    .entry(command_kind(command).to_string())
+                    .or_default() += 1;
             }
 
             match command {
@@ -599,7 +601,6 @@ impl WindowPerformanceSnapshot {
         text_cache_deltas: TextCacheDeltaDiagnostics,
         scene: SceneStatistics,
     ) -> Self {
-
         Self {
             window_id,
             frame_index,
@@ -622,9 +623,10 @@ impl WindowPerformanceSnapshot {
     }
 
     pub fn slowest_phase(&self) -> Option<FramePhaseSample> {
-        self.phase_timings.iter().copied().max_by(|left, right| {
-            left.duration_ms.total_cmp(&right.duration_ms)
-        })
+        self.phase_timings
+            .iter()
+            .copied()
+            .max_by(|left, right| left.duration_ms.total_cmp(&right.duration_ms))
     }
 
     pub fn summary(&self) -> WindowPerformanceSummary {
@@ -643,8 +645,9 @@ impl WindowPerformanceSnapshot {
     }
 }
 
-static WINDOW_PERFORMANCE_SNAPSHOTS: OnceLock<RwLock<HashMap<WindowId, WindowPerformanceSnapshot>>> =
-    OnceLock::new();
+static WINDOW_PERFORMANCE_SNAPSHOTS: OnceLock<
+    RwLock<HashMap<WindowId, WindowPerformanceSnapshot>>,
+> = OnceLock::new();
 static WINDOW_SCENE_STATISTICS_DETAIL_MODES: OnceLock<
     RwLock<HashMap<WindowId, SceneStatisticsDetailMode>>,
 > = OnceLock::new();
@@ -669,7 +672,9 @@ pub fn window_performance_summary(window_id: WindowId) -> Option<WindowPerforman
     let store = window_performance_store()
         .read()
         .expect("window performance snapshot store lock should not be poisoned");
-    store.get(&window_id).map(WindowPerformanceSnapshot::summary)
+    store
+        .get(&window_id)
+        .map(WindowPerformanceSnapshot::summary)
 }
 
 pub fn window_performance_text_caches(window_id: WindowId) -> Option<TextCacheDiagnostics> {
@@ -756,8 +761,8 @@ fn window_performance_store() -> &'static RwLock<HashMap<WindowId, WindowPerform
     WINDOW_PERFORMANCE_SNAPSHOTS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-fn window_scene_statistics_detail_mode_store(
-) -> &'static RwLock<HashMap<WindowId, SceneStatisticsDetailMode>> {
+fn window_scene_statistics_detail_mode_store()
+-> &'static RwLock<HashMap<WindowId, SceneStatisticsDetailMode>> {
     WINDOW_SCENE_STATISTICS_DETAIL_MODES.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
@@ -800,10 +805,9 @@ fn layer_update_kind(kind: SceneLayerUpdateKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics,
-        SceneStatistics, SceneStatisticsDetailMode, TextCacheDeltaDiagnostics,
-        TextCacheDiagnostics, WindowPerformanceSnapshot, WindowRenderOptions,
-        WindowTextRenderPolicy,
+        CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics, SceneStatistics,
+        SceneStatisticsDetailMode, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
+        WindowPerformanceSnapshot, WindowRenderOptions, WindowTextRenderPolicy,
         clear_window_performance_snapshot, set_window_render_options,
         set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
@@ -849,41 +853,8 @@ mod tests {
             17,
             vec![FramePhaseSample::new(FramePhase::Renderer, 2.5)],
             RendererSubmissionDiagnostics::new(
-                3,
-                9,
-                4096,
-                128,
-                3584,
-                4,
-                12,
-                10,
-                2,
-                7,
-                16384,
-                230,
-                90,
-                310,
-                120,
-                2,
-                5,
-                80,
-                1,
-                440,
-                210,
-                130,
-                15,
-                95,
-                4,
-                32768,
-                115,
-                85,
-                22,
-                16384,
-                920,
-                640,
-                180,
-                70,
-                560,
+                3, 9, 4096, 128, 3584, 4, 12, 10, 2, 7, 16384, 230, 90, 310, 120, 2, 5, 80, 1, 440,
+                210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -913,22 +884,57 @@ mod tests {
         assert_eq!(snapshot.renderer_submission.reused_tile_count, 10);
         assert_eq!(snapshot.renderer_submission.regenerated_tile_count, 2);
         assert_eq!(snapshot.renderer_submission.tile_memory_bytes, 16384);
-        assert_eq!(snapshot.renderer_submission.retained_scene_traversal_time_us, 310);
-        assert_eq!(snapshot.renderer_submission.retained_packet_build_time_us, 120);
+        assert_eq!(
+            snapshot
+                .renderer_submission
+                .retained_scene_traversal_time_us,
+            310
+        );
+        assert_eq!(
+            snapshot.renderer_submission.retained_packet_build_time_us,
+            120
+        );
         assert_eq!(snapshot.renderer_submission.retained_packet_build_count, 2);
         assert_eq!(snapshot.renderer_submission.text_atlas_miss_count, 5);
         assert_eq!(snapshot.renderer_submission.text_atlas_miss_time_us, 80);
         assert_eq!(snapshot.renderer_submission.text_atlas_fallback_count, 1);
         assert_eq!(snapshot.renderer_submission.surface_acquire_time_us, 440);
-        assert_eq!(snapshot.renderer_submission.resource_collection_time_us, 210);
+        assert_eq!(
+            snapshot.renderer_submission.resource_collection_time_us,
+            210
+        );
         assert_eq!(snapshot.renderer_submission.bind_group_prepare_time_us, 130);
         assert_eq!(snapshot.renderer_submission.image_bind_group_time_us, 15);
-        assert_eq!(snapshot.renderer_submission.analytic_path_bind_group_time_us, 95);
-        assert_eq!(snapshot.renderer_submission.analytic_path_bind_group_miss_count, 4);
-        assert_eq!(snapshot.renderer_submission.analytic_path_bind_group_upload_bytes, 32768);
-        assert_eq!(snapshot.renderer_submission.text_atlas_bind_group_time_us, 115);
-        assert_eq!(snapshot.renderer_submission.text_atlas_upload_copy_time_us, 85);
-        assert_eq!(snapshot.renderer_submission.text_atlas_upload_write_time_us, 22);
+        assert_eq!(
+            snapshot
+                .renderer_submission
+                .analytic_path_bind_group_time_us,
+            95
+        );
+        assert_eq!(
+            snapshot
+                .renderer_submission
+                .analytic_path_bind_group_miss_count,
+            4
+        );
+        assert_eq!(
+            snapshot
+                .renderer_submission
+                .analytic_path_bind_group_upload_bytes,
+            32768
+        );
+        assert_eq!(
+            snapshot.renderer_submission.text_atlas_bind_group_time_us,
+            115
+        );
+        assert_eq!(
+            snapshot.renderer_submission.text_atlas_upload_copy_time_us,
+            85
+        );
+        assert_eq!(
+            snapshot.renderer_submission.text_atlas_upload_write_time_us,
+            22
+        );
         assert_eq!(snapshot.renderer_submission.text_atlas_upload_bytes, 16384);
         assert_eq!(snapshot.renderer_submission.batch_prepare_time_us, 920);
         assert_eq!(snapshot.renderer_submission.gpu_upload_time_us, 640);
@@ -967,8 +973,16 @@ mod tests {
         assert_eq!(detailed.detail_mode, SceneStatisticsDetailMode::Detailed);
         assert_eq!(detailed.dirty_region_count, 1);
         assert_eq!(detailed.dirty_regions.len(), 1);
-        assert!(detailed.command_breakdown.contains(&("Clear".to_string(), 1)));
-        assert!(detailed.command_breakdown.contains(&("Label".to_string(), 1)));
+        assert!(
+            detailed
+                .command_breakdown
+                .contains(&("Clear".to_string(), 1))
+        );
+        assert!(
+            detailed
+                .command_breakdown
+                .contains(&("Label".to_string(), 1))
+        );
     }
 
     #[test]

@@ -354,21 +354,22 @@ impl<'a> DesktopApp<'a> {
                 let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
                 let semantics = output.semantics.clone();
                 let renderer_started = Instant::now();
-                let diagnostics_enabled = window_scene_statistics_detail_mode(window_id).is_detailed();
+                let diagnostics_enabled =
+                    window_scene_statistics_detail_mode(window_id).is_detailed();
                 self.renderer
                     .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 let render_options = window_render_options(window_id);
-                self.renderer.set_runtime_feathering_override(render_options.map(|options| {
-                    FeatheringOptions::new(options.feathering_enabled, options.feather_width)
-                }));
                 self.renderer
-                    .set_runtime_text_coverage_policy_override(render_options.map(|options| {
-                        map_window_text_render_policy(options.text_render_policy)
+                    .set_runtime_feathering_override(render_options.map(|options| {
+                        FeatheringOptions::new(options.feathering_enabled, options.feather_width)
                     }));
-                self.renderer
-                    .set_runtime_glyph_pixel_alignment_override(render_options.map(|options| {
-                        options.glyph_pixel_alignment_enabled
-                    }));
+                self.renderer.set_runtime_text_coverage_policy_override(
+                    render_options
+                        .map(|options| map_window_text_render_policy(options.text_render_policy)),
+                );
+                self.renderer.set_runtime_glyph_pixel_alignment_override(
+                    render_options.map(|options| options.glyph_pixel_alignment_enabled),
+                );
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
                 let presented_at_ms = self.current_time_ms();
@@ -787,7 +788,10 @@ fn sanitize_ime_cursor_area(
     let width = width.clamp(1, max_width) as u32;
     let height = height.clamp(1, max_height) as u32;
 
-    Some((PhysicalPosition::new(x, y), PhysicalSize::new(width, height)))
+    Some((
+        PhysicalPosition::new(x, y),
+        PhysicalSize::new(width, height),
+    ))
 }
 
 fn modifiers_state_to_modifiers(state: ModifiersState) -> Modifiers {
@@ -918,11 +922,9 @@ mod tests {
 
     #[test]
     fn sanitize_ime_cursor_area_clamps_overflowing_geometry() {
-        let (position, size) = sanitize_ime_cursor_area(
-            Rect::new(f32::MAX, f32::MAX, f32::MAX, f32::MAX),
-            1.0,
-        )
-        .unwrap();
+        let (position, size) =
+            sanitize_ime_cursor_area(Rect::new(f32::MAX, f32::MAX, f32::MAX, f32::MAX), 1.0)
+                .unwrap();
 
         assert_eq!(position, PhysicalPosition::new(i32::MAX - 1, i32::MAX - 1));
         assert_eq!(size, PhysicalSize::new(1, 1));

@@ -318,15 +318,12 @@ impl Widget for SplitView {
         let first_size = first_constraints.clamp(self.first.child().measured_size());
         let second_size = second_constraints.clamp(self.second.child().measured_size());
 
-        self.first.arrange(
-            ctx,
-            Rect::from_origin_size(bounds.origin, first_size),
-        );
-        let second_origin = bounds.origin + axis_point(self.axis, first_main + divider, 0.0).to_vector();
-        self.second.arrange(
-            ctx,
-            Rect::from_origin_size(second_origin, second_size),
-        );
+        self.first
+            .arrange(ctx, Rect::from_origin_size(bounds.origin, first_size));
+        let second_origin =
+            bounds.origin + axis_point(self.axis, first_main + divider, 0.0).to_vector();
+        self.second
+            .arrange(ctx, Rect::from_origin_size(second_origin, second_size));
 
         self.divider_bounds = Rect::from_origin_size(
             axis_point(self.axis, first_size_main(self.axis, first_size), 0.0),
@@ -467,13 +464,17 @@ impl FloatingStack {
     }
 
     fn frontmost_window_at(&self, host_bounds: Rect, position: Point) -> Option<usize> {
-        self.windows.iter().enumerate().rev().find_map(|(index, entry)| {
-            entry
-                .bounds
-                .translate(host_bounds.origin.to_vector())
-                .contains(position)
-                .then_some(index)
-        })
+        self.windows
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, entry)| {
+                entry
+                    .bounds
+                    .translate(host_bounds.origin.to_vector())
+                    .contains(position)
+                    .then_some(index)
+            })
     }
 
     fn bring_to_front(&mut self, index: usize) -> bool {
@@ -521,7 +522,10 @@ impl Widget for FloatingStack {
         }
 
         let content = self.content_rect();
-        constraints.clamp(Size::new(content.max_x().max(0.0), content.max_y().max(0.0)))
+        constraints.clamp(Size::new(
+            content.max_x().max(0.0),
+            content.max_y().max(0.0),
+        ))
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
@@ -548,7 +552,8 @@ impl Widget for FloatingStack {
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
-            self.content_rect().translate(ctx.bounds().origin.to_vector()),
+            self.content_rect()
+                .translate(ctx.bounds().origin.to_vector()),
         );
         node.name = self.name.clone();
         node.state.focused = ctx.is_focused();
@@ -632,8 +637,8 @@ mod tests {
     use super::{FloatingStack, SplitView};
     use crate::containers::SizedBox;
     use sui_core::{
-        Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        Result, SemanticsRole, SemanticsValue, Vector,
+        Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
+        SemanticsRole, SemanticsValue, Vector,
     };
     use sui_layout::Axis;
     use sui_runtime::{Application, Runtime, StackOrderPolicy, Widget, WindowBuilder};
@@ -757,16 +762,20 @@ mod tests {
         assert_eq!(host.surfaces.len(), 2);
         assert_eq!(host.surfaces[1], first_surface);
 
-        assert!(reordered
-            .frame
-            .layer_updates
-            .iter()
-            .any(|update| update.kind == SceneLayerUpdateKind::Ordering));
-        assert!(reordered
-            .frame
-            .layer_updates
-            .iter()
-            .all(|update| update.kind != SceneLayerUpdateKind::Content));
+        assert!(
+            reordered
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| update.kind == SceneLayerUpdateKind::Ordering)
+        );
+        assert!(
+            reordered
+                .frame
+                .layer_updates
+                .iter()
+                .all(|update| update.kind != SceneLayerUpdateKind::Content)
+        );
         Ok(())
     }
 }

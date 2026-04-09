@@ -936,11 +936,14 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(system.layout_cache_snapshot(), TextLayoutCacheSnapshot {
-            entries: 1,
-            hits: 0,
-            misses: 1,
-        });
+        assert_eq!(
+            system.layout_cache_snapshot(),
+            TextLayoutCacheSnapshot {
+                entries: 1,
+                hits: 0,
+                misses: 1,
+            }
+        );
         assert_eq!(layout.style().color, Color::WHITE);
 
         let second = system
@@ -952,11 +955,14 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(system.layout_cache_snapshot(), TextLayoutCacheSnapshot {
-            entries: 1,
-            hits: 1,
-            misses: 1,
-        });
+        assert_eq!(
+            system.layout_cache_snapshot(),
+            TextLayoutCacheSnapshot {
+                entries: 1,
+                hits: 1,
+                misses: 1,
+            }
+        );
         assert_eq!(second.style().color, Color::rgba(0.2, 0.7, 0.9, 1.0));
         assert!(second.shares_storage_with(&layout));
         assert_eq!(second.glyphs(), layout.glyphs());

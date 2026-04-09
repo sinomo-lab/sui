@@ -15,11 +15,13 @@ pub use composites::{
     BusyIndicator, ContextMenu, Dialog, Menu, MenuItem, Modal, Popover, ProgressBar, Spinner,
     TabBar, Tabs, Tooltip, TooltipPlacement,
 };
-pub use containers::{Align, Background, ScrollAxes, ScrollView, SizedBox, Stack, VirtualScrollView};
+pub use containers::{
+    Align, Background, ScrollAxes, ScrollView, SizedBox, Stack, VirtualScrollView,
+};
 pub use controls::{
-    Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label,
-    MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider,
-    SpinBox, Switch, TextArea, TextInput,
+    Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput,
+    NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea,
+    TextInput,
 };
 pub use sui_core::{
     AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, DpiInfo, Error, Event, FontHandle,
@@ -34,20 +36,19 @@ pub use sui_layout::{Alignment, Axis, Constraints, Padding};
 #[cfg(feature = "desktop")]
 pub use sui_platform::{AccessibilitySnapshot, DesktopPlatform, HeadlessPlatform, PlatformWindow};
 #[cfg(feature = "wgpu")]
-pub use sui_render_wgpu::{RendererCapabilities, RendererInterop, TextCoveragePolicy, WgpuRenderer};
+pub use sui_render_wgpu::{
+    RendererCapabilities, RendererInterop, TextCoveragePolicy, WgpuRenderer,
+};
 pub use sui_runtime::{
     Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta, EventCtx,
-    EventPhase, FocusState, FramePhase, FramePhaseSample, FrameSchedule, MeasureCtx,
-    PaintCtx, PresentationLatencyDiagnostics, RenderDiagnostics, RenderOutput,
-    RendererSubmissionDiagnostics, Runtime, SceneStatistics, SceneStatisticsDetailMode,
-    SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions,
-    TextCacheDeltaDiagnostics,
+    EventPhase, FocusState, FramePhase, FramePhaseSample, FrameSchedule, MeasureCtx, PaintCtx,
+    PresentationLatencyDiagnostics, RenderDiagnostics, RenderOutput, RendererSubmissionDiagnostics,
+    Runtime, SceneStatistics, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
+    StackHostOptions, StackOrderPolicy, StackSurfaceOptions, TextCacheDeltaDiagnostics,
     TextCacheDiagnostics, Widget, WidgetChildren, WidgetGeometrySnapshot, WidgetGraphSnapshot,
-    WidgetNodeSnapshot,
-    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
+    WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions,
-    WindowTextRenderPolicy,
-    clear_window_render_options, set_window_render_options,
+    WindowTextRenderPolicy, clear_window_render_options, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_performance_summary, window_render_options, window_scene_statistics_detail_mode,
 };
@@ -61,8 +62,8 @@ pub use sui_text::{
 };
 pub use sui_widgets::{
     Breadcrumb, BreadcrumbItem, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette,
-    ControlTypography, DataGrid, DefaultTheme, Image, ImageFit, ListItem, ListView, PathBar,
-    FloatingStack, ResizablePane, SplitView, Table, TableColumn, TableColumnAlignment, TableRow,
+    ControlTypography, DataGrid, DefaultTheme, FloatingStack, Image, ImageFit, ListItem, ListView,
+    PathBar, ResizablePane, SplitView, Table, TableColumn, TableColumnAlignment, TableRow,
     ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,
     ThemeContainers, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading,
     ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
@@ -334,25 +335,24 @@ impl Default for Style {
 
 pub mod prelude {
     pub use crate::{
-        Align, Alignment, Application, ArrangeCtx, AsyncWakeToken, Axis, Background,
-        Breadcrumb, BreadcrumbItem, Brush, BusyIndicator, Button, Checkbox, Color, ColorPicker,
-        ColorSwatch, ComboBox, Constraints, ContextMenu, ControlMetrics, ControlPalette,
-        ControlTypography, DataGrid, DefaultTheme, Dialog, Divider, Event, EventCtx, FontHandle,
-        Icon, IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImeEvent, Insets,
-        KeyboardEvent, Label, ListItem, ListView, MeasureCtx, Menu, MenuItem, Modal,
-        MultilineTextInput, NumberInput, PaintCtx, Path, PathBar, PathBuilder, Point,
-        PointerEvent, Popover, ProgressBar, RadioButton, RadioGroup, Rect, RegisteredFont,
-        RegisteredImage, ResizablePane, Result, ScrollAxes, ScrollView, Select, SemanticsCtx,
-        Separator, ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox, Spinner,
-        SplitView, Stack, StrokeStyle, Style, Switch, TabBar, Table, TableColumn,
-        TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextLayout,
-        TextMeasurement, TextStyle, Theme, ThemeAspectRatios, ThemeBlurScale,
-        ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeExtension,
-        ThemeExtensions, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading,
-        ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken,
-        ThemeTracking, TimerToken, Tooltip, TooltipPlacement, Transform, TreeItem, TreeView,
-        VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
-        WindowRenderOptions, containers::Padding, set_window_render_options,
+        Align, Alignment, Application, ArrangeCtx, AsyncWakeToken, Axis, Background, Breadcrumb,
+        BreadcrumbItem, Brush, BusyIndicator, Button, Checkbox, Color, ColorPicker, ColorSwatch,
+        ComboBox, Constraints, ContextMenu, ControlMetrics, ControlPalette, ControlTypography,
+        DataGrid, DefaultTheme, Dialog, Divider, Event, EventCtx, FontHandle, Icon, IconButton,
+        IconGlyph, Image, ImageFit, ImageHandle, ImeEvent, Insets, KeyboardEvent, Label, ListItem,
+        ListView, MeasureCtx, Menu, MenuItem, Modal, MultilineTextInput, NumberInput, PaintCtx,
+        Path, PathBar, PathBuilder, Point, PointerEvent, Popover, ProgressBar, RadioButton,
+        RadioGroup, Rect, RegisteredFont, RegisteredImage, ResizablePane, Result, ScrollAxes,
+        ScrollView, Select, SemanticsCtx, Separator, ShapedText, SingleChild, Size, SizedBox,
+        Slider, SpinBox, Spinner, SplitView, Stack, StrokeStyle, Style, Switch, TabBar, Table,
+        TableColumn, TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextLayout,
+        TextMeasurement, TextStyle, Theme, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints,
+        ThemeColorScheme, ThemeColors, ThemeContainers, ThemeExtension, ThemeExtensions,
+        ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemePerspective,
+        ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking, TimerToken,
+        Tooltip, TooltipPlacement, Transform, TreeItem, TreeView, VirtualScrollView, WakeEvent,
+        Widget, WidgetChildren, WidgetPod, WindowBuilder, WindowRenderOptions, containers::Padding,
+        set_window_render_options,
     };
 }
 

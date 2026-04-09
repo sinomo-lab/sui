@@ -19,7 +19,10 @@ impl SceneMesh {
 }
 
 #[cfg(test)]
-pub(crate) fn build_vertices(frame: &SceneFrame, text_engine: &mut TextEngine) -> Result<Vec<Vertex>> {
+pub(crate) fn build_vertices(
+    frame: &SceneFrame,
+    text_engine: &mut TextEngine,
+) -> Result<Vec<Vertex>> {
     let mut compositor = RetainedCompositorState::default();
     let draw_ops = compositor.prepare_frame(frame, text_engine, DEFAULT_FEATHER_WIDTH)?;
     let mut vertices = Vec::new();
@@ -475,14 +478,18 @@ pub(crate) fn create_static_vertex_buffer(
         return None;
     }
 
-    Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(label),
-        contents: bytemuck::cast_slice(vertices),
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-    }))
+    Some(
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(vertices),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        }),
+    )
 }
 
-pub(crate) fn collect_visible_retained_tiles(submission: &RetainedFrameSubmission) -> Vec<TileAddress> {
+pub(crate) fn collect_visible_retained_tiles(
+    submission: &RetainedFrameSubmission,
+) -> Vec<TileAddress> {
     let mut visible_tiles = Vec::new();
     let mut seen_tiles = HashSet::new();
     for fragment in &submission.fragments {
@@ -519,8 +526,7 @@ pub(crate) fn plan_retained_tile_upload(
         let clip_len = entry.clip_vertices().len() as u32;
         match entry.gpu_geometry.as_ref() {
             Some(geometry)
-                if scene_len <= geometry.scene_capacity
-                    && clip_len <= geometry.clip_capacity =>
+                if scene_len <= geometry.scene_capacity && clip_len <= geometry.clip_capacity =>
             {
                 if geometry.dirty {
                     plan.in_place_tiles.push(*address);
@@ -648,7 +654,12 @@ pub(crate) fn append_retained_tile_geometry(
 
     let scene_offset = base_scene_start as u64 * VERTEX_SIZE;
     let clip_offset = base_clip_start as u64 * VERTEX_SIZE;
-    upload_retained_tile_bytes(shared, arena.scene_buffer.as_ref(), scene_offset, &scene_data)?;
+    upload_retained_tile_bytes(
+        shared,
+        arena.scene_buffer.as_ref(),
+        scene_offset,
+        &scene_data,
+    )?;
     upload_retained_tile_bytes(shared, arena.clip_buffer.as_ref(), clip_offset, &clip_data)?;
 
     arena.used_scene_vertices += scene_data.len();
@@ -745,9 +756,8 @@ pub(crate) fn upload_retained_tile_bytes(
         return Ok(());
     }
 
-    let buffer = buffer.ok_or_else(|| {
-        Error::new("retained tile arena buffer missing before GPU upload")
-    })?;
+    let buffer =
+        buffer.ok_or_else(|| Error::new("retained tile arena buffer missing before GPU upload"))?;
     shared
         .queue
         .write_buffer(buffer, offset, bytemuck::cast_slice(vertices));
@@ -784,7 +794,9 @@ pub(crate) fn grow_retained_tile_vertex_capacity(current: usize, required: usize
     }
 }
 
-pub(crate) fn flatten_fragment_passes(fragments: &[PreparedFragmentSubmission]) -> Vec<EncodablePassBatch> {
+pub(crate) fn flatten_fragment_passes(
+    fragments: &[PreparedFragmentSubmission],
+) -> Vec<EncodablePassBatch> {
     let mut flattened = Vec::new();
     for fragment in fragments {
         for pass in &fragment.passes {
@@ -1023,7 +1035,8 @@ fn encode_draws_for_pass(
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
     current_kind: &mut Option<PreparedDrawPipelineKind>,
 ) -> Result<()> {
-    let (viewport_x, viewport_y) = translation_to_viewport_origin(translation, viewport, framebuffer_size);
+    let (viewport_x, viewport_y) =
+        translation_to_viewport_origin(translation, viewport, framebuffer_size);
     render_pass.set_viewport(
         viewport_x,
         viewport_y,
@@ -1302,7 +1315,12 @@ impl SceneDrawOpBuilder<'_> {
                     self.frame.scale_factor,
                     self.feather_width,
                 )?;
-                push_draw_op(draw_ops, DrawOpKind::TextAtlas, &self.scratch_vertices, state);
+                push_draw_op(
+                    draw_ops,
+                    DrawOpKind::TextAtlas,
+                    &self.scratch_vertices,
+                    state,
+                );
                 push_draw_op(
                     draw_ops,
                     DrawOpKind::Solid,
@@ -1322,7 +1340,12 @@ impl SceneDrawOpBuilder<'_> {
                     self.frame.scale_factor,
                     self.feather_width,
                 )?;
-                push_draw_op(draw_ops, DrawOpKind::TextAtlas, &self.scratch_vertices, state);
+                push_draw_op(
+                    draw_ops,
+                    DrawOpKind::TextAtlas,
+                    &self.scratch_vertices,
+                    state,
+                );
                 push_draw_op(
                     draw_ops,
                     DrawOpKind::Solid,
@@ -1393,7 +1416,12 @@ impl SceneDrawOpBuilder<'_> {
                     self.frame.scale_factor,
                     self.feather_width,
                 )?;
-                push_draw_op(draw_ops, DrawOpKind::TextAtlas, &self.scratch_vertices, state);
+                push_draw_op(
+                    draw_ops,
+                    DrawOpKind::TextAtlas,
+                    &self.scratch_vertices,
+                    state,
+                );
                 push_draw_op(
                     draw_ops,
                     DrawOpKind::Solid,
@@ -1834,7 +1862,11 @@ impl TextEngine {
         Ok(())
     }
 
-    pub(crate) fn shape_text_run(&self, text: &TextRun, font_registry: &FontRegistry) -> Result<TextLayout> {
+    pub(crate) fn shape_text_run(
+        &self,
+        text: &TextRun,
+        font_registry: &FontRegistry,
+    ) -> Result<TextLayout> {
         self.system.shape_text_run(text, font_registry)
     }
 
@@ -2052,10 +2084,7 @@ fn build_cached_glyph_atlas(
             bounds.logical_height / raster_scale_factor,
         ),
         uv_min: [logical_uv_min_x * inv_width, logical_uv_min_y * inv_height],
-        uv_max: [
-            logical_uv_max_x * inv_width,
-            logical_uv_max_y * inv_height,
-        ],
+        uv_max: [logical_uv_max_x * inv_width, logical_uv_max_y * inv_height],
     }))
 }
 
@@ -2715,14 +2744,8 @@ impl ttf_parser::OutlineBuilder for CachedGlyphRasterBuilder<'_> {
         let control1 = self.point(x1, y1);
         let control2 = self.point(x2, y2);
         let end = self.point(x, y);
-        self.builder.cubic_to(
-            control1.x,
-            control1.y,
-            control2.x,
-            control2.y,
-            end.x,
-            end.y,
-        );
+        self.builder
+            .cubic_to(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
     }
 
     fn close(&mut self) {
@@ -3336,4 +3359,3 @@ pub(crate) fn configure_surface(
     surface.configure(device, &config);
     Ok(config)
 }
-
