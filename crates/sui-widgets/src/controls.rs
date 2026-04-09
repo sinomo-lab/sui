@@ -1995,18 +1995,36 @@ impl Slider {
             }
         }
     }
+
+    fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
+        if self.hovered != hovered {
+            self.hovered = hovered;
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
 }
 
 impl Widget for Slider {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                self.hovered = ctx.bounds().contains(pointer.position);
+                let hovered = ctx.bounds().contains(pointer.position);
+                self.set_hovered(hovered, ctx);
                 if self.dragging {
+                    let previous = self.value;
                     self.set_from_position(ctx.bounds(), pointer.position);
+                    if (self.value - previous).abs() > f64::EPSILON {
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                    }
                 }
-                ctx.request_paint();
-                ctx.request_semantics();
+            }
+            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Enter) => {
+                self.set_hovered(true, ctx);
+            }
+            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
+                self.set_hovered(false, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -2036,6 +2054,7 @@ impl Widget for Slider {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.dragging {
                     self.dragging = false;
+                    self.hovered = false;
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -2261,18 +2280,27 @@ impl NumberInput {
             }
         }
     }
+
+    fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
+        if self.hovered != hovered {
+            self.hovered = hovered;
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
 }
 
 impl Widget for NumberInput {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = ctx.bounds().contains(pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+            }
+            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Enter) => {
+                self.set_hovered(true, ctx);
+            }
+            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
+                self.set_hovered(false, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -2914,16 +2942,41 @@ impl Select {
             on_change(index, self.options[index].clone());
         }
     }
+
+    fn set_hover_state(
+        &mut self,
+        hovered_header: bool,
+        hovered_option: Option<usize>,
+        ctx: &mut EventCtx,
+    ) {
+        if self.hovered_header != hovered_header || self.hovered_option != hovered_option {
+            self.hovered_header = hovered_header;
+            self.hovered_option = hovered_option;
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
 }
 
 impl Widget for Select {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                self.hovered_header = self.header_rect(ctx.bounds()).contains(pointer.position);
-                self.hovered_option = self.option_at(ctx.bounds(), pointer.position);
-                ctx.request_paint();
-                ctx.request_semantics();
+                self.set_hover_state(
+                    self.header_rect(ctx.bounds()).contains(pointer.position),
+                    self.option_at(ctx.bounds(), pointer.position),
+                    ctx,
+                );
+            }
+            Event::Pointer(pointer) if matches!(pointer.kind, PointerEventKind::Enter) => {
+                self.set_hover_state(
+                    self.header_rect(ctx.bounds()).contains(pointer.position),
+                    self.option_at(ctx.bounds(), pointer.position),
+                    ctx,
+                );
+            }
+            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
+                self.set_hover_state(false, None, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -2958,9 +3011,27 @@ impl Widget for Select {
                 }
 
                 self.pressed_header = false;
+                self.hovered_header = hovered_header;
+                self.hovered_option = if self.expanded {
+                    self.hovered_option
+                } else {
+                    None
+                };
+                ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed_header {
+                    self.pressed_header = false;
+                    self.hovered_header = false;
+                    self.hovered_option = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 if self.options.is_empty() {
@@ -4624,6 +4695,33 @@ mod tests {
     }
 
     #[test]
+    fn slider_clears_hover_state_after_pointer_moves_off_control() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            12.0,
+            Slider::new("Opacity").range(0.0, 1.0).step(0.25).value(0.5),
+        ));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(20.0, 20.0), false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(4.0, 4.0), false),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let slider = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider)
+            .expect("slider semantics present");
+        assert!(!slider.state.hovered);
+        Ok(())
+    }
+
+    #[test]
     fn number_input_nudges_value_and_exposes_numeric_semantics() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
@@ -4654,6 +4752,36 @@ mod tests {
             .find(|node| node.role == SemanticsRole::SpinBox)
             .expect("spinbox semantics present");
         assert_eq!(input.value, Some(SemanticsValue::Number(6.0)));
+        Ok(())
+    }
+
+    #[test]
+    fn number_input_clears_hover_state_after_pointer_moves_off_control() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            12.0,
+            NumberInput::new("Count")
+                .range(0.0, 10.0)
+                .step(1.0)
+                .value(4.0),
+        ));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(20.0, 20.0), false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(4.0, 4.0), false),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::SpinBox)
+            .expect("spinbox semantics present");
+        assert!(!input.state.hovered);
         Ok(())
     }
 
@@ -4790,6 +4918,35 @@ mod tests {
             select.value,
             Some(SemanticsValue::Text("Final".to_string()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn select_clears_hover_state_after_pointer_moves_off_control() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            12.0,
+            Select::new("Mode")
+                .placeholder("Choose mode")
+                .options(["Draft", "Final", "Review"]),
+        ));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(20.0, 20.0), false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(4.0, 4.0), false),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present");
+        assert!(!select.state.hovered);
         Ok(())
     }
 
