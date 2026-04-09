@@ -25,7 +25,7 @@ pub use data::{
     TableColumnAlignment, TableRow, TreeItem, TreeView,
 };
 pub use media::{ColorPicker, ColorSwatch, Image, ImageFit};
-pub use panes::{ResizablePane, SplitView};
+pub use panes::{FloatingStack, ResizablePane, SplitView};
 pub use theme::{
     ControlMetrics, ControlPalette, ControlTypography, DefaultTheme, ThemeAspectRatios,
     ThemeBlurScale, ThemeBoxShadowScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,

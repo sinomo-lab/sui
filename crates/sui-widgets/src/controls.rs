@@ -5,7 +5,8 @@ use sui_core::{
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_runtime::{
-    EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, Widget, window_render_options,
+    EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, StackSurfaceOptions, Widget,
+    window_render_options,
 };
 use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
 use sui_text::{TextLayout, TextMeasurement, TextStyle};
@@ -3117,6 +3118,13 @@ impl Widget for Select {
                 LayerCompositionMode::Normal
             },
         }
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.expanded.then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {

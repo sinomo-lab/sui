@@ -4,8 +4,9 @@ use sui_core::{
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
-    WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor, window_render_options,
+    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
+    StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
+    window_render_options,
 };
 use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
 use sui_text::{TextMeasurement, TextStyle};
@@ -1276,6 +1277,13 @@ impl Widget for Tooltip {
         }
     }
 
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.hovered.then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.child.semantics(ctx);
         if self.hovered {
@@ -1486,6 +1494,13 @@ impl Widget for Popover {
                 LayerCompositionMode::Normal
             },
         }
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.open.then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1872,6 +1887,13 @@ impl Widget for ContextMenu {
         }
     }
 
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.open.then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node =
             SemanticsNode::new(ctx.widget_id(), SemanticsRole::ContextMenu, ctx.bounds());
@@ -2255,6 +2277,13 @@ impl Widget for Dialog {
                 LayerCompositionMode::Normal
             },
         }
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.shown.then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2657,6 +2686,7 @@ mod tests {
 
     use super::{Dialog, Popover, ProgressBar, Spinner, TabBar};
     use super::Tabs;
+    use crate::FloatingStack;
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
         PointerEvent, PointerEventKind, SemanticsNode, SemanticsRole, SemanticsValue, Size,
@@ -2957,6 +2987,47 @@ mod tests {
 
         assert_eq!(descriptor.cache_policy, LayerCachePolicy::Direct);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
+    }
+
+    #[test]
+    fn open_popover_resolves_to_nearest_stack_host_and_tracks_owner_surface() {
+        let (mut runtime, window_id) = build_runtime(
+            FloatingStack::new().with_window(
+                sui_core::Rect::new(24.0, 24.0, 240.0, 160.0),
+                crate::Padding::all(
+                    16.0,
+                    Popover::new(
+                        "Options",
+                        crate::Button::new("Open"),
+                        crate::Label::new("Popover body"),
+                    )
+                    .open(true),
+                ),
+            ),
+        );
+
+        let output = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let popover = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Popover)
+            .expect("popover semantics present");
+        let node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == popover.id)
+            .expect("popover graph node present");
+        let host = graph
+            .stack_hosts
+            .iter()
+            .find(|host| host.host == graph.root)
+            .expect("root stack host present");
+
+        assert_eq!(node.stack_host, graph.root);
+        assert_eq!(node.stack_surface, popover.id);
+        assert_eq!(node.transient_owner_surface, Some(host.surfaces[0]));
+        assert_eq!(host.surfaces.last().copied(), Some(popover.id));
     }
 
     #[test]

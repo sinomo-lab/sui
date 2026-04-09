@@ -367,6 +367,7 @@ impl Harness {
                     .unwrap_or(WidgetGraphSnapshot {
                         root: Default::default(),
                         nodes: Vec::new(),
+                        stack_hosts: Vec::new(),
                     }),
                 focus_state: harness
                     .runtime
@@ -475,6 +476,7 @@ impl LiveHarness {
             widget_graph: WidgetGraphSnapshot {
                 root: Default::default(),
                 nodes: Vec::new(),
+                stack_hosts: Vec::new(),
             },
             focus_state: FocusState::default(),
             scene_summary: None,

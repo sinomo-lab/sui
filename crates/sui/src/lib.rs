@@ -40,7 +40,7 @@ pub use sui_runtime::{
     EventPhase, FocusState, FramePhase, FramePhaseSample, FrameSchedule, MeasureCtx,
     PaintCtx, PresentationLatencyDiagnostics, RenderDiagnostics, RenderOutput,
     RendererSubmissionDiagnostics, Runtime, SceneStatistics, SceneStatisticsDetailMode,
-    SemanticsCtx, SingleChild,
+    SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions,
     TextCacheDeltaDiagnostics,
     TextCacheDiagnostics, Widget, WidgetChildren, WidgetGeometrySnapshot, WidgetGraphSnapshot,
     WidgetNodeSnapshot,
@@ -62,7 +62,7 @@ pub use sui_text::{
 pub use sui_widgets::{
     Breadcrumb, BreadcrumbItem, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette,
     ControlTypography, DataGrid, DefaultTheme, Image, ImageFit, ListItem, ListView, PathBar,
-    ResizablePane, SplitView, Table, TableColumn, TableColumnAlignment, TableRow,
+    FloatingStack, ResizablePane, SplitView, Table, TableColumn, TableColumnAlignment, TableRow,
     ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,
     ThemeContainers, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading,
     ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,

@@ -38,7 +38,8 @@ pub use diagnostics::{
 };
 pub use widget::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx,
-    SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
+    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
 
@@ -543,14 +544,29 @@ pub struct WidgetNodeSnapshot {
     pub geometry: WidgetGeometrySnapshot,
     // Backward-compatible alias of geometry.layout_bounds.
     pub bounds: Rect,
+    pub stack_host: WidgetId,
+    pub stack_surface: WidgetId,
+    pub stack_surface_order: usize,
+    pub transient_owner_surface: Option<WidgetId>,
+    pub is_stack_host: bool,
+    pub is_stack_surface: bool,
+    pub stack_order_policy: StackOrderPolicy,
     pub accepts_focus: bool,
     pub focused: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StackHostSnapshot {
+    pub host: WidgetId,
+    pub order_policy: StackOrderPolicy,
+    pub surfaces: Vec<WidgetId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetGraphSnapshot {
     pub root: WidgetId,
     pub nodes: Vec<WidgetNodeSnapshot>,
+    pub stack_hosts: Vec<StackHostSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1934,6 +1950,9 @@ struct WidgetGraph {
     root: WidgetId,
     nodes: HashMap<WidgetId, WidgetNodeSnapshot>,
     order: Vec<WidgetId>,
+    host_surface_order: HashMap<WidgetId, Vec<WidgetId>>,
+    host_order_policy: HashMap<WidgetId, StackOrderPolicy>,
+    surface_owner: HashMap<WidgetId, Option<WidgetId>>,
 }
 
 impl WidgetGraph {
@@ -1942,6 +1961,9 @@ impl WidgetGraph {
             root,
             nodes: HashMap::new(),
             order: Vec::new(),
+            host_surface_order: HashMap::new(),
+            host_order_policy: HashMap::new(),
+            surface_owner: HashMap::new(),
         }
     }
 
@@ -1951,8 +1973,31 @@ impl WidgetGraph {
         paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
     ) -> Self {
         let mut graph = Self::empty(root.id());
-        graph.collect(root, None, focused_widget, paint_bounds_by_widget);
+        graph.collect(
+            root,
+            None,
+            focused_widget,
+            paint_bounds_by_widget,
+            root.id(),
+            root.id(),
+        );
+        graph.recompute_stack_surface_order();
         graph
+    }
+
+    fn recompute_stack_surface_order(&mut self) {
+        let mut position_by_surface = HashMap::<(WidgetId, WidgetId), usize>::new();
+        for (host, surfaces) in &self.host_surface_order {
+            for (index, surface) in surfaces.iter().copied().enumerate() {
+                position_by_surface.insert((*host, surface), index);
+            }
+        }
+
+        for node in self.nodes.values_mut() {
+            if let Some(order) = position_by_surface.get(&(node.stack_host, node.stack_surface)) {
+                node.stack_surface_order = *order;
+            }
+        }
     }
 
     fn update_paint_bounds_from_scene(&mut self, scene: &Scene) {
@@ -1982,6 +2027,21 @@ impl WidgetGraph {
     }
 
     fn snapshot(&self) -> WidgetGraphSnapshot {
+        let mut stack_hosts = self
+            .host_order_policy
+            .iter()
+            .map(|(host, order_policy)| StackHostSnapshot {
+                host: *host,
+                order_policy: *order_policy,
+                surfaces: self
+                    .host_surface_order
+                    .get(host)
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        stack_hosts.sort_by_key(|host| host.host.get());
+
         WidgetGraphSnapshot {
             root: self.root,
             nodes: self
@@ -1989,6 +2049,7 @@ impl WidgetGraph {
                 .iter()
                 .filter_map(|widget_id| self.nodes.get(widget_id).cloned())
                 .collect(),
+            stack_hosts,
         }
     }
 
@@ -2049,9 +2110,55 @@ impl WidgetGraph {
         parent: Option<WidgetId>,
         focused_widget: Option<WidgetId>,
         paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
+        inherited_host: WidgetId,
+        inherited_surface: WidgetId,
     ) {
         let id = pod.id();
         self.order.push(id);
+
+        let host_options = if id == self.root {
+            Some(
+                pod.current_stack_host_options()
+                    .unwrap_or_else(StackHostOptions::default),
+            )
+        } else {
+            pod.current_stack_host_options()
+        };
+        let is_stack_host = host_options.is_some();
+        let resolved_host = if is_stack_host { id } else { inherited_host };
+        let host_policy = host_options
+            .map(|options| options.order_policy)
+            .unwrap_or(StackOrderPolicy::Stable);
+        if is_stack_host {
+            self.host_order_policy.insert(resolved_host, host_policy);
+        } else {
+            self.host_order_policy
+                .entry(resolved_host)
+                .or_insert(StackOrderPolicy::Stable);
+        }
+        let resolved_policy = *self
+            .host_order_policy
+            .get(&resolved_host)
+            .unwrap_or(&StackOrderPolicy::Stable);
+
+        let surface_options = pod.current_stack_surface_options();
+        let is_direct_child_of_host = parent == Some(resolved_host);
+        let is_stack_surface = surface_options.is_some() || is_direct_child_of_host;
+        let resolved_surface = if is_stack_surface { id } else { inherited_surface };
+        let transient_owner_surface = surface_options
+            .filter(|options| options.transient && inherited_surface != id)
+            .map(|_| inherited_surface);
+        if is_stack_surface {
+            let surfaces = self.host_surface_order.entry(resolved_host).or_default();
+            if !surfaces.contains(&id) {
+                surfaces.push(id);
+            }
+        }
+        let stack_surface_order = self
+            .host_surface_order
+            .get(&resolved_host)
+            .and_then(|surfaces| surfaces.iter().position(|surface| *surface == resolved_surface))
+            .unwrap_or(0);
 
         let children = {
             let mut visitor = CollectChildrenVisitor {
@@ -2059,6 +2166,8 @@ impl WidgetGraph {
                 parent: id,
                 focused_widget,
                 paint_bounds_by_widget,
+                inherited_host: resolved_host,
+                inherited_surface: resolved_surface,
                 children: Vec::new(),
             };
             pod.visit_children(&mut visitor);
@@ -2081,6 +2190,13 @@ impl WidgetGraph {
                 measured_size: pod.measured_size(),
                 geometry: WidgetGeometrySnapshot::new(layout_bounds, input_bounds, paint_bounds),
                 bounds: layout_bounds,
+                stack_host: resolved_host,
+                stack_surface: resolved_surface,
+                stack_surface_order,
+                transient_owner_surface,
+                is_stack_host,
+                is_stack_surface,
+                stack_order_policy: resolved_policy,
                 accepts_focus: pod.accepts_focus(),
                 focused: Some(id) == focused_widget,
             },
@@ -2091,6 +2207,32 @@ impl WidgetGraph {
         let node = self.node(widget_id)?;
         if !node.geometry.input_bounds.contains(point) {
             return None;
+        }
+
+        if node.is_stack_host {
+            let mut tested_surfaces = HashSet::new();
+            if let Some(ordered_surfaces) = self.host_surface_order.get(&node.id) {
+                for surface_id in ordered_surfaces.iter().rev().copied() {
+                    tested_surfaces.insert(surface_id);
+                    if let Some(hit) = self.hit_test_node(surface_id, point) {
+                        return Some(hit);
+                    }
+                }
+            }
+
+            for child_id in node.children.iter().rev() {
+                if self
+                    .node(*child_id)
+                    .is_some_and(|child| child.is_stack_surface || tested_surfaces.contains(child_id))
+                {
+                    continue;
+                }
+                if let Some(hit) = self.hit_test_node(*child_id, point) {
+                    return Some(hit);
+                }
+            }
+
+            return Some(widget_id);
         }
 
         for child_id in node.children.iter().rev() {
@@ -2108,6 +2250,8 @@ struct CollectChildrenVisitor<'a> {
     parent: WidgetId,
     focused_widget: Option<WidgetId>,
     paint_bounds_by_widget: &'a HashMap<WidgetId, Rect>,
+    inherited_host: WidgetId,
+    inherited_surface: WidgetId,
     children: Vec<WidgetId>,
 }
 
@@ -2119,6 +2263,8 @@ impl WidgetPodVisitor for CollectChildrenVisitor<'_> {
             Some(self.parent),
             self.focused_widget,
             self.paint_bounds_by_widget,
+            self.inherited_host,
+            self.inherited_surface,
         );
     }
 }
@@ -2998,7 +3144,13 @@ mod tests {
 
         assert_eq!(graph.nodes.len(), 2);
         assert_eq!(graph.nodes[0].id, graph.root);
+        assert_eq!(graph.nodes[0].stack_host, graph.root);
+        assert!(graph.nodes[0].is_stack_host);
         assert_eq!(graph_child(&graph).parent, Some(graph.root));
+        assert_eq!(graph_child(&graph).stack_host, graph.root);
+        assert!(graph_child(&graph).is_stack_surface);
+        assert_eq!(graph.stack_hosts.len(), 1);
+        assert_eq!(graph.stack_hosts[0].host, graph.root);
         assert!(graph_child(&graph).accepts_focus);
         assert_eq!(graph_child(&graph).geometry.layout_bounds, graph_child(&graph).bounds);
         assert_eq!(

@@ -4,8 +4,8 @@ use sui_core::{
 };
 use sui_layout::{Axis, Constraints};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, StackHostOptions,
+    StackOrderPolicy, Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::StrokeStyle;
 
@@ -410,6 +410,169 @@ impl Widget for SplitView {
     }
 }
 
+struct FloatingWindowEntry {
+    bounds: Rect,
+    child: WidgetPod,
+}
+
+pub struct FloatingStack {
+    theme: Box<DefaultTheme>,
+    name: Option<String>,
+    windows: Vec<FloatingWindowEntry>,
+}
+
+impl FloatingStack {
+    pub fn new() -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            name: None,
+            windows: Vec::new(),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn with_window<W>(mut self, bounds: Rect, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.push_window(bounds, child);
+        self
+    }
+
+    pub fn push_window<W>(&mut self, bounds: Rect, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.windows.push(FloatingWindowEntry {
+            bounds,
+            child: WidgetPod::new(child),
+        });
+    }
+
+    pub fn len(&self) -> usize {
+        self.windows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.windows.is_empty()
+    }
+
+    fn frontmost_window_at(&self, host_bounds: Rect, position: Point) -> Option<usize> {
+        self.windows.iter().enumerate().rev().find_map(|(index, entry)| {
+            entry
+                .bounds
+                .translate(host_bounds.origin.to_vector())
+                .contains(position)
+                .then_some(index)
+        })
+    }
+
+    fn bring_to_front(&mut self, index: usize) -> bool {
+        if index >= self.windows.len() || index + 1 == self.windows.len() {
+            return false;
+        }
+
+        let entry = self.windows.remove(index);
+        self.windows.push(entry);
+        true
+    }
+
+    fn content_rect(&self) -> Rect {
+        self.windows
+            .iter()
+            .fold(Rect::ZERO, |current, entry| current.union(entry.bounds))
+    }
+}
+
+impl Default for FloatingStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Widget for FloatingStack {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Event::Pointer(pointer) = event {
+            if pointer.kind == PointerEventKind::Down
+                && pointer.button == Some(PointerButton::Primary)
+                && let Some(index) = self.frontmost_window_at(ctx.bounds(), pointer.position)
+                && self.bring_to_front(index)
+            {
+                ctx.request_paint();
+                ctx.request_hit_test();
+                ctx.request_semantics();
+            }
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        for entry in self.windows.iter_mut() {
+            entry
+                .child
+                .measure(ctx, Constraints::tight(entry.bounds.size));
+        }
+
+        let content = self.content_rect();
+        constraints.clamp(Size::new(content.max_x().max(0.0), content.max_y().max(0.0)))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        for entry in self.windows.iter_mut() {
+            entry
+                .child
+                .arrange(ctx, entry.bounds.translate(bounds.origin.to_vector()));
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        for entry in &self.windows {
+            entry.child.paint(ctx);
+        }
+    }
+
+    fn stack_host_options(&self) -> Option<StackHostOptions> {
+        Some(StackHostOptions {
+            order_policy: StackOrderPolicy::FocusFronted,
+        })
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            self.content_rect().translate(ctx.bounds().origin.to_vector()),
+        );
+        node.name = self.name.clone();
+        node.state.focused = ctx.is_focused();
+        ctx.push(node);
+
+        for entry in &self.windows {
+            entry.child.semantics(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        for entry in &self.windows {
+            visitor.visit(&entry.child);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        for entry in &mut self.windows {
+            visitor.visit(&mut entry.child);
+        }
+    }
+}
+
 fn split_child_constraints(axis: Axis, main: f32, cross: f32) -> Constraints {
     match axis {
         Axis::Horizontal => Constraints::tight(Size::new(main.max(0.0), cross.max(0.0))),
@@ -467,14 +630,14 @@ fn first_size_main(axis: Axis, size: Size) -> f32 {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use super::SplitView;
+    use super::{FloatingStack, SplitView};
     use crate::containers::SizedBox;
     use sui_core::{
-        Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Result,
-        SemanticsRole, SemanticsValue, Vector,
+        Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
+        Result, SemanticsRole, SemanticsValue, Vector,
     };
     use sui_layout::Axis;
-    use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
+    use sui_runtime::{Application, Runtime, StackOrderPolicy, Widget, WindowBuilder};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -551,6 +714,48 @@ mod tests {
             splitter.value,
             Some(SemanticsValue::Number(value)) if value > 0.65
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn floating_stack_reorders_host_surfaces_on_pointer_focus() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            FloatingStack::new()
+                .name("floating workspace")
+                .with_window(
+                    Rect::new(0.0, 0.0, 120.0, 80.0),
+                    SizedBox::new().width(120.0).height(80.0),
+                )
+                .with_window(
+                    Rect::new(48.0, 0.0, 120.0, 80.0),
+                    SizedBox::new().width(120.0).height(80.0),
+                ),
+        );
+
+        let _ = runtime.render(window_id)?;
+        let before = runtime.widget_graph(window_id)?;
+        let host = before
+            .stack_hosts
+            .iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should be present");
+        assert_eq!(host.surfaces.len(), 2);
+        let first_surface = host.surfaces[0];
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+        )?;
+        let _ = runtime.render(window_id)?;
+
+        let after = runtime.widget_graph(window_id)?;
+        let host = after
+            .stack_hosts
+            .iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should still be present");
+        assert_eq!(host.surfaces.len(), 2);
+        assert_eq!(host.surfaces[1], first_surface);
         Ok(())
     }
 }

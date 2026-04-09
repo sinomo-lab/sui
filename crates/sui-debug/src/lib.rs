@@ -547,10 +547,17 @@ fn graph_tree_item(
     nodes: &HashMap<WidgetId, &WidgetNodeSnapshot>,
 ) -> TreeItem {
     let mut detail = format!(
-        "layout={} input={} paint={} focusable={} focused={}",
+        "layout={} input={} paint={} host=#{} surface=#{} owner={} order={} host_node={} surface_node={} policy={:?} focusable={} focused={}",
         format_rect(node.geometry.layout_bounds),
         format_rect(node.geometry.input_bounds),
         format_rect(node.geometry.paint_bounds),
+        node.stack_host.get(),
+        node.stack_surface.get(),
+        format_optional_widget_id(node.transient_owner_surface),
+        node.stack_surface_order,
+        yes_no(node.is_stack_host),
+        yes_no(node.is_stack_surface),
+        node.stack_order_policy,
         yes_no(node.accepts_focus),
         yes_no(node.focused),
     );

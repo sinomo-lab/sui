@@ -51,6 +51,14 @@ pub trait Widget {
         LayerOptions::default()
     }
 
+    fn stack_host_options(&self) -> Option<StackHostOptions> {
+        None
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        None
+    }
+
     fn semantics(&self, _ctx: &mut SemanticsCtx) {}
 
     fn accepts_focus(&self) -> bool {
@@ -68,6 +76,40 @@ pub trait Widget {
 pub struct LayerOptions {
     pub cache_policy: LayerCachePolicy,
     pub composition_mode: LayerCompositionMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackOrderPolicy {
+    Stable,
+    FocusFronted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StackHostOptions {
+    pub order_policy: StackOrderPolicy,
+}
+
+impl Default for StackHostOptions {
+    fn default() -> Self {
+        Self {
+            order_policy: StackOrderPolicy::Stable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StackSurfaceOptions {
+    pub dynamic_ordering: bool,
+    pub transient: bool,
+}
+
+impl Default for StackSurfaceOptions {
+    fn default() -> Self {
+        Self {
+            dynamic_ordering: true,
+            transient: false,
+        }
+    }
 }
 
 impl Default for LayerOptions {
@@ -489,6 +531,14 @@ impl WidgetPod {
 
     pub(crate) fn current_layer_options(&self) -> LayerOptions {
         self.widget.layer_options()
+    }
+
+    pub(crate) fn current_stack_host_options(&self) -> Option<StackHostOptions> {
+        self.widget.stack_host_options()
+    }
+
+    pub(crate) fn current_stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.widget.stack_surface_options()
     }
 
     pub(crate) fn layer_composition_mode_for(
