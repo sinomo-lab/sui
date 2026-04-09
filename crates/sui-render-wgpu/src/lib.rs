@@ -2545,6 +2545,18 @@ mod tests {
         count
     }
 
+    fn rgba_pixel(image: &super::RgbaImage, x: u32, y: u32) -> [u8; 4] {
+        let width = image.width() as usize;
+        let index = ((y as usize * width) + x as usize) * 4;
+        let pixels = image.pixels();
+        [
+            pixels[index],
+            pixels[index + 1],
+            pixels[index + 2],
+            pixels[index + 3],
+        ]
+    }
+
     fn logical_x_from_ndc(ndc_x: f32, viewport: Size) -> f32 {
         ((ndc_x + 1.0) * 0.5) * viewport.width
     }
@@ -4202,6 +4214,300 @@ mod tests {
         assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
         assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
         assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
+    }
+
+    #[test]
+    fn overlay_layers_paint_above_later_normal_siblings() {
+        let normal_id = WidgetId::new(205);
+        let overlay_id = WidgetId::new(206);
+
+        let build_frame = || {
+            let normal_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(normal_id),
+                normal_id,
+                Rect::new(32.0, 12.0, 72.0, 48.0),
+            )
+            .with_content_bounds(Rect::new(32.0, 12.0, 72.0, 48.0))
+            .with_paint_bounds(Rect::new(32.0, 12.0, 72.0, 48.0))
+            .with_cache_policy(LayerCachePolicy::Direct);
+            let overlay_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(overlay_id),
+                overlay_id,
+                Rect::new(12.0, 12.0, 72.0, 48.0),
+            )
+            .with_content_bounds(Rect::new(12.0, 12.0, 72.0, 48.0))
+            .with_paint_bounds(Rect::new(12.0, 12.0, 72.0, 48.0))
+            .with_cache_policy(LayerCachePolicy::Direct)
+            .with_composition_mode(LayerCompositionMode::Overlay);
+
+            let mut overlay_scene = Scene::new();
+            overlay_scene.push(SceneCommand::FillRect {
+                rect: overlay_descriptor.bounds,
+                brush: Color::rgba(0.90, 0.16, 0.16, 1.0).into(),
+            });
+
+            let mut normal_scene = Scene::new();
+            normal_scene.push(SceneCommand::FillRect {
+                rect: normal_descriptor.bounds,
+                brush: Color::rgba(0.16, 0.72, 0.24, 1.0).into(),
+            });
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                overlay_descriptor.clone(),
+                overlay_scene,
+            )));
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                normal_descriptor.clone(),
+                normal_scene,
+            )));
+
+            SceneFrame {
+                window_id: WindowId::new(143),
+                viewport: Size::new(128.0, 80.0),
+                surface_size: Size::new(128.0, 80.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        overlay_descriptor,
+                    )
+                    .with_damage(Rect::new(12.0, 12.0, 72.0, 48.0)),
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        normal_descriptor,
+                    )
+                    .with_damage(Rect::new(32.0, 12.0, 72.0, 48.0)),
+                ],
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let frame = build_frame();
+        renderer.render(&frame).unwrap();
+        let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+        let overlap = rgba_pixel(&pixels, 48, 24);
+
+        assert!(
+            overlap[0] > overlap[1],
+            "expected overlay pixel to dominate overlap, got rgba={overlap:?}"
+        );
+    }
+
+    #[test]
+    fn nested_overlay_layers_paint_above_later_root_normal_siblings() {
+        let shell_id = WidgetId::new(207);
+        let nested_overlay_id = WidgetId::new(208);
+        let blocker_id = WidgetId::new(209);
+
+        let build_frame = || {
+            let shell_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(shell_id),
+                shell_id,
+                Rect::new(0.0, 0.0, 128.0, 80.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 128.0, 80.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 128.0, 80.0))
+            .with_cache_policy(LayerCachePolicy::Direct);
+            let nested_overlay_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(nested_overlay_id),
+                nested_overlay_id,
+                Rect::new(12.0, 12.0, 72.0, 48.0),
+            )
+            .with_content_bounds(Rect::new(12.0, 12.0, 72.0, 48.0))
+            .with_paint_bounds(Rect::new(12.0, 12.0, 72.0, 48.0))
+            .with_cache_policy(LayerCachePolicy::Direct)
+            .with_composition_mode(LayerCompositionMode::Overlay);
+            let blocker_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(blocker_id),
+                blocker_id,
+                Rect::new(32.0, 12.0, 72.0, 48.0),
+            )
+            .with_content_bounds(Rect::new(32.0, 12.0, 72.0, 48.0))
+            .with_paint_bounds(Rect::new(32.0, 12.0, 72.0, 48.0))
+            .with_cache_policy(LayerCachePolicy::Direct);
+
+            let mut nested_overlay_scene = Scene::new();
+            nested_overlay_scene.push(SceneCommand::FillRect {
+                rect: nested_overlay_descriptor.bounds,
+                brush: Color::rgba(0.90, 0.16, 0.16, 1.0).into(),
+            });
+
+            let mut shell_scene = Scene::new();
+            shell_scene.push(SceneCommand::FillRect {
+                rect: shell_descriptor.bounds,
+                brush: Color::rgba(0.97, 0.98, 1.0, 1.0).into(),
+            });
+            shell_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                nested_overlay_descriptor.clone(),
+                nested_overlay_scene,
+            )));
+
+            let mut blocker_scene = Scene::new();
+            blocker_scene.push(SceneCommand::FillRect {
+                rect: blocker_descriptor.bounds,
+                brush: Color::rgba(0.16, 0.72, 0.24, 1.0).into(),
+            });
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                shell_descriptor.clone(),
+                shell_scene,
+            )));
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                blocker_descriptor.clone(),
+                blocker_scene,
+            )));
+
+            SceneFrame {
+                window_id: WindowId::new(144),
+                viewport: Size::new(128.0, 80.0),
+                surface_size: Size::new(128.0, 80.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        shell_descriptor,
+                    )
+                    .with_damage(Rect::new(0.0, 0.0, 128.0, 80.0)),
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        nested_overlay_descriptor,
+                    )
+                    .with_damage(Rect::new(12.0, 12.0, 72.0, 48.0)),
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        blocker_descriptor,
+                    )
+                    .with_damage(Rect::new(32.0, 12.0, 72.0, 48.0)),
+                ],
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let frame = build_frame();
+        renderer.render(&frame).unwrap();
+        let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+        let overlap = rgba_pixel(&pixels, 48, 24);
+
+        assert!(
+            overlap[0] > overlap[1],
+            "expected nested overlay pixel to dominate overlap, got rgba={overlap:?}"
+        );
+    }
+
+    #[test]
+    fn cached_ancestor_overlay_layers_paint_above_later_root_normal_siblings() {
+        let shell_id = WidgetId::new(210);
+        let nested_overlay_id = WidgetId::new(211);
+        let blocker_id = WidgetId::new(212);
+
+        let build_frame = || {
+            let shell_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(shell_id),
+                shell_id,
+                Rect::new(0.0, 0.0, 512.0, 120.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 120.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 120.0))
+            .with_cache_policy(LayerCachePolicy::Cached);
+            let nested_overlay_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(nested_overlay_id),
+                nested_overlay_id,
+                Rect::new(12.0, 12.0, 180.0, 80.0),
+            )
+            .with_content_bounds(Rect::new(12.0, 12.0, 180.0, 80.0))
+            .with_paint_bounds(Rect::new(12.0, 12.0, 180.0, 80.0))
+            .with_cache_policy(LayerCachePolicy::Direct)
+            .with_composition_mode(LayerCompositionMode::Overlay);
+            let blocker_descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(blocker_id),
+                blocker_id,
+                Rect::new(96.0, 40.0, 220.0, 44.0),
+            )
+            .with_content_bounds(Rect::new(96.0, 40.0, 220.0, 44.0))
+            .with_paint_bounds(Rect::new(96.0, 40.0, 220.0, 44.0))
+            .with_cache_policy(LayerCachePolicy::Direct);
+
+            let mut nested_overlay_scene = Scene::new();
+            nested_overlay_scene.push(SceneCommand::FillRect {
+                rect: nested_overlay_descriptor.bounds,
+                brush: Color::rgba(0.90, 0.16, 0.16, 1.0).into(),
+            });
+
+            let mut shell_scene = Scene::new();
+            shell_scene.push(SceneCommand::FillRect {
+                rect: shell_descriptor.bounds,
+                brush: Color::rgba(0.97, 0.98, 1.0, 1.0).into(),
+            });
+            shell_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                nested_overlay_descriptor.clone(),
+                nested_overlay_scene,
+            )));
+
+            let mut blocker_scene = Scene::new();
+            blocker_scene.push(SceneCommand::FillRect {
+                rect: blocker_descriptor.bounds,
+                brush: Color::rgba(0.16, 0.72, 0.24, 1.0).into(),
+            });
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                shell_descriptor.clone(),
+                shell_scene,
+            )));
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                blocker_descriptor.clone(),
+                blocker_scene,
+            )));
+
+            SceneFrame {
+                window_id: WindowId::new(145),
+                viewport: Size::new(512.0, 120.0),
+                surface_size: Size::new(512.0, 120.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        shell_descriptor,
+                    )
+                    .with_damage(Rect::new(0.0, 0.0, 512.0, 120.0)),
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        nested_overlay_descriptor,
+                    )
+                    .with_damage(Rect::new(12.0, 12.0, 180.0, 80.0)),
+                    SceneLayerUpdate::from_descriptor(
+                        SceneLayerUpdateKind::Content,
+                        blocker_descriptor,
+                    )
+                    .with_damage(Rect::new(96.0, 40.0, 220.0, 44.0)),
+                ],
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let frame = build_frame();
+        renderer.render(&frame).unwrap();
+        let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+        let overlap = rgba_pixel(&pixels, 120, 52);
+
+        assert!(
+            overlap[0] > overlap[1],
+            "expected cached-ancestor overlay pixel to dominate overlap, got rgba={overlap:?}"
+        );
     }
 
     #[test]

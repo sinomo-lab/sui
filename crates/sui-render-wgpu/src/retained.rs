@@ -260,6 +260,13 @@ enum CompositionItem {
     Layer(SceneLayerId),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompositionPhase {
+    Normal,
+    Overlay,
+    Effect,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct TransformNode {
@@ -616,47 +623,42 @@ impl RetainedCompositorState {
         parent_layer: Option<SceneLayerId>,
     ) -> Result<RootSnapshot> {
         let mut result = RootSnapshot::default();
+        let mut normal_items = Vec::new();
+        let mut overlay_items = Vec::new();
+        let mut effect_items = Vec::new();
         let mut segment_scene = Scene::new();
         let mut segment_start = None::<ResolvedRasterState>;
-
-        let flush_segment =
-            |result: &mut RootSnapshot,
-             segment_scene: &mut Scene,
-             segment_start: &mut Option<ResolvedRasterState>| {
-                if !scene_has_draw_content(segment_scene) {
-                    *segment_scene = Scene::new();
-                    *segment_start = None;
-                    return;
-                }
-
-                let packet_id = RetainedPacketId {
-                    container,
-                    segment_index: result.packets.len() as u32,
-                };
-                result.items.push(CompositionItem::Packet(packet_id));
-                result.packet_ids.push(packet_id);
-                result.packets.push(PacketSnapshot {
-                    id: packet_id,
-                    scene: std::mem::take(segment_scene),
-                    initial_state: segment_start
-                        .take()
-                        .expect("segment state available before flush"),
-                });
-            };
 
         for command in scene.commands() {
             match command {
                 SceneCommand::Layer(layer) => {
-                    flush_segment(&mut result, &mut segment_scene, &mut segment_start);
+                    flush_container_segment(
+                        &self.effects,
+                        container,
+                        &mut result,
+                        &mut normal_items,
+                        &mut overlay_items,
+                        &mut effect_items,
+                        &mut segment_scene,
+                        &mut segment_start,
+                    );
 
                     let mut child_state = state.clone();
                     child_state.effect_node = self.push_effect_node(
                         Some(state.effect_node),
                         layer.descriptor.composition_mode,
                     );
+                    let phase =
+                        composition_phase_for_effect_node(child_state.effect_node, &self.effects);
                     let layer_snapshot =
                         self.build_layer_snapshot(layer, parent_layer, child_state, snapshot)?;
-                    result.items.push(CompositionItem::Layer(layer.layer_id()));
+                    push_composition_item(
+                        phase,
+                        CompositionItem::Layer(layer.layer_id()),
+                        &mut normal_items,
+                        &mut overlay_items,
+                        &mut effect_items,
+                    );
                     snapshot.layers.insert(layer.layer_id(), layer_snapshot);
                 }
                 _ => {
@@ -669,7 +671,19 @@ impl RetainedCompositorState {
             }
         }
 
-        flush_segment(&mut result, &mut segment_scene, &mut segment_start);
+        flush_container_segment(
+            &self.effects,
+            container,
+            &mut result,
+            &mut normal_items,
+            &mut overlay_items,
+            &mut effect_items,
+            &mut segment_scene,
+            &mut segment_start,
+        );
+        result.items = normal_items;
+        result.items.extend(overlay_items);
+        result.items.extend(effect_items);
         Ok(result)
     }
 
@@ -1149,7 +1163,13 @@ impl RetainedCompositorState {
         stats: &mut RetainedCompositorFrameStats,
     ) -> Result<DrawOpArena> {
         let mut draw_ops = DrawOpArena::default();
-        self.append_items(&self.root.items, &mut draw_ops, viewport, stats)?;
+        for phase in [
+            CompositionPhase::Normal,
+            CompositionPhase::Overlay,
+            CompositionPhase::Effect,
+        ] {
+            self.append_items_for_phase(&self.root.items, phase, &mut draw_ops, viewport, stats)?;
+        }
         Ok(draw_ops)
     }
 
@@ -1162,21 +1182,29 @@ impl RetainedCompositorState {
             fragments: Vec::new(),
         };
         let mut current = DrawOpArena::default();
-        self.append_items_to_submission(
-            &self.root.items,
-            &mut current,
-            &mut submission,
-            viewport,
-            stats,
-        )?;
+        for phase in [
+            CompositionPhase::Normal,
+            CompositionPhase::Overlay,
+            CompositionPhase::Effect,
+        ] {
+            self.append_items_to_submission_for_phase(
+                &self.root.items,
+                phase,
+                &mut current,
+                &mut submission,
+                viewport,
+                stats,
+            )?;
+        }
         flush_transient_fragment(&mut submission, &mut current);
         Ok(submission)
     }
 
     #[cfg(test)]
-    fn append_items(
+    fn append_items_for_phase(
         &self,
         items: &[CompositionItem],
+        phase: CompositionPhase,
         draw_ops: &mut DrawOpArena,
         viewport: Size,
         stats: &mut RetainedCompositorFrameStats,
@@ -1185,6 +1213,11 @@ impl RetainedCompositorState {
             match item {
                 CompositionItem::Packet(packet_id) => {
                     if let Some(packet) = self.packets.get(packet_id) {
+                        if composition_phase_for_effect_node(packet.initial_state.effect_node, &self.effects)
+                            != phase
+                        {
+                            continue;
+                        }
                         match packet.coordinate_space {
                             PacketCoordinateSpace::World => {
                                 draw_ops.append_fragment(&packet.draw_ops);
@@ -1222,9 +1255,27 @@ impl RetainedCompositorState {
                         match layer.render_mode {
                             RetainedLayerRenderMode::Direct => {
                                 stats.visible_layers += 1;
-                                self.append_items(&layer.items, draw_ops, viewport, stats)?;
+                                self.append_items_for_phase(
+                                    &layer.items,
+                                    phase,
+                                    draw_ops,
+                                    viewport,
+                                    stats,
+                                )?;
                             }
                             RetainedLayerRenderMode::CachedTiles => {
+                                let layer_phase =
+                                    composition_phase_for_effect_node(layer.effect_node, &self.effects);
+                                if layer_phase != phase {
+                                    self.append_items_for_phase(
+                                        &layer.items,
+                                        phase,
+                                        draw_ops,
+                                        viewport,
+                                        stats,
+                                    )?;
+                                    continue;
+                                }
                                 if !layer.visible_tiles.is_empty() {
                                     stats.visible_layers += 1;
                                 }
@@ -1245,9 +1296,10 @@ impl RetainedCompositorState {
         Ok(())
     }
 
-    fn append_items_to_submission(
+    fn append_items_to_submission_for_phase(
         &self,
         items: &[CompositionItem],
+        phase: CompositionPhase,
         current: &mut DrawOpArena,
         submission: &mut RetainedFrameSubmission,
         viewport: Size,
@@ -1257,6 +1309,11 @@ impl RetainedCompositorState {
             match item {
                 CompositionItem::Packet(packet_id) => {
                     if let Some(packet) = self.packets.get(packet_id) {
+                        if composition_phase_for_effect_node(packet.initial_state.effect_node, &self.effects)
+                            != phase
+                        {
+                            continue;
+                        }
                         match packet.coordinate_space {
                             PacketCoordinateSpace::World => {
                                 current.append_fragment(&packet.draw_ops);
@@ -1294,8 +1351,9 @@ impl RetainedCompositorState {
                         match layer.render_mode {
                             RetainedLayerRenderMode::Direct => {
                                 stats.visible_layers += 1;
-                                self.append_items_to_submission(
+                                self.append_items_to_submission_for_phase(
                                     &layer.items,
+                                    phase,
                                     current,
                                     submission,
                                     viewport,
@@ -1303,6 +1361,19 @@ impl RetainedCompositorState {
                                 )?;
                             }
                             RetainedLayerRenderMode::CachedTiles => {
+                                let layer_phase =
+                                    composition_phase_for_effect_node(layer.effect_node, &self.effects);
+                                if layer_phase != phase {
+                                    self.append_items_to_submission_for_phase(
+                                        &layer.items,
+                                        phase,
+                                        current,
+                                        submission,
+                                        viewport,
+                                        stats,
+                                    )?;
+                                    continue;
+                                }
                                 if !layer.visible_tiles.is_empty() {
                                     stats.visible_layers += 1;
                                 }
@@ -1421,6 +1492,7 @@ impl RetainedCompositorState {
                             layer_snapshot,
                             snapshot_layers,
                             &self.packets,
+                            &self.effects,
                             text_engine,
                             &mut self.path_cache,
                             feather_width,
@@ -1441,6 +1513,7 @@ impl RetainedCompositorState {
                         layer_snapshot,
                         snapshot_layers,
                         &self.packets,
+                        &self.effects,
                         text_engine,
                         &mut self.path_cache,
                         feather_width,
@@ -1512,6 +1585,84 @@ fn flush_transient_fragment(submission: &mut RetainedFrameSubmission, current: &
 
 fn scale_bucket(scale_factor: f32) -> u32 {
     (scale_factor.max(0.001) * 100.0).round() as u32
+}
+
+fn push_composition_item(
+    phase: CompositionPhase,
+    item: CompositionItem,
+    normal_items: &mut Vec<CompositionItem>,
+    overlay_items: &mut Vec<CompositionItem>,
+    effect_items: &mut Vec<CompositionItem>,
+) {
+    match phase {
+        CompositionPhase::Normal => normal_items.push(item),
+        CompositionPhase::Overlay => overlay_items.push(item),
+        CompositionPhase::Effect => effect_items.push(item),
+    }
+}
+
+fn flush_container_segment(
+    effects: &HashMap<EffectNodeId, EffectNode>,
+    container: CompositionContainerId,
+    result: &mut RootSnapshot,
+    normal_items: &mut Vec<CompositionItem>,
+    overlay_items: &mut Vec<CompositionItem>,
+    effect_items: &mut Vec<CompositionItem>,
+    segment_scene: &mut Scene,
+    segment_start: &mut Option<ResolvedRasterState>,
+) {
+    if !scene_has_draw_content(segment_scene) {
+        *segment_scene = Scene::new();
+        *segment_start = None;
+        return;
+    }
+
+    let initial_state = segment_start
+        .take()
+        .expect("segment state available before flush");
+    let phase = composition_phase_for_effect_node(initial_state.effect_node, effects);
+    let packet_id = RetainedPacketId {
+        container,
+        segment_index: result.packets.len() as u32,
+    };
+    push_composition_item(
+        phase,
+        CompositionItem::Packet(packet_id),
+        normal_items,
+        overlay_items,
+        effect_items,
+    );
+    result.packet_ids.push(packet_id);
+    result.packets.push(PacketSnapshot {
+        id: packet_id,
+        scene: std::mem::take(segment_scene),
+        initial_state,
+    });
+}
+
+fn composition_phase_for_effect_node(
+    mut effect_node: EffectNodeId,
+    effects: &HashMap<EffectNodeId, EffectNode>,
+) -> CompositionPhase {
+    let mut phase = CompositionPhase::Normal;
+
+    while let Some(node) = effects.get(&effect_node) {
+        phase = match (phase, node.composition_mode) {
+            (CompositionPhase::Effect, _) | (_, sui_scene::LayerCompositionMode::Effect) => {
+                CompositionPhase::Effect
+            }
+            (CompositionPhase::Overlay, _)
+            | (_, sui_scene::LayerCompositionMode::Overlay) => CompositionPhase::Overlay,
+            _ => phase,
+        };
+
+        let Some(parent) = node.parent else {
+            break;
+        };
+        effect_node = parent;
+    }
+
+    phase
 }
 
 fn resolve_layer_render_mode(
@@ -1799,6 +1950,7 @@ fn build_tile_entry(
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
     packets: &HashMap<RetainedPacketId, RetainedDirectPacket>,
+    effects: &HashMap<EffectNodeId, EffectNode>,
     text_engine: &mut TextEngine,
     path_cache: &mut PathMeshCache,
     feather_width: f32,
@@ -1812,6 +1964,8 @@ fn build_tile_entry(
         layer_snapshot,
         snapshot_layers,
         packets,
+        effects,
+        composition_phase_for_effect_node(layer_snapshot.effect_node, effects),
         text_engine,
         path_cache,
         feather_width,
@@ -1848,6 +2002,8 @@ fn build_cached_tile_fragment(
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
     packets: &HashMap<RetainedPacketId, RetainedDirectPacket>,
+    effects: &HashMap<EffectNodeId, EffectNode>,
+    included_phase: CompositionPhase,
     text_engine: &mut TextEngine,
     path_cache: &mut PathMeshCache,
     feather_width: f32,
@@ -1866,6 +2022,11 @@ fn build_cached_tile_fragment(
                     .iter()
                     .find(|packet| packet.id == *packet_id);
                 if let Some(packet) = packets.get(packet_id) {
+                    if composition_phase_for_effect_node(packet.initial_state.effect_node, effects)
+                        != included_phase
+                    {
+                        continue;
+                    }
                     if packet.coordinate_space == PacketCoordinateSpace::LayerLocal {
                         let mut external_clips = packet_snapshot
                             .map(|snapshot| snapshot.initial_state.clip_stack.clone())
@@ -1912,6 +2073,11 @@ fn build_cached_tile_fragment(
                 let Some(child_snapshot) = snapshot_layers.get(child_id) else {
                     continue;
                 };
+                if composition_phase_for_effect_node(child_snapshot.effect_node, effects)
+                    != included_phase
+                {
+                    continue;
+                }
                 if tile_scene_rect
                     .intersection(child_snapshot.descriptor.content_bounds)
                     .is_none()
@@ -1927,6 +2093,8 @@ fn build_cached_tile_fragment(
                     child_snapshot,
                     snapshot_layers,
                     packets,
+                    effects,
+                    included_phase,
                     text_engine,
                     path_cache,
                     feather_width,

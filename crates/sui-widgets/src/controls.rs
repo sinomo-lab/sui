@@ -2921,6 +2921,7 @@ impl Widget for Select {
                 self.hovered_option = self.option_at(ctx.bounds(), pointer.position);
                 self.pressed_header = self.hovered_header;
                 ctx.request_focus();
+                ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2945,7 +2946,6 @@ impl Widget for Select {
                 }
 
                 self.pressed_header = false;
-                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -3002,7 +3002,6 @@ impl Widget for Select {
                     _ => {}
                 }
 
-                ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -3022,14 +3021,7 @@ impl Widget for Select {
             .fold(0.0, f32::max);
         let width = (widest + padding.left + padding.right + 24.0)
             .max(self.theme.metrics.button_min_width + 40.0);
-        let height = self.header_height()
-            + if self.expanded {
-                self.menu_rect(Rect::new(0.0, 0.0, width, self.header_height()))
-                    .height()
-                    + 6.0
-            } else {
-                0.0
-            };
+        let height = self.header_height();
 
         constraints.clamp(Size::new(width, height))
     }
@@ -3150,7 +3142,6 @@ impl Widget for Select {
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if !focused && self.expanded {
             self.expanded = false;
-            ctx.request_measure();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -4818,6 +4809,119 @@ mod tests {
         assert_eq!(select.state.expanded, Some(true));
         assert_eq!(descriptor.cache_policy, LayerCachePolicy::Direct);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
+        Ok(())
+    }
+
+    #[test]
+    fn expanded_select_does_not_reflow_following_widgets() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            12.0,
+            crate::Stack::vertical()
+                .spacing(10.0)
+                .with_child(
+                    Select::new("Mode")
+                        .placeholder("Choose mode")
+                        .options(["Automatic", "Linear", "Gamma"]),
+                )
+                .with_child(NumberInput::new("Gamma").value(1.4)),
+        ));
+
+        let before = runtime.render(window_id)?;
+        let spin_before = before
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::SpinBox)
+            .expect("spin box semantics present before expand")
+            .bounds;
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(20.0, 20.0), false),
+        )?;
+
+        let after = runtime.render(window_id)?;
+        let spin_after = after
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::SpinBox)
+            .expect("spin box semantics present after expand")
+            .bounds;
+        let select = after
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after expand");
+        let descriptor =
+            layer_descriptor_for(&after, select.id).expect("select layer descriptor present");
+
+        assert_eq!(spin_before.y(), spin_after.y());
+        assert!(descriptor.paint_bounds.max_y() > select.bounds.max_y());
+        Ok(())
+    }
+
+    #[test]
+    fn expanded_select_accepts_pointer_selection_in_floating_menu() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            12.0,
+            crate::Stack::vertical()
+                .spacing(10.0)
+                .with_child(
+                    Select::new("Mode")
+                        .placeholder("Choose mode")
+                        .options(["Automatic", "Linear", "Gamma"])
+                        .on_change(move |_, value| on_change.borrow_mut().push(value)),
+                )
+                .with_child(NumberInput::new("Gamma").value(1.4)),
+        ));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(20.0, 20.0), false),
+        )?;
+
+        let expanded = runtime.render(window_id)?;
+        let select = expanded
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after expand");
+        let option_point = Point::new(
+            select.bounds.x() + 20.0,
+            select.bounds.max_y() + 6.0 + (select.bounds.height() * 1.5),
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, option_point, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, option_point, false),
+        )?;
+
+        assert_eq!(changes.borrow().as_slice(), &["Linear".to_string()]);
+
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after pointer selection");
+        assert_eq!(
+            select.value,
+            Some(SemanticsValue::Text("Linear".to_string()))
+        );
         Ok(())
     }
 

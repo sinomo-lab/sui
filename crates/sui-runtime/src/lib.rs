@@ -16,8 +16,8 @@ use sui_core::{
 };
 use sui_layout::Constraints;
 use sui_scene::{
-    ImageRegistry, RegisteredImage, Scene, SceneFrame, SceneLayer, SceneLayerDescriptor,
-    SceneLayerUpdate, SceneLayerUpdateKind,
+    ImageRegistry, LayerCompositionMode, RegisteredImage, Scene, SceneCommand, SceneFrame,
+    SceneLayer, SceneLayerDescriptor, SceneLayerUpdate, SceneLayerUpdateKind,
 };
 use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
@@ -622,7 +622,10 @@ impl WindowState {
         self.ensure_graph_for_event(&event, text_system, font_registry, image_registry);
 
         let hit_target = match &event {
-            Event::Pointer(pointer) => self.graph.hit_test(pointer.position),
+            Event::Pointer(pointer) => self
+                .floating_layer_hit_test(pointer.position)
+                .or_else(|| self.focused_floating_layer_hit_test(pointer.position))
+                .or_else(|| self.graph.hit_test(pointer.position)),
             _ => None,
         };
 
@@ -647,6 +650,33 @@ impl WindowState {
         self.finish_event(&event);
         self.schedule.extend(&invalidations);
         self.pending_invalidations.extend(invalidations);
+    }
+
+    fn floating_layer_hit_test(&self, point: Point) -> Option<WidgetId> {
+        let scene = self.last_frame.as_ref().map(|frame| &frame.scene)?;
+        scene_hit_test_for_phase(
+            scene,
+            point,
+            HitTestCompositionPhase::Effect,
+            HitTestCompositionPhase::Normal,
+        )
+        .or_else(|| {
+            scene_hit_test_for_phase(
+                scene,
+                point,
+                HitTestCompositionPhase::Overlay,
+                HitTestCompositionPhase::Normal,
+            )
+        })
+    }
+
+    fn focused_floating_layer_hit_test(&self, point: Point) -> Option<WidgetId> {
+        let focused = self.focus.focused_widget?;
+        let scene = self.last_frame.as_ref().map(|frame| &frame.scene)?;
+        let descriptor = collect_scene_layers(scene).get(&focused)?.clone();
+        (descriptor.composition_mode != LayerCompositionMode::Normal
+            && descriptor.paint_bounds.contains(point))
+            .then_some(focused)
     }
 
     fn next_wakeup_time(&self) -> Option<f64> {
@@ -2057,6 +2087,57 @@ fn collect_scene_layers(scene: &Scene) -> HashMap<WidgetId, SceneLayerDescriptor
         layers.insert(layer.widget_id(), layer.descriptor.clone());
     });
     layers
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HitTestCompositionPhase {
+    Normal,
+    Overlay,
+    Effect,
+}
+
+fn scene_hit_test_for_phase(
+    scene: &Scene,
+    point: Point,
+    target_phase: HitTestCompositionPhase,
+    inherited_phase: HitTestCompositionPhase,
+) -> Option<WidgetId> {
+    for command in scene.commands().iter().rev() {
+        let SceneCommand::Layer(layer) = command else {
+            continue;
+        };
+
+        let layer_phase = next_hit_test_phase(inherited_phase, layer.descriptor.composition_mode);
+        if !layer.descriptor.paint_bounds.contains(point) {
+            continue;
+        }
+
+        if let Some(hit) = scene_hit_test_for_phase(&layer.scene, point, target_phase, layer_phase)
+        {
+            return Some(hit);
+        }
+
+        if layer_phase == target_phase {
+            return Some(layer.widget_id());
+        }
+    }
+
+    None
+}
+
+fn next_hit_test_phase(
+    inherited_phase: HitTestCompositionPhase,
+    composition_mode: LayerCompositionMode,
+) -> HitTestCompositionPhase {
+    match (inherited_phase, composition_mode) {
+        (HitTestCompositionPhase::Effect, _) | (_, LayerCompositionMode::Effect) => {
+            HitTestCompositionPhase::Effect
+        }
+        (HitTestCompositionPhase::Overlay, _) | (_, LayerCompositionMode::Overlay) => {
+            HitTestCompositionPhase::Overlay
+        }
+        _ => HitTestCompositionPhase::Normal,
+    }
 }
 
 fn invalidation_to_layer_update_kind(
