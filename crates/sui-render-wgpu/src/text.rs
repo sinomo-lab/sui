@@ -23,15 +23,43 @@ pub(crate) struct GlyphCacheKey {
     pub(crate) glyph_id: u16,
     pub(crate) scale_bucket: u32,
     pub(crate) feather_width_bits: u32,
+    pub(crate) coverage_policy: TextCoverageCacheKey,
 }
 
 impl GlyphCacheKey {
-    pub(crate) fn new(face: GlyphFaceCacheKey, glyph_id: u16, scale_bucket: u32, feather_width: f32) -> Self {
+    pub(crate) fn new(
+        face: GlyphFaceCacheKey,
+        glyph_id: u16,
+        scale_bucket: u32,
+        feather_width: f32,
+        coverage_policy: TextCoveragePolicy,
+    ) -> Self {
         Self {
             face,
             glyph_id,
             scale_bucket,
             feather_width_bits: feather_width.to_bits(),
+            coverage_policy: TextCoverageCacheKey::from(coverage_policy),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TextCoverageCacheKey {
+    Linear,
+    Gamma { gamma_bits: u32 },
+    TwoCoverageMinusCoverageSq,
+}
+
+impl From<TextCoveragePolicy> for TextCoverageCacheKey {
+    fn from(value: TextCoveragePolicy) -> Self {
+        match value.normalized() {
+            TextCoveragePolicy::AutomaticByTextLuminance => Self::Linear,
+            TextCoveragePolicy::Linear => Self::Linear,
+            TextCoveragePolicy::Gamma(gamma) => Self::Gamma {
+                gamma_bits: gamma.to_bits(),
+            },
+            TextCoveragePolicy::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
         }
     }
 }

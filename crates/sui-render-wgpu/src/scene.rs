@@ -1639,6 +1639,8 @@ pub(crate) struct TextEngine {
     pub(crate) system: TextSystem,
     pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphPrimitive>,
     pub(crate) atlas: TextAtlas,
+    pub(crate) coverage_policy: TextCoveragePolicy,
+    pub(crate) glyph_pixel_alignment_enabled: bool,
     pub(crate) diagnostics_enabled: bool,
     pub(crate) glyph_cache_hits: usize,
     pub(crate) glyph_cache_misses: usize,
@@ -1653,6 +1655,8 @@ impl Default for TextEngine {
             system: TextSystem::new(),
             glyph_cache: HashMap::new(),
             atlas: TextAtlas::default(),
+            coverage_policy: TextCoveragePolicy::default(),
+            glyph_pixel_alignment_enabled: true,
             diagnostics_enabled: true,
             glyph_cache_hits: 0,
             glyph_cache_misses: 0,
@@ -1673,6 +1677,14 @@ impl TextEngine {
         if !enabled {
             self.frame_stats = TextFrameStats::default();
         }
+    }
+
+    pub(crate) fn set_text_coverage_policy(&mut self, policy: TextCoveragePolicy) {
+        self.coverage_policy = policy.normalized();
+    }
+
+    pub(crate) fn set_glyph_pixel_alignment_enabled(&mut self, enabled: bool) {
+        self.glyph_pixel_alignment_enabled = enabled;
     }
 
     pub(crate) fn begin_frame(&mut self) {
@@ -1759,6 +1771,10 @@ impl TextEngine {
 
         let face_key = GlyphFaceCacheKey::new(layout.face());
         let mut parsed_face = None;
+        let coverage_policy = self
+            .coverage_policy
+            .resolved_for_text_color(layout.style().color);
+        let glyph_pixel_alignment_enabled = self.glyph_pixel_alignment_enabled;
 
         for glyph in layout.glyphs() {
             let mut translated_glyph = glyph.clone();
@@ -1776,6 +1792,7 @@ impl TextEngine {
                 glyph.scale,
                 raster_scale_factor,
                 feather_width,
+                coverage_policy,
             )? {
                 match primitive {
                     CachedGlyphPrimitive::Atlas(atlas) => {
@@ -1787,6 +1804,7 @@ impl TextEngine {
                             state.current_transform,
                             viewport,
                             raster_scale_factor,
+                            glyph_pixel_alignment_enabled,
                         );
                         if self.diagnostics_enabled {
                             self.frame_stats.glyph_instances += 1;
@@ -1802,6 +1820,7 @@ impl TextEngine {
                             layout.style().color,
                             state.current_transform,
                             viewport,
+                            coverage_policy,
                         );
                         if self.diagnostics_enabled {
                             self.frame_stats.glyph_instances += 1;
@@ -1828,10 +1847,17 @@ impl TextEngine {
         glyph_scale: f32,
         raster_scale_factor: f32,
         feather_width: f32,
+        coverage_policy: TextCoveragePolicy,
     ) -> Result<Option<&CachedGlyphPrimitive>> {
         let atlas_physical_scale = glyph_scale * raster_scale_factor.max(1.0);
         let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
-        let key = GlyphCacheKey::new(face_key, glyph_id, scale_bucket, feather_width);
+        let key = GlyphCacheKey::new(
+            face_key,
+            glyph_id,
+            scale_bucket,
+            feather_width,
+            coverage_policy,
+        );
         match self.glyph_cache.entry(key) {
             Entry::Occupied(entry) => {
                 if self.diagnostics_enabled {
@@ -1866,6 +1892,7 @@ impl TextEngine {
                     bucketed_physical_scale,
                     raster_scale_factor.max(1.0),
                     bucketed_logical_scale,
+                    coverage_policy,
                 )? {
                     if let Some(started) = atlas_miss_started {
                         self.frame_stats.atlas_miss_count += 1;
@@ -1964,6 +1991,7 @@ fn build_cached_glyph_atlas(
     glyph_scale_physical: f32,
     raster_scale_factor: f32,
     glyph_scale_logical: f32,
+    coverage_policy: TextCoveragePolicy,
 ) -> Result<Option<CachedGlyphAtlas>> {
     let mut path_builder = TinySkiaPathBuilder::new();
     {
@@ -2001,7 +2029,7 @@ fn build_cached_glyph_atlas(
         return Ok(None);
     }
 
-    let pixels = rasterize_glyph_rgba(&path, bounds)?;
+    let pixels = rasterize_glyph_rgba(&path, bounds, coverage_policy)?;
     let Some(placement) = atlas.insert_rgba(width, height, &pixels) else {
         return Ok(None);
     };
@@ -2067,7 +2095,11 @@ pub(crate) fn glyph_raster_bounds(path: &tiny_skia::Path) -> Option<GlyphRasterB
     })
 }
 
-fn rasterize_glyph_rgba(path: &tiny_skia::Path, bounds: GlyphRasterBounds) -> Result<Vec<u8>> {
+fn rasterize_glyph_rgba(
+    path: &tiny_skia::Path,
+    bounds: GlyphRasterBounds,
+    coverage_policy: TextCoveragePolicy,
+) -> Result<Vec<u8>> {
     let width = bounds.raster_width as u32;
     let height = bounds.raster_height as u32;
     let mut pixmap = Pixmap::new(width, height)
@@ -2081,7 +2113,16 @@ fn rasterize_glyph_rgba(path: &tiny_skia::Path, bounds: GlyphRasterBounds) -> Re
         TinySkiaTransform::from_translate(-bounds.raster_min_x, -bounds.raster_min_y),
         None,
     );
-    Ok(pixmap.data().to_vec())
+    let mut pixels = pixmap.data().to_vec();
+    for pixel in pixels.chunks_exact_mut(4) {
+        let coverage = pixel[3] as f32 / 255.0;
+        let alpha = (coverage_policy.apply(coverage) * 255.0).round() as u8;
+        pixel[0] = 255;
+        pixel[1] = 255;
+        pixel[2] = 255;
+        pixel[3] = alpha;
+    }
+    Ok(pixels)
 }
 
 fn build_local_glyph_mesh(
@@ -2101,6 +2142,7 @@ fn append_cached_glyph_mesh(
     color: Color,
     transform: Transform,
     viewport: Size,
+    coverage_policy: TextCoveragePolicy,
 ) {
     let color = color.clamped();
     let rgba = shader_color(color);
@@ -2116,7 +2158,12 @@ fn append_cached_glyph_mesh(
         let ndc = to_ndc(transformed.x, transformed.y, viewport);
         vertices.push(Vertex {
             position: ndc,
-            color: [rgba[0], rgba[1], rgba[2], color.alpha * vertex.coverage],
+            color: [
+                rgba[0],
+                rgba[1],
+                rgba[2],
+                color.alpha * coverage_policy.apply(vertex.coverage),
+            ],
             tex_coords: [0.0, 0.0],
         });
     }
@@ -2130,6 +2177,7 @@ pub(crate) fn append_cached_glyph_atlas(
     transform: Transform,
     viewport: Size,
     raster_scale_factor: f32,
+    glyph_pixel_alignment_enabled: bool,
 ) {
     if atlas.size.is_empty() || viewport.is_empty() {
         return;
@@ -2145,6 +2193,7 @@ pub(crate) fn append_cached_glyph_atlas(
         transform,
         Rect::new(left, top, width, height),
         raster_scale_factor,
+        glyph_pixel_alignment_enabled,
     );
 
     vertices.extend_from_slice(&[
@@ -2185,13 +2234,17 @@ fn snapped_glyph_quad(
     transform: Transform,
     rect: Rect,
     raster_scale_factor: f32,
+    glyph_pixel_alignment_enabled: bool,
 ) -> (Point, Point, Point, Point) {
     let top_left = transform.transform_point(rect.origin);
     let top_right = transform.transform_point(Point::new(rect.max_x(), rect.y()));
     let bottom_left = transform.transform_point(Point::new(rect.x(), rect.max_y()));
     let bottom_right = transform.transform_point(Point::new(rect.max_x(), rect.max_y()));
 
-    if !transform_is_axis_aligned(transform) || raster_scale_factor <= 0.0 {
+    if !glyph_pixel_alignment_enabled
+        || !transform_is_axis_aligned(transform)
+        || raster_scale_factor <= 0.0
+    {
         return (top_left, top_right, bottom_left, bottom_right);
     }
 

@@ -323,10 +323,38 @@ impl SceneStatisticsDetailMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WindowTextRenderPolicy {
+    AutomaticByTextLuminance,
+    Linear,
+    Gamma(f32),
+    TwoCoverageMinusCoverageSq,
+}
+
+impl Default for WindowTextRenderPolicy {
+    fn default() -> Self {
+        Self::AutomaticByTextLuminance
+    }
+}
+
+impl WindowTextRenderPolicy {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::AutomaticByTextLuminance => Self::AutomaticByTextLuminance,
+            Self::Linear => Self::Linear,
+            Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
+            Self::Gamma(_) => Self::Linear,
+            Self::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowRenderOptions {
     pub feathering_enabled: bool,
     pub feather_width: f32,
     pub optical_vertical_text_alignment_enabled: bool,
+    pub glyph_pixel_alignment_enabled: bool,
+    pub text_render_policy: WindowTextRenderPolicy,
 }
 
 impl WindowRenderOptions {
@@ -335,6 +363,8 @@ impl WindowRenderOptions {
             feathering_enabled,
             feather_width,
             optical_vertical_text_alignment_enabled: true,
+            glyph_pixel_alignment_enabled: true,
+            text_render_policy: WindowTextRenderPolicy::AutomaticByTextLuminance,
         }
     }
 
@@ -346,11 +376,23 @@ impl WindowRenderOptions {
         self
     }
 
+    pub const fn with_glyph_pixel_alignment_enabled(mut self, enabled: bool) -> Self {
+        self.glyph_pixel_alignment_enabled = enabled;
+        self
+    }
+
+    pub const fn with_text_render_policy(mut self, policy: WindowTextRenderPolicy) -> Self {
+        self.text_render_policy = policy;
+        self
+    }
+
     pub fn clamped(self) -> Self {
         Self {
             feathering_enabled: self.feathering_enabled,
             feather_width: self.feather_width.max(0.0),
             optical_vertical_text_alignment_enabled: self.optical_vertical_text_alignment_enabled,
+            glyph_pixel_alignment_enabled: self.glyph_pixel_alignment_enabled,
+            text_render_policy: self.text_render_policy.normalized(),
         }
     }
 }
@@ -760,6 +802,7 @@ mod tests {
         CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics,
         SceneStatistics, SceneStatisticsDetailMode, TextCacheDeltaDiagnostics,
         TextCacheDiagnostics, WindowPerformanceSnapshot, WindowRenderOptions,
+        WindowTextRenderPolicy,
         clear_window_performance_snapshot, set_window_render_options,
         set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
@@ -952,24 +995,35 @@ mod tests {
     fn window_render_options_are_clamped_and_cleared_with_window_state() {
         let window_id = WindowId::new(91);
 
-        set_window_render_options(window_id, WindowRenderOptions::new(false, -2.0));
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(false, -2.0)
+                .with_text_render_policy(WindowTextRenderPolicy::Gamma(-1.0)),
+        );
 
         assert_eq!(
             window_render_options(window_id),
-            Some(WindowRenderOptions::new(false, 0.0))
+            Some(
+                WindowRenderOptions::new(false, 0.0)
+                    .with_text_render_policy(WindowTextRenderPolicy::Linear)
+            )
         );
 
         set_window_render_options(
             window_id,
             WindowRenderOptions::new(true, 1.0)
-                .with_optical_vertical_text_alignment_enabled(false),
+                .with_optical_vertical_text_alignment_enabled(false)
+                .with_glyph_pixel_alignment_enabled(false)
+                .with_text_render_policy(WindowTextRenderPolicy::TwoCoverageMinusCoverageSq),
         );
 
         assert_eq!(
             window_render_options(window_id),
             Some(
                 WindowRenderOptions::new(true, 1.0)
+                    .with_glyph_pixel_alignment_enabled(false)
                     .with_optical_vertical_text_alignment_enabled(false)
+                    .with_text_render_policy(WindowTextRenderPolicy::TwoCoverageMinusCoverageSq)
             )
         );
 

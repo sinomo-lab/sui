@@ -89,6 +89,58 @@ impl FeatheringOptions {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextCoveragePolicy {
+    AutomaticByTextLuminance,
+    Linear,
+    Gamma(f32),
+    TwoCoverageMinusCoverageSq,
+}
+
+impl Default for TextCoveragePolicy {
+    fn default() -> Self {
+        Self::AutomaticByTextLuminance
+    }
+}
+
+impl TextCoveragePolicy {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::AutomaticByTextLuminance => Self::AutomaticByTextLuminance,
+            Self::Linear => Self::Linear,
+            Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
+            Self::Gamma(_) => Self::Linear,
+            Self::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
+        }
+    }
+
+    pub fn resolved_for_text_color(self, color: Color) -> Self {
+        match self.normalized() {
+            Self::AutomaticByTextLuminance => {
+                let rgba = shader_color(color);
+                let luminance = ((rgba[0] * 0.2126) + (rgba[1] * 0.7152) + (rgba[2] * 0.0722))
+                    .clamp(0.0, 1.0);
+                if luminance >= 0.5 {
+                    Self::TwoCoverageMinusCoverageSq
+                } else {
+                    Self::Linear
+                }
+            }
+            policy => policy,
+        }
+    }
+
+    pub fn apply(self, coverage: f32) -> f32 {
+        let coverage = coverage.clamp(0.0, 1.0);
+        match self.normalized() {
+            Self::AutomaticByTextLuminance => coverage,
+            Self::Linear => coverage,
+            Self::Gamma(gamma) => coverage.powf(gamma),
+            Self::TwoCoverageMinusCoverageSq => (2.0 * coverage) - (coverage * coverage),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GlyphCacheSnapshot {
     pub entries: usize,
@@ -261,8 +313,12 @@ pub struct WgpuRenderer {
     instance: wgpu::Instance,
     feathering_enabled: bool,
     feather_width: f32,
+    text_coverage_policy: TextCoveragePolicy,
+    glyph_pixel_alignment_enabled: bool,
     vsync_enabled: bool,
     runtime_feathering_override: Option<FeatheringOptions>,
+    runtime_text_coverage_policy_override: Option<TextCoveragePolicy>,
+    runtime_glyph_pixel_alignment_override: Option<bool>,
     runtime_diagnostics_enabled: bool,
     frames_rendered: usize,
     capabilities: RendererCapabilities,
@@ -368,6 +424,16 @@ impl WgpuRenderer {
         self
     }
 
+    pub fn with_text_coverage_policy(mut self, policy: TextCoveragePolicy) -> Self {
+        self.set_text_coverage_policy(policy);
+        self
+    }
+
+    pub fn with_glyph_pixel_alignment_enabled(mut self, enabled: bool) -> Self {
+        self.set_glyph_pixel_alignment_enabled(enabled);
+        self
+    }
+
     pub fn with_feather_width(mut self, feather_width: f32) -> Self {
         self.set_feather_width(feather_width);
         self
@@ -394,6 +460,14 @@ impl WgpuRenderer {
         self.vsync_enabled
     }
 
+    pub fn text_coverage_policy(&self) -> TextCoveragePolicy {
+        self.text_coverage_policy
+    }
+
+    pub fn glyph_pixel_alignment_enabled(&self) -> bool {
+        self.glyph_pixel_alignment_enabled
+    }
+
     pub fn set_feathering(&mut self, feathering: FeatheringOptions) {
         let feathering = feathering.clamped();
         self.feathering_enabled = feathering.enabled;
@@ -402,6 +476,26 @@ impl WgpuRenderer {
 
     pub fn set_feathering_enabled(&mut self, enabled: bool) {
         self.feathering_enabled = enabled;
+    }
+
+    pub fn set_text_coverage_policy(&mut self, policy: TextCoveragePolicy) {
+        let policy = policy.normalized();
+        if self.text_coverage_policy == policy {
+            return;
+        }
+
+        self.text_coverage_policy = policy;
+        if let Some(text_engine) = self.text_engine.as_mut() {
+            text_engine.set_text_coverage_policy(policy);
+        }
+        self.invalidate_text_render_state();
+    }
+
+    pub fn set_glyph_pixel_alignment_enabled(&mut self, enabled: bool) {
+        self.glyph_pixel_alignment_enabled = enabled;
+        if let Some(text_engine) = self.text_engine.as_mut() {
+            text_engine.set_glyph_pixel_alignment_enabled(enabled);
+        }
     }
 
     pub fn set_feather_width(&mut self, feather_width: f32) {
@@ -414,6 +508,17 @@ impl WgpuRenderer {
 
     pub fn set_runtime_feathering_override(&mut self, feathering: Option<FeatheringOptions>) {
         self.runtime_feathering_override = feathering.map(FeatheringOptions::clamped);
+    }
+
+    pub fn set_runtime_text_coverage_policy_override(
+        &mut self,
+        policy: Option<TextCoveragePolicy>,
+    ) {
+        self.runtime_text_coverage_policy_override = policy.map(TextCoveragePolicy::normalized);
+    }
+
+    pub fn set_runtime_glyph_pixel_alignment_override(&mut self, enabled: Option<bool>) {
+        self.runtime_glyph_pixel_alignment_override = enabled;
     }
     
     pub fn set_runtime_diagnostics_enabled(&mut self, enabled: bool) {
@@ -430,6 +535,27 @@ impl WgpuRenderer {
         self.runtime_feathering_override
             .unwrap_or_else(|| self.feathering())
             .effective_width()
+    }
+
+    fn active_text_coverage_policy(&self) -> TextCoveragePolicy {
+        self.runtime_text_coverage_policy_override
+            .unwrap_or(self.text_coverage_policy)
+            .normalized()
+    }
+
+    fn active_glyph_pixel_alignment_enabled(&self) -> bool {
+        self.runtime_glyph_pixel_alignment_override
+            .unwrap_or(self.glyph_pixel_alignment_enabled)
+    }
+
+    fn invalidate_text_render_state(&mut self) {
+        self.text_engine = None;
+        self.text_atlas_textures.clear();
+        self.active_text_atlas_texture_index = 0;
+        self.compositors.clear();
+        self.retained_tile_arenas.clear();
+        self.last_frames.clear();
+        self.last_frame_stats.clear();
     }
 
     pub fn register_window(&mut self, window_id: WindowId, window: Arc<Window>) -> Result<()> {
@@ -910,6 +1036,8 @@ impl WgpuRenderer {
     fn prepare_scene_submission(&mut self, frame: &SceneFrame) -> Result<PreparedSceneSubmission> {
         let diagnostics_enabled = self.runtime_diagnostics_enabled;
         let feather_width = self.active_feather_width();
+        let text_coverage_policy = self.active_text_coverage_policy();
+        let glyph_pixel_alignment_enabled = self.active_glyph_pixel_alignment_enabled();
         let (submission, compositor_stats, text_frame_stats) = {
             if self.text_engine.is_none() {
                 self.text_engine = Some(TextEngine::new()?);
@@ -918,6 +1046,8 @@ impl WgpuRenderer {
                 .text_engine
                 .as_mut()
                 .expect("text engine initialized before draw-op construction");
+            text_engine.set_text_coverage_policy(text_coverage_policy);
+            text_engine.set_glyph_pixel_alignment_enabled(glyph_pixel_alignment_enabled);
             text_engine.set_diagnostics_enabled(diagnostics_enabled);
             text_engine.begin_frame();
             let compositor = self.compositors.entry(frame.window_id).or_default();
@@ -1881,8 +2011,12 @@ impl Default for WgpuRenderer {
             instance: wgpu::Instance::default(),
             feathering_enabled: true,
             feather_width: DEFAULT_FEATHER_WIDTH,
+            text_coverage_policy: TextCoveragePolicy::default(),
+            glyph_pixel_alignment_enabled: true,
             vsync_enabled: true,
             runtime_feathering_override: None,
+            runtime_text_coverage_policy_override: None,
+            runtime_glyph_pixel_alignment_override: None,
             runtime_diagnostics_enabled: true,
             frames_rendered: 0,
             capabilities: RendererCapabilities::default(),
@@ -1908,6 +2042,11 @@ impl fmt::Debug for WgpuRenderer {
         f.debug_struct("WgpuRenderer")
             .field("feathering_enabled", &self.feathering_enabled)
             .field("feather_width", &self.feather_width)
+            .field("text_coverage_policy", &self.text_coverage_policy)
+            .field(
+                "glyph_pixel_alignment_enabled",
+                &self.glyph_pixel_alignment_enabled,
+            )
             .field("frames_rendered", &self.frames_rendered)
             .field("capabilities", &self.capabilities)
             .field("last_frame_count", &self.last_frames.len())
@@ -2255,7 +2394,7 @@ mod tests {
         DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedClipPath,
         PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
         PreparedVertices, RendererFrameStats, RetainedCompositorState, RetainedFrameFragment,
-        RetainedLayerRenderMode, RetainedPacketId, ScissorRect, TextEngine, VERTEX_SIZE,
+        RetainedLayerRenderMode, RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine, VERTEX_SIZE,
         Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
         prepare_frame_batches, shader_color, to_ndc,
     };
@@ -2606,6 +2745,7 @@ mod tests {
             Transform::IDENTITY,
             Size::new(64.0, 64.0),
             1.0,
+            true,
         );
 
         assert_eq!(vertices.len(), 6);
@@ -2629,6 +2769,27 @@ mod tests {
         assert!((premultiplied[1] - 0.00868).abs() < 0.0001);
         assert!((premultiplied[2] - 0.24952).abs() < 0.0001);
         assert!((premultiplied[3] - 0.375).abs() < 0.0001);
+    }
+
+    #[test]
+    fn text_coverage_policy_matches_egui_reference_formulas() {
+        assert!((TextCoveragePolicy::Linear.apply(0.5) - 0.5).abs() < 0.0001);
+        assert!((TextCoveragePolicy::Gamma(2.0).apply(0.5) - 0.25).abs() < 0.0001);
+        assert!(
+            (TextCoveragePolicy::TwoCoverageMinusCoverageSq.apply(0.5) - 0.75).abs() < 0.0001
+        );
+    }
+
+    #[test]
+    fn automatic_text_coverage_policy_resolves_by_text_luminance() {
+        assert_eq!(
+            TextCoveragePolicy::AutomaticByTextLuminance.resolved_for_text_color(Color::BLACK),
+            TextCoveragePolicy::Linear
+        );
+        assert_eq!(
+            TextCoveragePolicy::AutomaticByTextLuminance.resolved_for_text_color(Color::WHITE),
+            TextCoveragePolicy::TwoCoverageMinusCoverageSq
+        );
     }
 
     #[test]
@@ -2680,6 +2841,108 @@ mod tests {
             is_physically_pixel_aligned(second_l_left, frame.scale_factor),
             "second l did not snap to the physical pixel grid: x={second_l_left}"
         );
+    }
+
+    #[test]
+    fn renderer_text_coverage_policy_changes_dark_text_output() {
+        let handle = FontHandle::new(33);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(201),
+            viewport: Size::new(320.0, 84.0),
+            surface_size: Size::new(320.0, 84.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 320.0, 84.0),
+                    brush: Color::BLACK.into(),
+                });
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(12.0, 8.0, 296.0, 64.0),
+                    text: "Reusable".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 56.0,
+                        line_height: 60.0,
+                        color: Color::WHITE,
+                        ..TextStyle::default()
+                    },
+                }));
+                scene
+            },
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut linear = WgpuRenderer::default().with_text_coverage_policy(TextCoveragePolicy::Linear);
+        linear.render(&frame).unwrap();
+        let linear_pixels = linear.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        let mut dark = WgpuRenderer::default()
+            .with_text_coverage_policy(TextCoveragePolicy::TwoCoverageMinusCoverageSq);
+        dark.render(&frame).unwrap();
+        let dark_pixels = dark.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        let diff_count = rgba_image_diff_count(&linear_pixels, &dark_pixels);
+        assert!(
+            diff_count > 0,
+            "text coverage policy should affect dark text output"
+        );
+    }
+
+    #[test]
+    fn automatic_text_coverage_policy_keeps_separate_glyph_cache_entries_for_light_and_dark_text() {
+        let handle = FontHandle::new(34);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(202),
+            viewport: Size::new(240.0, 96.0),
+            surface_size: Size::new(240.0, 96.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 8.0, 100.0, 32.0),
+                    text: "I".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 24.0,
+                        line_height: 28.0,
+                        color: Color::BLACK,
+                        ..TextStyle::default()
+                    },
+                }));
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 48.0, 100.0, 32.0),
+                    text: "I".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 24.0,
+                        line_height: 28.0,
+                        color: Color::WHITE,
+                        ..TextStyle::default()
+                    },
+                }));
+                scene
+            },
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        text_engine.set_text_coverage_policy(TextCoveragePolicy::AutomaticByTextLuminance);
+        let _ = build_vertices(&frame, &mut text_engine).unwrap();
+
+        assert_eq!(text_engine.glyph_cache_stats(), (2, 0, 2));
     }
 
     #[test]

@@ -7,11 +7,11 @@ mod headless;
 use std::time::Instant;
 
 use sui_core::WindowId;
-use sui_render_wgpu::WgpuRenderer;
+use sui_render_wgpu::{TextCoveragePolicy, WgpuRenderer};
 use sui_runtime::{
 	CacheMetrics, FramePhase, FramePhaseSample, RenderOutput, SceneStatistics,
 	PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, TextCacheDiagnostics,
-	WindowPerformanceSnapshot,
+	WindowPerformanceSnapshot, WindowTextRenderPolicy,
 	window_performance_text_caches, window_scene_statistics_detail_mode,
 	clear_window_performance_snapshot, clear_window_performance_snapshots,
 	publish_window_performance_snapshot,
@@ -24,6 +24,19 @@ pub use headless::{HeadlessPlatform, PlatformWindow};
 
 pub(crate) fn reset_window_performance_store() {
 	clear_window_performance_snapshots();
+}
+
+pub(crate) fn map_window_text_render_policy(policy: WindowTextRenderPolicy) -> TextCoveragePolicy {
+	match policy.normalized() {
+		WindowTextRenderPolicy::AutomaticByTextLuminance => {
+			TextCoveragePolicy::AutomaticByTextLuminance
+		}
+		WindowTextRenderPolicy::Linear => TextCoveragePolicy::Linear,
+		WindowTextRenderPolicy::Gamma(gamma) => TextCoveragePolicy::Gamma(gamma),
+		WindowTextRenderPolicy::TwoCoverageMinusCoverageSq => {
+			TextCoveragePolicy::TwoCoverageMinusCoverageSq
+		}
+	}
 }
 
 pub(crate) fn clear_window_performance(window_id: WindowId) {

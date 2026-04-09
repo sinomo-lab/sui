@@ -94,6 +94,8 @@ There are two important caches today:
 - `TextSystem` caches shaped layouts by text and layout inputs.
 - the renderer caches glyph-related data for repeated draws.
 
+The renderer also owns a grayscale text coverage policy for glyph alpha generation. By default it resolves automatically from text luminance, so dark text and light text can coexist in the same window while using different coverage curves. The resolved policy is applied when rasterizing atlas glyphs and when emitting analytic text fallback coverage, which makes text-edge tuning a renderer concern rather than a widget or layout concern.
+
 This split keeps text measurement and shaping out of widgets while still letting the renderer optimize repeated output.
 
 ### Images
