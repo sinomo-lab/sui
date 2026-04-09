@@ -622,10 +622,17 @@ impl WindowState {
         self.ensure_graph_for_event(&event, text_system, font_registry, image_registry);
 
         let hit_target = match &event {
-            Event::Pointer(pointer) => self
-                .floating_layer_hit_test(pointer.position)
-                .or_else(|| self.focused_floating_layer_hit_test(pointer.position))
-                .or_else(|| self.graph.hit_test(pointer.position)),
+            Event::Pointer(pointer) => {
+                let floating_hit = self.floating_layer_hit_test(pointer.position);
+                let focused_floating_hit = if floating_hit.is_none() {
+                    self.focused_floating_layer_hit_test(pointer.position)
+                } else {
+                    None
+                };
+                floating_hit
+                    .or(focused_floating_hit)
+                    .or_else(|| self.graph.hit_test(pointer.position))
+            }
             _ => None,
         };
 
@@ -652,31 +659,67 @@ impl WindowState {
         self.pending_invalidations.extend(invalidations);
     }
 
-    fn floating_layer_hit_test(&self, point: Point) -> Option<WidgetId> {
-        let scene = self.last_frame.as_ref().map(|frame| &frame.scene)?;
-        scene_hit_test_for_phase(
-            scene,
-            point,
-            HitTestCompositionPhase::Effect,
-            HitTestCompositionPhase::Normal,
-        )
-        .or_else(|| {
+    fn floating_layer_hit_test(&mut self, point: Point) -> Option<WidgetId> {
+        let effect_hit = {
+            let scene = self.last_frame.as_ref().map(|frame| &frame.scene)?;
+            scene_hit_test_for_phase(
+                scene,
+                point,
+                HitTestCompositionPhase::Effect,
+                HitTestCompositionPhase::Normal,
+            )
+        };
+        if let Some(widget_id) = effect_hit {
+            if self.current_widget_matches_hit_test_phase(widget_id, HitTestCompositionPhase::Effect)
+            {
+                return Some(widget_id);
+            }
+        }
+
+        let overlay_hit = {
+            let scene = self.last_frame.as_ref().map(|frame| &frame.scene)?;
             scene_hit_test_for_phase(
                 scene,
                 point,
                 HitTestCompositionPhase::Overlay,
                 HitTestCompositionPhase::Normal,
             )
+        };
+        overlay_hit.filter(|widget_id| {
+            self.current_widget_matches_hit_test_phase(*widget_id, HitTestCompositionPhase::Overlay)
         })
     }
 
-    fn focused_floating_layer_hit_test(&self, point: Point) -> Option<WidgetId> {
+    fn focused_floating_layer_hit_test(&mut self, point: Point) -> Option<WidgetId> {
         let focused = self.focus.focused_widget?;
+        if !self.current_widget_matches_hit_test_phase(focused, HitTestCompositionPhase::Overlay)
+            && !self.current_widget_matches_hit_test_phase(focused, HitTestCompositionPhase::Effect)
+        {
+            return None;
+        }
+
         let scene = self.last_frame.as_ref().map(|frame| &frame.scene)?;
         let descriptor = collect_scene_layers(scene).get(&focused)?.clone();
-        (descriptor.composition_mode != LayerCompositionMode::Normal
-            && descriptor.paint_bounds.contains(point))
-            .then_some(focused)
+        descriptor.paint_bounds.contains(point).then_some(focused)
+    }
+
+    fn current_widget_matches_hit_test_phase(
+        &mut self,
+        widget_id: WidgetId,
+        target_phase: HitTestCompositionPhase,
+    ) -> bool {
+        let Some(composition_mode) = self.current_widget_composition_mode(widget_id) else {
+            return false;
+        };
+
+        next_hit_test_phase(HitTestCompositionPhase::Normal, composition_mode) == target_phase
+    }
+
+    fn current_widget_composition_mode(
+        &mut self,
+        widget_id: WidgetId,
+    ) -> Option<LayerCompositionMode> {
+        self.root.layer_composition_mode_for(widget_id)
     }
 
     fn next_wakeup_time(&self) -> Option<f64> {

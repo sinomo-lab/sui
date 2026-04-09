@@ -4926,6 +4926,153 @@ mod tests {
     }
 
     #[test]
+    fn closed_select_does_not_block_immediate_clicks_before_next_render() -> Result<()> {
+        let presses = Rc::new(RefCell::new(0usize));
+        let on_press = Rc::clone(&presses);
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            12.0,
+            crate::Stack::vertical()
+                .spacing(4.0)
+                .with_child(
+                    Select::new("Mode")
+                        .placeholder("Choose mode")
+                        .options([
+                            "Automatic",
+                            "Linear",
+                            "Gamma",
+                            "Display P3",
+                            "HDR",
+                        ]),
+                )
+                .with_child(Button::new("Apply").on_press(move || {
+                    *on_press.borrow_mut() += 1;
+                })),
+        ));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(20.0, 20.0), false),
+        )?;
+
+        let expanded = runtime.render(window_id)?;
+        let button = expanded
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("button semantics present after expand")
+            .bounds;
+        let select = expanded
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after expand");
+        let descriptor =
+            layer_descriptor_for(&expanded, select.id).expect("select layer descriptor present");
+
+        assert!(descriptor.paint_bounds.intersection(button).is_some());
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(20.0, 20.0), false),
+        )?;
+
+        let button_center = Point::new(
+            button.x() + (button.width() * 0.5),
+            button.y() + (button.height() * 0.5),
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, button_center, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, button_center, false),
+        )?;
+
+        assert_eq!(*presses.borrow(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn outside_click_closes_select_without_blocking_following_interactions() -> Result<()> {
+        let presses = Rc::new(RefCell::new(0usize));
+        let on_press = Rc::clone(&presses);
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            12.0,
+            crate::Stack::vertical()
+                .spacing(4.0)
+                .with_child(
+                    Select::new("Mode")
+                        .placeholder("Choose mode")
+                        .options([
+                            "Automatic",
+                            "Linear",
+                            "Gamma",
+                            "Display P3",
+                            "HDR",
+                        ]),
+                )
+                .with_child(Button::new("Apply").on_press(move || {
+                    *on_press.borrow_mut() += 1;
+                })),
+        ));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(20.0, 20.0), false),
+        )?;
+
+        let expanded = runtime.render(window_id)?;
+        let button = expanded
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("button semantics present after expand")
+            .bounds;
+        let outside_point = Point::new(
+            button.x() + (button.width() * 0.5),
+            button.y() + (button.height() * 0.5),
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, outside_point, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, outside_point, false),
+        )?;
+
+        assert_eq!(*presses.borrow(), 0);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, outside_point, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, outside_point, false),
+        )?;
+
+        assert_eq!(*presses.borrow(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn select_retains_chevron_ink_when_feathering_is_enabled() {
         let root = crate::Padding::all(
             12.0,

@@ -475,7 +475,7 @@ impl WidgetPod {
     }
 
     pub(crate) fn build_layer_descriptor(&self, scene: &Scene) -> SceneLayerDescriptor {
-        let options = self.widget.layer_options();
+        let options = self.current_layer_options();
         SceneLayerDescriptor::new(
             SceneLayerId::from_widget(self.id),
             self.id,
@@ -485,6 +485,17 @@ impl WidgetPod {
         .with_paint_bounds(scene.paint_bounds().unwrap_or(self.layout_state.arranged_bounds))
         .with_cache_policy(options.cache_policy)
         .with_composition_mode(options.composition_mode)
+    }
+
+    pub(crate) fn current_layer_options(&self) -> LayerOptions {
+        self.widget.layer_options()
+    }
+
+    pub(crate) fn layer_composition_mode_for(
+        &mut self,
+        target: WidgetId,
+    ) -> Option<LayerCompositionMode> {
+        self.find_mut(target, &mut |pod| pod.current_layer_options().composition_mode)
     }
 }
 
