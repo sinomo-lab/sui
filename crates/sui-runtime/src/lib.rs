@@ -518,11 +518,30 @@ impl FrameSchedule {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct WidgetGeometrySnapshot {
+    pub layout_bounds: Rect,
+    pub input_bounds: Rect,
+    pub paint_bounds: Rect,
+}
+
+impl WidgetGeometrySnapshot {
+    pub const fn new(layout_bounds: Rect, input_bounds: Rect, paint_bounds: Rect) -> Self {
+        Self {
+            layout_bounds,
+            input_bounds,
+            paint_bounds,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct WidgetNodeSnapshot {
     pub id: WidgetId,
     pub parent: Option<WidgetId>,
     pub children: Vec<WidgetId>,
     pub measured_size: Size,
+    pub geometry: WidgetGeometrySnapshot,
+    // Backward-compatible alias of geometry.layout_bounds.
     pub bounds: Rect,
     pub accepts_focus: bool,
     pub focused: bool,
@@ -1117,7 +1136,7 @@ impl WindowState {
                     InvalidationTarget::Widget(widget_id),
                     InvalidationKind::Paint,
                 )
-                .with_region(node.bounds),
+                .with_region(node.geometry.paint_bounds),
             );
         }
 
@@ -1266,6 +1285,7 @@ impl WindowState {
             for translation in &composition_only_transforms {
                 let _ = scene.translate_layer(translation.widget_id, translation.delta);
             }
+            self.graph.update_paint_bounds_from_scene(&scene);
             invalidations.extend(paint_invalidations);
             self.ime_composition_rect = ime_composition_rect;
             let previous_scene = self.last_frame.as_ref().map(|frame| &frame.scene);
@@ -1387,7 +1407,11 @@ impl WindowState {
         let mut ime_composition_rect = baseline_ime_composition_rect;
 
         for &widget_id in dirty_layers {
-            let Some(bounds) = self.graph.node(widget_id).map(|node| node.bounds) else {
+            let Some(bounds) = self
+                .graph
+                .node(widget_id)
+                .map(|node| node.geometry.layout_bounds)
+            else {
                 return self.paint_full_scene(dpi_info);
             };
 
@@ -1510,7 +1534,8 @@ impl WindowState {
             match (previous_nodes.get(&widget_id), current_nodes.get(&widget_id)) {
                 (Some(previous_node), Some(current_node)) => {
                     if previous_node.measured_size != current_node.measured_size
-                        || previous_node.bounds.size != current_node.bounds.size
+                        || previous_node.geometry.layout_bounds.size
+                            != current_node.geometry.layout_bounds.size
                         || previous_node.parent != current_node.parent
                         || previous_node.children != current_node.children
                     {
@@ -1518,7 +1543,8 @@ impl WindowState {
                         continue;
                     }
 
-                    let delta = current_node.bounds.origin - previous_node.bounds.origin;
+                    let delta = current_node.geometry.layout_bounds.origin
+                        - previous_node.geometry.layout_bounds.origin;
                     if delta != Vector::ZERO {
                         transform_candidates.push(LayerTranslation {
                             widget_id: current_node.id,
@@ -1618,7 +1644,7 @@ impl WindowState {
                 continue;
             };
 
-            let delta = current.bounds.origin - previous.bounds.origin;
+            let delta = current.geometry.layout_bounds.origin - previous.bounds.origin;
             if delta == Vector::ZERO {
                 continue;
             }
@@ -1649,7 +1675,7 @@ impl WindowState {
             InvalidationTarget::Widget(widget_id) => self
                 .graph
                 .node(widget_id)
-                .map(|node| node.bounds)
+                .map(|node| node.geometry.paint_bounds)
                 .unwrap_or(viewport_rect),
             InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => viewport_rect,
         }
@@ -1787,7 +1813,21 @@ impl WindowState {
     }
 
     fn refresh_graph(&mut self) {
-        self.graph = WidgetGraph::rebuild(&self.root, self.focus.focused_widget);
+        let paint_bounds_by_widget = self
+            .last_frame
+            .as_ref()
+            .map(|frame| {
+                collect_scene_layers(&frame.scene)
+                    .into_iter()
+                    .map(|(widget_id, descriptor)| (widget_id, descriptor.paint_bounds))
+                    .collect::<HashMap<WidgetId, Rect>>()
+            })
+            .unwrap_or_default();
+        self.graph = WidgetGraph::rebuild(
+            &self.root,
+            self.focus.focused_widget,
+            &paint_bounds_by_widget,
+        );
         self.prune_runtime_state();
         self.schedule.hit_test = false;
     }
@@ -1905,10 +1945,28 @@ impl WidgetGraph {
         }
     }
 
-    fn rebuild(root: &WidgetPod, focused_widget: Option<WidgetId>) -> Self {
+    fn rebuild(
+        root: &WidgetPod,
+        focused_widget: Option<WidgetId>,
+        paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
+    ) -> Self {
         let mut graph = Self::empty(root.id());
-        graph.collect(root, None, focused_widget);
+        graph.collect(root, None, focused_widget, paint_bounds_by_widget);
         graph
+    }
+
+    fn update_paint_bounds_from_scene(&mut self, scene: &Scene) {
+        let paint_bounds_by_widget = collect_scene_layers(scene)
+            .into_iter()
+            .map(|(widget_id, descriptor)| (widget_id, descriptor.paint_bounds))
+            .collect::<HashMap<WidgetId, Rect>>();
+
+        for node in self.nodes.values_mut() {
+            node.geometry.paint_bounds = paint_bounds_by_widget
+                .get(&node.id)
+                .copied()
+                .unwrap_or(node.geometry.layout_bounds);
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -1990,6 +2048,7 @@ impl WidgetGraph {
         pod: &WidgetPod,
         parent: Option<WidgetId>,
         focused_widget: Option<WidgetId>,
+        paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
     ) {
         let id = pod.id();
         self.order.push(id);
@@ -1999,11 +2058,19 @@ impl WidgetGraph {
                 graph: self,
                 parent: id,
                 focused_widget,
+                paint_bounds_by_widget,
                 children: Vec::new(),
             };
             pod.visit_children(&mut visitor);
             visitor.children
         };
+
+        let layout_bounds = pod.bounds();
+        let input_bounds = layout_bounds;
+        let paint_bounds = paint_bounds_by_widget
+            .get(&id)
+            .copied()
+            .unwrap_or(layout_bounds);
 
         self.nodes.insert(
             id,
@@ -2012,7 +2079,8 @@ impl WidgetGraph {
                 parent,
                 children,
                 measured_size: pod.measured_size(),
-                bounds: pod.bounds(),
+                geometry: WidgetGeometrySnapshot::new(layout_bounds, input_bounds, paint_bounds),
+                bounds: layout_bounds,
                 accepts_focus: pod.accepts_focus(),
                 focused: Some(id) == focused_widget,
             },
@@ -2021,7 +2089,7 @@ impl WidgetGraph {
 
     fn hit_test_node(&self, widget_id: WidgetId, point: Point) -> Option<WidgetId> {
         let node = self.node(widget_id)?;
-        if !node.bounds.contains(point) {
+        if !node.geometry.input_bounds.contains(point) {
             return None;
         }
 
@@ -2039,14 +2107,19 @@ struct CollectChildrenVisitor<'a> {
     graph: &'a mut WidgetGraph,
     parent: WidgetId,
     focused_widget: Option<WidgetId>,
+    paint_bounds_by_widget: &'a HashMap<WidgetId, Rect>,
     children: Vec<WidgetId>,
 }
 
 impl WidgetPodVisitor for CollectChildrenVisitor<'_> {
     fn visit(&mut self, child: &WidgetPod) {
         self.children.push(child.id());
-        self.graph
-            .collect(child, Some(self.parent), self.focused_widget);
+        self.graph.collect(
+            child,
+            Some(self.parent),
+            self.focused_widget,
+            self.paint_bounds_by_widget,
+        );
     }
 }
 
@@ -2927,6 +3000,15 @@ mod tests {
         assert_eq!(graph.nodes[0].id, graph.root);
         assert_eq!(graph_child(&graph).parent, Some(graph.root));
         assert!(graph_child(&graph).accepts_focus);
+        assert_eq!(graph_child(&graph).geometry.layout_bounds, graph_child(&graph).bounds);
+        assert_eq!(
+            graph_child(&graph).geometry.input_bounds,
+            graph_child(&graph).geometry.layout_bounds
+        );
+        assert_eq!(
+            graph_child(&graph).geometry.paint_bounds,
+            graph_child(&graph).geometry.layout_bounds
+        );
         assert_eq!(output.frame.viewport, Size::new(320.0, 180.0));
         assert_eq!(output.frame.surface_size, Size::new(320.0, 180.0));
         assert_eq!(output.frame.scale_factor, 1.0);

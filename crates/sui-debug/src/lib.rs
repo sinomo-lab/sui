@@ -547,8 +547,10 @@ fn graph_tree_item(
     nodes: &HashMap<WidgetId, &WidgetNodeSnapshot>,
 ) -> TreeItem {
     let mut detail = format!(
-        "bounds={} focusable={} focused={}",
-        format_rect(node.bounds),
+        "layout={} input={} paint={} focusable={} focused={}",
+        format_rect(node.geometry.layout_bounds),
+        format_rect(node.geometry.input_bounds),
+        format_rect(node.geometry.paint_bounds),
         yes_no(node.accepts_focus),
         yes_no(node.focused),
     );
