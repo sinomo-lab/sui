@@ -4,6 +4,7 @@
 
 - [Documentation Index](./README.md)
 - [Architecture Overview](./architecture.md)
+- [Stack Hosts and Bounds Note](./stack-hosts.md)
 - [Crate Guide](./crate-architecture.md)
 - [Rendering Architecture](./renderer-architecture.md)
 - [Testing Guide](./testing.md)
