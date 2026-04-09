@@ -661,8 +661,8 @@ pub struct ControlTypography {
 impl ControlTypography {
     pub fn from_text_scale(text: &ThemeTextScale) -> Self {
         Self {
-            body_font_size: text.xs.size,
-            body_line_height: text.xs.line_height,
+            body_font_size: text.sm.size,
+            body_line_height: text.sm.line_height,
         }
     }
 }
