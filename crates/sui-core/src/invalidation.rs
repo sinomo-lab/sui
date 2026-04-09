@@ -4,6 +4,7 @@ use crate::{Rect, SurfaceId, WidgetId, WindowId};
 pub enum InvalidationKind {
     Measure,
     Arrange,
+    Ordering,
     Transform,
     Clip,
     Effect,

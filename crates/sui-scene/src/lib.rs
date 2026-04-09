@@ -71,6 +71,10 @@ pub struct SceneLayerDescriptor {
     pub bounds: Rect,
     pub content_bounds: Rect,
     pub paint_bounds: Rect,
+    pub stack_host: WidgetId,
+    pub stack_order: usize,
+    pub transient_owner_surface: Option<WidgetId>,
+    pub is_stack_surface: bool,
     pub cache_policy: LayerCachePolicy,
     pub composition_mode: LayerCompositionMode,
 }
@@ -83,6 +87,10 @@ impl SceneLayerDescriptor {
             bounds,
             content_bounds: bounds,
             paint_bounds: bounds,
+            stack_host: owner,
+            stack_order: 0,
+            transient_owner_surface: None,
+            is_stack_surface: false,
             cache_policy: LayerCachePolicy::Auto,
             composition_mode: LayerCompositionMode::Normal,
         }
@@ -95,6 +103,29 @@ impl SceneLayerDescriptor {
 
     pub const fn with_paint_bounds(mut self, paint_bounds: Rect) -> Self {
         self.paint_bounds = paint_bounds;
+        self
+    }
+
+    pub const fn with_stack_host(mut self, stack_host: WidgetId) -> Self {
+        self.stack_host = stack_host;
+        self
+    }
+
+    pub const fn with_stack_order(mut self, stack_order: usize) -> Self {
+        self.stack_order = stack_order;
+        self
+    }
+
+    pub const fn with_transient_owner_surface(
+        mut self,
+        transient_owner_surface: Option<WidgetId>,
+    ) -> Self {
+        self.transient_owner_surface = transient_owner_surface;
+        self
+    }
+
+    pub const fn with_is_stack_surface(mut self, is_stack_surface: bool) -> Self {
+        self.is_stack_surface = is_stack_surface;
         self
     }
 
@@ -194,6 +225,7 @@ impl SceneLayer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneLayerUpdateKind {
+    Ordering,
     Content,
     Transform,
     Clip,
@@ -210,6 +242,10 @@ pub struct SceneLayerUpdate {
     pub bounds: Rect,
     pub content_bounds: Rect,
     pub paint_bounds: Rect,
+    pub stack_host: WidgetId,
+    pub stack_order: usize,
+    pub transient_owner_surface: Option<WidgetId>,
+    pub is_stack_surface: bool,
     pub damage: Option<Rect>,
 }
 
@@ -222,6 +258,10 @@ impl SceneLayerUpdate {
             bounds: descriptor.bounds,
             content_bounds: descriptor.content_bounds,
             paint_bounds: descriptor.paint_bounds,
+            stack_host: descriptor.stack_host,
+            stack_order: descriptor.stack_order,
+            transient_owner_surface: descriptor.transient_owner_surface,
+            is_stack_surface: descriptor.is_stack_surface,
             damage: None,
         }
     }
@@ -314,6 +354,15 @@ impl Scene {
         }
     }
 
+    pub fn visit_layers_mut(&mut self, visitor: &mut dyn FnMut(&mut SceneLayer)) {
+        for command in &mut self.commands {
+            if let SceneCommand::Layer(layer) = command {
+                visitor(layer);
+                layer.scene.visit_layers_mut(visitor);
+            }
+        }
+    }
+
     pub fn content_bounds(&self) -> Option<Rect> {
         self.compute_bounds(false)
     }
@@ -364,6 +413,34 @@ impl Scene {
         }
 
         false
+    }
+
+    pub fn reorder_stack_surfaces(&mut self) {
+        let mut stack_layers = self
+            .commands
+            .iter()
+            .enumerate()
+            .filter_map(|(index, command)| match command {
+                SceneCommand::Layer(layer) if layer.descriptor.is_stack_surface => {
+                    Some((index, layer.clone()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        stack_layers.sort_by_key(|(index, layer)| (layer.descriptor.stack_order, *index));
+
+        let mut sorted_layers = stack_layers.into_iter().map(|(_, layer)| layer);
+        for command in &mut self.commands {
+            if let SceneCommand::Layer(layer) = command {
+                layer.scene.reorder_stack_surfaces();
+                if layer.descriptor.is_stack_surface {
+                    if let Some(replacement) = sorted_layers.next() {
+                        *layer = replacement;
+                    }
+                }
+            }
+        }
     }
 
     fn compute_bounds(&self, clipped: bool) -> Option<Rect> {

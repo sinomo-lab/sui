@@ -759,6 +759,10 @@ impl EventCtx {
         self.request_widget(InvalidationKind::Arrange);
     }
 
+    pub fn request_ordering(&mut self) {
+        self.request_widget(InvalidationKind::Ordering);
+    }
+
     pub fn request_paint(&mut self) {
         self.request_widget(InvalidationKind::Paint);
     }
@@ -879,6 +883,10 @@ impl MeasureCtx {
         self.request_widget(InvalidationKind::Arrange);
     }
 
+    pub fn request_ordering(&mut self) {
+        self.request_widget(InvalidationKind::Ordering);
+    }
+
     pub fn request_paint(&mut self) {
         self.request_widget(InvalidationKind::Paint);
     }
@@ -968,6 +976,10 @@ impl ArrangeCtx {
 
     pub fn request_arrange(&mut self) {
         self.request_widget(InvalidationKind::Arrange);
+    }
+
+    pub fn request_ordering(&mut self) {
+        self.request_widget(InvalidationKind::Ordering);
     }
 
     pub fn request_paint(&mut self) {

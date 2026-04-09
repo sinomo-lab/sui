@@ -429,6 +429,7 @@ pub struct FocusState {
 pub struct FrameSchedule {
     pub measure: bool,
     pub arrange: bool,
+    pub ordering: bool,
     pub paint: bool,
     pub semantics: bool,
     pub hit_test: bool,
@@ -441,6 +442,7 @@ impl FrameSchedule {
         Self {
             measure: true,
             arrange: true,
+            ordering: false,
             paint: true,
             semantics: true,
             hit_test: true,
@@ -452,6 +454,7 @@ impl FrameSchedule {
     pub const fn any(self) -> bool {
         self.measure
             || self.arrange
+            || self.ordering
             || self.paint
             || self.semantics
             || self.hit_test
@@ -460,7 +463,13 @@ impl FrameSchedule {
     }
 
     pub const fn needs_render(self) -> bool {
-        self.measure || self.arrange || self.paint || self.semantics || self.text || self.resources
+        self.measure
+            || self.arrange
+            || self.ordering
+            || self.paint
+            || self.semantics
+            || self.text
+            || self.resources
     }
 
     fn clear(&mut self) {
@@ -472,6 +481,7 @@ impl FrameSchedule {
             InvalidationKind::Measure => {
                 self.measure = true;
                 self.arrange = true;
+                self.ordering = true;
                 self.paint = true;
                 self.hit_test = true;
                 self.semantics = true;
@@ -480,10 +490,15 @@ impl FrameSchedule {
             | InvalidationKind::Transform
             | InvalidationKind::Clip
             | InvalidationKind::Visibility => {
+                self.ordering = true;
                 self.arrange = true;
                 self.paint = true;
                 self.hit_test = true;
                 self.semantics = true;
+            }
+            InvalidationKind::Ordering => {
+                self.ordering = true;
+                self.hit_test = true;
             }
             InvalidationKind::Effect => {
                 self.paint = true;
@@ -1258,7 +1273,14 @@ impl WindowState {
         }
 
         let mut scene_changed = false;
-        if self.last_frame.is_none() || !repaint_layers.is_empty() || !composition_only_transforms.is_empty() {
+        let has_ordering_updates = invalidations
+            .iter()
+            .any(|request| request.kind == InvalidationKind::Ordering);
+        if self.last_frame.is_none()
+            || !repaint_layers.is_empty()
+            || !composition_only_transforms.is_empty()
+            || has_ordering_updates
+        {
             let started = Instant::now();
             repainted = self.last_frame.is_none() || !repaint_layers.is_empty();
             scene_changed = true;
@@ -1301,6 +1323,7 @@ impl WindowState {
             for translation in &composition_only_transforms {
                 let _ = scene.translate_layer(translation.widget_id, translation.delta);
             }
+            self.sync_scene_stack_metadata(&mut scene);
             self.graph.update_paint_bounds_from_scene(&scene);
             invalidations.extend(paint_invalidations);
             self.ime_composition_rect = ime_composition_rect;
@@ -1754,6 +1777,19 @@ impl WindowState {
             }
         }
 
+        for (widget_id, descriptor) in &current_layers {
+            let Some(previous) = previous_layers.get(widget_id) else {
+                continue;
+            };
+            if descriptor.stack_host != previous.stack_host
+                || descriptor.stack_order != previous.stack_order
+                || descriptor.transient_owner_surface != previous.transient_owner_surface
+                || descriptor.is_stack_surface != previous.is_stack_surface
+            {
+                merge_layer_update_kind(&mut updates, *widget_id, SceneLayerUpdateKind::Ordering);
+            }
+        }
+
         for widget_id in graph_dirty_widgets.iter().copied() {
             merge_layer_update_kind(&mut updates, widget_id, SceneLayerUpdateKind::Transform);
         }
@@ -1846,6 +1882,18 @@ impl WindowState {
         );
         self.prune_runtime_state();
         self.schedule.hit_test = false;
+    }
+
+    fn sync_scene_stack_metadata(&self, scene: &mut Scene) {
+        scene.visit_layers_mut(&mut |layer| {
+            if let Some(node) = self.graph.node(layer.widget_id()) {
+                layer.descriptor.stack_host = node.stack_host;
+                layer.descriptor.stack_order = node.stack_surface_order;
+                layer.descriptor.transient_owner_surface = node.transient_owner_surface;
+                layer.descriptor.is_stack_surface = node.is_stack_surface;
+            }
+        });
+        scene.reorder_stack_surfaces();
     }
 
     fn prune_runtime_state(&mut self) {
@@ -1952,7 +2000,6 @@ struct WidgetGraph {
     order: Vec<WidgetId>,
     host_surface_order: HashMap<WidgetId, Vec<WidgetId>>,
     host_order_policy: HashMap<WidgetId, StackOrderPolicy>,
-    surface_owner: HashMap<WidgetId, Option<WidgetId>>,
 }
 
 impl WidgetGraph {
@@ -1963,7 +2010,6 @@ impl WidgetGraph {
             order: Vec::new(),
             host_surface_order: HashMap::new(),
             host_order_policy: HashMap::new(),
-            surface_owner: HashMap::new(),
         }
     }
 
@@ -2409,6 +2455,7 @@ fn invalidation_to_layer_update_kind(
         InvalidationKind::Measure
         | InvalidationKind::Arrange
         | InvalidationKind::Transform => Some(SceneLayerUpdateKind::Transform),
+        InvalidationKind::Ordering => Some(SceneLayerUpdateKind::Ordering),
         InvalidationKind::Clip => Some(SceneLayerUpdateKind::Clip),
         InvalidationKind::Effect => Some(SceneLayerUpdateKind::Effect),
         InvalidationKind::Visibility => Some(SceneLayerUpdateKind::Visibility),
@@ -2436,11 +2483,12 @@ fn merge_layer_update_kind(
 fn layer_update_priority(kind: SceneLayerUpdateKind) -> u8 {
     match kind {
         SceneLayerUpdateKind::Visibility => 0,
-        SceneLayerUpdateKind::Transform => 1,
-        SceneLayerUpdateKind::Clip => 2,
-        SceneLayerUpdateKind::Content => 3,
-        SceneLayerUpdateKind::Effect => 4,
-        SceneLayerUpdateKind::Resources => 5,
+        SceneLayerUpdateKind::Ordering => 1,
+        SceneLayerUpdateKind::Transform => 2,
+        SceneLayerUpdateKind::Clip => 3,
+        SceneLayerUpdateKind::Content => 4,
+        SceneLayerUpdateKind::Effect => 5,
+        SceneLayerUpdateKind::Resources => 6,
     }
 }
 

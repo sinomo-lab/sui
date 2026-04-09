@@ -920,7 +920,8 @@ impl RetainedCompositorState {
                 SceneLayerUpdateKind::Content | SceneLayerUpdateKind::Resources => {
                     packet_dirty_layers.insert(update.layer_id);
                 }
-                SceneLayerUpdateKind::Transform
+                SceneLayerUpdateKind::Ordering
+                | SceneLayerUpdateKind::Transform
                 | SceneLayerUpdateKind::Clip
                 | SceneLayerUpdateKind::Effect
                 | SceneLayerUpdateKind::Visibility => {}

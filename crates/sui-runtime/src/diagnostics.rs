@@ -787,6 +787,7 @@ fn command_kind(command: &SceneCommand) -> &'static str {
 
 fn layer_update_kind(kind: SceneLayerUpdateKind) -> &'static str {
     match kind {
+        SceneLayerUpdateKind::Ordering => "Ordering",
         SceneLayerUpdateKind::Content => "Content",
         SceneLayerUpdateKind::Transform => "Transform",
         SceneLayerUpdateKind::Clip => "Clip",

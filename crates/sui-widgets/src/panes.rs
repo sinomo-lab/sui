@@ -507,9 +507,8 @@ impl Widget for FloatingStack {
                 && let Some(index) = self.frontmost_window_at(ctx.bounds(), pointer.position)
                 && self.bring_to_front(index)
             {
-                ctx.request_paint();
+                ctx.request_ordering();
                 ctx.request_hit_test();
-                ctx.request_semantics();
             }
         }
     }
@@ -638,6 +637,7 @@ mod tests {
     };
     use sui_layout::Axis;
     use sui_runtime::{Application, Runtime, StackOrderPolicy, Widget, WindowBuilder};
+    use sui_scene::SceneLayerUpdateKind;
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -746,7 +746,7 @@ mod tests {
             window_id,
             primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
         )?;
-        let _ = runtime.render(window_id)?;
+        let reordered = runtime.render(window_id)?;
 
         let after = runtime.widget_graph(window_id)?;
         let host = after
@@ -756,6 +756,17 @@ mod tests {
             .expect("focus-fronted host should still be present");
         assert_eq!(host.surfaces.len(), 2);
         assert_eq!(host.surfaces[1], first_surface);
+
+        assert!(reordered
+            .frame
+            .layer_updates
+            .iter()
+            .any(|update| update.kind == SceneLayerUpdateKind::Ordering));
+        assert!(reordered
+            .frame
+            .layer_updates
+            .iter()
+            .all(|update| update.kind != SceneLayerUpdateKind::Content));
         Ok(())
     }
 }

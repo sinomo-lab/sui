@@ -3013,6 +3013,7 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::Popover)
             .expect("popover semantics present");
+        let descriptor = layer_descriptor_for(&output, popover.id).expect("popover layer descriptor present");
         let node = graph
             .nodes
             .iter()
@@ -3028,6 +3029,9 @@ mod tests {
         assert_eq!(node.stack_surface, popover.id);
         assert_eq!(node.transient_owner_surface, Some(host.surfaces[0]));
         assert_eq!(host.surfaces.last().copied(), Some(popover.id));
+        assert_eq!(descriptor.stack_host, graph.root);
+        assert_eq!(descriptor.transient_owner_surface, Some(host.surfaces[0]));
+        assert!(descriptor.is_stack_surface);
     }
 
     #[test]
