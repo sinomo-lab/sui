@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sui_core::{Color, DirtyRegion, Rect, SemanticsValue, Size, WidgetId, WindowId};
 use sui_layout::Alignment;
@@ -75,6 +75,11 @@ pub struct SceneDebugSummary {
     pub dirty_regions: Vec<DirtyRegion>,
     pub command_count: usize,
     pub command_breakdown: Vec<(String, usize)>,
+    pub layer_update_count: usize,
+    pub layer_update_breakdown: Vec<(String, usize)>,
+    pub stack_host_count: usize,
+    pub stack_surface_count: usize,
+    pub transient_surface_count: usize,
     pub detail_collected: bool,
 }
 
@@ -92,12 +97,39 @@ impl From<&SceneFrame> for SceneDebugSummary {
         let mut command_breakdown: Vec<_> = command_breakdown.into_iter().collect();
         command_breakdown.sort_by(|left, right| left.0.cmp(&right.0));
 
+        let mut layer_update_breakdown = HashMap::<String, usize>::new();
+        for update in &frame.layer_updates {
+            *layer_update_breakdown
+                .entry(layer_update_kind(update.kind).to_string())
+                .or_default() += 1;
+        }
+        let mut layer_update_breakdown: Vec<_> = layer_update_breakdown.into_iter().collect();
+        layer_update_breakdown.sort_by(|left, right| left.0.cmp(&right.0));
+
+        let mut stack_hosts = HashSet::new();
+        let mut stack_surface_count = 0usize;
+        let mut transient_surface_count = 0usize;
+        frame.scene.visit_layers(&mut |layer| {
+            if layer.descriptor.is_stack_surface {
+                stack_surface_count += 1;
+                stack_hosts.insert(layer.descriptor.stack_host);
+                if layer.descriptor.transient_owner_surface.is_some() {
+                    transient_surface_count += 1;
+                }
+            }
+        });
+
         Self {
             viewport: frame.viewport,
             dirty_region_count: frame.dirty_regions.len(),
             dirty_regions: frame.dirty_regions.clone(),
             command_count,
             command_breakdown,
+            layer_update_count: frame.layer_updates.len(),
+            layer_update_breakdown,
+            stack_host_count: stack_hosts.len(),
+            stack_surface_count,
+            transient_surface_count,
             detail_collected: true,
         }
     }
@@ -111,6 +143,11 @@ impl From<&SceneStatistics> for SceneDebugSummary {
             dirty_regions: scene.dirty_regions.clone(),
             command_count: scene.command_count,
             command_breakdown: scene.command_breakdown.clone(),
+            layer_update_count: scene.layer_update_count,
+            layer_update_breakdown: scene.layer_update_breakdown.clone(),
+            stack_host_count: 0,
+            stack_surface_count: 0,
+            transient_surface_count: 0,
             detail_collected: scene.detail_mode.is_detailed(),
         }
     }
@@ -307,6 +344,23 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
         DebugMetric::new("Commands", scene.command_count.to_string())
             .detail("Scene commands emitted by the runtime")
             .tone(DebugTone::Neutral),
+        DebugMetric::new("Layer updates", scene.layer_update_count.to_string())
+            .detail("Per-layer update records for this frame")
+            .tone(if scene.layer_update_count == 0 {
+                DebugTone::Success
+            } else {
+                DebugTone::Info
+            }),
+        DebugMetric::new("Stack surfaces", scene.stack_surface_count.to_string())
+            .detail(format!(
+                "{} hosts, {} transient surfaces",
+                scene.stack_host_count, scene.transient_surface_count
+            ))
+            .tone(if scene.stack_surface_count == 0 {
+                DebugTone::Neutral
+            } else {
+                DebugTone::Info
+            }),
     ]);
 
     let dirty_region_entries = if !scene.detail_collected {
@@ -344,11 +398,34 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
         rows
     };
 
+    let layer_update_rows = scene
+        .layer_update_breakdown
+        .iter()
+        .map(|(kind, count)| TableRow::new([kind.clone(), count.to_string()]))
+        .collect::<Vec<_>>();
+    let layer_update_rows = if layer_update_rows.is_empty() && !scene.detail_collected {
+        vec![TableRow::new(["detail disabled".to_string(), "n/a".to_string()])]
+    } else if layer_update_rows.is_empty() {
+        vec![TableRow::new(["none".to_string(), "0".to_string()])]
+    } else {
+        layer_update_rows
+    };
+
     Stack::vertical()
         .spacing(10.0)
         .alignment(Alignment::Stretch)
         .with_child(metrics)
         .with_child(debug_key_values(dirty_region_entries))
+        .with_child(
+            SizedBox::new().height(140.0).with_child(
+                Table::new("Scene layer update breakdown")
+                    .columns([
+                        TableColumn::new("Update kind").min_width(180.0),
+                        TableColumn::new("Count").width(90.0),
+                    ])
+                    .rows(layer_update_rows),
+            ),
+        )
         .with_child(
             SizedBox::new().height(172.0).with_child(
                 Table::new("Scene command breakdown")
@@ -401,6 +478,9 @@ pub fn window_snapshot_view(snapshot: WindowDebugSnapshot) -> impl Widget {
             DebugMetric::new("Widget nodes", widget_graph.nodes.len().to_string())
                 .detail(format!("graph root #{}", widget_graph.root.get()))
                 .tone(DebugTone::Neutral),
+            DebugMetric::new("Stack hosts", widget_graph.stack_hosts.len().to_string())
+                .detail("Host-local surface ordering groups")
+                .tone(DebugTone::Info),
             DebugMetric::new(
                 "Scene frame",
                 if scene_summary.is_some() { "available" } else { "missing" },
@@ -434,6 +514,11 @@ pub fn window_snapshot_view(snapshot: WindowDebugSnapshot) -> impl Widget {
         "Accessibility snapshot",
         "Accessible names, roles, and state are shared infrastructure for accessibility, testing, and automation.",
         accessibility_snapshot_view(accessibility),
+    ));
+    body.push(debug_panel(
+        "Stack hosts",
+        "Host-local ordering metadata makes floating and popup behavior inspectable without guessing from overlay layers.",
+        stack_host_snapshot_view(widget_graph.clone()),
     ));
     body.push(debug_panel(
         "Widget graph",
@@ -987,5 +1072,68 @@ fn format_cache_delta_metrics(delta: CacheMetricsDelta) -> String {
             delta.hits,
             requests,
         )
+    }
+}
+
+fn stack_host_snapshot_view(graph: WidgetGraphSnapshot) -> impl Widget {
+    let nodes = graph
+        .nodes
+        .iter()
+        .map(|node| (node.id, node))
+        .collect::<HashMap<_, _>>();
+
+    let rows = graph
+        .stack_hosts
+        .iter()
+        .map(|host| {
+            let transient_count = host
+                .surfaces
+                .iter()
+                .filter(|surface| {
+                    nodes
+                        .get(surface)
+                        .is_some_and(|node| node.transient_owner_surface.is_some())
+                })
+                .count();
+            TableRow::new([
+                format!("#{}", host.host.get()),
+                format!("{:?}", host.order_policy),
+                host.surfaces.len().to_string(),
+                transient_count.to_string(),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let rows = if rows.is_empty() {
+        vec![TableRow::new([
+            "none".to_string(),
+            "n/a".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+        ])]
+    } else {
+        rows
+    };
+
+    SizedBox::new().height(156.0).with_child(
+        Table::new("Stack hosts")
+            .columns([
+                TableColumn::new("Host").min_width(100.0),
+                TableColumn::new("Policy").min_width(120.0),
+                TableColumn::new("Surfaces").width(84.0),
+                TableColumn::new("Transient").width(84.0),
+            ])
+            .rows(rows),
+    )
+}
+
+fn layer_update_kind(kind: sui_scene::SceneLayerUpdateKind) -> &'static str {
+    match kind {
+        sui_scene::SceneLayerUpdateKind::Ordering => "Ordering",
+        sui_scene::SceneLayerUpdateKind::Content => "Content",
+        sui_scene::SceneLayerUpdateKind::Transform => "Transform",
+        sui_scene::SceneLayerUpdateKind::Clip => "Clip",
+        sui_scene::SceneLayerUpdateKind::Effect => "Effect",
+        sui_scene::SceneLayerUpdateKind::Visibility => "Visibility",
+        sui_scene::SceneLayerUpdateKind::Resources => "Resources",
     }
 }
