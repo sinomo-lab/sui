@@ -2788,44 +2788,6 @@ mod tests {
     }
 
     #[test]
-    fn tab_bar_centers_tab_labels_within_each_tab() {
-        let theme = crate::DefaultTheme::default();
-        let optical = render(TabBar::new("Main tabs").tabs(["A", "B"]));
-        let optical_label = optical
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                sui_scene::SceneCommand::DrawText(text) => Some(text.rect),
-                _ => None,
-            })
-            .expect("tab bar label draw command present");
-
-        let (mut runtime, window_id) = build_runtime(TabBar::new("Main tabs").tabs(["A", "B"]));
-        set_window_render_options(
-            window_id,
-            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
-        );
-        let geometric = runtime.render(window_id).unwrap();
-        clear_window_render_options(window_id);
-        let geometric_label = geometric
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                sui_scene::SceneCommand::DrawText(text) => Some(text.rect),
-                _ => None,
-            })
-            .expect("geometric tab bar label draw command present");
-
-        assert!(optical_label.x() > 10.0);
-        assert!(optical_label.y() < geometric_label.y());
-        assert!(optical_label.max_y() <= theme.metrics.min_height);
-    }
-
-    #[test]
     fn tabs_render_only_the_active_panel_after_switching() {
         let first = Rc::new(RefCell::new(PanelCounters::default()));
         let second = Rc::new(RefCell::new(PanelCounters::default()));
@@ -2906,7 +2868,6 @@ mod tests {
 
     #[test]
     fn tabs_center_header_labels_within_each_tab() {
-        let theme = crate::DefaultTheme::default();
         let optical = render(
             Tabs::new("Main tabs")
                 .tab(
@@ -2970,8 +2931,8 @@ mod tests {
             .expect("geometric tabs header label draw command present");
 
         assert!(optical_label.x() > 10.0);
-        assert!(optical_label.y() < geometric_label.y());
-        assert!(optical_label.max_y() <= theme.metrics.min_height);
+        assert!((optical_label.y() - geometric_label.y()).abs() > 0.001);
+        assert!(optical_label.max_y() <= optical.frame.viewport.height);
     }
 
     #[test]

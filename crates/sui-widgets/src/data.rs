@@ -2301,9 +2301,11 @@ mod tests {
         ]));
 
         let label = text_rects_for(&output, "Workspace")[0];
-        let line_height = DefaultTheme::default().body_text_style().line_height;
+        let theme = DefaultTheme::default();
+        let line_height = theme.body_text_style().line_height;
+        let available_height = (theme.metrics.min_height - 8.0).max(0.0);
 
-        assert!(label.height() >= line_height);
+        assert!((label.height() - line_height.min(available_height)).abs() < 0.001);
         assert!(label.width() > 0.0);
     }
 }

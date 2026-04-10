@@ -358,6 +358,23 @@ fn clip_stack_signature(clips: &[ResolvedClipPrimitive]) -> u64 {
     hasher.finish()
 }
 
+fn normalized_clip_stack_signature(
+    clips: &[ResolvedClipPrimitive],
+    normalization_origin: Vector,
+) -> u64 {
+    if normalization_origin == Vector::ZERO {
+        return clip_stack_signature(clips);
+    }
+
+    let delta = Vector::new(-normalization_origin.x, -normalization_origin.y);
+    let normalized = clips
+        .iter()
+        .cloned()
+        .map(|clip| translate_resolved_clip_primitive(clip, delta))
+        .collect::<Vec<_>>();
+    clip_stack_signature(&normalized)
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct RetainedDirectPacket {
@@ -727,6 +744,17 @@ impl RetainedCompositorState {
             snapshot,
             Some(layer.layer_id()),
         )?;
+        let layer_local_coordinate_space = layer.descriptor.composition_mode
+            == sui_scene::LayerCompositionMode::Scroll
+            || layer.descriptor.cache_policy == sui_scene::LayerCachePolicy::Direct;
+        let clip_signature = if layer_local_coordinate_space {
+            normalized_clip_stack_signature(
+                &inherited_state.clip_stack,
+                layer.descriptor.bounds.origin.to_vector(),
+            )
+        } else {
+            clip_stack_signature(&inherited_state.clip_stack)
+        };
         let children = container
             .items
             .iter()
@@ -745,7 +773,7 @@ impl RetainedCompositorState {
             packets: container.packets,
             transform_node: inherited_state.transform_node,
             clip_node: inherited_state.clip_node,
-            clip_signature: clip_stack_signature(&inherited_state.clip_stack),
+            clip_signature,
             effect_node: inherited_state.effect_node,
         })
     }
@@ -949,15 +977,6 @@ impl RetainedCompositorState {
                 | SceneLayerUpdateKind::Clip
                 | SceneLayerUpdateKind::Effect
                 | SceneLayerUpdateKind::Visibility => {}
-            }
-        }
-
-        for (layer_id, delta) in &cached_scroll_translations {
-            if let Some(layer) = snapshot.layers.get(layer_id) {
-                let exposed_damage = scroll_translation_exposed_damage(&layer.descriptor, *delta);
-                if let Some(damage) = exposed_damage {
-                    merge_damage_rect(&mut tiled_damage, *layer_id, Some(damage));
-                }
             }
         }
 
@@ -1800,68 +1819,6 @@ fn merge_damage_rect(
     }
 }
 
-fn scroll_translation_exposed_damage(
-    descriptor: &sui_scene::SceneLayerDescriptor,
-    delta: Vector,
-) -> Option<Rect> {
-    if delta == Vector::ZERO {
-        return None;
-    }
-
-    let mut damage: Option<Rect> = None;
-    let paint_bounds = descriptor.paint_bounds;
-    let width = paint_bounds.width();
-    let height = paint_bounds.height();
-
-    if delta.x.abs() >= width || delta.y.abs() >= height {
-        return Some(paint_bounds);
-    }
-
-    if delta.x > 0.0 {
-        damage = Some(Rect::new(
-            paint_bounds.x(),
-            paint_bounds.y(),
-            delta.x.min(width),
-            height,
-        ));
-    } else if delta.x < 0.0 {
-        let strip_width = (-delta.x).min(width);
-        damage = Some(Rect::new(
-            paint_bounds.max_x() - strip_width,
-            paint_bounds.y(),
-            strip_width,
-            height,
-        ));
-    }
-
-    if delta.y > 0.0 {
-        let strip = Rect::new(
-            paint_bounds.x(),
-            paint_bounds.y(),
-            width,
-            delta.y.min(height),
-        );
-        damage = Some(match damage {
-            Some(current) => current.union(strip),
-            None => strip,
-        });
-    } else if delta.y < 0.0 {
-        let strip_height = (-delta.y).min(height);
-        let strip = Rect::new(
-            paint_bounds.x(),
-            paint_bounds.max_y() - strip_height,
-            width,
-            strip_height,
-        );
-        damage = Some(match damage {
-            Some(current) => current.union(strip),
-            None => strip,
-        });
-    }
-
-    damage
-}
-
 fn mark_cached_layer_tiles_dirty(
     tiles: &mut HashMap<TileAddress, TileEntry>,
     layer_id: SceneLayerId,
@@ -1986,7 +1943,6 @@ fn build_tile_entry(
 ) -> Result<TileEntry> {
     let tile_local = tile_grid.tile_rect(address.tile_x, address.tile_y);
     let tile_scene = layer_local_to_scene(tile_local, descriptor);
-    let layer_clips = resolved_clip_primitives(layer_snapshot.clip_node, clips);
     let fragment = build_cached_tile_fragment(
         frame,
         tile_scene,

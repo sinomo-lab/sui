@@ -906,10 +906,10 @@ mod tests {
     fn default_theme_uses_body_text_scale_for_typography() {
         let theme = DefaultTheme::default();
 
-        assert_eq!(theme.typography.body_font_size, theme.text.xs.size);
-        assert_eq!(theme.typography.body_line_height, theme.text.xs.line_height);
-        assert_eq!(theme.typography.body_font_size, 12.0);
-        assert_eq!(theme.typography.body_line_height, 16.0);
+        assert_eq!(theme.typography.body_font_size, theme.text.sm.size);
+        assert_eq!(theme.typography.body_line_height, theme.text.sm.line_height);
+        assert_eq!(theme.typography.body_font_size, 14.0);
+        assert_eq!(theme.typography.body_line_height, 20.0);
         assert_eq!(theme.metrics.min_height, 24.0);
     }
 
@@ -917,8 +917,8 @@ mod tests {
     fn sync_derived_fields_updates_semantic_palette_and_typography() {
         let mut theme = DefaultTheme::default();
         theme.colors.primary = Color::rgba(0.2, 0.3, 0.4, 1.0);
-        theme.text.xs.size = 11.0;
-        theme.text.xs.line_height = 15.0;
+        theme.text.sm.size = 11.0;
+        theme.text.sm.line_height = 15.0;
         theme.sync_derived_fields();
 
         assert_eq!(theme.palette.accent, Color::rgba(0.2, 0.3, 0.4, 1.0));

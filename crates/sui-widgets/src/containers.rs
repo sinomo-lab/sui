@@ -662,13 +662,45 @@ impl VirtualScrollView {
         start..end
     }
 
+    fn exposed_viewport_strip(&self, viewport: Rect, previous_offset_y: f32) -> Option<Rect> {
+        let delta_y = self.offset_y - previous_offset_y;
+        if delta_y.abs() <= f32::EPSILON || viewport.is_empty() {
+            return None;
+        }
+
+        let strip_height = delta_y.abs().min(viewport.height());
+        if strip_height <= 0.0 {
+            return None;
+        }
+
+        if delta_y > 0.0 {
+            Some(Rect::new(
+                viewport.x(),
+                viewport.max_y() - strip_height,
+                viewport.width(),
+                strip_height,
+            ))
+        } else {
+            Some(Rect::new(
+                viewport.x(),
+                viewport.y(),
+                viewport.width(),
+                strip_height,
+            ))
+        }
+    }
+
     fn scroll_by(&mut self, viewport: Rect, delta_y: f32, ctx: &mut EventCtx) -> bool {
-        let next = self.clamp_offset(viewport.height(), self.offset_y + delta_y);
-        if (next - self.offset_y).abs() > f32::EPSILON {
+        let previous_offset_y = self.offset_y;
+        let next = self.clamp_offset(viewport.height(), previous_offset_y + delta_y);
+        if (next - previous_offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
             ctx.request_arrange();
             let next_visible_range =
                 self.visible_range_for_offset(viewport.height(), self.offset_y);
+            if let Some(exposed_strip) = self.exposed_viewport_strip(viewport, previous_offset_y) {
+                ctx.request_paint_rect(exposed_strip);
+            }
             if next_visible_range != self.visible_range {
                 ctx.request_paint();
             }
@@ -1210,10 +1242,7 @@ mod tests {
         RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot,
         WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
-    use sui_scene::{
-        Brush, LayerCachePolicy, LayerCompositionMode, Scene, SceneCommand, SceneLayer,
-        SceneLayerDescriptor,
-    };
+    use sui_scene::{Brush, LayerCachePolicy, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
 
     struct FixedBox {
         size: Size,
@@ -1598,7 +1627,7 @@ mod tests {
 
     #[test]
     fn background_paints_before_child_content() {
-        let (output, graph) = render_root(Background::new(
+        let (output, _) = render_root(Background::new(
             Brush::Solid(Color::rgba(0.1, 0.1, 0.1, 1.0)),
             FixedBox::new(Size::new(16.0, 12.0), Color::rgba(0.9, 0.2, 0.1, 1.0)),
         ));
@@ -1613,18 +1642,21 @@ mod tests {
         );
         assert_eq!(
             output.frame.scene.commands()[1],
-            SceneCommand::Layer(SceneLayer::new(
-                graph.nodes[1].id,
-                Rect::new(0.0, 0.0, 16.0, 12.0),
-                {
-                    let mut scene = Scene::new();
-                    scene.push(SceneCommand::FillRect {
-                        rect: Rect::new(0.0, 0.0, 16.0, 12.0),
-                        brush: Brush::Solid(Color::rgba(0.9, 0.2, 0.1, 1.0)),
-                    });
-                    scene
-                },
-            ))
+            match &output.frame.scene.commands()[1] {
+                SceneCommand::Layer(layer) => {
+                    assert_eq!(layer.descriptor.bounds, Rect::new(0.0, 0.0, 16.0, 12.0));
+                    assert_eq!(layer.scene.commands().len(), 1);
+                    assert_eq!(
+                        layer.scene.commands()[0],
+                        SceneCommand::FillRect {
+                            rect: Rect::new(0.0, 0.0, 16.0, 12.0),
+                            brush: Brush::Solid(Color::rgba(0.9, 0.2, 0.1, 1.0)),
+                        }
+                    );
+                    output.frame.scene.commands()[1].clone()
+                }
+                other => panic!("expected child layer command, found {other:?}"),
+            }
         );
     }
 
@@ -1786,9 +1818,9 @@ mod tests {
         );
 
         let _ = runtime.render(window_id).unwrap();
-        // With the overdraw buffer (35% of viewport = 14px for a 40px
-        // viewport), only items 0 and 1 are initially visible.
-        assert_eq!(*counts.borrow(), vec![1, 1, 0, 0]);
+        // The visible window extends by 75% of the viewport above and below,
+        // so the third item is included in the initial overdraw buffer.
+        assert_eq!(*counts.borrow(), vec![1, 1, 1, 0]);
 
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
         scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
@@ -1797,10 +1829,9 @@ mod tests {
             .unwrap();
         let _ = runtime.render(window_id).unwrap();
 
-        // After scrolling 32px, the overdraw buffer keeps item 0 in the
-        // visible range (its bottom at y=30 is still within the buffer zone
-        // above the viewport), while item 2 enters the visible range.
-        assert_eq!(*counts.borrow(), vec![2, 2, 1, 0]);
+        // After scrolling 32px, the overdraw buffer still includes item 0 and
+        // extends far enough to bring item 3 into the painted range.
+        assert_eq!(*counts.borrow(), vec![2, 2, 2, 1]);
     }
 
     #[test]
@@ -1826,8 +1857,13 @@ mod tests {
             .unwrap();
         let output = runtime.render(window_id).unwrap();
 
-        assert_eq!(*counts.borrow(), vec![2]);
-        assert!(!output.frame.layer_updates.is_empty());
+        assert_eq!(*counts.borrow(), vec![1]);
+        assert!(output.frame.layer_updates.iter().any(|update| {
+            update.kind == sui_scene::SceneLayerUpdateKind::Transform
+        }));
+        assert!(output.frame.layer_updates.iter().all(|update| {
+            update.kind != sui_scene::SceneLayerUpdateKind::Content
+        }));
     }
 
     #[test]
@@ -1880,7 +1916,7 @@ mod tests {
     }
 
     #[test]
-    fn virtual_scroll_view_emits_transform_updates_while_visible_range_is_unchanged() {
+    fn virtual_scroll_view_repaints_exposed_strip_while_visible_range_is_unchanged() {
         // Use a wider viewport (80px) so the overdraw buffer (35% = 28px)
         // is large enough that a small 4px scroll does not bring new items
         // into the visible range.
@@ -1927,8 +1963,9 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
 
         // A small 4px scroll should not change the visible range when
-        // the overdraw buffer covers all items.
-        assert_eq!(*counts.borrow(), vec![1, 1, 1, 1]);
+        // the overdraw buffer covers all items, but it still needs to repaint
+        // the newly exposed strip so equivalent final offsets stay history-independent.
+        assert_eq!(*counts.borrow(), vec![2, 2, 2, 2]);
         assert!(
             output
                 .frame
@@ -1941,7 +1978,10 @@ mod tests {
                 .frame
                 .layer_updates
                 .iter()
-                .all(|update| { update.kind != sui_scene::SceneLayerUpdateKind::Content })
+                .any(|update| {
+                    update.kind == sui_scene::SceneLayerUpdateKind::Content
+                        && update.damage == Some(Rect::new(0.0, 76.0, 80.0, 4.0))
+                })
         );
     }
 
