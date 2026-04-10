@@ -211,12 +211,13 @@ fn text_system_uses_registered_font_handles() {
         )
         .unwrap();
 
+    assert_eq!(layout.runs().len(), 1);
     assert_eq!(
-        layout.primary_face().face_index(),
+        layout.run_face(0).face_index(),
         fonts.get(handle).unwrap().face_index()
     );
     assert_eq!(
-        layout.primary_face().shared_bytes(),
+        layout.run_face(0).shared_bytes(),
         fonts.get(handle).unwrap().shared_bytes()
     );
 }
@@ -359,7 +360,7 @@ fn layout_document_preserves_mixed_faces_on_runs_and_glyphs() {
 }
 
 #[test]
-fn fallback_layout_exposes_non_primary_faces_on_runs_and_glyphs() {
+fn fallback_layout_exposes_non_explicit_faces_on_runs_and_glyphs() {
     let Some((explicit_font, fallback_char)) = find_fallback_font_case() else {
         return;
     };

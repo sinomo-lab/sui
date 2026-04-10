@@ -483,17 +483,6 @@ impl TextLayout {
         &self.data.faces
     }
 
-    pub fn primary_face(&self) -> &ResolvedTextFace {
-        &self.data.faces[0]
-    }
-
-    #[deprecated(
-        note = "TextLayout can resolve multiple faces; use primary_face(), faces(), runs(), or glyphs() depending on the detail you need"
-    )]
-    pub fn face(&self) -> &ResolvedTextFace {
-        self.primary_face()
-    }
-
     pub fn run_style(&self, run_index: usize) -> &TextStyle {
         self.document
             .span_style(self.data.runs[run_index].span_id.clone())
