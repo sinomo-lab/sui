@@ -158,7 +158,7 @@ Before removing the old implementation, validate the new path with:
 - widget-book visual comparisons
 - text-input caret, selection, and IME behavior
 
-Only after those cases are reliable should the legacy shaping path be removed.
+That validation coverage now exists across the text/layout tests, widget/runtime text-input coverage, and widget-book visual/performance checks. The renderer's legacy outline-mesh fallback path has been removed; text rendering now uses the atlas-backed swash raster path as the only live renderer path.
 
 ## Explicit Non-Goals For This Refactor
 

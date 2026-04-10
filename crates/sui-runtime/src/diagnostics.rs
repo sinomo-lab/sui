@@ -74,7 +74,6 @@ pub struct RendererSubmissionDiagnostics {
     pub retained_packet_build_count: usize,
     pub text_atlas_miss_count: usize,
     pub text_atlas_miss_time_us: u64,
-    pub text_atlas_fallback_count: usize,
     pub surface_acquire_time_us: u64,
     pub resource_collection_time_us: u64,
     pub bind_group_prepare_time_us: u64,
@@ -113,7 +112,6 @@ impl RendererSubmissionDiagnostics {
         retained_packet_build_count: usize,
         text_atlas_miss_count: usize,
         text_atlas_miss_time_us: u64,
-        text_atlas_fallback_count: usize,
         surface_acquire_time_us: u64,
         resource_collection_time_us: u64,
         bind_group_prepare_time_us: u64,
@@ -150,7 +148,6 @@ impl RendererSubmissionDiagnostics {
             retained_packet_build_count,
             text_atlas_miss_count,
             text_atlas_miss_time_us,
-            text_atlas_fallback_count,
             surface_acquire_time_us,
             resource_collection_time_us,
             bind_group_prepare_time_us,
@@ -853,7 +850,7 @@ mod tests {
             17,
             vec![FramePhaseSample::new(FramePhase::Renderer, 2.5)],
             RendererSubmissionDiagnostics::new(
-                3, 9, 4096, 128, 3584, 4, 12, 10, 2, 7, 16384, 230, 90, 310, 120, 2, 5, 80, 1, 440,
+                3, 9, 4096, 128, 3584, 4, 12, 10, 2, 7, 16384, 230, 90, 310, 120, 2, 5, 80, 440,
                 210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
@@ -897,7 +894,6 @@ mod tests {
         assert_eq!(snapshot.renderer_submission.retained_packet_build_count, 2);
         assert_eq!(snapshot.renderer_submission.text_atlas_miss_count, 5);
         assert_eq!(snapshot.renderer_submission.text_atlas_miss_time_us, 80);
-        assert_eq!(snapshot.renderer_submission.text_atlas_fallback_count, 1);
         assert_eq!(snapshot.renderer_submission.surface_acquire_time_us, 440);
         assert_eq!(
             snapshot.renderer_submission.resource_collection_time_us,

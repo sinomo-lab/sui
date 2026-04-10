@@ -43,7 +43,6 @@ use swash::{
 };
 #[cfg(test)]
 use tiny_skia::PathBuilder as TinySkiaPathBuilder;
-use ttf_parser::GlyphId;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -186,7 +185,6 @@ struct TextFrameStats {
     glyph_vertices: usize,
     atlas_miss_count: usize,
     atlas_miss_time_us: u64,
-    atlas_fallback_count: usize,
 }
 
 const TEXT_ATLAS_WIDTH: usize = 2048;
@@ -214,7 +212,6 @@ pub struct RendererFrameStats {
     pub retained_packet_build_count: usize,
     pub text_atlas_miss_count: usize,
     pub text_atlas_miss_time_us: u64,
-    pub text_atlas_fallback_count: usize,
     pub surface_acquire_time_us: u64,
     pub resource_collection_time_us: u64,
     pub bind_group_prepare_time_us: u64,
@@ -272,7 +269,6 @@ impl RendererFrameStats {
             retained_packet_build_count: 0,
             text_atlas_miss_count: 0,
             text_atlas_miss_time_us: 0,
-            text_atlas_fallback_count: 0,
             surface_acquire_time_us: 0,
             resource_collection_time_us: 0,
             bind_group_prepare_time_us: 0,
@@ -313,7 +309,6 @@ impl RendererFrameStats {
         self.text_vertex_bytes = stats.glyph_vertices as u64 * VERTEX_SIZE;
         self.text_atlas_miss_count = stats.atlas_miss_count;
         self.text_atlas_miss_time_us = stats.atlas_miss_time_us;
-        self.text_atlas_fallback_count = stats.atlas_fallback_count;
         self
     }
 }
@@ -3549,7 +3544,7 @@ mod tests {
     }
 
     #[test]
-    fn text_engine_reuses_cached_glyph_meshes_across_repeated_builds() {
+    fn text_engine_reuses_cached_glyph_atlas_entries_across_repeated_builds() {
         let mut scene = Scene::new();
         scene.push(SceneCommand::DrawText(TextRun {
             rect: Rect::new(4.0, 6.0, 120.0, 28.0),
@@ -3587,7 +3582,7 @@ mod tests {
     }
 
     #[test]
-    fn text_engine_parses_face_once_per_text_run_when_glyphs_miss() {
+    fn text_engine_parses_swash_face_once_per_text_run_when_glyphs_miss() {
         let mut scene = Scene::new();
         scene.push(SceneCommand::DrawText(TextRun {
             rect: Rect::new(4.0, 6.0, 120.0, 28.0),
@@ -3611,16 +3606,16 @@ mod tests {
         let first = build_vertices(&frame, &mut text_engine).unwrap();
         assert!(!first.is_empty());
         assert_eq!(text_engine.glyph_cache_stats(), (3, 0, 3));
-        assert_eq!(text_engine.glyph_face_parse_count(), 1);
+        assert_eq!(text_engine.swash_face_parse_count(), 1);
 
         let second = build_vertices(&frame, &mut text_engine).unwrap();
         assert_eq!(first.len(), second.len());
         assert_eq!(text_engine.glyph_cache_stats(), (3, 3, 3));
-        assert_eq!(text_engine.glyph_face_parse_count(), 1);
+        assert_eq!(text_engine.swash_face_parse_count(), 1);
     }
 
     #[test]
-    fn text_engine_buckets_cached_glyph_meshes_by_scale() {
+    fn text_engine_buckets_cached_glyph_atlas_entries_by_scale() {
         let mut scene = Scene::new();
         scene.push(SceneCommand::DrawText(TextRun {
             rect: Rect::new(4.0, 6.0, 120.0, 28.0),

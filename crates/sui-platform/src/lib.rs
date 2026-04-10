@@ -141,7 +141,6 @@ pub(crate) fn publish_frame_performance(
                 renderer_stats.retained_packet_build_count,
                 renderer_stats.text_atlas_miss_count,
                 renderer_stats.text_atlas_miss_time_us,
-                renderer_stats.text_atlas_fallback_count,
                 renderer_stats.surface_acquire_time_us,
                 renderer_stats.resource_collection_time_us,
                 renderer_stats.bind_group_prepare_time_us,

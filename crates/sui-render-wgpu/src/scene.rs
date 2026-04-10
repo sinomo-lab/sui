@@ -1171,7 +1171,6 @@ pub(crate) fn build_direct_packet(
         path_cache,
         feather_width,
         scratch_vertices: Vec::new(),
-        text_fallback_vertices: Vec::new(),
         overlay_scratch_vertices: Vec::new(),
         clip_scratch_vertices: Vec::new(),
     };
@@ -1187,7 +1186,6 @@ struct SceneDrawOpBuilder<'a> {
     scratch_vertices: Vec<Vertex>,
     overlay_scratch_vertices: Vec<Vertex>,
     clip_scratch_vertices: Vec<Vertex>,
-    text_fallback_vertices: Vec<Vertex>,
 }
 
 enum FillPathRenderMode {
@@ -1318,52 +1316,34 @@ impl SceneDrawOpBuilder<'_> {
             }
             SceneCommand::DrawText(text) => {
                 self.scratch_vertices.clear();
-                self.text_fallback_vertices.clear();
                 self.text_engine.append_text_run(
                     &mut self.scratch_vertices,
-                    &mut self.text_fallback_vertices,
                     state,
                     text,
                     self.frame.font_registry.as_ref(),
                     viewport,
                     self.frame.scale_factor,
-                    self.feather_width,
                 )?;
                 push_draw_op(
                     draw_ops,
                     DrawOpKind::TextAtlas,
                     &self.scratch_vertices,
-                    state,
-                );
-                push_draw_op(
-                    draw_ops,
-                    DrawOpKind::Solid,
-                    &self.text_fallback_vertices,
                     state,
                 );
             }
             SceneCommand::DrawShapedText(text) => {
                 self.scratch_vertices.clear();
-                self.text_fallback_vertices.clear();
                 self.text_engine.append_shaped_text(
                     &mut self.scratch_vertices,
-                    &mut self.text_fallback_vertices,
                     state,
                     text,
                     viewport,
                     self.frame.scale_factor,
-                    self.feather_width,
                 )?;
                 push_draw_op(
                     draw_ops,
                     DrawOpKind::TextAtlas,
                     &self.scratch_vertices,
-                    state,
-                );
-                push_draw_op(
-                    draw_ops,
-                    DrawOpKind::Solid,
-                    &self.text_fallback_vertices,
                     state,
                 );
             }
@@ -1415,10 +1395,8 @@ impl SceneDrawOpBuilder<'_> {
             }
             SceneCommand::Label { rect, text, color } => {
                 self.scratch_vertices.clear();
-                self.text_fallback_vertices.clear();
                 self.text_engine.append_text_run(
                     &mut self.scratch_vertices,
-                    &mut self.text_fallback_vertices,
                     state,
                     &TextRun {
                         rect: *rect,
@@ -1428,18 +1406,11 @@ impl SceneDrawOpBuilder<'_> {
                     self.frame.font_registry.as_ref(),
                     viewport,
                     self.frame.scale_factor,
-                    self.feather_width,
                 )?;
                 push_draw_op(
                     draw_ops,
                     DrawOpKind::TextAtlas,
                     &self.scratch_vertices,
-                    state,
-                );
-                push_draw_op(
-                    draw_ops,
-                    DrawOpKind::Solid,
-                    &self.text_fallback_vertices,
                     state,
                 );
             }
@@ -1678,7 +1649,7 @@ pub(crate) fn hash_path(path: &ScenePath, transform: Transform) -> u64 {
 
 pub(crate) struct TextEngine {
     pub(crate) system: TextSystem,
-    pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphPrimitive>,
+    pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphAtlas>,
     pub(crate) atlas: TextAtlas,
     swash_scale_context: SwashScaleContext,
     pub(crate) coverage_policy: TextCoveragePolicy,
@@ -1687,7 +1658,7 @@ pub(crate) struct TextEngine {
     pub(crate) glyph_cache_hits: usize,
     pub(crate) glyph_cache_misses: usize,
     #[cfg(test)]
-    glyph_face_parse_count: usize,
+    swash_face_parse_count: usize,
     pub(crate) frame_stats: TextFrameStats,
 }
 
@@ -1740,7 +1711,7 @@ impl Default for TextEngine {
             glyph_cache_hits: 0,
             glyph_cache_misses: 0,
             #[cfg(test)]
-            glyph_face_parse_count: 0,
+            swash_face_parse_count: 0,
             frame_stats: TextFrameStats::default(),
         }
     }
@@ -1777,13 +1748,11 @@ impl TextEngine {
     pub(crate) fn append_text_run(
         &mut self,
         atlas_vertices: &mut Vec<Vertex>,
-        fallback_vertices: &mut Vec<Vertex>,
         state: &SceneRasterState,
         text: &TextRun,
         font_registry: &FontRegistry,
         viewport: Size,
         raster_scale_factor: f32,
-        feather_width: f32,
     ) -> Result<()> {
         if text.rect.is_empty() || text.text.is_empty() || viewport.is_empty() {
             return Ok(());
@@ -1792,25 +1761,21 @@ impl TextEngine {
         let layout = self.shape_text_run(text, font_registry)?;
         self.append_text_layout(
             atlas_vertices,
-            fallback_vertices,
             state,
             Point::new(text.rect.x(), text.rect.y()),
             &layout,
             viewport,
             raster_scale_factor,
-            feather_width,
         )
     }
 
     pub(crate) fn append_shaped_text(
         &mut self,
         atlas_vertices: &mut Vec<Vertex>,
-        fallback_vertices: &mut Vec<Vertex>,
         state: &SceneRasterState,
         text: &ShapedText,
         viewport: Size,
         raster_scale_factor: f32,
-        feather_width: f32,
     ) -> Result<()> {
         if viewport.is_empty() {
             return Ok(());
@@ -1818,26 +1783,22 @@ impl TextEngine {
 
         self.append_text_layout(
             atlas_vertices,
-            fallback_vertices,
             state,
             text.origin,
             &text.layout,
             viewport,
             raster_scale_factor,
-            feather_width,
         )
     }
 
     fn append_text_layout(
         &mut self,
         atlas_vertices: &mut Vec<Vertex>,
-        fallback_vertices: &mut Vec<Vertex>,
         state: &SceneRasterState,
         origin: Point,
         layout: &TextLayout,
         viewport: Size,
         raster_scale_factor: f32,
-        feather_width: f32,
     ) -> Result<()> {
         if layout.measurement().width <= 0.0 || layout.measurement().height <= 0.0 {
             return Ok(());
@@ -1850,7 +1811,6 @@ impl TextEngine {
 
         let mut active_face_index = None;
         let mut swash_face = None;
-        let mut parsed_face = None;
         let glyph_pixel_alignment_enabled = self.glyph_pixel_alignment_enabled;
 
         for glyph in layout.glyphs() {
@@ -1858,7 +1818,6 @@ impl TextEngine {
             if active_face_index != Some(face_index) {
                 active_face_index = Some(face_index);
                 swash_face = None;
-                parsed_face = None;
             }
 
             let glyph_face = layout.glyph_face(glyph);
@@ -1874,50 +1833,28 @@ impl TextEngine {
                 translated_glyph.bounds = Some(bounds.translate(origin.to_vector()));
             }
 
-            if let Some(primitive) = self.cached_glyph_primitive(
+            if let Some(atlas) = self.cached_glyph_primitive(
                 glyph_face,
                 &mut swash_face,
-                &mut parsed_face,
                 face_key,
                 glyph.glyph_id,
                 glyph.scale,
                 raster_scale_factor,
-                feather_width,
                 coverage_policy,
             )? {
-                match primitive {
-                    CachedGlyphPrimitive::Atlas(atlas) => {
-                        append_cached_glyph_atlas(
-                            atlas_vertices,
-                            atlas,
-                            &translated_glyph,
-                            glyph_style.color,
-                            state.current_transform,
-                            viewport,
-                            raster_scale_factor,
-                            glyph_pixel_alignment_enabled,
-                        );
-                        if self.diagnostics_enabled {
-                            self.frame_stats.glyph_instances += 1;
-                            self.frame_stats.glyph_vertices += 6;
-                        }
-                    }
-                    CachedGlyphPrimitive::Mesh(mesh) => {
-                        let glyph_vertex_count = mesh.indices.len();
-                        append_cached_glyph_mesh(
-                            fallback_vertices,
-                            mesh,
-                            &translated_glyph,
-                            glyph_style.color,
-                            state.current_transform,
-                            viewport,
-                            coverage_policy,
-                        );
-                        if self.diagnostics_enabled {
-                            self.frame_stats.glyph_instances += 1;
-                            self.frame_stats.glyph_vertices += glyph_vertex_count;
-                        }
-                    }
+                append_cached_glyph_atlas(
+                    atlas_vertices,
+                    atlas,
+                    &translated_glyph,
+                    glyph_style.color,
+                    state.current_transform,
+                    viewport,
+                    raster_scale_factor,
+                    glyph_pixel_alignment_enabled,
+                );
+                if self.diagnostics_enabled {
+                    self.frame_stats.glyph_instances += 1;
+                    self.frame_stats.glyph_vertices += 6;
                 }
             }
         }
@@ -1937,23 +1874,15 @@ impl TextEngine {
         &mut self,
         face: &'face ResolvedTextFace,
         swash_face: &mut Option<SwashFaceState<'face>>,
-        parsed_face: &mut Option<rustybuzz::Face<'face>>,
         face_key: GlyphFaceCacheKey,
         glyph_id: u16,
         glyph_scale: f32,
         raster_scale_factor: f32,
-        feather_width: f32,
         coverage_policy: TextCoveragePolicy,
-    ) -> Result<Option<&CachedGlyphPrimitive>> {
+    ) -> Result<Option<&CachedGlyphAtlas>> {
         let atlas_physical_scale = glyph_scale * raster_scale_factor.max(1.0);
         let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
-        let key = GlyphCacheKey::new(
-            face_key,
-            glyph_id,
-            scale_bucket,
-            feather_width,
-            coverage_policy,
-        );
+        let key = GlyphCacheKey::new(face_key, glyph_id, scale_bucket, coverage_policy);
         match self.glyph_cache.entry(key) {
             Entry::Occupied(entry) => {
                 if self.diagnostics_enabled {
@@ -1968,7 +1897,7 @@ impl TextEngine {
                 if swash_face.is_none() {
                     #[cfg(test)]
                     {
-                        self.glyph_face_parse_count += 1;
+                        self.swash_face_parse_count += 1;
                     }
                     *swash_face = Some(SwashFaceState::new(face, face_key)?);
                 }
@@ -1992,34 +1921,13 @@ impl TextEngine {
                         self.frame_stats.atlas_miss_count += 1;
                         self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
                     }
-                    CachedGlyphPrimitive::Atlas(atlas)
+                    atlas
                 } else {
                     if let Some(started) = atlas_miss_started {
                         self.frame_stats.atlas_miss_count += 1;
                         self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
                     }
-                    if parsed_face.is_none() {
-                        *parsed_face = Some(
-                            rustybuzz::Face::from_slice(face.bytes(), face.face_index())
-                                .ok_or_else(|| Error::new("failed to parse shaped text face data"))?,
-                        );
-                    }
-                    let parsed_face = parsed_face
-                        .as_ref()
-                        .expect("parsed text face should be cached after fallback initialization");
-                    let Some(mesh) = build_cached_glyph_mesh(
-                        parsed_face,
-                        glyph_id,
-                        bucketed_logical_scale,
-                        feather_width,
-                    )?
-                    else {
-                        return Ok(None);
-                    };
-                    if self.diagnostics_enabled {
-                        self.frame_stats.atlas_fallback_count += 1;
-                    }
-                    CachedGlyphPrimitive::Mesh(mesh)
+                    return Ok(None);
                 };
                 Ok(Some(&*entry.insert(primitive)))
             }
@@ -2040,8 +1948,8 @@ impl TextEngine {
     }
 
     #[cfg(test)]
-    pub(crate) fn glyph_face_parse_count(&self) -> usize {
-        self.glyph_face_parse_count
+    pub(crate) fn swash_face_parse_count(&self) -> usize {
+        self.swash_face_parse_count
     }
 
     pub(crate) fn cache_snapshot(&self) -> RendererTextCacheSnapshot {
@@ -2055,36 +1963,6 @@ impl TextEngine {
             path: GlyphCacheSnapshot::default(),
         }
     }
-}
-
-fn build_cached_glyph_mesh(
-    face: &rustybuzz::Face<'_>,
-    glyph_id: u16,
-    glyph_scale: f32,
-    feather_width: f32,
-) -> Result<Option<CachedGlyphMesh>> {
-    let mut path_builder = LyonPath::builder();
-    {
-        let mut outline = CachedGlyphOutlineBuilder {
-            builder: &mut path_builder,
-            contour_open: false,
-            scale: glyph_scale,
-        };
-        if face
-            .outline_glyph(GlyphId(glyph_id), &mut outline)
-            .is_none()
-        {
-            return Ok(None);
-        }
-        outline.finish();
-    }
-
-    let path = path_builder.build();
-    Ok(Some(build_local_glyph_mesh(
-        &path,
-        glyph_scale,
-        feather_width,
-    )?))
 }
 
 fn build_cached_glyph_atlas(
@@ -2317,50 +2195,6 @@ pub(crate) fn glyph_raster_bounds(path: &tiny_skia::Path) -> Option<GlyphRasterB
         raster_width,
         raster_height,
     })
-}
-
-fn build_local_glyph_mesh(
-    path: &LyonPath,
-    glyph_scale: f32,
-    feather_width: f32,
-) -> Result<CachedGlyphMesh> {
-    let mut mesh = feathering::build_local_glyph_mesh(path, feather_width)?;
-    mesh.scale = glyph_scale;
-    Ok(mesh)
-}
-
-fn append_cached_glyph_mesh(
-    vertices: &mut Vec<Vertex>,
-    mesh: &CachedGlyphMesh,
-    glyph: &SceneShapedGlyph,
-    color: Color,
-    transform: Transform,
-    viewport: Size,
-    coverage_policy: TextCoveragePolicy,
-) {
-    let color = color.clamped();
-    let rgba = shader_color(color);
-    let mesh_scale = mesh.scale.max(f32::EPSILON);
-    let residual_scale = glyph.scale / mesh_scale;
-    for index in &mesh.indices {
-        let vertex = mesh.vertices[*index as usize];
-        let positioned = Point::new(
-            glyph.origin_x + (vertex.position.x * residual_scale),
-            glyph.origin_y + (vertex.position.y * residual_scale),
-        );
-        let transformed = transform.transform_point(positioned);
-        let ndc = to_ndc(transformed.x, transformed.y, viewport);
-        vertices.push(Vertex {
-            position: ndc,
-            color: [
-                rgba[0],
-                rgba[1],
-                rgba[2],
-                color.alpha * coverage_policy.apply(vertex.coverage),
-            ],
-            tex_coords: [0.0, 0.0],
-        });
-    }
 }
 
 pub(crate) fn append_cached_glyph_atlas(
@@ -2843,72 +2677,6 @@ fn append_indexed_triangles(
             color: rgba,
             tex_coords: [0.0, 0.0],
         });
-    }
-}
-
-struct CachedGlyphOutlineBuilder<'a, B>
-where
-    B: LyonPathBuilder,
-{
-    builder: &'a mut B,
-    contour_open: bool,
-    scale: f32,
-}
-
-impl<'a, B> CachedGlyphOutlineBuilder<'a, B>
-where
-    B: LyonPathBuilder,
-{
-    fn point(&self, x: f32, y: f32) -> lyon_path::math::Point {
-        point(x * self.scale, -y * self.scale)
-    }
-
-    fn finish(&mut self) {
-        if self.contour_open {
-            LyonPathBuilder::end(self.builder, true);
-            self.contour_open = false;
-        }
-    }
-}
-
-
-impl<B> ttf_parser::OutlineBuilder for CachedGlyphOutlineBuilder<'_, B>
-where
-    B: LyonPathBuilder,
-{
-    fn move_to(&mut self, x: f32, y: f32) {
-        if self.contour_open {
-            LyonPathBuilder::end(self.builder, true);
-        }
-        LyonPathBuilder::begin(self.builder, self.point(x, y), &[]);
-        self.contour_open = true;
-    }
-
-    fn line_to(&mut self, x: f32, y: f32) {
-        LyonPathBuilder::line_to(self.builder, self.point(x, y), &[]);
-    }
-
-    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        LyonPathBuilder::quadratic_bezier_to(
-            self.builder,
-            self.point(x1, y1),
-            self.point(x, y),
-            &[],
-        );
-    }
-
-    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        LyonPathBuilder::cubic_bezier_to(
-            self.builder,
-            self.point(x1, y1),
-            self.point(x2, y2),
-            self.point(x, y),
-            &[],
-        );
-    }
-
-    fn close(&mut self) {
-        self.finish();
     }
 }
 

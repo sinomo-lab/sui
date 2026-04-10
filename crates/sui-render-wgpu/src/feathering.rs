@@ -25,13 +25,6 @@ enum FeatheredPathType {
     Closed,
 }
 
-pub(super) fn build_local_glyph_mesh(
-    path: &LyonPath,
-    feather_width: f32,
-) -> Result<CachedGlyphMesh> {
-    build_local_fill_mesh(path, feather_width)
-}
-
 pub(super) fn build_local_fill_mesh(
     path: &LyonPath,
     feather_width: f32,

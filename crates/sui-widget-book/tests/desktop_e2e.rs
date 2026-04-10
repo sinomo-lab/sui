@@ -1341,7 +1341,6 @@ fn publish_frame_performance(
                 renderer_stats.retained_packet_build_count,
                 renderer_stats.text_atlas_miss_count,
                 renderer_stats.text_atlas_miss_time_us,
-                renderer_stats.text_atlas_fallback_count,
                 renderer_stats.surface_acquire_time_us,
                 renderer_stats.resource_collection_time_us,
                 renderer_stats.bind_group_prepare_time_us,
@@ -1445,7 +1444,6 @@ struct ScrollBenchmarkFrameSample {
     retained_packet_build_count: usize,
     text_atlas_miss_count: usize,
     text_atlas_miss_time_us: u64,
-    text_atlas_fallback_count: usize,
     surface_acquire_time_us: u64,
     resource_collection_time_us: u64,
     bind_group_prepare_time_us: u64,
@@ -1490,7 +1488,6 @@ impl ScrollBenchmarkFrameSample {
             retained_packet_build_count: snapshot.renderer_submission.retained_packet_build_count,
             text_atlas_miss_count: snapshot.renderer_submission.text_atlas_miss_count,
             text_atlas_miss_time_us: snapshot.renderer_submission.text_atlas_miss_time_us,
-            text_atlas_fallback_count: snapshot.renderer_submission.text_atlas_fallback_count,
             surface_acquire_time_us: snapshot.renderer_submission.surface_acquire_time_us,
             resource_collection_time_us: snapshot.renderer_submission.resource_collection_time_us,
             bind_group_prepare_time_us: snapshot.renderer_submission.bind_group_prepare_time_us,
@@ -1859,11 +1856,6 @@ fn run_widget_book_scroll_benchmark(
         .map(|sample| sample.text_atlas_miss_count as f64)
         .sum::<f64>()
         / valid_count as f64;
-    let avg_text_atlas_fallback_count = frame_samples
-        .iter()
-        .map(|sample| sample.text_atlas_fallback_count as f64)
-        .sum::<f64>()
-        / valid_count as f64;
     let avg_surface_acquire_ms = frame_samples
         .iter()
         .map(|sample| sample.surface_acquire_time_us as f64 / 1000.0)
@@ -1996,7 +1988,7 @@ fn run_widget_book_scroll_benchmark(
         "avg packet build: {avg_retained_packet_build_ms:.3} ms ({avg_retained_packet_build_count:.2} packets)"
     );
     println!(
-        "avg atlas miss:   {avg_text_atlas_miss_ms:.3} ms ({avg_text_atlas_miss_count:.2} misses, {avg_text_atlas_fallback_count:.2} fallback)"
+        "avg atlas miss:   {avg_text_atlas_miss_ms:.3} ms ({avg_text_atlas_miss_count:.2} misses)"
     );
     println!(
         "avg surface:      acq {avg_surface_acquire_ms:.3} ms  pres {avg_surface_present_ms:.3} ms"
@@ -2046,13 +2038,12 @@ fn run_widget_book_scroll_benchmark(
             sample.composition_time_us as f64 / 1000.0,
         );
         println!(
-            "             traverse {:>7.3} ms  packets {:>3} / {:>7.3} ms  atlas {:>3} / {:>7.3} ms  fallback {:>2}",
+            "             traverse {:>7.3} ms  packets {:>3} / {:>7.3} ms  atlas {:>3} / {:>7.3} ms",
             sample.retained_scene_traversal_time_us as f64 / 1000.0,
             sample.retained_packet_build_count,
             sample.retained_packet_build_time_us as f64 / 1000.0,
             sample.text_atlas_miss_count,
             sample.text_atlas_miss_time_us as f64 / 1000.0,
-            sample.text_atlas_fallback_count,
         );
         println!(
             "             surface {:>7.3} / {:>7.3} ms  prep {:>7.3} / {:>7.3} / {:>7.3} ms  submit {:>7.3} / {:>7.3} / {:>7.3} ms",
@@ -2132,10 +2123,9 @@ fn run_widget_book_scroll_benchmark(
             snapshot.renderer_submission.retained_packet_build_time_us as f64 / 1000.0,
         );
         println!(
-            "  atlas miss:      {} misses / {:.3} ms / {} fallback",
+            "  atlas miss:      {} misses / {:.3} ms",
             snapshot.renderer_submission.text_atlas_miss_count,
             snapshot.renderer_submission.text_atlas_miss_time_us as f64 / 1000.0,
-            snapshot.renderer_submission.text_atlas_fallback_count,
         );
         println!(
             "  surface:         {:.3} ms acquire / {:.3} ms present",

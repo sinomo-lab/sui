@@ -22,7 +22,6 @@ pub(crate) struct GlyphCacheKey {
     pub(crate) face: GlyphFaceCacheKey,
     pub(crate) glyph_id: u16,
     pub(crate) scale_bucket: u32,
-    pub(crate) feather_width_bits: u32,
     pub(crate) coverage_policy: TextCoverageCacheKey,
 }
 
@@ -31,14 +30,12 @@ impl GlyphCacheKey {
         face: GlyphFaceCacheKey,
         glyph_id: u16,
         scale_bucket: u32,
-        feather_width: f32,
         coverage_policy: TextCoveragePolicy,
     ) -> Self {
         Self {
             face,
             glyph_id,
             scale_bucket,
-            feather_width_bits: feather_width.to_bits(),
             coverage_policy: TextCoverageCacheKey::from(coverage_policy),
         }
     }
@@ -92,15 +89,8 @@ pub(crate) struct CachedGlyphAtlas {
     pub(crate) is_color: bool,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum CachedGlyphPrimitive {
-    Atlas(CachedGlyphAtlas),
-    Mesh(CachedGlyphMesh),
-}
-
 #[derive(Debug, Default, Clone)]
 pub(crate) struct CachedGlyphMesh {
-    pub(crate) scale: f32,
     pub(crate) vertices: Vec<CachedGlyphVertex>,
     pub(crate) indices: Vec<u32>,
 }

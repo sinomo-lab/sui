@@ -2023,7 +2023,6 @@ dependencies = [
  "lyon_path",
  "lyon_tessellation",
  "pollster",
- "rustybuzz",
  "sui-core",
  "sui-scene",
  "sui-text",
