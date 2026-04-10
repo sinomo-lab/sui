@@ -23,6 +23,7 @@ const DIRECTION_SENTINEL_METADATA: usize = usize::MAX;
 struct PreparedGlyph {
     glyph_id: u16,
     cluster_start: usize,
+    span_metadata: usize,
     origin_x: f32,
     origin_y: f32,
     advance: Vector,
@@ -188,8 +189,10 @@ pub(crate) fn layout_document(
             shaped_glyphs.push(ShapedGlyph {
                 glyph_id: glyph.glyph_id,
                 cluster: glyph.cluster_start,
+                span_id: resolved_spans[glyph.span_metadata].id.clone(),
                 run_index: 0,
                 line_index,
+                face_index: glyph.face_index,
                 origin_x: glyph.origin_x,
                 origin_y: glyph.origin_y + block_top,
                 advance: glyph.advance,
@@ -218,24 +221,23 @@ pub(crate) fn layout_document(
             });
         }
 
-        let mut run_cluster_counts = vec![0_usize; layout_runs.len() - run_start];
         for cluster in &prepared_line.clusters {
-            let owning_run = layout_runs
-                .iter()
-                .enumerate()
-                .skip(run_start)
-                .find(|(_, run)| {
-                    run.line_index == line_index
-                        && cluster.range.start >= run.byte_range.start
-                        && cluster.range.end <= run.byte_range.end
-                })
-                .map(|(index, _)| index)
-                .unwrap_or(run_start);
+            let byte_range = cluster.range.clone();
+            let glyph_range =
+                (glyph_start + cluster.glyph_range.start)..(glyph_start + cluster.glyph_range.end);
+            let run_range = overlapping_run_range(
+                &layout_runs[run_start..],
+                line_index,
+                &byte_range,
+            )
+            .map(|range| (run_start + range.start)..(run_start + range.end))
+            .unwrap_or(run_start..run_start);
             layout_clusters.push(TextCluster {
                 paragraph_index: prepared_line.paragraph_index,
                 line_index,
-                run_index: owning_run,
-                byte_range: cluster.range.clone(),
+                byte_range: byte_range.clone(),
+                glyph_range,
+                run_range,
                 rect: Rect::new(
                     cluster.x_start.min(cluster.x_end),
                     prepared_line.rect.y() + block_top,
@@ -243,14 +245,17 @@ pub(crate) fn layout_document(
                     prepared_line.rect.height(),
                 ),
             });
-            run_cluster_counts[owning_run - run_start] += 1;
         }
 
-        let mut current_cluster = cluster_start;
-        for (offset, cluster_count) in run_cluster_counts.into_iter().enumerate() {
-            let run = &mut layout_runs[run_start + offset];
-            run.cluster_range = current_cluster..(current_cluster + cluster_count);
-            current_cluster += cluster_count;
+        for run in &mut layout_runs[run_start..] {
+            let cluster_range = overlapping_cluster_range(
+                &layout_clusters[cluster_start..],
+                run.line_index,
+                &run.byte_range,
+            )
+            .map(|range| (cluster_start + range.start)..(cluster_start + range.end))
+            .unwrap_or(cluster_start..cluster_start);
+            run.cluster_range = cluster_range;
         }
 
         layout_lines.push(TextLine {
@@ -412,7 +417,7 @@ fn prepare_paragraph(
             TextFlowDirection::LeftToRight
         };
         let line_left = visible_glyphs
-            .iter()
+                .iter()
             .map(|(glyph, _)| glyph.x)
             .reduce(f32::min)
             .unwrap_or_else(|| {
@@ -492,6 +497,7 @@ fn build_prepared_glyphs(
         prepared.push(PreparedGlyph {
             glyph_id: glyph.glyph_id,
             cluster_start: paragraph_start + adjusted_range.start,
+            span_metadata: glyph.metadata,
             origin_x,
             origin_y,
             advance: Vector::new(glyph.w, 0.0),
@@ -583,24 +589,26 @@ fn build_cluster_geometries(
             range: line_byte_range,
             x_start: 0.0,
             x_end: 0.0,
+            glyph_range: 0..0,
         }];
     }
 
-    let mut clusters = BTreeMap::<usize, (Range<usize>, f32, f32, bool)>::new();
-    for (glyph, adjusted_range) in visible_glyphs {
+    let mut clusters = BTreeMap::<usize, (Range<usize>, f32, f32, bool, Range<usize>)>::new();
+    for (glyph_index, (glyph, adjusted_range)) in visible_glyphs.iter().enumerate() {
         let range = (paragraph_start + adjusted_range.start)..(paragraph_start + adjusted_range.end);
         let key = range.start;
         let left = glyph.x;
         let right = glyph.x + glyph.w;
         let rtl = glyph.level.is_rtl();
         match clusters.get_mut(&key) {
-            Some((stored_range, cluster_left, cluster_right, _)) => {
+            Some((stored_range, cluster_left, cluster_right, _, glyph_range)) => {
                 stored_range.end = stored_range.end.max(range.end);
                 *cluster_left = cluster_left.min(left);
                 *cluster_right = cluster_right.max(right);
+                glyph_range.end = glyph_index + 1;
             }
             None => {
-                clusters.insert(key, (range, left, right, rtl));
+                clusters.insert(key, (range, left, right, rtl, glyph_index..(glyph_index + 1)));
             }
         }
     }
@@ -610,15 +618,17 @@ fn build_cluster_geometries(
     let mut previous_x = clusters
         .values()
         .next()
-        .map(|(_, left, right, rtl)| if *rtl { *right } else { *left })
+        .map(|(_, left, right, rtl, _)| if *rtl { *right } else { *left })
         .unwrap_or(0.0);
+    let mut previous_glyph_end = 0_usize;
 
-    for (_, (range, left, right, rtl)) in clusters {
+    for (_, (range, left, right, rtl, glyph_range)) in clusters {
         if range.start > previous_end {
             geometries.push(TextClusterGeometry {
                 range: previous_end..range.start,
                 x_start: previous_x,
                 x_end: previous_x,
+                glyph_range: previous_glyph_end..previous_glyph_end,
             });
         }
         let (x_start, x_end) = if rtl { (right, left) } else { (left, right) };
@@ -626,9 +636,11 @@ fn build_cluster_geometries(
             range: range.clone(),
             x_start,
             x_end,
+            glyph_range: glyph_range.clone(),
         });
         previous_end = range.end;
         previous_x = x_end;
+        previous_glyph_end = glyph_range.end;
     }
 
     if previous_end < line_byte_range.end {
@@ -636,10 +648,57 @@ fn build_cluster_geometries(
             range: previous_end..line_byte_range.end,
             x_start: previous_x,
             x_end: previous_x,
+            glyph_range: previous_glyph_end..previous_glyph_end,
         });
     }
 
     geometries
+}
+
+fn overlapping_run_range(
+    runs: &[TextLayoutRun],
+    line_index: usize,
+    cluster_byte_range: &Range<usize>,
+) -> Option<Range<usize>> {
+    contiguous_overlap_range(runs.iter().enumerate().filter_map(|(index, run)| {
+        if run.line_index == line_index && byte_ranges_overlap(cluster_byte_range, &run.byte_range) {
+            Some(index)
+        } else {
+            None
+        }
+    }))
+}
+
+fn overlapping_cluster_range(
+    clusters: &[TextCluster],
+    line_index: usize,
+    run_byte_range: &Range<usize>,
+) -> Option<Range<usize>> {
+    contiguous_overlap_range(clusters.iter().enumerate().filter_map(|(index, cluster)| {
+        if cluster.line_index == line_index && byte_ranges_overlap(&cluster.byte_range, run_byte_range)
+        {
+            Some(index)
+        } else {
+            None
+        }
+    }))
+}
+
+fn contiguous_overlap_range(indices: impl Iterator<Item = usize>) -> Option<Range<usize>> {
+    let mut indices = indices.peekable();
+    let start = *indices.peek()?;
+    let end = indices.last().map(|index| index + 1).unwrap_or(start + 1);
+    Some(start..end)
+}
+
+fn byte_ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
+    if left.is_empty() {
+        return right.start <= left.start && left.start <= right.end;
+    }
+    if right.is_empty() {
+        return left.start <= right.start && right.start <= left.end;
+    }
+    left.start < right.end && right.start < left.end
 }
 
 fn visible_line_byte_range(

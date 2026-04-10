@@ -2881,8 +2881,13 @@ mod tests {
         let glyph = ShapedGlyph {
             glyph_id: 42,
             cluster: 0,
+            span_id: sui_text::TextSpanId {
+                paragraph_index: 0,
+                span_index: 0,
+            },
             run_index: 0,
             line_index: 0,
+            face_index: 0,
             origin_x: 12.0,
             origin_y: 20.0,
             advance: Vector::new(8.0, 0.0),

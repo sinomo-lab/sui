@@ -1816,7 +1816,7 @@ impl TextEngine {
         let glyph_pixel_alignment_enabled = self.glyph_pixel_alignment_enabled;
 
         for glyph in layout.glyphs() {
-            let face_index = layout.runs()[glyph.run_index].face_index;
+            let face_index = glyph.face_index;
             if active_face_index != Some(face_index) {
                 active_face_index = Some(face_index);
                 parsed_face = None;

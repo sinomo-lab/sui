@@ -323,8 +323,10 @@ pub struct TextSelectionGeometry {
 pub struct ShapedGlyph {
     pub glyph_id: u16,
     pub cluster: usize,
+    pub span_id: TextSpanId,
     pub run_index: usize,
     pub line_index: usize,
+    pub face_index: usize,
     pub origin_x: f32,
     pub origin_y: f32,
     pub advance: Vector,
@@ -337,6 +339,7 @@ pub(crate) struct TextClusterGeometry {
     pub range: Range<usize>,
     pub x_start: f32,
     pub x_end: f32,
+    pub glyph_range: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -352,8 +355,9 @@ pub struct TextParagraphLayout {
 pub struct TextCluster {
     pub paragraph_index: usize,
     pub line_index: usize,
-    pub run_index: usize,
     pub byte_range: Range<usize>,
+    pub glyph_range: Range<usize>,
+    pub run_range: Range<usize>,
     pub rect: Rect,
 }
 
@@ -479,8 +483,15 @@ impl TextLayout {
         &self.data.faces
     }
 
-    pub fn face(&self) -> &ResolvedTextFace {
+    pub fn primary_face(&self) -> &ResolvedTextFace {
         &self.data.faces[0]
+    }
+
+    #[deprecated(
+        note = "TextLayout can resolve multiple faces; use primary_face(), faces(), runs(), or glyphs() depending on the detail you need"
+    )]
+    pub fn face(&self) -> &ResolvedTextFace {
+        self.primary_face()
     }
 
     pub fn run_style(&self, run_index: usize) -> &TextStyle {
@@ -493,11 +504,11 @@ impl TextLayout {
     }
 
     pub fn glyph_style(&self, glyph: &ShapedGlyph) -> &TextStyle {
-        self.run_style(glyph.run_index)
+        self.document.span_style(glyph.span_id.clone())
     }
 
     pub fn glyph_face(&self, glyph: &ShapedGlyph) -> &ResolvedTextFace {
-        self.run_face(glyph.run_index)
+        &self.data.faces[glyph.face_index]
     }
 
     pub fn caret(&self, cursor: TextCursor) -> TextCaret {
