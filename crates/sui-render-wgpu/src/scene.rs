@@ -1991,6 +1991,8 @@ fn build_cached_glyph_atlas(
         return Ok(None);
     };
 
+    let logical_offset = glyph_raster_offset(&image.placement, raster_scale_factor);
+
     let width = image.placement.width as usize;
     let height = image.placement.height as usize;
     let Some(rasterized) = swash_image_to_rgba(&image, coverage_policy) else {
@@ -2000,10 +2002,7 @@ fn build_cached_glyph_atlas(
     if width == 0 || height == 0 {
         return Ok(Some(CachedGlyphAtlas {
             scale: glyph_scale_logical,
-            offset: Vector::new(
-                image.placement.left as f32 / raster_scale_factor,
-                image.placement.top as f32 / raster_scale_factor,
-            ),
+            offset: logical_offset,
             size: Size::ZERO,
             uv_min: [0.0, 0.0],
             uv_max: [0.0, 0.0],
@@ -2026,10 +2025,7 @@ fn build_cached_glyph_atlas(
     let logical_uv_max_y = logical_uv_min_y + image.placement.height as f32;
     Ok(Some(CachedGlyphAtlas {
         scale: glyph_scale_logical,
-        offset: Vector::new(
-            image.placement.left as f32 / raster_scale_factor,
-            image.placement.top as f32 / raster_scale_factor,
-        ),
+        offset: logical_offset,
         size: Size::new(
             image.placement.width as f32 / raster_scale_factor,
             image.placement.height as f32 / raster_scale_factor,
@@ -2038,6 +2034,16 @@ fn build_cached_glyph_atlas(
         uv_max: [logical_uv_max_x * inv_width, logical_uv_max_y * inv_height],
         is_color: rasterized.is_color,
     }))
+}
+
+pub(crate) fn glyph_raster_offset(
+    placement: &swash::zeno::Placement,
+    raster_scale_factor: f32,
+) -> Vector {
+    Vector::new(
+        placement.left as f32 / raster_scale_factor,
+        -(placement.top as f32) / raster_scale_factor,
+    )
 }
 
 pub(crate) struct SwashRasterizedGlyph {

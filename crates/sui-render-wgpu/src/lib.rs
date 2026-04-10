@@ -2459,8 +2459,8 @@ mod tests {
         append_cached_path_mesh, batch_draw_ops, build_vertices, prepare_frame_batches,
         SwashImageContent, SwashSource, SwashStrikeWith,
         scene::{
-            CachedDrawBatch, CachedPassBatch, append_cached_glyph_atlas, linearized_color_unorm,
-            prepare_cached_passes, swash_image_to_rgba,
+            CachedDrawBatch, CachedPassBatch, append_cached_glyph_atlas, glyph_raster_offset,
+            linearized_color_unorm, prepare_cached_passes, swash_image_to_rgba,
         },
         shader_color, to_ndc,
     };
@@ -2951,6 +2951,21 @@ mod tests {
             assert!((vertex.color[2] - expected[2]).abs() < 0.0001);
             assert!((vertex.color[3] - expected[3]).abs() < 0.0001);
         }
+    }
+
+    #[test]
+    fn swash_placement_offsets_are_converted_to_screen_space() {
+        let offset = glyph_raster_offset(
+            &swash::zeno::Placement {
+                left: 6,
+                top: 10,
+                width: 12,
+                height: 14,
+            },
+            2.0,
+        );
+
+        assert_eq!(offset, Vector::new(3.0, -5.0));
     }
 
     #[test]
