@@ -23,6 +23,7 @@ opt-level = 2
 
 [workspace.dependencies]
 bytemuck = { version = "1", features = ["derive"] }
+cosmic-text = "0.18.2"
 fontdb = "0.23"
 lyon_path = "1.0"
 lyon_tessellation = "1.0"

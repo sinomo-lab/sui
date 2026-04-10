@@ -2881,6 +2881,7 @@ mod tests {
         let glyph = ShapedGlyph {
             glyph_id: 42,
             cluster: 0,
+            run_index: 0,
             line_index: 0,
             origin_x: 12.0,
             origin_y: 20.0,
