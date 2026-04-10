@@ -412,6 +412,15 @@ impl RgbaImage {
 
 const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 const DEFAULT_FEATHER_WIDTH: f32 = 1.0;
+const TEXT_ATLAS_RETRY_ERROR_MESSAGE: &str = "text atlas capacity exceeded; retry with reset";
+
+fn text_atlas_retry_error() -> Error {
+    Error::new(TEXT_ATLAS_RETRY_ERROR_MESSAGE)
+}
+
+fn is_text_atlas_retry_error(error: &Error) -> bool {
+    error.message() == TEXT_ATLAS_RETRY_ERROR_MESSAGE
+}
 
 impl WgpuRenderer {
     pub fn new() -> Self {
@@ -1045,31 +1054,45 @@ impl WgpuRenderer {
         let feather_width = self.active_feather_width();
         let text_coverage_policy = self.active_text_coverage_policy();
         let glyph_pixel_alignment_enabled = self.active_glyph_pixel_alignment_enabled();
-        let (submission, compositor_stats, text_frame_stats) = {
+        let mut atlas_retry_attempted = false;
+        let (submission, compositor_stats, text_frame_stats) = loop {
             if self.text_engine.is_none() {
                 self.text_engine = Some(TextEngine::new()?);
             }
-            let text_engine = self
-                .text_engine
-                .as_mut()
-                .expect("text engine initialized before draw-op construction");
-            text_engine.set_text_coverage_policy(text_coverage_policy);
-            text_engine.set_glyph_pixel_alignment_enabled(glyph_pixel_alignment_enabled);
-            text_engine.set_diagnostics_enabled(diagnostics_enabled);
-            text_engine.begin_frame();
-            let compositor = self.compositors.entry(frame.window_id).or_default();
-            compositor.set_diagnostics_enabled(diagnostics_enabled);
-            let submission =
-                compositor.prepare_frame_submission(frame, text_engine, feather_width)?;
-            (
-                submission,
-                compositor.last_frame_stats,
-                if diagnostics_enabled {
-                    text_engine.frame_stats()
-                } else {
-                    TextFrameStats::default()
-                },
-            )
+            let attempt = {
+                let text_engine = self
+                    .text_engine
+                    .as_mut()
+                    .expect("text engine initialized before draw-op construction");
+                text_engine.set_text_coverage_policy(text_coverage_policy);
+                text_engine.set_glyph_pixel_alignment_enabled(glyph_pixel_alignment_enabled);
+                text_engine.set_diagnostics_enabled(diagnostics_enabled);
+                text_engine.begin_frame();
+                let compositor = self.compositors.entry(frame.window_id).or_default();
+                compositor.set_diagnostics_enabled(diagnostics_enabled);
+                compositor
+                    .prepare_frame_submission(frame, text_engine, feather_width)
+                    .map(|submission| {
+                        (
+                            submission,
+                            compositor.last_frame_stats,
+                            if diagnostics_enabled {
+                                text_engine.frame_stats()
+                            } else {
+                                TextFrameStats::default()
+                            },
+                        )
+                    })
+            };
+
+            match attempt {
+                Ok(result) => break result,
+                Err(error) if !atlas_retry_attempted && is_text_atlas_retry_error(&error) => {
+                    atlas_retry_attempted = true;
+                    self.invalidate_text_render_state();
+                }
+                Err(error) => return Err(error),
+            }
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
         let mut analytic_paths = HashMap::new();
@@ -2432,8 +2455,9 @@ mod tests {
         PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
         PreparedVertices, RendererFrameStats, RetainedCompositorState, RetainedFrameFragment,
         RetainedLayerRenderMode, RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine,
-        VERTEX_SIZE, Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
-        prepare_frame_batches, SwashImageContent, SwashSource, SwashStrikeWith,
+        TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, VERTEX_SIZE, Vertex, WgpuRenderer,
+        append_cached_path_mesh, batch_draw_ops, build_vertices, prepare_frame_batches,
+        SwashImageContent, SwashSource, SwashStrikeWith,
         scene::{
             CachedDrawBatch, CachedPassBatch, append_cached_glyph_atlas, linearized_color_unorm,
             prepare_cached_passes, swash_image_to_rgba,
@@ -7990,6 +8014,61 @@ mod tests {
             error
                 .to_string()
                 .contains("font handle 404 is not registered")
+        );
+    }
+
+    #[test]
+    fn renderer_resets_and_retries_when_text_atlas_fills_mid_frame() {
+        let mut scene = Scene::new();
+        let text: String = (33u8..=126).map(char::from).collect();
+        scene.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(4.0, 6.0, 1800.0, 32.0),
+            text,
+            style: TextStyle {
+                font_size: 18.0,
+                line_height: 22.0,
+                ..TextStyle::new(Color::WHITE)
+            },
+        }));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(16),
+            viewport: Size::new(1800.0, 64.0),
+            surface_size: Size::new(1800.0, 64.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut renderer = WgpuRenderer::new();
+        let mut text_engine = TextEngine::new().unwrap();
+        text_engine.atlas = TextAtlas::new(64, 64);
+        renderer.text_engine = Some(text_engine);
+
+        renderer.render(&frame).unwrap();
+
+        let active_text_engine = renderer
+            .text_engine
+            .as_ref()
+            .expect("renderer should recreate the text engine after atlas retry");
+        assert_eq!(
+            active_text_engine.atlas.size(),
+            (TEXT_ATLAS_WIDTH as u32, TEXT_ATLAS_HEIGHT as u32)
+        );
+        assert!(active_text_engine.glyph_cache_stats().0 > 32);
+
+        let stats = renderer
+            .last_frame_stats(frame.window_id)
+            .expect("renderer should record frame stats after retry");
+        assert!(stats.text_glyph_instance_count > 0);
+
+        let image = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+        assert!(
+            image.pixels().chunks_exact(4).any(|pixel| pixel[3] != 0),
+            "retried frame should still render visible text"
         );
     }
 

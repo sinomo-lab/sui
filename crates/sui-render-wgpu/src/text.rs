@@ -144,6 +144,12 @@ pub(crate) struct TextAtlasPlacement {
     pub(crate) y: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextAtlasInsertError {
+    Full,
+    TooLarge,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TextAtlasUpload {
     pub(crate) size: (u32, u32),
@@ -187,9 +193,13 @@ impl TextAtlas {
         (self.width as u32, self.height as u32)
     }
 
-    fn allocate(&mut self, width: usize, height: usize) -> Option<TextAtlasPlacement> {
+    fn allocate(
+        &mut self,
+        width: usize,
+        height: usize,
+    ) -> std::result::Result<TextAtlasPlacement, TextAtlasInsertError> {
         if width == 0 || height == 0 || width > self.width || height > self.height {
-            return None;
+            return Err(TextAtlasInsertError::TooLarge);
         }
 
         if self.cursor.0 + width + TEXT_ATLAS_PADDING > self.width {
@@ -199,7 +209,7 @@ impl TextAtlas {
         }
 
         if self.cursor.1 + height + TEXT_ATLAS_PADDING > self.height {
-            return None;
+            return Err(TextAtlasInsertError::Full);
         }
 
         let placement = TextAtlasPlacement {
@@ -208,7 +218,7 @@ impl TextAtlas {
         };
         self.cursor.0 += width + TEXT_ATLAS_PADDING;
         self.row_height = self.row_height.max(height);
-        Some(placement)
+        Ok(placement)
     }
 
     fn write_rgba(
@@ -234,10 +244,10 @@ impl TextAtlas {
         width: usize,
         height: usize,
         pixels: &[u8],
-    ) -> Option<TextAtlasPlacement> {
+    ) -> std::result::Result<TextAtlasPlacement, TextAtlasInsertError> {
         let placement = self.allocate(width, height)?;
         self.write_rgba(placement, width, height, pixels);
-        Some(placement)
+        Ok(placement)
     }
 
     pub(crate) fn take_upload(&mut self) -> Option<TextAtlasUpload> {

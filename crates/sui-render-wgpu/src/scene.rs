@@ -2011,8 +2011,10 @@ fn build_cached_glyph_atlas(
         }));
     }
 
-    let Some(placement) = atlas.insert_rgba(width, height, &rasterized.pixels) else {
-        return Ok(None);
+    let placement = match atlas.insert_rgba(width, height, &rasterized.pixels) {
+        Ok(placement) => placement,
+        Err(TextAtlasInsertError::TooLarge) => return Ok(None),
+        Err(TextAtlasInsertError::Full) => return Err(text_atlas_retry_error()),
     };
 
     let atlas_size = atlas.size();
