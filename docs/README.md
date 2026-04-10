@@ -11,9 +11,10 @@ Suggested reading order:
 1. [architecture.md](./architecture.md) for the runtime and frame pipeline.
 2. [stack-hosts.md](./stack-hosts.md) for the planned stacking, popup-host, and multi-bounds model.
 3. [crate-architecture.md](./crate-architecture.md) for crate ownership and dependency boundaries.
-4. [renderer-architecture.md](./renderer-architecture.md) for scene, compositor, and renderer details.
-5. [testing.md](./testing.md) for headless tests, desktop harness tests, and visual artifacts.
-6. [design.md](./design.md) for the long-term product and API direction.
+4. [text-system.md](./text-system.md) for the planned text-engine refactor and long-term text goals.
+5. [renderer-architecture.md](./renderer-architecture.md) for scene, compositor, and renderer details.
+6. [testing.md](./testing.md) for headless tests, desktop harness tests, and visual artifacts.
+7. [design.md](./design.md) for the long-term product and API direction.
 
 ## Workspace At A Glance
 

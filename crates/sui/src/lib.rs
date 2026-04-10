@@ -57,8 +57,11 @@ pub use sui_scene::{
     SceneFrame, StrokeStyle,
 };
 pub use sui_text::{
-    FontRegistry, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText, TextLayout, TextLine,
-    TextMeasurement, TextRun, TextStyle,
+    FontRegistry, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText, TextAffinity,
+    TextAlign, TextCluster, TextCursor, TextDirection, TextDocument, TextFlowDirection,
+    TextLayout, TextLayoutRequest, TextLayoutRun, TextLine, TextMeasurement, TextParagraph,
+    TextParagraphLayout, TextParagraphStyle, TextRun, TextSelection, TextSelectionGeometry,
+    TextSpan, TextSpanId, TextStyle, TextWrap, TextWritingMode,
 };
 pub use sui_widgets::{
     Breadcrumb, BreadcrumbItem, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette,

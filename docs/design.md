@@ -6,6 +6,7 @@
 - [Architecture Overview](./architecture.md)
 - [Stack Hosts and Bounds Note](./stack-hosts.md)
 - [Crate Guide](./crate-architecture.md)
+- [Text System Direction](./text-system.md)
 - [Rendering Architecture](./renderer-architecture.md)
 - [Testing Guide](./testing.md)
 

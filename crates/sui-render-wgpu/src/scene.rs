@@ -1811,14 +1811,23 @@ impl TextEngine {
             return Ok(());
         }
 
-        let face_key = GlyphFaceCacheKey::new(layout.face());
+        let mut active_face_index = None;
         let mut parsed_face = None;
-        let coverage_policy = self
-            .coverage_policy
-            .resolved_for_text_color(layout.style().color);
         let glyph_pixel_alignment_enabled = self.glyph_pixel_alignment_enabled;
 
         for glyph in layout.glyphs() {
+            let face_index = layout.runs()[glyph.run_index].face_index;
+            if active_face_index != Some(face_index) {
+                active_face_index = Some(face_index);
+                parsed_face = None;
+            }
+
+            let glyph_face = layout.glyph_face(glyph);
+            let face_key = GlyphFaceCacheKey::new(glyph_face);
+            let glyph_style = layout.glyph_style(glyph);
+            let coverage_policy = self
+                .coverage_policy
+                .resolved_for_text_color(glyph_style.color);
             let mut translated_glyph = glyph.clone();
             translated_glyph.origin_x += origin.x;
             translated_glyph.origin_y += origin.y;
@@ -1827,7 +1836,7 @@ impl TextEngine {
             }
 
             if let Some(primitive) = self.cached_glyph_primitive(
-                layout.face(),
+                glyph_face,
                 &mut parsed_face,
                 face_key,
                 glyph.glyph_id,
@@ -1842,7 +1851,7 @@ impl TextEngine {
                             atlas_vertices,
                             atlas,
                             &translated_glyph,
-                            layout.style().color,
+                            glyph_style.color,
                             state.current_transform,
                             viewport,
                             raster_scale_factor,
@@ -1859,7 +1868,7 @@ impl TextEngine {
                             fallback_vertices,
                             mesh,
                             &translated_glyph,
-                            layout.style().color,
+                            glyph_style.color,
                             state.current_transform,
                             viewport,
                             coverage_policy,
