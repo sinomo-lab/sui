@@ -579,50 +579,462 @@ fn build_render_settings_tab() -> impl Widget {
     RenderSettingsTab::new()
 }
 
-fn build_dev_workspace() -> impl Widget {
+fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
     let widget_book_state = default_widget_book_state();
     let workspace = FloatingWorkspaceState::new();
 
-    let views = FloatingWorkspace::new(workspace.clone())
-        .name("Development workspace")
-        .with_view(
-            FloatingViewConfig::new(WIDGET_BOOK_TAB_LABEL, Rect::new(24.0, 24.0, 680.0, 760.0))
-                .min_size(Size::new(420.0, 320.0)),
-            build_widget_book_gallery(widget_book_state),
-        )
-        .with_view(
-            FloatingViewConfig::new(BUTTON_GRID_TAB_LABEL, Rect::new(560.0, 72.0, 420.0, 340.0))
-                .min_size(Size::new(280.0, 220.0)),
-            build_button_grid_benchmark(),
-        )
-        .with_view(
-            FloatingViewConfig::new(SETTINGS_TAB_LABEL, Rect::new(420.0, 440.0, 420.0, 320.0))
-                .min_size(Size::new(300.0, 240.0)),
-            build_render_settings_tab(),
-        );
+    let mut views = FloatingWorkspace::new(workspace.clone()).name("Development workspace");
+    views.push_view(
+        FloatingViewConfig::new(WIDGET_BOOK_TAB_LABEL, widget_book_bounds)
+            .min_size(Size::new(420.0, 320.0)),
+        build_widget_book_gallery(widget_book_state),
+    );
+    views.push_view(
+        FloatingViewConfig::new(BUTTON_GRID_TAB_LABEL, Rect::new(560.0, 72.0, 420.0, 340.0))
+            .min_size(Size::new(280.0, 220.0)),
+        build_button_grid_benchmark(),
+    );
+    views.push_view(
+        FloatingViewConfig::new(SETTINGS_TAB_LABEL, Rect::new(420.0, 440.0, 420.0, 320.0))
+            .min_size(Size::new(300.0, 240.0)),
+        build_render_settings_tab(),
+    );
 
-    SplitView::horizontal(ViewSidebar::new(workspace), views)
+    let root = SplitView::horizontal(ViewSidebar::new(workspace.clone()), views)
         .name("Development workspace split")
         .ratio(0.24)
         .min_first(236.0)
         .min_second(420.0)
-        .divider_thickness(12.0)
-}
+        .divider_thickness(12.0);
 
-fn build_dev_application() -> Application {
     let mut app = Application::new();
     register_widget_book_images(&mut app);
-    app.window(
+    let app = app.window(
         WindowBuilder::new()
             .title(WINDOW_TITLE)
             .root(LivePerformanceRoot::new(
                 WINDOW_TITLE,
                 WINDOW_DESCRIPTION,
-                build_dev_workspace(),
+                root,
             )),
-    )
+    );
+
+    app
+}
+
+fn build_dev_application() -> Application {
+    build_dev_application_with_widget_book_bounds(Rect::new(24.0, 24.0, 680.0, 760.0))
 }
 
 fn main() -> sui::Result<()> {
     build_dev_application().run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use sui::{
+        Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
+        Result, SemanticsNode, SemanticsRole, Vector,
+    };
+    use sui_testing::{Screenshot, TestApp, TestWindow, WindowSnapshot};
+
+    #[test]
+    fn widget_book_scroll_does_not_repaint_pixels_outside_shrunken_floating_view() -> Result<()> {
+        let initial_bounds = Rect::new(320.0, 28.0, 560.0, 520.0);
+        let app = TestApp::new(move || {
+            build_dev_application_with_widget_book_bounds(initial_bounds).build()
+        })?;
+        let window = app.main_window()?;
+
+        let initial_snapshot = window.snapshot()?;
+        let initial_view = find_named_node(&initial_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
+        let resize_start = Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
+        let resize_end = Point::new(initial_view.bounds.x() + 420.0, initial_view.bounds.y() + 328.0);
+        drag_pointer(&window, resize_start, resize_end)?;
+
+        let before_snapshot = window.snapshot()?;
+        let view = find_named_node(&before_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
+        assert!(
+            view.bounds.width() <= 440.0,
+            "expected the widget book floating view to shrink horizontally for the regression, before={:?} after={:?}",
+            initial_view.bounds,
+            view.bounds,
+        );
+        assert!(
+            view.bounds.height() <= 360.0,
+            "expected the widget book floating view to shrink vertically for the regression, before={:?} after={:?}",
+            initial_view.bounds,
+            view.bounds,
+        );
+
+        let viewport = viewport_bounds(&before_snapshot);
+        let probes = leak_probe_regions(view.bounds, viewport);
+        assert!(
+            !probes.is_empty(),
+            "expected at least one valid probe region outside the widget book view, view={:?}, viewport={:?}",
+            view.bounds,
+            viewport,
+        );
+
+        let gallery = window
+            .get_by_role(SemanticsRole::Window)
+            .with_name(WIDGET_BOOK_TAB_LABEL)
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
+
+        let before_frame = window.capture_screenshot()?;
+        for _ in 0..6 {
+            gallery.scroll_pixels(Vector::new(0.0, -120.0))?;
+        }
+        let after_snapshot = window.snapshot()?;
+        let after_frame = window.capture_screenshot()?;
+
+        for probe in probes {
+            let before_crop = before_frame.crop(scale_bounds_for_screenshot(
+                probe,
+                &before_snapshot,
+                &before_frame,
+            ))?;
+            let after_crop = after_frame.crop(scale_bounds_for_screenshot(
+                probe,
+                &after_snapshot,
+                &after_frame,
+            ))?;
+            let diff_count = pixel_diff_count(&before_crop, &after_crop);
+            assert_eq!(
+                diff_count,
+                0,
+                "scrolling inside the shrunken widget book view changed pixels outside the view bounds in probe {:?}",
+                probe,
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_image_and_swatch_stories_do_not_leak_outside_shrunken_floating_view() -> Result<()> {
+        let initial_bounds = Rect::new(320.0, 28.0, 560.0, 520.0);
+        let app = TestApp::new(move || {
+            build_dev_application_with_widget_book_bounds(initial_bounds).build()
+        })?;
+        let window = app.main_window()?;
+
+        let initial_snapshot = window.snapshot()?;
+        let initial_view = find_named_node(&initial_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
+        let resize_start = Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
+        let resize_end = Point::new(initial_view.bounds.x() + 420.0, initial_view.bounds.y() + 328.0);
+        drag_pointer(&window, resize_start, resize_end)?;
+
+        assert_story_exit_does_not_repaint_outside_view(
+            &window,
+            SemanticsRole::Image,
+            sui_widget_book::DEMO_IMAGE_LABEL,
+        )?;
+        assert_story_exit_does_not_repaint_outside_view(
+            &window,
+            SemanticsRole::ColorSwatch,
+            sui_widget_book::COLOR_SWATCH_NAME,
+        )?;
+
+        Ok(())
+    }
+
+    fn drag_pointer(window: &TestWindow, from: Point, to: Point) -> Result<()> {
+        let root = window.root();
+
+        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, from)))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, from);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        root.dispatch_event(Event::Pointer(down))?;
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, to);
+        moved.buttons = PointerButtons::new(1);
+        moved.delta = to - from;
+        root.dispatch_event(Event::Pointer(moved))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, to);
+        up.button = Some(PointerButton::Primary);
+        root.dispatch_event(Event::Pointer(up))
+    }
+
+    fn find_named_node(snapshot: &WindowSnapshot, role: SemanticsRole, name: &str) -> SemanticsNode {
+        let matches = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .filter(|node| node.role == role && node.name.as_deref() == Some(name))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        match matches.as_slice() {
+            [node] => node.clone(),
+            [] => panic!("missing semantics node {:?} named {:?}", role, name),
+            _ => panic!(
+                "expected exactly one semantics node {:?} named {:?}, found {}",
+                role,
+                name,
+                matches.len()
+            ),
+        }
+    }
+
+    fn viewport_bounds(snapshot: &WindowSnapshot) -> Rect {
+        if let Some(scene) = &snapshot.scene_summary {
+            return Rect::new(0.0, 0.0, scene.viewport.width, scene.viewport.height);
+        }
+
+        snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.role == SemanticsRole::Window && node.name.as_deref() == Some(WINDOW_TITLE))
+            .map(|node| node.bounds)
+            .unwrap_or(Rect::new(0.0, 0.0, 1280.0, 720.0))
+    }
+
+    fn assert_story_exit_does_not_repaint_outside_view(
+        window: &TestWindow,
+        role: SemanticsRole,
+        name: &str,
+    ) -> Result<()> {
+        let gallery = window
+            .get_by_role(SemanticsRole::Window)
+            .with_name(WIDGET_BOOK_TAB_LABEL)
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
+
+        scroll_story_until_visible(window, &gallery, role.clone(), name, 80)?;
+        let before_snapshot = window.snapshot()?;
+        let viewport = viewport_bounds(&before_snapshot);
+        let view = find_named_node(&before_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
+        let probes = leak_probe_regions(view.bounds, viewport);
+        assert!(
+            !probes.is_empty(),
+            "expected probe regions around the shrunken widget book view, view={:?}, viewport={:?}",
+            view.bounds,
+            viewport,
+        );
+
+        let before_frame = window.capture_screenshot()?;
+
+        scroll_story_until_hidden(window, &gallery, role.clone(), name, 120)?;
+
+        let after_snapshot = window.snapshot()?;
+        let after_frame = window.capture_screenshot()?;
+
+        for probe in probes {
+            let before_crop = before_frame.crop(scale_bounds_for_screenshot(
+                probe,
+                &before_snapshot,
+                &before_frame,
+            ))?;
+            let after_crop = after_frame.crop(scale_bounds_for_screenshot(
+                probe,
+                &after_snapshot,
+                &after_frame,
+            ))?;
+            let diff_count = pixel_diff_count(&before_crop, &after_crop);
+            assert_eq!(
+                diff_count,
+                0,
+                "scrolling story {:?} named {:?} fully outside the widget book viewport changed pixels outside the floating view in probe {:?}",
+                role,
+                name,
+                probe,
+            );
+        }
+
+        Ok(())
+    }
+
+    fn scroll_story_until_visible(
+        window: &TestWindow,
+        gallery: &sui_testing::Locator,
+        role: SemanticsRole,
+        name: &str,
+        max_steps: usize,
+    ) -> Result<()> {
+        for _ in 0..max_steps {
+            let snapshot = window.snapshot()?;
+            if let Some(story) = find_named_node_optional(&snapshot, role.clone(), name) {
+                let gallery_bounds = find_named_node(
+                    &snapshot,
+                    SemanticsRole::ScrollView,
+                    sui_widget_book::GALLERY_SCROLL_NAME,
+                )
+                .bounds;
+                if visible_area_ratio(story.bounds, gallery_bounds) > 0.0 {
+                    return Ok(());
+                }
+            }
+
+            gallery.scroll_pixels(Vector::new(0.0, -120.0))?;
+        }
+
+        Err(sui::Error::new(format!(
+            "failed to scroll story {:?} named {:?} into the widget book viewport",
+            role, name,
+        )))
+    }
+
+    fn scroll_story_until_hidden(
+        window: &TestWindow,
+        gallery: &sui_testing::Locator,
+        role: SemanticsRole,
+        name: &str,
+        max_steps: usize,
+    ) -> Result<()> {
+        let mut last_observation = None;
+        for _ in 0..max_steps {
+            gallery.scroll_pixels(Vector::new(0.0, 24.0))?;
+
+            let snapshot = window.snapshot()?;
+            let Some(story) = find_named_node_optional(&snapshot, role.clone(), name) else {
+                return Ok(());
+            };
+            let gallery_bounds = find_named_node(
+                &snapshot,
+                SemanticsRole::ScrollView,
+                sui_widget_book::GALLERY_SCROLL_NAME,
+            )
+            .bounds;
+            last_observation = Some((story.bounds, gallery_bounds));
+            if visible_area_ratio(story.bounds, gallery_bounds) == 0.0 {
+                return Ok(());
+            }
+        }
+
+        let detail = last_observation
+            .map(|(story_bounds, gallery_bounds)| {
+                format!(
+                    ", last story bounds={:?}, gallery bounds={:?}",
+                    story_bounds, gallery_bounds
+                )
+            })
+            .unwrap_or_default();
+
+        Err(sui::Error::new(format!(
+            "failed to scroll story {:?} named {:?} completely outside the widget book viewport{}",
+            role, name, detail,
+        )))
+    }
+
+    fn find_named_node_optional(
+        snapshot: &WindowSnapshot,
+        role: SemanticsRole,
+        name: &str,
+    ) -> Option<SemanticsNode> {
+        snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.role == role && node.name.as_deref() == Some(name))
+            .cloned()
+    }
+
+    fn visible_area_ratio(bounds: Rect, viewport: Rect) -> f32 {
+        let Some(visible) = bounds.intersection(viewport) else {
+            return 0.0;
+        };
+        let bounds_area = bounds.width() * bounds.height();
+        if bounds_area <= 0.0 {
+            return 0.0;
+        }
+        (visible.width() * visible.height()) / bounds_area
+    }
+
+    fn leak_probe_regions(view_bounds: Rect, viewport: Rect) -> Vec<Rect> {
+        let margin = 8.0;
+        let thickness = 48.0;
+        let mut probes = Vec::new();
+
+        let left_probe = Rect::new(
+            view_bounds.x() - margin - thickness,
+            view_bounds.y() + 16.0,
+            thickness,
+            (view_bounds.height() - 32.0).max(24.0),
+        );
+        if let Some(probe) = left_probe.intersection(viewport) {
+            if probe.width() >= 24.0 && probe.height() >= 24.0 {
+                probes.push(probe);
+            }
+        }
+
+        let top_probe = Rect::new(
+            view_bounds.x() + 16.0,
+            view_bounds.y() - margin - thickness,
+            (view_bounds.width() - 32.0).max(24.0),
+            thickness,
+        );
+        if let Some(probe) = top_probe.intersection(viewport) {
+            if probe.width() >= 24.0 && probe.height() >= 24.0 {
+                probes.push(probe);
+            }
+        }
+
+        let right_probe = Rect::new(
+            view_bounds.max_x() + margin,
+            view_bounds.y() + 16.0,
+            thickness,
+            (view_bounds.height() - 32.0).max(24.0),
+        );
+        if let Some(probe) = right_probe.intersection(viewport) {
+            if probe.width() >= 24.0 && probe.height() >= 24.0 {
+                probes.push(probe);
+            }
+        }
+
+        let bottom_probe = Rect::new(
+            view_bounds.x() + 16.0,
+            view_bounds.max_y() + margin,
+            (view_bounds.width() - 32.0).max(24.0),
+            thickness,
+        );
+        if let Some(probe) = bottom_probe.intersection(viewport) {
+            if probe.width() >= 24.0 && probe.height() >= 24.0 {
+                probes.push(probe);
+            }
+        }
+
+        probes
+    }
+
+    fn scale_bounds_for_screenshot(
+        bounds: Rect,
+        snapshot: &WindowSnapshot,
+        screenshot: &Screenshot,
+    ) -> Rect {
+        let Some(scene) = &snapshot.scene_summary else {
+            return bounds;
+        };
+        let viewport = scene.viewport;
+        if viewport.width <= 0.0 || viewport.height <= 0.0 {
+            return bounds;
+        }
+
+        let scale_x = screenshot.width() as f32 / viewport.width;
+        let scale_y = screenshot.height() as f32 / viewport.height;
+        Rect::new(
+            bounds.x() * scale_x,
+            bounds.y() * scale_y,
+            bounds.width() * scale_x,
+            bounds.height() * scale_y,
+        )
+    }
+
+    fn pixel_diff_count(left: &Screenshot, right: &Screenshot) -> usize {
+        assert_eq!(left.width(), right.width(), "screenshot widths differ");
+        assert_eq!(left.height(), right.height(), "screenshot heights differ");
+
+        left.pixels()
+            .chunks_exact(4)
+            .zip(right.pixels().chunks_exact(4))
+            .filter(|(left_pixel, right_pixel)| left_pixel != right_pixel)
+            .count()
+    }
 }

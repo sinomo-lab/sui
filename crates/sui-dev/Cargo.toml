@@ -14,3 +14,7 @@ path = "src/main.rs"
 [dependencies]
 sui = { workspace = true }
 sui-widget-book = { workspace = true }
+
+[dev-dependencies]
+sui-scene = { workspace = true }
+sui-testing = { workspace = true }

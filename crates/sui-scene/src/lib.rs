@@ -518,11 +518,14 @@ impl SceneBoundsState {
                 self.transform = self.transform_stack.pop().unwrap_or_default();
                 None
             }
-            SceneCommand::Layer(layer) => Some(if clipped {
-                layer.descriptor.paint_bounds
-            } else {
-                layer.descriptor.content_bounds
-            }),
+            SceneCommand::Layer(layer) => self.apply_rect(
+                if clipped {
+                    layer.descriptor.paint_bounds
+                } else {
+                    layer.descriptor.content_bounds
+                },
+                clipped,
+            ),
             SceneCommand::Label { rect, .. } => self.apply_rect(*rect, clipped),
         }
     }

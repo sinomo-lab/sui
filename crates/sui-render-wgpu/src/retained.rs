@@ -338,6 +338,26 @@ impl ResolvedRasterState {
     }
 }
 
+fn clip_stack_signature(clips: &[ResolvedClipPrimitive]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for clip in clips {
+        match clip {
+            ResolvedClipPrimitive::Rect(rect) => {
+                0u8.hash(&mut hasher);
+                hash_rect(&mut hasher, *rect);
+            }
+            ResolvedClipPrimitive::Path {
+                bounds, signature, ..
+            } => {
+                1u8.hash(&mut hasher);
+                hash_rect(&mut hasher, *bounds);
+                signature.hash(&mut hasher);
+            }
+        }
+    }
+    hasher.finish()
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct RetainedDirectPacket {
@@ -371,6 +391,7 @@ pub(crate) struct RetainedLayer {
     pub(crate) packet_ids: Vec<RetainedPacketId>,
     pub(crate) transform_node: TransformNodeId,
     pub(crate) clip_node: ClipNodeId,
+    pub(crate) clip_signature: u64,
     pub(crate) effect_node: EffectNodeId,
     pub(crate) render_mode: RetainedLayerRenderMode,
     pub(crate) content_version: u64,
@@ -396,6 +417,7 @@ struct LayerSnapshot {
     packets: Vec<PacketSnapshot>,
     transform_node: TransformNodeId,
     clip_node: ClipNodeId,
+    clip_signature: u64,
     effect_node: EffectNodeId,
 }
 
@@ -639,6 +661,18 @@ impl RetainedCompositorState {
                         Some(state.effect_node),
                         layer.descriptor.composition_mode,
                     );
+                    if layer.descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
+                        || layer.descriptor.is_stack_surface
+                    {
+                        let clip = ResolvedClipPrimitive::Rect(layer.descriptor.bounds);
+                        let parent = child_state
+                            .clip_stack
+                            .last()
+                            .map(|(_, node_id)| *node_id)
+                            .unwrap_or(ClipNodeId::ROOT);
+                        let node_id = self.push_clip_node(Some(parent), clip.clone());
+                        child_state.clip_stack.push((clip, node_id));
+                    }
                     let phase =
                         composition_phase_for_effect_node(child_state.effect_node, &self.effects);
                     let layer_snapshot =
@@ -711,6 +745,7 @@ impl RetainedCompositorState {
             packets: container.packets,
             transform_node: inherited_state.transform_node,
             clip_node: inherited_state.clip_node,
+            clip_signature: clip_stack_signature(&inherited_state.clip_stack),
             effect_node: inherited_state.effect_node,
         })
     }
@@ -851,24 +886,17 @@ impl RetainedCompositorState {
             }
 
             if let Some(cached_root) = cached_tile_owners.get(&update.layer_id).copied().flatten() {
-                let cached_root_is_scroll =
-                    snapshot.layers.get(&cached_root).is_some_and(|layer| {
-                        layer.descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
-                    });
                 if update.kind == SceneLayerUpdateKind::Transform
-                    && cached_root != update.layer_id
-                    && cached_root_is_scroll
-                    && !packet_dirty_layers.contains(&cached_root)
+                    && cached_root == update.layer_id
+                    && render_modes[&cached_root] == RetainedLayerRenderMode::CachedTiles
                 {
-                    let translation_delta =
-                        previous_layers.get(&update.layer_id).and_then(|previous| {
-                            snapshot.layers.get(&update.layer_id).and_then(|current| {
-                                descriptor_translation_delta(
-                                    &previous.descriptor,
-                                    &current.descriptor,
-                                )
-                            })
-                        });
+                    let translation_delta = previous_layers.get(&cached_root).and_then(|previous| {
+                        descriptor_translation_delta(
+                            &previous.descriptor,
+                            &snapshot.layers[&cached_root].descriptor,
+                        )
+                    });
+
                     if let Some(delta) = translation_delta {
                         if let Some(existing) = cached_scroll_translations.get(&cached_root) {
                             if *existing != delta {
@@ -884,8 +912,16 @@ impl RetainedCompositorState {
                         } else if !cached_scroll_translation_conflicts.contains(&cached_root) {
                             cached_scroll_translations.insert(cached_root, delta);
                         }
-                        continue;
+                    } else {
+                        packet_dirty_layers.insert(cached_root);
+                        merge_damage_rect(
+                            &mut tiled_damage,
+                            cached_root,
+                            update.damage.or(Some(update.paint_bounds)),
+                        );
                     }
+
+                    continue;
                 }
 
                 if matches!(
@@ -916,22 +952,12 @@ impl RetainedCompositorState {
             }
         }
 
-        for (cached_root, delta) in cached_scroll_translations {
-            if packet_dirty_layers.contains(&cached_root) {
-                continue;
-            }
-
-            translate_cached_layer_tiles(&mut self.tiles, cached_root, delta, frame.viewport);
-            if let Some(descriptor) = snapshot
-                .layers
-                .get(&cached_root)
-                .map(|layer| &layer.descriptor)
-            {
-                merge_damage_rect(
-                    &mut tiled_damage,
-                    cached_root,
-                    scroll_translation_exposed_damage(descriptor, delta),
-                );
+        for (layer_id, delta) in &cached_scroll_translations {
+            if let Some(layer) = snapshot.layers.get(layer_id) {
+                let exposed_damage = scroll_translation_exposed_damage(&layer.descriptor, *delta);
+                if let Some(damage) = exposed_damage {
+                    merge_damage_rect(&mut tiled_damage, *layer_id, Some(damage));
+                }
             }
         }
 
@@ -980,7 +1006,7 @@ impl RetainedCompositorState {
                     || previous.packet_ids != layer_snapshot.packet_ids
                     || previous.transform_node != layer_snapshot.transform_node
                     || (render_modes[&layer_id] != RetainedLayerRenderMode::Direct
-                        && previous.clip_node != layer_snapshot.clip_node)
+                        && previous.clip_signature != layer_snapshot.clip_signature)
                     || previous.effect_node != layer_snapshot.effect_node
                     || (!translated_only && previous.descriptor != layer_snapshot.descriptor)
             });
@@ -1014,6 +1040,7 @@ impl RetainedCompositorState {
                     packet_ids: layer_snapshot.packet_ids.clone(),
                     transform_node: layer_snapshot.transform_node,
                     clip_node: layer_snapshot.clip_node,
+                    clip_signature: layer_snapshot.clip_signature,
                     effect_node: layer_snapshot.effect_node,
                     render_mode: render_modes[&layer_id],
                     content_version: 0,
@@ -1042,6 +1069,7 @@ impl RetainedCompositorState {
             retained.packet_ids = layer_snapshot.packet_ids.clone();
             retained.transform_node = layer_snapshot.transform_node;
             retained.clip_node = layer_snapshot.clip_node;
+            retained.clip_signature = layer_snapshot.clip_signature;
             retained.effect_node = layer_snapshot.effect_node;
             retained.render_mode = render_modes[&layer_id];
             if retained.render_mode != RetainedLayerRenderMode::CachedTiles {
@@ -1051,7 +1079,10 @@ impl RetainedCompositorState {
 
             let packet_dirty =
                 global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
-            let coordinate_space = if render_modes[&layer_id] == RetainedLayerRenderMode::Direct {
+            let coordinate_space = if layer_snapshot.descriptor.composition_mode
+                == sui_scene::LayerCompositionMode::Scroll
+                || layer_snapshot.descriptor.cache_policy == sui_scene::LayerCachePolicy::Direct
+            {
                 PacketCoordinateSpace::LayerLocal
             } else {
                 PacketCoordinateSpace::World
@@ -1491,6 +1522,7 @@ impl RetainedCompositorState {
                             frame,
                             layer_snapshot,
                             snapshot_layers,
+                            &self.clips,
                             &self.packets,
                             &self.effects,
                             text_engine,
@@ -1512,6 +1544,7 @@ impl RetainedCompositorState {
                         frame,
                         layer_snapshot,
                         snapshot_layers,
+                        &self.clips,
                         &self.packets,
                         &self.effects,
                         text_engine,
@@ -1668,20 +1701,13 @@ fn composition_phase_for_effect_node(
 
 fn resolve_layer_render_mode(
     descriptor: &sui_scene::SceneLayerDescriptor,
-    scale_factor: f32,
+    _scale_factor: f32,
 ) -> RetainedLayerRenderMode {
     match descriptor.cache_policy {
         sui_scene::LayerCachePolicy::Direct => RetainedLayerRenderMode::Direct,
         sui_scene::LayerCachePolicy::Cached => RetainedLayerRenderMode::CachedTiles,
         sui_scene::LayerCachePolicy::Auto => {
-            let max_dimension_px = descriptor
-                .content_bounds
-                .width()
-                .max(descriptor.content_bounds.height())
-                * scale_factor.max(1.0);
-            if descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
-                || max_dimension_px > DEFAULT_TILE_SIZE_PX as f32
-            {
+            if descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll {
                 RetainedLayerRenderMode::CachedTiles
             } else {
                 RetainedLayerRenderMode::Direct
@@ -1950,6 +1976,7 @@ fn build_tile_entry(
     frame: &SceneFrame,
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    clips: &HashMap<ClipNodeId, ClipNode>,
     packets: &HashMap<RetainedPacketId, RetainedDirectPacket>,
     effects: &HashMap<EffectNodeId, EffectNode>,
     text_engine: &mut TextEngine,
@@ -1959,11 +1986,13 @@ fn build_tile_entry(
 ) -> Result<TileEntry> {
     let tile_local = tile_grid.tile_rect(address.tile_x, address.tile_y);
     let tile_scene = layer_local_to_scene(tile_local, descriptor);
+    let layer_clips = resolved_clip_primitives(layer_snapshot.clip_node, clips);
     let fragment = build_cached_tile_fragment(
         frame,
         tile_scene,
         layer_snapshot,
         snapshot_layers,
+        clips,
         packets,
         effects,
         composition_phase_for_effect_node(layer_snapshot.effect_node, effects),
@@ -2002,6 +2031,7 @@ fn build_cached_tile_fragment(
     tile_scene_rect: Rect,
     layer_snapshot: &LayerSnapshot,
     snapshot_layers: &HashMap<SceneLayerId, LayerSnapshot>,
+    clips: &HashMap<ClipNodeId, ClipNode>,
     packets: &HashMap<RetainedPacketId, RetainedDirectPacket>,
     effects: &HashMap<EffectNodeId, EffectNode>,
     included_phase: CompositionPhase,
@@ -2010,10 +2040,14 @@ fn build_cached_tile_fragment(
     feather_width: f32,
 ) -> Result<DrawOpArena> {
     let mut draw_ops = DrawOpArena::default();
-    let tile_clip = [ResolvedClipPrimitive::Rect(snap_rect_to_device_pixels(
+    let tile_clip = ResolvedClipPrimitive::Rect(snap_rect_to_device_pixels(
         tile_scene_rect,
         frame.scale_factor,
-    ))];
+    ));
+    let layer_clips = resolved_clip_primitives(layer_snapshot.clip_node, clips);
+    let mut effective_clips = layer_clips.clone();
+    effective_clips.push(tile_clip.clone());
+    let tile_only = [tile_clip.clone()];
 
     for item in &layer_snapshot.items {
         match item {
@@ -2022,6 +2056,14 @@ fn build_cached_tile_fragment(
                     .packets
                     .iter()
                     .find(|packet| packet.id == *packet_id);
+                let additional_clips = packet_snapshot
+                    .map(|snapshot| {
+                        packet_additional_clips(
+                            &layer_clips,
+                            &snapshot.initial_state.clip_stack,
+                        )
+                    })
+                    .unwrap_or(&[]);
                 if let Some(packet) = packets.get(packet_id) {
                     if composition_phase_for_effect_node(packet.initial_state.effect_node, effects)
                         != included_phase
@@ -2029,10 +2071,8 @@ fn build_cached_tile_fragment(
                         continue;
                     }
                     if packet.coordinate_space == PacketCoordinateSpace::LayerLocal {
-                        let mut external_clips = packet_snapshot
-                            .map(|snapshot| snapshot.initial_state.clip_stack.clone())
-                            .unwrap_or_default();
-                        external_clips.push(tile_clip[0].clone());
+                        let mut external_clips = effective_clips.clone();
+                        external_clips.extend_from_slice(additional_clips);
                         draw_ops.append_composed_fragment(
                             &packet.draw_ops,
                             layer_snapshot.descriptor.bounds.origin.to_vector(),
@@ -2048,7 +2088,7 @@ fn build_cached_tile_fragment(
                         draw_ops.append_composed_fragment(
                             &packet.draw_ops,
                             Vector::ZERO,
-                            &tile_clip,
+                            &tile_only,
                             frame.viewport,
                         )?;
                         continue;
@@ -2059,7 +2099,9 @@ fn build_cached_tile_fragment(
                     continue;
                 };
                 let mut tile_state = packet_snapshot.initial_state.clone();
-                tile_state.clip_stack.push(tile_clip[0].clone());
+                let mut clip_stack = effective_clips.clone();
+                clip_stack.extend_from_slice(additional_clips);
+                tile_state.clip_stack = clip_stack;
                 let fragment = build_direct_packet(
                     frame,
                     &packet_snapshot.scene,
@@ -2093,6 +2135,7 @@ fn build_cached_tile_fragment(
                     tile_scene_rect,
                     child_snapshot,
                     snapshot_layers,
+                    clips,
                     packets,
                     effects,
                     included_phase,
@@ -2129,6 +2172,17 @@ fn scene_contains_clip_commands(scene: &Scene) -> bool {
             SceneCommand::PushClip { .. } | SceneCommand::PushClipPath { .. }
         )
     })
+}
+
+fn packet_additional_clips<'a>(
+    layer_clips: &[ResolvedClipPrimitive],
+    packet_clips: &'a [ResolvedClipPrimitive],
+) -> &'a [ResolvedClipPrimitive] {
+    if packet_clips.starts_with(layer_clips) {
+        &packet_clips[layer_clips.len()..]
+    } else {
+        packet_clips
+    }
 }
 
 impl RetainedCompositorState {
