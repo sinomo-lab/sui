@@ -4013,7 +4013,7 @@ fn centered_text_rect(
 
     Rect::new(
         rect.x() + ((rect.width() - width) * 0.5),
-        vertically_centered_text_rect_y(ctx, rect, measurement),
+        vertically_centered_text_rect_y(ctx, rect, measurement, height),
         width,
         height,
     )
@@ -4029,11 +4029,13 @@ fn vertically_centered_text_rect(
         return rect;
     };
 
+    let height = line_height.max(measurement.height).min(rect.height());
+
     Rect::new(
         rect.x(),
-        vertically_centered_text_rect_y(ctx, rect, measurement),
+        vertically_centered_text_rect_y(ctx, rect, measurement, height),
         rect.width(),
-        line_height.max(measurement.height).min(rect.height()),
+        height,
     )
 }
 
@@ -4041,6 +4043,7 @@ fn vertically_centered_text_rect_y(
     ctx: &PaintCtx,
     rect: Rect,
     measurement: TextMeasurement,
+    height: f32,
 ) -> f32 {
     let optical_centering = window_render_options(ctx.window_id())
         .map(|options| options.optical_vertical_text_alignment_enabled)
@@ -4057,7 +4060,8 @@ fn vertically_centered_text_rect_y(
     };
     let visual_center = (top + bottom) * 0.5;
     let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
-    baseline - measurement.ascent
+    let leading_above = ((height - (measurement.ascent + measurement.descent)).max(0.0)) * 0.5;
+    baseline - measurement.ascent - leading_above
 }
 
 #[cfg(test)]
@@ -4079,6 +4083,7 @@ mod tests {
         clear_window_render_options, set_window_render_options,
     };
     use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+    use sui_text::{FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -4148,6 +4153,25 @@ mod tests {
                 _ => None,
             })
             .expect("text draw command present")
+    }
+
+    fn first_text_run(output: &RenderOutput) -> sui_text::TextRun {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .expect("text draw command present")
+    }
+
+    fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
+        let top = -measurement.cap_height.unwrap_or(measurement.ascent);
+        let bottom = measurement.descent * 0.5;
+        (top + bottom) * 0.5
     }
 
     fn optical_and_geometric_first_text_rects<W, F>(build: F) -> (Rect, Rect)
@@ -4452,6 +4476,24 @@ mod tests {
 
         assert!((optical_label.y() - geometric_label.y()).abs() > 0.001);
         assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
+    }
+
+    #[test]
+    fn button_label_visual_center_matches_control_center() {
+        let output = render(Button::new("Go").min_width(140.0));
+        let text = first_text_run(&output);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("button label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("button label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - control_center).abs() < 0.75);
     }
 
     #[test]

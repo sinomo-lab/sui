@@ -2662,10 +2662,11 @@ fn centered_text_rect(
     };
     let visual_center = (top + bottom) * 0.5;
     let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
+    let leading_above = ((height - (measurement.ascent + measurement.descent)).max(0.0)) * 0.5;
 
     Rect::new(
         rect.x() + ((rect.width() - width) * 0.5),
-        baseline - measurement.ascent,
+        baseline - measurement.ascent - leading_above,
         width,
         height,
     )
