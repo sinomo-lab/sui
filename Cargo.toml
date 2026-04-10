@@ -31,6 +31,7 @@ lyon_tessellation = "1.0"
 palette = "0.7"
 pollster = "0.4"
 rustybuzz = "0.20"
+swash = "0.2.7"
 sui = { path = "crates/sui" }
 sui-debug = { path = "crates/sui-debug" }
 sui-core = { path = "crates/sui-core" }

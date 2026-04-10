@@ -12,6 +12,7 @@ lyon_path = { workspace = true }
 lyon_tessellation = { workspace = true }
 pollster = { workspace = true }
 rustybuzz = { workspace = true }
+swash = { workspace = true, features = ["scale", "render"] }
 sui-core = { workspace = true }
 sui-scene = { workspace = true }
 sui-text = { workspace = true }

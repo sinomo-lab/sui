@@ -1676,11 +1676,11 @@ pub(crate) fn hash_path(path: &ScenePath, transform: Transform) -> u64 {
     hasher.finish()
 }
 
-#[derive(Debug)]
 pub(crate) struct TextEngine {
     pub(crate) system: TextSystem,
     pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphPrimitive>,
     pub(crate) atlas: TextAtlas,
+    swash_scale_context: SwashScaleContext,
     pub(crate) coverage_policy: TextCoveragePolicy,
     pub(crate) glyph_pixel_alignment_enabled: bool,
     pub(crate) diagnostics_enabled: bool,
@@ -1691,12 +1691,49 @@ pub(crate) struct TextEngine {
     pub(crate) frame_stats: TextFrameStats,
 }
 
+#[derive(Clone, Copy)]
+struct SwashFaceState<'a> {
+    font_ref: SwashFontRef<'a>,
+    font_id: [u64; 2],
+    units_per_em: f32,
+}
+
+impl<'a> SwashFaceState<'a> {
+    fn new(face: &'a ResolvedTextFace, face_key: GlyphFaceCacheKey) -> Result<Self> {
+        let face_index = usize::try_from(face.face_index())
+            .map_err(|_| Error::new("text face index does not fit into usize"))?;
+        let font_ref = SwashFontRef::from_index(face.bytes(), face_index)
+            .ok_or_else(|| Error::new("failed to parse shaped text face data for swash"))?;
+        let units_per_em = f32::from(font_ref.metrics(&[]).units_per_em.max(1));
+        Ok(Self {
+            font_ref,
+            font_id: swash_font_id(face_key),
+            units_per_em,
+        })
+    }
+
+    fn ppem_for_scale(self, glyph_scale: f32) -> f32 {
+        (glyph_scale * self.units_per_em).max(f32::EPSILON)
+    }
+}
+
+fn swash_font_id(face_key: GlyphFaceCacheKey) -> [u64; 2] {
+    let mut hasher = DefaultHasher::new();
+    face_key.hash(&mut hasher);
+    let primary = hasher.finish();
+    let secondary = (face_key.data_ptr as u64).rotate_left(17)
+        ^ (face_key.data_len as u64).rotate_left(7)
+        ^ u64::from(face_key.face_index).rotate_left(31);
+    [primary, secondary]
+}
+
 impl Default for TextEngine {
     fn default() -> Self {
         Self {
             system: TextSystem::new(),
             glyph_cache: HashMap::new(),
             atlas: TextAtlas::default(),
+            swash_scale_context: SwashScaleContext::new(),
             coverage_policy: TextCoveragePolicy::default(),
             glyph_pixel_alignment_enabled: true,
             diagnostics_enabled: true,
@@ -1812,6 +1849,7 @@ impl TextEngine {
         }
 
         let mut active_face_index = None;
+        let mut swash_face = None;
         let mut parsed_face = None;
         let glyph_pixel_alignment_enabled = self.glyph_pixel_alignment_enabled;
 
@@ -1819,6 +1857,7 @@ impl TextEngine {
             let face_index = glyph.face_index;
             if active_face_index != Some(face_index) {
                 active_face_index = Some(face_index);
+                swash_face = None;
                 parsed_face = None;
             }
 
@@ -1837,6 +1876,7 @@ impl TextEngine {
 
             if let Some(primitive) = self.cached_glyph_primitive(
                 glyph_face,
+                &mut swash_face,
                 &mut parsed_face,
                 face_key,
                 glyph.glyph_id,
@@ -1896,6 +1936,7 @@ impl TextEngine {
     fn cached_glyph_primitive<'face>(
         &mut self,
         face: &'face ResolvedTextFace,
+        swash_face: &mut Option<SwashFaceState<'face>>,
         parsed_face: &mut Option<rustybuzz::Face<'face>>,
         face_key: GlyphFaceCacheKey,
         glyph_id: u16,
@@ -1924,27 +1965,25 @@ impl TextEngine {
                 if self.diagnostics_enabled {
                     self.glyph_cache_misses += 1;
                 }
-                if parsed_face.is_none() {
+                if swash_face.is_none() {
                     #[cfg(test)]
                     {
                         self.glyph_face_parse_count += 1;
                     }
-                    *parsed_face = Some(
-                        rustybuzz::Face::from_slice(face.bytes(), face.face_index())
-                            .ok_or_else(|| Error::new("failed to parse shaped text face data"))?,
-                    );
+                    *swash_face = Some(SwashFaceState::new(face, face_key)?);
                 }
-                let face = parsed_face
+                let swash_face = swash_face
                     .as_ref()
-                    .expect("parsed text face should be cached after initialization");
+                    .expect("swash text face should be cached after initialization");
                 let atlas_miss_started = self.diagnostics_enabled.then(Instant::now);
                 let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
                 let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
                 let primitive = if let Some(atlas) = build_cached_glyph_atlas(
                     &mut self.atlas,
-                    &face,
+                    &mut self.swash_scale_context,
+                    swash_face,
                     glyph_id,
-                    bucketed_physical_scale,
+                    swash_face.ppem_for_scale(bucketed_physical_scale),
                     raster_scale_factor.max(1.0),
                     bucketed_logical_scale,
                     coverage_policy,
@@ -1959,8 +1998,17 @@ impl TextEngine {
                         self.frame_stats.atlas_miss_count += 1;
                         self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
                     }
+                    if parsed_face.is_none() {
+                        *parsed_face = Some(
+                            rustybuzz::Face::from_slice(face.bytes(), face.face_index())
+                                .ok_or_else(|| Error::new("failed to parse shaped text face data"))?,
+                        );
+                    }
+                    let parsed_face = parsed_face
+                        .as_ref()
+                        .expect("parsed text face should be cached after fallback initialization");
                     let Some(mesh) = build_cached_glyph_mesh(
-                        &face,
+                        parsed_face,
                         glyph_id,
                         bucketed_logical_scale,
                         feather_width,
@@ -2041,50 +2089,44 @@ fn build_cached_glyph_mesh(
 
 fn build_cached_glyph_atlas(
     atlas: &mut TextAtlas,
-    face: &rustybuzz::Face<'_>,
+    scale_context: &mut SwashScaleContext,
+    face: &SwashFaceState<'_>,
     glyph_id: u16,
-    glyph_scale_physical: f32,
+    font_size_physical: f32,
     raster_scale_factor: f32,
     glyph_scale_logical: f32,
     coverage_policy: TextCoveragePolicy,
 ) -> Result<Option<CachedGlyphAtlas>> {
-    let mut path_builder = TinySkiaPathBuilder::new();
-    {
-        let mut outline = CachedGlyphRasterBuilder {
-            builder: &mut path_builder,
-            contour_open: false,
-            scale: glyph_scale_physical,
-        };
-        if face
-            .outline_glyph(GlyphId(glyph_id), &mut outline)
-            .is_none()
-        {
-            return Ok(None);
-        }
-        outline.finish();
-    }
-
-    let Some(path) = path_builder.finish() else {
+    let sources = [SwashSource::Outline];
+    let mut scaler = scale_context
+        .builder_with_id(face.font_ref, face.font_id)
+        .size(font_size_physical)
+        .hint(false)
+        .build();
+    let mut renderer = SwashRender::new(&sources);
+    renderer.format(SwashFormat::Subpixel);
+    let Some(image) = renderer.render(&mut scaler, glyph_id) else {
         return Ok(None);
     };
 
-    let Some(bounds) = glyph_raster_bounds(&path) else {
+    let width = image.placement.width as usize;
+    let height = image.placement.height as usize;
+    if width == 0 || height == 0 {
         return Ok(Some(CachedGlyphAtlas {
             scale: glyph_scale_logical,
-            offset: Vector::ZERO,
+            offset: Vector::new(
+                image.placement.left as f32 / raster_scale_factor,
+                image.placement.top as f32 / raster_scale_factor,
+            ),
             size: Size::ZERO,
             uv_min: [0.0, 0.0],
             uv_max: [0.0, 0.0],
         }));
-    };
-
-    let width = bounds.raster_width;
-    let height = bounds.raster_height;
-    if width == 0 || height == 0 {
-        return Ok(None);
     }
 
-    let pixels = rasterize_glyph_rgba(&path, bounds, coverage_policy)?;
+    let Some(pixels) = swash_image_to_rgba(&image, coverage_policy) else {
+        return Ok(None);
+    };
     let Some(placement) = atlas.insert_rgba(width, height, &pixels) else {
         return Ok(None);
     };
@@ -2092,25 +2134,97 @@ fn build_cached_glyph_atlas(
     let atlas_size = atlas.size();
     let inv_width = 1.0 / atlas_size.0 as f32;
     let inv_height = 1.0 / atlas_size.1 as f32;
-    let logical_uv_min_x = placement.x as f32 + (bounds.logical_min_x - bounds.raster_min_x);
-    let logical_uv_min_y = placement.y as f32 + (bounds.logical_min_y - bounds.raster_min_y);
-    let logical_uv_max_x = logical_uv_min_x + bounds.logical_width;
-    let logical_uv_max_y = logical_uv_min_y + bounds.logical_height;
+    let logical_uv_min_x = placement.x as f32;
+    let logical_uv_min_y = placement.y as f32;
+    let logical_uv_max_x = logical_uv_min_x + image.placement.width as f32;
+    let logical_uv_max_y = logical_uv_min_y + image.placement.height as f32;
     Ok(Some(CachedGlyphAtlas {
         scale: glyph_scale_logical,
         offset: Vector::new(
-            bounds.logical_min_x / raster_scale_factor,
-            bounds.logical_min_y / raster_scale_factor,
+            image.placement.left as f32 / raster_scale_factor,
+            image.placement.top as f32 / raster_scale_factor,
         ),
         size: Size::new(
-            bounds.logical_width / raster_scale_factor,
-            bounds.logical_height / raster_scale_factor,
+            image.placement.width as f32 / raster_scale_factor,
+            image.placement.height as f32 / raster_scale_factor,
         ),
         uv_min: [logical_uv_min_x * inv_width, logical_uv_min_y * inv_height],
         uv_max: [logical_uv_max_x * inv_width, logical_uv_max_y * inv_height],
     }))
 }
 
+fn swash_image_to_rgba(
+    image: &swash::scale::image::Image,
+    coverage_policy: TextCoveragePolicy,
+) -> Option<Vec<u8>> {
+    let width = usize::try_from(image.placement.width).ok()?;
+    let height = usize::try_from(image.placement.height).ok()?;
+    let pixel_count = width.checked_mul(height)?;
+    let mut coverage = vec![0; pixel_count];
+
+    match image.content {
+        SwashImageContent::Mask => {
+            if image.data.len() < pixel_count {
+                return None;
+            }
+            coverage.copy_from_slice(&image.data[..pixel_count]);
+        }
+        SwashImageContent::SubpixelMask => {
+            if image.data.len() < pixel_count.checked_mul(4)? {
+                return None;
+            }
+
+            for (source, target) in image.data.chunks_exact(4).zip(coverage.iter_mut()) {
+                let grayscale = (u16::from(source[0]) + u16::from(source[1]) + u16::from(source[2])) / 3;
+                *target = grayscale as u8;
+            }
+        }
+        SwashImageContent::Color => return None,
+    }
+
+    if coverage.iter().all(|value| *value == 0 || *value == 255) {
+        coverage = soften_binary_coverage(&coverage, width, height);
+    }
+
+    let mut pixels = vec![0; pixel_count.checked_mul(4)?];
+    for (coverage, pixel) in coverage.into_iter().zip(pixels.chunks_exact_mut(4)) {
+        let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
+        pixel[0] = 255;
+        pixel[1] = 255;
+        pixel[2] = 255;
+        pixel[3] = alpha;
+    }
+
+    Some(pixels)
+}
+
+fn soften_binary_coverage(coverage: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut softened = vec![0; coverage.len()];
+
+    for y in 0..height {
+        let y_start = y.saturating_sub(1);
+        let y_end = (y + 1).min(height.saturating_sub(1));
+        for x in 0..width {
+            let x_start = x.saturating_sub(1);
+            let x_end = (x + 1).min(width.saturating_sub(1));
+            let mut sum = 0u32;
+            let mut samples = 0u32;
+
+            for sample_y in y_start..=y_end {
+                for sample_x in x_start..=x_end {
+                    sum += u32::from(coverage[sample_y * width + sample_x]);
+                    samples += 1;
+                }
+            }
+
+            softened[y * width + x] = (sum / samples.max(1)) as u8;
+        }
+    }
+
+    softened
+}
+
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct GlyphRasterBounds {
     pub(crate) logical_min_x: f32,
@@ -2123,6 +2237,7 @@ pub(crate) struct GlyphRasterBounds {
     pub(crate) raster_height: usize,
 }
 
+#[cfg(test)]
 pub(crate) fn glyph_raster_bounds(path: &tiny_skia::Path) -> Option<GlyphRasterBounds> {
     let bounds = path.bounds().to_non_zero_rect()?;
     let logical_min_x = bounds.x();
@@ -2145,36 +2260,6 @@ pub(crate) fn glyph_raster_bounds(path: &tiny_skia::Path) -> Option<GlyphRasterB
         raster_width,
         raster_height,
     })
-}
-
-fn rasterize_glyph_rgba(
-    path: &tiny_skia::Path,
-    bounds: GlyphRasterBounds,
-    coverage_policy: TextCoveragePolicy,
-) -> Result<Vec<u8>> {
-    let width = bounds.raster_width as u32;
-    let height = bounds.raster_height as u32;
-    let mut pixmap = Pixmap::new(width, height)
-        .ok_or_else(|| Error::new("failed to allocate text atlas pixmap"))?;
-    let mut paint = TinySkiaPaint::default();
-    paint.set_color_rgba8(255, 255, 255, 255);
-    pixmap.fill_path(
-        path,
-        &paint,
-        FillRule::Winding,
-        TinySkiaTransform::from_translate(-bounds.raster_min_x, -bounds.raster_min_y),
-        None,
-    );
-    let mut pixels = pixmap.data().to_vec();
-    for pixel in pixels.chunks_exact_mut(4) {
-        let coverage = pixel[3] as f32 / 255.0;
-        let alpha = (coverage_policy.apply(coverage) * 255.0).round() as u8;
-        pixel[0] = 255;
-        pixel[1] = 255;
-        pixel[2] = 255;
-        pixel[3] = alpha;
-    }
-    Ok(pixels)
 }
 
 fn build_local_glyph_mesh(
@@ -2725,56 +2810,6 @@ where
     }
 }
 
-struct CachedGlyphRasterBuilder<'a> {
-    builder: &'a mut TinySkiaPathBuilder,
-    contour_open: bool,
-    scale: f32,
-}
-
-impl CachedGlyphRasterBuilder<'_> {
-    fn finish(&mut self) {
-        if self.contour_open {
-            self.builder.close();
-            self.contour_open = false;
-        }
-    }
-
-    fn point(&self, x: f32, y: f32) -> tiny_skia::Point {
-        tiny_skia::Point::from_xy(x * self.scale, -y * self.scale)
-    }
-}
-
-impl ttf_parser::OutlineBuilder for CachedGlyphRasterBuilder<'_> {
-    fn move_to(&mut self, x: f32, y: f32) {
-        if self.contour_open {
-            self.builder.close();
-        }
-        self.builder.move_to(x * self.scale, -y * self.scale);
-        self.contour_open = true;
-    }
-
-    fn line_to(&mut self, x: f32, y: f32) {
-        self.builder.line_to(x * self.scale, -y * self.scale);
-    }
-
-    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let control = self.point(x1, y1);
-        let end = self.point(x, y);
-        self.builder.quad_to(control.x, control.y, end.x, end.y);
-    }
-
-    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let control1 = self.point(x1, y1);
-        let control2 = self.point(x2, y2);
-        let end = self.point(x, y);
-        self.builder
-            .cubic_to(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
-    }
-
-    fn close(&mut self) {
-        self.finish();
-    }
-}
 
 impl<B> ttf_parser::OutlineBuilder for CachedGlyphOutlineBuilder<'_, B>
 where

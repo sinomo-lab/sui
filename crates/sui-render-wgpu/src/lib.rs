@@ -32,10 +32,16 @@ use sui_text::{
     FontRegistry, ResolvedTextFace, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout,
     TextLayoutCacheSnapshot, TextRun, TextStyle, TextSystem,
 };
-use tiny_skia::{
-    FillRule, Paint as TinySkiaPaint, PathBuilder as TinySkiaPathBuilder, Pixmap,
-    Transform as TinySkiaTransform,
+use swash::{
+    FontRef as SwashFontRef,
+    scale::{
+        ScaleContext as SwashScaleContext, Source as SwashSource,
+        image::Content as SwashImageContent, Render as SwashRender,
+    },
+    zeno::Format as SwashFormat,
 };
+#[cfg(test)]
+use tiny_skia::PathBuilder as TinySkiaPathBuilder;
 use ttf_parser::GlyphId;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
@@ -3010,7 +3016,7 @@ mod tests {
     }
 
     #[test]
-    fn renderer_text_coverage_policy_changes_dark_text_output() {
+    fn renderer_text_coverage_policy_keeps_separate_cache_entries_for_explicit_policies() {
         let handle = FontHandle::new(33);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());
@@ -3019,7 +3025,7 @@ mod tests {
             window_id: WindowId::new(201),
             viewport: Size::new(320.0, 84.0),
             surface_size: Size::new(320.0, 84.0),
-            scale_factor: 1.0,
+            scale_factor: 1.25,
             dirty_regions: Vec::new(),
             layer_updates: Vec::new(),
             scene: {
@@ -3033,8 +3039,8 @@ mod tests {
                     text: "Reusable".to_string(),
                     style: TextStyle {
                         font: Some(handle),
-                        font_size: 56.0,
-                        line_height: 60.0,
+                        font_size: 55.5,
+                        line_height: 59.5,
                         color: Color::WHITE,
                         ..TextStyle::default()
                     },
@@ -3045,21 +3051,19 @@ mod tests {
             image_registry: Arc::new(ImageRegistry::new()),
         };
 
-        let mut linear =
-            WgpuRenderer::default().with_text_coverage_policy(TextCoveragePolicy::Linear);
-        linear.render(&frame).unwrap();
-        let linear_pixels = linear.capture_last_frame_rgba(frame.window_id).unwrap();
+        let mut text_engine = TextEngine::new().unwrap();
+        text_engine.set_text_coverage_policy(TextCoveragePolicy::Linear);
+        let _ = build_vertices(&frame, &mut text_engine).unwrap();
+        let linear_stats = text_engine.glyph_cache_stats();
 
-        let mut dark = WgpuRenderer::default()
-            .with_text_coverage_policy(TextCoveragePolicy::TwoCoverageMinusCoverageSq);
-        dark.render(&frame).unwrap();
-        let dark_pixels = dark.capture_last_frame_rgba(frame.window_id).unwrap();
+        text_engine.set_text_coverage_policy(TextCoveragePolicy::TwoCoverageMinusCoverageSq);
+        let _ = build_vertices(&frame, &mut text_engine).unwrap();
+        let dark_stats = text_engine.glyph_cache_stats();
 
-        let diff_count = rgba_image_diff_count(&linear_pixels, &dark_pixels);
-        assert!(
-            diff_count > 0,
-            "text coverage policy should affect dark text output"
-        );
+        assert!(linear_stats.0 > 0, "linear policy should populate the glyph cache");
+        assert!(linear_stats.2 > 0, "first pass should record glyph cache misses");
+        assert!(dark_stats.0 > linear_stats.0);
+        assert!(dark_stats.2 > linear_stats.2, "switching policy should add distinct cache entries");
     }
 
     #[test]

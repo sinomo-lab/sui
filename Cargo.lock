@@ -2027,6 +2027,7 @@ dependencies = [
  "sui-core",
  "sui-scene",
  "sui-text",
+ "swash",
  "tiny-skia",
  "ttf-parser",
  "wgpu",
