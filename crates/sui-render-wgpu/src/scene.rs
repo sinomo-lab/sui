@@ -411,14 +411,25 @@ pub(crate) fn prepare_cached_passes(
             draws: pass
                 .draws
                 .iter()
-                .map(|draw| PreparedDrawBatch {
-                    kind: draw.kind,
-                    clip_rect: intersect_optional_rect(
+                .filter_map(|draw| {
+                    let clip_rect = resolve_submission_clip_rect(
                         draw.clip_rect.map(|rect| rect.translate(translation)),
                         external_clip_rect,
-                    )
-                    .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size)),
-                    vertices: draw.vertices.offset(scene_vertex_offset),
+                    )?;
+                    let clip_rect = match clip_rect {
+                        Some(rect) => {
+                            if rect.is_empty() {
+                                return None;
+                            }
+                            rect_to_scissor(rect, viewport, framebuffer_size)
+                        }
+                        None => None,
+                    };
+                    Some(PreparedDrawBatch {
+                        kind: draw.kind,
+                        clip_rect,
+                        vertices: draw.vertices.offset(scene_vertex_offset),
+                    })
                 })
                 .collect(),
         })
@@ -3082,17 +3093,21 @@ impl DrawOpArena {
                     }
                 }));
             self.draw_ops
-                .extend(transformed.draw_ops.iter().cloned().map(|mut draw_op| {
+                .extend(transformed.draw_ops.iter().cloned().filter_map(|mut draw_op| {
                     draw_op.vertices = draw_op.vertices.offset(scene_delta);
                     draw_op.clip_state_index += clip_state_base;
-                    draw_op.clip_rect =
-                        intersect_optional_rect(draw_op.clip_rect, external_clip_rect);
+                    let Some(clip_rect) =
+                        resolve_fragment_clip_rect(draw_op.clip_rect, external_clip_rect)
+                    else {
+                        return None;
+                    };
+                    draw_op.clip_rect = clip_rect;
                     if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
                         draw_op.kind = DrawOpKind::AnalyticPath {
                             id: analytic_id_map[&id],
                         };
                     }
-                    draw_op
+                    Some(draw_op)
                 }));
             return Ok(());
         }
@@ -3112,10 +3127,15 @@ impl DrawOpArena {
                     self.push_clip_state(&clip_paths)
                 });
 
+            let Some(clip_rect) = resolve_fragment_clip_rect(draw_op.clip_rect, external_clip_rect)
+            else {
+                continue;
+            };
+
             self.draw_ops.push(DrawOp {
                 kind: draw_op.kind,
                 vertices: draw_op.vertices.offset(scene_delta),
-                clip_rect: intersect_optional_rect(draw_op.clip_rect, external_clip_rect),
+                clip_rect,
                 clip_state_index: merged_clip_state,
             });
             if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
@@ -3210,12 +3230,21 @@ impl DrawOpArena {
     }
 }
 
-fn intersect_optional_rect(current: Option<Rect>, next: Option<Rect>) -> Option<Rect> {
+fn resolve_submission_clip_rect(current: Option<Rect>, next: Option<Rect>) -> Option<Option<Rect>> {
     match (current, next) {
-        (Some(current), Some(next)) => current.intersection(next),
-        (Some(current), None) => Some(current),
-        (None, Some(next)) => Some(next),
-        (None, None) => None,
+        (Some(current), Some(next)) => current.intersection(next).map(Some),
+        (Some(current), None) => Some(Some(current)),
+        (None, Some(next)) => Some(Some(next)),
+        (None, None) => Some(None),
+    }
+}
+
+fn resolve_fragment_clip_rect(current: Option<Rect>, next: Option<Rect>) -> Option<Option<Rect>> {
+    match (current, next) {
+        (Some(current), Some(next)) => current.intersection(next).map(Some),
+        (Some(current), None) => Some(Some(current)),
+        (None, Some(next)) => Some(Some(next)),
+        (None, None) => Some(None),
     }
 }
 

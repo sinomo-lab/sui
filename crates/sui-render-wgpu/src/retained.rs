@@ -1430,11 +1430,7 @@ impl RetainedCompositorState {
                                 if !layer.visible_tiles.is_empty() {
                                     stats.visible_layers += 1;
                                 }
-                                let clip_rect = self
-                                    .clips
-                                    .get(&layer.clip_node)
-                                    .and_then(|node| node.parent)
-                                    .and_then(|parent| resolved_clip_bounds(parent, &self.clips));
+                                let clip_rect = resolved_clip_bounds(layer.clip_node, &self.clips);
                                 for tile in &layer.visible_tiles {
                                     if self.tiles.contains_key(tile) {
                                         flush_transient_fragment(submission, current);

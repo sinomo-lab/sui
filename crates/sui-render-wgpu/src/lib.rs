@@ -3269,6 +3269,65 @@ mod tests {
     }
 
     #[test]
+    fn prepare_cached_passes_uses_external_clip_for_unclipped_draws() {
+        let passes = prepare_cached_passes(
+            &[CachedPassBatch {
+                clip_paths: Vec::new(),
+                draws: vec![CachedDrawBatch {
+                    kind: PreparedDrawKind::Image {
+                        handle: ImageHandle::new(99),
+                    },
+                    clip_rect: None,
+                    vertices: PreparedVertices { start: 0, len: 6 },
+                }],
+            }],
+            Size::new(100.0, 100.0),
+            (100, 100),
+            Vector::ZERO,
+            Some(Rect::new(20.0, 30.0, 40.0, 50.0)),
+            0,
+            0,
+        );
+
+        assert_eq!(passes.len(), 1);
+        assert_eq!(passes[0].draws.len(), 1);
+        assert_eq!(
+            passes[0].draws[0].clip_rect,
+            Some(ScissorRect {
+                x: 20,
+                y: 30,
+                width: 40,
+                height: 50,
+            })
+        );
+    }
+
+    #[test]
+    fn prepare_cached_passes_drops_draws_fully_outside_external_clip() {
+        let passes = prepare_cached_passes(
+            &[CachedPassBatch {
+                clip_paths: Vec::new(),
+                draws: vec![CachedDrawBatch {
+                    kind: PreparedDrawKind::Image {
+                        handle: ImageHandle::new(100),
+                    },
+                    clip_rect: Some(Rect::new(70.0, 70.0, 20.0, 20.0)),
+                    vertices: PreparedVertices { start: 0, len: 6 },
+                }],
+            }],
+            Size::new(100.0, 100.0),
+            (100, 100),
+            Vector::ZERO,
+            Some(Rect::new(0.0, 0.0, 20.0, 20.0)),
+            0,
+            0,
+        );
+
+        assert_eq!(passes.len(), 1);
+        assert!(passes[0].draws.is_empty());
+    }
+
+    #[test]
     fn renderer_frame_stats_count_passes_draws_and_uploaded_vertices() {
         let vertex = Vertex {
             position: [0.0, 0.0],
