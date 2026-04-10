@@ -352,6 +352,8 @@ impl WidgetPod {
             self.layout_state.arranged_bounds,
             parent_ctx.focused_widget_id(),
             parent_ctx.dpi(),
+            Arc::clone(&parent_ctx.text_system),
+            Arc::clone(&parent_ctx.font_registry),
         );
         self.widget.paint(&mut child_ctx);
 
@@ -1027,6 +1029,8 @@ pub struct PaintCtx {
     focused_widget_id: Option<WidgetId>,
     bounds: Rect,
     dpi_info: DpiInfo,
+    text_system: Arc<TextSystem>,
+    font_registry: Arc<FontRegistry>,
     scene: Scene,
     invalidations: Vec<InvalidationRequest>,
     ime_composition_rect: Option<Rect>,
@@ -1039,6 +1043,8 @@ impl PaintCtx {
         bounds: Rect,
         focused_widget_id: Option<WidgetId>,
         dpi_info: DpiInfo,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
     ) -> Self {
         Self {
             window_id,
@@ -1046,6 +1052,8 @@ impl PaintCtx {
             focused_widget_id,
             bounds,
             dpi_info,
+            text_system,
+            font_registry,
             scene: Scene::new(),
             invalidations: Vec::new(),
             ime_composition_rect: None,
@@ -1074,6 +1082,15 @@ impl PaintCtx {
 
     pub const fn dpi(&self) -> DpiInfo {
         self.dpi_info
+    }
+
+    pub fn measure_text(
+        &self,
+        text: impl Into<String>,
+        style: TextStyle,
+    ) -> sui_core::Result<TextMeasurement> {
+        self.text_system
+            .measure_text(text, style, self.font_registry.as_ref())
     }
 
     pub fn clear(&mut self, color: Color) {
@@ -1319,6 +1336,8 @@ impl SemanticsCtx {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{
         ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
         WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
@@ -1367,6 +1386,8 @@ mod tests {
             Rect::new(0.0, 0.0, 120.0, 60.0),
             None,
             dpi,
+            Arc::new(TextSystem::new()),
+            Arc::new(FontRegistry::new()),
         );
 
         assert_eq!(measure.dpi(), dpi);
@@ -1438,6 +1459,8 @@ mod tests {
             Rect::new(0.0, 0.0, 120.0, 60.0),
             None,
             DpiInfo::default(),
+            Arc::new(TextSystem::new()),
+            Arc::new(FontRegistry::new()),
         );
         pod.paint(&mut paint);
 
@@ -1519,6 +1542,8 @@ mod tests {
             Rect::new(0.0, 0.0, 120.0, 40.0),
             None,
             DpiInfo::default(),
+            Arc::new(TextSystem::new()),
+            Arc::new(FontRegistry::new()),
         );
         children.paint(&mut paint);
 
@@ -1544,6 +1569,8 @@ mod tests {
             Rect::new(0.0, 0.0, 120.0, 60.0),
             None,
             DpiInfo::default(),
+            Arc::new(TextSystem::new()),
+            Arc::new(FontRegistry::new()),
         );
 
         let mut path = sui_core::Path::builder();
@@ -1616,6 +1643,8 @@ mod tests {
             Rect::new(0.0, 0.0, 120.0, 60.0),
             None,
             DpiInfo::default(),
+            Arc::new(TextSystem::new()),
+            Arc::new(FontRegistry::new()),
         );
         let origin = Point::new(8.0, 10.0);
         paint.draw_text_layout(origin, &layout);

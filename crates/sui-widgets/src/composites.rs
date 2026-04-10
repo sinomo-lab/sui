@@ -2686,9 +2686,10 @@ mod tests {
     use sui_layout::Constraints;
     use sui_runtime::{
         Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
-        WindowBuilder, WindowRenderOptions, clear_window_render_options, set_window_render_options,
+        WindowBuilder,
     };
     use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneLayerDescriptor};
+    use sui_text::{FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -2708,6 +2709,25 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).unwrap()
+    }
+
+    fn first_text_run(output: &RenderOutput) -> sui_text::TextRun {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                sui_scene::SceneCommand::DrawText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .expect("text draw command present")
+    }
+
+    fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
+        let top = -measurement.cap_height.unwrap_or(measurement.ascent);
+        let bottom = measurement.descent * 0.5;
+        (top + bottom) * 0.5
     }
 
     fn layer_descriptor_for(
@@ -2868,72 +2888,21 @@ mod tests {
     }
 
     #[test]
-    fn tabs_center_header_labels_within_each_tab() {
-        let optical = render(
-            Tabs::new("Main tabs")
-                .tab(
-                    "A",
-                    SpyPanel::new(
-                        "first-panel",
-                        Rc::new(RefCell::new(PanelCounters::default())),
-                    ),
-                )
-                .tab(
-                    "B",
-                    SpyPanel::new(
-                        "second-panel",
-                        Rc::new(RefCell::new(PanelCounters::default())),
-                    ),
-                ),
-        );
-        let optical_label = optical
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                sui_scene::SceneCommand::DrawText(text) => Some(text.rect),
-                _ => None,
-            })
-            .expect("tabs header label draw command present");
+    fn tab_bar_header_label_visual_center_matches_control_center() {
+        let output = render(TabBar::new("Main tabs").tabs(["A", "B"]));
+        let text = first_text_run(&output);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("tab header label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("tab header label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = output.frame.viewport.height * 0.5;
 
-        let (mut runtime, window_id) = build_runtime(
-            Tabs::new("Main tabs")
-                .tab(
-                    "A",
-                    SpyPanel::new(
-                        "first-panel",
-                        Rc::new(RefCell::new(PanelCounters::default())),
-                    ),
-                )
-                .tab(
-                    "B",
-                    SpyPanel::new(
-                        "second-panel",
-                        Rc::new(RefCell::new(PanelCounters::default())),
-                    ),
-                ),
-        );
-        set_window_render_options(
-            window_id,
-            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
-        );
-        let geometric = runtime.render(window_id).unwrap();
-        clear_window_render_options(window_id);
-        let geometric_label = geometric
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                sui_scene::SceneCommand::DrawText(text) => Some(text.rect),
-                _ => None,
-            })
-            .expect("geometric tabs header label draw command present");
-
-        assert!(optical_label.x() > 10.0);
-        assert!((optical_label.y() - geometric_label.y()).abs() > 0.001);
-        assert!(optical_label.max_y() <= optical.frame.viewport.height);
+        assert!((actual_visual_center - control_center).abs() < 0.75);
     }
 
     #[test]

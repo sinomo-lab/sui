@@ -4419,43 +4419,12 @@ mod tests {
             })
             .expect("button label draw command present");
 
-        let (mut runtime, window_id) = build_runtime(Button::new("Go").min_width(140.0));
-        set_window_render_options(
-            window_id,
-            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
-        );
-        let geometric = runtime.render(window_id).unwrap();
-        clear_window_render_options(window_id);
-        let geometric_label = geometric
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawText(text) => Some(text.rect),
-                _ => None,
-            })
-            .expect("geometric button label draw command present");
-
         assert!(optical_label.x() > theme.metrics.button_padding.left);
-        assert!(optical_label.y() > geometric_label.y());
         assert!(optical_label.max_y() <= optical.frame.viewport.height);
     }
 
     #[test]
-    fn button_window_option_can_disable_optical_vertical_centering() {
-        let optical = render(Button::new("Go").min_width(140.0));
-        let optical_label = optical
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawText(text) => Some(text.rect),
-                _ => None,
-            })
-            .expect("optical button label draw command present");
-
+    fn button_window_option_keeps_button_label_centered() {
         let (mut runtime, window_id) = build_runtime(Button::new("Go").min_width(140.0));
         set_window_render_options(
             window_id,
@@ -4463,19 +4432,19 @@ mod tests {
         );
         let geometric = runtime.render(window_id).unwrap();
         clear_window_render_options(window_id);
-        let geometric_label = geometric
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawText(text) => Some(text.rect),
-                _ => None,
-            })
-            .expect("geometric button label draw command present");
+        let text = first_text_run(&geometric);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("button label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("button label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = geometric.frame.viewport.height * 0.5;
 
-        assert!((optical_label.y() - geometric_label.y()).abs() > 0.001);
-        assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
+        assert!((actual_visual_center - control_center).abs() < 0.75);
     }
 
     #[test]
@@ -4506,12 +4475,21 @@ mod tests {
     }
 
     #[test]
-    fn radio_button_label_uses_optical_vertical_centering() {
-        let (optical_label, geometric_label) =
-            optical_and_geometric_first_text_rects(|| RadioButton::new("Option A"));
+    fn radio_button_label_visual_center_matches_control_center() {
+        let output = render(RadioButton::new("Option A"));
+        let text = first_text_run(&output);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("radio button label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("radio button label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = output.frame.viewport.height * 0.5;
 
-        assert!((optical_label.y() - geometric_label.y()).abs() > 0.001);
-        assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
+        assert!((actual_visual_center - control_center).abs() < 0.75);
     }
 
     #[test]

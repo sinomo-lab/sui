@@ -1433,7 +1433,11 @@ impl WindowState {
             let (scene, paint_invalidations, ime_composition_rect) = if self.last_frame.is_none()
                 || repaint_layers.contains(&self.root.id())
             {
-                self.paint_full_scene(dpi_info)
+                self.paint_full_scene(
+                    dpi_info,
+                    Arc::clone(&text_system),
+                    Arc::clone(&font_registry),
+                )
             } else if repaint_layers.is_empty() {
                 (
                     self.last_frame
@@ -1444,7 +1448,13 @@ impl WindowState {
                     baseline_ime_composition_rect,
                 )
             } else {
-                self.repaint_dirty_layers(dpi_info, &repaint_layers, baseline_ime_composition_rect)
+                self.repaint_dirty_layers(
+                    dpi_info,
+                    &repaint_layers,
+                    baseline_ime_composition_rect,
+                    Arc::clone(&text_system),
+                    Arc::clone(&font_registry),
+                )
             };
             let mut scene = scene;
             for translation in &composition_only_transforms {
@@ -1546,6 +1556,8 @@ impl WindowState {
     fn paint_full_scene(
         &mut self,
         dpi_info: DpiInfo,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
     ) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
         let mut paint_ctx = PaintCtx::new(
             self.id,
@@ -1553,6 +1565,8 @@ impl WindowState {
             self.root.bounds(),
             self.focus.focused_widget,
             dpi_info,
+            text_system,
+            font_registry,
         );
         let _ = self
             .root
@@ -1565,6 +1579,8 @@ impl WindowState {
         dpi_info: DpiInfo,
         dirty_layers: &[WidgetId],
         baseline_ime_composition_rect: Option<Rect>,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
     ) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
         let mut scene = self
             .last_frame
@@ -1580,7 +1596,7 @@ impl WindowState {
                 .node(widget_id)
                 .map(|node| node.geometry.layout_bounds)
             else {
-                return self.paint_full_scene(dpi_info);
+                return self.paint_full_scene(dpi_info, text_system, font_registry);
             };
 
             let mut paint_ctx = PaintCtx::new(
@@ -1589,18 +1605,20 @@ impl WindowState {
                 bounds,
                 self.focus.focused_widget,
                 dpi_info,
+                Arc::clone(&text_system),
+                Arc::clone(&font_registry),
             );
             if !self
                 .root
                 .paint_layer_contents_for(widget_id, &mut paint_ctx)
             {
-                return self.paint_full_scene(dpi_info);
+                return self.paint_full_scene(dpi_info, text_system, font_registry);
             }
 
             let (layer_scene, layer_invalidations, layer_ime_composition_rect) =
                 paint_ctx.into_parts();
             let Some(descriptor) = self.root.layer_descriptor_for(widget_id, &layer_scene) else {
-                return self.paint_full_scene(dpi_info);
+                return self.paint_full_scene(dpi_info, text_system, font_registry);
             };
             if widget_id == self.root.id()
                 || !scene.replace_layer(
@@ -1608,7 +1626,7 @@ impl WindowState {
                     SceneLayer::from_descriptor(descriptor, layer_scene),
                 )
             {
-                return self.paint_full_scene(dpi_info);
+                return self.paint_full_scene(dpi_info, text_system, font_registry);
             }
 
             invalidations.extend(layer_invalidations);

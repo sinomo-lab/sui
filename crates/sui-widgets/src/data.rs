@@ -3,7 +3,7 @@ use sui_core::{
     SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector,
 };
 use sui_layout::{Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget, window_render_options};
 use sui_text::{TextMeasurement, TextStyle};
 
 use crate::DefaultTheme;
@@ -396,9 +396,17 @@ impl Widget for ListView {
                 (row.max_x() - text_x - 8.0).max(0.0),
                 row.height(),
             );
+            let label_measurement = paint_text_measurement(ctx, &item.label, &label_style);
+            let detail_measurement = item
+                .detail
+                .as_deref()
+                .map(|detail| paint_text_measurement(ctx, detail, &detail_style));
             let (label_rect, detail_rect) = row_text_rects(
+                ctx,
                 text_bounds,
+                label_measurement,
                 label_style.line_height,
+                detail_measurement,
                 item.detail.as_ref().map(|_| detail_style.line_height),
             );
             ctx.draw_text(
@@ -907,9 +915,18 @@ impl Widget for TreeView {
                 row_rect.height(),
             );
             let detail_style = caption_style(self.theme.as_ref());
+            let label_style = self.theme.body_text_style();
+            let label_measurement = paint_text_measurement(ctx, &row.label, &label_style);
+            let detail_measurement = row
+                .detail
+                .as_deref()
+                .map(|detail| paint_text_measurement(ctx, detail, &detail_style));
             let (label_rect, detail_rect) = row_text_rects(
+                ctx,
                 text_bounds,
-                self.theme.body_text_style().line_height,
+                label_measurement,
+                label_style.line_height,
+                detail_measurement,
                 row.detail.as_ref().map(|_| detail_style.line_height),
             );
             ctx.draw_text(
@@ -920,7 +937,7 @@ impl Widget for TreeView {
                 } else if selected {
                     self.theme.text_style(palette.border_focus)
                 } else {
-                    self.theme.body_text_style()
+                    label_style
                 },
             );
             if let Some(detail) = &row.detail {
@@ -1867,6 +1884,7 @@ fn draw_aligned_text(
     style: &TextStyle,
     alignment: TableColumnAlignment,
 ) {
+    let measurement = paint_text_measurement(ctx, text, style);
     let estimated = estimate_text_width(text, style);
     let width = rect.width().max(estimated);
     let x = match alignment {
@@ -1875,7 +1893,7 @@ fn draw_aligned_text(
         TableColumnAlignment::End => rect.max_x() - estimated.max(0.0),
     };
     let height = style.line_height.min(rect.height());
-    let y = rect.y() + ((rect.height() - height) * 0.5).max(0.0);
+    let y = vertically_centered_text_rect_y(ctx, rect, measurement, height);
     ctx.draw_text(
         Rect::new(x, y, width, height),
         text.to_string(),
@@ -1884,27 +1902,52 @@ fn draw_aligned_text(
 }
 
 fn row_text_rects(
+    ctx: &PaintCtx,
     rect: Rect,
+    primary_measurement: TextMeasurement,
     primary_line_height: f32,
+    secondary_measurement: Option<TextMeasurement>,
     secondary_line_height: Option<f32>,
 ) -> (Rect, Option<Rect>) {
     match secondary_line_height {
         Some(secondary_line_height) => {
             let total_height = primary_line_height + secondary_line_height + 2.0;
             let top = rect.y() + ((rect.height() - total_height) * 0.5).max(0.0);
+            let primary_rect = Rect::new(rect.x(), top, rect.width(), primary_line_height);
+            let secondary_rect = Rect::new(
+                rect.x(),
+                top + primary_line_height + 2.0,
+                rect.width(),
+                secondary_line_height,
+            );
             (
-                Rect::new(rect.x(), top, rect.width(), primary_line_height),
+                Rect::new(
+                    primary_rect.x(),
+                    vertically_centered_text_rect_y(
+                        ctx,
+                        primary_rect,
+                        primary_measurement,
+                        primary_line_height,
+                    ),
+                    primary_rect.width(),
+                    primary_rect.height(),
+                ),
                 Some(Rect::new(
-                    rect.x(),
-                    top + primary_line_height + 2.0,
-                    rect.width(),
-                    secondary_line_height,
+                    secondary_rect.x(),
+                    vertically_centered_text_rect_y(
+                        ctx,
+                        secondary_rect,
+                        secondary_measurement.unwrap_or(primary_measurement),
+                        secondary_line_height,
+                    ),
+                    secondary_rect.width(),
+                    secondary_rect.height(),
                 )),
             )
         }
         None => {
             let height = primary_line_height.min(rect.height());
-            let y = rect.y() + ((rect.height() - height) * 0.5).max(0.0);
+            let y = vertically_centered_text_rect_y(ctx, rect, primary_measurement, height);
             (Rect::new(rect.x(), y, rect.width(), height), None)
         }
     }
@@ -1937,6 +1980,43 @@ fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeas
             descent: 0.0,
             cap_height: Some(style.font_size),
         })
+}
+
+fn paint_text_measurement(ctx: &PaintCtx, text: &str, style: &TextStyle) -> TextMeasurement {
+    ctx.measure_text(text.to_string(), style.clone())
+        .unwrap_or(TextMeasurement {
+            width: estimate_text_width(text, style),
+            height: style.line_height,
+            bounds: Rect::ZERO,
+            ascent: style.font_size,
+            descent: 0.0,
+            cap_height: Some(style.font_size),
+        })
+}
+
+fn vertically_centered_text_rect_y(
+    ctx: &PaintCtx,
+    rect: Rect,
+    measurement: TextMeasurement,
+    height: f32,
+) -> f32 {
+    let optical_centering = window_render_options(ctx.window_id())
+        .map(|options| options.optical_vertical_text_alignment_enabled)
+        .unwrap_or(true);
+    let top = if optical_centering {
+        -measurement.cap_height.unwrap_or(measurement.ascent)
+    } else {
+        -measurement.ascent
+    };
+    let bottom = if optical_centering {
+        measurement.descent * 0.5
+    } else {
+        measurement.descent
+    };
+    let visual_center = (top + bottom) * 0.5;
+    let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
+    let leading_above = ((height - (measurement.ascent + measurement.descent)).max(0.0)) * 0.5;
+    baseline - measurement.ascent - leading_above
 }
 
 fn caption_style(theme: &DefaultTheme) -> TextStyle {
@@ -1986,6 +2066,7 @@ mod tests {
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
     use sui_scene::SceneCommand;
+    use sui_text::{FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -2016,7 +2097,27 @@ mod tests {
                 }
             }
         });
+
         rects
+    }
+
+    fn text_runs_for(output: &RenderOutput, text: &str) -> Vec<sui_text::TextRun> {
+        let mut runs = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::DrawText(run) = command {
+                if run.text == text {
+                    runs.push(run.clone());
+                }
+            }
+        });
+
+        runs
+    }
+
+    fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
+        let top = -measurement.cap_height.unwrap_or(measurement.ascent);
+        let bottom = measurement.descent * 0.5;
+        (top + bottom) * 0.5
     }
 
     fn primary_pointer(kind: PointerEventKind, position: Point, pressed: bool) -> Event {
@@ -2307,5 +2408,32 @@ mod tests {
 
         assert!((label.height() - line_height.min(available_height)).abs() < 0.001);
         assert!(label.width() > 0.0);
+    }
+
+    #[test]
+    fn breadcrumb_label_stays_within_vertical_item_bounds() {
+        let output = render(Breadcrumb::new("Path").items([BreadcrumbItem::new("Workspace")]));
+        let label = text_rects_for(&output, "Workspace")[0];
+
+        assert!(label.y() >= 4.0);
+        assert!(label.max_y() <= output.frame.viewport.height - 4.0);
+    }
+
+    #[test]
+    fn list_row_label_visual_center_matches_row_center() {
+        let output = render(ListView::new("Assets").item(ListItem::new("Hero texture")));
+        let run = text_runs_for(&output, "Hero texture")
+            .into_iter()
+            .next()
+            .expect("list row label draw command present");
+        let layout = TextSystem::new()
+            .shape_text_run(&run, &FontRegistry::new())
+            .expect("list row label should shape");
+        let line = layout.lines().first().expect("list row line present");
+        let actual_visual_center =
+            run.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let row_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - row_center).abs() < 0.75);
     }
 }
