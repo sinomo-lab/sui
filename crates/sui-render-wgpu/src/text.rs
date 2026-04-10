@@ -89,6 +89,7 @@ pub(crate) struct CachedGlyphAtlas {
     pub(crate) size: Size,
     pub(crate) uv_min: [f32; 2],
     pub(crate) uv_max: [f32; 2],
+    pub(crate) is_color: bool,
 }
 
 #[derive(Debug, Clone)]

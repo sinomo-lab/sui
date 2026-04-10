@@ -2097,7 +2097,11 @@ fn build_cached_glyph_atlas(
     glyph_scale_logical: f32,
     coverage_policy: TextCoveragePolicy,
 ) -> Result<Option<CachedGlyphAtlas>> {
-    let sources = [SwashSource::Outline];
+    let sources = [
+        SwashSource::ColorOutline(0),
+        SwashSource::ColorBitmap(SwashStrikeWith::BestFit),
+        SwashSource::Outline,
+    ];
     let mut scaler = scale_context
         .builder_with_id(face.font_ref, face.font_id)
         .size(font_size_physical)
@@ -2111,6 +2115,10 @@ fn build_cached_glyph_atlas(
 
     let width = image.placement.width as usize;
     let height = image.placement.height as usize;
+    let Some(rasterized) = swash_image_to_rgba(&image, coverage_policy) else {
+        return Ok(None);
+    };
+
     if width == 0 || height == 0 {
         return Ok(Some(CachedGlyphAtlas {
             scale: glyph_scale_logical,
@@ -2121,13 +2129,11 @@ fn build_cached_glyph_atlas(
             size: Size::ZERO,
             uv_min: [0.0, 0.0],
             uv_max: [0.0, 0.0],
+            is_color: rasterized.is_color,
         }));
     }
 
-    let Some(pixels) = swash_image_to_rgba(&image, coverage_policy) else {
-        return Ok(None);
-    };
-    let Some(placement) = atlas.insert_rgba(width, height, &pixels) else {
+    let Some(placement) = atlas.insert_rgba(width, height, &rasterized.pixels) else {
         return Ok(None);
     };
 
@@ -2150,26 +2156,51 @@ fn build_cached_glyph_atlas(
         ),
         uv_min: [logical_uv_min_x * inv_width, logical_uv_min_y * inv_height],
         uv_max: [logical_uv_max_x * inv_width, logical_uv_max_y * inv_height],
+        is_color: rasterized.is_color,
     }))
 }
 
-fn swash_image_to_rgba(
+pub(crate) struct SwashRasterizedGlyph {
+    pub(crate) pixels: Vec<u8>,
+    pub(crate) is_color: bool,
+}
+
+pub(crate) fn swash_image_to_rgba(
     image: &swash::scale::image::Image,
     coverage_policy: TextCoveragePolicy,
-) -> Option<Vec<u8>> {
+) -> Option<SwashRasterizedGlyph> {
     let width = usize::try_from(image.placement.width).ok()?;
     let height = usize::try_from(image.placement.height).ok()?;
     let pixel_count = width.checked_mul(height)?;
-    let mut coverage = vec![0; pixel_count];
 
     match image.content {
         SwashImageContent::Mask => {
+            let mut coverage = vec![0; pixel_count];
             if image.data.len() < pixel_count {
                 return None;
             }
             coverage.copy_from_slice(&image.data[..pixel_count]);
+
+            if coverage.iter().all(|value| *value == 0 || *value == 255) {
+                coverage = soften_binary_coverage(&coverage, width, height);
+            }
+
+            let mut pixels = vec![0; pixel_count.checked_mul(4)?];
+            for (coverage, pixel) in coverage.into_iter().zip(pixels.chunks_exact_mut(4)) {
+                let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
+                pixel[0] = 255;
+                pixel[1] = 255;
+                pixel[2] = 255;
+                pixel[3] = alpha;
+            }
+
+            Some(SwashRasterizedGlyph {
+                pixels,
+                is_color: false,
+            })
         }
         SwashImageContent::SubpixelMask => {
+            let mut coverage = vec![0; pixel_count];
             if image.data.len() < pixel_count.checked_mul(4)? {
                 return None;
             }
@@ -2178,24 +2209,50 @@ fn swash_image_to_rgba(
                 let grayscale = (u16::from(source[0]) + u16::from(source[1]) + u16::from(source[2])) / 3;
                 *target = grayscale as u8;
             }
+
+            if coverage.iter().all(|value| *value == 0 || *value == 255) {
+                coverage = soften_binary_coverage(&coverage, width, height);
+            }
+
+            let mut pixels = vec![0; pixel_count.checked_mul(4)?];
+            for (coverage, pixel) in coverage.into_iter().zip(pixels.chunks_exact_mut(4)) {
+                let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
+                pixel[0] = 255;
+                pixel[1] = 255;
+                pixel[2] = 255;
+                pixel[3] = alpha;
+            }
+
+            Some(SwashRasterizedGlyph {
+                pixels,
+                is_color: false,
+            })
         }
-        SwashImageContent::Color => return None,
-    }
+        SwashImageContent::Color => {
+            if image.data.len() < pixel_count.checked_mul(4)? {
+                return None;
+            }
 
-    if coverage.iter().all(|value| *value == 0 || *value == 255) {
-        coverage = soften_binary_coverage(&coverage, width, height);
-    }
+            let mut pixels = vec![0; pixel_count.checked_mul(4)?];
+            for (source, pixel) in image.data.chunks_exact(4).zip(pixels.chunks_exact_mut(4)) {
+                pixel[0] = linearized_color_unorm(source[0]);
+                pixel[1] = linearized_color_unorm(source[1]);
+                pixel[2] = linearized_color_unorm(source[2]);
+                pixel[3] = source[3];
+            }
 
-    let mut pixels = vec![0; pixel_count.checked_mul(4)?];
-    for (coverage, pixel) in coverage.into_iter().zip(pixels.chunks_exact_mut(4)) {
-        let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
-        pixel[0] = 255;
-        pixel[1] = 255;
-        pixel[2] = 255;
-        pixel[3] = alpha;
+            Some(SwashRasterizedGlyph {
+                pixels,
+                is_color: true,
+            })
+        }
     }
+}
 
-    Some(pixels)
+pub(crate) fn linearized_color_unorm(channel: u8) -> u8 {
+    (srgb_transfer_to_linear(channel as f32 / 255.0) * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 fn soften_binary_coverage(coverage: &[u8], width: usize, height: usize) -> Vec<u8> {
@@ -2320,7 +2377,11 @@ pub(crate) fn append_cached_glyph_atlas(
         return;
     }
 
-    let rgba = shader_color(color);
+    let rgba = if atlas.is_color {
+        [1.0, 1.0, 1.0, -color.clamped().alpha]
+    } else {
+        shader_color(color)
+    };
     let residual_scale = glyph.scale / atlas.scale.max(f32::EPSILON);
     let left = glyph.origin_x + (atlas.offset.x * residual_scale);
     let top = glyph.origin_y + (atlas.offset.y * residual_scale);

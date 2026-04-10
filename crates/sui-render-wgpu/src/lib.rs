@@ -36,6 +36,7 @@ use swash::{
     FontRef as SwashFontRef,
     scale::{
         ScaleContext as SwashScaleContext, Source as SwashSource,
+        StrikeWith as SwashStrikeWith,
         image::Content as SwashImageContent, Render as SwashRender,
     },
     zeno::Format as SwashFormat,
@@ -2279,7 +2280,14 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let coverage = textureSample(text_atlas_texture, text_atlas_sampler, in.tex_coords).a;
+    let sampled = textureSample(text_atlas_texture, text_atlas_sampler, in.tex_coords);
+    if in.color.a < 0.0 {
+        let opacity = -in.color.a;
+        let alpha = sampled.a * opacity;
+        return vec4<f32>(sampled.rgb * alpha, alpha);
+    }
+
+    let coverage = sampled.a;
     let alpha = in.color.a * coverage;
     return vec4<f32>(in.color.rgb * alpha, alpha);
 }
@@ -2430,9 +2438,10 @@ mod tests {
         PreparedVertices, RendererFrameStats, RetainedCompositorState, RetainedFrameFragment,
         RetainedLayerRenderMode, RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine,
         VERTEX_SIZE, Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
-        prepare_frame_batches,
+        prepare_frame_batches, SwashImageContent, SwashSource, SwashStrikeWith,
         scene::{
-            CachedDrawBatch, CachedPassBatch, append_cached_glyph_atlas, prepare_cached_passes,
+            CachedDrawBatch, CachedPassBatch, append_cached_glyph_atlas, linearized_color_unorm,
+            prepare_cached_passes, swash_image_to_rgba,
         },
         shader_color, to_ndc,
     };
@@ -2883,6 +2892,7 @@ mod tests {
             size: Size::new(8.0, 10.0),
             uv_min: [0.25, 0.5],
             uv_max: [0.5, 0.75],
+            is_color: false,
         };
         let glyph = ShapedGlyph {
             glyph_id: 42,
@@ -2925,6 +2935,79 @@ mod tests {
     }
 
     #[test]
+    fn cached_color_glyph_atlas_uses_opacity_sentinel() {
+        let atlas = CachedGlyphAtlas {
+            scale: 12.0,
+            offset: Vector::new(1.0, 2.0),
+            size: Size::new(8.0, 10.0),
+            uv_min: [0.25, 0.5],
+            uv_max: [0.5, 0.75],
+            is_color: true,
+        };
+        let glyph = ShapedGlyph {
+            glyph_id: 42,
+            cluster: 0,
+            span_id: sui_text::TextSpanId {
+                paragraph_index: 0,
+                span_index: 0,
+            },
+            run_index: 0,
+            line_index: 0,
+            face_index: 0,
+            origin_x: 12.0,
+            origin_y: 20.0,
+            advance: Vector::new(8.0, 0.0),
+            scale: 12.0,
+            bounds: Some(Rect::new(13.0, 22.0, 8.0, 10.0)),
+        };
+
+        let mut vertices = Vec::new();
+        append_cached_glyph_atlas(
+            &mut vertices,
+            &atlas,
+            &glyph,
+            Color::srgba(0.2, 0.4, 0.6, 0.75),
+            Transform::IDENTITY,
+            Size::new(64.0, 64.0),
+            1.0,
+            true,
+        );
+
+        assert_eq!(vertices.len(), 6);
+        for vertex in vertices {
+            assert_eq!(vertex.color[0], 1.0);
+            assert_eq!(vertex.color[1], 1.0);
+            assert_eq!(vertex.color[2], 1.0);
+            assert_eq!(vertex.color[3], -0.75);
+        }
+    }
+
+    #[test]
+    fn swash_color_glyph_images_are_linearized_for_text_atlas() {
+        let image = swash::scale::image::Image {
+            source: SwashSource::ColorBitmap(SwashStrikeWith::BestFit),
+            content: SwashImageContent::Color,
+            placement: swash::zeno::Placement {
+                left: 0,
+                top: 0,
+                width: 1,
+                height: 1,
+            },
+            data: vec![66, 42, 213, 128],
+        };
+
+        let rasterized = swash_image_to_rgba(&image, TextCoveragePolicy::Linear)
+            .expect("color glyph should convert into atlas pixels");
+
+        assert!(rasterized.is_color);
+        assert_eq!(rasterized.pixels.len(), 4);
+        assert_eq!(rasterized.pixels[0], linearized_color_unorm(66));
+        assert_eq!(rasterized.pixels[1], linearized_color_unorm(42));
+        assert_eq!(rasterized.pixels[2], linearized_color_unorm(213));
+        assert_eq!(rasterized.pixels[3], 128);
+    }
+
+    #[test]
     fn text_atlas_shader_outputs_premultiplied_alpha() {
         let color = shader_color(Color::srgba(
             66.0 / 255.0,
@@ -2939,6 +3022,24 @@ mod tests {
         assert!((premultiplied[0] - 0.02043).abs() < 0.0001);
         assert!((premultiplied[1] - 0.00868).abs() < 0.0001);
         assert!((premultiplied[2] - 0.24952).abs() < 0.0001);
+        assert!((premultiplied[3] - 0.375).abs() < 0.0001);
+    }
+
+    #[test]
+    fn color_text_atlas_shader_outputs_sampled_premultiplied_alpha() {
+        let sampled = [
+            linearized_color_unorm(66) as f32 / 255.0,
+            linearized_color_unorm(42) as f32 / 255.0,
+            linearized_color_unorm(213) as f32 / 255.0,
+            0.5,
+        ];
+        let opacity = 0.75;
+        let alpha = sampled[3] * opacity;
+        let premultiplied = [sampled[0] * alpha, sampled[1] * alpha, sampled[2] * alpha, alpha];
+
+        assert!((premultiplied[0] - sampled[0] * 0.375).abs() < 0.0001);
+        assert!((premultiplied[1] - sampled[1] * 0.375).abs() < 0.0001);
+        assert!((premultiplied[2] - sampled[2] * 0.375).abs() < 0.0001);
         assert!((premultiplied[3] - 0.375).abs() < 0.0001);
     }
 
