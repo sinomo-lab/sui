@@ -106,7 +106,7 @@ pub(crate) struct AnalyticPointGpu {
 #[derive(Debug, Clone)]
 pub(crate) struct AnalyticPathCpuData {
     pub(crate) resource_signature: u64,
-    pub(crate) mode: AnalyticPathMode,
+    mode: AnalyticPathMode,
     pub(crate) feather_width: f32,
     pub(crate) stroke_width: f32,
     pub(crate) contours: Vec<AnalyticContourGpu>,
@@ -114,7 +114,7 @@ pub(crate) struct AnalyticPathCpuData {
 }
 
 impl AnalyticPathCpuData {
-    pub(crate) fn new(
+    fn new(
         mode: AnalyticPathMode,
         feather_width: f32,
         stroke_width: f32,
@@ -1453,7 +1453,7 @@ impl SceneDrawOpBuilder<'_> {
 pub(crate) struct SceneRasterState {
     pub(crate) current_transform: Transform,
     pub(crate) transform_stack: Vec<Transform>,
-    pub(crate) clip_stack: Vec<ClipPrimitive>,
+    clip_stack: Vec<ClipPrimitive>,
     pub(crate) path_clip_state_id: u64,
     pub(crate) active_path_clips: Vec<PreparedVertices>,
     pub(crate) clip_state_index: usize,

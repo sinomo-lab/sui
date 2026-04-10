@@ -143,14 +143,14 @@ pub(crate) struct RetainedTileUploadPlan {
 
 #[derive(Debug)]
 pub(crate) struct TileEntry {
-    pub(crate) key: TileKey,
+    key: TileKey,
     pub(crate) rect: Rect,
     pub(crate) translation: Vector,
     pub(crate) dirty: bool,
     pub(crate) visible: bool,
     pub(crate) last_used_frame: u64,
     pub(crate) memory_cost: usize,
-    pub(crate) payload: TilePayload,
+    payload: TilePayload,
     pub(crate) cached_passes: Vec<CachedPassBatch>,
     pub(crate) gpu_geometry: Option<RetainedGpuGeometry>,
 }
@@ -310,9 +310,9 @@ struct EffectNode {
 pub(crate) struct ResolvedRasterState {
     pub(crate) current_transform: Transform,
     pub(crate) clip_stack: Vec<ResolvedClipPrimitive>,
-    pub(crate) transform_node: TransformNodeId,
-    pub(crate) clip_node: ClipNodeId,
-    pub(crate) effect_node: EffectNodeId,
+    transform_node: TransformNodeId,
+    clip_node: ClipNodeId,
+    effect_node: EffectNodeId,
 }
 
 impl ResolvedRasterState {
@@ -385,7 +385,7 @@ pub(crate) struct RetainedDirectPacket {
     pub(crate) scene: Scene,
     pub(crate) initial_state: ResolvedRasterState,
     pub(crate) signature: u64,
-    pub(crate) coordinate_space: PacketCoordinateSpace,
+    coordinate_space: PacketCoordinateSpace,
     pub(crate) draw_ops: DrawOpArena,
 }
 
@@ -407,16 +407,16 @@ pub(crate) struct RetainedLayer {
     pub(crate) descriptor: sui_scene::SceneLayerDescriptor,
     pub(crate) parent: Option<SceneLayerId>,
     pub(crate) children: Vec<SceneLayerId>,
-    pub(crate) items: Vec<CompositionItem>,
+    items: Vec<CompositionItem>,
     pub(crate) packet_ids: Vec<RetainedPacketId>,
-    pub(crate) transform_node: TransformNodeId,
-    pub(crate) clip_node: ClipNodeId,
+    transform_node: TransformNodeId,
+    clip_node: ClipNodeId,
     pub(crate) clip_signature: u64,
-    pub(crate) effect_node: EffectNodeId,
+    effect_node: EffectNodeId,
     pub(crate) render_mode: RetainedLayerRenderMode,
     pub(crate) content_version: u64,
     pub(crate) structure_version: u64,
-    pub(crate) tile_grid: Option<TileGrid>,
+    tile_grid: Option<TileGrid>,
     pub(crate) visible_tiles: Vec<TileAddress>,
 }
 
@@ -497,13 +497,13 @@ impl CompositionTraversalState {
 
 #[derive(Debug)]
 pub(crate) struct RetainedCompositorState {
-    pub(crate) root: RetainedRootNode,
+    root: RetainedRootNode,
     pub(crate) layers: HashMap<SceneLayerId, RetainedLayer>,
     pub(crate) packets: HashMap<RetainedPacketId, RetainedDirectPacket>,
     pub(crate) tiles: HashMap<TileAddress, TileEntry>,
-    pub(crate) transforms: HashMap<TransformNodeId, TransformNode>,
-    pub(crate) clips: HashMap<ClipNodeId, ClipNode>,
-    pub(crate) effects: HashMap<EffectNodeId, EffectNode>,
+    transforms: HashMap<TransformNodeId, TransformNode>,
+    clips: HashMap<ClipNodeId, ClipNode>,
+    effects: HashMap<EffectNodeId, EffectNode>,
     pub(crate) next_transform_node: u64,
     pub(crate) next_clip_node: u64,
     pub(crate) next_effect_node: u64,

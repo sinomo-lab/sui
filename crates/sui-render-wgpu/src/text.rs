@@ -167,7 +167,7 @@ pub(crate) struct TextAtlas {
     pub(crate) width: usize,
     pub(crate) height: usize,
     pub(crate) pixels: Vec<u8>,
-    pub(crate) dirty: AtlasRectU,
+    dirty: AtlasRectU,
     pub(crate) full_upload: bool,
     pub(crate) cursor: (usize, usize),
     pub(crate) row_height: usize,
@@ -322,7 +322,7 @@ impl PathCacheKey {
 
 #[derive(Debug)]
 pub(crate) struct PathMeshCache {
-    pub(crate) meshes: HashMap<PathCacheKey, CachedGlyphMesh>,
+    meshes: HashMap<PathCacheKey, CachedGlyphMesh>,
     pub(crate) diagnostics_enabled: bool,
     pub(crate) hits: usize,
     pub(crate) misses: usize,
