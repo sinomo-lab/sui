@@ -2579,6 +2579,117 @@ mod tests {
         ]
     }
 
+    fn build_translucent_scroll_child_frame(
+        window_id: WindowId,
+        scroll_cache_policy: LayerCachePolicy,
+        child_cache_policy: LayerCachePolicy,
+        child_y: f32,
+        update_kind: SceneLayerUpdateKind,
+    ) -> SceneFrame {
+        let shell_id = WidgetId::new(210);
+        let scroll_id = WidgetId::new(211);
+        let child_id = WidgetId::new(212);
+        let scroll_bounds = Rect::new(24.0, 24.0, 382.0, 292.0);
+        let child_bounds = Rect::new(42.0, child_y, 360.0, 220.0);
+        let selected_row = Rect::new(42.0, child_y + 32.0, 360.0, 28.0);
+        let thumb = Rect::new(396.0, child_y + 14.0, 4.0, 58.0);
+
+        let shell_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(shell_id),
+            shell_id,
+            Rect::new(0.0, 0.0, 430.0, 360.0),
+        )
+        .with_content_bounds(Rect::new(0.0, 0.0, 430.0, 360.0))
+        .with_paint_bounds(Rect::new(0.0, 0.0, 430.0, 360.0))
+        .with_cache_policy(LayerCachePolicy::Direct);
+
+        let scroll_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(scroll_id),
+            scroll_id,
+            scroll_bounds,
+        )
+        .with_content_bounds(scroll_bounds)
+        .with_paint_bounds(scroll_bounds)
+        .with_cache_policy(scroll_cache_policy)
+        .with_composition_mode(LayerCompositionMode::Scroll);
+
+        let child_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(child_id),
+            child_id,
+            child_bounds,
+        )
+        .with_content_bounds(child_bounds)
+        .with_paint_bounds(child_bounds)
+        .with_cache_policy(child_cache_policy);
+
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::FillRect {
+            rect: child_bounds,
+            brush: Color::rgba(0.985, 0.99, 1.0, 1.0).into(),
+        });
+        child_scene.push(SceneCommand::PushClip { rect: child_bounds });
+        child_scene.push(SceneCommand::FillPath {
+            path: Path::rounded_rect(selected_row, 6.0),
+            brush: Color::rgba(0.09, 0.40, 0.92, 0.14).into(),
+        });
+        child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(58.0, child_y + 40.0, 172.0, 12.0),
+            brush: Color::rgba(0.17, 0.21, 0.29, 1.0).into(),
+        });
+        child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(58.0, child_y + 64.0, 140.0, 10.0),
+            brush: Color::rgba(0.45, 0.52, 0.61, 1.0).into(),
+        });
+        child_scene.push(SceneCommand::PopClip);
+        child_scene.push(SceneCommand::FillPath {
+            path: Path::rounded_rect(thumb, 2.0),
+            brush: Color::rgba(0.54, 0.60, 0.68, 0.75).into(),
+        });
+
+        let mut scroll_scene = Scene::new();
+        scroll_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            child_descriptor.clone(),
+            child_scene,
+        )));
+
+        let mut shell_scene = Scene::new();
+        shell_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 430.0, 360.0),
+            brush: Color::rgba(0.95, 0.97, 0.99, 1.0).into(),
+        });
+        shell_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            scroll_descriptor.clone(),
+            scroll_scene,
+        )));
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            shell_descriptor,
+            shell_scene,
+        )));
+
+        let update_damage = if update_kind == SceneLayerUpdateKind::Transform {
+            Rect::new(42.0, 0.0, 360.0, 320.0)
+        } else {
+            child_bounds
+        };
+
+        SceneFrame {
+            window_id,
+            viewport: Size::new(430.0, 360.0),
+            surface_size: Size::new(430.0, 360.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(update_kind, child_descriptor)
+                    .with_damage(update_damage),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        }
+    }
+
     fn logical_x_from_ndc(ndc_x: f32, viewport: Size) -> f32 {
         ((ndc_x + 1.0) * 0.5) * viewport.width
     }
@@ -6010,6 +6121,100 @@ mod tests {
             WindowId::new(113),
             LayerCachePolicy::Cached,
             72.0,
+            SceneLayerUpdateKind::Transform,
+        );
+        renderer.render(&cached_updated).unwrap();
+        let cached_pixels = renderer
+            .capture_last_frame_rgba(cached_updated.window_id)
+            .unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn cached_scroll_translucent_auto_child_matches_direct_after_translation() {
+        let mut renderer = WgpuRenderer::default();
+
+        let direct_initial = build_translucent_scroll_child_frame(
+            WindowId::new(214),
+            LayerCachePolicy::Direct,
+            LayerCachePolicy::Direct,
+            60.0,
+            SceneLayerUpdateKind::Content,
+        );
+        renderer.render(&direct_initial).unwrap();
+        let direct_updated = build_translucent_scroll_child_frame(
+            WindowId::new(214),
+            LayerCachePolicy::Direct,
+            LayerCachePolicy::Direct,
+            132.0,
+            SceneLayerUpdateKind::Transform,
+        );
+        renderer.render(&direct_updated).unwrap();
+        let direct_pixels = renderer
+            .capture_last_frame_rgba(direct_updated.window_id)
+            .unwrap();
+
+        let cached_initial = build_translucent_scroll_child_frame(
+            WindowId::new(215),
+            LayerCachePolicy::Cached,
+            LayerCachePolicy::Auto,
+            60.0,
+            SceneLayerUpdateKind::Content,
+        );
+        renderer.render(&cached_initial).unwrap();
+        let cached_updated = build_translucent_scroll_child_frame(
+            WindowId::new(215),
+            LayerCachePolicy::Cached,
+            LayerCachePolicy::Auto,
+            132.0,
+            SceneLayerUpdateKind::Transform,
+        );
+        renderer.render(&cached_updated).unwrap();
+        let cached_pixels = renderer
+            .capture_last_frame_rgba(cached_updated.window_id)
+            .unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn cached_scroll_translucent_direct_child_matches_direct_after_translation() {
+        let mut renderer = WgpuRenderer::default();
+
+        let direct_initial = build_translucent_scroll_child_frame(
+            WindowId::new(216),
+            LayerCachePolicy::Direct,
+            LayerCachePolicy::Direct,
+            60.0,
+            SceneLayerUpdateKind::Content,
+        );
+        renderer.render(&direct_initial).unwrap();
+        let direct_updated = build_translucent_scroll_child_frame(
+            WindowId::new(216),
+            LayerCachePolicy::Direct,
+            LayerCachePolicy::Direct,
+            132.0,
+            SceneLayerUpdateKind::Transform,
+        );
+        renderer.render(&direct_updated).unwrap();
+        let direct_pixels = renderer
+            .capture_last_frame_rgba(direct_updated.window_id)
+            .unwrap();
+
+        let cached_initial = build_translucent_scroll_child_frame(
+            WindowId::new(217),
+            LayerCachePolicy::Cached,
+            LayerCachePolicy::Direct,
+            60.0,
+            SceneLayerUpdateKind::Content,
+        );
+        renderer.render(&cached_initial).unwrap();
+        let cached_updated = build_translucent_scroll_child_frame(
+            WindowId::new(217),
+            LayerCachePolicy::Cached,
+            LayerCachePolicy::Direct,
+            132.0,
             SceneLayerUpdateKind::Transform,
         );
         renderer.render(&cached_updated).unwrap();

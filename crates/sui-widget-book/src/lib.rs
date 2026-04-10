@@ -2230,9 +2230,17 @@ mod tests {
             .unwrap_or_default();
 
         output.semantics.iter().any(|node| {
-            node.role == role
-                && node.name.as_deref() == Some(name)
-                && node.bounds.intersection(viewport).is_some()
+            if node.role != role || node.name.as_deref() != Some(name) {
+                return false;
+            }
+
+            let Some(visible) = node.bounds.intersection(viewport) else {
+                return false;
+            };
+
+            let node_area = node.bounds.width() * node.bounds.height();
+            let visible_area = visible.width() * visible.height();
+            node_area > 0.0 && (visible_area / node_area) >= 0.85
         })
     }
 
@@ -2609,7 +2617,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "broad cached-vs-direct integration diff; rely on renderer regressions instead"]
     fn widget_book_list_view_matches_forced_direct_render_after_scroll() {
         const LIST_DIFF_TOLERANCE: usize = 8;
 

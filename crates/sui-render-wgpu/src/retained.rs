@@ -2038,9 +2038,38 @@ fn build_cached_tile_fragment(
                         continue;
                     }
 
-                    if !packet_snapshot
-                        .is_some_and(|snapshot| scene_contains_clip_commands(&snapshot.scene))
-                    {
+                    if layer_snapshot.descriptor.cache_policy == sui_scene::LayerCachePolicy::Auto {
+                        let Some(packet_snapshot) = packet_snapshot.cloned() else {
+                            continue;
+                        };
+                        let normalized_snapshot = normalize_packet_snapshot(
+                            packet_snapshot,
+                            PacketCoordinateSpace::LayerLocal,
+                            layer_snapshot.descriptor.bounds.origin.to_vector(),
+                        );
+                        let mut external_clips = effective_clips.clone();
+                        external_clips.extend_from_slice(additional_clips);
+                        let fragment = build_direct_packet(
+                            frame,
+                            &normalized_snapshot.scene,
+                            &normalized_snapshot.initial_state,
+                            text_engine,
+                            path_cache,
+                            feather_width,
+                        )?;
+                        draw_ops.append_composed_fragment(
+                            &fragment,
+                            layer_snapshot.descriptor.bounds.origin.to_vector(),
+                            &external_clips,
+                            frame.viewport,
+                        )?;
+                        continue;
+                    }
+
+                    if !packet_snapshot.is_some_and(|snapshot| {
+                        scene_contains_clip_commands(&snapshot.scene)
+                            || scene_contains_path_commands(&snapshot.scene)
+                    }) {
                         draw_ops.append_composed_fragment(
                             &packet.draw_ops,
                             Vector::ZERO,
@@ -2126,6 +2155,15 @@ fn scene_contains_clip_commands(scene: &Scene) -> bool {
         matches!(
             command,
             SceneCommand::PushClip { .. } | SceneCommand::PushClipPath { .. }
+        )
+    })
+}
+
+fn scene_contains_path_commands(scene: &Scene) -> bool {
+    scene.commands().iter().any(|command| {
+        matches!(
+            command,
+            SceneCommand::FillPath { .. } | SceneCommand::StrokePath { .. }
         )
     })
 }
