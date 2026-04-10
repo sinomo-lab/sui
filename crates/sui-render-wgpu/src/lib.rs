@@ -1083,7 +1083,7 @@ impl WgpuRenderer {
                         &mut image_handles,
                     );
                 }
-                RetainedFrameFragment::Tile(address) => {
+                RetainedFrameFragment::Tile { address, .. } => {
                     let Some(compositor) = self.compositors.get(&frame.window_id) else {
                         continue;
                     };
@@ -1208,7 +1208,7 @@ impl WgpuRenderer {
                         gpu_upload_time_us += started.elapsed().as_micros() as u64;
                     }
                 }
-                RetainedFrameFragment::Tile(address) => {
+                RetainedFrameFragment::Tile { address, clip_rect } => {
                     let (passes, scene_buffer, clip_buffer, translation) = {
                         let (scene_buffer, clip_buffer) = self
                             .retained_tile_arenas
@@ -1231,12 +1231,21 @@ impl WgpuRenderer {
                             .gpu_geometry
                             .as_ref()
                             .expect("tile GPU geometry created before retained submission");
+                        let submission_clip_rect = clip_rect.map(|rect| {
+                            let scale = frame.scale_factor.max(0.001);
+                            let min_x = (rect.x() * scale).round() / scale;
+                            let min_y = (rect.y() * scale).round() / scale;
+                            let max_x = ((rect.x() + rect.width()) * scale).round() / scale;
+                            let max_y = ((rect.y() + rect.height()) * scale).round() / scale;
+                            Rect::from_points(Point::new(min_x, min_y), Point::new(max_x, max_y))
+                        });
                         let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
                         let passes = prepare_cached_passes(
                             &entry.cached_passes,
                             frame.viewport,
                             framebuffer_size,
                             entry.translation,
+                            submission_clip_rect,
                             geometry.scene_range.start,
                             geometry.clip_range.start,
                         );
@@ -3247,6 +3256,7 @@ mod tests {
             Size::new(512.0, 128.0),
             (768, 192),
             Vector::new(0.25, 0.0),
+            None,
             0,
             0,
         );
@@ -4269,7 +4279,7 @@ mod tests {
         assert!(
             fragments
                 .iter()
-                .all(|fragment| matches!(fragment, RetainedFrameFragment::Tile(_)))
+                .all(|fragment| matches!(fragment, RetainedFrameFragment::Tile { .. }))
         );
     }
 

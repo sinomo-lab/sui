@@ -242,7 +242,10 @@ pub(crate) struct RetainedFrameSubmission {
 #[derive(Debug)]
 pub(crate) enum RetainedFrameFragment {
     Transient(DrawOpArena),
-    Tile(TileAddress),
+    Tile {
+        address: TileAddress,
+        clip_rect: Option<Rect>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1427,12 +1430,18 @@ impl RetainedCompositorState {
                                 if !layer.visible_tiles.is_empty() {
                                     stats.visible_layers += 1;
                                 }
+                                let clip_rect = self
+                                    .clips
+                                    .get(&layer.clip_node)
+                                    .and_then(|node| node.parent)
+                                    .and_then(|parent| resolved_clip_bounds(parent, &self.clips));
                                 for tile in &layer.visible_tiles {
                                     if self.tiles.contains_key(tile) {
                                         flush_transient_fragment(submission, current);
-                                        submission
-                                            .fragments
-                                            .push(RetainedFrameFragment::Tile(*tile));
+                                        submission.fragments.push(RetainedFrameFragment::Tile {
+                                            address: *tile,
+                                            clip_rect,
+                                        });
                                         stats.visible_tiles += 1;
                                     }
                                 }
@@ -2038,7 +2047,14 @@ fn build_cached_tile_fragment(
                         continue;
                     }
 
-                    if layer_snapshot.descriptor.cache_policy == sui_scene::LayerCachePolicy::Auto {
+                    if layer_snapshot.descriptor.cache_policy == sui_scene::LayerCachePolicy::Auto
+                        && packet_snapshot.is_some_and(|snapshot| {
+                            (!snapshot.initial_state.clip_stack.is_empty()
+                                || scene_contains_clip_commands(&snapshot.scene)
+                                || scene_contains_path_commands(&snapshot.scene))
+                                && !scene_contains_image_commands(&snapshot.scene)
+                        })
+                    {
                         let Some(packet_snapshot) = packet_snapshot.cloned() else {
                             continue;
                         };
@@ -2166,6 +2182,13 @@ fn scene_contains_path_commands(scene: &Scene) -> bool {
             SceneCommand::FillPath { .. } | SceneCommand::StrokePath { .. }
         )
     })
+}
+
+fn scene_contains_image_commands(scene: &Scene) -> bool {
+    scene
+        .commands()
+        .iter()
+        .any(|command| matches!(command, SceneCommand::DrawImage { .. }))
 }
 
 fn packet_additional_clips<'a>(

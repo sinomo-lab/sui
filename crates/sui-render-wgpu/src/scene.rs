@@ -329,6 +329,7 @@ pub(crate) fn batch_draw_ops(
         viewport,
         framebuffer_size,
         Vector::ZERO,
+        None,
         0,
         0,
     )
@@ -391,6 +392,7 @@ pub(crate) fn prepare_cached_passes(
     viewport: Size,
     framebuffer_size: (u32, u32),
     translation: Vector,
+    external_clip_rect: Option<Rect>,
     scene_vertex_offset: u32,
     clip_vertex_offset: u32,
 ) -> Vec<PreparedPassBatch> {
@@ -411,10 +413,11 @@ pub(crate) fn prepare_cached_passes(
                 .iter()
                 .map(|draw| PreparedDrawBatch {
                     kind: draw.kind,
-                    clip_rect: draw
-                        .clip_rect
-                        .map(|rect| rect.translate(translation))
-                        .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size)),
+                    clip_rect: intersect_optional_rect(
+                        draw.clip_rect.map(|rect| rect.translate(translation)),
+                        external_clip_rect,
+                    )
+                    .and_then(|rect| rect_to_scissor(rect, viewport, framebuffer_size)),
                     vertices: draw.vertices.offset(scene_vertex_offset),
                 })
                 .collect(),
@@ -493,7 +496,7 @@ pub(crate) fn collect_visible_retained_tiles(
     let mut visible_tiles = Vec::new();
     let mut seen_tiles = HashSet::new();
     for fragment in &submission.fragments {
-        if let RetainedFrameFragment::Tile(address) = fragment {
+        if let RetainedFrameFragment::Tile { address, .. } = fragment {
             if seen_tiles.insert(*address) {
                 visible_tiles.push(*address);
             }
