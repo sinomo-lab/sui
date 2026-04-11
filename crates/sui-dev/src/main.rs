@@ -895,9 +895,74 @@ mod tests {
             .map(|sample| sample.renderer_submission.retained_packet_build_time_us as f64 / 1000.0)
             .sum::<f64>()
             / valid_count as f64;
+        let avg_packet_build_count = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
         let avg_surface_acquire_ms = measured_samples
             .iter()
             .map(|sample| sample.renderer_submission.surface_acquire_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_draws = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.draw_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_uploaded_vertex_bytes = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.uploaded_vertex_bytes as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_text_vertex_bytes = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.text_vertex_bytes as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_glyph_instances = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.text_glyph_instance_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_text_atlas_miss_count = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.text_atlas_miss_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_glyph_cache_hits = measured_samples
+            .iter()
+            .map(|sample| sample.text_cache_deltas.renderer_glyph.hits as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_glyph_cache_misses = measured_samples
+            .iter()
+            .map(|sample| sample.text_cache_deltas.renderer_glyph.misses as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_glyph_cache_entries = measured_samples
+            .iter()
+            .map(|sample| sample.text_cache_deltas.renderer_glyph.entries_delta as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_path_cache_hits = measured_samples
+            .iter()
+            .map(|sample| sample.text_cache_deltas.renderer_path.hits as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_path_cache_misses = measured_samples
+            .iter()
+            .map(|sample| sample.text_cache_deltas.renderer_path.misses as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_scene_commands = measured_samples
+            .iter()
+            .map(|sample| sample.scene.command_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_text_commands = measured_samples
+            .iter()
+            .map(|sample| sample.scene.text_command_count as f64)
             .sum::<f64>()
             / valid_count as f64;
 
@@ -907,10 +972,17 @@ mod tests {
         println!("min frame time:   {min_ms:.3} ms");
         println!("max frame time:   {max_ms:.3} ms");
         println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!("avg scene cmds:   {avg_scene_commands:.2} ({avg_text_commands:.2} text)");
+        println!("avg draws:        {avg_draws:.2}");
+        println!("avg vertex bytes: {:.0}", avg_uploaded_vertex_bytes);
+        println!("avg text bytes:   {:.0} ({avg_glyph_instances:.2} glyphs)", avg_text_vertex_bytes);
         println!("avg visible tiles:{avg_visible_tiles:.2}");
         println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
         println!("avg tile gen:     {avg_tile_generation_ms:.3} ms");
-        println!("avg packet build: {avg_packet_build_ms:.3} ms");
+        println!("avg packet build: {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
+        println!("avg atlas misses: {avg_text_atlas_miss_count:.2}");
+        println!("avg glyph cache Δ:{avg_glyph_cache_entries:.2} entries / {avg_glyph_cache_hits:.2} hits / {avg_glyph_cache_misses:.2} misses");
+        println!("avg path cache Δ: {avg_path_cache_hits:.2} hits / {avg_path_cache_misses:.2} misses");
         println!("avg surface acq:  {avg_surface_acquire_ms:.3} ms");
         println!("=========================================\n");
 

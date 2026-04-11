@@ -396,3 +396,59 @@ fn fallback_layout_exposes_non_explicit_faces_on_runs_and_glyphs() {
     }
     assert_cluster_run_ranges(&layout);
 }
+
+#[test]
+fn fallback_faces_keep_stable_shared_bytes_across_layout_builds() {
+    let Some((explicit_font, fallback_char)) = find_fallback_font_case() else {
+        return;
+    };
+
+    let system = TextSystem::new();
+    let handle = FontHandle::new(104);
+    let mut fonts = FontRegistry::new();
+    fonts.insert(handle, explicit_font.clone());
+    let style = TextStyle {
+        font: Some(handle),
+        ..TextStyle::new(Color::WHITE)
+    };
+
+    let first = system
+        .shape_text(
+            format!("A{fallback_char}B"),
+            Size::new(200.0, 32.0),
+            style.clone(),
+            &fonts,
+        )
+        .unwrap();
+    let second = system
+        .shape_text(
+            format!("A{fallback_char}B"),
+            Size::new(201.0, 32.0),
+            style,
+            &fonts,
+        )
+        .unwrap();
+
+    let primary_bytes = explicit_font.shared_bytes();
+    let first_fallback = first
+        .glyphs()
+        .iter()
+        .find_map(|glyph| {
+            let face = first.glyph_face(glyph);
+            (face.shared_bytes() != primary_bytes).then(|| face.clone())
+        })
+        .expect("expected fallback glyph face in first layout");
+    let second_fallback = second
+        .glyphs()
+        .iter()
+        .find_map(|glyph| {
+            let face = second.glyph_face(glyph);
+            (face.shared_bytes() != primary_bytes).then(|| face.clone())
+        })
+        .expect("expected fallback glyph face in second layout");
+
+    assert_eq!(first_fallback.face_index(), second_fallback.face_index());
+    assert_eq!(first_fallback.data_len(), second_fallback.data_len());
+    assert_eq!(first_fallback.data_ptr(), second_fallback.data_ptr());
+    assert_eq!(first_fallback.shared_bytes(), second_fallback.shared_bytes());
+}

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 
 use cosmic_text::{fontdb, Attrs, Family, FontSystem, Metrics};
 use sui_core::{Error, FontHandle, Rect, Result};
@@ -156,6 +156,7 @@ pub(crate) struct FontContext {
     default_face: ResolvedTextFace,
     default_face_key: FaceCacheKey,
     explicit_fonts: HashMap<FontHandle, ExplicitFontSpec>,
+    shared_faces: Arc<Mutex<HashMap<fontdb::ID, ResolvedTextFace>>>,
 }
 
 impl FontContext {
@@ -212,12 +213,30 @@ impl FontContext {
     }
 
     pub(crate) fn resolve_face(&self, font_id: fontdb::ID) -> Result<ResolvedTextFace> {
-        self.font_system
+        if let Some(face) = self
+            .shared_faces
+            .lock()
+            .map_err(|_| Error::new("shared text face cache lock was poisoned"))?
+            .get(&font_id)
+            .cloned()
+        {
+            return Ok(face);
+        }
+
+        let face = self
+            .font_system
             .db()
             .with_face_data(font_id, |font_data, face_index| {
                 ResolvedTextFace::from_bytes(Arc::<[u8]>::from(font_data.to_vec()), face_index)
             })
-            .ok_or_else(|| Error::new("failed to access font face data from cosmic-text database"))
+            .ok_or_else(|| Error::new("failed to access font face data from cosmic-text database"))?;
+
+        self.shared_faces
+            .lock()
+            .map_err(|_| Error::new("shared text face cache lock was poisoned"))?
+            .insert(font_id, face.clone());
+
+        Ok(face)
     }
 
     pub(crate) fn default_face(&self) -> &ResolvedTextFace {
@@ -230,6 +249,7 @@ pub(crate) struct TextSystemState {
     locale: String,
     font_db: fontdb::Database,
     default_face: ResolvedTextFace,
+    shared_faces: Arc<Mutex<HashMap<fontdb::ID, ResolvedTextFace>>>,
 }
 
 impl TextSystemState {
@@ -254,11 +274,14 @@ impl TextSystemState {
                 ResolvedTextFace::from_bytes(Arc::<[u8]>::from(font_data.to_vec()), face_index)
             })
             .ok_or_else(|| Error::new("failed to access fallback system font data"))?;
+        let mut shared_faces = HashMap::new();
+        shared_faces.insert(default_font, default_face.clone());
 
         Ok(Self {
             locale,
             font_db,
             default_face,
+            shared_faces: Arc::new(Mutex::new(shared_faces)),
         })
     }
 
@@ -297,6 +320,7 @@ impl TextSystemState {
             default_face: self.default_face.clone(),
             default_face_key: FaceCacheKey::new(&self.default_face),
             explicit_fonts,
+            shared_faces: Arc::clone(&self.shared_faces),
         })
     }
 }
