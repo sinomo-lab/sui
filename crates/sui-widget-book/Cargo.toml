@@ -9,11 +9,11 @@ publish = false
 [dependencies]
 sui = { workspace = true }
 sui-debug = { workspace = true }
+sui-runtime = { workspace = true }
+sui-scene = { workspace = true }
 sui-testing = { workspace = true }
 
 [dev-dependencies]
 png = "0.17"
 sui-render-wgpu = { workspace = true }
-sui-runtime = { workspace = true }
-sui-scene = { workspace = true }
 winit = { workspace = true }

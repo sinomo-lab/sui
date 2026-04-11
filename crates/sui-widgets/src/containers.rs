@@ -566,6 +566,7 @@ pub struct VirtualScrollView {
     name: Option<String>,
     padding: Insets,
     spacing: f32,
+    cache_policy: LayerCachePolicy,
     offset_y: f32,
     last_arranged_offset_y: f32,
     content_height: f32,
@@ -580,6 +581,7 @@ impl VirtualScrollView {
             name: None,
             padding: Insets::ZERO,
             spacing: 0.0,
+            cache_policy: LayerCachePolicy::Cached,
             offset_y: 0.0,
             last_arranged_offset_y: 0.0,
             content_height: 0.0,
@@ -601,6 +603,11 @@ impl VirtualScrollView {
 
     pub fn spacing(mut self, spacing: f32) -> Self {
         self.spacing = spacing.max(0.0);
+        self
+    }
+
+    pub fn cache_policy(mut self, cache_policy: LayerCachePolicy) -> Self {
+        self.cache_policy = cache_policy;
         self
     }
 
@@ -696,13 +703,8 @@ impl VirtualScrollView {
         if (next - previous_offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
             ctx.request_arrange();
-            let next_visible_range =
-                self.visible_range_for_offset(viewport.height(), self.offset_y);
             if let Some(exposed_strip) = self.exposed_viewport_strip(viewport, previous_offset_y) {
                 ctx.request_paint_rect(exposed_strip);
-            }
-            if next_visible_range != self.visible_range {
-                ctx.request_paint();
             }
             for child in self.visible_children() {
                 ctx.request(InvalidationRequest::new(
@@ -1002,8 +1004,11 @@ impl Widget for VirtualScrollView {
         let viewport = self.viewport_rect(bounds);
         self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
         let previous_visible_range = self.visible_range.clone();
+        let previous_arranged_offset_y = self.last_arranged_offset_y;
         self.update_visible_range(viewport.height());
-        if self.visible_range != previous_visible_range {
+        if self.visible_range != previous_visible_range
+            && (self.offset_y - previous_arranged_offset_y).abs() <= f32::EPSILON
+        {
             ctx.request_paint();
         }
         self.last_arranged_offset_y = self.offset_y;
@@ -1046,7 +1051,7 @@ impl Widget for VirtualScrollView {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: LayerCachePolicy::Cached,
+            cache_policy: self.cache_policy,
             composition_mode: LayerCompositionMode::Scroll,
         }
     }

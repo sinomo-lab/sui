@@ -892,12 +892,54 @@ impl RetainedCompositorState {
             })
             .collect::<HashMap<_, _>>();
         let previous_layers = self.layers.clone();
+        let layer_translation_deltas = snapshot
+            .layers
+            .iter()
+            .filter_map(|(layer_id, layer_snapshot)| {
+                previous_layers.get(layer_id).and_then(|previous| {
+                    descriptor_translation_delta(&previous.descriptor, &layer_snapshot.descriptor)
+                        .map(|delta| (*layer_id, delta))
+                })
+            })
+            .collect::<HashMap<_, _>>();
         let mut packet_dirty_layers = HashSet::new();
         let mut tiled_damage = HashMap::<SceneLayerId, Option<Rect>>::new();
         let mut cached_scroll_translations = HashMap::<SceneLayerId, Vector>::new();
         let mut cached_scroll_translation_conflicts = HashSet::<SceneLayerId>::new();
         let current_layers = snapshot.layers.keys().copied().collect::<HashSet<_>>();
         let mut root_dirty = global_rebuild;
+
+        let mut scroll_descendant_translations = HashMap::<SceneLayerId, Vector>::new();
+        let mut scroll_descendant_translation_conflicts = HashSet::<SceneLayerId>::new();
+        for update in &frame.layer_updates {
+            if update.kind != SceneLayerUpdateKind::Transform {
+                continue;
+            }
+
+            let Some(cached_root) = cached_tile_owners.get(&update.layer_id).copied().flatten()
+            else {
+                continue;
+            };
+            if cached_root == update.layer_id
+                || render_modes.get(&cached_root) != Some(&RetainedLayerRenderMode::CachedTiles)
+                || !snapshot.layers.get(&cached_root).is_some_and(|layer| {
+                    layer.descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
+                })
+            {
+                continue;
+            }
+
+            let Some(delta) = layer_translation_deltas.get(&update.layer_id).copied() else {
+                continue;
+            };
+
+            register_cached_scroll_translation(
+                &mut scroll_descendant_translations,
+                &mut scroll_descendant_translation_conflicts,
+                cached_root,
+                delta,
+            );
+        }
 
         for update in &frame.layer_updates {
             if !current_layers.contains(&update.layer_id) {
@@ -917,33 +959,44 @@ impl RetainedCompositorState {
             }
 
             if let Some(cached_root) = cached_tile_owners.get(&update.layer_id).copied().flatten() {
+                let cached_root_is_scroll = render_modes.get(&cached_root)
+                    == Some(&RetainedLayerRenderMode::CachedTiles)
+                    && snapshot.layers.get(&cached_root).is_some_and(|layer| {
+                        layer.descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
+                    });
                 if update.kind == SceneLayerUpdateKind::Transform
                     && cached_root == update.layer_id
                     && render_modes[&cached_root] == RetainedLayerRenderMode::CachedTiles
                 {
-                    let translation_delta = previous_layers.get(&cached_root).and_then(|previous| {
-                        descriptor_translation_delta(
-                            &previous.descriptor,
-                            &snapshot.layers[&cached_root].descriptor,
-                        )
-                    });
+                    let translation_delta = layer_translation_deltas
+                        .get(&cached_root)
+                        .copied()
+                        .or_else(|| {
+                            if cached_root_is_scroll
+                                && !scroll_descendant_translation_conflicts
+                                    .contains(&cached_root)
+                            {
+                                scroll_descendant_translations.get(&cached_root).copied()
+                            } else {
+                                None
+                            }
+                        });
 
                     if let Some(delta) = translation_delta {
-                        if let Some(existing) = cached_scroll_translations.get(&cached_root) {
-                            if *existing != delta {
-                                cached_scroll_translations.remove(&cached_root);
-                                cached_scroll_translation_conflicts.insert(cached_root);
-                                packet_dirty_layers.insert(cached_root);
-                                merge_damage_rect(
-                                    &mut tiled_damage,
-                                    cached_root,
-                                    update.damage.or(Some(update.paint_bounds)),
-                                );
-                            }
-                        } else if !cached_scroll_translation_conflicts.contains(&cached_root) {
-                            cached_scroll_translations.insert(cached_root, delta);
+                        if !register_cached_scroll_translation(
+                            &mut cached_scroll_translations,
+                            &mut cached_scroll_translation_conflicts,
+                            cached_root,
+                            delta,
+                        ) {
+                            packet_dirty_layers.insert(cached_root);
+                            merge_damage_rect(
+                                &mut tiled_damage,
+                                cached_root,
+                                update.damage.or(Some(update.paint_bounds)),
+                            );
                         }
-                    } else {
+                    } else if !cached_root_is_scroll {
                         packet_dirty_layers.insert(cached_root);
                         merge_damage_rect(
                             &mut tiled_damage,
@@ -953,6 +1006,25 @@ impl RetainedCompositorState {
                     }
 
                     continue;
+                }
+
+                if update.kind == SceneLayerUpdateKind::Transform && cached_root_is_scroll {
+                    if let Some(delta) = layer_translation_deltas.get(&update.layer_id).copied() {
+                        let matches_scroll_translation = !scroll_descendant_translation_conflicts
+                            .contains(&cached_root)
+                            && scroll_descendant_translations.get(&cached_root).copied()
+                                == Some(delta);
+                        if matches_scroll_translation
+                            && register_cached_scroll_translation(
+                                &mut cached_scroll_translations,
+                                &mut cached_scroll_translation_conflicts,
+                                cached_root,
+                                delta,
+                            )
+                        {
+                            continue;
+                        }
+                    }
                 }
 
                 if matches!(
@@ -1017,15 +1089,30 @@ impl RetainedCompositorState {
         let mut structure_dirty_layers = HashSet::new();
 
         for (layer_id, layer_snapshot) in snapshot.layers {
-            let translation_delta = previous_layers.get(&layer_id).and_then(|previous| {
-                descriptor_translation_delta(&previous.descriptor, &layer_snapshot.descriptor)
-            });
+            let translation_delta = cached_scroll_translations
+                .get(&layer_id)
+                .copied()
+                .or_else(|| {
+                    previous_layers.get(&layer_id).and_then(|previous| {
+                        descriptor_translation_delta(
+                            &previous.descriptor,
+                            &layer_snapshot.descriptor,
+                        )
+                    })
+                });
             let translated_only = translation_delta.is_some();
+            let scroll_translated_cached_layer = cached_scroll_translations.contains_key(&layer_id)
+                && render_modes[&layer_id] == RetainedLayerRenderMode::CachedTiles
+                && layer_snapshot.descriptor.composition_mode
+                    == sui_scene::LayerCompositionMode::Scroll;
             let structure_changed = previous_layers.get(&layer_id).is_none_or(|previous| {
                 previous.parent != layer_snapshot.parent
-                    || previous.children != layer_snapshot.children
-                    || previous.items != layer_snapshot.items
-                    || previous.packet_ids != layer_snapshot.packet_ids
+                    || (!scroll_translated_cached_layer
+                        && previous.children != layer_snapshot.children)
+                    || (!scroll_translated_cached_layer
+                        && previous.items != layer_snapshot.items)
+                    || (!scroll_translated_cached_layer
+                        && previous.packet_ids != layer_snapshot.packet_ids)
                     || previous.transform_node != layer_snapshot.transform_node
                     || (render_modes[&layer_id] != RetainedLayerRenderMode::Direct
                         && previous.clip_signature != layer_snapshot.clip_signature)
@@ -2372,6 +2459,30 @@ fn translate_cached_layer_tiles(
         }
 
         entry.translation += delta;
+    }
+}
+
+fn register_cached_scroll_translation(
+    translations: &mut HashMap<SceneLayerId, Vector>,
+    conflicts: &mut HashSet<SceneLayerId>,
+    layer_id: SceneLayerId,
+    delta: Vector,
+) -> bool {
+    if conflicts.contains(&layer_id) {
+        return false;
+    }
+
+    match translations.get(&layer_id).copied() {
+        Some(existing) if existing != delta => {
+            translations.remove(&layer_id);
+            conflicts.insert(layer_id);
+            false
+        }
+        Some(_) => true,
+        None => {
+            translations.insert(layer_id, delta);
+            true
+        }
     }
 }
 

@@ -10,6 +10,8 @@ use sui::{
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_scene_statistics_detail_mode,
 };
+use sui_runtime::LayerOptions;
+use sui_scene::{LayerCachePolicy, LayerCompositionMode};
 
 mod visual_artifacts;
 
@@ -196,6 +198,13 @@ pub fn register_widget_book_images(application: &mut Application) {
 }
 
 pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
+    build_widget_book_application_with_gallery_cache_policy(state, LayerCachePolicy::Direct)
+}
+
+fn build_widget_book_application_with_gallery_cache_policy(
+    state: Rc<RefCell<WidgetBookState>>,
+    gallery_cache_policy: LayerCachePolicy,
+) -> Application {
     let mut application = Application::new();
     register_widget_book_images(&mut application);
 
@@ -204,7 +213,10 @@ pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> App
             LivePerformanceRoot::new(
                 WINDOW_TITLE,
                 WINDOW_DESCRIPTION,
-                build_widget_book_gallery(Rc::clone(&state)),
+                build_widget_book_gallery_with_cache_policy(
+                    Rc::clone(&state),
+                    gallery_cache_policy,
+                ),
             )
             .watch_widget_book_state(state),
         ),
@@ -674,6 +686,13 @@ impl Widget for ThemePreviewShowcase {
 }
 
 pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
+    build_widget_book_gallery_with_cache_policy(state, LayerCachePolicy::Direct)
+}
+
+fn build_widget_book_gallery_with_cache_policy(
+    state: Rc<RefCell<WidgetBookState>>,
+    cache_policy: LayerCachePolicy,
+) -> impl Widget {
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
     let initial_notes = snapshot.notes.clone();
@@ -706,6 +725,7 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
 
     VirtualScrollView::new()
         .name(GALLERY_SCROLL_NAME)
+        .cache_policy(cache_policy)
         .padding(Insets::all(24.0))
         .spacing(18.0)
         .with_child(
@@ -1839,6 +1859,13 @@ impl Widget for LivePerformancePanel {
         constraints.clamp(Size::new(width, Self::HEIGHT))
     }
 
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            cache_policy: LayerCachePolicy::Direct,
+            composition_mode: LayerCompositionMode::Overlay,
+        }
+    }
+
     fn paint(&self, ctx: &mut PaintCtx) {
         let detail_mode = window_scene_statistics_detail_mode(ctx.window_id());
         let lines = self.rebuild_lines(ctx.bounds().width(), &self.content_specs(ctx.window_id()));
@@ -2620,9 +2647,12 @@ mod tests {
     fn widget_book_list_view_matches_forced_direct_render_after_scroll() {
         const LIST_DIFF_TOLERANCE: usize = 8;
 
-        let mut runtime = build_widget_book_application(default_widget_book_state())
-            .build()
-            .expect("runtime should build");
+        let mut runtime = super::build_widget_book_application_with_gallery_cache_policy(
+            default_widget_book_state(),
+            LayerCachePolicy::Cached,
+        )
+        .build()
+        .expect("runtime should build");
         let window_id = runtime.window_ids()[0];
 
         let mut output = runtime.render(window_id).expect("initial render succeeds");
