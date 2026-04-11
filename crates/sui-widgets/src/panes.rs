@@ -863,13 +863,23 @@ impl SplitView {
         self.divider_bounds.translate(bounds.origin.to_vector())
     }
 
+    fn allowed_first_main_range(&self, available: f32) -> (f32, f32) {
+        let available = available.max(0.0);
+        let lower = self.min_first.min(available);
+        let upper = (available - self.min_second).max(0.0);
+
+        if lower <= upper {
+            (lower, upper)
+        } else {
+            (0.0, available)
+        }
+    }
+
     fn divider_main_offset(&self, bounds: Rect) -> f32 {
         let divider = self.resolved_divider_thickness();
         let available = (axis_main(self.axis, bounds.size) - divider).max(0.0);
-        let first = (available * self.ratio).clamp(
-            self.min_first.min(available),
-            (available - self.min_second).max(0.0),
-        );
+        let (lower, upper) = self.allowed_first_main_range(available);
+        let first = (available * self.ratio).clamp(lower, upper);
         first
     }
 
@@ -889,10 +899,8 @@ impl SplitView {
         }
 
         let pointer_main = axis_position(self.axis, position) - axis_origin(self.axis, bounds);
-        let clamped = pointer_main.clamp(
-            self.min_first.min(total),
-            (total - self.min_second).max(0.0),
-        );
+        let (lower, upper) = self.allowed_first_main_range(total);
+        let clamped = pointer_main.clamp(lower, upper);
         let ratio = (clamped / total).clamp(0.0, 1.0);
         if (ratio - self.ratio).abs() > f32::EPSILON {
             self.ratio = ratio;
@@ -1485,7 +1493,7 @@ mod tests {
     use crate::containers::SizedBox;
     use sui_core::{
         Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
-        SemanticsRole, SemanticsValue, Size, Vector,
+        SemanticsRole, SemanticsValue, Size, Vector, WindowEvent,
     };
     use sui_layout::Axis;
     use sui_runtime::{Application, Runtime, StackOrderPolicy, Widget, WindowBuilder};
@@ -1566,6 +1574,30 @@ mod tests {
             splitter.value,
             Some(SemanticsValue::Number(value)) if value > 0.65
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn split_view_allows_resize_below_combined_minimums() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SplitView::new(
+                Axis::Horizontal,
+                SizedBox::new().width(320.0).height(180.0),
+                SizedBox::new().width(320.0).height(180.0),
+            )
+            .min_first(236.0)
+            .min_second(420.0)
+            .divider_thickness(12.0),
+        );
+
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(664.0, 360.0))),
+        )?;
+
+        let output = runtime.render(window_id)?;
+
+        assert_eq!(output.frame.viewport, Size::new(664.0, 360.0));
         Ok(())
     }
 
