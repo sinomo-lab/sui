@@ -200,6 +200,21 @@ pub struct RendererSubmissionDiagnostics {
     pub retained_packet_rebuild_signature_count: usize,
     pub retained_packet_rebuild_scene_count: usize,
     pub retained_packet_rebuild_state_count: usize,
+    pub retained_packet_normalize_time_us: u64,
+    pub retained_packet_signature_time_us: u64,
+    pub retained_packet_raster_state_init_time_us: u64,
+    pub retained_packet_scene_build_time_us: u64,
+    pub retained_packet_command_count: usize,
+    pub retained_packet_text_command_count: usize,
+    pub retained_packet_path_command_count: usize,
+    pub retained_packet_clip_path_command_count: usize,
+    pub retained_packet_image_command_count: usize,
+    pub retained_packet_rect_command_count: usize,
+    pub retained_packet_text_command_time_us: u64,
+    pub retained_packet_path_command_time_us: u64,
+    pub retained_packet_clip_path_command_time_us: u64,
+    pub retained_packet_image_command_time_us: u64,
+    pub retained_packet_rect_command_time_us: u64,
     pub text_atlas_miss_count: usize,
     pub text_atlas_miss_time_us: u64,
     pub surface_acquire_time_us: u64,
@@ -284,6 +299,21 @@ impl RendererSubmissionDiagnostics {
             retained_packet_rebuild_signature_count,
             retained_packet_rebuild_scene_count,
             retained_packet_rebuild_state_count,
+            retained_packet_normalize_time_us: 0,
+            retained_packet_signature_time_us: 0,
+            retained_packet_raster_state_init_time_us: 0,
+            retained_packet_scene_build_time_us: 0,
+            retained_packet_command_count: 0,
+            retained_packet_text_command_count: 0,
+            retained_packet_path_command_count: 0,
+            retained_packet_clip_path_command_count: 0,
+            retained_packet_image_command_count: 0,
+            retained_packet_rect_command_count: 0,
+            retained_packet_text_command_time_us: 0,
+            retained_packet_path_command_time_us: 0,
+            retained_packet_clip_path_command_time_us: 0,
+            retained_packet_image_command_time_us: 0,
+            retained_packet_rect_command_time_us: 0,
             text_atlas_miss_count,
             text_atlas_miss_time_us,
             surface_acquire_time_us,
@@ -303,6 +333,42 @@ impl RendererSubmissionDiagnostics {
             queue_submit_time_us,
             surface_present_time_us,
         }
+    }
+
+    pub fn with_retained_packet_breakdown(
+        mut self,
+        retained_packet_normalize_time_us: u64,
+        retained_packet_signature_time_us: u64,
+        retained_packet_raster_state_init_time_us: u64,
+        retained_packet_scene_build_time_us: u64,
+        retained_packet_command_count: usize,
+        retained_packet_text_command_count: usize,
+        retained_packet_path_command_count: usize,
+        retained_packet_clip_path_command_count: usize,
+        retained_packet_image_command_count: usize,
+        retained_packet_rect_command_count: usize,
+        retained_packet_text_command_time_us: u64,
+        retained_packet_path_command_time_us: u64,
+        retained_packet_clip_path_command_time_us: u64,
+        retained_packet_image_command_time_us: u64,
+        retained_packet_rect_command_time_us: u64,
+    ) -> Self {
+        self.retained_packet_normalize_time_us = retained_packet_normalize_time_us;
+        self.retained_packet_signature_time_us = retained_packet_signature_time_us;
+        self.retained_packet_raster_state_init_time_us = retained_packet_raster_state_init_time_us;
+        self.retained_packet_scene_build_time_us = retained_packet_scene_build_time_us;
+        self.retained_packet_command_count = retained_packet_command_count;
+        self.retained_packet_text_command_count = retained_packet_text_command_count;
+        self.retained_packet_path_command_count = retained_packet_path_command_count;
+        self.retained_packet_clip_path_command_count = retained_packet_clip_path_command_count;
+        self.retained_packet_image_command_count = retained_packet_image_command_count;
+        self.retained_packet_rect_command_count = retained_packet_rect_command_count;
+        self.retained_packet_text_command_time_us = retained_packet_text_command_time_us;
+        self.retained_packet_path_command_time_us = retained_packet_path_command_time_us;
+        self.retained_packet_clip_path_command_time_us = retained_packet_clip_path_command_time_us;
+        self.retained_packet_image_command_time_us = retained_packet_image_command_time_us;
+        self.retained_packet_rect_command_time_us = retained_packet_rect_command_time_us;
+        self
     }
 }
 

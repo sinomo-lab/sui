@@ -215,6 +215,21 @@ pub struct RendererFrameStats {
     pub retained_packet_rebuild_signature_count: usize,
     pub retained_packet_rebuild_scene_count: usize,
     pub retained_packet_rebuild_state_count: usize,
+    pub retained_packet_normalize_time_us: u64,
+    pub retained_packet_signature_time_us: u64,
+    pub retained_packet_raster_state_init_time_us: u64,
+    pub retained_packet_scene_build_time_us: u64,
+    pub retained_packet_command_count: usize,
+    pub retained_packet_text_command_count: usize,
+    pub retained_packet_path_command_count: usize,
+    pub retained_packet_clip_path_command_count: usize,
+    pub retained_packet_image_command_count: usize,
+    pub retained_packet_rect_command_count: usize,
+    pub retained_packet_text_command_time_us: u64,
+    pub retained_packet_path_command_time_us: u64,
+    pub retained_packet_clip_path_command_time_us: u64,
+    pub retained_packet_image_command_time_us: u64,
+    pub retained_packet_rect_command_time_us: u64,
     pub text_atlas_miss_count: usize,
     pub text_atlas_miss_time_us: u64,
     pub surface_acquire_time_us: u64,
@@ -277,6 +292,21 @@ impl RendererFrameStats {
             retained_packet_rebuild_signature_count: 0,
             retained_packet_rebuild_scene_count: 0,
             retained_packet_rebuild_state_count: 0,
+            retained_packet_normalize_time_us: 0,
+            retained_packet_signature_time_us: 0,
+            retained_packet_raster_state_init_time_us: 0,
+            retained_packet_scene_build_time_us: 0,
+            retained_packet_command_count: 0,
+            retained_packet_text_command_count: 0,
+            retained_packet_path_command_count: 0,
+            retained_packet_clip_path_command_count: 0,
+            retained_packet_image_command_count: 0,
+            retained_packet_rect_command_count: 0,
+            retained_packet_text_command_time_us: 0,
+            retained_packet_path_command_time_us: 0,
+            retained_packet_clip_path_command_time_us: 0,
+            retained_packet_image_command_time_us: 0,
+            retained_packet_rect_command_time_us: 0,
             text_atlas_miss_count: 0,
             text_atlas_miss_time_us: 0,
             surface_acquire_time_us: 0,
@@ -317,6 +347,30 @@ impl RendererFrameStats {
         self.retained_packet_rebuild_signature_count = stats.packet_rebuild_signature_count;
         self.retained_packet_rebuild_scene_count = stats.packet_rebuild_scene_count;
         self.retained_packet_rebuild_state_count = stats.packet_rebuild_state_count;
+        self.retained_packet_normalize_time_us =
+            (stats.packet_normalize_time_ms * 1000.0).round() as u64;
+        self.retained_packet_signature_time_us =
+            (stats.packet_signature_time_ms * 1000.0).round() as u64;
+        self.retained_packet_raster_state_init_time_us =
+            (stats.packet_raster_state_init_time_ms * 1000.0).round() as u64;
+        self.retained_packet_scene_build_time_us =
+            (stats.packet_scene_build_time_ms * 1000.0).round() as u64;
+        self.retained_packet_command_count = stats.packet_command_count;
+        self.retained_packet_text_command_count = stats.packet_text_command_count;
+        self.retained_packet_path_command_count = stats.packet_path_command_count;
+        self.retained_packet_clip_path_command_count = stats.packet_clip_path_command_count;
+        self.retained_packet_image_command_count = stats.packet_image_command_count;
+        self.retained_packet_rect_command_count = stats.packet_rect_command_count;
+        self.retained_packet_text_command_time_us =
+            (stats.packet_text_command_time_ms * 1000.0).round() as u64;
+        self.retained_packet_path_command_time_us =
+            (stats.packet_path_command_time_ms * 1000.0).round() as u64;
+        self.retained_packet_clip_path_command_time_us =
+            (stats.packet_clip_path_command_time_ms * 1000.0).round() as u64;
+        self.retained_packet_image_command_time_us =
+            (stats.packet_image_command_time_ms * 1000.0).round() as u64;
+        self.retained_packet_rect_command_time_us =
+            (stats.packet_rect_command_time_ms * 1000.0).round() as u64;
         self
     }
 

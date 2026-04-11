@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use super::*;
 
 #[derive(Debug, Default, Clone)]
@@ -1165,6 +1167,7 @@ pub(crate) fn build_direct_packet(
 ) -> Result<DrawOpArena> {
     let mut draw_ops = DrawOpArena::default();
     let mut state = SceneRasterState::from_resolved(initial_state, &mut draw_ops, frame.viewport)?;
+    let mut diagnostics = DirectPacketBuildDiagnostics::default();
     let mut builder = SceneDrawOpBuilder {
         frame,
         text_engine,
@@ -1174,8 +1177,53 @@ pub(crate) fn build_direct_packet(
         overlay_scratch_vertices: Vec::new(),
         clip_scratch_vertices: Vec::new(),
     };
-    builder.build_scene(scene, &mut draw_ops, &mut state)?;
+    builder.build_scene(scene, &mut draw_ops, &mut state, &mut diagnostics)?;
     Ok(draw_ops)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DirectPacketBuildDiagnostics {
+    pub(crate) command_count: usize,
+    pub(crate) text_command_count: usize,
+    pub(crate) path_command_count: usize,
+    pub(crate) clip_path_command_count: usize,
+    pub(crate) image_command_count: usize,
+    pub(crate) rect_command_count: usize,
+    pub(crate) raster_state_init_time_ms: f64,
+    pub(crate) scene_build_time_ms: f64,
+    pub(crate) text_command_time_ms: f64,
+    pub(crate) path_command_time_ms: f64,
+    pub(crate) clip_path_command_time_ms: f64,
+    pub(crate) image_command_time_ms: f64,
+    pub(crate) rect_command_time_ms: f64,
+}
+
+pub(crate) fn build_direct_packet_with_diagnostics(
+    frame: &SceneFrame,
+    scene: &Scene,
+    initial_state: &ResolvedRasterState,
+    text_engine: &mut TextEngine,
+    path_cache: &mut PathMeshCache,
+    feather_width: f32,
+) -> Result<(DrawOpArena, DirectPacketBuildDiagnostics)> {
+    let mut diagnostics = DirectPacketBuildDiagnostics::default();
+    let mut draw_ops = DrawOpArena::default();
+    let state_init_started = Instant::now();
+    let mut state = SceneRasterState::from_resolved(initial_state, &mut draw_ops, frame.viewport)?;
+    diagnostics.raster_state_init_time_ms = state_init_started.elapsed().as_secs_f64() * 1000.0;
+    let mut builder = SceneDrawOpBuilder {
+        frame,
+        text_engine,
+        path_cache,
+        feather_width,
+        scratch_vertices: Vec::new(),
+        overlay_scratch_vertices: Vec::new(),
+        clip_scratch_vertices: Vec::new(),
+    };
+    let scene_build_started = Instant::now();
+    builder.build_scene(scene, &mut draw_ops, &mut state, &mut diagnostics)?;
+    diagnostics.scene_build_time_ms = scene_build_started.elapsed().as_secs_f64() * 1000.0;
+    Ok((draw_ops, diagnostics))
 }
 
 struct SceneDrawOpBuilder<'a> {
@@ -1199,9 +1247,10 @@ impl SceneDrawOpBuilder<'_> {
         scene: &Scene,
         draw_ops: &mut DrawOpArena,
         state: &mut SceneRasterState,
+        diagnostics: &mut DirectPacketBuildDiagnostics,
     ) -> Result<()> {
         for command in scene.commands() {
-            self.build_command(command, draw_ops, state)?;
+            self.build_command(command, draw_ops, state, diagnostics)?;
         }
 
         Ok(())
@@ -1212,10 +1261,13 @@ impl SceneDrawOpBuilder<'_> {
         command: &SceneCommand,
         draw_ops: &mut DrawOpArena,
         state: &mut SceneRasterState,
+        diagnostics: &mut DirectPacketBuildDiagnostics,
     ) -> Result<()> {
         let viewport = self.frame.viewport;
+        diagnostics.command_count += 1;
+        let command_started = Instant::now();
 
-        match command {
+        let result = match command {
             SceneCommand::Clear(color) => {
                 self.scratch_vertices.clear();
                 append_rect(
@@ -1225,6 +1277,8 @@ impl SceneDrawOpBuilder<'_> {
                     viewport,
                 );
                 push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                diagnostics.rect_command_count += 1;
+                Ok(())
             }
             SceneCommand::FillRect { rect, brush } => {
                 let Brush::Solid(color) = brush;
@@ -1238,6 +1292,8 @@ impl SceneDrawOpBuilder<'_> {
                     self.feather_width,
                 );
                 push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                diagnostics.rect_command_count += 1;
+                Ok(())
             }
             SceneCommand::StrokeRect {
                 rect,
@@ -1256,6 +1312,8 @@ impl SceneDrawOpBuilder<'_> {
                     self.feather_width,
                 );
                 push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                diagnostics.rect_command_count += 1;
+                Ok(())
             }
             SceneCommand::FillPath { path, brush } => {
                 let Brush::Solid(color) = brush;
@@ -1281,6 +1339,8 @@ impl SceneDrawOpBuilder<'_> {
                         state,
                     );
                 }
+                diagnostics.path_command_count += 1;
+                Ok(())
             }
             SceneCommand::StrokePath {
                 path,
@@ -1313,6 +1373,8 @@ impl SceneDrawOpBuilder<'_> {
                         state,
                     );
                 }
+                diagnostics.path_command_count += 1;
+                Ok(())
             }
             SceneCommand::DrawText(text) => {
                 self.scratch_vertices.clear();
@@ -1330,6 +1392,8 @@ impl SceneDrawOpBuilder<'_> {
                     &self.scratch_vertices,
                     state,
                 );
+                diagnostics.text_command_count += 1;
+                Ok(())
             }
             SceneCommand::DrawShapedText(text) => {
                 self.scratch_vertices.clear();
@@ -1346,6 +1410,8 @@ impl SceneDrawOpBuilder<'_> {
                     &self.scratch_vertices,
                     state,
                 );
+                diagnostics.text_command_count += 1;
+                Ok(())
             }
             SceneCommand::DrawImage { rect, source } => {
                 self.scratch_vertices.clear();
@@ -1371,27 +1437,36 @@ impl SceneDrawOpBuilder<'_> {
                     &self.scratch_vertices,
                     state,
                 );
+                diagnostics.image_command_count += 1;
+                Ok(())
             }
             SceneCommand::PushClip { rect } => {
                 state.push_clip(*rect);
+                diagnostics.rect_command_count += 1;
+                Ok(())
             }
             SceneCommand::PushClipPath { path } => {
                 state.push_clip_path(path, viewport, draw_ops, &mut self.clip_scratch_vertices)?;
+                diagnostics.clip_path_command_count += 1;
+                Ok(())
             }
             SceneCommand::PopClip => {
                 state.pop_clip(draw_ops);
+                Ok(())
             }
             SceneCommand::PushTransform { transform } => {
                 state.push_transform(*transform);
+                Ok(())
             }
             SceneCommand::PopTransform => {
                 state.pop_transform();
+                Ok(())
             }
             SceneCommand::Layer(layer) => {
-                return Err(Error::new(format!(
+                Err(Error::new(format!(
                     "retained direct packet compiler encountered nested layer {}",
                     layer.layer_id().get()
-                )));
+                )))
             }
             SceneCommand::Label { rect, text, color } => {
                 self.scratch_vertices.clear();
@@ -1413,10 +1488,40 @@ impl SceneDrawOpBuilder<'_> {
                     &self.scratch_vertices,
                     state,
                 );
+                diagnostics.text_command_count += 1;
+                Ok(())
             }
+        };
+
+        let elapsed_ms = command_started.elapsed().as_secs_f64() * 1000.0;
+        match command {
+            SceneCommand::Clear(_)
+            | SceneCommand::FillRect { .. }
+            | SceneCommand::StrokeRect { .. }
+            | SceneCommand::PushClip { .. } => {
+                diagnostics.rect_command_time_ms += elapsed_ms;
+            }
+            SceneCommand::FillPath { .. } | SceneCommand::StrokePath { .. } => {
+                diagnostics.path_command_time_ms += elapsed_ms;
+            }
+            SceneCommand::DrawText(_)
+            | SceneCommand::DrawShapedText(_)
+            | SceneCommand::Label { .. } => {
+                diagnostics.text_command_time_ms += elapsed_ms;
+            }
+            SceneCommand::DrawImage { .. } => {
+                diagnostics.image_command_time_ms += elapsed_ms;
+            }
+            SceneCommand::PushClipPath { .. } => {
+                diagnostics.clip_path_command_time_ms += elapsed_ms;
+            }
+            SceneCommand::PopClip
+            | SceneCommand::PushTransform { .. }
+            | SceneCommand::PopTransform
+            | SceneCommand::Layer(_) => {}
         }
 
-        Ok(())
+        result
     }
 }
 

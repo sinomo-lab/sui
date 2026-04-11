@@ -237,6 +237,21 @@ pub(crate) struct RetainedCompositorFrameStats {
     pub(crate) packet_rebuild_signature_count: usize,
     pub(crate) packet_rebuild_scene_count: usize,
     pub(crate) packet_rebuild_state_count: usize,
+    pub(crate) packet_normalize_time_ms: f64,
+    pub(crate) packet_signature_time_ms: f64,
+    pub(crate) packet_raster_state_init_time_ms: f64,
+    pub(crate) packet_scene_build_time_ms: f64,
+    pub(crate) packet_command_count: usize,
+    pub(crate) packet_text_command_count: usize,
+    pub(crate) packet_path_command_count: usize,
+    pub(crate) packet_clip_path_command_count: usize,
+    pub(crate) packet_image_command_count: usize,
+    pub(crate) packet_rect_command_count: usize,
+    pub(crate) packet_text_command_time_ms: f64,
+    pub(crate) packet_path_command_time_ms: f64,
+    pub(crate) packet_clip_path_command_time_ms: f64,
+    pub(crate) packet_image_command_time_ms: f64,
+    pub(crate) packet_rect_command_time_ms: f64,
 }
 
 impl RetainedCompositorFrameStats {
@@ -250,6 +265,29 @@ impl RetainedCompositorFrameStats {
             PacketRebuildReason::Scene => self.packet_rebuild_scene_count += 1,
             PacketRebuildReason::State => self.packet_rebuild_state_count += 1,
         }
+    }
+
+    fn record_packet_build_diagnostics(
+        &mut self,
+        diagnostics: DirectPacketBuildDiagnostics,
+        normalize_time_ms: f64,
+        signature_time_ms: f64,
+    ) {
+        self.packet_normalize_time_ms += normalize_time_ms;
+        self.packet_signature_time_ms += signature_time_ms;
+        self.packet_raster_state_init_time_ms += diagnostics.raster_state_init_time_ms;
+        self.packet_scene_build_time_ms += diagnostics.scene_build_time_ms;
+        self.packet_command_count += diagnostics.command_count;
+        self.packet_text_command_count += diagnostics.text_command_count;
+        self.packet_path_command_count += diagnostics.path_command_count;
+        self.packet_clip_path_command_count += diagnostics.clip_path_command_count;
+        self.packet_image_command_count += diagnostics.image_command_count;
+        self.packet_rect_command_count += diagnostics.rect_command_count;
+        self.packet_text_command_time_ms += diagnostics.text_command_time_ms;
+        self.packet_path_command_time_ms += diagnostics.path_command_time_ms;
+        self.packet_clip_path_command_time_ms += diagnostics.clip_path_command_time_ms;
+        self.packet_image_command_time_ms += diagnostics.image_command_time_ms;
+        self.packet_rect_command_time_ms += diagnostics.rect_command_time_ms;
     }
 }
 
@@ -1207,13 +1245,21 @@ impl RetainedCompositorState {
         feather_width: f32,
         stats: &mut RetainedCompositorFrameStats,
     ) -> Result<()> {
+        let normalize_started = self.diagnostics_enabled.then(Instant::now);
         let snapshot = normalize_packet_snapshot(snapshot, coordinate_space, normalization_origin);
+        let normalize_time_ms = normalize_started
+            .map(|started| started.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
+        let signature_started = self.diagnostics_enabled.then(Instant::now);
         let signature = packet_signature(
             &snapshot.scene,
             &snapshot.initial_state,
             frame.viewport,
             feather_width,
         );
+        let signature_time_ms = signature_started
+            .map(|started| started.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
         let rebuild_reason = match self.packets.get(&snapshot.id) {
             None => Some(PacketRebuildReason::NewPacket),
             Some(packet) if packet.coordinate_space != coordinate_space => {
@@ -1241,7 +1287,7 @@ impl RetainedCompositorState {
 
         if let Some(reason) = rebuild_reason {
             let packet_build_started = self.diagnostics_enabled.then(|| Instant::now());
-            let draw_ops = build_direct_packet(
+            let (draw_ops, diagnostics) = build_direct_packet_with_diagnostics(
                 frame,
                 &snapshot.scene,
                 &snapshot.initial_state,
@@ -1250,6 +1296,11 @@ impl RetainedCompositorState {
                 feather_width,
             )?;
             stats.record_packet_rebuild(reason);
+            stats.record_packet_build_diagnostics(
+                diagnostics,
+                normalize_time_ms,
+                signature_time_ms,
+            );
             if let Some(started) = packet_build_started {
                 stats.packet_build_count += 1;
                 stats.packet_build_time_ms += started.elapsed().as_secs_f64() * 1000.0;

@@ -1382,6 +1382,23 @@ fn publish_frame_performance(
                 renderer_stats.pass_encode_time_us,
                 renderer_stats.queue_submit_time_us,
                 renderer_stats.surface_present_time_us,
+            )
+            .with_retained_packet_breakdown(
+                renderer_stats.retained_packet_normalize_time_us,
+                renderer_stats.retained_packet_signature_time_us,
+                renderer_stats.retained_packet_raster_state_init_time_us,
+                renderer_stats.retained_packet_scene_build_time_us,
+                renderer_stats.retained_packet_command_count,
+                renderer_stats.retained_packet_text_command_count,
+                renderer_stats.retained_packet_path_command_count,
+                renderer_stats.retained_packet_clip_path_command_count,
+                renderer_stats.retained_packet_image_command_count,
+                renderer_stats.retained_packet_rect_command_count,
+                renderer_stats.retained_packet_text_command_time_us,
+                renderer_stats.retained_packet_path_command_time_us,
+                renderer_stats.retained_packet_clip_path_command_time_us,
+                renderer_stats.retained_packet_image_command_time_us,
+                renderer_stats.retained_packet_rect_command_time_us,
             ),
             text_caches,
             text_cache_deltas,
@@ -1507,6 +1524,21 @@ struct ScrollBenchmarkFrameSample {
     retained_packet_rebuild_signature_count: usize,
     retained_packet_rebuild_scene_count: usize,
     retained_packet_rebuild_state_count: usize,
+    retained_packet_normalize_time_us: u64,
+    retained_packet_signature_time_us: u64,
+    retained_packet_raster_state_init_time_us: u64,
+    retained_packet_scene_build_time_us: u64,
+    retained_packet_command_count: usize,
+    retained_packet_text_command_count: usize,
+    retained_packet_path_command_count: usize,
+    retained_packet_clip_path_command_count: usize,
+    retained_packet_image_command_count: usize,
+    retained_packet_rect_command_count: usize,
+    retained_packet_text_command_time_us: u64,
+    retained_packet_path_command_time_us: u64,
+    retained_packet_clip_path_command_time_us: u64,
+    retained_packet_image_command_time_us: u64,
+    retained_packet_rect_command_time_us: u64,
     text_atlas_miss_count: usize,
     text_atlas_miss_time_us: u64,
     surface_acquire_time_us: u64,
@@ -1582,6 +1614,51 @@ impl ScrollBenchmarkFrameSample {
             retained_packet_rebuild_state_count: snapshot
                 .renderer_submission
                 .retained_packet_rebuild_state_count,
+            retained_packet_normalize_time_us: snapshot
+                .renderer_submission
+                .retained_packet_normalize_time_us,
+            retained_packet_signature_time_us: snapshot
+                .renderer_submission
+                .retained_packet_signature_time_us,
+            retained_packet_raster_state_init_time_us: snapshot
+                .renderer_submission
+                .retained_packet_raster_state_init_time_us,
+            retained_packet_scene_build_time_us: snapshot
+                .renderer_submission
+                .retained_packet_scene_build_time_us,
+            retained_packet_command_count: snapshot
+                .renderer_submission
+                .retained_packet_command_count,
+            retained_packet_text_command_count: snapshot
+                .renderer_submission
+                .retained_packet_text_command_count,
+            retained_packet_path_command_count: snapshot
+                .renderer_submission
+                .retained_packet_path_command_count,
+            retained_packet_clip_path_command_count: snapshot
+                .renderer_submission
+                .retained_packet_clip_path_command_count,
+            retained_packet_image_command_count: snapshot
+                .renderer_submission
+                .retained_packet_image_command_count,
+            retained_packet_rect_command_count: snapshot
+                .renderer_submission
+                .retained_packet_rect_command_count,
+            retained_packet_text_command_time_us: snapshot
+                .renderer_submission
+                .retained_packet_text_command_time_us,
+            retained_packet_path_command_time_us: snapshot
+                .renderer_submission
+                .retained_packet_path_command_time_us,
+            retained_packet_clip_path_command_time_us: snapshot
+                .renderer_submission
+                .retained_packet_clip_path_command_time_us,
+            retained_packet_image_command_time_us: snapshot
+                .renderer_submission
+                .retained_packet_image_command_time_us,
+            retained_packet_rect_command_time_us: snapshot
+                .renderer_submission
+                .retained_packet_rect_command_time_us,
             text_atlas_miss_count: snapshot.renderer_submission.text_atlas_miss_count,
             text_atlas_miss_time_us: snapshot.renderer_submission.text_atlas_miss_time_us,
             surface_acquire_time_us: snapshot.renderer_submission.surface_acquire_time_us,
@@ -2496,6 +2573,81 @@ fn run_widget_book_scroll_benchmark(
         .map(|sample| sample.retained_packet_build_count as f64)
         .sum::<f64>()
         / valid_count as f64;
+    let avg_retained_packet_normalize_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_normalize_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_signature_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_signature_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_raster_state_init_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_raster_state_init_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_scene_build_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_scene_build_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_command_count = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_command_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_text_command_count = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_text_command_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_path_command_count = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_path_command_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_clip_path_command_count = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_clip_path_command_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_image_command_count = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_image_command_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_rect_command_count = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_rect_command_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_text_command_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_text_command_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_path_command_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_path_command_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_clip_path_command_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_clip_path_command_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_image_command_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_image_command_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_rect_command_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_rect_command_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
     let avg_text_atlas_miss_ms = frame_samples
         .iter()
         .map(|sample| sample.text_atlas_miss_time_us as f64 / 1000.0)
@@ -2638,6 +2790,15 @@ fn run_widget_book_scroll_benchmark(
         "avg packet build: {avg_retained_packet_build_ms:.3} ms ({avg_retained_packet_build_count:.2} packets)"
     );
     println!(
+        "avg packet stage: norm {avg_retained_packet_normalize_ms:.3} ms  sig {avg_retained_packet_signature_ms:.3} ms  state {avg_retained_packet_raster_state_init_ms:.3} ms  scene {avg_retained_packet_scene_build_ms:.3} ms"
+    );
+    println!(
+        "avg packet cmds:  total {avg_retained_packet_command_count:.2}  text {avg_retained_packet_text_command_count:.2}  path {avg_retained_packet_path_command_count:.2}  clip-path {avg_retained_packet_clip_path_command_count:.2}  image {avg_retained_packet_image_command_count:.2}  rect {avg_retained_packet_rect_command_count:.2}"
+    );
+    println!(
+        "avg packet time:  text {avg_retained_packet_text_command_ms:.3} ms  path {avg_retained_packet_path_command_ms:.3} ms  clip-path {avg_retained_packet_clip_path_command_ms:.3} ms  image {avg_retained_packet_image_command_ms:.3} ms  rect {avg_retained_packet_rect_command_ms:.3} ms"
+    );
+    println!(
         "avg atlas miss:   {avg_text_atlas_miss_ms:.3} ms ({avg_text_atlas_miss_count:.2} misses)"
     );
     println!(
@@ -2694,6 +2855,30 @@ fn run_widget_book_scroll_benchmark(
             sample.retained_packet_build_time_us as f64 / 1000.0,
             sample.text_atlas_miss_count,
             sample.text_atlas_miss_time_us as f64 / 1000.0,
+        );
+        println!(
+            "             packet stage norm {:>7.3} ms  sig {:>7.3} ms  state {:>7.3} ms  scene {:>7.3} ms",
+            sample.retained_packet_normalize_time_us as f64 / 1000.0,
+            sample.retained_packet_signature_time_us as f64 / 1000.0,
+            sample.retained_packet_raster_state_init_time_us as f64 / 1000.0,
+            sample.retained_packet_scene_build_time_us as f64 / 1000.0,
+        );
+        println!(
+            "             packet cmds total {:>4}  text {:>4}  path {:>4}  clip {:>4}  image {:>4}  rect {:>4}",
+            sample.retained_packet_command_count,
+            sample.retained_packet_text_command_count,
+            sample.retained_packet_path_command_count,
+            sample.retained_packet_clip_path_command_count,
+            sample.retained_packet_image_command_count,
+            sample.retained_packet_rect_command_count,
+        );
+        println!(
+            "             packet time text {:>7.3} ms  path {:>7.3} ms  clip {:>7.3} ms  image {:>7.3} ms  rect {:>7.3} ms",
+            sample.retained_packet_text_command_time_us as f64 / 1000.0,
+            sample.retained_packet_path_command_time_us as f64 / 1000.0,
+            sample.retained_packet_clip_path_command_time_us as f64 / 1000.0,
+            sample.retained_packet_image_command_time_us as f64 / 1000.0,
+            sample.retained_packet_rect_command_time_us as f64 / 1000.0,
         );
         println!(
             "             surface {:>7.3} / {:>7.3} ms  prep {:>7.3} / {:>7.3} / {:>7.3} ms  submit {:>7.3} / {:>7.3} / {:>7.3} ms",
