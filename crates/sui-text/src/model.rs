@@ -192,14 +192,13 @@ impl TextDocument {
             .unwrap_or_default()
     }
 
-    pub(crate) fn normalized(&self) -> Self {
-        let mut paragraphs = if self.paragraphs.is_empty() {
-            vec![TextParagraph::new(String::new(), TextStyle::default())]
-        } else {
-            self.paragraphs.clone()
-        };
+    pub(crate) fn into_normalized(mut self) -> Self {
+        if self.paragraphs.is_empty() {
+            self.paragraphs
+                .push(TextParagraph::new(String::new(), TextStyle::default()));
+        }
 
-        for paragraph in &mut paragraphs {
+        for paragraph in &mut self.paragraphs {
             if paragraph.spans.is_empty() {
                 paragraph
                     .spans
@@ -207,7 +206,7 @@ impl TextDocument {
             }
         }
 
-        Self { paragraphs }
+        self
     }
 
     pub(crate) fn span_style(&self, span_id: TextSpanId) -> &TextStyle {

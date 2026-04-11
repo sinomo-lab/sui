@@ -33,6 +33,14 @@ impl RegisteredFont {
         Arc::clone(&self.data)
     }
 
+    pub fn data_ptr(&self) -> usize {
+        self.data.as_ptr() as usize
+    }
+
+    pub fn data_len(&self) -> usize {
+        self.data.len()
+    }
+
     pub const fn face_index(&self) -> u32 {
         self.face_index
     }
@@ -133,6 +141,14 @@ impl FaceCacheKey {
             face_index: face.face_index(),
         }
     }
+
+    pub(crate) fn from_registered_font(font: &RegisteredFont) -> Self {
+        Self {
+            data_ptr: font.data_ptr(),
+            data_len: font.data_len(),
+            face_index: font.face_index(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -141,20 +157,17 @@ pub(crate) struct ResolvedSpanInput {
     pub text: String,
     pub style: TextStyle,
     pub family_name: Option<String>,
-    pub cache_face_key: FaceCacheKey,
 }
 
 #[derive(Debug, Clone)]
 struct ExplicitFontSpec {
     family_name: String,
-    cache_face_key: FaceCacheKey,
 }
 
 #[derive(Debug)]
 pub(crate) struct FontContext {
     pub font_system: FontSystem,
     default_face: ResolvedTextFace,
-    default_face_key: FaceCacheKey,
     explicit_fonts: HashMap<FontHandle, ExplicitFontSpec>,
     shared_faces: Arc<Mutex<HashMap<fontdb::ID, ResolvedTextFace>>>,
 }
@@ -166,13 +179,13 @@ impl FontContext {
         text: String,
         style: &TextStyle,
     ) -> Result<ResolvedSpanInput> {
-        let (family_name, cache_face_key) = if let Some(handle) = style.font {
+        let family_name = if let Some(handle) = style.font {
             let spec = self.explicit_fonts.get(&handle).ok_or_else(|| {
                 Error::new(format!("font handle {} is not registered", handle.get()))
             })?;
-            (Some(spec.family_name.clone()), spec.cache_face_key)
+            Some(spec.family_name.clone())
         } else {
-            (None, self.default_face_key)
+            None
         };
 
         Ok(ResolvedSpanInput {
@@ -180,7 +193,6 @@ impl FontContext {
             text,
             style: style.clone(),
             family_name,
-            cache_face_key,
         })
     }
 
@@ -249,6 +261,7 @@ pub(crate) struct TextSystemState {
     locale: String,
     font_db: fontdb::Database,
     default_face: ResolvedTextFace,
+    default_face_key: FaceCacheKey,
     shared_faces: Arc<Mutex<HashMap<fontdb::ID, ResolvedTextFace>>>,
 }
 
@@ -280,9 +293,14 @@ impl TextSystemState {
         Ok(Self {
             locale,
             font_db,
+            default_face_key: FaceCacheKey::new(&default_face),
             default_face,
             shared_faces: Arc::new(Mutex::new(shared_faces)),
         })
+    }
+
+    pub(crate) fn default_face_key(&self) -> FaceCacheKey {
+        self.default_face_key
     }
 
     pub(crate) fn build_font_context(&self, font_registry: &FontRegistry) -> Result<FontContext> {
@@ -290,7 +308,6 @@ impl TextSystemState {
         let mut explicit_fonts = HashMap::new();
 
         for (handle, font) in &font_registry.fonts {
-            let face = ResolvedTextFace::from_bytes(font.shared_bytes(), font.face_index());
             let ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(font.bytes().to_vec())));
             let face_info = ids
                 .iter()
@@ -309,7 +326,6 @@ impl TextSystemState {
                 *handle,
                 ExplicitFontSpec {
                     family_name,
-                    cache_face_key: FaceCacheKey::new(&face),
                 },
             );
         }
@@ -318,7 +334,6 @@ impl TextSystemState {
         Ok(FontContext {
             font_system,
             default_face: self.default_face.clone(),
-            default_face_key: FaceCacheKey::new(&self.default_face),
             explicit_fonts,
             shared_faces: Arc::clone(&self.shared_faces),
         })

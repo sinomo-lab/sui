@@ -1,11 +1,13 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    hash::{BuildHasher, Hash, Hasher},
+};
 
 use sui_core::{FontHandle, Size};
 
 use crate::{
-    flatten::FlattenedTextDocument,
     font::FaceCacheKey,
-    model::{TextLayout, TextParagraphStyle, TextStyle},
+    model::{TextDocument, TextLayout, TextParagraphStyle, TextStyle},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -61,42 +63,121 @@ pub(crate) struct TextLayoutCacheKey {
 
 impl TextLayoutCacheKey {
     pub(crate) fn new(
-        flattened: &FlattenedTextDocument,
+        document: &TextDocument,
         span_face_keys: &[FaceCacheKey],
         box_size: Option<Size>,
     ) -> Self {
-        let paragraphs = flattened
+        let mut span_index = 0;
+        let paragraphs = document
             .paragraphs
             .iter()
             .map(|paragraph| TextParagraphCacheKey {
                 style: paragraph.style.clone(),
                 spans: paragraph
-                    .span_range
-                    .clone()
-                    .map(|index| {
-                        let span = &flattened.spans[index];
+                    .spans
+                    .iter()
+                    .map(|span| {
+                        let face = span_face_keys[span_index];
+                        span_index += 1;
                         TextSpanCacheKey {
                             text: span.text.clone(),
                             style: TextStyleCacheKey::new(&span.style),
-                            face: span_face_keys[index],
+                            face,
                         }
                     })
                     .collect(),
             })
             .collect();
+        debug_assert_eq!(span_index, span_face_keys.len());
 
         Self {
             paragraphs,
             box_size: box_size.map(SizeCacheKey::from),
         }
     }
+
+    fn hash_document<S: BuildHasher>(
+        hasher: &S,
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        box_size: Option<Size>,
+    ) -> u64 {
+        let mut state = hasher.build_hasher();
+        Self::hash_document_into(&mut state, document, span_face_keys, box_size);
+        state.finish()
+    }
+
+    fn hash_document_into<H: Hasher>(
+        state: &mut H,
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        box_size: Option<Size>,
+    ) {
+        document.paragraphs.len().hash(state);
+        let mut span_index = 0;
+        for paragraph in &document.paragraphs {
+            paragraph.style.hash(state);
+            paragraph.spans.len().hash(state);
+            for span in &paragraph.spans {
+                span.text.hash(state);
+                TextStyleCacheKey::new(&span.style).hash(state);
+                span_face_keys[span_index].hash(state);
+                span_index += 1;
+            }
+        }
+        debug_assert_eq!(span_index, span_face_keys.len());
+        box_size.map(SizeCacheKey::from).hash(state);
+    }
+
+    fn matches_document(
+        &self,
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        box_size: Option<Size>,
+    ) -> bool {
+        if self.box_size != box_size.map(SizeCacheKey::from) {
+            return false;
+        }
+        if self.paragraphs.len() != document.paragraphs.len() {
+            return false;
+        }
+
+        let mut span_index = 0;
+        for (cached_paragraph, paragraph) in self.paragraphs.iter().zip(&document.paragraphs) {
+            if cached_paragraph.style != paragraph.style {
+                return false;
+            }
+            if cached_paragraph.spans.len() != paragraph.spans.len() {
+                return false;
+            }
+
+            for (cached_span, span) in cached_paragraph.spans.iter().zip(&paragraph.spans) {
+                if cached_span.text != span.text
+                    || cached_span.style != TextStyleCacheKey::new(&span.style)
+                    || cached_span.face != span_face_keys[span_index]
+                {
+                    return false;
+                }
+                span_index += 1;
+            }
+        }
+
+        span_index == span_face_keys.len()
+    }
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct TextLayoutCache {
-    entries: HashMap<TextLayoutCacheKey, TextLayout>,
+    entries: HashMap<u64, Vec<TextLayoutCacheEntry>>,
+    entry_count: usize,
     hits: usize,
     misses: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TextLayoutCacheEntry {
+    key: TextLayoutCacheKey,
+    layout: TextLayout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -124,14 +205,33 @@ impl TextLayoutCacheSnapshot {
 impl TextLayoutCache {
     pub(crate) fn snapshot(&self) -> TextLayoutCacheSnapshot {
         TextLayoutCacheSnapshot {
-            entries: self.entries.len(),
+            entries: self.entry_count,
             hits: self.hits,
             misses: self.misses,
         }
     }
 
-    pub(crate) fn get(&mut self, key: &TextLayoutCacheKey) -> Option<TextLayout> {
-        let cached = self.entries.get(key).cloned();
+    pub(crate) fn get(
+        &mut self,
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        box_size: Option<Size>,
+    ) -> Option<TextLayout> {
+        let hash = TextLayoutCacheKey::hash_document(
+            self.entries.hasher(),
+            document,
+            span_face_keys,
+            box_size,
+        );
+        let cached = self
+            .entries
+            .get(&hash)
+            .and_then(|bucket| {
+                bucket
+                    .iter()
+                    .find(|entry| entry.key.matches_document(document, span_face_keys, box_size))
+            })
+            .map(|entry| entry.layout.clone());
         if cached.is_some() {
             self.hits += 1;
         } else {
@@ -140,7 +240,27 @@ impl TextLayoutCache {
         cached
     }
 
-    pub(crate) fn insert(&mut self, key: TextLayoutCacheKey, layout: TextLayout) {
-        self.entries.insert(key, layout);
+    pub(crate) fn insert(
+        &mut self,
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        box_size: Option<Size>,
+        layout: TextLayout,
+    ) {
+        let hash = TextLayoutCacheKey::hash_document(
+            self.entries.hasher(),
+            document,
+            span_face_keys,
+            box_size,
+        );
+        let key = TextLayoutCacheKey::new(document, span_face_keys, box_size);
+        let bucket = self.entries.entry(hash).or_default();
+        if let Some(existing) = bucket.iter_mut().find(|entry| entry.key == key) {
+            existing.layout = layout;
+            return;
+        }
+
+        bucket.push(TextLayoutCacheEntry { key, layout });
+        self.entry_count += 1;
     }
 }

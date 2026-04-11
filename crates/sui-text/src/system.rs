@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    collections::HashMap,
     sync::{Mutex, OnceLock},
     time::Instant,
 };
@@ -7,9 +8,9 @@ use std::{
 use sui_core::{Error, Result, Size};
 
 use crate::{
-    cache::{TextLayoutCache, TextLayoutCacheKey, TextLayoutCacheSnapshot},
+    cache::{TextLayoutCache, TextLayoutCacheSnapshot},
     flatten::FlattenedTextDocument,
-    font::{FontContext, ResolvedSpanInput, TextSystemState},
+    font::{FaceCacheKey, FontContext, ResolvedSpanInput, TextSystemState},
     layout::layout_document,
     model::{TextDocument, TextLayout, TextLayoutRequest, TextMeasurement, TextRun, TextStyle},
     FontRegistry,
@@ -164,22 +165,16 @@ impl TextSystem {
         font_registry: &FontRegistry,
     ) -> Result<TextLayout> {
         let total_started = text_timing_enabled().then(Instant::now);
-        let normalized_document = request.document.normalized();
-        let flattened = FlattenedTextDocument::new(normalized_document.clone());
-        let font_context = self.font_context(font_registry)?;
-        let resolved_spans = self.resolve_span_inputs(&flattened, &font_context)?;
-        let span_face_keys = resolved_spans
-            .iter()
-            .map(|span| span.cache_face_key)
-            .collect::<Vec<_>>();
-        let cache_key = TextLayoutCacheKey::new(&flattened, &span_face_keys, request.box_size);
+        let TextLayoutRequest { document, box_size } = request;
+        let normalized_document = document.into_normalized();
+        let span_face_keys = self.resolve_span_face_keys(&normalized_document, font_registry)?;
         let prelookup_time_us = total_started
             .as_ref()
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
 
         let lookup_started = text_timing_enabled().then(Instant::now);
-        if let Some(cached) = self.cached_layout(&cache_key)? {
+        if let Some(cached) = self.cached_layout(&normalized_document, &span_face_keys, box_size)? {
             let cache_lookup_time_us = lookup_started
                 .as_ref()
                 .map(|started| started.elapsed().as_micros() as u64)
@@ -198,12 +193,15 @@ impl TextSystem {
             .unwrap_or(0);
 
         let layout_started = text_timing_enabled().then(Instant::now);
-        let layout = layout_document(flattened, resolved_spans, request.box_size, font_context)?;
+        let flattened = FlattenedTextDocument::new(normalized_document.clone());
+        let font_context = self.font_context(font_registry)?;
+        let resolved_spans = self.resolve_span_inputs(&flattened, &font_context)?;
+        let layout = layout_document(flattened, resolved_spans, box_size, font_context)?;
         let miss_layout_time_us = layout_started
             .as_ref()
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
-        self.store_layout(cache_key, layout.clone())?;
+        self.store_layout(&normalized_document, &span_face_keys, box_size, layout.clone())?;
         let total_time_us = total_started
             .as_ref()
             .map(|started| started.elapsed().as_micros() as u64)
@@ -236,30 +234,84 @@ impl TextSystem {
             .collect()
     }
 
-    fn cached_layout(&self, key: &TextLayoutCacheKey) -> Result<Option<TextLayout>> {
-        let mut cache = self
-            .layout_cache
-            .lock()
-            .map_err(|_| Error::new("text layout cache lock was poisoned"))?;
-        Ok(cache.get(key))
+    fn resolve_span_face_keys(
+        &self,
+        document: &TextDocument,
+        font_registry: &FontRegistry,
+    ) -> Result<Vec<FaceCacheKey>> {
+        let state = self.text_system_state()?;
+        let default_face_key = state.default_face_key();
+        let total_spans = document
+            .paragraphs
+            .iter()
+            .map(|paragraph| paragraph.spans.len())
+            .sum();
+        let mut keys = Vec::with_capacity(total_spans);
+        let mut explicit_face_keys = HashMap::new();
+
+        for paragraph in &document.paragraphs {
+            for span in &paragraph.spans {
+                let face_key = match span.style.font {
+                    Some(handle) => {
+                        if let Some(face_key) = explicit_face_keys.get(&handle).copied() {
+                            face_key
+                        } else {
+                            let font = font_registry.get(handle).ok_or_else(|| {
+                                Error::new(format!("font handle {} is not registered", handle.get()))
+                            })?;
+                            let face_key = FaceCacheKey::from_registered_font(font);
+                            explicit_face_keys.insert(handle, face_key);
+                            face_key
+                        }
+                    }
+                    None => default_face_key,
+                };
+                keys.push(face_key);
+            }
+        }
+
+        Ok(keys)
     }
 
-    fn store_layout(&self, key: TextLayoutCacheKey, layout: TextLayout) -> Result<()> {
+    fn cached_layout(
+        &self,
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        box_size: Option<Size>,
+    ) -> Result<Option<TextLayout>> {
         let mut cache = self
             .layout_cache
             .lock()
             .map_err(|_| Error::new("text layout cache lock was poisoned"))?;
-        cache.insert(key, layout);
+        Ok(cache.get(document, span_face_keys, box_size))
+    }
+
+    fn store_layout(
+        &self,
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        box_size: Option<Size>,
+        layout: TextLayout,
+    ) -> Result<()> {
+        let mut cache = self
+            .layout_cache
+            .lock()
+            .map_err(|_| Error::new("text layout cache lock was poisoned"))?;
+        cache.insert(document, span_face_keys, box_size, layout);
         Ok(())
     }
 
-    fn font_context(&self, font_registry: &FontRegistry) -> Result<FontContext> {
+    fn text_system_state(&self) -> Result<&TextSystemState> {
         let state = self
             .state
             .get_or_init(|| TextSystemState::new().map_err(|error| error.to_string()));
         match state {
-            Ok(state) => state.build_font_context(font_registry),
+            Ok(state) => Ok(state),
             Err(message) => Err(Error::new(message.clone())),
         }
+    }
+
+    fn font_context(&self, font_registry: &FontRegistry) -> Result<FontContext> {
+        self.text_system_state()?.build_font_context(font_registry)
     }
 }

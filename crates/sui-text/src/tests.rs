@@ -267,6 +267,61 @@ fn text_system_reuses_cached_layouts_across_color_changes() {
 }
 
 #[test]
+fn text_system_reuses_cached_registered_font_layouts_across_color_changes() {
+    let system = TextSystem::new();
+    let handle = FontHandle::new(29);
+    let mut fonts = FontRegistry::new();
+    fonts.insert(handle, load_test_font());
+
+    let layout = system
+        .shape_text(
+            "registered cached",
+            Size::new(180.0, 28.0),
+            TextStyle {
+                font: Some(handle),
+                ..TextStyle::new(Color::WHITE)
+            },
+            &fonts,
+        )
+        .unwrap();
+
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 1,
+            hits: 0,
+            misses: 1,
+        }
+    );
+
+    let second = system
+        .shape_text(
+            "registered cached",
+            Size::new(180.0, 28.0),
+            TextStyle {
+                font: Some(handle),
+                color: Color::rgba(0.3, 0.8, 0.4, 1.0),
+                ..TextStyle::default()
+            },
+            &fonts,
+        )
+        .unwrap();
+
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 1,
+            hits: 1,
+            misses: 1,
+        }
+    );
+    assert_eq!(second.style().color, Color::rgba(0.3, 0.8, 0.4, 1.0));
+    assert!(second.shares_storage_with(&layout));
+    assert_eq!(second.glyphs(), layout.glyphs());
+    assert_eq!(second.run_face(0).shared_bytes(), layout.run_face(0).shared_bytes());
+}
+
+#[test]
 fn layout_document_keeps_paragraph_and_span_structure() {
     let system = TextSystem::new();
     let document = TextDocument {
