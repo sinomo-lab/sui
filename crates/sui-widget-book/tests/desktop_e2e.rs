@@ -1409,6 +1409,23 @@ fn click_at(harness: &DesktopHarness, window_id: WindowId, position: Point) -> R
     )
 }
 
+fn click_primary(harness: &DesktopHarness, window_id: WindowId) -> Result<()> {
+    harness.dispatch(
+        window_id,
+        HostInputEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Left,
+        },
+    )?;
+    harness.dispatch(
+        window_id,
+        HostInputEvent::MouseInput {
+            state: ElementState::Released,
+            button: MouseButton::Left,
+        },
+    )
+}
+
 fn resize_window(harness: &DesktopHarness, window_id: WindowId, size: Size) -> Result<()> {
     harness.dispatch(window_id, HostInputEvent::Resized { size })
 }
@@ -1432,6 +1449,18 @@ fn find_node(snapshot: &DesktopWindowSnapshot, role: SemanticsRole, name: &str) 
         .find(|node| node.role == role && node.name.as_deref() == Some(name))
         .cloned()
         .unwrap_or_else(|| panic!("missing semantics node {role:?} named {name}"))
+}
+
+fn find_node_optional(
+    snapshot: &DesktopWindowSnapshot,
+    role: SemanticsRole,
+    name: &str,
+) -> Option<SemanticsNode> {
+    snapshot
+        .semantics
+        .iter()
+        .find(|node| node.role == role && node.name.as_deref() == Some(name))
+        .cloned()
 }
 
 fn text_input_value(snapshot: &DesktopWindowSnapshot, name: &str) -> String {
@@ -1459,6 +1488,11 @@ struct ScrollBenchmarkFrameSample {
     retained_scene_traversal_time_us: u64,
     retained_packet_build_time_us: u64,
     retained_packet_build_count: usize,
+    retained_packet_rebuild_new_count: usize,
+    retained_packet_rebuild_coordinate_space_count: usize,
+    retained_packet_rebuild_signature_count: usize,
+    retained_packet_rebuild_scene_count: usize,
+    retained_packet_rebuild_state_count: usize,
     text_atlas_miss_count: usize,
     text_atlas_miss_time_us: u64,
     surface_acquire_time_us: u64,
@@ -1479,6 +1513,12 @@ struct ScrollBenchmarkFrameSample {
     surface_present_time_us: u64,
     dirty_region_count: usize,
     dirty_coverage: f32,
+    glyph_cache_entries_delta: isize,
+    glyph_cache_hits: usize,
+    glyph_cache_misses: usize,
+    path_cache_entries_delta: isize,
+    path_cache_hits: usize,
+    path_cache_misses: usize,
 }
 
 impl ScrollBenchmarkFrameSample {
@@ -1503,6 +1543,21 @@ impl ScrollBenchmarkFrameSample {
                 .renderer_submission
                 .retained_packet_build_time_us,
             retained_packet_build_count: snapshot.renderer_submission.retained_packet_build_count,
+            retained_packet_rebuild_new_count: snapshot
+                .renderer_submission
+                .retained_packet_rebuild_new_count,
+            retained_packet_rebuild_coordinate_space_count: snapshot
+                .renderer_submission
+                .retained_packet_rebuild_coordinate_space_count,
+            retained_packet_rebuild_signature_count: snapshot
+                .renderer_submission
+                .retained_packet_rebuild_signature_count,
+            retained_packet_rebuild_scene_count: snapshot
+                .renderer_submission
+                .retained_packet_rebuild_scene_count,
+            retained_packet_rebuild_state_count: snapshot
+                .renderer_submission
+                .retained_packet_rebuild_state_count,
             text_atlas_miss_count: snapshot.renderer_submission.text_atlas_miss_count,
             text_atlas_miss_time_us: snapshot.renderer_submission.text_atlas_miss_time_us,
             surface_acquire_time_us: snapshot.renderer_submission.surface_acquire_time_us,
@@ -1535,8 +1590,439 @@ impl ScrollBenchmarkFrameSample {
             surface_present_time_us: snapshot.renderer_submission.surface_present_time_us,
             dirty_region_count: snapshot.scene.dirty_region_count,
             dirty_coverage: snapshot.scene.dirty_coverage,
+            glyph_cache_entries_delta: snapshot.text_cache_deltas.renderer_glyph.entries_delta,
+            glyph_cache_hits: snapshot.text_cache_deltas.renderer_glyph.hits,
+            glyph_cache_misses: snapshot.text_cache_deltas.renderer_glyph.misses,
+            path_cache_entries_delta: snapshot.text_cache_deltas.renderer_path.entries_delta,
+            path_cache_hits: snapshot.text_cache_deltas.renderer_path.hits,
+            path_cache_misses: snapshot.text_cache_deltas.renderer_path.misses,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DialogRepaintTransition {
+    Open,
+    Close,
+}
+
+impl DialogRepaintTransition {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Close => "close",
+        }
+    }
+
+    const fn dialog_should_be_visible(self) -> bool {
+        matches!(self, Self::Open)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DialogRepaintFrameSample {
+    transition: DialogRepaintTransition,
+    sample: ScrollBenchmarkFrameSample,
+}
+
+fn visible_node_center(node: &SemanticsNode, viewport: Rect) -> Point {
+    node_center(node.bounds.intersection(viewport).unwrap_or(node.bounds))
+}
+
+fn scroll_gallery_until_visible(
+    harness: &DesktopHarness,
+    window_id: WindowId,
+    role: SemanticsRole,
+    name: &str,
+) -> Result<(DesktopWindowSnapshot, SemanticsNode, Rect)> {
+    const SCROLL_STEP_PX: f32 = -160.0;
+    const MAX_SCROLL_STEPS: usize = 96;
+
+    let mut snapshot = harness.snapshot(window_id)?;
+    let role_label = format!("{role:?}");
+    let gallery = find_node(
+        &snapshot,
+        SemanticsRole::ScrollView,
+        sui_widget_book::GALLERY_SCROLL_NAME,
+    );
+    let gallery_bounds = gallery.bounds;
+    let scroll_point = gallery_scroll_point(gallery_bounds);
+
+    move_cursor(harness, window_id, scroll_point)?;
+
+    for _ in 0..MAX_SCROLL_STEPS {
+        if let Some(node) = find_node_optional(&snapshot, role.clone(), name)
+            .filter(|node| node.bounds.intersection(gallery_bounds).is_some())
+        {
+            return Ok((snapshot, node, gallery_bounds));
+        }
+
+        harness.dispatch(
+            window_id,
+            HostInputEvent::MouseWheel {
+                delta: ScrollKind::Pixels(Vector::new(0.0, SCROLL_STEP_PX)),
+            },
+        )?;
+        snapshot = harness.snapshot(window_id)?;
+    }
+
+    Err(Error::new(format!(
+        "failed to bring semantics node {role_label} named {name} into the widget-book gallery viewport"
+    )))
+}
+
+fn run_widget_book_dialog_repaint_benchmark(
+    build_runtime: impl FnOnce() -> Application + Send + 'static,
+) -> Result<()> {
+    const FRAME_BUDGET_MS: f64 = 1000.0 / 60.0;
+    const WARMUP_CYCLES: usize = 2;
+    const MEASURED_CYCLES: usize = 48;
+
+    let harness = DesktopHarness::launch_with_vsync(|| build_runtime().build(), false)?;
+    let window_id = harness.main_window_id();
+
+    set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+    harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+    let (initial_snapshot, dialog_trigger, gallery_bounds) = scroll_gallery_until_visible(
+        &harness,
+        window_id,
+        SemanticsRole::Button,
+        sui_widget_book::DIALOG_TRIGGER_LABEL,
+    )?;
+    let mut previous_frame_index = initial_snapshot
+        .performance
+        .as_ref()
+        .expect("widget-book repaint benchmark should publish an initial performance snapshot")
+        .frame_index;
+
+    assert!(
+        find_node_optional(
+            &initial_snapshot,
+            SemanticsRole::Dialog,
+            sui_widget_book::DIALOG_TITLE,
+        )
+        .is_none(),
+        "project settings dialog should start closed",
+    );
+
+    move_cursor(
+        &harness,
+        window_id,
+        visible_node_center(&dialog_trigger, gallery_bounds),
+    )?;
+
+    let benchmark_start = Instant::now();
+    let mut phase_totals: HashMap<&str, f64> = HashMap::new();
+    let mut measured_samples = Vec::with_capacity(MEASURED_CYCLES * 2);
+    let mut repaint_diff_checks = 0usize;
+
+    for cycle in 0..(WARMUP_CYCLES + MEASURED_CYCLES) {
+        for transition in [DialogRepaintTransition::Open, DialogRepaintTransition::Close] {
+            let before_frame = (cycle >= WARMUP_CYCLES && repaint_diff_checks < 2)
+                .then(|| harness.capture(window_id))
+                .transpose()?;
+
+            click_primary(&harness, window_id)?;
+
+            let after_snapshot = harness.snapshot(window_id)?;
+            let performance = after_snapshot
+                .performance
+                .as_ref()
+                .expect("widget-book repaint benchmark should publish performance snapshots");
+
+            assert!(
+                performance.frame_index > previous_frame_index,
+                "dialog repaint benchmark did not render a new frame for cycle {} transition {}",
+                cycle,
+                transition.label(),
+            );
+            previous_frame_index = performance.frame_index;
+
+            let dialog_visible = find_node_optional(
+                &after_snapshot,
+                SemanticsRole::Dialog,
+                sui_widget_book::DIALOG_TITLE,
+            )
+            .is_some();
+            assert_eq!(
+                dialog_visible,
+                transition.dialog_should_be_visible(),
+                "dialog visibility mismatch after {} transition in cycle {}",
+                transition.label(),
+                cycle,
+            );
+
+            if let Some(before_frame) = before_frame {
+                let after_frame = harness.capture(window_id)?;
+                assert!(
+                    frame_pixel_diff_count(&before_frame, &after_frame) > 0,
+                    "dialog repaint benchmark {} transition did not change any rendered pixels",
+                    transition.label(),
+                );
+                repaint_diff_checks += 1;
+            }
+
+            if cycle >= WARMUP_CYCLES {
+                measured_samples.push(DialogRepaintFrameSample {
+                    transition,
+                    sample: ScrollBenchmarkFrameSample::from_snapshot(performance),
+                });
+                for phase in &performance.phase_timings {
+                    *phase_totals.entry(phase.phase.label()).or_insert(0.0) += phase.duration_ms;
+                }
+            }
+        }
+    }
+
+    let benchmark_elapsed_ms = benchmark_start.elapsed().as_secs_f64() * 1000.0;
+    let valid_count = measured_samples.len();
+    assert!(valid_count > 0, "expected measured repaint frames");
+
+    let frame_times_ms: Vec<_> = measured_samples
+        .iter()
+        .map(|sample| sample.sample.total_time_ms)
+        .collect();
+    let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+    let avg_ms = total_frame_time_ms / valid_count as f64;
+    let min_ms = frame_times_ms
+        .iter()
+        .copied()
+        .min_by(|a, b| a.total_cmp(b))
+        .unwrap_or(0.0);
+    let max_ms = frame_times_ms
+        .iter()
+        .copied()
+        .max_by(|a, b| a.total_cmp(b))
+        .unwrap_or(0.0);
+    let mut sorted_times = frame_times_ms.clone();
+    sorted_times.sort_by(|a, b| a.total_cmp(b));
+    let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+    let p95_ms = sorted_times[p95_index];
+
+    let average_of = |project: fn(&ScrollBenchmarkFrameSample) -> f64| {
+        measured_samples
+            .iter()
+            .map(|sample| project(&sample.sample))
+            .sum::<f64>()
+            / valid_count as f64
+    };
+
+    let avg_draws = average_of(|sample| sample.draw_count as f64);
+    let avg_passes = average_of(|sample| sample.pass_count as f64);
+    let avg_visible_tiles = average_of(|sample| sample.visible_tile_count as f64);
+    let avg_reused_tiles = average_of(|sample| sample.reused_tile_count as f64);
+    let avg_regenerated_tiles = average_of(|sample| sample.regenerated_tile_count as f64);
+    let avg_uploaded_vertex_bytes = average_of(|sample| sample.uploaded_vertex_bytes as f64);
+    let avg_text_vertex_bytes = average_of(|sample| sample.text_vertex_bytes as f64);
+    let avg_dirty_regions = average_of(|sample| sample.dirty_region_count as f64);
+    let avg_dirty_coverage = average_of(|sample| sample.dirty_coverage as f64);
+    let avg_tile_generation_ms = average_of(|sample| sample.tile_generation_time_us as f64 / 1000.0);
+    let avg_composition_ms = average_of(|sample| sample.composition_time_us as f64 / 1000.0);
+    let avg_retained_scene_traversal_ms =
+        average_of(|sample| sample.retained_scene_traversal_time_us as f64 / 1000.0);
+    let avg_retained_packet_build_ms =
+        average_of(|sample| sample.retained_packet_build_time_us as f64 / 1000.0);
+    let avg_retained_packet_build_count =
+        average_of(|sample| sample.retained_packet_build_count as f64);
+    let avg_packet_rebuild_new = average_of(|sample| sample.retained_packet_rebuild_new_count as f64);
+    let avg_packet_rebuild_coordinate_space =
+        average_of(|sample| sample.retained_packet_rebuild_coordinate_space_count as f64);
+    let avg_packet_rebuild_signature =
+        average_of(|sample| sample.retained_packet_rebuild_signature_count as f64);
+    let avg_packet_rebuild_scene =
+        average_of(|sample| sample.retained_packet_rebuild_scene_count as f64);
+    let avg_packet_rebuild_state =
+        average_of(|sample| sample.retained_packet_rebuild_state_count as f64);
+    let avg_text_atlas_miss_count = average_of(|sample| sample.text_atlas_miss_count as f64);
+    let avg_text_atlas_miss_ms = average_of(|sample| sample.text_atlas_miss_time_us as f64 / 1000.0);
+    let avg_glyph_cache_entries_delta = average_of(|sample| sample.glyph_cache_entries_delta as f64);
+    let avg_glyph_cache_hits = average_of(|sample| sample.glyph_cache_hits as f64);
+    let avg_glyph_cache_misses = average_of(|sample| sample.glyph_cache_misses as f64);
+    let avg_path_cache_entries_delta = average_of(|sample| sample.path_cache_entries_delta as f64);
+    let avg_path_cache_hits = average_of(|sample| sample.path_cache_hits as f64);
+    let avg_path_cache_misses = average_of(|sample| sample.path_cache_misses as f64);
+    let avg_surface_acquire_ms = average_of(|sample| sample.surface_acquire_time_us as f64 / 1000.0);
+    let avg_resource_collection_ms =
+        average_of(|sample| sample.resource_collection_time_us as f64 / 1000.0);
+    let avg_bind_group_prepare_ms =
+        average_of(|sample| sample.bind_group_prepare_time_us as f64 / 1000.0);
+    let avg_batch_prepare_ms = average_of(|sample| sample.batch_prepare_time_us as f64 / 1000.0);
+    let avg_gpu_upload_ms = average_of(|sample| sample.gpu_upload_time_us as f64 / 1000.0);
+    let avg_pass_encode_ms = average_of(|sample| sample.pass_encode_time_us as f64 / 1000.0);
+    let avg_queue_submit_ms = average_of(|sample| sample.queue_submit_time_us as f64 / 1000.0);
+    let avg_surface_present_ms = average_of(|sample| sample.surface_present_time_us as f64 / 1000.0);
+
+    println!("\n=== Widget Book Dialog Repaint Benchmark ===");
+    println!("scenario:         project settings preview open/close");
+    println!("frames measured:  {valid_count}");
+    println!("cycles measured:  {MEASURED_CYCLES}");
+    println!("wall-clock time:  {benchmark_elapsed_ms:.1} ms");
+    println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+    println!("min frame time:   {min_ms:.3} ms");
+    println!("max frame time:   {max_ms:.3} ms");
+    println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+    println!("avg gpu passes:   {avg_passes:.2}");
+    println!("avg gpu draws:    {avg_draws:.2}");
+    println!("avg visible tiles:{avg_visible_tiles:.2}");
+    println!("avg reused tiles: {avg_reused_tiles:.2}");
+    println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
+    println!("avg vertex bytes: {:.0}", avg_uploaded_vertex_bytes);
+    println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
+    println!("avg dirty regions:{avg_dirty_regions:.2}");
+    println!("avg dirty cover:  {avg_dirty_coverage:.1}%");
+    println!("avg tile-gen:     {avg_tile_generation_ms:.3} ms");
+    println!("avg compose:      {avg_composition_ms:.3} ms");
+    println!("avg traverse:     {avg_retained_scene_traversal_ms:.3} ms");
+    println!(
+        "avg packet build: {avg_retained_packet_build_ms:.3} ms ({avg_retained_packet_build_count:.2} packets)"
+    );
+    println!(
+        "avg packet why:   new {avg_packet_rebuild_new:.2} | coord {avg_packet_rebuild_coordinate_space:.2} | sig {avg_packet_rebuild_signature:.2} | scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2}"
+    );
+    println!(
+        "avg glyph cache Δ:{avg_glyph_cache_entries_delta:.2} entries / {avg_glyph_cache_hits:.2} hits / {avg_glyph_cache_misses:.2} misses"
+    );
+    println!(
+        "avg path cache Δ: {avg_path_cache_entries_delta:.2} entries / {avg_path_cache_hits:.2} hits / {avg_path_cache_misses:.2} misses"
+    );
+    println!(
+        "avg atlas misses: {avg_text_atlas_miss_count:.2} / {avg_text_atlas_miss_ms:.3} ms"
+    );
+    println!(
+        "avg surface:      acq {avg_surface_acquire_ms:.3} ms  pres {avg_surface_present_ms:.3} ms"
+    );
+    println!(
+        "avg prep:         scan {avg_resource_collection_ms:.3} ms  bind {avg_bind_group_prepare_ms:.3} ms  batch {avg_batch_prepare_ms:.3} ms"
+    );
+    println!(
+        "avg submit path:  upload {avg_gpu_upload_ms:.3} ms  encode {avg_pass_encode_ms:.3} ms  submit {avg_queue_submit_ms:.3} ms"
+    );
+
+    println!("\n--- By transition ---");
+    for transition in [DialogRepaintTransition::Open, DialogRepaintTransition::Close] {
+        let transition_samples = measured_samples
+            .iter()
+            .filter(|sample| sample.transition == transition)
+            .collect::<Vec<_>>();
+        let transition_count = transition_samples.len();
+        let transition_avg = transition_samples
+            .iter()
+            .map(|sample| sample.sample.total_time_ms)
+            .sum::<f64>()
+            / transition_count as f64;
+        let transition_p95_index =
+            ((transition_count as f64 * 0.95).ceil() as usize).min(transition_count - 1);
+        let mut transition_times = transition_samples
+            .iter()
+            .map(|sample| sample.sample.total_time_ms)
+            .collect::<Vec<_>>();
+        transition_times.sort_by(|a, b| a.total_cmp(b));
+        let transition_p95 = transition_times[transition_p95_index];
+        let transition_avg_regen = transition_samples
+            .iter()
+            .map(|sample| sample.sample.regenerated_tile_count as f64)
+            .sum::<f64>()
+            / transition_count as f64;
+        let transition_avg_packet_build = transition_samples
+            .iter()
+            .map(|sample| sample.sample.retained_packet_build_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / transition_count as f64;
+        let transition_avg_tile_gen = transition_samples
+            .iter()
+            .map(|sample| sample.sample.tile_generation_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / transition_count as f64;
+        let transition_avg_glyph_misses = transition_samples
+            .iter()
+            .map(|sample| sample.sample.glyph_cache_misses as f64)
+            .sum::<f64>()
+            / transition_count as f64;
+        println!(
+            "  {:<5} avg {:>7.3} ms  p95 {:>7.3} ms  regen {:>5.2}  tile-gen {:>7.3} ms  packet {:>7.3} ms  glyph misses {:>5.2}",
+            transition.label(),
+            transition_avg,
+            transition_p95,
+            transition_avg_regen,
+            transition_avg_tile_gen,
+            transition_avg_packet_build,
+            transition_avg_glyph_misses,
+        );
+    }
+
+    println!("\n--- Phase breakdown (avg per frame) ---");
+    let mut phase_entries: Vec<_> = phase_totals.iter().collect();
+    phase_entries.sort_by(|a, b| b.1.total_cmp(a.1));
+    for (phase, total_ms) in &phase_entries {
+        let avg_phase_ms = *total_ms / valid_count as f64;
+        let pct = (*total_ms / total_frame_time_ms) * 100.0;
+        println!("  {phase:<22} {avg_phase_ms:>8.3} ms  ({pct:>5.1}%)");
+    }
+
+    println!("\n--- Slowest frames ---");
+    let mut slowest_samples = measured_samples.clone();
+    slowest_samples.sort_by(|a, b| b.sample.total_time_ms.total_cmp(&a.sample.total_time_ms));
+    for sample in slowest_samples.iter().take(6) {
+        println!(
+            "  frame {:>4}  {:<5} total {:>7.3} ms  regen {:>2}  reused {:>2}  upload {:>8}  text {:>8}  dirty {:>5.1}%",
+            sample.sample.frame_index,
+            sample.transition.label(),
+            sample.sample.total_time_ms,
+            sample.sample.regenerated_tile_count,
+            sample.sample.reused_tile_count,
+            sample.sample.uploaded_vertex_bytes,
+            sample.sample.text_vertex_bytes,
+            sample.sample.dirty_coverage,
+        );
+        println!(
+            "             tile {:>7.3} ms  compose {:>7.3} ms  traverse {:>7.3} ms  packet {:>3} / {:>7.3} ms",
+            sample.sample.tile_generation_time_us as f64 / 1000.0,
+            sample.sample.composition_time_us as f64 / 1000.0,
+            sample.sample.retained_scene_traversal_time_us as f64 / 1000.0,
+            sample.sample.retained_packet_build_count,
+            sample.sample.retained_packet_build_time_us as f64 / 1000.0,
+        );
+        println!(
+            "             packet why new {:>2} coord {:>2} sig {:>2} scene {:>2} state {:>2}",
+            sample.sample.retained_packet_rebuild_new_count,
+            sample.sample.retained_packet_rebuild_coordinate_space_count,
+            sample.sample.retained_packet_rebuild_signature_count,
+            sample.sample.retained_packet_rebuild_scene_count,
+            sample.sample.retained_packet_rebuild_state_count,
+        );
+        println!(
+            "             glyph Δ {:+} / {:>3} hits / {:>3} misses  path Δ {:+} / {:>3} hits / {:>3} misses  atlas {:>3} / {:>7.3} ms",
+            sample.sample.glyph_cache_entries_delta,
+            sample.sample.glyph_cache_hits,
+            sample.sample.glyph_cache_misses,
+            sample.sample.path_cache_entries_delta,
+            sample.sample.path_cache_hits,
+            sample.sample.path_cache_misses,
+            sample.sample.text_atlas_miss_count,
+            sample.sample.text_atlas_miss_time_us as f64 / 1000.0,
+        );
+    }
+    println!("========================================\n");
+
+    assert!(
+        measured_samples
+            .iter()
+            .all(|sample| sample.sample.glyph_cache_misses == 0),
+        "expected glyph cache to stay warm during measured repaint frames",
+    );
+    assert!(
+        measured_samples
+            .iter()
+            .all(|sample| sample.sample.text_atlas_miss_count == 0),
+        "expected text atlas to stay warm during measured repaint frames",
+    );
+    assert!(
+        avg_ms < FRAME_BUDGET_MS,
+        "average repaint frame time {avg_ms:.3} ms exceeds the 16.67 ms budget for 60 fps",
+    );
+
+    Ok(())
 }
 
 fn gallery_scroll_point(bounds: Rect) -> Point {
@@ -2794,6 +3280,18 @@ fn widget_book_scroll_fps_benchmark_without_live_overlay() -> Result<()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     run_widget_book_scroll_benchmark(|| {
+        build_widget_book_gallery_application(scroll_benchmark_widget_book_state())
+    })
+}
+
+#[test]
+#[ignore = "diagnostic benchmark for cache-invalid repaint cost in overlay-free widget-book gallery"]
+fn widget_book_dialog_repaint_benchmark_without_live_overlay() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    run_widget_book_dialog_repaint_benchmark(|| {
         build_widget_book_gallery_application(scroll_benchmark_widget_book_state())
     })
 }
