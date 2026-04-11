@@ -937,38 +937,6 @@ impl RetainedCompositorState {
         let current_layers = snapshot.layers.keys().copied().collect::<HashSet<_>>();
         let mut root_dirty = global_rebuild;
 
-        let mut scroll_descendant_translations = HashMap::<SceneLayerId, Vector>::new();
-        let mut scroll_descendant_translation_conflicts = HashSet::<SceneLayerId>::new();
-        for update in &frame.layer_updates {
-            if update.kind != SceneLayerUpdateKind::Transform {
-                continue;
-            }
-
-            let Some(cached_root) = cached_tile_owners.get(&update.layer_id).copied().flatten()
-            else {
-                continue;
-            };
-            if cached_root == update.layer_id
-                || render_modes.get(&cached_root) != Some(&RetainedLayerRenderMode::CachedTiles)
-                || !snapshot.layers.get(&cached_root).is_some_and(|layer| {
-                    layer.descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
-                })
-            {
-                continue;
-            }
-
-            let Some(delta) = layer_translation_deltas.get(&update.layer_id).copied() else {
-                continue;
-            };
-
-            register_cached_scroll_translation(
-                &mut scroll_descendant_translations,
-                &mut scroll_descendant_translation_conflicts,
-                cached_root,
-                delta,
-            );
-        }
-
         for update in &frame.layer_updates {
             if !current_layers.contains(&update.layer_id) {
                 if matches!(
@@ -996,19 +964,7 @@ impl RetainedCompositorState {
                     && cached_root == update.layer_id
                     && render_modes[&cached_root] == RetainedLayerRenderMode::CachedTiles
                 {
-                    let translation_delta = layer_translation_deltas
-                        .get(&cached_root)
-                        .copied()
-                        .or_else(|| {
-                            if cached_root_is_scroll
-                                && !scroll_descendant_translation_conflicts
-                                    .contains(&cached_root)
-                            {
-                                scroll_descendant_translations.get(&cached_root).copied()
-                            } else {
-                                None
-                            }
-                        });
+                    let translation_delta = layer_translation_deltas.get(&cached_root).copied();
 
                     if let Some(delta) = translation_delta {
                         if !register_cached_scroll_translation(
@@ -1034,25 +990,6 @@ impl RetainedCompositorState {
                     }
 
                     continue;
-                }
-
-                if update.kind == SceneLayerUpdateKind::Transform && cached_root_is_scroll {
-                    if let Some(delta) = layer_translation_deltas.get(&update.layer_id).copied() {
-                        let matches_scroll_translation = !scroll_descendant_translation_conflicts
-                            .contains(&cached_root)
-                            && scroll_descendant_translations.get(&cached_root).copied()
-                                == Some(delta);
-                        if matches_scroll_translation
-                            && register_cached_scroll_translation(
-                                &mut cached_scroll_translations,
-                                &mut cached_scroll_translation_conflicts,
-                                cached_root,
-                                delta,
-                            )
-                        {
-                            continue;
-                        }
-                    }
                 }
 
                 if matches!(
@@ -2148,98 +2085,85 @@ fn build_cached_tile_fragment(
                 let packet_snapshot = layer_snapshot
                     .packets
                     .iter()
-                    .find(|packet| packet.id == *packet_id);
-                let additional_clips = packet_snapshot
-                    .map(|snapshot| {
-                        packet_additional_clips(
-                            &layer_clips,
-                            &snapshot.initial_state.clip_stack,
-                        )
-                    })
-                    .unwrap_or(&[]);
-                if let Some(packet) = packets.get(packet_id) {
-                    if composition_phase_for_effect_node(packet.initial_state.effect_node, effects)
-                        != included_phase
-                    {
-                        continue;
-                    }
-                    if packet.coordinate_space == PacketCoordinateSpace::LayerLocal {
-                        let mut external_clips = effective_clips.clone();
-                        external_clips.extend_from_slice(additional_clips);
-                        draw_ops.append_composed_fragment(
-                            &packet.draw_ops,
-                            layer_snapshot.descriptor.bounds.origin.to_vector(),
-                            &external_clips,
-                            frame.viewport,
-                        )?;
-                        continue;
-                    }
+                    .find(|packet| packet.id == *packet_id)
+                    .cloned();
+                let Some(packet) = packets.get(packet_id) else {
+                    continue;
+                };
+                if composition_phase_for_effect_node(packet.initial_state.effect_node, effects)
+                    != included_phase
+                {
+                    continue;
+                }
 
-                    if layer_snapshot.descriptor.cache_policy == sui_scene::LayerCachePolicy::Auto
-                        && packet_snapshot.is_some_and(|snapshot| {
-                            (!snapshot.initial_state.clip_stack.is_empty()
-                                || scene_contains_clip_commands(&snapshot.scene)
-                                || scene_contains_path_commands(&snapshot.scene))
-                                && !scene_contains_image_commands(&snapshot.scene)
-                        })
-                    {
-                        let Some(packet_snapshot) = packet_snapshot.cloned() else {
-                            continue;
-                        };
-                        let normalized_snapshot = normalize_packet_snapshot(
-                            packet_snapshot,
-                            PacketCoordinateSpace::LayerLocal,
-                            layer_snapshot.descriptor.bounds.origin.to_vector(),
-                        );
-                        let mut external_clips = effective_clips.clone();
-                        external_clips.extend_from_slice(additional_clips);
-                        let fragment = build_direct_packet(
-                            frame,
-                            &normalized_snapshot.scene,
-                            &normalized_snapshot.initial_state,
-                            text_engine,
-                            path_cache,
-                            feather_width,
-                        )?;
-                        draw_ops.append_composed_fragment(
-                            &fragment,
-                            layer_snapshot.descriptor.bounds.origin.to_vector(),
-                            &external_clips,
-                            frame.viewport,
-                        )?;
-                        continue;
-                    }
+                match packet.coordinate_space {
+                    PacketCoordinateSpace::World => {
+                        if layer_snapshot.descriptor.cache_policy == sui_scene::LayerCachePolicy::Auto
+                        {
+                            let Some(packet_snapshot) = packet_snapshot else {
+                                continue;
+                            };
+                            let has_clip_or_path = !packet_snapshot.initial_state.clip_stack.is_empty()
+                                || scene_contains_clip_commands(&packet_snapshot.scene)
+                                || scene_contains_path_commands(&packet_snapshot.scene);
+                            if has_clip_or_path
+                                && !scene_contains_image_commands(&packet_snapshot.scene)
+                            {
+                                let additional_clips = packet_additional_clips(
+                                    &layer_clips,
+                                    packet_snapshot.initial_state.clip_stack.as_slice(),
+                                )
+                                .to_vec();
+                                let normalized_snapshot = normalize_packet_snapshot(
+                                    packet_snapshot,
+                                    PacketCoordinateSpace::LayerLocal,
+                                    layer_snapshot.descriptor.bounds.origin.to_vector(),
+                                );
+                                let mut external_clips = effective_clips.clone();
+                                external_clips.extend_from_slice(&additional_clips);
+                                let fragment = build_direct_packet(
+                                    frame,
+                                    &normalized_snapshot.scene,
+                                    &normalized_snapshot.initial_state,
+                                    text_engine,
+                                    path_cache,
+                                    feather_width,
+                                )?;
+                                draw_ops.append_composed_fragment(
+                                    &fragment,
+                                    layer_snapshot.descriptor.bounds.origin.to_vector(),
+                                    &external_clips,
+                                    frame.viewport,
+                                )?;
+                                continue;
+                            }
+                        }
 
-                    if !packet_snapshot.is_some_and(|snapshot| {
-                        scene_contains_clip_commands(&snapshot.scene)
-                            || scene_contains_path_commands(&snapshot.scene)
-                    }) {
                         draw_ops.append_composed_fragment(
                             &packet.draw_ops,
                             Vector::ZERO,
                             &tile_only,
                             frame.viewport,
                         )?;
-                        continue;
+                    }
+                    PacketCoordinateSpace::LayerLocal => {
+                        let Some(packet_snapshot) = packet_snapshot else {
+                            continue;
+                        };
+                        let additional_clips = packet_additional_clips(
+                            &layer_clips,
+                            packet_snapshot.initial_state.clip_stack.as_slice(),
+                        );
+                        let mut external_clips = effective_clips.clone();
+                        external_clips.extend_from_slice(additional_clips);
+                        draw_ops.append_composed_fragment(
+                            &packet.draw_ops,
+                            layer_snapshot.descriptor.bounds.origin.to_vector(),
+                            &external_clips,
+                            frame.viewport,
+                        )?;
                     }
                 }
-
-                let Some(packet_snapshot) = packet_snapshot else {
-                    continue;
-                };
-                let mut tile_state = packet_snapshot.initial_state.clone();
-                let mut clip_stack = effective_clips.clone();
-                clip_stack.extend_from_slice(additional_clips);
-                tile_state.clip_stack = clip_stack;
-                let fragment = build_direct_packet(
-                    frame,
-                    &packet_snapshot.scene,
-                    &tile_state,
-                    text_engine,
-                    path_cache,
-                    feather_width,
-                )?;
-                draw_ops.append_fragment(&fragment);
             }
             CompositionItem::Layer(child_id) => {
                 let Some(child_snapshot) = snapshot_layers.get(child_id) else {
@@ -2294,6 +2218,17 @@ fn snap_rect_to_device_pixels(rect: Rect, scale_factor: f32) -> Rect {
     Rect::from_points(Point::new(min_x, min_y), Point::new(max_x, max_y))
 }
 
+fn packet_additional_clips<'a>(
+    layer_clips: &[ResolvedClipPrimitive],
+    packet_clips: &'a [ResolvedClipPrimitive],
+) -> &'a [ResolvedClipPrimitive] {
+    if packet_clips.starts_with(layer_clips) {
+        &packet_clips[layer_clips.len()..]
+    } else {
+        packet_clips
+    }
+}
+
 fn scene_contains_clip_commands(scene: &Scene) -> bool {
     scene.commands().iter().any(|command| {
         matches!(
@@ -2317,17 +2252,6 @@ fn scene_contains_image_commands(scene: &Scene) -> bool {
         .commands()
         .iter()
         .any(|command| matches!(command, SceneCommand::DrawImage { .. }))
-}
-
-fn packet_additional_clips<'a>(
-    layer_clips: &[ResolvedClipPrimitive],
-    packet_clips: &'a [ResolvedClipPrimitive],
-) -> &'a [ResolvedClipPrimitive] {
-    if packet_clips.starts_with(layer_clips) {
-        &packet_clips[layer_clips.len()..]
-    } else {
-        packet_clips
-    }
 }
 
 impl RetainedCompositorState {

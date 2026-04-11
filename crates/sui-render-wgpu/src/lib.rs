@@ -5746,6 +5746,153 @@ mod tests {
     }
 
     #[test]
+    fn cached_tiles_match_direct_for_theme_preview_style_cards() {
+        let handle = FontHandle::new(151);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let widget_id = WidgetId::new(152);
+        let build_frame = |window_id, cache_policy| {
+            let descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(widget_id),
+                widget_id,
+                Rect::new(0.0, 0.0, 640.0, 220.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 640.0, 220.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 640.0, 220.0))
+            .with_cache_policy(cache_policy)
+            .with_composition_mode(LayerCompositionMode::Scroll);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 640.0, 220.0),
+                brush: Color::rgba(0.94, 0.95, 0.98, 1.0).into(),
+            });
+
+            let card_specs = [
+                (
+                    56.0,
+                    Color::rgba(0.99, 0.99, 1.0, 1.0),
+                    Color::rgba(0.19, 0.46, 0.91, 1.0),
+                    Color::rgba(0.15, 0.73, 0.70, 1.0),
+                    Color::rgba(0.10, 0.13, 0.19, 1.0),
+                    Color::rgba(0.39, 0.45, 0.54, 1.0),
+                    Color::rgba(0.82, 0.85, 0.91, 1.0),
+                    "Light theme",
+                ),
+                (
+                    344.0,
+                    Color::rgba(0.14, 0.16, 0.21, 1.0),
+                    Color::rgba(0.45, 0.60, 0.98, 1.0),
+                    Color::rgba(0.96, 0.54, 0.31, 1.0),
+                    Color::rgba(0.94, 0.95, 0.98, 1.0),
+                    Color::rgba(0.68, 0.72, 0.80, 1.0),
+                    Color::rgba(0.28, 0.31, 0.38, 1.0),
+                    "Dark theme",
+                ),
+            ];
+
+            for (
+                card_x,
+                surface,
+                accent,
+                secondary,
+                text_color,
+                subtle_text,
+                border,
+                title,
+            ) in card_specs
+            {
+                let card_rect = Rect::new(card_x, 24.0, 240.0, 172.0);
+                layer_scene.push(SceneCommand::FillPath {
+                    path: Path::rounded_rect(card_rect, 18.0),
+                    brush: surface.into(),
+                });
+                layer_scene.push(SceneCommand::StrokePath {
+                    path: Path::rounded_rect(card_rect, 18.0),
+                    brush: border.into(),
+                    stroke: StrokeStyle::new(1.0),
+                });
+                layer_scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(card_x + 20.0, 44.0, 172.0, 24.0),
+                    text: title.to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 18.0,
+                        line_height: 22.0,
+                        color: text_color,
+                    },
+                }));
+                layer_scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(card_x + 20.0, 76.0, 188.0, 20.0),
+                    text: "Cached tiles must match direct".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 13.0,
+                        line_height: 18.0,
+                        color: subtle_text,
+                    },
+                }));
+
+                let swatch_colors = [
+                    Color::rgba(0.84, 0.87, 0.92, 1.0),
+                    accent,
+                    secondary,
+                ];
+                for (index, swatch_color) in swatch_colors.into_iter().enumerate() {
+                    let swatch_rect = Rect::new(
+                        card_x + 24.0 + (index as f32 * 72.0),
+                        124.0,
+                        60.0,
+                        32.0,
+                    );
+                    layer_scene.push(SceneCommand::FillPath {
+                        path: Path::rounded_rect(swatch_rect, 10.0),
+                        brush: swatch_color.into(),
+                    });
+                    layer_scene.push(SceneCommand::StrokePath {
+                        path: Path::rounded_rect(swatch_rect, 10.0),
+                        brush: border.into(),
+                        stroke: StrokeStyle::new(1.0),
+                    });
+                }
+            }
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor.clone(),
+                layer_scene,
+            )));
+
+            SceneFrame {
+                window_id,
+                viewport: Size::new(640.0, 220.0),
+                surface_size: Size::new(640.0, 220.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                        .with_damage(Rect::new(0.0, 0.0, 640.0, 220.0)),
+                ],
+                scene,
+                font_registry: Arc::new(fonts.clone()),
+                image_registry: Arc::new(ImageRegistry::new()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(WindowId::new(152), LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(WindowId::new(153), LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
     fn cached_scroll_layer_matches_direct_at_fractional_tile_boundaries() {
         let widget_id = WidgetId::new(95);
         let build_frame = |window_id, cache_policy| {
