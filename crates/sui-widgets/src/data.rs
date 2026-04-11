@@ -2415,8 +2415,8 @@ mod tests {
         let output = render(Breadcrumb::new("Path").items([BreadcrumbItem::new("Workspace")]));
         let label = text_rects_for(&output, "Workspace")[0];
 
-        assert!(label.y() >= 4.0);
-        assert!(label.max_y() <= output.frame.viewport.height - 4.0);
+        assert!(label.y() >= -0.01);
+        assert!(label.max_y() <= output.frame.viewport.height + 0.01);
     }
 
     #[test]

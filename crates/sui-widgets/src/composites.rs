@@ -1073,6 +1073,8 @@ impl Widget for Menu {
 
             let highlighted = self.highlighted == Some(index);
             let pressed = self.pressed == Some(index);
+            let label_style = self.theme.text_style(item.text_color(self.theme.as_ref()));
+            let label_measurement = paint_text_measurement(ctx, &item.label, &label_style);
             if highlighted || pressed {
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
@@ -1085,26 +1087,28 @@ impl Widget for Menu {
             }
 
             ctx.draw_text(
-                Rect::new(
-                    row.x() + 12.0,
-                    row.y() + 8.0,
-                    row.width() - 24.0,
-                    row.height() - 16.0,
+                vertically_centered_text_rect(
+                    ctx,
+                    Rect::new(row.x() + 12.0, row.y(), row.width() - 24.0, row.height()),
+                    Some(label_measurement),
+                    label_style.line_height,
                 ),
                 item.label.clone(),
-                self.theme.text_style(item.text_color(self.theme.as_ref())),
+                label_style,
             );
 
             if let Some(shortcut) = &item.shortcut {
+                let shortcut_style = self.theme.placeholder_text_style();
+                let shortcut_measurement = paint_text_measurement(ctx, shortcut, &shortcut_style);
                 ctx.draw_text(
-                    Rect::new(
-                        row.max_x() - 120.0,
-                        row.y() + 8.0,
-                        108.0,
-                        row.height() - 16.0,
+                    vertically_centered_text_rect(
+                        ctx,
+                        Rect::new(row.max_x() - 120.0, row.y(), 108.0, row.height()),
+                        Some(shortcut_measurement),
+                        shortcut_style.line_height,
                     ),
                     shortcut.clone(),
-                    self.theme.placeholder_text_style(),
+                    shortcut_style,
                 );
             }
         }
@@ -1835,6 +1839,8 @@ impl Widget for ContextMenu {
 
             let highlighted = self.highlighted == Some(index);
             let pressed = self.pressed == Some(index);
+            let label_style = self.theme.text_style(item.text_color(self.theme.as_ref()));
+            let label_measurement = paint_text_measurement(ctx, &item.label, &label_style);
             if highlighted || pressed {
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
@@ -1847,26 +1853,28 @@ impl Widget for ContextMenu {
             }
 
             ctx.draw_text(
-                Rect::new(
-                    row.x() + 12.0,
-                    row.y() + 8.0,
-                    row.width() - 24.0,
-                    row.height() - 16.0,
+                vertically_centered_text_rect(
+                    ctx,
+                    Rect::new(row.x() + 12.0, row.y(), row.width() - 24.0, row.height()),
+                    Some(label_measurement),
+                    label_style.line_height,
                 ),
                 item.label.clone(),
-                self.theme.text_style(item.text_color(self.theme.as_ref())),
+                label_style,
             );
 
             if let Some(shortcut) = &item.shortcut {
+                let shortcut_style = self.theme.placeholder_text_style();
+                let shortcut_measurement = paint_text_measurement(ctx, shortcut, &shortcut_style);
                 ctx.draw_text(
-                    Rect::new(
-                        row.max_x() - 120.0,
-                        row.y() + 8.0,
-                        108.0,
-                        row.height() - 16.0,
+                    vertically_centered_text_rect(
+                        ctx,
+                        Rect::new(row.max_x() - 120.0, row.y(), 108.0, row.height()),
+                        Some(shortcut_measurement),
+                        shortcut_style.line_height,
                     ),
                     shortcut.clone(),
-                    self.theme.placeholder_text_style(),
+                    shortcut_style,
                 );
             }
         }
@@ -2376,7 +2384,12 @@ impl ProgressBar {
 
 impl Widget for ProgressBar {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(240.0, 18.0))
+        let min_height = if self.show_value {
+            self.theme.body_text_style().line_height.max(18.0)
+        } else {
+            18.0
+        };
+        constraints.clamp(Size::new(240.0, min_height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -2403,10 +2416,19 @@ impl Widget for ProgressBar {
             );
         }
         if self.show_value {
+            let label = format!("{:.0}%", self.fraction() * 100.0);
+            let text_style = self.theme.text_style(palette.accent_text);
+            let text_measurement = paint_text_measurement(ctx, &label, &text_style);
             ctx.draw_text(
-                inset_rect(ctx.bounds(), Insets::all(2.0)),
-                format!("{:.0}%", self.fraction() * 100.0),
-                self.theme.text_style(palette.accent_text),
+                centered_text_rect(
+                    ctx,
+                    ctx.bounds(),
+                    Insets::all(2.0),
+                    Some(text_measurement),
+                    text_style.line_height,
+                ),
+                label,
+                text_style,
             );
         }
     }
@@ -2524,6 +2546,18 @@ impl Widget for Spinner {
 pub type BusyIndicator = Spinner;
 
 fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
+    ctx.measure_text(text.to_string(), style.clone())
+        .unwrap_or(TextMeasurement {
+            width: 0.0,
+            height: style.line_height,
+            bounds: Rect::new(0.0, 0.0, 0.0, style.line_height),
+            ascent: style.font_size,
+            descent: 0.0,
+            cap_height: Some(style.font_size),
+        })
+}
+
+fn paint_text_measurement(ctx: &PaintCtx, text: &str, style: &TextStyle) -> TextMeasurement {
     ctx.measure_text(text.to_string(), style.clone())
         .unwrap_or(TextMeasurement {
             width: 0.0,
@@ -2672,12 +2706,48 @@ fn centered_text_rect(
     )
 }
 
+fn vertically_centered_text_rect(
+    ctx: &PaintCtx,
+    rect: Rect,
+    measurement: Option<TextMeasurement>,
+    line_height: f32,
+) -> Rect {
+    let Some(measurement) = measurement else {
+        return rect;
+    };
+
+    let height = line_height.max(measurement.height).min(rect.height());
+    let optical_centering = window_render_options(ctx.window_id())
+        .map(|options| options.optical_vertical_text_alignment_enabled)
+        .unwrap_or(true);
+    let top = if optical_centering {
+        -measurement.cap_height.unwrap_or(measurement.ascent)
+    } else {
+        -measurement.ascent
+    };
+    let bottom = if optical_centering {
+        measurement.descent * 0.5
+    } else {
+        measurement.descent
+    };
+    let visual_center = (top + bottom) * 0.5;
+    let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
+    let leading_above = ((height - (measurement.ascent + measurement.descent)).max(0.0)) * 0.5;
+
+    Rect::new(
+        rect.x(),
+        baseline - measurement.ascent - leading_above,
+        rect.width(),
+        height,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::Tabs;
-    use super::{Dialog, Popover, ProgressBar, Spinner, TabBar};
+    use super::{ContextMenu, Dialog, Menu, MenuItem, Popover, ProgressBar, Spinner, TabBar};
     use crate::FloatingStack;
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
@@ -2719,6 +2789,19 @@ mod tests {
             .iter()
             .find_map(|command| match command {
                 sui_scene::SceneCommand::DrawText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .expect("text draw command present")
+    }
+
+    fn text_run_for(output: &RenderOutput, text: &str) -> sui_text::TextRun {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                sui_scene::SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
                 _ => None,
             })
             .expect("text draw command present")
@@ -2898,6 +2981,102 @@ mod tests {
             .lines()
             .first()
             .expect("tab header label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn menu_row_label_visual_center_matches_row_center() {
+        let output = render(
+            Menu::new("App menu")
+                .items([MenuItem::new("New File"), MenuItem::new("Open...")]),
+        );
+        let text = text_run_for(&output, "New File");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("menu item text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("menu item text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let row_height = (output.frame.viewport.height - 12.0) / 2.0;
+        let row_center = 8.0 + (row_height * 0.5);
+
+        assert!((actual_visual_center - row_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn context_menu_row_label_visual_center_matches_row_center() -> Result<(), String> {
+        let (mut runtime, window_id) = build_runtime(ContextMenu::new(
+            "Canvas menu",
+            crate::Button::new("Open menu"),
+        )
+        .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]));
+
+        let closed = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("context menu trigger present")
+            .bounds;
+        let trigger_center = Point::new(
+            trigger.x() + (trigger.width() * 0.5),
+            trigger.y() + (trigger.height() * 0.5),
+        );
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, trigger_center);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .map_err(|error| error.to_string())?;
+
+        let output = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let context = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ContextMenu)
+            .expect("context menu semantics present");
+        let text = text_run_for(&output, "Rename");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("context menu item text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("context menu item text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let menu_height = context.bounds.height() - trigger.height() - 6.0;
+        let row_height = (menu_height - 12.0) / 2.0;
+        let row_center = trigger.max_y() + 6.0 + 8.0 + (row_height * 0.5);
+
+        assert!((actual_visual_center - row_center).abs() < 0.75);
+        Ok(())
+    }
+
+    #[test]
+    fn progress_bar_value_text_visual_center_matches_control_center() {
+        let output = render(
+            ProgressBar::new("Export progress")
+                .range(0.0, 100.0)
+                .value(42.0)
+                .show_value(true),
+        );
+        let text = text_run_for(&output, "42%");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("progress bar label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("progress bar label should contain one line");
         let actual_visual_center =
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
         let control_center = output.frame.viewport.height * 0.5;

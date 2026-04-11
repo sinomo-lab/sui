@@ -2366,6 +2366,8 @@ impl Widget for NumberInput {
         let metrics = self.theme.metrics;
         let content = number_input_text_rect(ctx.bounds(), metrics);
         let stepper = number_input_stepper_rect(ctx.bounds(), metrics);
+        let text_style = self.text_style();
+        let measurement = paint_text_measurement(ctx, &self.buffer, &text_style);
 
         draw_control_frame(
             ctx,
@@ -2389,7 +2391,11 @@ impl Widget for NumberInput {
             ctx.is_focused().then_some(palette.focus_ring),
         );
 
-        ctx.draw_text(content, self.buffer.clone(), self.text_style());
+        ctx.draw_text(
+            vertically_centered_text_rect(ctx, content, Some(measurement), text_style.line_height),
+            self.buffer.clone(),
+            text_style,
+        );
         ctx.stroke(
             line_path(
                 Point::new(stepper.x(), ctx.bounds().y() + 6.0),
@@ -3113,9 +3119,20 @@ impl Widget for Select {
         let palette = self.theme.palette;
         let metrics = self.theme.metrics;
         let header = self.header_rect(ctx.bounds());
-        let text_rect = inset_rect(header, metrics.text_input_padding);
         let label = self.current_label();
         let placeholder = self.current_value().is_none();
+        let text_style = if placeholder {
+            self.theme.placeholder_text_style()
+        } else {
+            self.theme.body_text_style()
+        };
+        let text_measurement = paint_text_measurement(ctx, &label, &text_style);
+        let text_rect = vertically_centered_text_rect(
+            ctx,
+            horizontal_text_inset_rect(header, metrics.text_input_padding),
+            Some(text_measurement),
+            text_style.line_height,
+        );
 
         draw_control_frame(
             ctx,
@@ -3141,11 +3158,7 @@ impl Widget for Select {
         ctx.draw_text(
             text_rect,
             label,
-            if placeholder {
-                self.theme.placeholder_text_style()
-            } else {
-                self.theme.body_text_style()
-            },
+            text_style,
         );
         draw_icon_glyph(
             ctx,
@@ -3172,6 +3185,8 @@ impl Widget for Select {
                 let row = self.option_rect(ctx.bounds(), index);
                 let selected = self.selected == Some(index);
                 let hovered = self.hovered_option == Some(index);
+                let text_style = self.theme.body_text_style();
+                let text_measurement = paint_text_measurement(ctx, option, &text_style);
                 if hovered || selected {
                     ctx.fill(
                         rounded_rect_path(row.inflate(-4.0, -4.0), metrics.corner_radius - 2.0),
@@ -3183,9 +3198,14 @@ impl Widget for Select {
                     );
                 }
                 ctx.draw_text(
-                    inset_rect(row, metrics.text_input_padding),
+                    vertically_centered_text_rect(
+                        ctx,
+                        horizontal_text_inset_rect(row, metrics.text_input_padding),
+                        Some(text_measurement),
+                        text_style.line_height,
+                    ),
                     option.clone(),
-                    self.theme.body_text_style(),
+                    text_style,
                 );
             }
         }
@@ -3597,6 +3617,18 @@ fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeas
         })
 }
 
+fn paint_text_measurement(ctx: &PaintCtx, text: &str, style: &TextStyle) -> TextMeasurement {
+    ctx.measure_text(text.to_string(), style.clone())
+        .unwrap_or(TextMeasurement {
+            width: 0.0,
+            height: style.line_height,
+            bounds: Rect::new(0.0, 0.0, 0.0, style.line_height),
+            ascent: style.font_size,
+            descent: 0.0,
+            cap_height: Some(style.font_size),
+        })
+}
+
 fn keyboard_text(event: &sui_core::KeyboardEvent) -> Option<&str> {
     if event.state != KeyState::Pressed
         || event.is_composing
@@ -3649,6 +3681,15 @@ fn switch_label_rect(bounds: Rect, padding: Insets, metrics: ControlMetrics, gap
     )
 }
 
+fn horizontal_text_inset_rect(bounds: Rect, padding: Insets) -> Rect {
+    Rect::new(
+        bounds.x() + padding.left,
+        bounds.y(),
+        (bounds.width() - padding.left - padding.right).max(0.0),
+        bounds.height(),
+    )
+}
+
 fn number_input_stepper_rect(bounds: Rect, metrics: ControlMetrics) -> Rect {
     Rect::new(
         bounds.max_x() - metrics.number_input_stepper_width,
@@ -3662,10 +3703,10 @@ fn number_input_text_rect(bounds: Rect, metrics: ControlMetrics) -> Rect {
     let padding = metrics.text_input_padding;
     Rect::new(
         bounds.x() + padding.left,
-        bounds.y() + padding.top,
+        bounds.y(),
         (bounds.width() - padding.left - padding.right - metrics.number_input_stepper_width)
             .max(0.0),
-        (bounds.height() - padding.top - padding.bottom).max(0.0),
+        bounds.height(),
     )
 }
 
@@ -3975,12 +4016,7 @@ fn indicator_rect(bounds: Rect, padding: Insets, indicator_size: f32) -> Rect {
 fn checkbox_label_rect(bounds: Rect, padding: Insets, indicator_size: f32, gap: f32) -> Rect {
     let x = bounds.x() + padding.left + indicator_size + gap;
     let width = (bounds.width() - padding.left - padding.right - indicator_size - gap).max(0.0);
-    Rect::new(
-        x,
-        bounds.y() + padding.top,
-        width,
-        (bounds.height() - padding.top - padding.bottom).max(0.0),
-    )
+    Rect::new(x, bounds.y(), width, bounds.height())
 }
 
 fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
@@ -4142,19 +4178,6 @@ mod tests {
         count
     }
 
-    fn first_text_rect(output: &RenderOutput) -> Rect {
-        output
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawText(text) => Some(text.rect),
-                _ => None,
-            })
-            .expect("text draw command present")
-    }
-
     fn first_text_run(output: &RenderOutput) -> sui_text::TextRun {
         output
             .frame
@@ -4168,30 +4191,23 @@ mod tests {
             .expect("text draw command present")
     }
 
+    fn text_run_for(output: &RenderOutput, text: &str) -> sui_text::TextRun {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
+                _ => None,
+            })
+            .expect("text draw command present")
+    }
+
     fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
         let top = -measurement.cap_height.unwrap_or(measurement.ascent);
         let bottom = measurement.descent * 0.5;
         (top + bottom) * 0.5
-    }
-
-    fn optical_and_geometric_first_text_rects<W, F>(build: F) -> (Rect, Rect)
-    where
-        W: Widget + 'static,
-        F: Fn() -> W,
-    {
-        let optical = render(build());
-        let optical_rect = first_text_rect(&optical);
-
-        let (mut runtime, window_id) = build_runtime(build());
-        set_window_render_options(
-            window_id,
-            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
-        );
-        let geometric = runtime.render(window_id).unwrap();
-        clear_window_render_options(window_id);
-        let geometric_rect = first_text_rect(&geometric);
-
-        (optical_rect, geometric_rect)
     }
 
     fn layer_descriptor_for(
@@ -4466,12 +4482,21 @@ mod tests {
     }
 
     #[test]
-    fn switch_label_uses_optical_vertical_centering() {
-        let (optical_label, geometric_label) =
-            optical_and_geometric_first_text_rects(|| Switch::new("Airplane mode"));
+    fn switch_label_visual_center_matches_control_center() {
+        let output = render(Switch::new("Airplane mode"));
+        let text = first_text_run(&output);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("switch label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("switch label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = output.frame.viewport.height * 0.5;
 
-        assert!((optical_label.y() - geometric_label.y()).abs() > 0.001);
-        assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
+        assert!((actual_visual_center - control_center).abs() < 0.75);
     }
 
     #[test]
@@ -4493,13 +4518,21 @@ mod tests {
     }
 
     #[test]
-    fn radio_group_labels_use_optical_vertical_centering() {
-        let (optical_label, geometric_label) = optical_and_geometric_first_text_rects(|| {
-            RadioGroup::new("Choices").options(["Alpha", "Beta"])
-        });
+    fn radio_group_first_label_visual_center_matches_row_center() {
+        let output = render(RadioGroup::new("Choices").options(["Alpha", "Beta"]));
+        let text = text_run_for(&output, "Alpha");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("radio group label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("radio group label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let row_center = DefaultTheme::default().metrics.min_height * 0.5;
 
-        assert!((optical_label.y() - geometric_label.y()).abs() > 0.001);
-        assert!((optical_label.x() - geometric_label.x()).abs() < 0.001);
+        assert!((actual_visual_center - row_center).abs() < 0.75);
     }
 
     #[test]
@@ -4842,6 +4875,24 @@ mod tests {
     }
 
     #[test]
+    fn number_input_value_text_visual_center_matches_control_center() {
+        let output = render(NumberInput::new("Count").value(12.0));
+        let text = text_run_for(&output, "12");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("number input text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("number input text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
     fn text_area_supports_multiline_input() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
@@ -5106,6 +5157,68 @@ mod tests {
             select.value,
             Some(SemanticsValue::Text("Linear".to_string()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn select_header_text_visual_center_matches_control_center() {
+        let output = render(
+            Select::new("Mode")
+                .placeholder("Choose mode")
+                .options(["Automatic", "Linear", "Gamma"]),
+        );
+        let text = text_run_for(&output, "Choose mode");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("select header text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("select header text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn expanded_select_option_text_visual_center_matches_row_center() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            Select::new("Mode")
+                .placeholder("Choose mode")
+                .options(["Automatic", "Linear", "Gamma"]),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(20.0, 20.0), false),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present");
+        let text = text_run_for(&output, "Automatic");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("select menu option text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("select menu option text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let row_center = select.bounds.max_y() + 6.0 + (select.bounds.height() * 0.5);
+
+        assert!((actual_visual_center - row_center).abs() < 0.75);
         Ok(())
     }
 
