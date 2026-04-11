@@ -71,6 +71,9 @@ enum ScrollKind {
 #[derive(Debug, Clone)]
 enum HostInputEvent {
     Focused(bool),
+    Resized {
+        size: Size,
+    },
     CursorEntered,
     CursorMoved {
         position: Point,
@@ -849,6 +852,11 @@ impl DesktopHarnessApp {
 
         let event = match event {
             HostInputEvent::Focused(focused) => WinitWindowEvent::Focused(focused),
+            HostInputEvent::Resized { size } => {
+                let logical_size = LogicalSize::new(size.width as f64, size.height as f64);
+                let _ = window.window.request_inner_size(logical_size);
+                WinitWindowEvent::Resized(logical_size.to_physical(scale_factor))
+            }
             HostInputEvent::CursorEntered => WinitWindowEvent::CursorEntered { device_id },
             HostInputEvent::CursorMoved { position } => WinitWindowEvent::CursorMoved {
                 device_id,
@@ -1394,6 +1402,10 @@ fn click_at(harness: &DesktopHarness, window_id: WindowId, position: Point) -> R
             button: MouseButton::Left,
         },
     )
+}
+
+fn resize_window(harness: &DesktopHarness, window_id: WindowId, size: Size) -> Result<()> {
+    harness.dispatch(window_id, HostInputEvent::Resized { size })
 }
 
 fn live_performance_toggle_point(snapshot: &DesktopWindowSnapshot) -> Point {
@@ -2191,6 +2203,118 @@ fn run_widget_book_scroll_benchmark(
     Ok(())
 }
 
+fn run_button_grid_resize_benchmark() -> Result<()> {
+    const FRAME_BUDGET_MS: f64 = 1000.0 / 60.0;
+    const WARMUP_FRAMES: usize = 12;
+    const MEASURED_FRAMES: usize = 120;
+
+    let resize_sequence = [
+        Size::new(1040.0, 520.0),
+        Size::new(1180.0, 620.0),
+        Size::new(1360.0, 760.0),
+        Size::new(1440.0, 900.0),
+        Size::new(1240.0, 680.0),
+        Size::new(1100.0, 560.0),
+    ];
+
+    let harness = DesktopHarness::launch_with_vsync(
+        || build_button_grid_benchmark_application().build(),
+        false,
+    )?;
+    let window_id = harness.main_window_id();
+
+    harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+    let initial_snapshot = harness.snapshot(window_id)?;
+    let mut previous_frame_index = initial_snapshot
+        .performance
+        .as_ref()
+        .expect("64-button resize benchmark should publish an initial performance snapshot")
+        .frame_index;
+    let mut frame_times_ms = Vec::with_capacity(MEASURED_FRAMES);
+
+    for step in 0..(WARMUP_FRAMES + MEASURED_FRAMES) {
+        let target_size = resize_sequence[step % resize_sequence.len()];
+        resize_window(&harness, window_id, target_size)?;
+
+        let snapshot = harness.snapshot(window_id)?;
+        let performance = snapshot
+            .performance
+            .as_ref()
+            .expect("64-button resize benchmark should publish performance snapshots");
+
+        assert!(
+            performance.frame_index > previous_frame_index,
+            "64-button resize benchmark did not render a new frame for resize step {} to {:?}",
+            step,
+            target_size,
+        );
+
+        previous_frame_index = performance.frame_index;
+
+        if step >= WARMUP_FRAMES {
+            frame_times_ms.push(performance.total_time_ms);
+        }
+    }
+
+    let final_snapshot = harness.snapshot(window_id)?;
+    let button_count = final_snapshot
+        .semantics
+        .iter()
+        .filter(|node| node.role == SemanticsRole::Button)
+        .count();
+
+    assert_eq!(final_snapshot.title, BUTTON_GRID_BENCHMARK_TITLE);
+    assert_eq!(button_count, BUTTON_GRID_ROWS * BUTTON_GRID_COLUMNS);
+    assert_eq!(frame_times_ms.len(), MEASURED_FRAMES);
+
+    let valid_count = frame_times_ms.len();
+    let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+    let avg_ms = total_frame_time_ms / valid_count as f64;
+    let min_ms = frame_times_ms
+        .iter()
+        .copied()
+        .min_by(|a, b| a.total_cmp(b))
+        .unwrap_or(0.0);
+    let max_ms = frame_times_ms
+        .iter()
+        .copied()
+        .max_by(|a, b| a.total_cmp(b))
+        .unwrap_or(0.0);
+    let mut sorted_times = frame_times_ms.clone();
+    sorted_times.sort_by(|a, b| a.total_cmp(b));
+    let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+    let p95_ms = sorted_times[p95_index];
+
+    println!("\n=== 64-Button Resize FPS Benchmark ===");
+    println!("warmup frames:    {WARMUP_FRAMES}");
+    println!("frames measured:  {valid_count}");
+    println!("resize variants:  {}", resize_sequence.len());
+    println!(
+        "avg frame time:   {avg_ms:.3} ms ({:.0} fps)",
+        1000.0 / avg_ms
+    );
+    println!("min frame time:   {min_ms:.3} ms");
+    println!("max frame time:   {max_ms:.3} ms");
+    println!(
+        "p95 frame time:   {p95_ms:.3} ms ({:.0} fps)",
+        1000.0 / p95_ms
+    );
+    println!("last frame index: {previous_frame_index}");
+    println!("======================================\n");
+
+    assert!(
+        avg_ms < FRAME_BUDGET_MS,
+        "average resize frame time {avg_ms:.3} ms exceeds the 16.67 ms budget for 60 fps",
+    );
+    assert!(
+        p95_ms < FRAME_BUDGET_MS,
+        "p95 resize frame time {p95_ms:.3} ms exceeds the 16.67 ms budget for stable 60 fps",
+    );
+
+    Ok(())
+}
+
 fn node_is_mostly_visible(
     snapshot: &DesktopWindowSnapshot,
     viewport: Rect,
@@ -2717,6 +2841,15 @@ fn desktop_button_grid_64_reports_initial_render_time() -> Result<()> {
     );
 
     Ok(())
+}
+
+#[test]
+fn desktop_button_grid_64_resize_fps_benchmark() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    run_button_grid_resize_benchmark()
 }
 
 #[test]
