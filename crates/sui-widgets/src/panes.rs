@@ -1,7 +1,7 @@
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
     PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
-    SemanticsValue, Size,
+    SemanticsValue, Size, WidgetId,
 };
 use sui_layout::{Axis, Constraints};
 use sui_runtime::{
@@ -68,6 +68,7 @@ struct FloatingWorkspaceStateInner {
     views: Vec<FloatingViewState>,
     z_order: Vec<u64>,
     maximized_view: Option<u64>,
+    active_resize_view: Option<u64>,
 }
 
 #[derive(Clone, Default)]
@@ -220,6 +221,19 @@ impl FloatingWorkspaceState {
             .filter(|id| inner.views.iter().any(|view| view.id == *id && view.visible))
             .collect()
     }
+
+    pub fn active_resize_view(&self) -> Option<u64> {
+        self.inner.borrow().active_resize_view
+    }
+
+    pub fn set_active_resize_view(&self, view_id: Option<u64>) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if inner.active_resize_view == view_id {
+            return false;
+        }
+        inner.active_resize_view = view_id;
+        true
+    }
 }
 
 struct FloatingWorkspaceEntry {
@@ -342,15 +356,16 @@ impl FloatingWorkspace {
             })
     }
 
-    fn update_drag(&mut self, host_bounds: Rect, position: Point) -> bool {
+    fn update_drag(&mut self, host_bounds: Rect, position: Point) -> Option<Rect> {
         let Some(gesture) = &self.gesture else {
-            return false;
+            return None;
         };
         let Some(view) = self.state.snapshot(gesture.view_id) else {
-            return false;
+            return None;
         };
 
         let delta = position - gesture.pointer_origin;
+        let previous_bounds = view.bounds;
         let next_bounds = match gesture.kind {
             FloatingWorkspaceGestureKind::Move => Rect::new(
                 gesture.initial_bounds.x() + delta.x,
@@ -366,7 +381,11 @@ impl FloatingWorkspace {
             ),
         };
         let clamped = clamp_floating_view_bounds(&self.theme, host_bounds, next_bounds, view.min_size);
-        self.state.set_view_bounds(view.id, clamped)
+        if !self.state.set_view_bounds(view.id, clamped) {
+            return None;
+        }
+
+        Some(previous_bounds.union(clamped))
     }
 }
 
@@ -384,14 +403,11 @@ impl Widget for FloatingWorkspace {
                     .gesture
                     .as_ref()
                     .is_some_and(|gesture| matches!(gesture.kind, FloatingWorkspaceGestureKind::Resize));
-                if self.update_drag(ctx.bounds(), pointer.position) {
+                if let Some(dirty_region) = self.update_drag(ctx.bounds(), pointer.position) {
                     if resizing {
-                        request_window_refresh(ctx, true, false);
+                        request_widget_drag_refresh(ctx, dirty_region);
                     } else {
-                        ctx.request_arrange();
-                        ctx.request_paint();
-                        ctx.request_hit_test();
-                        ctx.request_semantics();
+                        request_widget_refresh(ctx, false, false, dirty_region);
                     }
                 }
                 ctx.set_handled();
@@ -404,6 +420,16 @@ impl Widget for FloatingWorkspace {
                         .as_ref()
                         .is_some_and(|gesture| gesture.pointer_id == pointer.pointer_id) =>
             {
+                let active_view = self.gesture.as_ref().and_then(|gesture| {
+                    matches!(gesture.kind, FloatingWorkspaceGestureKind::Resize)
+                        .then_some(gesture.view_id)
+                });
+                if self.state.set_active_resize_view(None) {
+                    let refresh_region = active_view
+                        .and_then(|view_id| self.state.snapshot(view_id).map(|view| view.bounds))
+                        .unwrap_or(ctx.bounds());
+                    request_widget_refresh(ctx, true, false, refresh_region);
+                }
                 self.gesture = None;
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.set_handled();
@@ -415,6 +441,16 @@ impl Widget for FloatingWorkspace {
                         .as_ref()
                         .is_some_and(|gesture| gesture.pointer_id == pointer.pointer_id) =>
             {
+                let active_view = self.gesture.as_ref().and_then(|gesture| {
+                    matches!(gesture.kind, FloatingWorkspaceGestureKind::Resize)
+                        .then_some(gesture.view_id)
+                });
+                if self.state.set_active_resize_view(None) {
+                    let refresh_region = active_view
+                        .and_then(|view_id| self.state.snapshot(view_id).map(|view| view.bounds))
+                        .unwrap_or(ctx.bounds());
+                    request_widget_refresh(ctx, true, false, refresh_region);
+                }
                 self.gesture = None;
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.set_handled();
@@ -450,6 +486,7 @@ impl Widget for FloatingWorkspace {
                         ctx.set_handled();
                     }
                     FloatingWorkspaceHitRegion::ResizeHandle => {
+                        self.state.set_active_resize_view(Some(hit.view_id));
                         self.gesture = Some(FloatingWorkspaceGesture {
                             view_id: hit.view_id,
                             pointer_id: pointer.pointer_id,
@@ -518,6 +555,13 @@ impl Widget for FloatingWorkspace {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let dirty_region = widget_invalidation_region(ctx.invalidations(), ctx.widget_id())
+            .and_then(|region| region.intersection(ctx.bounds()));
+
+        if let Some(region) = dirty_region {
+            ctx.push_clip_rect(region);
+        }
+
         let palette = self.theme.palette;
         ctx.fill_bounds(Color::rgba(0.94, 0.955, 0.975, 1.0));
         ctx.fill_rect(
@@ -527,8 +571,15 @@ impl Widget for FloatingWorkspace {
 
         for view_id in self.active_view_ids() {
             if let Some(entry) = self.entry(view_id) {
+                if dirty_region.is_some_and(|region| entry.child.bounds().intersection(region).is_none()) {
+                    continue;
+                }
                 entry.child.paint(ctx);
             }
+        }
+
+        if dirty_region.is_some() {
+            ctx.pop_clip();
         }
     }
 
@@ -652,6 +703,17 @@ impl Widget for FloatingViewSurface {
         ctx.pop_clip();
     }
 
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            cache_policy: if self.state.active_resize_view() == Some(self.view_id) {
+                LayerCachePolicy::Direct
+            } else {
+                LayerCachePolicy::Cached
+            },
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         if let Some(view) = self.state.snapshot(self.view_id) {
             let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Window, ctx.bounds());
@@ -719,7 +781,11 @@ impl Widget for FloatingViewHost {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: LayerCachePolicy::Direct,
+            cache_policy: if self.state.active_resize_view() == Some(self.view_id) {
+                LayerCachePolicy::Direct
+            } else {
+                LayerCachePolicy::Cached
+            },
             composition_mode: LayerCompositionMode::Scroll,
         }
     }
@@ -1451,36 +1517,54 @@ fn diagonal_handle_path(bounds: Rect, inset: f32, offset: f32) -> sui_core::Path
     builder.build()
 }
 
-fn request_window_refresh(ctx: &mut EventCtx, include_measure: bool, include_ordering: bool) {
+fn request_widget_refresh(
+    ctx: &mut EventCtx,
+    include_measure: bool,
+    include_ordering: bool,
+    region: Rect,
+) {
+    let target = InvalidationTarget::Widget(ctx.widget_id());
     if include_measure {
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Window(ctx.window_id()),
-            InvalidationKind::Measure,
-        ));
+        ctx.request(InvalidationRequest::new(target, InvalidationKind::Measure).with_region(region));
     } else {
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Window(ctx.window_id()),
-            InvalidationKind::Arrange,
-        ));
+        ctx.request(InvalidationRequest::new(target, InvalidationKind::Arrange).with_region(region));
     }
     if include_ordering {
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Window(ctx.window_id()),
-            InvalidationKind::Ordering,
-        ));
+        ctx.request(InvalidationRequest::new(target, InvalidationKind::Ordering).with_region(region));
     }
-    ctx.request(InvalidationRequest::new(
-        InvalidationTarget::Window(ctx.window_id()),
-        InvalidationKind::Paint,
-    ));
-    ctx.request(InvalidationRequest::new(
-        InvalidationTarget::Window(ctx.window_id()),
-        InvalidationKind::HitTest,
-    ));
-    ctx.request(InvalidationRequest::new(
-        InvalidationTarget::Window(ctx.window_id()),
-        InvalidationKind::Semantics,
-    ));
+    ctx.request(InvalidationRequest::new(target, InvalidationKind::Paint).with_region(region));
+    ctx.request(InvalidationRequest::new(target, InvalidationKind::HitTest).with_region(region));
+    ctx.request(InvalidationRequest::new(target, InvalidationKind::Semantics).with_region(region));
+}
+
+fn request_widget_drag_refresh(ctx: &mut EventCtx, region: Rect) {
+    let target = InvalidationTarget::Widget(ctx.widget_id());
+    ctx.request(InvalidationRequest::new(target, InvalidationKind::Arrange).with_region(region));
+    ctx.request(InvalidationRequest::new(target, InvalidationKind::Paint).with_region(region));
+}
+
+fn widget_invalidation_region(
+    invalidations: &[InvalidationRequest],
+    widget_id: WidgetId,
+) -> Option<Rect> {
+    invalidations
+        .iter()
+        .filter(|request| matches!(request.target, InvalidationTarget::Widget(target) if target == widget_id))
+        .filter(|request| {
+            matches!(
+                request.kind,
+                InvalidationKind::Measure
+                    | InvalidationKind::Arrange
+                    | InvalidationKind::Ordering
+                    | InvalidationKind::Transform
+                    | InvalidationKind::Clip
+                    | InvalidationKind::Effect
+                    | InvalidationKind::Visibility
+                    | InvalidationKind::Paint
+            )
+        })
+        .filter_map(|request| request.region)
+        .reduce(|current, next| current.union(next))
 }
 
 #[cfg(test)]

@@ -636,7 +636,8 @@ mod tests {
 
     use sui::{
         Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        Result, SemanticsNode, SemanticsRole, Vector,
+        Result, SceneStatisticsDetailMode, SemanticsNode, SemanticsRole,
+        WindowPerformanceSnapshot, Vector, set_window_scene_statistics_detail_mode,
     };
     use sui_testing::{Screenshot, TestApp, TestWindow, WindowSnapshot};
 
@@ -743,6 +744,17 @@ mod tests {
     }
 
     fn drag_pointer(window: &TestWindow, from: Point, to: Point) -> Result<()> {
+        drag_pointer_with_samples(window, from, to, 1).map(|_| ())
+    }
+
+    fn drag_pointer_with_samples(
+        window: &TestWindow,
+        from: Point,
+        to: Point,
+        steps: usize,
+    ) -> Result<Vec<WindowPerformanceSnapshot>> {
+        assert!(steps > 0, "drag steps must be greater than zero");
+
         let root = window.root();
 
         root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, from)))?;
@@ -752,14 +764,27 @@ mod tests {
         down.buttons = PointerButtons::new(1);
         root.dispatch_event(Event::Pointer(down))?;
 
-        let mut moved = PointerEvent::new(PointerEventKind::Move, to);
-        moved.buttons = PointerButtons::new(1);
-        moved.delta = to - from;
-        root.dispatch_event(Event::Pointer(moved))?;
+        let mut samples = Vec::with_capacity(steps);
+        let total_delta = to - from;
+        let mut previous = from;
+        for step in 1..=steps {
+            let progress = step as f32 / steps as f32;
+            let position = Point::new(
+                from.x + (total_delta.x * progress),
+                from.y + (total_delta.y * progress),
+            );
+            let mut moved = PointerEvent::new(PointerEventKind::Move, position);
+            moved.buttons = PointerButtons::new(1);
+            moved.delta = position - previous;
+            root.dispatch_event(Event::Pointer(moved))?;
+            samples.push(window.performance_snapshot()?);
+            previous = position;
+        }
 
         let mut up = PointerEvent::new(PointerEventKind::Up, to);
         up.button = Some(PointerButton::Primary);
         root.dispatch_event(Event::Pointer(up))
+            .map(|_| samples)
     }
 
     fn find_named_node(snapshot: &WindowSnapshot, role: SemanticsRole, name: &str) -> SemanticsNode {
@@ -781,6 +806,124 @@ mod tests {
                 matches.len()
             ),
         }
+    }
+
+    #[test]
+    fn button_grid_resize_stays_at_stable_60_fps_in_dev_workspace() -> Result<()> {
+        const FRAME_BUDGET_MS: f64 = 1000.0 / 60.0;
+        const DRAG_STEPS: usize = 28;
+        const WARMUP_SAMPLES: usize = 4;
+
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+
+        let initial_snapshot = window.snapshot()?;
+        let initial_view =
+            find_named_node(&initial_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
+        let resize_start =
+            Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
+        let resize_end = Point::new(
+            initial_view.bounds.x() + 760.0,
+            initial_view.bounds.y() + 560.0,
+        );
+
+        let frame_samples =
+            drag_pointer_with_samples(&window, resize_start, resize_end, DRAG_STEPS)?;
+        let measured_samples = frame_samples
+            .into_iter()
+            .skip(WARMUP_SAMPLES)
+            .collect::<Vec<_>>();
+        assert!(
+            !measured_samples.is_empty(),
+            "expected resize benchmark to record measured frame samples"
+        );
+
+        let after_snapshot = window.snapshot()?;
+        let resized_view = find_named_node(&after_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
+        assert!(
+            resized_view.bounds.width() > initial_view.bounds.width(),
+            "expected the 64-button view to grow during the resize benchmark, before={:?} after={:?}",
+            initial_view.bounds,
+            resized_view.bounds,
+        );
+        assert!(
+            resized_view.bounds.height() > initial_view.bounds.height(),
+            "expected the 64-button view height to grow during the resize benchmark, before={:?} after={:?}",
+            initial_view.bounds,
+            resized_view.bounds,
+        );
+
+        let frame_times_ms = measured_samples
+            .iter()
+            .map(|sample| sample.total_time_ms)
+            .collect::<Vec<_>>();
+        let valid_count = frame_times_ms.len();
+        let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+        let avg_ms = total_frame_time_ms / valid_count as f64;
+        let min_ms = frame_times_ms
+            .iter()
+            .copied()
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let max_ms = frame_times_ms
+            .iter()
+            .copied()
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let mut sorted = frame_times_ms.clone();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_ms = sorted[p95_index];
+        let avg_visible_tiles = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.visible_tile_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_regenerated_tiles = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.regenerated_tile_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_tile_generation_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.tile_generation_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_build_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_surface_acquire_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_acquire_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+
+        println!("\n=== SUI Dev 64-Button Resize Benchmark ===");
+        println!("frames measured:  {valid_count}");
+        println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!("min frame time:   {min_ms:.3} ms");
+        println!("max frame time:   {max_ms:.3} ms");
+        println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!("avg visible tiles:{avg_visible_tiles:.2}");
+        println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
+        println!("avg tile gen:     {avg_tile_generation_ms:.3} ms");
+        println!("avg packet build: {avg_packet_build_ms:.3} ms");
+        println!("avg surface acq:  {avg_surface_acquire_ms:.3} ms");
+        println!("=========================================\n");
+
+        assert!(
+            avg_ms < FRAME_BUDGET_MS,
+            "average resize frame time {avg_ms:.3} ms exceeds the 16.67 ms budget for 60 fps",
+        );
+        assert!(
+            p95_ms < FRAME_BUDGET_MS,
+            "p95 resize frame time {p95_ms:.3} ms exceeds the 16.67 ms budget for stable 60 fps",
+        );
+
+        Ok(())
     }
 
     fn viewport_bounds(snapshot: &WindowSnapshot) -> Rect {
