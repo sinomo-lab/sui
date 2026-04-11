@@ -251,7 +251,9 @@ impl HeadlessPlatform {
         let event_started = Instant::now();
         runtime.handle_event(window_id, queued_event.event)?;
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
-        self.windows[window_index].pending_event_time_ms += event_time_ms;
+        if !is_redraw {
+            self.windows[window_index].pending_event_time_ms += event_time_ms;
+        }
         if !is_redraw && !is_close {
             self.windows[window_index].last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
         }
@@ -315,6 +317,7 @@ impl HeadlessPlatform {
                     window_id,
                     frame_index,
                     pending_event_time_ms,
+                    event_time_ms,
                     runtime_time_ms,
                     presentation_latency,
                     &output,

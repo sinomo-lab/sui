@@ -670,7 +670,13 @@ impl WindowState {
         self.preprocess_window_event(&event);
         self.ensure_graph_for_event(&event, text_system, font_registry, image_registry);
 
+        let captured_target = match &event {
+            Event::Pointer(pointer) => self.pointer_capture.get(&pointer.pointer_id).copied(),
+            _ => None,
+        };
+
         let hit_target = match &event {
+            Event::Pointer(_) if captured_target.is_some() => None,
             Event::Pointer(pointer) => {
                 let floating_hit = self.floating_layer_hit_test(pointer.position);
                 let focused_floating_hit = if floating_hit.is_none() {
@@ -825,9 +831,10 @@ impl WindowState {
     }
 
     fn dispatch_direct_event(&mut self, target: WidgetId, event: &Event) -> widget::EventDispatch {
+        let path = self.graph.path_to(target);
         self.root
-            .dispatch_event_for(
-                target,
+            .dispatch_event_for_path(
+                path.as_deref().unwrap_or(&[self.root.id()]),
                 self.id,
                 self.last_tick_time,
                 EventPhase::Target,
@@ -1106,11 +1113,11 @@ impl WindowState {
         let mut focus_request = None;
 
         if path.len() > 1 {
-            for &widget_id in &path[..path.len() - 1] {
+            for path_len in 1..path.len() {
                 let dispatch = self
                     .root
-                    .dispatch_event_for(
-                        widget_id,
+                    .dispatch_event_for_path(
+                        &path[..path_len],
                         self.id,
                         self.last_tick_time,
                         EventPhase::Capture,
@@ -1132,11 +1139,10 @@ impl WindowState {
         }
 
         if !handled {
-            let target_id = *path.last().unwrap_or(&self.root.id());
             let dispatch = self
                 .root
-                .dispatch_event_for(
-                    target_id,
+                .dispatch_event_for_path(
+                    &path,
                     self.id,
                     self.last_tick_time,
                     EventPhase::Target,
@@ -1154,11 +1160,11 @@ impl WindowState {
         }
 
         if !handled && path.len() > 1 {
-            for &widget_id in path[..path.len() - 1].iter().rev() {
+            for path_len in (1..path.len()).rev() {
                 let dispatch = self
                     .root
-                    .dispatch_event_for(
-                        widget_id,
+                    .dispatch_event_for_path(
+                        &path[..path_len],
                         self.id,
                         self.last_tick_time,
                         EventPhase::Bubble,
@@ -1250,13 +1256,28 @@ impl WindowState {
             effects
                 .invalidations
                 .extend(self.focus_transition_invalidations(widget_id));
-            if let Some(extra) = self.root.notify_focus_change_for(
-                widget_id,
-                self.id,
-                self.last_tick_time,
-                self.focus.focused_widget,
-                false,
-            ) {
+            let extra = self
+                .graph
+                .path_to(widget_id)
+                .and_then(|path| {
+                    self.root.notify_focus_change_for_path(
+                        &path,
+                        self.id,
+                        self.last_tick_time,
+                        self.focus.focused_widget,
+                        false,
+                    )
+                })
+                .or_else(|| {
+                    self.root.notify_focus_change_for(
+                        widget_id,
+                        self.id,
+                        self.last_tick_time,
+                        self.focus.focused_widget,
+                        false,
+                    )
+                });
+            if let Some(extra) = extra {
                 effects.extend(extra);
             }
         }
@@ -1265,13 +1286,28 @@ impl WindowState {
             effects
                 .invalidations
                 .extend(self.focus_transition_invalidations(widget_id));
-            if let Some(extra) = self.root.notify_focus_change_for(
-                widget_id,
-                self.id,
-                self.last_tick_time,
-                self.focus.focused_widget,
-                true,
-            ) {
+            let extra = self
+                .graph
+                .path_to(widget_id)
+                .and_then(|path| {
+                    self.root.notify_focus_change_for_path(
+                        &path,
+                        self.id,
+                        self.last_tick_time,
+                        self.focus.focused_widget,
+                        true,
+                    )
+                })
+                .or_else(|| {
+                    self.root.notify_focus_change_for(
+                        widget_id,
+                        self.id,
+                        self.last_tick_time,
+                        self.focus.focused_widget,
+                        true,
+                    )
+                });
+            if let Some(extra) = extra {
                 effects.extend(extra);
             }
         }
@@ -1279,7 +1315,7 @@ impl WindowState {
         self.schedule.mark(InvalidationKind::Paint);
         self.schedule.mark(InvalidationKind::Semantics);
         self.schedule.mark(InvalidationKind::HitTest);
-        self.refresh_graph();
+        self.graph.set_focused_widget(self.focus.focused_widget);
 
         effects
     }
@@ -2217,6 +2253,12 @@ impl WidgetGraph {
                 .get(&node.id)
                 .copied()
                 .unwrap_or(node.geometry.layout_bounds);
+        }
+    }
+
+    fn set_focused_widget(&mut self, focused_widget: Option<WidgetId>) {
+        for node in self.nodes.values_mut() {
+            node.focused = Some(node.id) == focused_widget;
         }
     }
 
@@ -3795,6 +3837,15 @@ mod tests {
                 window_focused: true,
             }
         );
+        assert!(
+            runtime
+                .widget_graph(window_id)
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|node| node.id == first_id)
+                .is_some_and(|node| node.focused)
+        );
 
         runtime
             .handle_event(
@@ -3810,6 +3861,15 @@ mod tests {
                 focused_widget: Some(second_id),
                 window_focused: true,
             }
+        );
+        assert!(
+            runtime
+                .widget_graph(window_id)
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|node| node.id == second_id)
+                .is_some_and(|node| node.focused)
         );
 
         let output = runtime.render(window_id).unwrap();
@@ -3834,6 +3894,15 @@ mod tests {
                 focused_widget: Some(first_id),
                 window_focused: true,
             }
+        );
+        assert!(
+            runtime
+                .widget_graph(window_id)
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|node| node.id == first_id)
+                .is_some_and(|node| node.focused)
         );
     }
 

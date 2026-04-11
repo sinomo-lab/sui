@@ -314,7 +314,9 @@ impl<'a> DesktopApp<'a> {
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
 
         if let Some(window) = self.windows.get_mut(&window_id) {
-            window.pending_event_time_ms += event_time_ms;
+            if !is_redraw {
+                window.pending_event_time_ms += event_time_ms;
+            }
             if !is_redraw && !is_close {
                 window.last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
             }
@@ -404,6 +406,7 @@ impl<'a> DesktopApp<'a> {
                     window_id,
                     frame_index,
                     pending_event_time_ms,
+                    event_time_ms,
                     runtime_time_ms,
                     presentation_latency,
                     &output,

@@ -10,6 +10,7 @@ use sui_scene::{SceneCommand, SceneFrame, SceneLayerUpdateKind};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FramePhase {
     Event,
+    Redraw,
     MeasureArrange,
     HitTest,
     Paint,
@@ -22,6 +23,7 @@ impl FramePhase {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Event => "Event handling",
+            Self::Redraw => "Redraw callback",
             Self::MeasureArrange => "Measure and arrange",
             Self::HitTest => "Graph and hit test",
             Self::Paint => "Paint",

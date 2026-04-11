@@ -535,7 +535,9 @@ impl DesktopHarnessApp {
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
 
         if let Some(window) = self.windows.get_mut(&window_id) {
-            window.pending_event_time_ms += event_time_ms;
+            if !is_redraw {
+                window.pending_event_time_ms += event_time_ms;
+            }
             if !is_redraw && !is_close {
                 window.last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
             }
@@ -611,6 +613,7 @@ impl DesktopHarnessApp {
                     window_id,
                     frame_index,
                     pending_event_time_ms,
+                    event_time_ms,
                     runtime_time_ms,
                     presentation_latency,
                     &output,
@@ -1253,6 +1256,7 @@ fn publish_frame_performance(
     window_id: WindowId,
     frame_index: u64,
     event_time_ms: f64,
+    redraw_time_ms: f64,
     runtime_time_ms: f64,
     presentation_latency: PresentationLatencyDiagnostics,
     output: &RenderOutput,
@@ -1260,7 +1264,7 @@ fn publish_frame_performance(
     renderer_time_ms: f64,
 ) {
     let detail_mode = window_scene_statistics_detail_mode(window_id);
-    let total_time_ms = event_time_ms + runtime_time_ms + renderer_time_ms;
+    let total_time_ms = event_time_ms + redraw_time_ms + runtime_time_ms + renderer_time_ms;
 
     if !detail_mode.is_detailed() {
         publish_window_performance_snapshot(
@@ -1280,7 +1284,7 @@ fn publish_frame_performance(
     }
 
     let diagnostics_started = Instant::now();
-    let mut phase_timings = Vec::with_capacity(output.diagnostics.phase_timings.len() + 2);
+    let mut phase_timings = Vec::with_capacity(output.diagnostics.phase_timings.len() + 3);
     let renderer_text_cache = renderer.text_cache_snapshot(window_id);
     let text_caches = TextCacheDiagnostics {
         runtime_layout: output.diagnostics.text_caches.runtime_layout,
@@ -1309,6 +1313,10 @@ fn publish_frame_performance(
         phase_timings.push(FramePhaseSample::new(FramePhase::Event, event_time_ms));
     }
 
+    if redraw_time_ms > 0.0 {
+        phase_timings.push(FramePhaseSample::new(FramePhase::Redraw, redraw_time_ms));
+    }
+
     phase_timings.extend(output.diagnostics.phase_timings.iter().copied());
     phase_timings.push(FramePhaseSample::new(
         FramePhase::Renderer,
@@ -1320,6 +1328,7 @@ fn publish_frame_performance(
     ));
 
     let total_time_ms = event_time_ms
+        + redraw_time_ms
         + runtime_time_ms
         + renderer_time_ms
         + diagnostics_started.elapsed().as_secs_f64() * 1000.0;

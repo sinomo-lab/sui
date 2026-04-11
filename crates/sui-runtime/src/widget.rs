@@ -404,16 +404,16 @@ impl WidgetPod {
         self.widget.visit_children_mut(visitor);
     }
 
-    pub(crate) fn dispatch_event_for(
+    pub(crate) fn dispatch_event_for_path(
         &mut self,
-        target: WidgetId,
+        path: &[WidgetId],
         window_id: WindowId,
         current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
         event: &Event,
     ) -> Option<EventDispatch> {
-        self.find_mut(target, &mut |pod| {
+        self.find_mut_path(path, &mut |pod| {
             pod.dispatch_event(window_id, current_time, phase, focused_widget, event)
         })
     }
@@ -427,6 +427,19 @@ impl WidgetPod {
         focused: bool,
     ) -> Option<EventDispatch> {
         self.find_mut(target, &mut |pod| {
+            pod.focus_changed(window_id, current_time, focused_widget, focused)
+        })
+    }
+
+    pub(crate) fn notify_focus_change_for_path(
+        &mut self,
+        path: &[WidgetId],
+        window_id: WindowId,
+        current_time: f64,
+        focused_widget: Option<WidgetId>,
+        focused: bool,
+    ) -> Option<EventDispatch> {
+        self.find_mut_path(path, &mut |pod| {
             pod.focus_changed(window_id, current_time, focused_widget, focused)
         })
     }
@@ -493,6 +506,29 @@ impl WidgetPod {
         let mut result = None;
         let mut visitor = FindMutVisitor {
             target,
+            callback: f,
+            result: &mut result,
+        };
+        self.visit_children_mut(&mut visitor);
+        result
+    }
+
+    fn find_mut_path<R, F>(&mut self, path: &[WidgetId], f: &mut F) -> Option<R>
+    where
+        F: FnMut(&mut WidgetPod) -> R,
+    {
+        let (&current, rest) = path.split_first()?;
+        if current != self.id {
+            return None;
+        }
+
+        if rest.is_empty() {
+            return Some(f(self));
+        }
+
+        let mut result = None;
+        let mut visitor = FindPathMutVisitor {
+            path: rest,
             callback: f,
             result: &mut result,
         };
@@ -587,6 +623,26 @@ where
     fn visit(&mut self, child: &mut WidgetPod) {
         if self.result.is_none() {
             *self.result = child.find_mut(self.target, self.callback);
+        }
+    }
+}
+
+struct FindPathMutVisitor<'a, F, R>
+where
+    F: FnMut(&mut WidgetPod) -> R,
+{
+    path: &'a [WidgetId],
+    callback: &'a mut F,
+    result: &'a mut Option<R>,
+}
+
+impl<F, R> WidgetPodMutVisitor for FindPathMutVisitor<'_, F, R>
+where
+    F: FnMut(&mut WidgetPod) -> R,
+{
+    fn visit(&mut self, child: &mut WidgetPod) {
+        if self.result.is_none() && self.path.first().copied() == Some(child.id) {
+            *self.result = child.find_mut_path(self.path, self.callback);
         }
     }
 }
