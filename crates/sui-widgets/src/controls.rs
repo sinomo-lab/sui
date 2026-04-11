@@ -456,10 +456,25 @@ impl Label {
 
 impl Widget for Label {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let measurement = measure_text(ctx, &self.text, &self.style);
+        let natural_measurement = measure_text(ctx, &self.text, &self.style);
+        let (measured_width, measurement) =
+            if constraints.max.width.is_finite() && natural_measurement.width > constraints.max.width
+            {
+                let wrapped_measurement = ctx
+                    .shape_text(
+                        self.text.clone(),
+                        Size::new(constraints.max.width.max(1.0), f32::INFINITY),
+                        self.style.clone(),
+                    )
+                    .map(|layout| layout.measurement())
+                    .unwrap_or(natural_measurement);
+                (constraints.max.width.max(0.0), wrapped_measurement)
+            } else {
+                (natural_measurement.width, natural_measurement)
+            };
         self.measurement = Some(measurement);
         constraints.clamp(Size::new(
-            measurement.width,
+            measured_width,
             measurement.height.max(self.style.line_height),
         ))
     }
@@ -4108,6 +4123,7 @@ mod tests {
         Button, Checkbox, DefaultTheme, Label, NumberInput, RadioButton, RadioGroup, Select,
         Slider, Switch, TextArea, TextInput,
     };
+    use crate::containers::SizedBox;
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsRole,
@@ -4254,6 +4270,17 @@ mod tests {
         ));
         assert_eq!(output.semantics[0].role, SemanticsRole::Text);
         assert_eq!(output.semantics[0].name.as_deref(), Some("Hello SUI"));
+    }
+
+    #[test]
+    fn label_measures_wrapped_height_when_width_is_constrained() {
+        let output = render(
+            SizedBox::new().width(96.0).with_child(Label::new(
+                "This label should wrap onto multiple lines when its layout width is constrained.",
+            )),
+        );
+
+        assert!(output.frame.viewport.height > DefaultTheme::default().typography.body_line_height);
     }
 
     #[test]
