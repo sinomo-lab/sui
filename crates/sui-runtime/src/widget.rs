@@ -2,6 +2,9 @@ use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
+use std::time::Instant;
+
+use crate::diagnostics::{WidgetTimingPhase, record_widget_timing};
 
 use sui_core::{
     AsyncWakeToken, Color, DpiInfo, Event, InvalidationKind, InvalidationRequest,
@@ -38,6 +41,10 @@ pub trait WidgetPodMutVisitor {
 
 pub trait Widget {
     fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
+
+    fn debug_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.max
@@ -325,7 +332,14 @@ impl WidgetPod {
             Arc::clone(&parent_ctx.font_registry),
             Arc::clone(&parent_ctx.image_registry),
         );
+        let started = Instant::now();
         let size = self.widget.measure(&mut child_ctx, constraints);
+        record_widget_timing(
+            self.id,
+            self.widget.debug_name(),
+            WidgetTimingPhase::Measure,
+            started.elapsed(),
+        );
         self.layout_state.measured_size = size;
         self.layout_state.last_constraints = constraints;
         self.layout_state.measure_valid = true;
@@ -341,7 +355,14 @@ impl WidgetPod {
         self.translate_descendants(delta);
 
         let mut child_ctx = ArrangeCtx::new(parent_ctx.window_id(), self.id, parent_ctx.dpi());
+        let started = Instant::now();
         self.widget.arrange(&mut child_ctx, bounds);
+        record_widget_timing(
+            self.id,
+            self.widget.debug_name(),
+            WidgetTimingPhase::Arrange,
+            started.elapsed(),
+        );
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
     }
 
@@ -355,7 +376,14 @@ impl WidgetPod {
             Arc::clone(&parent_ctx.text_system),
             Arc::clone(&parent_ctx.font_registry),
         );
+        let started = Instant::now();
         self.widget.paint(&mut child_ctx);
+        record_widget_timing(
+            self.id,
+            self.widget.debug_name(),
+            WidgetTimingPhase::Paint,
+            started.elapsed(),
+        );
 
         let (scene, invalidations, ime_composition_rect) = child_ctx.into_parts();
         parent_ctx.push_layer(self.build_layer_descriptor(&scene), scene);
@@ -368,7 +396,16 @@ impl WidgetPod {
         target: WidgetId,
         parent_ctx: &mut PaintCtx,
     ) -> bool {
-        self.find_mut(target, &mut |pod| pod.widget.paint(parent_ctx))
+        self.find_mut(target, &mut |pod| {
+            let started = Instant::now();
+            pod.widget.paint(parent_ctx);
+            record_widget_timing(
+                pod.id,
+                pod.widget.debug_name(),
+                WidgetTimingPhase::Paint,
+                started.elapsed(),
+            );
+        })
             .is_some()
     }
 
@@ -388,7 +425,14 @@ impl WidgetPod {
             self.layout_state.arranged_bounds,
             parent_ctx.focused_widget_id(),
         );
+        let started = Instant::now();
         self.widget.semantics(&mut child_ctx);
+        record_widget_timing(
+            self.id,
+            self.widget.debug_name(),
+            WidgetTimingPhase::Semantics,
+            started.elapsed(),
+        );
         parent_ctx.extend_nodes(child_ctx.into_nodes());
     }
 

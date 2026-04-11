@@ -1,11 +1,13 @@
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     sync::{OnceLock, RwLock},
     time::Duration,
 };
 
-use sui_core::{DirtyRegion, Size, WindowId};
+use sui_core::{DirtyRegion, Size, WidgetId, WindowId};
 use sui_scene::{SceneCommand, SceneFrame, SceneLayerUpdateKind};
+use sui_text::RuntimeTextTimingDiagnostics;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FramePhase {
@@ -50,10 +52,129 @@ impl FramePhaseSample {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WidgetTimingPhase {
+    Measure,
+    Arrange,
+    Paint,
+    Semantics,
+}
+
+impl WidgetTimingPhase {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Measure => "Measure",
+            Self::Arrange => "Arrange",
+            Self::Paint => "Paint",
+            Self::Semantics => "Semantics",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WidgetTimingSample {
+    pub widget_id: WidgetId,
+    pub widget_name: &'static str,
+    pub phase: WidgetTimingPhase,
+    pub duration_ms: f64,
+    pub calls: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RenderDiagnostics {
     pub phase_timings: Vec<FramePhaseSample>,
     pub text_caches: TextCacheDiagnostics,
+    pub runtime_text_timing: RuntimeTextTimingDiagnostics,
+    pub widget_timings: Vec<WidgetTimingSample>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct WidgetTimingKey {
+    widget_id: WidgetId,
+    widget_name: &'static str,
+    phase: WidgetTimingPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct WidgetTimingAccum {
+    duration_ms: f64,
+    calls: usize,
+}
+
+thread_local! {
+    static WIDGET_TIMING_COLLECTOR: RefCell<Option<BTreeMap<WidgetTimingKey, WidgetTimingAccum>>> =
+        const { RefCell::new(None) };
+}
+
+fn widget_timing_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("SUI_PROFILE_WIDGET_TIMINGS").is_some())
+}
+
+pub(crate) fn begin_widget_timing_collection() {
+    if !widget_timing_enabled() {
+        return;
+    }
+
+    WIDGET_TIMING_COLLECTOR.with(|collector| {
+        *collector.borrow_mut() = Some(BTreeMap::new());
+    });
+}
+
+pub(crate) fn record_widget_timing(
+    widget_id: WidgetId,
+    widget_name: &'static str,
+    phase: WidgetTimingPhase,
+    duration: Duration,
+) {
+    if !widget_timing_enabled() {
+        return;
+    }
+
+    let duration_ms = duration.as_secs_f64() * 1000.0;
+    WIDGET_TIMING_COLLECTOR.with(|collector| {
+        let mut collector = collector.borrow_mut();
+        let Some(entries) = collector.as_mut() else {
+            return;
+        };
+
+        let entry = entries
+            .entry(WidgetTimingKey {
+                widget_id,
+                widget_name,
+                phase,
+            })
+            .or_default();
+        entry.duration_ms += duration_ms;
+        entry.calls += 1;
+    });
+}
+
+pub(crate) fn take_widget_timing_collection() -> Vec<WidgetTimingSample> {
+    if !widget_timing_enabled() {
+        return Vec::new();
+    }
+
+    let mut samples = WIDGET_TIMING_COLLECTOR
+        .with(|collector| collector.borrow_mut().take())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(key, accum)| WidgetTimingSample {
+            widget_id: key.widget_id,
+            widget_name: key.widget_name,
+            phase: key.phase,
+            duration_ms: accum.duration_ms,
+            calls: accum.calls,
+        })
+        .collect::<Vec<_>>();
+    samples.sort_by(|left, right| {
+        right
+            .duration_ms
+            .total_cmp(&left.duration_ms)
+            .then_with(|| left.phase.cmp(&right.phase))
+            .then_with(|| left.widget_id.get().cmp(&right.widget_id.get()))
+    });
+    samples
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -578,6 +699,8 @@ pub struct WindowPerformanceSnapshot {
     pub renderer_submission: RendererSubmissionDiagnostics,
     pub text_caches: TextCacheDiagnostics,
     pub text_cache_deltas: TextCacheDeltaDiagnostics,
+    pub runtime_text_timing: RuntimeTextTimingDiagnostics,
+    pub widget_timings: Vec<WidgetTimingSample>,
     pub scene: SceneStatistics,
 }
 
@@ -624,6 +747,8 @@ impl WindowPerformanceSnapshot {
             renderer_submission,
             text_caches,
             text_cache_deltas,
+            runtime_text_timing: RuntimeTextTimingDiagnostics::default(),
+            widget_timings: Vec::new(),
             scene,
         }
     }
@@ -633,6 +758,19 @@ impl WindowPerformanceSnapshot {
         presentation_latency: PresentationLatencyDiagnostics,
     ) -> Self {
         self.presentation_latency = presentation_latency;
+        self
+    }
+
+    pub fn with_widget_timings(mut self, widget_timings: Vec<WidgetTimingSample>) -> Self {
+        self.widget_timings = widget_timings;
+        self
+    }
+
+    pub fn with_runtime_text_timing(
+        mut self,
+        runtime_text_timing: RuntimeTextTimingDiagnostics,
+    ) -> Self {
+        self.runtime_text_timing = runtime_text_timing;
         self
     }
 

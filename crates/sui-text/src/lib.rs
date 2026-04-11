@@ -16,7 +16,10 @@ pub use model::{
     TextParagraphStyle, TextRun, TextSelection, TextSelectionGeometry, TextSpan, TextSpanId,
     TextStyle, TextWrap, TextWritingMode,
 };
-pub use system::TextSystem;
+pub use system::{
+    RuntimeTextTimingDiagnostics, TextSystem, begin_text_timing_collection,
+    take_text_timing_collection,
+};
 
 #[cfg(test)]
 mod tests;

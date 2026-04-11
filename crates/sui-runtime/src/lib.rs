@@ -24,7 +24,8 @@ use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 pub use diagnostics::{
     CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
     RenderDiagnostics, RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
-    TextCacheDeltaDiagnostics, TextCacheDiagnostics, WindowPerformanceSnapshot,
+    TextCacheDeltaDiagnostics, TextCacheDiagnostics, WidgetTimingPhase, WidgetTimingSample,
+    WindowPerformanceSnapshot,
     WindowPerformanceSummary, WindowRenderOptions, WindowTextRenderPolicy,
     clear_window_performance_snapshot, clear_window_performance_snapshots,
     clear_window_render_options, publish_window_performance_snapshot, set_window_render_options,
@@ -667,6 +668,11 @@ impl WindowState {
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) {
+        if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
+            diagnostics::begin_widget_timing_collection();
+            sui_text::begin_text_timing_collection();
+        }
+
         self.preprocess_window_event(&event);
         self.ensure_graph_for_event(&event, text_system, font_registry, image_registry);
 
@@ -1577,6 +1583,10 @@ impl WindowState {
             diagnostics.text_caches.runtime_layout =
                 CacheMetrics::new(layout_cache.entries, layout_cache.hits, layout_cache.misses);
         }
+
+        diagnostics.runtime_text_timing = sui_text::take_text_timing_collection();
+
+        diagnostics.widget_timings = diagnostics::take_widget_timing_collection();
 
         self.schedule.clear();
 

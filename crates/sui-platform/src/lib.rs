@@ -68,7 +68,9 @@ pub(crate) fn publish_frame_performance(
                 Default::default(),
                 SceneStatistics::minimal(&output.frame, detail_mode),
             )
-            .with_presentation_latency(presentation_latency),
+            .with_presentation_latency(presentation_latency)
+            .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
+            .with_widget_timings(output.diagnostics.widget_timings.clone()),
         );
         return;
     }
@@ -173,6 +175,8 @@ pub(crate) fn publish_frame_performance(
             text_cache_deltas,
             SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
         )
-        .with_presentation_latency(presentation_latency),
+        .with_presentation_latency(presentation_latency)
+        .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
+        .with_widget_timings(output.diagnostics.widget_timings.clone()),
     );
 }

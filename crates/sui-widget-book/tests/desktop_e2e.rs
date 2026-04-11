@@ -23,7 +23,8 @@ use sui::{
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
     RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
-    TextCacheDiagnostics, WindowPerformanceSnapshot, clear_window_performance_snapshots,
+    TextCacheDiagnostics, WidgetTimingPhase, WindowPerformanceSnapshot,
+    clear_window_performance_snapshots,
     publish_window_performance_snapshot, set_window_scene_statistics_detail_mode,
     window_performance_text_caches, window_scene_statistics_detail_mode,
 };
@@ -1278,7 +1279,9 @@ fn publish_frame_performance(
                 Default::default(),
                 SceneStatistics::minimal(&output.frame, detail_mode),
             )
-            .with_presentation_latency(presentation_latency),
+            .with_presentation_latency(presentation_latency)
+            .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
+            .with_widget_timings(output.diagnostics.widget_timings.clone()),
         );
         return;
     }
@@ -1384,7 +1387,9 @@ fn publish_frame_performance(
             text_cache_deltas,
             SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
         )
-        .with_presentation_latency(presentation_latency),
+        .with_presentation_latency(presentation_latency)
+        .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
+        .with_widget_timings(output.diagnostics.widget_timings.clone()),
     );
 }
 
@@ -1522,6 +1527,16 @@ struct ScrollBenchmarkFrameSample {
     surface_present_time_us: u64,
     dirty_region_count: usize,
     dirty_coverage: f32,
+    runtime_text_request_count: usize,
+    runtime_text_hit_count: usize,
+    runtime_text_miss_count: usize,
+    runtime_text_total_time_us: u64,
+    runtime_text_prelookup_time_us: u64,
+    runtime_text_cache_lookup_time_us: u64,
+    runtime_text_miss_layout_time_us: u64,
+    runtime_layout_entries_delta: isize,
+    runtime_layout_hits: usize,
+    runtime_layout_misses: usize,
     glyph_cache_entries_delta: isize,
     glyph_cache_hits: usize,
     glyph_cache_misses: usize,
@@ -1599,6 +1614,16 @@ impl ScrollBenchmarkFrameSample {
             surface_present_time_us: snapshot.renderer_submission.surface_present_time_us,
             dirty_region_count: snapshot.scene.dirty_region_count,
             dirty_coverage: snapshot.scene.dirty_coverage,
+            runtime_text_request_count: snapshot.runtime_text_timing.request_count,
+            runtime_text_hit_count: snapshot.runtime_text_timing.cache_hit_count,
+            runtime_text_miss_count: snapshot.runtime_text_timing.cache_miss_count,
+            runtime_text_total_time_us: snapshot.runtime_text_timing.total_time_us,
+            runtime_text_prelookup_time_us: snapshot.runtime_text_timing.prelookup_time_us,
+            runtime_text_cache_lookup_time_us: snapshot.runtime_text_timing.cache_lookup_time_us,
+            runtime_text_miss_layout_time_us: snapshot.runtime_text_timing.miss_layout_time_us,
+            runtime_layout_entries_delta: snapshot.text_cache_deltas.runtime_layout.entries_delta,
+            runtime_layout_hits: snapshot.text_cache_deltas.runtime_layout.hits,
+            runtime_layout_misses: snapshot.text_cache_deltas.runtime_layout.misses,
             glyph_cache_entries_delta: snapshot.text_cache_deltas.renderer_glyph.entries_delta,
             glyph_cache_hits: snapshot.text_cache_deltas.renderer_glyph.hits,
             glyph_cache_misses: snapshot.text_cache_deltas.renderer_glyph.misses,
@@ -1632,6 +1657,23 @@ impl DialogRepaintTransition {
 struct DialogRepaintFrameSample {
     transition: DialogRepaintTransition,
     sample: ScrollBenchmarkFrameSample,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct WidgetTimingAggregateKey {
+    widget_id: u64,
+    widget_name: &'static str,
+    phase: WidgetTimingPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct WidgetTimingAggregate {
+    total_ms: f64,
+    total_calls: usize,
+}
+
+fn short_widget_name(widget_name: &'static str) -> &'static str {
+    widget_name.rsplit("::").next().unwrap_or(widget_name)
 }
 
 fn visible_node_center(node: &SemanticsNode, viewport: Rect) -> Point {
@@ -1723,6 +1765,8 @@ fn run_widget_book_dialog_repaint_benchmark(
 
     let benchmark_start = Instant::now();
     let mut phase_totals: HashMap<&str, f64> = HashMap::new();
+    let mut widget_timing_totals: HashMap<WidgetTimingAggregateKey, WidgetTimingAggregate> =
+        HashMap::new();
     let mut measured_samples = Vec::with_capacity(MEASURED_CYCLES * 2);
     let mut repaint_diff_checks = 0usize;
 
@@ -1777,6 +1821,17 @@ fn run_widget_book_dialog_repaint_benchmark(
                     transition,
                     sample: ScrollBenchmarkFrameSample::from_snapshot(performance),
                 });
+                for timing in &performance.widget_timings {
+                    let entry = widget_timing_totals
+                        .entry(WidgetTimingAggregateKey {
+                            widget_id: timing.widget_id.get(),
+                            widget_name: timing.widget_name,
+                            phase: timing.phase,
+                        })
+                        .or_default();
+                    entry.total_ms += timing.duration_ms;
+                    entry.total_calls += timing.calls;
+                }
                 for phase in &performance.phase_timings {
                     *phase_totals.entry(phase.phase.label()).or_insert(0.0) += phase.duration_ms;
                 }
@@ -1848,6 +1903,21 @@ fn run_widget_book_dialog_repaint_benchmark(
     let avg_glyph_cache_entries_delta = average_of(|sample| sample.glyph_cache_entries_delta as f64);
     let avg_glyph_cache_hits = average_of(|sample| sample.glyph_cache_hits as f64);
     let avg_glyph_cache_misses = average_of(|sample| sample.glyph_cache_misses as f64);
+    let avg_runtime_layout_entries_delta =
+        average_of(|sample| sample.runtime_layout_entries_delta as f64);
+    let avg_runtime_layout_hits = average_of(|sample| sample.runtime_layout_hits as f64);
+    let avg_runtime_layout_misses = average_of(|sample| sample.runtime_layout_misses as f64);
+    let avg_runtime_text_requests = average_of(|sample| sample.runtime_text_request_count as f64);
+    let avg_runtime_text_hits = average_of(|sample| sample.runtime_text_hit_count as f64);
+    let avg_runtime_text_misses = average_of(|sample| sample.runtime_text_miss_count as f64);
+    let avg_runtime_text_total_ms =
+        average_of(|sample| sample.runtime_text_total_time_us as f64 / 1000.0);
+    let avg_runtime_text_prelookup_ms =
+        average_of(|sample| sample.runtime_text_prelookup_time_us as f64 / 1000.0);
+    let avg_runtime_text_lookup_ms =
+        average_of(|sample| sample.runtime_text_cache_lookup_time_us as f64 / 1000.0);
+    let avg_runtime_text_miss_layout_ms =
+        average_of(|sample| sample.runtime_text_miss_layout_time_us as f64 / 1000.0);
     let avg_path_cache_entries_delta = average_of(|sample| sample.path_cache_entries_delta as f64);
     let avg_path_cache_hits = average_of(|sample| sample.path_cache_hits as f64);
     let avg_path_cache_misses = average_of(|sample| sample.path_cache_misses as f64);
@@ -1888,6 +1958,12 @@ fn run_widget_book_dialog_repaint_benchmark(
     );
     println!(
         "avg packet why:   new {avg_packet_rebuild_new:.2} | coord {avg_packet_rebuild_coordinate_space:.2} | sig {avg_packet_rebuild_signature:.2} | scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2}"
+    );
+    println!(
+        "avg runtime text Δ:{avg_runtime_layout_entries_delta:.2} entries / {avg_runtime_layout_hits:.2} hits / {avg_runtime_layout_misses:.2} misses"
+    );
+    println!(
+        "avg runtime text:  {avg_runtime_text_requests:.2} req  hits {avg_runtime_text_hits:.2}  misses {avg_runtime_text_misses:.2}  total {avg_runtime_text_total_ms:.3} ms  pre {avg_runtime_text_prelookup_ms:.3} ms  lookup {avg_runtime_text_lookup_ms:.3} ms  miss-layout {avg_runtime_text_miss_layout_ms:.3} ms"
     );
     println!(
         "avg glyph cache Δ:{avg_glyph_cache_entries_delta:.2} entries / {avg_glyph_cache_hits:.2} hits / {avg_glyph_cache_misses:.2} misses"
@@ -1969,6 +2045,62 @@ fn run_widget_book_dialog_repaint_benchmark(
         println!("  {phase:<22} {avg_phase_ms:>8.3} ms  ({pct:>5.1}%)");
     }
 
+    println!("\n--- Widget hotspots (avg per frame) ---");
+    for phase in [
+        WidgetTimingPhase::Measure,
+        WidgetTimingPhase::Arrange,
+        WidgetTimingPhase::Paint,
+        WidgetTimingPhase::Semantics,
+    ] {
+        let mut entries = widget_timing_totals
+            .iter()
+            .filter(|(key, _)| key.phase == phase)
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| right.1.total_ms.total_cmp(&left.1.total_ms));
+        if entries.is_empty() {
+            continue;
+        }
+
+        println!("  {}:", phase.label());
+        for (key, aggregate) in entries.into_iter().take(8) {
+            println!(
+                "    {:>7.3} ms/frame  {:>5.2} calls/frame  {}#{}",
+                aggregate.total_ms / valid_count as f64,
+                aggregate.total_calls as f64 / valid_count as f64,
+                short_widget_name(key.widget_name),
+                key.widget_id,
+            );
+        }
+    }
+
+    println!("\n--- Repeated measure calls ---");
+    let mut repeated_measure_entries = widget_timing_totals
+        .iter()
+        .filter(|(key, aggregate)| {
+            key.phase == WidgetTimingPhase::Measure && aggregate.total_calls > valid_count
+        })
+        .collect::<Vec<_>>();
+    repeated_measure_entries.sort_by(|left, right| {
+        let left_calls = left.1.total_calls as f64 / valid_count as f64;
+        let right_calls = right.1.total_calls as f64 / valid_count as f64;
+        right_calls
+            .total_cmp(&left_calls)
+            .then_with(|| right.1.total_ms.total_cmp(&left.1.total_ms))
+    });
+    if repeated_measure_entries.is_empty() {
+        println!("  none above 1.00 calls/frame in the measured full-redraw frames");
+    } else {
+        for (key, aggregate) in repeated_measure_entries.into_iter().take(8) {
+            println!(
+                "  {:>5.2} calls/frame  {:>7.3} ms/frame  {}#{}",
+                aggregate.total_calls as f64 / valid_count as f64,
+                aggregate.total_ms / valid_count as f64,
+                short_widget_name(key.widget_name),
+                key.widget_id,
+            );
+        }
+    }
+
     println!("\n--- Slowest frames ---");
     let mut slowest_samples = measured_samples.clone();
     slowest_samples.sort_by(|a, b| b.sample.total_time_ms.total_cmp(&a.sample.total_time_ms));
@@ -2001,10 +2133,16 @@ fn run_widget_book_dialog_repaint_benchmark(
             sample.sample.retained_packet_rebuild_state_count,
         );
         println!(
-            "             glyph Δ {:+} / {:>3} hits / {:>3} misses  path Δ {:+} / {:>3} hits / {:>3} misses  atlas {:>3} / {:>7.3} ms",
+            "             text Δ {:+} / {:>3} hits / {:>3} misses  glyph Δ {:+} / {:>3} hits / {:>3} misses",
+            sample.sample.runtime_layout_entries_delta,
+            sample.sample.runtime_layout_hits,
+            sample.sample.runtime_layout_misses,
             sample.sample.glyph_cache_entries_delta,
             sample.sample.glyph_cache_hits,
             sample.sample.glyph_cache_misses,
+        );
+        println!(
+            "             path Δ {:+} / {:>3} hits / {:>3} misses  atlas {:>3} / {:>7.3} ms",
             sample.sample.path_cache_entries_delta,
             sample.sample.path_cache_hits,
             sample.sample.path_cache_misses,

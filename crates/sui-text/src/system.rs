@@ -1,4 +1,8 @@
-use std::sync::{Mutex, OnceLock};
+use std::{
+    cell::RefCell,
+    sync::{Mutex, OnceLock},
+    time::Instant,
+};
 
 use sui_core::{Error, Result, Size};
 
@@ -10,6 +14,76 @@ use crate::{
     model::{TextDocument, TextLayout, TextLayoutRequest, TextMeasurement, TextRun, TextStyle},
     FontRegistry,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RuntimeTextTimingDiagnostics {
+    pub request_count: usize,
+    pub cache_hit_count: usize,
+    pub cache_miss_count: usize,
+    pub total_time_us: u64,
+    pub prelookup_time_us: u64,
+    pub cache_lookup_time_us: u64,
+    pub miss_layout_time_us: u64,
+}
+
+thread_local! {
+    static TEXT_TIMING_COLLECTOR: RefCell<Option<RuntimeTextTimingDiagnostics>> =
+        const { RefCell::new(None) };
+}
+
+fn text_timing_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("SUI_PROFILE_TEXT_TIMINGS").is_some())
+}
+
+pub fn begin_text_timing_collection() {
+    if !text_timing_enabled() {
+        return;
+    }
+
+    TEXT_TIMING_COLLECTOR.with(|collector| {
+        *collector.borrow_mut() = Some(RuntimeTextTimingDiagnostics::default());
+    });
+}
+
+pub fn take_text_timing_collection() -> RuntimeTextTimingDiagnostics {
+    if !text_timing_enabled() {
+        return RuntimeTextTimingDiagnostics::default();
+    }
+
+    TEXT_TIMING_COLLECTOR
+        .with(|collector| collector.borrow_mut().take())
+        .unwrap_or_default()
+}
+
+fn record_text_timing(
+    total_time_us: u64,
+    prelookup_time_us: u64,
+    cache_lookup_time_us: u64,
+    miss_layout_time_us: u64,
+    cache_hit: bool,
+) {
+    if !text_timing_enabled() {
+        return;
+    }
+
+    TEXT_TIMING_COLLECTOR.with(|collector| {
+        let mut collector = collector.borrow_mut();
+        let Some(diagnostics) = collector.as_mut() else {
+            return;
+        };
+        diagnostics.request_count += 1;
+        diagnostics.total_time_us += total_time_us;
+        diagnostics.prelookup_time_us += prelookup_time_us;
+        diagnostics.cache_lookup_time_us += cache_lookup_time_us;
+        diagnostics.miss_layout_time_us += miss_layout_time_us;
+        if cache_hit {
+            diagnostics.cache_hit_count += 1;
+        } else {
+            diagnostics.cache_miss_count += 1;
+        }
+    });
+}
 
 #[derive(Debug, Default)]
 pub struct TextSystem {
@@ -89,6 +163,7 @@ impl TextSystem {
         request: TextLayoutRequest,
         font_registry: &FontRegistry,
     ) -> Result<TextLayout> {
+        let total_started = text_timing_enabled().then(Instant::now);
         let normalized_document = request.document.normalized();
         let flattened = FlattenedTextDocument::new(normalized_document.clone());
         let font_context = self.font_context(font_registry)?;
@@ -98,13 +173,48 @@ impl TextSystem {
             .map(|span| span.cache_face_key)
             .collect::<Vec<_>>();
         let cache_key = TextLayoutCacheKey::new(&flattened, &span_face_keys, request.box_size);
+        let prelookup_time_us = total_started
+            .as_ref()
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
 
+        let lookup_started = text_timing_enabled().then(Instant::now);
         if let Some(cached) = self.cached_layout(&cache_key)? {
+            let cache_lookup_time_us = lookup_started
+                .as_ref()
+                .map(|started| started.elapsed().as_micros() as u64)
+                .unwrap_or(0);
+            let total_time_us = total_started
+                .as_ref()
+                .map(|started| started.elapsed().as_micros() as u64)
+                .unwrap_or(0);
+            record_text_timing(total_time_us, prelookup_time_us, cache_lookup_time_us, 0, true);
             return Ok(cached.with_document(normalized_document));
         }
 
+        let cache_lookup_time_us = lookup_started
+            .as_ref()
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
+
+        let layout_started = text_timing_enabled().then(Instant::now);
         let layout = layout_document(flattened, resolved_spans, request.box_size, font_context)?;
+        let miss_layout_time_us = layout_started
+            .as_ref()
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
         self.store_layout(cache_key, layout.clone())?;
+        let total_time_us = total_started
+            .as_ref()
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or(0);
+        record_text_timing(
+            total_time_us,
+            prelookup_time_us,
+            cache_lookup_time_us,
+            miss_layout_time_us,
+            false,
+        );
         Ok(layout.with_document(normalized_document))
     }
 
