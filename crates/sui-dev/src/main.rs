@@ -636,10 +636,64 @@ mod tests {
 
     use sui::{
         Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        Result, SceneStatisticsDetailMode, SemanticsNode, SemanticsRole,
+        Result, SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, StackOrderPolicy,
         WindowPerformanceSnapshot, Vector, set_window_scene_statistics_detail_mode,
     };
     use sui_testing::{Screenshot, TestApp, TestWindow, WindowSnapshot};
+
+    const FRONTING_TEST_TITLE: &str = "Fronting test";
+
+    struct SolidFill {
+        color: Color,
+    }
+
+    impl SolidFill {
+        fn new(color: Color) -> Self {
+            Self { color }
+        }
+    }
+
+    impl Widget for SolidFill {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.max
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(self.color);
+        }
+    }
+
+    fn build_fronting_test_application() -> Application {
+        let workspace = FloatingWorkspaceState::new();
+        let mut views = FloatingWorkspace::new(workspace.clone()).name(FRONTING_TEST_TITLE);
+        views.push_view(
+            FloatingViewConfig::new("First", Rect::new(24.0, 48.0, 320.0, 240.0))
+                .min_size(Size::new(220.0, 160.0)),
+            SolidFill::new(Color::rgba(0.86, 0.22, 0.18, 1.0)),
+        );
+        views.push_view(
+            FloatingViewConfig::new("Second", Rect::new(420.0, 88.0, 320.0, 240.0))
+                .min_size(Size::new(220.0, 160.0)),
+            SolidFill::new(Color::rgba(0.16, 0.62, 0.28, 1.0)),
+        );
+
+        let root = SplitView::horizontal(ViewSidebar::new(workspace), views)
+            .name("Fronting test split")
+            .ratio(0.24)
+            .min_first(236.0)
+            .min_second(420.0)
+            .divider_thickness(12.0);
+
+        Application::new().window(
+            WindowBuilder::new()
+                .title(FRONTING_TEST_TITLE)
+                .root(LivePerformanceRoot::new(
+                    FRONTING_TEST_TITLE,
+                    "Floating workspace fronting regression.",
+                    root,
+                )),
+        )
+    }
 
     #[test]
     fn widget_book_scroll_does_not_repaint_pixels_outside_shrunken_floating_view() -> Result<()> {
@@ -716,6 +770,120 @@ mod tests {
     }
 
     #[test]
+    fn dev_shell_clicking_floating_title_bar_reorders_frontmost_pixels() -> Result<()> {
+        let app = TestApp::new(move || build_fronting_test_application().build())?;
+        let window = app.main_window()?;
+
+        let before_snapshot = window.snapshot()?;
+        let first_view = find_named_node(&before_snapshot, SemanticsRole::Window, "First");
+        let host = before_snapshot
+            .widget_graph
+            .stack_hosts
+            .iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should be present");
+        assert_eq!(host.surfaces.len(), 2);
+        let first_surface = host.surfaces[0];
+        assert_eq!(host.surfaces[0], first_surface);
+
+        let second_view = find_named_node(&before_snapshot, SemanticsRole::Window, "Second");
+        let overlap_probe = overlap_probe(first_view.bounds, second_view.bounds);
+        let before_frame = window.capture_screenshot()?;
+        let before_pixel = sample_pixel(&before_frame, overlap_probe, &before_snapshot)?;
+
+        let click_point = Point::new(first_view.bounds.x() + 32.0, first_view.bounds.y() + 18.0);
+        click_pointer(&window, click_point)?;
+
+        let after_snapshot = window.snapshot()?;
+        let host = after_snapshot
+            .widget_graph
+            .stack_hosts
+            .iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should still be present");
+        assert_eq!(host.surfaces.len(), 2);
+        assert_eq!(host.surfaces[1], first_surface);
+
+        let after_frame = window.capture_screenshot()?;
+        let after_pixel = sample_pixel(&after_frame, overlap_probe, &after_snapshot)?;
+
+        assert_ne!(before_pixel, after_pixel, "expected overlap pixel to change after fronting");
+        assert!(after_pixel[0] > after_pixel[1], "expected first view color to be frontmost after click, pixel={after_pixel:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn dev_shell_dragging_floating_title_bar_keeps_dragged_view_frontmost() -> Result<()> {
+        let app = TestApp::new(move || build_fronting_test_application().build())?;
+        let window = app.main_window()?;
+        let root = window.root();
+
+        let before_snapshot = window.snapshot()?;
+        let first_view = find_named_node(&before_snapshot, SemanticsRole::Window, "First");
+        let first_surface = before_snapshot
+            .widget_graph
+            .stack_hosts
+            .iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .and_then(|host| host.surfaces.first().copied())
+            .expect("first surface should be present before drag");
+        let second_view = find_named_node(&before_snapshot, SemanticsRole::Window, "Second");
+        let overlap_probe = overlap_probe(first_view.bounds, second_view.bounds);
+        let before_frame = window.capture_screenshot()?;
+        let before_pixel = sample_pixel(&before_frame, overlap_probe, &before_snapshot)?;
+
+        let drag_start = Point::new(first_view.bounds.x() + 32.0, first_view.bounds.y() + 18.0);
+        let drag_end = Point::new(drag_start.x + 24.0, drag_start.y + 8.0);
+        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, drag_start)))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, drag_start);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        root.dispatch_event(Event::Pointer(down))?;
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, drag_end);
+        moved.buttons = PointerButtons::new(1);
+        moved.delta = drag_end - drag_start;
+        root.dispatch_event(Event::Pointer(moved))?;
+
+        let during_drag_snapshot = window.snapshot()?;
+        let during_drag_host = during_drag_snapshot
+            .widget_graph
+            .stack_hosts
+            .iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should be present during drag");
+        assert_eq!(during_drag_host.surfaces.last().copied(), Some(first_surface));
+        let during_drag_frame = window.capture_screenshot()?;
+        let during_drag_pixel =
+            sample_pixel(&during_drag_frame, overlap_probe, &during_drag_snapshot)?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, drag_end);
+        up.button = Some(PointerButton::Primary);
+        root.dispatch_event(Event::Pointer(up))?;
+
+        let after_snapshot = window.snapshot()?;
+        let moved_first_view = find_named_node(&after_snapshot, SemanticsRole::Window, "First");
+        assert!(moved_first_view.bounds.x() > first_view.bounds.x());
+        assert!(moved_first_view.bounds.y() > first_view.bounds.y());
+        let host = after_snapshot
+            .widget_graph
+            .stack_hosts
+            .iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should still be present after drag");
+        assert_eq!(host.surfaces.last().copied(), Some(first_surface));
+        let after_frame = window.capture_screenshot()?;
+        let after_pixel = sample_pixel(&after_frame, overlap_probe, &after_snapshot)?;
+
+        assert_ne!(before_pixel, during_drag_pixel, "expected overlap pixel to change while dragging a fronted view");
+        assert!(during_drag_pixel[0] > during_drag_pixel[1], "expected dragged first view color to be frontmost during drag, pixel={during_drag_pixel:?}");
+        assert_ne!(before_pixel, after_pixel, "expected overlap pixel to stay changed after dragging a fronted view");
+        assert!(after_pixel[0] > after_pixel[1], "expected dragged first view color to remain frontmost, pixel={after_pixel:?}");
+        Ok(())
+    }
+
+    #[test]
     fn widget_book_image_and_swatch_stories_do_not_leak_outside_shrunken_floating_view() -> Result<()> {
         let initial_bounds = Rect::new(320.0, 28.0, 560.0, 520.0);
         let app = TestApp::new(move || {
@@ -745,6 +913,21 @@ mod tests {
 
     fn drag_pointer(window: &TestWindow, from: Point, to: Point) -> Result<()> {
         drag_pointer_with_samples(window, from, to, 1).map(|_| ())
+    }
+
+    fn click_pointer(window: &TestWindow, position: Point) -> Result<()> {
+        let root = window.root();
+
+        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, position)))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        root.dispatch_event(Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.button = Some(PointerButton::Primary);
+        root.dispatch_event(Event::Pointer(up)).map(|_| ())
     }
 
     fn drag_pointer_with_samples(
@@ -900,6 +1083,35 @@ mod tests {
             .map(|sample| sample.renderer_submission.retained_packet_build_count as f64)
             .sum::<f64>()
             / valid_count as f64;
+        let avg_packet_rebuild_new = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_new_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_coordinate_space = measured_samples
+            .iter()
+            .map(|sample| {
+                sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64
+            })
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_signature = measured_samples
+            .iter()
+            .map(|sample| {
+                sample.renderer_submission.retained_packet_rebuild_signature_count as f64
+            })
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_scene = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_state = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
         let avg_surface_acquire_ms = measured_samples
             .iter()
             .map(|sample| sample.renderer_submission.surface_acquire_time_us as f64 / 1000.0)
@@ -980,6 +1192,9 @@ mod tests {
         println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
         println!("avg tile gen:     {avg_tile_generation_ms:.3} ms");
         println!("avg packet build: {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
+        println!(
+            "avg packet why:   new {avg_packet_rebuild_new:.2} | coord {avg_packet_rebuild_coordinate_space:.2} | sig {avg_packet_rebuild_signature:.2} | scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2}"
+        );
         println!("avg atlas misses: {avg_text_atlas_miss_count:.2}");
         println!("avg glyph cache Δ:{avg_glyph_cache_entries:.2} entries / {avg_glyph_cache_hits:.2} hits / {avg_glyph_cache_misses:.2} misses");
         println!("avg path cache Δ: {avg_path_cache_hits:.2} hits / {avg_path_cache_misses:.2} misses");
@@ -1251,5 +1466,22 @@ mod tests {
             .zip(right.pixels().chunks_exact(4))
             .filter(|(left_pixel, right_pixel)| left_pixel != right_pixel)
             .count()
+    }
+
+    fn overlap_probe(first: Rect, second: Rect) -> Rect {
+        let overlap = first
+            .intersection(second)
+            .expect("floating views should overlap for the probe");
+        Rect::new(overlap.x() + 24.0, overlap.y() + 48.0, 1.0, 1.0)
+    }
+
+    fn sample_pixel(
+        screenshot: &Screenshot,
+        bounds: Rect,
+        snapshot: &WindowSnapshot,
+    ) -> Result<[u8; 4]> {
+        let pixel = screenshot.crop(scale_bounds_for_screenshot(bounds, snapshot, screenshot))?;
+        let rgba = pixel.pixels();
+        Ok([rgba[0], rgba[1], rgba[2], rgba[3]])
     }
 }

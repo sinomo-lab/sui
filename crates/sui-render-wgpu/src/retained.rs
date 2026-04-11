@@ -232,6 +232,25 @@ pub(crate) struct RetainedCompositorFrameStats {
     pub(crate) scene_traversal_time_ms: f64,
     pub(crate) packet_build_count: usize,
     pub(crate) packet_build_time_ms: f64,
+    pub(crate) packet_rebuild_new_count: usize,
+    pub(crate) packet_rebuild_coordinate_space_count: usize,
+    pub(crate) packet_rebuild_signature_count: usize,
+    pub(crate) packet_rebuild_scene_count: usize,
+    pub(crate) packet_rebuild_state_count: usize,
+}
+
+impl RetainedCompositorFrameStats {
+    fn record_packet_rebuild(&mut self, reason: PacketRebuildReason) {
+        match reason {
+            PacketRebuildReason::NewPacket => self.packet_rebuild_new_count += 1,
+            PacketRebuildReason::CoordinateSpace => {
+                self.packet_rebuild_coordinate_space_count += 1;
+            }
+            PacketRebuildReason::Signature => self.packet_rebuild_signature_count += 1,
+            PacketRebuildReason::Scene => self.packet_rebuild_scene_count += 1,
+            PacketRebuildReason::State => self.packet_rebuild_state_count += 1,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -393,6 +412,15 @@ pub(crate) struct RetainedDirectPacket {
 enum PacketCoordinateSpace {
     World,
     LayerLocal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PacketRebuildReason {
+    NewPacket,
+    CoordinateSpace,
+    Signature,
+    Scene,
+    State,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1235,7 +1263,7 @@ impl RetainedCompositorState {
         &mut self,
         frame: &SceneFrame,
         snapshot: PacketSnapshot,
-        forced_dirty: bool,
+        _forced_dirty: bool,
         coordinate_space: PacketCoordinateSpace,
         normalization_origin: Vector,
         text_engine: &mut TextEngine,
@@ -1249,16 +1277,32 @@ impl RetainedCompositorState {
             frame.viewport,
             feather_width,
         );
-        let should_rebuild = forced_dirty
-            || self.packets.get(&snapshot.id).is_none_or(|packet| {
-                packet.coordinate_space != coordinate_space
-                    || packet.id != snapshot.id
-                    || packet.signature != signature
-                    || packet.scene != snapshot.scene
-                    || packet.initial_state != snapshot.initial_state
-            });
+        let rebuild_reason = match self.packets.get(&snapshot.id) {
+            None => Some(PacketRebuildReason::NewPacket),
+            Some(packet) if packet.coordinate_space != coordinate_space => {
+                Some(PacketRebuildReason::CoordinateSpace)
+            }
+            Some(packet) if packet.signature != signature => {
+                if self.diagnostics_enabled {
+                    if packet.scene != snapshot.scene {
+                        Some(PacketRebuildReason::Scene)
+                    } else if packet.initial_state != snapshot.initial_state {
+                        Some(PacketRebuildReason::State)
+                    } else {
+                        Some(PacketRebuildReason::Signature)
+                    }
+                } else {
+                    Some(PacketRebuildReason::Signature)
+                }
+            }
+            Some(packet) if packet.scene != snapshot.scene => Some(PacketRebuildReason::Scene),
+            Some(packet) if packet.initial_state != snapshot.initial_state => {
+                Some(PacketRebuildReason::State)
+            }
+            Some(_) => None,
+        };
 
-        if should_rebuild {
+        if let Some(reason) = rebuild_reason {
             let packet_build_started = self.diagnostics_enabled.then(|| Instant::now());
             let draw_ops = build_direct_packet(
                 frame,
@@ -1268,6 +1312,7 @@ impl RetainedCompositorState {
                 &mut self.path_cache,
                 feather_width,
             )?;
+            stats.record_packet_rebuild(reason);
             if let Some(started) = packet_build_started {
                 stats.packet_build_count += 1;
                 stats.packet_build_time_ms += started.elapsed().as_secs_f64() * 1000.0;

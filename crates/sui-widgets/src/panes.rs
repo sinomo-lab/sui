@@ -51,6 +51,7 @@ pub struct FloatingViewSnapshot {
     pub min_size: Size,
     pub visible: bool,
     pub maximized: bool,
+    pub surface_widget_id: Option<WidgetId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +61,7 @@ struct FloatingViewState {
     bounds: Rect,
     min_size: Size,
     visible: bool,
+    surface_widget_id: Option<WidgetId>,
 }
 
 #[derive(Debug, Default)]
@@ -91,6 +93,7 @@ impl FloatingWorkspaceState {
             bounds: config.bounds,
             min_size: Size::new(config.min_size.width.max(120.0), config.min_size.height.max(120.0)),
             visible: config.visible,
+            surface_widget_id: None,
         });
         inner.z_order.push(id);
         id
@@ -108,6 +111,7 @@ impl FloatingWorkspaceState {
                 min_size: view.min_size,
                 visible: view.visible,
                 maximized: inner.maximized_view == Some(view.id),
+                surface_widget_id: view.surface_widget_id,
             })
             .collect()
     }
@@ -121,7 +125,29 @@ impl FloatingWorkspaceState {
             min_size: view.min_size,
             visible: view.visible,
             maximized: inner.maximized_view == Some(view.id),
+            surface_widget_id: view.surface_widget_id,
         })
+    }
+
+    pub fn set_view_surface_widget(&self, view_id: u64, widget_id: WidgetId) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        let Some(view) = inner.views.iter_mut().find(|view| view.id == view_id) else {
+            return false;
+        };
+        if view.surface_widget_id == Some(widget_id) {
+            return false;
+        }
+        view.surface_widget_id = Some(widget_id);
+        true
+    }
+
+    pub fn view_surface_widget_id(&self, view_id: u64) -> Option<WidgetId> {
+        self.inner
+            .borrow()
+            .views
+            .iter()
+            .find(|view| view.id == view_id)
+            .and_then(|view| view.surface_widget_id)
     }
 
     pub fn set_view_visible(&self, view_id: u64, visible: bool) -> bool {
@@ -300,14 +326,16 @@ impl FloatingWorkspace {
         W: Widget + 'static,
     {
         let view_id = self.state.add_view(config);
+        let child = WidgetPod::new(FloatingViewSurface::new(
+            (*self.theme).clone(),
+            self.state.clone(),
+            view_id,
+            child,
+        ));
+        self.state.set_view_surface_widget(view_id, child.id());
         self.views.push(FloatingWorkspaceEntry {
             view_id,
-            child: WidgetPod::new(FloatingViewSurface::new(
-                (*self.theme).clone(),
-                self.state.clone(),
-                view_id,
-                child,
-            )),
+            child,
         });
         view_id
     }
@@ -403,11 +431,19 @@ impl Widget for FloatingWorkspace {
                     .gesture
                     .as_ref()
                     .is_some_and(|gesture| matches!(gesture.kind, FloatingWorkspaceGestureKind::Resize));
+                let refresh_target = if resizing {
+                    self.gesture
+                        .as_ref()
+                        .and_then(|gesture| self.state.view_surface_widget_id(gesture.view_id))
+                        .unwrap_or(ctx.widget_id())
+                } else {
+                    ctx.widget_id()
+                };
                 if let Some(dirty_region) = self.update_drag(ctx.bounds(), pointer.position) {
                     if resizing {
-                        request_widget_drag_refresh(ctx, dirty_region);
+                        request_widget_drag_refresh(ctx, refresh_target, dirty_region);
                     } else {
-                        request_widget_refresh(ctx, false, false, dirty_region);
+                        request_widget_refresh(ctx, refresh_target, false, false, dirty_region);
                     }
                 }
                 ctx.set_handled();
@@ -425,10 +461,13 @@ impl Widget for FloatingWorkspace {
                         .then_some(gesture.view_id)
                 });
                 if self.state.set_active_resize_view(None) {
+                    let refresh_target = active_view
+                        .and_then(|view_id| self.state.view_surface_widget_id(view_id))
+                        .unwrap_or(ctx.widget_id());
                     let refresh_region = active_view
                         .and_then(|view_id| self.state.snapshot(view_id).map(|view| view.bounds))
                         .unwrap_or(ctx.bounds());
-                    request_widget_refresh(ctx, true, false, refresh_region);
+                    request_widget_refresh(ctx, refresh_target, true, false, refresh_region);
                 }
                 self.gesture = None;
                 ctx.release_pointer_capture(pointer.pointer_id);
@@ -446,10 +485,13 @@ impl Widget for FloatingWorkspace {
                         .then_some(gesture.view_id)
                 });
                 if self.state.set_active_resize_view(None) {
+                    let refresh_target = active_view
+                        .and_then(|view_id| self.state.view_surface_widget_id(view_id))
+                        .unwrap_or(ctx.widget_id());
                     let refresh_region = active_view
                         .and_then(|view_id| self.state.snapshot(view_id).map(|view| view.bounds))
                         .unwrap_or(ctx.bounds());
-                    request_widget_refresh(ctx, true, false, refresh_region);
+                    request_widget_refresh(ctx, refresh_target, true, false, refresh_region);
                 }
                 self.gesture = None;
                 ctx.release_pointer_capture(pointer.pointer_id);
@@ -466,6 +508,7 @@ impl Widget for FloatingWorkspace {
                 let ordering_changed = self.state.bring_to_front(hit.view_id);
                 if ordering_changed {
                     ctx.request_ordering();
+                    ctx.request_paint();
                     ctx.request_hit_test();
                 }
 
@@ -1311,6 +1354,7 @@ impl Widget for FloatingStack {
                 && self.bring_to_front(index)
             {
                 ctx.request_ordering();
+                ctx.request_paint();
                 ctx.request_hit_test();
             }
         }
@@ -1519,11 +1563,12 @@ fn diagonal_handle_path(bounds: Rect, inset: f32, offset: f32) -> sui_core::Path
 
 fn request_widget_refresh(
     ctx: &mut EventCtx,
+    widget_id: WidgetId,
     include_measure: bool,
     include_ordering: bool,
     region: Rect,
 ) {
-    let target = InvalidationTarget::Widget(ctx.widget_id());
+    let target = InvalidationTarget::Widget(widget_id);
     if include_measure {
         ctx.request(InvalidationRequest::new(target, InvalidationKind::Measure).with_region(region));
     } else {
@@ -1537,8 +1582,8 @@ fn request_widget_refresh(
     ctx.request(InvalidationRequest::new(target, InvalidationKind::Semantics).with_region(region));
 }
 
-fn request_widget_drag_refresh(ctx: &mut EventCtx, region: Rect) {
-    let target = InvalidationTarget::Widget(ctx.widget_id());
+fn request_widget_drag_refresh(ctx: &mut EventCtx, widget_id: WidgetId, region: Rect) {
+    let target = InvalidationTarget::Widget(widget_id);
     ctx.request(InvalidationRequest::new(target, InvalidationKind::Arrange).with_region(region));
     ctx.request(InvalidationRequest::new(target, InvalidationKind::Paint).with_region(region));
 }
@@ -1576,12 +1621,36 @@ mod tests {
     };
     use crate::containers::SizedBox;
     use sui_core::{
-        Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
-        SemanticsRole, SemanticsValue, Size, Vector, WindowEvent,
+        Color, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
+        Result, SemanticsRole, SemanticsValue, Size, Vector, WindowEvent,
     };
     use sui_layout::Axis;
-    use sui_runtime::{Application, Runtime, StackOrderPolicy, Widget, WindowBuilder};
+    use sui_render_wgpu::{RgbaImage, WgpuRenderer};
+    use sui_runtime::{
+        Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, StackOrderPolicy, Widget,
+        WindowBuilder,
+    };
     use sui_scene::SceneLayerUpdateKind;
+
+    struct ColorFill {
+        color: Color,
+    }
+
+    impl ColorFill {
+        fn new(color: Color) -> Self {
+            Self { color }
+        }
+    }
+
+    impl Widget for ColorFill {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: sui_layout::Constraints) -> Size {
+            constraints.max
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(self.color);
+        }
+    }
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -1613,6 +1682,41 @@ mod tests {
             pointer_kind: sui_core::PointerKind::Mouse,
             is_primary: true,
         })
+    }
+
+    fn render_rgba(
+        runtime: &mut Runtime,
+        renderer: &mut WgpuRenderer,
+        window_id: sui_core::WindowId,
+    ) -> Result<(RenderOutput, RgbaImage)> {
+        let output = runtime.render(window_id)?;
+        renderer.render(&output.frame)?;
+        let image = renderer.capture_last_frame_rgba(window_id)?;
+        Ok((output, image))
+    }
+
+    fn rgba_pixel(image: &RgbaImage, x: u32, y: u32) -> [u8; 4] {
+        let index = ((y as usize * image.width() as usize) + x as usize) * 4;
+        let pixels = image.pixels();
+        [
+            pixels[index],
+            pixels[index + 1],
+            pixels[index + 2],
+            pixels[index + 3],
+        ]
+    }
+
+    fn assert_pixel_matches(pixel: [u8; 4], color: Color) {
+        let expected = [
+            (color.red * 255.0).round() as i16,
+            (color.green * 255.0).round() as i16,
+            (color.blue * 255.0).round() as i16,
+            (color.alpha * 255.0).round() as i16,
+        ];
+
+        for (channel, target) in pixel.into_iter().map(i16::from).zip(expected) {
+            assert!((channel - target).abs() <= 1, "pixel channel {channel} did not match expected {target}");
+        }
     }
 
     #[test]
@@ -1778,6 +1882,176 @@ mod tests {
         let moved = state.snapshot(first_id).expect("first view state present");
         assert!(moved.bounds.x() > 72.0);
         assert!(moved.bounds.y() > 56.0);
+        Ok(())
+    }
+
+    #[test]
+    fn floating_workspace_body_click_brings_view_to_front() -> Result<()> {
+        let state = FloatingWorkspaceState::new();
+        let mut workspace = FloatingWorkspace::new(state.clone());
+        let first_id = workspace.push_view(
+            FloatingViewConfig::new("First", Rect::new(16.0, 16.0, 180.0, 140.0)),
+            crate::Button::new("First action"),
+        );
+        workspace.push_view(
+            FloatingViewConfig::new("Second", Rect::new(120.0, 40.0, 180.0, 140.0)),
+            crate::Button::new("Second action"),
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(420.0).height(260.0).with_child(workspace),
+        );
+
+        let _ = runtime.render(window_id)?;
+        let first_surface = state
+            .snapshot(first_id)
+            .and_then(|view| view.surface_widget_id)
+            .expect("first view surface should be registered");
+        let before = runtime.widget_graph(window_id)?;
+        let host = before
+            .stack_hosts
+            .iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should be present");
+        assert_eq!(host.surfaces.len(), 2);
+        assert_eq!(host.surfaces[0], first_surface);
+        assert_ne!(host.surfaces[1], first_surface);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(44.0, 88.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(44.0, 88.0), false),
+        )?;
+
+        let reordered = runtime.render(window_id)?;
+        let after = runtime.widget_graph(window_id)?;
+        let host = after
+            .stack_hosts
+            .iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should still be present");
+        assert_eq!(host.surfaces.len(), 2);
+        assert_eq!(host.surfaces[1], first_surface);
+        assert!(
+            reordered
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| update.kind == SceneLayerUpdateKind::Ordering)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn floating_workspace_title_bar_fronting_updates_renderer_output() -> Result<()> {
+        let first_color = Color::rgba(0.82, 0.36, 0.18, 1.0);
+        let second_color = Color::rgba(0.18, 0.54, 0.82, 1.0);
+        let state = FloatingWorkspaceState::new();
+        let mut workspace = FloatingWorkspace::new(state.clone());
+        let first_id = workspace.push_view(
+            FloatingViewConfig::new("First", Rect::new(16.0, 16.0, 180.0, 140.0)),
+            ColorFill::new(first_color),
+        );
+        workspace.push_view(
+            FloatingViewConfig::new("Second", Rect::new(120.0, 40.0, 180.0, 140.0)),
+            ColorFill::new(second_color),
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(420.0).height(260.0).with_child(workspace),
+        );
+        let mut renderer = WgpuRenderer::default();
+
+        let (_, initial_image) = render_rgba(&mut runtime, &mut renderer, window_id)?;
+        assert_pixel_matches(rgba_pixel(&initial_image, 140, 100), second_color);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(44.0, 32.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(44.0, 32.0), false),
+        )?;
+
+        let (reordered, reordered_image) = render_rgba(&mut runtime, &mut renderer, window_id)?;
+        let host = runtime
+            .widget_graph(window_id)?
+            .stack_hosts
+            .into_iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should still be present");
+        let first_surface = state
+            .snapshot(first_id)
+            .and_then(|view| view.surface_widget_id)
+            .expect("first view surface should be registered");
+        assert_eq!(host.surfaces.last().copied(), Some(first_surface));
+        assert!(
+            reordered
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| update.kind == SceneLayerUpdateKind::Ordering)
+        );
+        assert_pixel_matches(rgba_pixel(&reordered_image, 140, 100), first_color);
+        Ok(())
+    }
+
+    #[test]
+    fn floating_workspace_title_bar_drag_keeps_fronted_view_visually_on_top() -> Result<()> {
+        let first_color = Color::rgba(0.82, 0.36, 0.18, 1.0);
+        let second_color = Color::rgba(0.18, 0.54, 0.82, 1.0);
+        let state = FloatingWorkspaceState::new();
+        let mut workspace = FloatingWorkspace::new(state.clone());
+        let first_id = workspace.push_view(
+            FloatingViewConfig::new("First", Rect::new(16.0, 16.0, 180.0, 140.0)),
+            ColorFill::new(first_color),
+        );
+        workspace.push_view(
+            FloatingViewConfig::new("Second", Rect::new(120.0, 40.0, 180.0, 140.0)),
+            ColorFill::new(second_color),
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(420.0).height(260.0).with_child(workspace),
+        );
+        let mut renderer = WgpuRenderer::default();
+
+        let (_, initial_image) = render_rgba(&mut runtime, &mut renderer, window_id)?;
+        assert_pixel_matches(rgba_pixel(&initial_image, 140, 100), second_color);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(44.0, 32.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(52.0, 36.0), true),
+        )?;
+
+        let (dragging, dragging_image) = render_rgba(&mut runtime, &mut renderer, window_id)?;
+        let host = runtime
+            .widget_graph(window_id)?
+            .stack_hosts
+            .into_iter()
+            .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
+            .expect("focus-fronted host should still be present");
+        let first_surface = state
+            .snapshot(first_id)
+            .and_then(|view| view.surface_widget_id)
+            .expect("first view surface should be registered");
+        assert_eq!(host.surfaces.last().copied(), Some(first_surface));
+        assert!(
+            dragging
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| update.kind == SceneLayerUpdateKind::Ordering)
+        );
+        assert_pixel_matches(rgba_pixel(&dragging_image, 140, 100), first_color);
         Ok(())
     }
 

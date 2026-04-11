@@ -210,6 +210,11 @@ pub struct RendererFrameStats {
     pub retained_scene_traversal_time_us: u64,
     pub retained_packet_build_time_us: u64,
     pub retained_packet_build_count: usize,
+    pub retained_packet_rebuild_new_count: usize,
+    pub retained_packet_rebuild_coordinate_space_count: usize,
+    pub retained_packet_rebuild_signature_count: usize,
+    pub retained_packet_rebuild_scene_count: usize,
+    pub retained_packet_rebuild_state_count: usize,
     pub text_atlas_miss_count: usize,
     pub text_atlas_miss_time_us: u64,
     pub surface_acquire_time_us: u64,
@@ -267,6 +272,11 @@ impl RendererFrameStats {
             retained_scene_traversal_time_us: 0,
             retained_packet_build_time_us: 0,
             retained_packet_build_count: 0,
+            retained_packet_rebuild_new_count: 0,
+            retained_packet_rebuild_coordinate_space_count: 0,
+            retained_packet_rebuild_signature_count: 0,
+            retained_packet_rebuild_scene_count: 0,
+            retained_packet_rebuild_state_count: 0,
             text_atlas_miss_count: 0,
             text_atlas_miss_time_us: 0,
             surface_acquire_time_us: 0,
@@ -301,6 +311,12 @@ impl RendererFrameStats {
             (stats.scene_traversal_time_ms * 1000.0).round() as u64;
         self.retained_packet_build_time_us = (stats.packet_build_time_ms * 1000.0).round() as u64;
         self.retained_packet_build_count = stats.packet_build_count;
+        self.retained_packet_rebuild_new_count = stats.packet_rebuild_new_count;
+        self.retained_packet_rebuild_coordinate_space_count =
+            stats.packet_rebuild_coordinate_space_count;
+        self.retained_packet_rebuild_signature_count = stats.packet_rebuild_signature_count;
+        self.retained_packet_rebuild_scene_count = stats.packet_rebuild_scene_count;
+        self.retained_packet_rebuild_state_count = stats.packet_rebuild_state_count;
         self
     }
 
@@ -3899,6 +3915,49 @@ mod tests {
         assert!(third_content_version > first_content_version);
         assert_ne!(first_signature, third_signature);
         assert_ne!(first.scene_vertices, third.scene_vertices);
+    }
+
+    #[test]
+    fn retained_compositor_skips_packet_rebuild_for_unchanged_content_updates() {
+        let layer_id = WidgetId::new(411);
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(4.0, 6.0, 32.0, 24.0),
+            brush: Color::rgba(1.0, 0.0, 0.0, 1.0).into(),
+        });
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::new(
+            layer_id,
+            Rect::new(4.0, 6.0, 32.0, 24.0),
+            child_scene,
+        )));
+
+        let mut frame = SceneFrame {
+            window_id: WindowId::new(211),
+            viewport: Size::new(96.0, 64.0),
+            surface_size: Size::new(96.0, 64.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: content_updates([layer_id]),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        assert!(compositor.last_frame_stats.packet_build_count > 0);
+        let layer_container = CompositionContainerId::Layer(SceneLayerId::from_widget(layer_id));
+        let first_signature = packet_signature(&compositor, layer_container);
+
+        frame.layer_updates = content_updates([layer_id]);
+        let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+
+        assert_eq!(compositor.last_frame_stats.packet_build_count, 0);
+        assert_eq!(first_signature, packet_signature(&compositor, layer_container));
+        assert_eq!(first.scene_vertices, second.scene_vertices);
     }
 
     #[test]

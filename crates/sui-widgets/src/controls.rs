@@ -500,6 +500,7 @@ pub struct Button {
     hovered: bool,
     pressed: bool,
     label_measurement: Option<TextMeasurement>,
+    label_layout: Option<TextLayout>,
     on_press: Option<Box<dyn FnMut()>>,
 }
 
@@ -515,6 +516,7 @@ impl Button {
             hovered: false,
             pressed: false,
             label_measurement: None,
+            label_layout: None,
             on_press: None,
         }
     }
@@ -661,8 +663,19 @@ impl Widget for Button {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
-        let measurement = measure_text(ctx, &self.label, &text_style);
+        let label_layout = ctx
+            .shape_text(
+                self.label.clone(),
+                Size::new(f32::INFINITY, text_style.line_height.max(1.0)),
+                text_style.clone(),
+            )
+            .ok();
+        let measurement = label_layout
+            .as_ref()
+            .map(|layout| layout.measurement())
+            .unwrap_or_else(|| measure_text(ctx, &self.label, &text_style));
         self.label_measurement = Some(measurement);
+        self.label_layout = label_layout;
 
         let width = (measurement.width + padding.left + padding.right).max(min_size.width);
         let height =
@@ -708,7 +721,20 @@ impl Widget for Button {
             self.label_measurement,
             text_style.line_height,
         );
-        ctx.draw_text(label_rect, self.label.clone(), text_style);
+        if let Some(layout) = &self.label_layout {
+            let layout_bounds = layout.measurement().bounds;
+            ctx.push_clip_rect(label_rect);
+            ctx.draw_text_layout(
+                Point::new(
+                    label_rect.x() - layout_bounds.x(),
+                    label_rect.y() - layout_bounds.y(),
+                ),
+                layout,
+            );
+            ctx.pop_clip();
+        } else {
+            ctx.draw_text(label_rect, self.label.clone(), text_style);
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -4202,6 +4228,11 @@ mod tests {
             .iter()
             .find_map(|command| match command {
                 SceneCommand::DrawText(text) => Some(text.clone()),
+                SceneCommand::DrawShapedText(text) => Some(sui_text::TextRun {
+                    rect: text.layout.measurement().bounds.translate(text.origin.to_vector()),
+                    text: text.layout.text().to_string(),
+                    style: text.layout.style().clone(),
+                }),
                 _ => None,
             })
             .expect("text draw command present")
@@ -4215,6 +4246,13 @@ mod tests {
             .iter()
             .find_map(|command| match command {
                 SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
+                SceneCommand::DrawShapedText(run) if run.layout.text() == text => {
+                    Some(sui_text::TextRun {
+                        rect: run.layout.measurement().bounds.translate(run.origin.to_vector()),
+                        text: run.layout.text().to_string(),
+                        style: run.layout.style().clone(),
+                    })
+                }
                 _ => None,
             })
             .expect("text draw command present")
@@ -4451,16 +4489,7 @@ mod tests {
     fn button_centers_label_within_available_content_width() {
         let theme = DefaultTheme::default();
         let optical = render(Button::new("Go").min_width(140.0));
-        let optical_label = optical
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawText(text) => Some(text.rect),
-                _ => None,
-            })
-            .expect("button label draw command present");
+        let optical_label = first_text_run(&optical).rect;
 
         assert!(optical_label.x() > theme.metrics.button_padding.left);
         assert!(optical_label.max_y() <= optical.frame.viewport.height);
@@ -4591,16 +4620,7 @@ mod tests {
         let output = render(Button::new("Theme").theme(theme));
 
         assert_eq!(output.frame.viewport, Size::new(156.0, 52.0));
-        let label = output
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawText(text) => Some(text),
-                _ => None,
-            })
-            .expect("button label draw command present");
+        let label = first_text_run(&output);
         assert_eq!(label.style.font_size, 16.0);
         assert_eq!(label.style.line_height, 24.0);
         assert_eq!(label.style.color, theme.palette.accent_text);

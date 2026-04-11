@@ -3208,8 +3208,9 @@ mod tests {
             7,
             vec![FramePhaseSample::new(FramePhase::Renderer, 1.5)],
             RendererSubmissionDiagnostics::new(
-                2, 6, 2048, 24, 1536, 3, 18, 15, 3, 6, 65536, 420, 160, 210, 120, 3, 4, 90, 440,
-                210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
+                2, 6, 2048, 24, 1536, 3, 18, 15, 3, 6, 65536, 420, 160, 210, 120, 3, 1, 0, 1,
+                1, 0, 4, 90, 440, 210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384,
+                920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -3245,8 +3246,9 @@ mod tests {
                 FramePhaseSample::new(FramePhase::Renderer, 1.9),
             ],
             RendererSubmissionDiagnostics::new(
-                2, 6, 2048, 24, 1536, 3, 18, 15, 3, 6, 65536, 420, 160, 210, 120, 3, 4, 90, 440,
-                210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
+                2, 6, 2048, 24, 1536, 3, 18, 15, 3, 6, 65536, 420, 160, 210, 120, 3, 1, 0, 1,
+                1, 0, 4, 90, 440, 210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384,
+                920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
