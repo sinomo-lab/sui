@@ -1406,6 +1406,25 @@ fn publish_frame_performance(
         )
         .with_presentation_latency(presentation_latency)
         .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
+        .with_retained_packet_hotspot(
+            renderer_stats.retained_packet_hotspot.clone().map(|hotspot| {
+                sui_runtime::RetainedPacketHotspotDiagnostics {
+                    container_layer_id: hotspot.container_layer_id,
+                    owner_widget_id: hotspot.owner_widget_id,
+                    segment_index: hotspot.segment_index,
+                    total_time_us: hotspot.total_time_us,
+                    scene_build_time_us: hotspot.scene_build_time_us,
+                    command_count: hotspot.command_count,
+                    text_command_count: hotspot.text_command_count,
+                    path_command_count: hotspot.path_command_count,
+                    rect_command_count: hotspot.rect_command_count,
+                    text_command_time_us: hotspot.text_command_time_us,
+                    path_command_time_us: hotspot.path_command_time_us,
+                    rect_command_time_us: hotspot.rect_command_time_us,
+                    text_sample: hotspot.text_sample,
+                }
+            }),
+        )
         .with_widget_timings(output.diagnostics.widget_timings.clone()),
     );
 }
@@ -1502,7 +1521,7 @@ fn text_input_value(snapshot: &DesktopWindowSnapshot, name: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct ScrollBenchmarkFrameSample {
     frame_index: u64,
     total_time_ms: f64,
@@ -1575,6 +1594,19 @@ struct ScrollBenchmarkFrameSample {
     path_cache_entries_delta: isize,
     path_cache_hits: usize,
     path_cache_misses: usize,
+    packet_hotspot_layer_id: Option<u64>,
+    packet_hotspot_owner_widget_id: Option<u64>,
+    packet_hotspot_segment_index: u32,
+    packet_hotspot_total_time_us: u64,
+    packet_hotspot_scene_build_time_us: u64,
+    packet_hotspot_command_count: usize,
+    packet_hotspot_text_command_count: usize,
+    packet_hotspot_path_command_count: usize,
+    packet_hotspot_rect_command_count: usize,
+    packet_hotspot_text_command_time_us: u64,
+    packet_hotspot_path_command_time_us: u64,
+    packet_hotspot_rect_command_time_us: u64,
+    packet_hotspot_text_sample: Option<String>,
 }
 
 impl ScrollBenchmarkFrameSample {
@@ -1707,6 +1739,68 @@ impl ScrollBenchmarkFrameSample {
             path_cache_entries_delta: snapshot.text_cache_deltas.renderer_path.entries_delta,
             path_cache_hits: snapshot.text_cache_deltas.renderer_path.hits,
             path_cache_misses: snapshot.text_cache_deltas.renderer_path.misses,
+            packet_hotspot_layer_id: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .and_then(|hotspot| hotspot.container_layer_id),
+            packet_hotspot_owner_widget_id: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .and_then(|hotspot| hotspot.owner_widget_id),
+            packet_hotspot_segment_index: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.segment_index)
+                .unwrap_or(0),
+            packet_hotspot_total_time_us: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.total_time_us)
+                .unwrap_or(0),
+            packet_hotspot_scene_build_time_us: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.scene_build_time_us)
+                .unwrap_or(0),
+            packet_hotspot_command_count: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.command_count)
+                .unwrap_or(0),
+            packet_hotspot_text_command_count: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.text_command_count)
+                .unwrap_or(0),
+            packet_hotspot_path_command_count: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.path_command_count)
+                .unwrap_or(0),
+            packet_hotspot_rect_command_count: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.rect_command_count)
+                .unwrap_or(0),
+            packet_hotspot_text_command_time_us: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.text_command_time_us)
+                .unwrap_or(0),
+            packet_hotspot_path_command_time_us: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.path_command_time_us)
+                .unwrap_or(0),
+            packet_hotspot_rect_command_time_us: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .map(|hotspot| hotspot.rect_command_time_us)
+                .unwrap_or(0),
+            packet_hotspot_text_sample: snapshot
+                .retained_packet_hotspot
+                .as_ref()
+                .and_then(|hotspot| hotspot.text_sample.clone()),
         }
     }
 }
@@ -1730,7 +1824,7 @@ impl DialogRepaintTransition {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct DialogRepaintFrameSample {
     transition: DialogRepaintTransition,
     sample: ScrollBenchmarkFrameSample,
@@ -2755,7 +2849,7 @@ fn run_widget_book_scroll_benchmark(
         .unwrap_or(0);
     let last_sample = frame_samples
         .last()
-        .copied()
+        .cloned()
         .expect("scroll benchmark should record at least one sample");
 
     println!("\n=== Widget Book Scroll FPS Benchmark ===");
@@ -2880,6 +2974,36 @@ fn run_widget_book_scroll_benchmark(
             sample.retained_packet_image_command_time_us as f64 / 1000.0,
             sample.retained_packet_rect_command_time_us as f64 / 1000.0,
         );
+        if sample.packet_hotspot_total_time_us > 0 {
+            let packet_container = sample
+                .packet_hotspot_layer_id
+                .map(|layer_id| format!("layer {layer_id}"))
+                .unwrap_or_else(|| "root".to_string());
+            let packet_owner = sample
+                .packet_hotspot_owner_widget_id
+                .map(|owner_id| owner_id.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "             hotspot packet {packet_container} seg {:>3}  owner {:>6}  total {:>7.3} ms  scene {:>7.3} ms",
+                sample.packet_hotspot_segment_index,
+                packet_owner,
+                sample.packet_hotspot_total_time_us as f64 / 1000.0,
+                sample.packet_hotspot_scene_build_time_us as f64 / 1000.0,
+            );
+            println!(
+                "             hotspot cmds   total {:>4}  text {:>4}  path {:>4}  rect {:>4}  text-time {:>7.3} ms  path-time {:>7.3} ms  rect-time {:>7.3} ms",
+                sample.packet_hotspot_command_count,
+                sample.packet_hotspot_text_command_count,
+                sample.packet_hotspot_path_command_count,
+                sample.packet_hotspot_rect_command_count,
+                sample.packet_hotspot_text_command_time_us as f64 / 1000.0,
+                sample.packet_hotspot_path_command_time_us as f64 / 1000.0,
+                sample.packet_hotspot_rect_command_time_us as f64 / 1000.0,
+            );
+            if let Some(text_sample) = &sample.packet_hotspot_text_sample {
+                println!("             hotspot text   {text_sample}");
+            }
+        }
         println!(
             "             surface {:>7.3} / {:>7.3} ms  prep {:>7.3} / {:>7.3} / {:>7.3} ms  submit {:>7.3} / {:>7.3} / {:>7.3} ms",
             sample.surface_acquire_time_us as f64 / 1000.0,

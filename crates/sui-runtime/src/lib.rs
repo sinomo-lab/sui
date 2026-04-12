@@ -23,7 +23,8 @@ use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 
 pub use diagnostics::{
     CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
-    RenderDiagnostics, RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
+    RenderDiagnostics, RendererSubmissionDiagnostics, RetainedPacketHotspotDiagnostics,
+    SceneStatistics, SceneStatisticsDetailMode,
     TextCacheDeltaDiagnostics, TextCacheDiagnostics, WidgetTimingPhase, WidgetTimingSample,
     WindowPerformanceSnapshot,
     WindowPerformanceSummary, WindowRenderOptions, WindowTextRenderPolicy,

@@ -235,6 +235,23 @@ pub struct RendererSubmissionDiagnostics {
     pub surface_present_time_us: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RetainedPacketHotspotDiagnostics {
+    pub container_layer_id: Option<u64>,
+    pub owner_widget_id: Option<u64>,
+    pub segment_index: u32,
+    pub total_time_us: u64,
+    pub scene_build_time_us: u64,
+    pub command_count: usize,
+    pub text_command_count: usize,
+    pub path_command_count: usize,
+    pub rect_command_count: usize,
+    pub text_command_time_us: u64,
+    pub path_command_time_us: u64,
+    pub rect_command_time_us: u64,
+    pub text_sample: Option<String>,
+}
+
 impl RendererSubmissionDiagnostics {
     pub const fn new(
         pass_count: usize,
@@ -767,6 +784,7 @@ pub struct WindowPerformanceSnapshot {
     pub text_cache_deltas: TextCacheDeltaDiagnostics,
     pub runtime_text_timing: RuntimeTextTimingDiagnostics,
     pub widget_timings: Vec<WidgetTimingSample>,
+    pub retained_packet_hotspot: Option<RetainedPacketHotspotDiagnostics>,
     pub scene: SceneStatistics,
 }
 
@@ -815,6 +833,7 @@ impl WindowPerformanceSnapshot {
             text_cache_deltas,
             runtime_text_timing: RuntimeTextTimingDiagnostics::default(),
             widget_timings: Vec::new(),
+            retained_packet_hotspot: None,
             scene,
         }
     }
@@ -837,6 +856,14 @@ impl WindowPerformanceSnapshot {
         runtime_text_timing: RuntimeTextTimingDiagnostics,
     ) -> Self {
         self.runtime_text_timing = runtime_text_timing;
+        self
+    }
+
+    pub fn with_retained_packet_hotspot(
+        mut self,
+        retained_packet_hotspot: Option<RetainedPacketHotspotDiagnostics>,
+    ) -> Self {
+        self.retained_packet_hotspot = retained_packet_hotspot;
         self
     }
 

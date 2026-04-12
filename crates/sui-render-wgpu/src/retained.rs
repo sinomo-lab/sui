@@ -219,7 +219,7 @@ impl RetainedTileUploadPlan {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct RetainedCompositorFrameStats {
     pub(crate) visible_layers: usize,
     pub(crate) visible_tiles: usize,
@@ -252,6 +252,24 @@ pub(crate) struct RetainedCompositorFrameStats {
     pub(crate) packet_clip_path_command_time_ms: f64,
     pub(crate) packet_image_command_time_ms: f64,
     pub(crate) packet_rect_command_time_ms: f64,
+    pub(crate) slowest_packet_build: Option<RetainedPacketBuildHotspot>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RetainedPacketBuildHotspot {
+    pub(crate) container_layer_id: Option<u64>,
+    pub(crate) owner_widget_id: Option<u64>,
+    pub(crate) segment_index: u32,
+    pub(crate) total_time_ms: f64,
+    pub(crate) scene_build_time_ms: f64,
+    pub(crate) command_count: usize,
+    pub(crate) text_command_count: usize,
+    pub(crate) path_command_count: usize,
+    pub(crate) rect_command_count: usize,
+    pub(crate) text_command_time_ms: f64,
+    pub(crate) path_command_time_ms: f64,
+    pub(crate) rect_command_time_ms: f64,
+    pub(crate) text_sample: Option<String>,
 }
 
 impl RetainedCompositorFrameStats {
@@ -288,6 +306,17 @@ impl RetainedCompositorFrameStats {
         self.packet_clip_path_command_time_ms += diagnostics.clip_path_command_time_ms;
         self.packet_image_command_time_ms += diagnostics.image_command_time_ms;
         self.packet_rect_command_time_ms += diagnostics.rect_command_time_ms;
+    }
+
+    fn consider_packet_build_hotspot(&mut self, hotspot: RetainedPacketBuildHotspot) {
+        let should_replace = self
+            .slowest_packet_build
+            .as_ref()
+            .map(|current| hotspot.total_time_ms > current.total_time_ms)
+            .unwrap_or(true);
+        if should_replace {
+            self.slowest_packet_build = Some(hotspot);
+        }
     }
 }
 
@@ -692,7 +721,7 @@ impl RetainedCompositorState {
         if let Some(started) = composition_started {
             frame_stats.composition_time_ms = started.elapsed().as_secs_f64() * 1000.0;
             frame_stats.tile_memory_bytes = self.total_tile_memory_bytes();
-            self.last_frame_stats = *frame_stats;
+            self.last_frame_stats = frame_stats.clone();
         } else {
             self.last_frame_stats = RetainedCompositorFrameStats::default();
         }
@@ -1302,8 +1331,33 @@ impl RetainedCompositorState {
                 signature_time_ms,
             );
             if let Some(started) = packet_build_started {
+                let total_time_ms = started.elapsed().as_secs_f64() * 1000.0;
                 stats.packet_build_count += 1;
-                stats.packet_build_time_ms += started.elapsed().as_secs_f64() * 1000.0;
+                stats.packet_build_time_ms += total_time_ms;
+                let (container_layer_id, owner_widget_id) = match snapshot.id.container {
+                    CompositionContainerId::Root => (None, None),
+                    CompositionContainerId::Layer(layer_id) => (
+                        Some(layer_id.get()),
+                        self.layers
+                            .get(&layer_id)
+                            .map(|layer| layer.descriptor.owner.get()),
+                    ),
+                };
+                stats.consider_packet_build_hotspot(RetainedPacketBuildHotspot {
+                    container_layer_id,
+                    owner_widget_id,
+                    segment_index: snapshot.id.segment_index,
+                    total_time_ms,
+                    scene_build_time_ms: diagnostics.scene_build_time_ms,
+                    command_count: diagnostics.command_count,
+                    text_command_count: diagnostics.text_command_count,
+                    path_command_count: diagnostics.path_command_count,
+                    rect_command_count: diagnostics.rect_command_count,
+                    text_command_time_ms: diagnostics.text_command_time_ms,
+                    path_command_time_ms: diagnostics.path_command_time_ms,
+                    rect_command_time_ms: diagnostics.rect_command_time_ms,
+                    text_sample: packet_text_sample(&snapshot.scene),
+                });
             }
             self.packets.insert(
                 snapshot.id,
@@ -2430,6 +2484,27 @@ fn normalize_packet_snapshot(
         snapshot.initial_state.clip_node = ClipNodeId::ROOT;
     }
     snapshot
+}
+
+fn packet_text_sample(scene: &Scene) -> Option<String> {
+    for command in scene.commands() {
+        let text = match command {
+            SceneCommand::Label { text, .. } => Some(text.as_str()),
+            SceneCommand::DrawText(run) => Some(run.text.as_str()),
+            _ => None,
+        };
+        if let Some(text) = text {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                let mut excerpt = trimmed.chars().take(64).collect::<String>();
+                if trimmed.chars().count() > 64 {
+                    excerpt.push_str("...");
+                }
+                return Some(excerpt);
+            }
+        }
+    }
+    None
 }
 
 fn translate_resolved_raster_state(

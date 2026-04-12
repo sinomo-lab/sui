@@ -192,7 +192,7 @@ const TEXT_ATLAS_HEIGHT: usize = 2048;
 const TEXT_ATLAS_PADDING: usize = 1;
 const TEXT_ATLAS_TEXTURE_RING_LEN: usize = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RendererFrameStats {
     pub pass_count: usize,
     pub draw_count: usize,
@@ -248,6 +248,24 @@ pub struct RendererFrameStats {
     pub pass_encode_time_us: u64,
     pub queue_submit_time_us: u64,
     pub surface_present_time_us: u64,
+    pub retained_packet_hotspot: Option<RendererPacketHotspot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RendererPacketHotspot {
+    pub container_layer_id: Option<u64>,
+    pub owner_widget_id: Option<u64>,
+    pub segment_index: u32,
+    pub total_time_us: u64,
+    pub scene_build_time_us: u64,
+    pub command_count: usize,
+    pub text_command_count: usize,
+    pub path_command_count: usize,
+    pub rect_command_count: usize,
+    pub text_command_time_us: u64,
+    pub path_command_time_us: u64,
+    pub rect_command_time_us: u64,
+    pub text_sample: Option<String>,
 }
 
 impl RendererFrameStats {
@@ -325,6 +343,7 @@ impl RendererFrameStats {
             pass_encode_time_us: 0,
             queue_submit_time_us: 0,
             surface_present_time_us: 0,
+            retained_packet_hotspot: None,
         }
     }
 
@@ -371,6 +390,21 @@ impl RendererFrameStats {
             (stats.packet_image_command_time_ms * 1000.0).round() as u64;
         self.retained_packet_rect_command_time_us =
             (stats.packet_rect_command_time_ms * 1000.0).round() as u64;
+        self.retained_packet_hotspot = stats.slowest_packet_build.map(|hotspot| RendererPacketHotspot {
+            container_layer_id: hotspot.container_layer_id,
+            owner_widget_id: hotspot.owner_widget_id,
+            segment_index: hotspot.segment_index,
+            total_time_us: (hotspot.total_time_ms * 1000.0).round() as u64,
+            scene_build_time_us: (hotspot.scene_build_time_ms * 1000.0).round() as u64,
+            command_count: hotspot.command_count,
+            text_command_count: hotspot.text_command_count,
+            path_command_count: hotspot.path_command_count,
+            rect_command_count: hotspot.rect_command_count,
+            text_command_time_us: (hotspot.text_command_time_ms * 1000.0).round() as u64,
+            path_command_time_us: (hotspot.path_command_time_ms * 1000.0).round() as u64,
+            rect_command_time_us: (hotspot.rect_command_time_ms * 1000.0).round() as u64,
+            text_sample: hotspot.text_sample,
+        });
         self
     }
 
@@ -693,7 +727,7 @@ impl WgpuRenderer {
     }
 
     pub fn last_frame_stats(&self, window_id: WindowId) -> Option<RendererFrameStats> {
-        self.last_frame_stats.get(&window_id).copied()
+        self.last_frame_stats.get(&window_id).cloned()
     }
 
     pub fn text_cache_snapshot(&self, window_id: WindowId) -> RendererTextCacheSnapshot {
@@ -1145,7 +1179,7 @@ impl WgpuRenderer {
                     .map(|submission| {
                         (
                             submission,
-                            compositor.last_frame_stats,
+                            compositor.last_frame_stats.clone(),
                             if diagnostics_enabled {
                                 text_engine.frame_stats()
                             } else {
