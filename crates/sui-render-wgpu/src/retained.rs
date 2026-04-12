@@ -120,6 +120,8 @@ pub(crate) struct RetainedGpuGeometry {
     pub(crate) scene_capacity: u32,
     pub(crate) clip_range: PreparedVertices,
     pub(crate) clip_capacity: u32,
+    pub(crate) text_range: PreparedVertices,
+    pub(crate) text_capacity: u32,
     pub(crate) dirty: bool,
 }
 
@@ -127,10 +129,13 @@ pub(crate) struct RetainedGpuGeometry {
 pub(crate) struct RetainedTileVertexArena {
     pub(crate) scene_buffer: Option<wgpu::Buffer>,
     pub(crate) clip_buffer: Option<wgpu::Buffer>,
+    pub(crate) text_instance_buffer: Option<wgpu::Buffer>,
     pub(crate) scene_capacity_vertices: usize,
     pub(crate) clip_capacity_vertices: usize,
+    pub(crate) text_instance_capacity: usize,
     pub(crate) used_scene_vertices: usize,
     pub(crate) used_clip_vertices: usize,
+    pub(crate) used_text_instances: usize,
 }
 
 #[derive(Debug, Default)]
@@ -139,6 +144,7 @@ pub(crate) struct RetainedTileUploadPlan {
     pub(crate) appended_tiles: Vec<TileAddress>,
     pub(crate) appended_scene_vertices: usize,
     pub(crate) appended_clip_vertices: usize,
+    pub(crate) appended_text_instances: usize,
 }
 
 #[derive(Debug)]
@@ -174,15 +180,28 @@ impl TileEntry {
         }
     }
 
+    pub(crate) fn text_instances(&self) -> &[TextAtlasInstance] {
+        match &self.payload {
+            TilePayload::DirectPacket(draw_ops) => &draw_ops.text_instances,
+        }
+    }
+
     pub(crate) fn uploaded_vertex_bytes(&self) -> u64 {
         (self.scene_vertices().len() as u64 + self.clip_vertices().len() as u64) * VERTEX_SIZE
+            + self.text_instances().len() as u64 * TEXT_ATLAS_INSTANCE_SIZE
     }
 }
 
 impl RetainedTileVertexArena {
-    pub(crate) fn has_capacity(&self, scene_vertices: usize, clip_vertices: usize) -> bool {
+    pub(crate) fn has_capacity(
+        &self,
+        scene_vertices: usize,
+        clip_vertices: usize,
+        text_instances: usize,
+    ) -> bool {
         self.scene_capacity_vertices >= scene_vertices
             && self.clip_capacity_vertices >= clip_vertices
+            && self.text_instance_capacity >= text_instances
     }
 
     pub(crate) fn ensure_capacity(
@@ -190,8 +209,9 @@ impl RetainedTileVertexArena {
         device: &wgpu::Device,
         scene_vertices: usize,
         clip_vertices: usize,
+        text_instances: usize,
     ) {
-        if self.has_capacity(scene_vertices, clip_vertices) {
+        if self.has_capacity(scene_vertices, clip_vertices, text_instances) {
             return;
         }
 
@@ -199,22 +219,33 @@ impl RetainedTileVertexArena {
             grow_retained_tile_vertex_capacity(self.scene_capacity_vertices, scene_vertices);
         let clip_capacity =
             grow_retained_tile_vertex_capacity(self.clip_capacity_vertices, clip_vertices);
+        let text_capacity =
+            grow_retained_tile_vertex_capacity(self.text_instance_capacity, text_instances);
 
         self.scene_buffer =
             create_empty_vertex_buffer(device, "SUI retained tile scene arena", scene_capacity);
         self.clip_buffer =
             create_empty_vertex_buffer(device, "SUI retained tile clip arena", clip_capacity);
+        self.text_instance_buffer = create_empty_text_instance_buffer(
+            device,
+            "SUI retained tile text instance arena",
+            text_capacity,
+        );
         self.scene_capacity_vertices = scene_capacity;
         self.clip_capacity_vertices = clip_capacity;
+        self.text_instance_capacity = text_capacity;
     }
 }
 
 impl RetainedTileUploadPlan {
     pub(crate) fn needs_rebuild(&self, arena: &RetainedTileVertexArena) -> bool {
-        (arena.used_scene_vertices > 0 || arena.used_clip_vertices > 0)
+        (arena.used_scene_vertices > 0
+            || arena.used_clip_vertices > 0
+            || arena.used_text_instances > 0)
             && !arena.has_capacity(
                 arena.used_scene_vertices + self.appended_scene_vertices,
                 arena.used_clip_vertices + self.appended_clip_vertices,
+                arena.used_text_instances + self.appended_text_instances,
             )
     }
 }

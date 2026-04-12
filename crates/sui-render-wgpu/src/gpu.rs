@@ -26,6 +26,7 @@ pub(crate) struct SharedRenderer {
     pub(crate) analytic_path_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) image_sampler: wgpu::Sampler,
     pub(crate) text_atlas_sampler: wgpu::Sampler,
+    pub(crate) text_quad_buffer: wgpu::Buffer,
 }
 
 impl SharedRenderer {
@@ -225,6 +226,12 @@ impl SharedRenderer {
                 ),
                 PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => None,
             };
+            let scene_vertex_layouts = [Vertex::layout()];
+            let text_vertex_layouts = [TextAtlasQuadVertex::layout(), TextAtlasInstance::layout()];
+            let vertex_buffers = match kind {
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => &text_vertex_layouts[..],
+                _ => &scene_vertex_layouts[..],
+            };
 
             self.device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -243,7 +250,7 @@ impl SharedRenderer {
                     vertex: wgpu::VertexState {
                         module: &shader,
                         entry_point: Some("vs_main"),
-                        buffers: &[Vertex::layout()],
+                        buffers: vertex_buffers,
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
                     primitive: wgpu::PrimitiveState::default(),
@@ -347,6 +354,77 @@ impl Vertex {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBUTES,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+pub(crate) struct TextAtlasQuadVertex {
+    pub(crate) local_pos: [f32; 2],
+}
+
+impl TextAtlasQuadVertex {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0 => Float32x2];
+
+    pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBUTES,
+        }
+    }
+
+    pub(crate) fn unit_quad() -> [Self; 6] {
+        [
+            Self {
+                local_pos: [0.0, 0.0],
+            },
+            Self {
+                local_pos: [1.0, 0.0],
+            },
+            Self {
+                local_pos: [0.0, 1.0],
+            },
+            Self {
+                local_pos: [0.0, 1.0],
+            },
+            Self {
+                local_pos: [1.0, 0.0],
+            },
+            Self {
+                local_pos: [1.0, 1.0],
+            },
+        ]
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+pub(crate) struct TextAtlasInstance {
+    pub(crate) top_left: [f32; 2],
+    pub(crate) x_axis: [f32; 2],
+    pub(crate) y_axis: [f32; 2],
+    pub(crate) uv_min: [f32; 2],
+    pub(crate) uv_max: [f32; 2],
+    pub(crate) color: [f32; 4],
+}
+
+impl TextAtlasInstance {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+        1 => Float32x2,
+        2 => Float32x2,
+        3 => Float32x2,
+        4 => Float32x2,
+        5 => Float32x2,
+        6 => Float32x4
+    ];
+
+    pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
             attributes: &Self::ATTRIBUTES,
         }
     }

@@ -29,7 +29,12 @@ pub(crate) fn build_vertices(
     let draw_ops = compositor.prepare_frame(frame, text_engine, DEFAULT_FEATHER_WIDTH)?;
     let mut vertices = Vec::new();
     for op in &draw_ops.draw_ops {
-        vertices.extend_from_slice(draw_ops.scene_vertices(op.vertices));
+        match op.kind {
+            DrawOpKind::TextAtlas => {
+                append_text_instance_vertices(&mut vertices, draw_ops.text_instances(op.vertices));
+            }
+            _ => vertices.extend_from_slice(draw_ops.scene_vertices(op.vertices)),
+        }
     }
     Ok(vertices)
 }
@@ -54,6 +59,7 @@ pub(crate) struct DrawOp {
 pub(crate) struct DrawOpArena {
     pub(crate) scene_vertices: Vec<Vertex>,
     pub(crate) clip_vertices: Vec<Vertex>,
+    pub(crate) text_instances: Vec<TextAtlasInstance>,
     pub(crate) clip_states: Vec<ClipState>,
     pub(crate) draw_ops: Vec<DrawOp>,
     pub(crate) analytic_paths: HashMap<u64, Arc<AnalyticPathCpuData>>,
@@ -194,6 +200,7 @@ pub(crate) struct ClipState {
 pub(crate) struct PreparedFrameBatches {
     pub(crate) scene_vertices: Vec<Vertex>,
     pub(crate) clip_vertices: Vec<Vertex>,
+    pub(crate) text_instances: Vec<TextAtlasInstance>,
     pub(crate) passes: Vec<PreparedPassBatch>,
 }
 
@@ -259,6 +266,7 @@ pub(crate) struct PreparedFragmentSubmission {
     pub(crate) passes: Vec<PreparedPassBatch>,
     pub(crate) scene_buffer: Option<wgpu::Buffer>,
     pub(crate) clip_buffer: Option<wgpu::Buffer>,
+    pub(crate) text_instance_buffer: Option<wgpu::Buffer>,
     pub(crate) translation: Vector,
 }
 
@@ -281,6 +289,7 @@ pub(crate) struct EncodablePassBatch {
     pub(crate) pass: PreparedPassBatch,
     pub(crate) scene_buffer: Option<wgpu::Buffer>,
     pub(crate) clip_buffer: Option<wgpu::Buffer>,
+    pub(crate) text_instance_buffer: Option<wgpu::Buffer>,
     pub(crate) translation: Vector,
 }
 
@@ -316,6 +325,7 @@ pub(crate) fn prepare_frame_batches(
     PreparedFrameBatches {
         scene_vertices: draw_ops.scene_vertices,
         clip_vertices: draw_ops.clip_vertices,
+        text_instances: draw_ops.text_instances,
         passes,
     }
 }
@@ -332,6 +342,7 @@ pub(crate) fn batch_draw_ops(
         framebuffer_size,
         Vector::ZERO,
         None,
+        0,
         0,
         0,
     )
@@ -397,6 +408,7 @@ pub(crate) fn prepare_cached_passes(
     external_clip_rect: Option<Rect>,
     scene_vertex_offset: u32,
     clip_vertex_offset: u32,
+    text_instance_offset: u32,
 ) -> Vec<PreparedPassBatch> {
     cached_passes
         .iter()
@@ -430,7 +442,12 @@ pub(crate) fn prepare_cached_passes(
                     Some(PreparedDrawBatch {
                         kind: draw.kind,
                         clip_rect,
-                        vertices: draw.vertices.offset(scene_vertex_offset),
+                        vertices: match draw.kind {
+                            PreparedDrawKind::TextAtlas => {
+                                draw.vertices.offset(text_instance_offset)
+                            }
+                            _ => draw.vertices.offset(scene_vertex_offset),
+                        },
                     })
                 })
                 .collect(),
@@ -503,6 +520,24 @@ pub(crate) fn create_static_vertex_buffer(
     )
 }
 
+pub(crate) fn create_static_text_instance_buffer(
+    device: &wgpu::Device,
+    label: &str,
+    instances: &[TextAtlasInstance],
+) -> Option<wgpu::Buffer> {
+    if instances.is_empty() {
+        return None;
+    }
+
+    Some(
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(instances),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        }),
+    )
+}
+
 pub(crate) fn collect_visible_retained_tiles(
     submission: &RetainedFrameSubmission,
 ) -> Vec<TileAddress> {
@@ -540,9 +575,12 @@ pub(crate) fn plan_retained_tile_upload(
             .ok_or_else(|| retained_tile_error(*address))?;
         let scene_len = entry.scene_vertices().len() as u32;
         let clip_len = entry.clip_vertices().len() as u32;
+        let text_len = entry.text_instances().len() as u32;
         match entry.gpu_geometry.as_ref() {
             Some(geometry)
-                if scene_len <= geometry.scene_capacity && clip_len <= geometry.clip_capacity =>
+                if scene_len <= geometry.scene_capacity
+                    && clip_len <= geometry.clip_capacity
+                    && text_len <= geometry.text_capacity =>
             {
                 if geometry.dirty {
                     plan.in_place_tiles.push(*address);
@@ -552,6 +590,7 @@ pub(crate) fn plan_retained_tile_upload(
                 plan.appended_tiles.push(*address);
                 plan.appended_scene_vertices += scene_len as usize;
                 plan.appended_clip_vertices += clip_len as usize;
+                plan.appended_text_instances += text_len as usize;
             }
         }
     }
@@ -580,6 +619,7 @@ pub(crate) fn rebuild_retained_tile_geometry(
     let cached_tiles = sorted_retained_tile_addresses(compositor);
     let mut total_scene_vertices = 0usize;
     let mut total_clip_vertices = 0usize;
+    let mut total_text_instances = 0usize;
     for address in &cached_tiles {
         let entry = compositor
             .tiles
@@ -587,12 +627,19 @@ pub(crate) fn rebuild_retained_tile_geometry(
             .ok_or_else(|| retained_tile_error(*address))?;
         total_scene_vertices += entry.scene_vertices().len();
         total_clip_vertices += entry.clip_vertices().len();
+        total_text_instances += entry.text_instances().len();
     }
 
-    arena.ensure_capacity(&shared.device, total_scene_vertices, total_clip_vertices);
+    arena.ensure_capacity(
+        &shared.device,
+        total_scene_vertices,
+        total_clip_vertices,
+        total_text_instances,
+    );
 
     let mut scene_data = Vec::with_capacity(total_scene_vertices);
     let mut clip_data = Vec::with_capacity(total_clip_vertices);
+    let mut text_data = Vec::with_capacity(total_text_instances);
     for address in cached_tiles {
         let entry = compositor
             .tiles
@@ -600,12 +647,19 @@ pub(crate) fn rebuild_retained_tile_geometry(
             .ok_or_else(|| retained_tile_error(address))?;
         let scene_start = scene_data.len() as u32;
         let clip_start = clip_data.len() as u32;
-        let (scene_len, clip_len) = {
+        let text_start = text_data.len() as u32;
+        let (scene_len, clip_len, text_len) = {
             let scene_vertices = entry.scene_vertices();
             let clip_vertices = entry.clip_vertices();
+            let text_instances = entry.text_instances();
             scene_data.extend_from_slice(scene_vertices);
             clip_data.extend_from_slice(clip_vertices);
-            (scene_vertices.len() as u32, clip_vertices.len() as u32)
+            text_data.extend_from_slice(text_instances);
+            (
+                scene_vertices.len() as u32,
+                clip_vertices.len() as u32,
+                text_instances.len() as u32,
+            )
         };
         entry.gpu_geometry = Some(RetainedGpuGeometry {
             scene_range: PreparedVertices {
@@ -618,16 +672,26 @@ pub(crate) fn rebuild_retained_tile_geometry(
                 len: clip_len,
             },
             clip_capacity: clip_len,
+            text_range: PreparedVertices {
+                start: text_start,
+                len: text_len,
+            },
+            text_capacity: text_len,
             dirty: false,
         });
     }
 
     upload_retained_tile_bytes(shared, arena.scene_buffer.as_ref(), 0, &scene_data)?;
     upload_retained_tile_bytes(shared, arena.clip_buffer.as_ref(), 0, &clip_data)?;
+    upload_retained_text_instance_bytes(shared, arena.text_instance_buffer.as_ref(), 0, &text_data)?;
 
     arena.used_scene_vertices = scene_data.len();
     arena.used_clip_vertices = clip_data.len();
-    Ok((scene_data.len() as u64 + clip_data.len() as u64) * VERTEX_SIZE)
+    arena.used_text_instances = text_data.len();
+    Ok(
+        (scene_data.len() as u64 + clip_data.len() as u64) * VERTEX_SIZE
+            + text_data.len() as u64 * TEXT_ATLAS_INSTANCE_SIZE,
+    )
 }
 
 pub(crate) fn append_retained_tile_geometry(
@@ -640,6 +704,7 @@ pub(crate) fn append_retained_tile_geometry(
         &shared.device,
         arena.used_scene_vertices + plan.appended_scene_vertices,
         arena.used_clip_vertices + plan.appended_clip_vertices,
+        arena.used_text_instances + plan.appended_text_instances,
     );
 
     if plan.appended_tiles.is_empty() {
@@ -648,8 +713,10 @@ pub(crate) fn append_retained_tile_geometry(
 
     let base_scene_start = arena.used_scene_vertices as u32;
     let base_clip_start = arena.used_clip_vertices as u32;
+    let base_text_start = arena.used_text_instances as u32;
     let mut scene_data = Vec::with_capacity(plan.appended_scene_vertices);
     let mut clip_data = Vec::with_capacity(plan.appended_clip_vertices);
+    let mut text_data = Vec::with_capacity(plan.appended_text_instances);
     let mut assignments = Vec::with_capacity(plan.appended_tiles.len());
 
     for address in &plan.appended_tiles {
@@ -659,17 +726,30 @@ pub(crate) fn append_retained_tile_geometry(
             .ok_or_else(|| retained_tile_error(*address))?;
         let scene_start = base_scene_start + scene_data.len() as u32;
         let clip_start = base_clip_start + clip_data.len() as u32;
+        let text_start = base_text_start + text_data.len() as u32;
         let scene_vertices = entry.scene_vertices();
         let clip_vertices = entry.clip_vertices();
+        let text_instances = entry.text_instances();
         let scene_len = scene_vertices.len() as u32;
         let clip_len = clip_vertices.len() as u32;
+        let text_len = text_instances.len() as u32;
         scene_data.extend_from_slice(scene_vertices);
         clip_data.extend_from_slice(clip_vertices);
-        assignments.push((*address, scene_start, scene_len, clip_start, clip_len));
+        text_data.extend_from_slice(text_instances);
+        assignments.push((
+            *address,
+            scene_start,
+            scene_len,
+            clip_start,
+            clip_len,
+            text_start,
+            text_len,
+        ));
     }
 
     let scene_offset = base_scene_start as u64 * VERTEX_SIZE;
     let clip_offset = base_clip_start as u64 * VERTEX_SIZE;
+    let text_offset = base_text_start as u64 * TEXT_ATLAS_INSTANCE_SIZE;
     upload_retained_tile_bytes(
         shared,
         arena.scene_buffer.as_ref(),
@@ -677,11 +757,18 @@ pub(crate) fn append_retained_tile_geometry(
         &scene_data,
     )?;
     upload_retained_tile_bytes(shared, arena.clip_buffer.as_ref(), clip_offset, &clip_data)?;
+    upload_retained_text_instance_bytes(
+        shared,
+        arena.text_instance_buffer.as_ref(),
+        text_offset,
+        &text_data,
+    )?;
 
     arena.used_scene_vertices += scene_data.len();
     arena.used_clip_vertices += clip_data.len();
+    arena.used_text_instances += text_data.len();
 
-    for (address, scene_start, scene_len, clip_start, clip_len) in assignments {
+    for (address, scene_start, scene_len, clip_start, clip_len, text_start, text_len) in assignments {
         let entry = compositor
             .tiles
             .get_mut(&address)
@@ -697,11 +784,19 @@ pub(crate) fn append_retained_tile_geometry(
                 len: clip_len,
             },
             clip_capacity: clip_len,
+            text_range: PreparedVertices {
+                start: text_start,
+                len: text_len,
+            },
+            text_capacity: text_len,
             dirty: false,
         });
     }
 
-    Ok((scene_data.len() as u64 + clip_data.len() as u64) * VERTEX_SIZE)
+    Ok(
+        (scene_data.len() as u64 + clip_data.len() as u64) * VERTEX_SIZE
+            + text_data.len() as u64 * TEXT_ATLAS_INSTANCE_SIZE,
+    )
 }
 
 pub(crate) fn refresh_retained_tile_geometry(
@@ -717,13 +812,14 @@ pub(crate) fn refresh_retained_tile_geometry(
             .tiles
             .get_mut(address)
             .ok_or_else(|| retained_tile_error(*address))?;
-        let (scene_start, clip_start, scene_len, clip_len) = {
+        let (scene_start, clip_start, scene_len, clip_len, text_start, text_len) = {
             let geometry = entry
                 .gpu_geometry
                 .as_ref()
                 .expect("retained tile geometry exists before in-place upload");
             let scene_start = geometry.scene_range.start;
             let clip_start = geometry.clip_range.start;
+            let text_start = geometry.text_range.start;
             upload_retained_tile_bytes(
                 shared,
                 arena.scene_buffer.as_ref(),
@@ -736,11 +832,19 @@ pub(crate) fn refresh_retained_tile_geometry(
                 clip_start as u64 * VERTEX_SIZE,
                 entry.clip_vertices(),
             )?;
+            upload_retained_text_instance_bytes(
+                shared,
+                arena.text_instance_buffer.as_ref(),
+                text_start as u64 * TEXT_ATLAS_INSTANCE_SIZE,
+                entry.text_instances(),
+            )?;
             (
                 scene_start,
                 clip_start,
                 entry.scene_vertices().len() as u32,
                 entry.clip_vertices().len() as u32,
+                text_start,
+                entry.text_instances().len() as u32,
             )
         };
         let geometry = entry
@@ -754,6 +858,10 @@ pub(crate) fn refresh_retained_tile_geometry(
         geometry.clip_range = PreparedVertices {
             start: clip_start,
             len: clip_len,
+        };
+        geometry.text_range = PreparedVertices {
+            start: text_start,
+            len: text_len,
         };
         geometry.dirty = false;
         uploaded_vertex_bytes += entry.uploaded_vertex_bytes();
@@ -780,6 +888,24 @@ pub(crate) fn upload_retained_tile_bytes(
     Ok(())
 }
 
+pub(crate) fn upload_retained_text_instance_bytes(
+    shared: &SharedRenderer,
+    buffer: Option<&wgpu::Buffer>,
+    offset: u64,
+    instances: &[TextAtlasInstance],
+) -> Result<()> {
+    if instances.is_empty() {
+        return Ok(());
+    }
+
+    let buffer =
+        buffer.ok_or_else(|| Error::new("retained text instance arena buffer missing before GPU upload"))?;
+    shared
+        .queue
+        .write_buffer(buffer, offset, bytemuck::cast_slice(instances));
+    Ok(())
+}
+
 pub(crate) fn create_empty_vertex_buffer(
     device: &wgpu::Device,
     label: &str,
@@ -792,6 +918,23 @@ pub(crate) fn create_empty_vertex_buffer(
     Some(device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: vertex_capacity as u64 * VERTEX_SIZE,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    }))
+}
+
+pub(crate) fn create_empty_text_instance_buffer(
+    device: &wgpu::Device,
+    label: &str,
+    instance_capacity: usize,
+) -> Option<wgpu::Buffer> {
+    if instance_capacity == 0 {
+        return None;
+    }
+
+    Some(device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: instance_capacity as u64 * TEXT_ATLAS_INSTANCE_SIZE,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     }))
@@ -820,6 +963,7 @@ pub(crate) fn flatten_fragment_passes(
                 pass: pass.clone(),
                 scene_buffer: fragment.scene_buffer.clone(),
                 clip_buffer: fragment.clip_buffer.clone(),
+                text_instance_buffer: fragment.text_instance_buffer.clone(),
                 translation: fragment.translation,
             });
         }
@@ -928,6 +1072,7 @@ fn encode_unclipped_pass_run(
             framebuffer_size,
             &batch.pass,
             batch.scene_buffer.as_ref(),
+            batch.text_instance_buffer.as_ref(),
             batch.translation,
             false,
             image_bind_groups,
@@ -1011,6 +1156,7 @@ fn encode_clipped_pass(
         framebuffer_size,
         &batch.pass,
         batch.scene_buffer.as_ref(),
+        batch.text_instance_buffer.as_ref(),
         batch.translation,
         true,
         image_bind_groups,
@@ -1044,6 +1190,7 @@ fn encode_draws_for_pass(
     framebuffer_size: (u32, u32),
     pass: &PreparedPassBatch,
     scene_buffer: Option<&wgpu::Buffer>,
+    text_instance_buffer: Option<&wgpu::Buffer>,
     translation: Vector,
     clipped: bool,
     image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
@@ -1122,22 +1269,40 @@ fn encode_draws_for_pass(
             PreparedDrawKind::AnalyticPath { .. } => {}
         }
 
-        let scene_buffer = scene_buffer
-            .ok_or_else(|| Error::new("prepared render batch is missing a scene vertex buffer"))?;
-        render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
-        let instances = match draw.kind {
+        let (vertex_range, instances) = match draw.kind {
+            PreparedDrawKind::TextAtlas => {
+                let text_instance_buffer = text_instance_buffer.ok_or_else(|| {
+                    Error::new("prepared render batch is missing a text instance buffer")
+                })?;
+                render_pass.set_vertex_buffer(0, shared.text_quad_buffer.slice(..));
+                render_pass.set_vertex_buffer(
+                    1,
+                    text_instance_buffer_slice(text_instance_buffer, draw.vertices),
+                );
+                (0..6, 0..draw.vertices.len)
+            }
             PreparedDrawKind::AnalyticPath { resource_signature } => {
+                let scene_buffer = scene_buffer.ok_or_else(|| {
+                    Error::new("prepared render batch is missing a scene vertex buffer")
+                })?;
+                render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
                 let slot = analytic_path_resources
                     .expect("analytic path resources prepared before retained render pass")
                     .slots
                     .get(&resource_signature)
                     .copied()
                     .expect("analytic path slot prepared before retained render pass");
-                slot..slot + 1
+                (0..draw.vertices.len, slot..slot + 1)
             }
-            _ => 0..1,
+            _ => {
+                let scene_buffer = scene_buffer.ok_or_else(|| {
+                    Error::new("prepared render batch is missing a scene vertex buffer")
+                })?;
+                render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
+                (0..draw.vertices.len, 0..1)
+            }
         };
-        render_pass.draw(0..draw.vertices.len, instances);
+        render_pass.draw(vertex_range, instances);
     }
 
     Ok(())
@@ -1174,6 +1339,7 @@ pub(crate) fn build_direct_packet(
         path_cache,
         feather_width,
         scratch_vertices: Vec::new(),
+        scratch_text_instances: Vec::new(),
         overlay_scratch_vertices: Vec::new(),
         clip_scratch_vertices: Vec::new(),
     };
@@ -1217,6 +1383,7 @@ pub(crate) fn build_direct_packet_with_diagnostics(
         path_cache,
         feather_width,
         scratch_vertices: Vec::new(),
+        scratch_text_instances: Vec::new(),
         overlay_scratch_vertices: Vec::new(),
         clip_scratch_vertices: Vec::new(),
     };
@@ -1232,6 +1399,7 @@ struct SceneDrawOpBuilder<'a> {
     path_cache: &'a mut PathMeshCache,
     feather_width: f32,
     scratch_vertices: Vec<Vertex>,
+    scratch_text_instances: Vec<TextAtlasInstance>,
     overlay_scratch_vertices: Vec<Vertex>,
     clip_scratch_vertices: Vec<Vertex>,
 }
@@ -1377,40 +1545,30 @@ impl SceneDrawOpBuilder<'_> {
                 Ok(())
             }
             SceneCommand::DrawText(text) => {
-                self.scratch_vertices.clear();
+                self.scratch_text_instances.clear();
                 self.text_engine.append_text_run(
-                    &mut self.scratch_vertices,
+                    &mut self.scratch_text_instances,
                     state,
                     text,
                     self.frame.font_registry.as_ref(),
                     viewport,
                     self.frame.scale_factor,
                 )?;
-                push_draw_op(
-                    draw_ops,
-                    DrawOpKind::TextAtlas,
-                    &self.scratch_vertices,
-                    state,
-                );
+                push_text_draw_op(draw_ops, &self.scratch_text_instances, state);
                 diagnostics.text_command_count += 1;
                 Ok(())
             }
             SceneCommand::DrawShapedText(text) => {
-                self.scratch_vertices.clear();
+                self.scratch_text_instances.clear();
                 self.text_engine.append_shaped_text(
-                    &mut self.scratch_vertices,
+                    &mut self.scratch_text_instances,
                     state,
                     text,
                     self.frame.text_layout_registry.as_ref(),
                     viewport,
                     self.frame.scale_factor,
                 )?;
-                push_draw_op(
-                    draw_ops,
-                    DrawOpKind::TextAtlas,
-                    &self.scratch_vertices,
-                    state,
-                );
+                push_text_draw_op(draw_ops, &self.scratch_text_instances, state);
                 diagnostics.text_command_count += 1;
                 Ok(())
             }
@@ -1470,9 +1628,9 @@ impl SceneDrawOpBuilder<'_> {
                 )))
             }
             SceneCommand::Label { rect, text, color } => {
-                self.scratch_vertices.clear();
+                self.scratch_text_instances.clear();
                 self.text_engine.append_text_run(
-                    &mut self.scratch_vertices,
+                    &mut self.scratch_text_instances,
                     state,
                     &TextRun {
                         rect: *rect,
@@ -1483,12 +1641,7 @@ impl SceneDrawOpBuilder<'_> {
                     viewport,
                     self.frame.scale_factor,
                 )?;
-                push_draw_op(
-                    draw_ops,
-                    DrawOpKind::TextAtlas,
-                    &self.scratch_vertices,
-                    state,
-                );
+                push_text_draw_op(draw_ops, &self.scratch_text_instances, state);
                 diagnostics.text_command_count += 1;
                 Ok(())
             }
@@ -1853,7 +2006,7 @@ impl TextEngine {
 
     pub(crate) fn append_text_run(
         &mut self,
-        atlas_vertices: &mut Vec<Vertex>,
+        atlas_instances: &mut Vec<TextAtlasInstance>,
         state: &SceneRasterState,
         text: &TextRun,
         font_registry: &FontRegistry,
@@ -1866,7 +2019,7 @@ impl TextEngine {
 
         let layout = self.shape_text_run(text, font_registry)?;
         self.append_text_layout(
-            atlas_vertices,
+            atlas_instances,
             state,
             Point::new(text.rect.x(), text.rect.y()),
             &layout,
@@ -1877,7 +2030,7 @@ impl TextEngine {
 
     pub(crate) fn append_shaped_text(
         &mut self,
-        atlas_vertices: &mut Vec<Vertex>,
+        atlas_instances: &mut Vec<TextAtlasInstance>,
         state: &SceneRasterState,
         text: &ShapedText,
         text_layout_registry: &sui_text::TextLayoutRegistry,
@@ -1897,7 +2050,7 @@ impl TextEngine {
         })?;
 
         self.append_text_layout(
-            atlas_vertices,
+            atlas_instances,
             state,
             text.origin,
             layout,
@@ -1908,7 +2061,7 @@ impl TextEngine {
 
     fn append_text_layout(
         &mut self,
-        atlas_vertices: &mut Vec<Vertex>,
+        atlas_instances: &mut Vec<TextAtlasInstance>,
         state: &SceneRasterState,
         origin: Point,
         layout: &TextLayout,
@@ -1957,8 +2110,7 @@ impl TextEngine {
                 raster_scale_factor,
                 coverage_policy,
             )? {
-                append_cached_glyph_atlas(
-                    atlas_vertices,
+                if let Some(instance) = build_text_atlas_instance(
                     atlas,
                     &translated_glyph,
                     glyph_style.color,
@@ -1966,10 +2118,12 @@ impl TextEngine {
                     viewport,
                     raster_scale_factor,
                     glyph_pixel_alignment_enabled,
-                );
-                if self.diagnostics_enabled {
-                    self.frame_stats.glyph_instances += 1;
-                    self.frame_stats.glyph_vertices += 6;
+                ) {
+                    atlas_instances.push(instance);
+                    if self.diagnostics_enabled {
+                        self.frame_stats.glyph_instances += 1;
+                        self.frame_stats.glyph_upload_bytes += TEXT_ATLAS_INSTANCE_SIZE;
+                    }
                 }
             }
         }
@@ -2320,6 +2474,7 @@ pub(crate) fn glyph_raster_bounds(path: &tiny_skia::Path) -> Option<GlyphRasterB
     })
 }
 
+#[cfg(test)]
 pub(crate) fn append_cached_glyph_atlas(
     vertices: &mut Vec<Vertex>,
     atlas: &CachedGlyphAtlas,
@@ -2330,8 +2485,30 @@ pub(crate) fn append_cached_glyph_atlas(
     raster_scale_factor: f32,
     glyph_pixel_alignment_enabled: bool,
 ) {
+    if let Some(instance) = build_text_atlas_instance(
+        atlas,
+        glyph,
+        color,
+        transform,
+        viewport,
+        raster_scale_factor,
+        glyph_pixel_alignment_enabled,
+    ) {
+        append_text_instance_vertices(vertices, std::slice::from_ref(&instance));
+    }
+}
+
+fn build_text_atlas_instance(
+    atlas: &CachedGlyphAtlas,
+    glyph: &SceneShapedGlyph,
+    color: Color,
+    transform: Transform,
+    viewport: Size,
+    raster_scale_factor: f32,
+    glyph_pixel_alignment_enabled: bool,
+) -> Option<TextAtlasInstance> {
     if atlas.size.is_empty() || viewport.is_empty() {
-        return;
+        return None;
     }
 
     let rgba = if atlas.is_color {
@@ -2351,38 +2528,70 @@ pub(crate) fn append_cached_glyph_atlas(
         glyph_pixel_alignment_enabled,
     );
 
-    vertices.extend_from_slice(&[
-        Vertex {
-            position: to_ndc(top_left.x, top_left.y, viewport),
-            color: rgba,
-            tex_coords: atlas.uv_min,
-        },
-        Vertex {
-            position: to_ndc(top_right.x, top_right.y, viewport),
-            color: rgba,
-            tex_coords: [atlas.uv_max[0], atlas.uv_min[1]],
-        },
-        Vertex {
-            position: to_ndc(bottom_left.x, bottom_left.y, viewport),
-            color: rgba,
-            tex_coords: [atlas.uv_min[0], atlas.uv_max[1]],
-        },
-        Vertex {
-            position: to_ndc(bottom_left.x, bottom_left.y, viewport),
-            color: rgba,
-            tex_coords: [atlas.uv_min[0], atlas.uv_max[1]],
-        },
-        Vertex {
-            position: to_ndc(top_right.x, top_right.y, viewport),
-            color: rgba,
-            tex_coords: [atlas.uv_max[0], atlas.uv_min[1]],
-        },
-        Vertex {
-            position: to_ndc(bottom_right.x, bottom_right.y, viewport),
-            color: rgba,
-            tex_coords: atlas.uv_max,
-        },
-    ]);
+    let top_left = to_ndc(top_left.x, top_left.y, viewport);
+    let top_right = to_ndc(top_right.x, top_right.y, viewport);
+    let bottom_left = to_ndc(bottom_left.x, bottom_left.y, viewport);
+    let _bottom_right = to_ndc(bottom_right.x, bottom_right.y, viewport);
+
+    Some(TextAtlasInstance {
+        top_left,
+        x_axis: [top_right[0] - top_left[0], top_right[1] - top_left[1]],
+        y_axis: [bottom_left[0] - top_left[0], bottom_left[1] - top_left[1]],
+        uv_min: atlas.uv_min,
+        uv_max: atlas.uv_max,
+        color: rgba,
+    })
+}
+
+#[cfg(test)]
+fn append_text_instance_vertices(vertices: &mut Vec<Vertex>, instances: &[TextAtlasInstance]) {
+    for instance in instances {
+        let top_left = instance.top_left;
+        let top_right = [
+            instance.top_left[0] + instance.x_axis[0],
+            instance.top_left[1] + instance.x_axis[1],
+        ];
+        let bottom_left = [
+            instance.top_left[0] + instance.y_axis[0],
+            instance.top_left[1] + instance.y_axis[1],
+        ];
+        let bottom_right = [
+            top_right[0] + instance.y_axis[0],
+            top_right[1] + instance.y_axis[1],
+        ];
+        vertices.extend_from_slice(&[
+            Vertex {
+                position: top_left,
+                color: instance.color,
+                tex_coords: instance.uv_min,
+            },
+            Vertex {
+                position: top_right,
+                color: instance.color,
+                tex_coords: [instance.uv_max[0], instance.uv_min[1]],
+            },
+            Vertex {
+                position: bottom_left,
+                color: instance.color,
+                tex_coords: [instance.uv_min[0], instance.uv_max[1]],
+            },
+            Vertex {
+                position: bottom_left,
+                color: instance.color,
+                tex_coords: [instance.uv_min[0], instance.uv_max[1]],
+            },
+            Vertex {
+                position: top_right,
+                color: instance.color,
+                tex_coords: [instance.uv_max[0], instance.uv_min[1]],
+            },
+            Vertex {
+                position: bottom_right,
+                color: instance.color,
+                tex_coords: instance.uv_max,
+            },
+        ]);
+    }
 }
 
 fn snapped_glyph_quad(
@@ -2985,6 +3194,24 @@ fn push_draw_op(
     });
 }
 
+fn push_text_draw_op(
+    draw_ops: &mut DrawOpArena,
+    instances: &[TextAtlasInstance],
+    state: &SceneRasterState,
+) {
+    if instances.is_empty() {
+        return;
+    }
+
+    let instance_span = draw_ops.push_text_instances(instances);
+    draw_ops.draw_ops.push(DrawOp {
+        kind: DrawOpKind::TextAtlas,
+        vertices: instance_span,
+        clip_rect: state.current_clip_bounds(),
+        clip_state_index: state.clip_state_index,
+    });
+}
+
 impl DrawOpArena {
     pub(crate) fn insert_analytic_path(&mut self, data: AnalyticPathCpuData) -> u64 {
         let id = self.next_analytic_path_id;
@@ -3020,6 +3247,10 @@ impl DrawOpArena {
             vertex.position[0] += delta_x;
             vertex.position[1] += delta_y;
         }
+        for instance in &mut self.text_instances {
+            instance.top_left[0] += delta_x;
+            instance.top_left[1] += delta_y;
+        }
         for draw_op in &mut self.draw_ops {
             draw_op.clip_rect = draw_op.clip_rect.map(|rect| rect.translate(translation));
         }
@@ -3045,11 +3276,14 @@ impl DrawOpArena {
 
         let scene_delta = self.scene_vertices.len() as u32;
         let clip_delta = self.clip_vertices.len() as u32;
+        let text_delta = self.text_instances.len() as u32;
         let analytic_id_map = self.import_analytic_paths(&transformed);
         self.scene_vertices
             .extend_from_slice(&transformed.scene_vertices);
         self.clip_vertices
             .extend_from_slice(&transformed.clip_vertices);
+        self.text_instances
+            .extend_from_slice(&transformed.text_instances);
 
         let external_clip_rect = external_clips.iter().fold(None::<Rect>, |current, clip| {
             let bounds = clip.bounds();
@@ -3090,7 +3324,10 @@ impl DrawOpArena {
                 }));
             self.draw_ops
                 .extend(transformed.draw_ops.iter().cloned().filter_map(|mut draw_op| {
-                    draw_op.vertices = draw_op.vertices.offset(scene_delta);
+                    draw_op.vertices = match draw_op.kind {
+                        DrawOpKind::TextAtlas => draw_op.vertices.offset(text_delta),
+                        _ => draw_op.vertices.offset(scene_delta),
+                    };
                     draw_op.clip_state_index += clip_state_base;
                     let Some(clip_rect) =
                         resolve_fragment_clip_rect(draw_op.clip_rect, external_clip_rect)
@@ -3130,7 +3367,10 @@ impl DrawOpArena {
 
             self.draw_ops.push(DrawOp {
                 kind: draw_op.kind,
-                vertices: draw_op.vertices.offset(scene_delta),
+                vertices: match draw_op.kind {
+                    DrawOpKind::TextAtlas => draw_op.vertices.offset(text_delta),
+                    _ => draw_op.vertices.offset(scene_delta),
+                },
                 clip_rect,
                 clip_state_index: merged_clip_state,
             });
@@ -3148,6 +3388,7 @@ impl DrawOpArena {
     pub(crate) fn append_fragment(&mut self, fragment: &DrawOpArena) {
         let scene_delta = self.scene_vertices.len() as u32;
         let clip_delta = self.clip_vertices.len() as u32;
+        let text_delta = self.text_instances.len() as u32;
         let clip_state_delta = self.clip_states.len();
         let analytic_id_map = self.import_analytic_paths(fragment);
 
@@ -3155,6 +3396,8 @@ impl DrawOpArena {
             .extend_from_slice(&fragment.scene_vertices);
         self.clip_vertices
             .extend_from_slice(&fragment.clip_vertices);
+        self.text_instances
+            .extend_from_slice(&fragment.text_instances);
         self.clip_states
             .extend(fragment.clip_states.iter().map(|clip_state| {
                 ClipState {
@@ -3168,7 +3411,10 @@ impl DrawOpArena {
             }));
         self.draw_ops
             .extend(fragment.draw_ops.iter().cloned().map(|mut draw_op| {
-                draw_op.vertices = draw_op.vertices.offset(scene_delta);
+                draw_op.vertices = match draw_op.kind {
+                    DrawOpKind::TextAtlas => draw_op.vertices.offset(text_delta),
+                    _ => draw_op.vertices.offset(scene_delta),
+                };
                 draw_op.clip_state_index += clip_state_delta;
                 if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
                     draw_op.kind = DrawOpKind::AnalyticPath {
@@ -3182,6 +3428,7 @@ impl DrawOpArena {
     pub(crate) fn byte_size(&self) -> usize {
         self.scene_vertices.len() * std::mem::size_of::<Vertex>()
             + self.clip_vertices.len() * std::mem::size_of::<Vertex>()
+            + self.text_instances.len() * std::mem::size_of::<TextAtlasInstance>()
             + self
                 .clip_states
                 .iter()
@@ -3201,6 +3448,18 @@ impl DrawOpArena {
         PreparedVertices {
             start,
             len: vertices.len() as u32,
+        }
+    }
+
+    pub(crate) fn push_text_instances(
+        &mut self,
+        instances: &[TextAtlasInstance],
+    ) -> PreparedVertices {
+        let start = self.text_instances.len() as u32;
+        self.text_instances.extend_from_slice(instances);
+        PreparedVertices {
+            start,
+            len: instances.len() as u32,
         }
     }
 
@@ -3224,6 +3483,11 @@ impl DrawOpArena {
     fn scene_vertices(&self, span: PreparedVertices) -> &[Vertex] {
         &self.scene_vertices[span.start as usize..(span.start + span.len) as usize]
     }
+
+    #[cfg(test)]
+    fn text_instances(&self, span: PreparedVertices) -> &[TextAtlasInstance] {
+        &self.text_instances[span.start as usize..(span.start + span.len) as usize]
+    }
 }
 
 fn resolve_submission_clip_rect(current: Option<Rect>, next: Option<Rect>) -> Option<Option<Rect>> {
@@ -3245,10 +3509,20 @@ fn resolve_fragment_clip_rect(current: Option<Rect>, next: Option<Rect>) -> Opti
 }
 
 pub(crate) const VERTEX_SIZE: u64 = std::mem::size_of::<Vertex>() as u64;
+pub(crate) const TEXT_ATLAS_INSTANCE_SIZE: u64 = std::mem::size_of::<TextAtlasInstance>() as u64;
 
 fn vertex_buffer_slice(buffer: &wgpu::Buffer, vertices: PreparedVertices) -> wgpu::BufferSlice<'_> {
     let start = vertices.start as u64 * VERTEX_SIZE;
     let end = start + vertices.len as u64 * VERTEX_SIZE;
+    buffer.slice(start..end)
+}
+
+fn text_instance_buffer_slice(
+    buffer: &wgpu::Buffer,
+    instances: PreparedVertices,
+) -> wgpu::BufferSlice<'_> {
+    let start = instances.start as u64 * TEXT_ATLAS_INSTANCE_SIZE;
+    let end = start + instances.len as u64 * TEXT_ATLAS_INSTANCE_SIZE;
     buffer.slice(start..end)
 }
 

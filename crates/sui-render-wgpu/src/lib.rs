@@ -182,7 +182,7 @@ pub struct RendererTextCacheSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct TextFrameStats {
     glyph_instances: usize,
-    glyph_vertices: usize,
+    glyph_upload_bytes: u64,
     atlas_miss_count: usize,
     atlas_miss_time_us: u64,
 }
@@ -279,7 +279,8 @@ impl RendererFrameStats {
                 .map(|pass| pass.clip_paths.len() + pass.draws.len())
                 .sum(),
             (prepared.scene_vertices.len() as u64 + prepared.clip_vertices.len() as u64)
-                * VERTEX_SIZE,
+                * VERTEX_SIZE
+                + prepared.text_instances.len() as u64 * TEXT_ATLAS_INSTANCE_SIZE,
         )
     }
 
@@ -410,7 +411,7 @@ impl RendererFrameStats {
 
     fn with_text_stats(mut self, stats: TextFrameStats) -> Self {
         self.text_glyph_instance_count = stats.glyph_instances;
-        self.text_vertex_bytes = stats.glyph_vertices as u64 * VERTEX_SIZE;
+        self.text_vertex_bytes = stats.glyph_upload_bytes;
         self.text_atlas_miss_count = stats.atlas_miss_count;
         self.text_atlas_miss_time_us = stats.atlas_miss_time_us;
         self
@@ -908,6 +909,11 @@ impl WgpuRenderer {
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
+        let text_quad_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("SUI text atlas quad"),
+            contents: bytemuck::cast_slice(&TextAtlasQuadVertex::unit_quad()),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
         let analytic_path_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("SUI analytic path bind group layout"),
@@ -954,6 +960,7 @@ impl WgpuRenderer {
             analytic_path_bind_group_layout,
             image_sampler,
             text_atlas_sampler,
+            text_quad_buffer,
         });
 
         Ok(())
@@ -1303,7 +1310,8 @@ impl WgpuRenderer {
                         draw_count += fragment_draw_count;
                         uploaded_vertex_bytes += (prepared.scene_vertices.len() as u64
                             + prepared.clip_vertices.len() as u64)
-                            * VERTEX_SIZE;
+                            * VERTEX_SIZE
+                            + prepared.text_instances.len() as u64 * TEXT_ATLAS_INSTANCE_SIZE;
                     }
 
                     if prepared.passes.is_empty() {
@@ -1331,6 +1339,11 @@ impl WgpuRenderer {
                             "SUI transient fragment clip",
                             &prepared.clip_vertices,
                         ),
+                        text_instance_buffer: create_static_text_instance_buffer(
+                            &shared.device,
+                            "SUI transient fragment text instances",
+                            &prepared.text_instances,
+                        ),
                         translation: Vector::ZERO,
                     });
                     if let Some(started) = gpu_upload_started {
@@ -1338,12 +1351,18 @@ impl WgpuRenderer {
                     }
                 }
                 RetainedFrameFragment::Tile { address, clip_rect } => {
-                    let (passes, scene_buffer, clip_buffer, translation) = {
-                        let (scene_buffer, clip_buffer) = self
+                    let (passes, scene_buffer, clip_buffer, text_instance_buffer, translation) = {
+                        let (scene_buffer, clip_buffer, text_instance_buffer) = self
                             .retained_tile_arenas
                             .get(&frame.window_id)
-                            .map(|arena| (arena.scene_buffer.clone(), arena.clip_buffer.clone()))
-                            .unwrap_or((None, None));
+                            .map(|arena| {
+                                (
+                                    arena.scene_buffer.clone(),
+                                    arena.clip_buffer.clone(),
+                                    arena.text_instance_buffer.clone(),
+                                )
+                            })
+                            .unwrap_or((None, None, None));
                         let compositor = self
                             .compositors
                             .get_mut(&frame.window_id)
@@ -1377,11 +1396,18 @@ impl WgpuRenderer {
                             submission_clip_rect,
                             geometry.scene_range.start,
                             geometry.clip_range.start,
+                            geometry.text_range.start,
                         );
                         if let Some(started) = batch_prepare_started {
                             batch_prepare_time_us += started.elapsed().as_micros() as u64;
                         }
-                        (passes, scene_buffer, clip_buffer, entry.translation)
+                        (
+                            passes,
+                            scene_buffer,
+                            clip_buffer,
+                            text_instance_buffer,
+                            entry.translation,
+                        )
                     };
                     if diagnostics_enabled {
                         let (_, fragment_draw_count) = prepared_batch_counts(&passes);
@@ -1397,6 +1423,7 @@ impl WgpuRenderer {
                         passes,
                         scene_buffer,
                         clip_buffer,
+                        text_instance_buffer,
                         translation,
                     });
                 }
@@ -2389,14 +2416,18 @@ var text_atlas_texture: texture_2d<f32>;
 
 @vertex
 fn vs_main(
-    @location(0) position: vec2<f32>,
-    @location(1) color: vec4<f32>,
-    @location(2) tex_coords: vec2<f32>,
+    @location(0) local_pos: vec2<f32>,
+    @location(1) top_left: vec2<f32>,
+    @location(2) x_axis: vec2<f32>,
+    @location(3) y_axis: vec2<f32>,
+    @location(4) uv_min: vec2<f32>,
+    @location(5) uv_max: vec2<f32>,
+    @location(6) color: vec4<f32>,
 ) -> VsOut {
     var out: VsOut;
-    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.position = vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0);
     out.color = color;
-    out.tex_coords = tex_coords;
+    out.tex_coords = uv_min + local_pos * (uv_max - uv_min);
     return out;
 }
 
@@ -3420,6 +3451,7 @@ mod tests {
                     6
                 ],
                 clip_vertices: Vec::new(),
+                text_instances: Vec::new(),
                 clip_states: vec![ClipState {
                     clip_paths: Vec::new(),
                 }],
@@ -3462,6 +3494,7 @@ mod tests {
                     6
                 ],
                 clip_vertices: Vec::new(),
+                text_instances: Vec::new(),
                 clip_states: vec![ClipState {
                     clip_paths: Vec::new(),
                 }],
@@ -3517,6 +3550,7 @@ mod tests {
             None,
             0,
             0,
+            0,
         );
 
         let first = passes[0].draws[0].clip_rect.expect("first scissor");
@@ -3543,6 +3577,7 @@ mod tests {
             (100, 100),
             Vector::ZERO,
             Some(Rect::new(20.0, 30.0, 40.0, 50.0)),
+            0,
             0,
             0,
         );
@@ -3579,6 +3614,7 @@ mod tests {
             Some(Rect::new(0.0, 0.0, 20.0, 20.0)),
             0,
             0,
+            0,
         );
 
         assert_eq!(passes.len(), 1);
@@ -3595,6 +3631,7 @@ mod tests {
         let prepared = PreparedFrameBatches {
             scene_vertices: vec![vertex; 9],
             clip_vertices: vec![vertex; 6],
+            text_instances: Vec::new(),
             passes: vec![
                 PreparedPassBatch {
                     clip_paths: vec![PreparedClipPath {
