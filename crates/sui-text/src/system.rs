@@ -196,7 +196,12 @@ impl TextSystem {
         let flattened = FlattenedTextDocument::new(normalized_document.clone());
         let font_context = self.font_context(font_registry)?;
         let resolved_spans = self.resolve_span_inputs(&flattened, &font_context)?;
-        let layout = layout_document(flattened, resolved_spans, box_size, font_context)?;
+        let layout_id = crate::cache::TextLayoutCacheKey::stable_layout_id(
+            &normalized_document,
+            &span_face_keys,
+            box_size,
+        );
+        let layout = layout_document(flattened, resolved_spans, box_size, font_context, layout_id)?;
         let miss_layout_time_us = layout_started
             .as_ref()
             .map(|started| started.elapsed().as_micros() as u64)

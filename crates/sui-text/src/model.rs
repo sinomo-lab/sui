@@ -214,6 +214,38 @@ impl TextDocument {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextLayoutId(u64);
+
+impl TextLayoutId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextLayoutVersion(u64);
+
+impl TextLayoutVersion {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextLayoutMetadata {
+    pub id: TextLayoutId,
+    pub version: TextLayoutVersion,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextLayoutRequest {
     pub document: TextDocument,
@@ -346,6 +378,9 @@ pub struct TextParagraphLayout {
     pub paragraph_index: usize,
     pub byte_range: Range<usize>,
     pub line_range: Range<usize>,
+    pub run_range: Range<usize>,
+    pub cluster_range: Range<usize>,
+    pub glyph_range: Range<usize>,
     pub rect: Rect,
     pub style: TextParagraphStyle,
 }
@@ -380,6 +415,7 @@ pub struct TextLine {
     pub byte_range: Range<usize>,
     pub run_range: Range<usize>,
     pub cluster_range: Range<usize>,
+    pub glyph_range: Range<usize>,
     pub rect: Rect,
     pub baseline: f32,
     pub ascent: f32,
@@ -419,6 +455,7 @@ impl TextLine {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TextLayoutData {
+    pub metadata: TextLayoutMetadata,
     pub text: String,
     pub box_size: Size,
     pub faces: Vec<ResolvedTextFace>,
@@ -437,7 +474,87 @@ pub struct TextLayout {
     pub(crate) primary_style: TextStyle,
 }
 
+#[derive(Debug, Clone)]
+pub struct TextLayoutView<'a> {
+    pub metadata: TextLayoutMetadata,
+    pub text: &'a str,
+    pub document: &'a TextDocument,
+    pub box_size: Size,
+    pub measurement: TextMeasurement,
+    pub faces: &'a [ResolvedTextFace],
+    pub paragraphs: &'a [TextParagraphLayout],
+    pub lines: &'a [TextLine],
+    pub runs: &'a [TextLayoutRun],
+    pub clusters: &'a [TextCluster],
+    pub glyphs: &'a [ShapedGlyph],
+}
+
+#[derive(Debug, Clone)]
+pub struct TextLineWindow<'a> {
+    layout: &'a TextLayout,
+    pub metadata: TextLayoutMetadata,
+    pub line_range: Range<usize>,
+    pub run_range: Range<usize>,
+    pub cluster_range: Range<usize>,
+    pub glyph_range: Range<usize>,
+}
+
+impl<'a> TextLineWindow<'a> {
+    pub fn lines(&self) -> &'a [TextLine] {
+        &self.layout.data.lines[self.line_range.clone()]
+    }
+
+    pub fn runs(&self) -> &'a [TextLayoutRun] {
+        &self.layout.data.runs[self.run_range.clone()]
+    }
+
+    pub fn clusters(&self) -> &'a [TextCluster] {
+        &self.layout.data.clusters[self.cluster_range.clone()]
+    }
+
+    pub fn glyphs(&self) -> &'a [ShapedGlyph] {
+        &self.layout.data.glyphs[self.glyph_range.clone()]
+    }
+
+    pub fn glyph_instances(&self) -> impl ExactSizeIterator<Item = TextGlyphInstance<'a>> + 'a {
+        (self.glyph_range.start..self.glyph_range.end).map(|index| self.layout.glyph_instance(index))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TextRunView<'a> {
+    pub index: usize,
+    pub run: &'a TextLayoutRun,
+    pub style: &'a TextStyle,
+    pub face: &'a ResolvedTextFace,
+    pub line: &'a TextLine,
+    pub clusters: &'a [TextCluster],
+    pub glyphs: &'a [ShapedGlyph],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TextGlyphInstance<'a> {
+    pub index: usize,
+    pub glyph: &'a ShapedGlyph,
+    pub style: &'a TextStyle,
+    pub face: &'a ResolvedTextFace,
+    pub run: &'a TextLayoutRun,
+    pub line: &'a TextLine,
+}
+
 impl TextLayout {
+    pub fn id(&self) -> TextLayoutId {
+        self.data.metadata.id
+    }
+
+    pub fn version(&self) -> TextLayoutVersion {
+        self.data.metadata.version
+    }
+
+    pub fn metadata(&self) -> TextLayoutMetadata {
+        self.data.metadata
+    }
+
     pub fn text(&self) -> &str {
         &self.data.text
     }
@@ -482,6 +599,22 @@ impl TextLayout {
         &self.data.faces
     }
 
+    pub fn view(&self) -> TextLayoutView<'_> {
+        TextLayoutView {
+            metadata: self.metadata(),
+            text: self.text(),
+            document: self.document(),
+            box_size: self.box_size(),
+            measurement: self.measurement(),
+            faces: self.faces(),
+            paragraphs: self.paragraphs(),
+            lines: self.lines(),
+            runs: self.runs(),
+            clusters: self.clusters(),
+            glyphs: self.glyphs(),
+        }
+    }
+
     pub fn run_style(&self, run_index: usize) -> &TextStyle {
         self.document
             .span_style(self.data.runs[run_index].span_id.clone())
@@ -497,6 +630,71 @@ impl TextLayout {
 
     pub fn glyph_face(&self, glyph: &ShapedGlyph) -> &ResolvedTextFace {
         &self.data.faces[glyph.face_index]
+    }
+
+    pub fn run_view(&self, run_index: usize) -> TextRunView<'_> {
+        let run = &self.data.runs[run_index];
+        TextRunView {
+            index: run_index,
+            run,
+            style: self.run_style(run_index),
+            face: self.run_face(run_index),
+            line: &self.data.lines[run.line_index],
+            clusters: &self.data.clusters[run.cluster_range.clone()],
+            glyphs: &self.data.glyphs[run.glyph_range.clone()],
+        }
+    }
+
+    pub fn run_views(&self) -> impl ExactSizeIterator<Item = TextRunView<'_>> + '_ {
+        (0..self.data.runs.len()).map(|index| self.run_view(index))
+    }
+
+    pub fn glyph_instance(&self, glyph_index: usize) -> TextGlyphInstance<'_> {
+        let glyph = &self.data.glyphs[glyph_index];
+        TextGlyphInstance {
+            index: glyph_index,
+            glyph,
+            style: self.glyph_style(glyph),
+            face: self.glyph_face(glyph),
+            run: &self.data.runs[glyph.run_index],
+            line: &self.data.lines[glyph.line_index],
+        }
+    }
+
+    pub fn glyph_instances(&self) -> impl ExactSizeIterator<Item = TextGlyphInstance<'_>> + '_ {
+        (0..self.data.glyphs.len()).map(|index| self.glyph_instance(index))
+    }
+
+    pub fn line_window(&self, line_range: Range<usize>) -> TextLineWindow<'_> {
+        let line_start = line_range.start.min(self.data.lines.len());
+        let line_end = line_range.end.min(self.data.lines.len()).max(line_start);
+        let clamped_line_range = line_start..line_end;
+        let (run_range, cluster_range, glyph_range) = if clamped_line_range.is_empty() {
+            (0..0, 0..0, 0..0)
+        } else {
+            collapse_range(self.data.lines[clamped_line_range.clone()].iter().map(|line| line.run_range.clone()))
+                .zip(collapse_range(
+                    self.data.lines[clamped_line_range.clone()]
+                        .iter()
+                        .map(|line| line.cluster_range.clone()),
+                ))
+                .zip(collapse_range(
+                    self.data.lines[clamped_line_range.clone()]
+                        .iter()
+                        .map(|line| line.glyph_range.clone()),
+                ))
+                .map(|((run_range, cluster_range), glyph_range)| (run_range, cluster_range, glyph_range))
+                .unwrap_or((0..0, 0..0, 0..0))
+        };
+
+        TextLineWindow {
+            layout: self,
+            metadata: self.metadata(),
+            line_range: clamped_line_range,
+            run_range,
+            cluster_range,
+            glyph_range,
+        }
     }
 
     pub fn caret(&self, cursor: TextCursor) -> TextCaret {
@@ -587,6 +785,15 @@ impl TextLayout {
     pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.data, &other.data)
     }
+}
+
+fn collapse_range(ranges: impl Iterator<Item = Range<usize>>) -> Option<Range<usize>> {
+    ranges.fold(None, |current: Option<Range<usize>>, range| {
+        Some(match current {
+            Some(existing) => existing.start.min(range.start)..existing.end.max(range.end),
+            None => range,
+        })
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]

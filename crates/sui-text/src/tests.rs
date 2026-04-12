@@ -263,6 +263,8 @@ fn text_system_reuses_cached_layouts_across_color_changes() {
     );
     assert_eq!(second.style().color, Color::rgba(0.2, 0.7, 0.9, 1.0));
     assert!(second.shares_storage_with(&layout));
+    assert_eq!(second.id(), layout.id());
+    assert_eq!(second.version(), layout.version());
     assert_eq!(second.glyphs(), layout.glyphs());
 }
 
@@ -317,6 +319,8 @@ fn text_system_reuses_cached_registered_font_layouts_across_color_changes() {
     );
     assert_eq!(second.style().color, Color::rgba(0.3, 0.8, 0.4, 1.0));
     assert!(second.shares_storage_with(&layout));
+    assert_eq!(second.id(), layout.id());
+    assert_eq!(second.version(), layout.version());
     assert_eq!(second.glyphs(), layout.glyphs());
     assert_eq!(second.run_face(0).shared_bytes(), layout.run_face(0).shared_bytes());
 }
@@ -506,4 +510,61 @@ fn fallback_faces_keep_stable_shared_bytes_across_layout_builds() {
     assert_eq!(first_fallback.data_len(), second_fallback.data_len());
     assert_eq!(first_fallback.data_ptr(), second_fallback.data_ptr());
     assert_eq!(first_fallback.shared_bytes(), second_fallback.shared_bytes());
+}
+
+#[test]
+fn run_views_and_glyph_instances_expose_renderer_context() {
+    let system = TextSystem::new();
+    let document = TextDocument {
+        paragraphs: vec![TextParagraph {
+            style: Default::default(),
+            spans: vec![
+                TextSpan::new("hello", TextStyle::new(Color::WHITE)),
+                TextSpan::new(" world", TextStyle::new(Color::BLACK)),
+            ],
+        }],
+    };
+
+    let layout = system
+        .layout_document(
+            TextLayoutRequest::new(document).with_box_size(Size::new(200.0, 40.0)),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    let run_views = layout.run_views().collect::<Vec<_>>();
+    assert_eq!(run_views.len(), layout.runs().len());
+    assert_eq!(run_views[0].style.color, Color::WHITE);
+    assert_eq!(run_views[1].style.color, Color::BLACK);
+    assert_eq!(run_views[0].glyphs.len(), layout.runs()[0].glyph_range.len());
+    assert_eq!(run_views[1].clusters.len(), layout.runs()[1].cluster_range.len());
+
+    let glyph_instances = layout.glyph_instances().collect::<Vec<_>>();
+    assert_eq!(glyph_instances.len(), layout.glyphs().len());
+    for instance in glyph_instances {
+        assert_eq!(instance.run.line_index, instance.glyph.line_index);
+        assert_eq!(instance.line.paragraph_index, instance.run.paragraph_index);
+        assert_eq!(instance.run.face_index, instance.glyph.face_index);
+        assert_eq!(instance.face.face_index(), layout.glyph_face(instance.glyph).face_index());
+        assert_eq!(instance.style.color, layout.glyph_style(instance.glyph).color);
+    }
+}
+
+#[test]
+fn line_window_exposes_visible_layout_slice() {
+    let system = TextSystem::new();
+    let layout = system
+        .shape_text(
+            "this is a wrapped line window test",
+            Size::new(75.0, 120.0),
+            TextStyle::new(Color::WHITE),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    assert!(layout.lines().len() >= 2);
+    let window = layout.line_window(0..1);
+    assert_eq!(window.lines().len(), 1);
+    assert_eq!(window.glyphs().len(), layout.lines()[0].glyph_range.len());
+    assert_eq!(window.glyph_instances().count(), window.glyphs().len());
 }

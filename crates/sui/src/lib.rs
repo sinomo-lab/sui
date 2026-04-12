@@ -59,9 +59,11 @@ pub use sui_scene::{
 pub use sui_text::{
     FontRegistry, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText, TextAffinity,
     TextAlign, TextCluster, TextCursor, TextDirection, TextDocument, TextFlowDirection,
-    TextLayout, TextLayoutRequest, TextLayoutRun, TextLine, TextMeasurement, TextParagraph,
-    TextParagraphLayout, TextParagraphStyle, TextRun, TextSelection, TextSelectionGeometry,
-    TextSpan, TextSpanId, TextStyle, TextWrap, TextWritingMode,
+    TextGlyphInstance, TextLayout, TextLayoutId, TextLayoutMetadata, TextLayoutRequest,
+    TextLayoutRun, TextLayoutVersion, TextLayoutView, TextLine, TextLineWindow,
+    TextMeasurement, TextParagraph, TextParagraphLayout, TextParagraphStyle, TextRun,
+    TextRunView, TextSelection, TextSelectionGeometry, TextSpan, TextSpanId, TextStyle,
+    TextWrap, TextWritingMode,
 };
 pub use sui_widgets::{
     Breadcrumb, BreadcrumbItem, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette,

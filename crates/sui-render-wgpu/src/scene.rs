@@ -1918,20 +1918,20 @@ impl TextEngine {
         let mut swash_face = None;
         let glyph_pixel_alignment_enabled = self.glyph_pixel_alignment_enabled;
 
-        for glyph in layout.glyphs() {
-            let face_index = glyph.face_index;
+        for glyph in layout.glyph_instances() {
+            let face_index = glyph.glyph.face_index;
             if active_face_index != Some(face_index) {
                 active_face_index = Some(face_index);
                 swash_face = None;
             }
 
-            let glyph_face = layout.glyph_face(glyph);
+            let glyph_face = glyph.face;
             let face_key = GlyphFaceCacheKey::new(glyph_face);
-            let glyph_style = layout.glyph_style(glyph);
+            let glyph_style = glyph.style;
             let coverage_policy = self
                 .coverage_policy
                 .resolved_for_text_color(glyph_style.color);
-            let mut translated_glyph = glyph.clone();
+            let mut translated_glyph = glyph.glyph.clone();
             translated_glyph.origin_x += origin.x;
             translated_glyph.origin_y += origin.y;
             if let Some(bounds) = translated_glyph.bounds {
@@ -1942,8 +1942,8 @@ impl TextEngine {
                 glyph_face,
                 &mut swash_face,
                 face_key,
-                glyph.glyph_id,
-                glyph.scale,
+                glyph.glyph.glyph_id,
+                glyph.glyph.scale,
                 raster_scale_factor,
                 coverage_policy,
             )? {

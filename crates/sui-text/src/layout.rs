@@ -1,5 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     ops::Range,
     sync::Arc,
 };
@@ -12,8 +14,8 @@ use crate::{
     font::{FontContext, ResolvedSpanInput, ResolvedTextFace},
     model::{
         ShapedGlyph, TextCluster, TextClusterGeometry, TextDirection, TextFlowDirection,
-        TextLayout, TextLayoutData, TextLayoutRun, TextLine, TextMeasurement,
-        TextParagraphLayout, TextStyle, TextWrap,
+        TextLayout, TextLayoutData, TextLayoutId, TextLayoutMetadata, TextLayoutRun,
+        TextLayoutVersion, TextLine, TextMeasurement, TextParagraphLayout, TextStyle, TextWrap,
     },
 };
 
@@ -84,6 +86,7 @@ pub(crate) fn layout_document(
     resolved_spans: Vec<ResolvedSpanInput>,
     box_size: Option<Size>,
     mut font_context: FontContext,
+    layout_id: TextLayoutId,
 ) -> Result<TextLayout> {
     let box_width = box_size.map(|size| size.width);
     let mut faces = vec![font_context.default_face().clone()];
@@ -263,6 +266,7 @@ pub(crate) fn layout_document(
             byte_range: prepared_line.byte_range,
             run_range: run_start..layout_runs.len(),
             cluster_range: cluster_start..layout_clusters.len(),
+            glyph_range: glyph_start..shaped_glyphs.len(),
             rect: prepared_line.rect.translate(Vector::new(0.0, block_top)),
             baseline: prepared_line.baseline + block_top,
             ascent: prepared_line.ascent,
@@ -275,32 +279,55 @@ pub(crate) fn layout_document(
 
     let paragraph_layouts = paragraphs
         .into_iter()
-        .map(|paragraph| TextParagraphLayout {
-            paragraph_index: paragraph.paragraph_index,
-            byte_range: paragraph.byte_range,
-            line_range: paragraph.line_range,
-            rect: paragraph.rect.translate(Vector::new(0.0, block_top)),
-            style: paragraph.style,
+        .map(|paragraph| {
+            let (run_range, cluster_range, glyph_range) = collapse_line_component_ranges(
+                &layout_lines[paragraph.line_range.clone()],
+            );
+            TextParagraphLayout {
+                paragraph_index: paragraph.paragraph_index,
+                byte_range: paragraph.byte_range,
+                line_range: paragraph.line_range,
+                run_range,
+                cluster_range,
+                glyph_range,
+                rect: paragraph.rect.translate(Vector::new(0.0, block_top)),
+                style: paragraph.style,
+            }
         })
         .collect::<Vec<_>>();
 
     let bounds = measured_bounds.unwrap_or_else(|| Rect::new(0.0, block_top, measured_width, natural_height));
+    let measurement = TextMeasurement {
+        width: measured_width,
+        height: natural_height,
+        bounds,
+        ascent: max_ascent,
+        descent: max_descent,
+        cap_height: max_cap_height,
+    };
+    let version = compute_layout_version(
+        final_box_size,
+        &faces,
+        measurement,
+        &paragraph_layouts,
+        &layout_lines,
+        &layout_runs,
+        &layout_clusters,
+        &shaped_glyphs,
+    );
 
     Ok(TextLayout {
         primary_style: flattened.document.primary_style(),
         document: Arc::new(flattened.document),
         data: Arc::new(TextLayoutData {
+            metadata: TextLayoutMetadata {
+                id: layout_id,
+                version,
+            },
             text: flattened.text,
             box_size: final_box_size,
             faces,
-            measurement: TextMeasurement {
-                width: measured_width,
-                height: natural_height,
-                bounds,
-                ascent: max_ascent,
-                descent: max_descent,
-                cap_height: max_cap_height,
-            },
+            measurement,
             paragraphs: paragraph_layouts,
             lines: layout_lines,
             runs: layout_runs,
@@ -653,6 +680,180 @@ fn build_cluster_geometries(
     }
 
     geometries
+}
+
+fn collapse_line_component_ranges(lines: &[TextLine]) -> (Range<usize>, Range<usize>, Range<usize>) {
+    let run_range = collapse_range(lines.iter().map(|line| line.run_range.clone())).unwrap_or(0..0);
+    let cluster_range =
+        collapse_range(lines.iter().map(|line| line.cluster_range.clone())).unwrap_or(0..0);
+    let glyph_range =
+        collapse_range(lines.iter().map(|line| line.glyph_range.clone())).unwrap_or(0..0);
+    (run_range, cluster_range, glyph_range)
+}
+
+fn collapse_range(ranges: impl Iterator<Item = Range<usize>>) -> Option<Range<usize>> {
+    ranges.fold(None, |current: Option<Range<usize>>, range| {
+        Some(match current {
+            Some(existing) => existing.start.min(range.start)..existing.end.max(range.end),
+            None => range,
+        })
+    })
+}
+
+fn compute_layout_version(
+    box_size: Size,
+    faces: &[ResolvedTextFace],
+    measurement: TextMeasurement,
+    paragraphs: &[TextParagraphLayout],
+    lines: &[TextLine],
+    runs: &[TextLayoutRun],
+    clusters: &[TextCluster],
+    glyphs: &[ShapedGlyph],
+) -> TextLayoutVersion {
+    let mut state = DefaultHasher::new();
+    hash_size(&mut state, box_size);
+    hash_measurement(&mut state, measurement);
+    hash_faces(&mut state, faces);
+    hash_paragraphs(&mut state, paragraphs);
+    hash_lines(&mut state, lines);
+    hash_runs(&mut state, runs);
+    hash_clusters(&mut state, clusters);
+    hash_glyphs(&mut state, glyphs);
+    TextLayoutVersion::new(state.finish())
+}
+
+fn hash_faces(state: &mut DefaultHasher, faces: &[ResolvedTextFace]) {
+    faces.len().hash(state);
+    for face in faces {
+        face.data_ptr().hash(state);
+        face.data_len().hash(state);
+        face.face_index().hash(state);
+    }
+}
+
+fn hash_paragraphs(state: &mut DefaultHasher, paragraphs: &[TextParagraphLayout]) {
+    paragraphs.len().hash(state);
+    for paragraph in paragraphs {
+        paragraph.paragraph_index.hash(state);
+        paragraph.byte_range.hash(state);
+        paragraph.line_range.hash(state);
+        paragraph.run_range.hash(state);
+        paragraph.cluster_range.hash(state);
+        paragraph.glyph_range.hash(state);
+        paragraph.style.hash(state);
+        hash_rect(state, paragraph.rect);
+    }
+}
+
+fn hash_lines(state: &mut DefaultHasher, lines: &[TextLine]) {
+    lines.len().hash(state);
+    for line in lines {
+        line.paragraph_index.hash(state);
+        line.byte_range.hash(state);
+        line.run_range.hash(state);
+        line.cluster_range.hash(state);
+        line.glyph_range.hash(state);
+        hash_rect(state, line.rect);
+        hash_f32(state, line.baseline);
+        hash_f32(state, line.ascent);
+        hash_f32(state, line.descent);
+        hash_f32(state, line.width);
+        line.direction.hash(state);
+        line.clusters.len().hash(state);
+        for cluster in &line.clusters {
+            cluster.range.hash(state);
+            cluster.glyph_range.hash(state);
+            hash_f32(state, cluster.x_start);
+            hash_f32(state, cluster.x_end);
+        }
+    }
+}
+
+fn hash_runs(state: &mut DefaultHasher, runs: &[TextLayoutRun]) {
+    runs.len().hash(state);
+    for run in runs {
+        run.paragraph_index.hash(state);
+        run.line_index.hash(state);
+        run.span_id.hash(state);
+        run.byte_range.hash(state);
+        run.glyph_range.hash(state);
+        run.cluster_range.hash(state);
+        hash_rect(state, run.rect);
+        hash_f32(state, run.baseline);
+        run.face_index.hash(state);
+        run.direction.hash(state);
+    }
+}
+
+fn hash_clusters(state: &mut DefaultHasher, clusters: &[TextCluster]) {
+    clusters.len().hash(state);
+    for cluster in clusters {
+        cluster.paragraph_index.hash(state);
+        cluster.line_index.hash(state);
+        cluster.byte_range.hash(state);
+        cluster.glyph_range.hash(state);
+        cluster.run_range.hash(state);
+        hash_rect(state, cluster.rect);
+    }
+}
+
+fn hash_glyphs(state: &mut DefaultHasher, glyphs: &[ShapedGlyph]) {
+    glyphs.len().hash(state);
+    for glyph in glyphs {
+        glyph.glyph_id.hash(state);
+        glyph.cluster.hash(state);
+        glyph.span_id.hash(state);
+        glyph.run_index.hash(state);
+        glyph.line_index.hash(state);
+        glyph.face_index.hash(state);
+        hash_f32(state, glyph.origin_x);
+        hash_f32(state, glyph.origin_y);
+        hash_vector(state, glyph.advance);
+        hash_f32(state, glyph.scale);
+        match glyph.bounds {
+            Some(bounds) => {
+                true.hash(state);
+                hash_rect(state, bounds);
+            }
+            None => false.hash(state),
+        }
+    }
+}
+
+fn hash_measurement(state: &mut DefaultHasher, measurement: TextMeasurement) {
+    hash_f32(state, measurement.width);
+    hash_f32(state, measurement.height);
+    hash_rect(state, measurement.bounds);
+    hash_f32(state, measurement.ascent);
+    hash_f32(state, measurement.descent);
+    match measurement.cap_height {
+        Some(cap_height) => {
+            true.hash(state);
+            hash_f32(state, cap_height);
+        }
+        None => false.hash(state),
+    }
+}
+
+fn hash_rect(state: &mut DefaultHasher, rect: Rect) {
+    hash_f32(state, rect.x());
+    hash_f32(state, rect.y());
+    hash_f32(state, rect.width());
+    hash_f32(state, rect.height());
+}
+
+fn hash_size(state: &mut DefaultHasher, size: Size) {
+    hash_f32(state, size.width);
+    hash_f32(state, size.height);
+}
+
+fn hash_vector(state: &mut DefaultHasher, vector: Vector) {
+    hash_f32(state, vector.x);
+    hash_f32(state, vector.y);
+}
+
+fn hash_f32(state: &mut DefaultHasher, value: f32) {
+    value.to_bits().hash(state);
 }
 
 fn overlapping_run_range(

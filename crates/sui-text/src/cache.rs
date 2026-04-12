@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    collections::hash_map::DefaultHasher,
     hash::{BuildHasher, Hash, Hasher},
 };
 
@@ -7,7 +8,7 @@ use sui_core::{FontHandle, Size};
 
 use crate::{
     font::FaceCacheKey,
-    model::{TextDocument, TextLayout, TextParagraphStyle, TextStyle},
+    model::{TextDocument, TextLayout, TextLayoutId, TextParagraphStyle, TextStyle},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,6 +63,16 @@ pub(crate) struct TextLayoutCacheKey {
 }
 
 impl TextLayoutCacheKey {
+    pub(crate) fn stable_layout_id(
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        box_size: Option<Size>,
+    ) -> TextLayoutId {
+        let mut state = DefaultHasher::new();
+        Self::hash_document_into(&mut state, document, span_face_keys, box_size);
+        TextLayoutId::new(state.finish())
+    }
+
     pub(crate) fn new(
         document: &TextDocument,
         span_face_keys: &[FaceCacheKey],
