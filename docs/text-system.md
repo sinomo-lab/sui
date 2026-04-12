@@ -4,53 +4,65 @@
 
 This document records the intended direction for the SUI text subsystem.
 
-It is not a description of the current implementation. The current code still uses the existing `sui-text` shaping and layout stack plus renderer-owned glyph rasterization. This document describes the planned refactor target and the constraints for getting there safely.
+It is not a description of every current implementation detail. The current stack already uses `sui-text` as the text subsystem boundary and an atlas-backed renderer path in `sui-render-wgpu`. That migration is complete. The remaining problem is architectural: text is still fed into the renderer too much like transient scene geometry, which makes text-heavy retained packet rebuilds too expensive for editor-style workloads.
 
-The near-term implementation direction is to rebuild the core text stack on top of `cosmic-text` while keeping `sui-text` as the text subsystem boundary. That migration should improve multi-line layout, Unicode-aware line breaking, fallback handling, right-to-left text, and any vertical layout behavior the upstream engine already supports, without trying to invent new SUI-specific shaping behavior in the same refactor. See [text-system.md](./text-system.md) for the concrete migration direction and scope boundaries.
+The next direction is a hybrid refactor:
 
-Longer term, the text subsystem should also grow toward editing-grade control for creative tools. That includes low-level typographic controls such as tracking and baseline adjustment, plus support for vector and artistic text workflows where text remains an editable design object instead of only a rasterized UI label.
+- keep `sui-text` as the subsystem boundary for content, shaping, layout, cursoring, selection, raster inputs, and outline extraction
+- introduce persistent text layout and text run objects that can survive scene and packet rebuilds
+- move renderer text submission away from per-glyph triangle expansion and toward instanced or similarly persistent text draw data
+- add a dedicated text surface path for editor-grade and document-grade workloads without forcing all text through a fully specialized editor widget immediately
 
-## Near-Term Refactor Goal
+The goal is to support both everyday UI labels and text-heavy applications such as code editors, markdown previews, rich text panels, logs, and creative-tool text objects.
 
-The next major text refactor should move SUI toward using `cosmic-text` as the core text engine underneath `sui-text`.
+## Refactor Goal
 
-The goal is not only to replace the current shaping and rendering path. The goal is to turn text into a more complete rendering subsystem with better language coverage, better layout behavior, and a cleaner long-term foundation for both UI text and creative-tool text workflows.
+The next major text refactor should turn text into a persistent rendering subsystem rather than a stream of transient draw commands.
 
-The refactor should adopt the capabilities that `cosmic-text` already provides. It should not add SUI-specific text shaping or layout features beyond what `cosmic-text` can support during this migration.
+The goal is not only to make the current label path cheaper. The goal is to establish an architecture that can keep renderer cost low for editor-style workloads while preserving a clean long-term foundation for UI text, creative-tool text, and fully interactive editing surfaces.
 
-## Target Capabilities For This Refactor
+The refactor should preserve the `sui-text` subsystem boundary while making it practical to:
+
+- reuse shaped and laid out text across retained packet rebuilds
+- render visible text from persistent layout artifacts rather than rebuilding glyph geometry command by command
+- update only the changed text runs, lines, paragraphs, or viewport slices during editing
+- support future editor-grade text surfaces and vector or artistic text workflows without another root-level rewrite
+
+## Target Capabilities
 
 The refactor should improve or enable the following behavior inside the existing SUI text stack:
 
-- multi-line text layout as a first-class path rather than a thin extension of single-line shaping
-- proper Unicode-aware line breaking and wrapping
-- font fallback driven by the underlying text engine rather than a mostly single-face layout model
-- right-to-left and bidirectional text handling
-- any vertical or top-to-bottom layout behavior that `cosmic-text` can provide without custom SUI extensions
-- more reliable glyph placement and metrics for mixed-script text, emoji, and international input
-- a cleaner bridge between text layout in `sui-text` and glyph rasterization in `sui-render-wgpu`
+- persistent text layout objects with stable identities and explicit renderer-facing extraction APIs
+- persistent text run and glyph-instance data that can be reused across scene and retained packet churn
+- viewport-aware text rendering so large documents and previews submit only visible content plus small guard bands
+- incremental updates for editing paths, including line-level or paragraph-level relayout and localized selection or caret redraw
+- proper Unicode-aware line breaking, fallback handling, right-to-left and bidirectional text, and mixed-script layout
+- richer paragraph, run, and writing-mode support suitable for both UI documents and editor-grade text surfaces
+- a cleaner bridge between text layout in `sui-text` and text submission in `sui-render-wgpu`
+- future support for vector and artistic text objects that remain editable as text rather than collapsing immediately into pixels
 
 This work should improve both text correctness and future renderer architecture.
 
 ## Public API Direction
 
-The refactor should preserve the text subsystem boundary, not the current type boundary.
+The refactor should preserve the text subsystem boundary, not the current convenience types.
 
 In practice, that means `sui-text` should remain the crate that owns font management, shaping, layout, cursoring, selection geometry, raster inputs, and outline extraction.
 
 It does not mean the current public data model should be treated as stable.
 
-The current API was built for a very small text feature set. It is good enough for basic labels, simple text input, and measurement, but it is not a strong long-term foundation for a fully featured text engine. In particular, a future system needs to represent:
+The current API was built for a small text feature set. It is good enough for basic labels, simple text input, and measurement, but it is not a strong long-term foundation for a fully featured text engine and text renderer. In particular, a future system needs to represent:
 
 - attributed text rather than only one string plus one style
 - fallback-aware layout rather than effectively one resolved face per layout
 - richer paragraph and writing-mode controls
 - cursoring and selection behavior that follows complex layout rather than a minimal byte-range model
-- renderer-oriented raster output and vector-oriented outline output as separate views over the same layout result
+- renderer-oriented extraction views over the same layout result, including glyph instances, run ranges, viewport slices, and outline data
+- persistent layout identities and versioning so render work can reuse stable text state instead of rebuilding everything from raw strings
 
 Because the codebase is still early, SUI should be willing to make breaking API changes now if they are necessary to establish the right text architecture.
 
-The current surface may still survive in part as a convenience API for simple UI text, but it should not be treated as the canonical long-term text model.
+The current surface may still survive in part as a convenience API for simple UI text, but it should not be treated as the canonical long-term text or text-rendering model.
 
 ## Target API Shape
 
@@ -81,6 +93,8 @@ It should be able to describe:
 - runs
 - clusters
 - glyph instances
+- stable layout handles and layout versions
+- viewport slices or visible line windows
 - cursor positions and movement boundaries
 - selection geometry
 - measurement summaries
@@ -94,62 +108,113 @@ This layer should expose different derived outputs from the same layout result.
 At minimum, it should support:
 
 - glyph instances and raster inputs for UI rendering
+- stable renderer-facing run or line payloads that can be cached independently from widget packet rebuilds
+- extraction of visible text ranges for viewport-driven text surfaces
 - outline extraction for vector workflows
 - data suitable for artistic text objects that remain editable as text
 
 UI text and artistic text should share shaping and layout foundations even when their rendering and editing behavior diverge.
 
-## Planned Migration Shape
+## Renderer Design Direction
 
-The migration should be phased.
+The renderer should stop treating text primarily as transient per-glyph vertex expansion owned by packet compilation.
 
-### Phase 1: Redesign The Core Text Model In `sui-text`
+The target renderer model is:
 
-Redesign the core `sui-text` data model first.
+- `sui-text` owns the persistent layout result and renderer-facing extraction views
+- `sui-render-wgpu` consumes stable glyph instance or run data rather than reconstructing text geometry from raw text commands on every rebuild
+- text draw ops reference persistent text payloads by handle, version, visible range, style overrides, transform, and clip state
+- atlas caching remains renderer-owned, but text submission becomes instance-oriented rather than six transient vertices per glyph
+- editor overlays such as carets, selections, IME composition, diagnostics, and current-line highlights should remain separate overlay content and must not force bulk text payload rebuilds
 
-The goal of this phase is to stop treating the current API as the long-term architecture. Before wiring in `cosmic-text`, define the core text concepts that SUI actually wants to preserve:
+The important design rule is that text layout reuse must not depend on retained packet reuse. Text should have its own persistence boundary.
 
-- content and style input objects
-- layout result objects
-- cursor and selection primitives
-- rendering and outline extraction views
+## Text Surface Direction
 
-This phase may include breaking API changes. The important constraint is to land on a model that can represent fallback-aware, multi-run, multi-line, and future editing-grade text correctly.
+SUI should support two text consumption modes built on the same text core.
 
-### Phase 2: `cosmic-text` Layout Adapter
+### 1. Generic UI Text
 
-Add a `cosmic-text` backed implementation that translates `Buffer` and layout-run output into SUI's new core layout objects.
+This covers labels, buttons, menus, tables, trees, forms, property grids, and other widget text.
 
-This phase should cover:
+This path should:
 
-- measurement
-- line metrics
-- glyph placement
-- caret geometry
-- selection geometry
-- fallback-aware layout data
+- keep convenient widget-facing text APIs
+- lower to persistent layout handles instead of raw string-only scene commands where practical
+- reuse layout and renderer data across retained packet rebuilds
 
-The output still needs to map into SUI-owned layout types so the rest of the stack can depend on SUI abstractions rather than raw upstream types.
+### 2. Dedicated Text Surface
 
-### Phase 3: Mixed-Font And Fallback-Correct Layout Data
+This covers code editors, markdown previews, large logs, terminals, document views, and future rich text editors.
 
-`cosmic-text` based layout will naturally produce runs that may use different fonts and fallback faces.
+This path should be a first-class widget or family of widgets that owns:
 
-This phase should ensure SUI can represent mixed-font output correctly throughout the subsystem instead of flattening it back into a single-face abstraction.
+- document storage or document adapters
+- incremental relayout and viewport management
+- line and cluster hit testing
+- selection and caret logic
+- overlay rendering for editing affordances
+- renderer-facing extraction of only the visible text content
 
-The key rule is to fix the data model at the root instead of pretending all shaped output still belongs to one face.
+This path should not be modeled as a large pile of independent label-like draw commands.
 
-### Phase 4: Renderer Text Rasterization Upgrade
+## Refactor Plan
 
-Once layout is stable, the renderer should move away from relying on the current outline-heavy text rasterization path.
+The next refactor should be phased.
 
-The preferred direction is to use `cosmic-text` and `swash` style glyph raster data for atlas generation and glyph caching, while keeping SUI's retained compositor and scene-frame boundaries intact.
+### Phase 1: Stabilize The Core Text Model In `sui-text`
 
-The renderer should continue to own GPU policy, atlas uploads, batching, and cache lifetimes. The text engine should provide better layout and raster inputs, not bypass the renderer architecture.
+Redesign the core `sui-text` model around the types SUI actually needs long term:
 
-### Phase 5: Validation And Removal Of The Legacy Path
+- content and styling objects
+- layout result objects with lines, runs, clusters, and glyph instances
+- persistent layout identities and versioning
+- renderer extraction views
+- cursor, caret, selection, and hit-testing primitives
 
-Before removing the old implementation, validate the new path with:
+This phase may include breaking API changes. The goal is to stop treating today's convenience types as the long-term model.
+
+### Phase 2: Introduce Persistent Text Layout Handles
+
+Scene and widget code should move toward referencing text layouts through stable handles or equivalent persistent objects instead of repeatedly lowering raw text into transient packet-local work.
+
+This phase should keep the simple widget API ergonomic while changing the renderer contract under it.
+
+### Phase 3: Renderer Text Instance Submission
+
+Replace transient per-glyph triangle expansion as the primary text submission path.
+
+The preferred direction is to:
+
+- store glyph instance data or similarly compact run data
+- render text from a shared quad plus per-instance attributes
+- keep atlas policy, uploads, batching, and lifetime management in `sui-render-wgpu`
+- let text draw ops reference persistent text payloads instead of rebuilding packet-local text vertices command by command
+
+This is the main near-term performance step for text-heavy retained packet rebuilds.
+
+### Phase 4: Dedicated Text Surface For Editor-Grade Workloads
+
+Add a dedicated text surface path for documents and editors.
+
+This phase should introduce:
+
+- viewport-driven line or paragraph extraction
+- incremental relayout for edits
+- separate overlay rendering for selections, carets, IME composition, diagnostics, and similar adornments
+- document-oriented hit testing and interaction instead of widget-per-span composition
+
+This phase is what makes high refresh rate code editors and rich previews realistic on top of the same core text system.
+
+### Phase 5: Promote Generic Widgets Onto The New Text Path
+
+Once the persistent layout and instance rendering path is stable, migrate generic widgets such as labels, buttons, tables, trees, breadcrumbs, menus, and inspectors to consume the same text infrastructure.
+
+The result should be one text subsystem with two consumption modes, not a separate text stack for editors.
+
+### Phase 6: Validation And Benchmarking
+
+Validate the new path with:
 
 - mixed-script text samples
 - emoji and fallback fonts
@@ -157,21 +222,21 @@ Before removing the old implementation, validate the new path with:
 - multi-line wrapping and line-breaking tests
 - widget-book visual comparisons
 - text-input caret, selection, and IME behavior
-
-That validation coverage now exists across the text/layout tests, widget/runtime text-input coverage, and widget-book visual/performance checks. The renderer's legacy outline-mesh fallback path has been removed; text rendering now uses the atlas-backed swash raster path as the only live renderer path.
+- text-heavy retained packet benchmarks
+- editor-style typing, scrolling, selection, and syntax-highlighting benchmarks
 
 ## Explicit Non-Goals For This Refactor
 
-This migration should stay within the capability envelope that `cosmic-text` already offers.
+This refactor should stay focused on the text architecture and renderer contract. It should not try to solve every higher-level editor problem at once.
 
 The refactor should not try to solve these problems in the same step:
 
-- a custom rich-text document model beyond what current SUI text APIs need
-- a bespoke text-editing engine independent of `cosmic-text`
-- SUI-specific shaping features that the upstream engine does not support
-- full typographic authoring controls beyond what the initial redesigned text model needs for forward compatibility
+- a full IDE feature model beyond text layout, rendering, and interaction fundamentals
+- language intelligence, tokenization, parsing, or syntax services beyond the hooks needed to render styled text efficiently
+- a fully custom document engine for every text workload before the shared persistent text model is in place
+- final artistic-text authoring features beyond the core text architecture needed to support them later
 
-Those may be valid future directions, but combining them with the backend migration would make the change much riskier.
+Those may be valid future directions, but combining them with the core text refactor would make the change much riskier.
 
 ## Long-Term Direction Beyond The Refactor
 
@@ -186,14 +251,14 @@ That longer-term direction should include:
 - support for vector text workflows, including reliable outline conversion and transform-friendly text objects
 - support for artistic text use cases where text behaves like design content rather than only UI chrome
 
-These goals are one reason not to over-preserve the current API. A text subsystem designed only around basic UI measurement and glyph placement will become a blocker once SUI needs real artistic text objects or editing-grade typographic controls.
+These goals are one reason not to over-preserve the current API and not to optimize only the current packet compiler. A text subsystem designed only around basic UI measurement and packet-local glyph placement will become a blocker once SUI needs real artistic text objects or editing-grade text surfaces.
 
-Those controls are a goal for later work, not a requirement for the initial `cosmic-text` migration.
+Those controls are a goal for later work, not a requirement for the first stages of this refactor.
 
-The immediate refactor should establish a text engine and renderer path that makes those later capabilities feasible instead of painting SUI into another dead end.
+The immediate refactor should establish a persistent text model and renderer path that makes those later capabilities feasible instead of painting SUI into another dead end.
 
 ## Design Rule
 
-When tradeoffs appear during this migration, prefer choices that improve the foundation for international text and creative-tool text workflows, even if they require breaking changes to the current API.
+When tradeoffs appear during this refactor, prefer choices that improve the foundation for international text and creative-tool text workflows, even if they require breaking changes to the current API.
 
 The text subsystem must serve both everyday UI text and demanding editor-style applications.
