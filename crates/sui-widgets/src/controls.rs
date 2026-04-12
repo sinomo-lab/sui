@@ -9,7 +9,7 @@ use sui_runtime::{
     window_render_options,
 };
 use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
-use sui_text::{TextLayout, TextMeasurement, TextStyle};
+use sui_text::{PersistentTextLayout, TextMeasurement, TextStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconGlyph {
@@ -500,7 +500,7 @@ pub struct Button {
     hovered: bool,
     pressed: bool,
     label_measurement: Option<TextMeasurement>,
-    label_layout: Option<TextLayout>,
+    label_layout: Option<PersistentTextLayout>,
     on_press: Option<Box<dyn FnMut()>>,
 }
 
@@ -664,7 +664,8 @@ impl Widget for Button {
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
         let label_layout = ctx
-            .shape_text(
+            .shape_text_persistent(
+                self.label_layout.as_ref().map(|layout| layout.handle()),
                 self.label.clone(),
                 Size::new(f32::INFINITY, text_style.line_height.max(1.0)),
                 text_style.clone(),
@@ -724,7 +725,7 @@ impl Widget for Button {
         if let Some(layout) = &self.label_layout {
             let layout_bounds = layout.measurement().bounds;
             ctx.push_clip_rect(label_rect);
-            ctx.draw_text_layout(
+            ctx.draw_persistent_text_layout(
                 Point::new(
                     label_rect.x() - layout_bounds.x(),
                     label_rect.y() - layout_bounds.y(),
@@ -2525,8 +2526,8 @@ pub struct TextArea {
     min_width: Option<f32>,
     min_height: Option<f32>,
     hovered: bool,
-    display_layout: Option<TextLayout>,
-    input_layout: Option<TextLayout>,
+    display_layout: Option<PersistentTextLayout>,
+    input_layout: Option<PersistentTextLayout>,
     on_change: Option<Box<dyn FnMut(String)>>,
 }
 
@@ -2747,14 +2748,16 @@ impl Widget for TextArea {
         };
 
         let display_layout = ctx
-            .shape_text(
+            .shape_text_persistent(
+                self.display_layout.as_ref().map(|layout| layout.handle()),
                 display_text,
                 Size::new(content_width.max(1.0), f32::INFINITY),
                 display_style,
             )
             .ok();
         let input_layout = ctx
-            .shape_text(
+            .shape_text_persistent(
+                self.input_layout.as_ref().map(|layout| layout.handle()),
                 input_text,
                 Size::new(content_width.max(1.0), f32::INFINITY),
                 text_style.clone(),
@@ -2808,7 +2811,7 @@ impl Widget for TextArea {
 
         if let Some(layout) = &self.display_layout {
             ctx.push_clip_rect(content);
-            ctx.draw_text_layout(content.origin, layout);
+            ctx.draw_persistent_text_layout(content.origin, layout);
             ctx.pop_clip();
         }
 
@@ -4228,11 +4231,13 @@ mod tests {
             .iter()
             .find_map(|command| match command {
                 SceneCommand::DrawText(text) => Some(text.clone()),
-                SceneCommand::DrawShapedText(text) => Some(sui_text::TextRun {
-                    rect: text.layout.measurement().bounds.translate(text.origin.to_vector()),
-                    text: text.layout.text().to_string(),
-                    style: text.layout.style().clone(),
-                }),
+                SceneCommand::DrawShapedText(text) => text
+                    .resolve(output.frame.text_layout_registry.as_ref())
+                    .map(|layout| sui_text::TextRun {
+                        rect: layout.measurement().bounds.translate(text.origin.to_vector()),
+                        text: layout.text().to_string(),
+                        style: layout.style().clone(),
+                    }),
                 _ => None,
             })
             .expect("text draw command present")
@@ -4246,13 +4251,14 @@ mod tests {
             .iter()
             .find_map(|command| match command {
                 SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
-                SceneCommand::DrawShapedText(run) if run.layout.text() == text => {
-                    Some(sui_text::TextRun {
-                        rect: run.layout.measurement().bounds.translate(run.origin.to_vector()),
-                        text: run.layout.text().to_string(),
-                        style: run.layout.style().clone(),
-                    })
-                }
+                SceneCommand::DrawShapedText(run) => run
+                    .resolve(output.frame.text_layout_registry.as_ref())
+                    .filter(|layout| layout.text() == text)
+                    .map(|layout| sui_text::TextRun {
+                        rect: layout.measurement().bounds.translate(run.origin.to_vector()),
+                        text: layout.text().to_string(),
+                        style: layout.style().clone(),
+                    }),
                 _ => None,
             })
             .expect("text draw command present")

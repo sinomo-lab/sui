@@ -10,9 +10,10 @@ mod system;
 pub use cache::TextLayoutCacheSnapshot;
 pub use font::{FontRegistry, RegisteredFont, ResolvedTextFace};
 pub use model::{
-    ShapedGlyph, ShapedText, TextAffinity, TextAlign, TextCaret, TextCluster, TextCursor,
-    TextDirection, TextDocument, TextFlowDirection, TextGlyphInstance, TextLayout,
-    TextLayoutId, TextLayoutMetadata, TextLayoutRequest, TextLayoutRun, TextLayoutVersion,
+    PersistentTextLayout, ShapedGlyph, ShapedText, TextAffinity, TextAlign, TextCaret,
+    TextCluster, TextCursor, TextDirection, TextDocument, TextFlowDirection,
+    TextGlyphInstance, TextLayout, TextLayoutHandle, TextLayoutId, TextLayoutMetadata,
+    TextLayoutRegistry, TextLayoutRequest, TextLayoutRun, TextLayoutVersion,
     TextLayoutView, TextLine, TextLineWindow, TextMeasurement, TextParagraph,
     TextParagraphLayout, TextParagraphStyle, TextRun, TextRunView, TextSelection,
     TextSelectionGeometry, TextSpan, TextSpanId, TextStyle, TextWrap, TextWritingMode,

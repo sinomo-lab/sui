@@ -1528,6 +1528,7 @@ impl WindowState {
                 scene,
                 font_registry: Arc::clone(&font_registry),
                 image_registry: Arc::clone(&image_registry),
+                text_layout_registry: text_system.text_layout_registry(),
             });
             if diagnostics_enabled && repainted {
                 diagnostics.push(FramePhase::Paint, started.elapsed());
@@ -2743,7 +2744,7 @@ mod tests {
     };
     use sui_layout::Constraints;
     use sui_scene::{RegisteredImage, SceneCommand, SceneLayerUpdateKind};
-    use sui_text::{RegisteredFont, TextLayout, TextStyle};
+    use sui_text::{PersistentTextLayout, RegisteredFont, TextStyle};
 
     #[derive(Default)]
     struct Counters {
@@ -3251,14 +3252,14 @@ mod tests {
     }
 
     struct TextImeLeaf {
-        layout: RefCell<Option<TextLayout>>,
+        layout: RefCell<Option<PersistentTextLayout>>,
     }
 
     impl Widget for TextImeLeaf {
         fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(160.0, 32.0));
             let layout = ctx
-                .shape_text("compose", size, TextStyle::new(Color::WHITE))
+                .shape_text_persistent(None, "compose", size, TextStyle::new(Color::WHITE))
                 .unwrap();
             *self.layout.borrow_mut() = Some(layout);
             size
@@ -3270,7 +3271,7 @@ mod tests {
                 .as_ref()
                 .expect("measure pass should shape text first");
             let origin = ctx.bounds().origin;
-            ctx.draw_text_layout(origin, layout);
+            ctx.draw_persistent_text_layout(origin, layout);
             ctx.set_ime_composition_rect(layout.caret_rect(3).translate(origin.to_vector()));
         }
 

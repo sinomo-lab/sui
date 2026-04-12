@@ -17,7 +17,8 @@ use sui_scene::{
     SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle,
 };
 use sui_text::{
-    FontRegistry, ShapedText, TextLayout, TextMeasurement, TextRun, TextStyle, TextSystem,
+    FontRegistry, PersistentTextLayout, ShapedText, TextLayout, TextLayoutHandle,
+    TextMeasurement, TextRun, TextStyle, TextSystem,
 };
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
@@ -1026,6 +1027,22 @@ impl MeasureCtx {
             .shape_text(text, box_size, style, self.font_registry.as_ref())
     }
 
+    pub fn shape_text_persistent(
+        &self,
+        handle: Option<TextLayoutHandle>,
+        text: impl Into<String>,
+        box_size: Size,
+        style: TextStyle,
+    ) -> sui_core::Result<PersistentTextLayout> {
+        self.text_system.shape_text_persistent(
+            handle,
+            text,
+            box_size,
+            style,
+            self.font_registry.as_ref(),
+        )
+    }
+
     pub fn image_size(&self, image: sui_core::ImageHandle) -> Option<Size> {
         self.image_registry
             .get(image)
@@ -1244,10 +1261,13 @@ impl PaintCtx {
     }
 
     pub fn draw_text_layout(&mut self, origin: Point, layout: &TextLayout) {
-        self.scene.push(SceneCommand::DrawShapedText(ShapedText {
-            origin,
-            layout: layout.clone(),
-        }));
+        let persistent = self.text_system.adopt_layout(layout.clone());
+        self.draw_persistent_text_layout(origin, &persistent);
+    }
+
+    pub fn draw_persistent_text_layout(&mut self, origin: Point, layout: &PersistentTextLayout) {
+        self.scene
+            .push(SceneCommand::DrawShapedText(ShapedText::new(origin, layout)));
     }
 
     pub fn label(&mut self, rect: Rect, text: impl Into<String>, color: Color) {

@@ -2673,10 +2673,9 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
         SceneCommand::DrawShapedText(text) => {
             6u8.hash(hasher);
             hash_point(hasher, text.origin);
-            text.layout.text().hash(hasher);
-            hash_text_style(text.layout.style(), hasher);
-            text.layout.box_size().width.to_bits().hash(hasher);
-            text.layout.box_size().height.to_bits().hash(hasher);
+            text.layout_handle.get().hash(hasher);
+            text.layout_version.get().hash(hasher);
+            hash_rect(hasher, text.bounds);
         }
         SceneCommand::DrawImage { rect, source } => {
             7u8.hash(hasher);

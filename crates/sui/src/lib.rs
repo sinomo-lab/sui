@@ -57,9 +57,10 @@ pub use sui_scene::{
     SceneFrame, StrokeStyle,
 };
 pub use sui_text::{
-    FontRegistry, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText, TextAffinity,
-    TextAlign, TextCluster, TextCursor, TextDirection, TextDocument, TextFlowDirection,
-    TextGlyphInstance, TextLayout, TextLayoutId, TextLayoutMetadata, TextLayoutRequest,
+    FontRegistry, PersistentTextLayout, RegisteredFont, ResolvedTextFace, ShapedGlyph,
+    ShapedText, TextAffinity, TextAlign, TextCluster, TextCursor, TextDirection,
+    TextDocument, TextFlowDirection, TextGlyphInstance, TextLayout, TextLayoutHandle,
+    TextLayoutId, TextLayoutMetadata, TextLayoutRegistry, TextLayoutRequest,
     TextLayoutRun, TextLayoutVersion, TextLayoutView, TextLine, TextLineWindow,
     TextMeasurement, TextParagraph, TextParagraphLayout, TextParagraphStyle, TextRun,
     TextRunView, TextSelection, TextSelectionGeometry, TextSpan, TextSpanId, TextStyle,

@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::{collections::HashMap, ops::Deref, ops::Range, sync::Arc};
 
 use sui_core::{Color, FontHandle, Point, Rect, Size, Vector};
 
@@ -241,6 +241,23 @@ impl TextLayoutVersion {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextLayoutHandle(u64);
+
+impl TextLayoutHandle {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    pub const fn from_layout_id(id: TextLayoutId) -> Self {
+        Self(id.get())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextLayoutMetadata {
     pub id: TextLayoutId,
     pub version: TextLayoutVersion,
@@ -472,6 +489,83 @@ pub struct TextLayout {
     pub(crate) data: Arc<TextLayoutData>,
     pub(crate) document: Arc<TextDocument>,
     pub(crate) primary_style: TextStyle,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PersistentTextLayout {
+    handle: TextLayoutHandle,
+    layout: TextLayout,
+}
+
+impl PersistentTextLayout {
+    pub fn new(handle: TextLayoutHandle, layout: TextLayout) -> Self {
+        Self { handle, layout }
+    }
+
+    pub fn handle(&self) -> TextLayoutHandle {
+        self.handle
+    }
+
+    pub fn version(&self) -> TextLayoutVersion {
+        self.layout.version()
+    }
+
+    pub fn metadata(&self) -> TextLayoutMetadata {
+        self.layout.metadata()
+    }
+
+    pub fn layout(&self) -> &TextLayout {
+        &self.layout
+    }
+
+    pub fn into_parts(self) -> (TextLayoutHandle, TextLayout) {
+        (self.handle, self.layout)
+    }
+}
+
+impl Deref for PersistentTextLayout {
+    type Target = TextLayout;
+
+    fn deref(&self) -> &Self::Target {
+        &self.layout
+    }
+}
+
+impl AsRef<TextLayout> for PersistentTextLayout {
+    fn as_ref(&self) -> &TextLayout {
+        &self.layout
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TextLayoutRegistry {
+    layouts: HashMap<TextLayoutHandle, TextLayout>,
+}
+
+impl TextLayoutRegistry {
+    pub fn get(&self, handle: TextLayoutHandle) -> Option<&TextLayout> {
+        self.layouts.get(&handle)
+    }
+
+    pub fn contains(&self, handle: TextLayoutHandle) -> bool {
+        self.layouts.contains_key(&handle)
+    }
+
+    pub fn len(&self) -> usize {
+        self.layouts.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.layouts.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (TextLayoutHandle, &TextLayout)> {
+        self.layouts.iter().map(|(handle, layout)| (*handle, layout))
+    }
+
+    pub(crate) fn insert(&mut self, handle: TextLayoutHandle, layout: TextLayout) {
+        self.layouts.insert(handle, layout);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -799,5 +893,36 @@ fn collapse_range(ranges: impl Iterator<Item = Range<usize>>) -> Option<Range<us
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShapedText {
     pub origin: Point,
-    pub layout: TextLayout,
+    pub layout_handle: TextLayoutHandle,
+    pub layout_version: TextLayoutVersion,
+    pub bounds: Rect,
+}
+
+impl ShapedText {
+    pub fn new(origin: Point, layout: &PersistentTextLayout) -> Self {
+        Self {
+            origin,
+            layout_handle: layout.handle(),
+            layout_version: layout.version(),
+            bounds: layout.measurement().bounds,
+        }
+    }
+
+    pub fn from_layout(origin: Point, layout_handle: TextLayoutHandle, layout: &TextLayout) -> Self {
+        Self {
+            origin,
+            layout_handle,
+            layout_version: layout.version(),
+            bounds: layout.measurement().bounds,
+        }
+    }
+
+    pub fn translated_bounds(&self) -> Rect {
+        self.bounds.translate(self.origin.to_vector())
+    }
+
+    pub fn resolve<'a>(&self, registry: &'a TextLayoutRegistry) -> Option<&'a TextLayout> {
+        let layout = registry.get(self.layout_handle)?;
+        (layout.version() == self.layout_version).then_some(layout)
+    }
 }

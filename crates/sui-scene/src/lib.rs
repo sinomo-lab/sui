@@ -6,7 +6,7 @@ use sui_core::{
     Color, DirtyRegion, Error, ImageHandle, Path, PathElement, Rect, Result, Size, Transform,
     Vector, WidgetId, WindowId,
 };
-use sui_text::{FontRegistry, ShapedText, TextRun};
+use sui_text::{FontRegistry, ShapedText, TextLayoutRegistry, TextRun};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Brush {
@@ -486,14 +486,7 @@ impl SceneBoundsState {
                 clipped,
             ),
             SceneCommand::DrawText(text) => self.apply_rect(text.rect, clipped),
-            SceneCommand::DrawShapedText(text) => {
-                let bounds = text
-                    .layout
-                    .measurement()
-                    .bounds
-                    .translate(text.origin.to_vector());
-                self.apply_rect(bounds, clipped)
-            }
+            SceneCommand::DrawShapedText(text) => self.apply_rect(text.translated_bounds(), clipped),
             SceneCommand::DrawImage { rect, .. } => self.apply_rect(*rect, clipped),
             SceneCommand::PushClip { rect } => {
                 let clip = self.transform.transform_rect_bbox(*rect);
@@ -738,6 +731,7 @@ pub struct SceneFrame {
     pub scene: Scene,
     pub font_registry: Arc<FontRegistry>,
     pub image_registry: Arc<ImageRegistry>,
+    pub text_layout_registry: Arc<TextLayoutRegistry>,
 }
 
 impl SceneFrame {
@@ -752,6 +746,7 @@ impl SceneFrame {
             scene: Scene::new(),
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         }
     }
 }
@@ -767,7 +762,9 @@ mod tests {
     use sui_core::{
         Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, WidgetId, WindowId,
     };
-    use sui_text::{FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem};
+    use sui_text::{
+        FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem,
+    };
 
     #[test]
     fn scene_command_variants_store_extended_primitives() {
@@ -776,16 +773,20 @@ mod tests {
             text: "hello".to_string(),
             style: TextStyle::new(Color::WHITE),
         });
+        let shaped_layout = TextSystem::new()
+            .shape_text_persistent(
+                None,
+                "hello",
+                sui_core::Size::new(120.0, 24.0),
+                TextStyle::new(Color::WHITE),
+                &FontRegistry::new(),
+            )
+            .unwrap();
         let shaped_text = SceneCommand::DrawShapedText(ShapedText {
             origin: Point::new(4.0, 8.0),
-            layout: TextSystem::new()
-                .shape_text(
-                    "hello",
-                    sui_core::Size::new(120.0, 24.0),
-                    TextStyle::new(Color::WHITE),
-                    &FontRegistry::new(),
-                )
-                .unwrap(),
+            layout_handle: shaped_layout.handle(),
+            layout_version: shaped_layout.version(),
+            bounds: shaped_layout.measurement().bounds,
         });
         let image = SceneCommand::DrawImage {
             rect: Rect::new(0.0, 0.0, 32.0, 32.0),

@@ -1401,6 +1401,7 @@ impl SceneDrawOpBuilder<'_> {
                     &mut self.scratch_vertices,
                     state,
                     text,
+                    self.frame.text_layout_registry.as_ref(),
                     viewport,
                     self.frame.scale_factor,
                 )?;
@@ -1879,6 +1880,7 @@ impl TextEngine {
         atlas_vertices: &mut Vec<Vertex>,
         state: &SceneRasterState,
         text: &ShapedText,
+        text_layout_registry: &sui_text::TextLayoutRegistry,
         viewport: Size,
         raster_scale_factor: f32,
     ) -> Result<()> {
@@ -1886,11 +1888,19 @@ impl TextEngine {
             return Ok(());
         }
 
+        let layout = text.resolve(text_layout_registry).ok_or_else(|| {
+            Error::new(format!(
+                "text layout handle {} version {} is not available in the frame registry",
+                text.layout_handle.get(),
+                text.layout_version.get(),
+            ))
+        })?;
+
         self.append_text_layout(
             atlas_vertices,
             state,
             text.origin,
-            &text.layout,
+            layout,
             viewport,
             raster_scale_factor,
         )

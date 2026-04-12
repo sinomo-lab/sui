@@ -2579,7 +2579,8 @@ mod tests {
         SceneLayerUpdateKind, StrokeStyle,
     };
     use sui_text::{
-        FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, TextRun, TextStyle, TextSystem,
+        FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, TextLayoutRegistry, TextRun,
+        TextStyle, TextSystem,
     };
 
     fn load_test_font() -> RegisteredFont {
@@ -2834,6 +2835,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         }
     }
 
@@ -2872,6 +2874,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             },
             &mut text_engine,
         )
@@ -2920,6 +2923,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             },
             &mut text_engine,
         )
@@ -2966,6 +2970,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             },
             &mut text_engine,
         )
@@ -3231,6 +3236,7 @@ mod tests {
             },
             font_registry: Arc::new(fonts),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -3288,6 +3294,7 @@ mod tests {
             },
             font_registry: Arc::new(fonts),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -3346,6 +3353,7 @@ mod tests {
             },
             font_registry: Arc::new(fonts),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -3383,6 +3391,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             },
             &mut text_engine,
             &mut compositor,
@@ -3651,8 +3660,10 @@ mod tests {
 
     #[test]
     fn build_vertices_supports_pre_shaped_text() {
-        let layout = TextSystem::new()
-            .shape_text(
+        let text_system = TextSystem::new();
+        let layout = text_system
+            .shape_text_persistent(
+                None,
                 "scene",
                 Size::new(80.0, 24.0),
                 TextStyle::new(Color::WHITE),
@@ -3661,10 +3672,10 @@ mod tests {
             .unwrap();
 
         let mut scene = Scene::new();
-        scene.push(SceneCommand::DrawShapedText(ShapedText {
-            origin: Point::new(4.0, 6.0),
-            layout,
-        }));
+        scene.push(SceneCommand::DrawShapedText(ShapedText::new(
+            Point::new(4.0, 6.0),
+            &layout,
+        )));
 
         let mut text_engine = TextEngine::new().unwrap();
         let vertices = build_vertices(
@@ -3678,6 +3689,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: text_system.text_layout_registry(),
             },
             &mut text_engine,
         )
@@ -3705,6 +3717,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -3743,6 +3756,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -3776,6 +3790,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut scaled_scene = Scene::new();
@@ -3799,6 +3814,7 @@ mod tests {
             scene: scaled_scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -3848,6 +3864,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -3911,6 +3928,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -3956,6 +3974,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4031,6 +4050,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4087,6 +4107,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4184,6 +4205,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4263,6 +4285,7 @@ mod tests {
             scene: build_scene(Rect::new(0.0, 0.0, 160.0, 96.0)),
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4386,6 +4409,7 @@ mod tests {
             scene: build_scene(Rect::new(0.0, 0.0, 220.0, 180.0)),
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4444,6 +4468,7 @@ mod tests {
             scene: first_scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4525,6 +4550,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4614,6 +4640,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4695,6 +4722,7 @@ mod tests {
             scene: build_scene(0.0),
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4808,6 +4836,7 @@ mod tests {
             scene: build_scene(Color::rgba(0.8, 0.2, 0.2, 1.0)),
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -4901,6 +4930,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -5007,6 +5037,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -5113,6 +5144,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -5193,6 +5225,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -5294,6 +5327,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -5449,6 +5483,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -5587,6 +5622,7 @@ mod tests {
             scene: build_scene(Color::rgba(1.0, 0.0, 0.0, 1.0)),
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -5654,6 +5690,7 @@ mod tests {
             scene: first_scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut text_engine = TextEngine::new().unwrap();
@@ -5729,6 +5766,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(fonts.clone()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -5818,6 +5856,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(fonts.clone()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -5965,6 +6004,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(fonts.clone()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -6031,6 +6071,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -6107,6 +6148,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -6207,6 +6249,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -6292,6 +6335,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -6429,6 +6473,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -6595,6 +6640,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -6876,6 +6922,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::clone(&images),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -7045,6 +7092,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::clone(&images),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -7182,6 +7230,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::clone(&images),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -7328,6 +7377,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::clone(&images),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -7559,6 +7609,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::clone(&images),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -7789,6 +7840,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::clone(&images),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -7893,6 +7945,7 @@ mod tests {
             },
             font_registry: Arc::new(fonts.clone()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut renderer = WgpuRenderer::default();
@@ -7940,6 +7993,7 @@ mod tests {
             },
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut renderer = WgpuRenderer::default();
@@ -7986,6 +8040,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -8096,6 +8151,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -8169,6 +8225,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -8237,6 +8294,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(fonts.clone()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             }
         };
 
@@ -8280,6 +8338,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(fonts),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             },
             &mut text_engine,
         )
@@ -8312,6 +8371,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             },
             &mut text_engine,
         ) {
@@ -8350,6 +8410,7 @@ mod tests {
             scene,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
         };
 
         let mut renderer = WgpuRenderer::new();
@@ -8416,6 +8477,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(images),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             },
             &mut text_engine,
             &mut compositor,
@@ -8449,6 +8511,7 @@ mod tests {
                 scene,
                 font_registry: Arc::new(FontRegistry::new()),
                 image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             },
             &mut text_engine,
             &mut compositor,

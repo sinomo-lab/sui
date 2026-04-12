@@ -1,7 +1,8 @@
 use std::{
+    sync::atomic::{AtomicU64, Ordering},
     cell::RefCell,
     collections::HashMap,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::Instant,
 };
 
@@ -12,7 +13,10 @@ use crate::{
     flatten::FlattenedTextDocument,
     font::{FaceCacheKey, FontContext, ResolvedSpanInput, TextSystemState},
     layout::layout_document,
-    model::{TextDocument, TextLayout, TextLayoutRequest, TextMeasurement, TextRun, TextStyle},
+    model::{
+        PersistentTextLayout, TextDocument, TextLayout, TextLayoutHandle, TextLayoutRegistry,
+        TextLayoutRequest, TextMeasurement, TextRun, TextStyle,
+    },
     FontRegistry,
 };
 
@@ -86,10 +90,23 @@ fn record_text_timing(
     });
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TextSystem {
     state: OnceLock<std::result::Result<TextSystemState, String>>,
     layout_cache: Mutex<TextLayoutCache>,
+    persistent_layouts: Mutex<Arc<TextLayoutRegistry>>,
+    next_layout_handle: AtomicU64,
+}
+
+impl Default for TextSystem {
+    fn default() -> Self {
+        Self {
+            state: OnceLock::new(),
+            layout_cache: Mutex::new(TextLayoutCache::default()),
+            persistent_layouts: Mutex::new(Arc::new(TextLayoutRegistry::default())),
+            next_layout_handle: AtomicU64::new(1),
+        }
+    }
 }
 
 impl TextSystem {
@@ -138,6 +155,28 @@ impl TextSystem {
         self.shape_text_internal(request, font_registry)
     }
 
+    pub fn shape_text_persistent(
+        &self,
+        handle: Option<TextLayoutHandle>,
+        text: impl Into<String>,
+        box_size: Size,
+        style: TextStyle,
+        font_registry: &FontRegistry,
+    ) -> Result<PersistentTextLayout> {
+        let layout = self.shape_text(text, box_size, style, font_registry)?;
+        Ok(self.pin_layout(handle, layout))
+    }
+
+    pub fn layout_document_persistent(
+        &self,
+        handle: Option<TextLayoutHandle>,
+        request: TextLayoutRequest,
+        font_registry: &FontRegistry,
+    ) -> Result<PersistentTextLayout> {
+        let layout = self.layout_document(request, font_registry)?;
+        Ok(self.pin_layout(handle, layout))
+    }
+
     pub fn shape_text_run(
         &self,
         run: &TextRun,
@@ -149,6 +188,28 @@ impl TextSystem {
             run.style.clone(),
             font_registry,
         )
+    }
+
+    pub fn shape_text_run_persistent(
+        &self,
+        handle: Option<TextLayoutHandle>,
+        run: &TextRun,
+        font_registry: &FontRegistry,
+    ) -> Result<PersistentTextLayout> {
+        let layout = self.shape_text_run(run, font_registry)?;
+        Ok(self.pin_layout(handle, layout))
+    }
+
+    pub fn adopt_layout(&self, layout: TextLayout) -> PersistentTextLayout {
+        let handle = TextLayoutHandle::from_layout_id(layout.id());
+        self.store_persistent_layout(handle, layout)
+    }
+
+    pub fn text_layout_registry(&self) -> Arc<TextLayoutRegistry> {
+        match self.persistent_layouts.lock() {
+            Ok(registry) => Arc::clone(&registry),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
     }
 
     pub fn layout_cache_snapshot(&self) -> TextLayoutCacheSnapshot {
@@ -219,6 +280,34 @@ impl TextSystem {
             false,
         );
         Ok(layout.with_document(normalized_document))
+    }
+
+    fn pin_layout(
+        &self,
+        handle: Option<TextLayoutHandle>,
+        layout: TextLayout,
+    ) -> PersistentTextLayout {
+        let handle = handle.unwrap_or_else(|| self.alloc_layout_handle());
+        self.store_persistent_layout(handle, layout)
+    }
+
+    fn alloc_layout_handle(&self) -> TextLayoutHandle {
+        TextLayoutHandle::new(self.next_layout_handle.fetch_add(1, Ordering::Relaxed).max(1))
+    }
+
+    fn store_persistent_layout(
+        &self,
+        handle: TextLayoutHandle,
+        layout: TextLayout,
+    ) -> PersistentTextLayout {
+        match self.persistent_layouts.lock() {
+            Ok(mut registry) => Arc::make_mut(&mut registry).insert(handle, layout.clone()),
+            Err(poisoned) => {
+                let mut registry = poisoned.into_inner();
+                Arc::make_mut(&mut registry).insert(handle, layout.clone());
+            }
+        }
+        PersistentTextLayout::new(handle, layout)
     }
 
     fn resolve_span_inputs(

@@ -568,3 +568,60 @@ fn line_window_exposes_visible_layout_slice() {
     assert_eq!(window.glyphs().len(), layout.lines()[0].glyph_range.len());
     assert_eq!(window.glyph_instances().count(), window.glyphs().len());
 }
+
+#[test]
+fn persistent_layout_handle_survives_relayout() {
+    let system = TextSystem::new();
+    let first = system
+        .shape_text_persistent(
+            None,
+            "alpha",
+            Size::new(120.0, 24.0),
+            TextStyle::new(Color::WHITE),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    let second = system
+        .shape_text_persistent(
+            Some(first.handle()),
+            "beta beta",
+            Size::new(160.0, 24.0),
+            TextStyle::new(Color::WHITE),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    assert_eq!(first.handle(), second.handle());
+    assert_ne!(first.version(), second.version());
+
+    let registry = system.text_layout_registry();
+    let resolved = registry
+        .get(second.handle())
+        .expect("persistent layout handle should resolve from the registry snapshot");
+    assert_eq!(resolved.text(), "beta beta");
+    assert_eq!(resolved.version(), second.version());
+}
+
+#[test]
+fn adopted_layouts_register_content_derived_handles() {
+    let system = TextSystem::new();
+    let layout = system
+        .shape_text(
+            "adopted",
+            Size::new(120.0, 24.0),
+            TextStyle::new(Color::WHITE),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    let persistent = system.adopt_layout(layout.clone());
+    assert_eq!(persistent.handle().get(), layout.id().get());
+
+    let registry = system.text_layout_registry();
+    let resolved = registry
+        .get(persistent.handle())
+        .expect("adopted layout should be inserted into the registry snapshot");
+    assert_eq!(resolved.text(), layout.text());
+    assert_eq!(resolved.version(), layout.version());
+}
