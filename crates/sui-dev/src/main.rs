@@ -6,8 +6,8 @@ use sui::{
     WidgetPodVisitor, WindowEvent, WindowTextRenderPolicy, prelude::*,
 };
 use sui_widget_book::{
-    LivePerformanceRoot, build_button_grid_benchmark, build_widget_book_gallery,
-    default_widget_book_state, register_widget_book_images,
+    LivePerformanceRoot, build_button_grid_benchmark, build_retained_text_benchmark,
+    build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
 };
 
 const WINDOW_TITLE: &str = "SUI Dev";
@@ -15,6 +15,7 @@ const WINDOW_DESCRIPTION: &str =
     "Floating development workspace for the widget book and focused performance demos.";
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
 const BUTTON_GRID_TAB_LABEL: &str = "64 buttons";
+const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
 const SETTINGS_TAB_LABEL: &str = "Settings";
 const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
 const FEATHER_WIDTH_NAME: &str = "Feather width";
@@ -579,7 +580,9 @@ fn build_render_settings_tab() -> impl Widget {
     RenderSettingsTab::new()
 }
 
-fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
+fn build_dev_workspace_with_widget_book_bounds(
+    widget_book_bounds: Rect,
+) -> (FloatingWorkspaceState, FloatingWorkspace) {
     let widget_book_state = default_widget_book_state();
     let workspace = FloatingWorkspaceState::new();
 
@@ -595,10 +598,22 @@ fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Ap
         build_button_grid_benchmark(),
     );
     views.push_view(
+        FloatingViewConfig::new(RETAINED_TEXT_TAB_LABEL, Rect::new(860.0, 420.0, 360.0, 260.0))
+            .min_size(Size::new(320.0, 260.0))
+            .visible(false),
+        build_retained_text_benchmark(),
+    );
+    views.push_view(
         FloatingViewConfig::new(SETTINGS_TAB_LABEL, Rect::new(420.0, 440.0, 420.0, 320.0))
             .min_size(Size::new(300.0, 240.0)),
         build_render_settings_tab(),
     );
+
+    (workspace, views)
+}
+
+fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
+    let (workspace, views) = build_dev_workspace_with_widget_book_bounds(widget_book_bounds);
 
     let root = SplitView::horizontal(ViewSidebar::new(workspace.clone()), views)
         .name("Development workspace split")
@@ -1208,6 +1223,25 @@ mod tests {
         assert!(
             p95_ms < FRAME_BUDGET_MS,
             "p95 resize frame time {p95_ms:.3} ms exceeds the 16.67 ms budget for stable 60 fps",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn dev_workspace_exposes_retained_text_benchmark_view() -> Result<()> {
+        let (workspace, _views) =
+            build_dev_workspace_with_widget_book_bounds(Rect::new(24.0, 24.0, 680.0, 760.0));
+
+        let retained_text_view = workspace
+            .snapshots()
+            .into_iter()
+            .find(|view| view.title == RETAINED_TEXT_TAB_LABEL)
+            .expect("expected retained text benchmark view to be registered in the sui-dev workspace");
+        assert_eq!(retained_text_view.min_size, Size::new(320.0, 260.0));
+        assert!(
+            !retained_text_view.visible,
+            "expected retained text benchmark view to be available from the sidebar without changing the default sui-dev layout",
         );
 
         Ok(())

@@ -209,6 +209,7 @@ This crate launches a desktop app with tabs for:
 
 - the widget book gallery
 - the 64-button benchmark surface
+- the retained text benchmark surface
 - renderer settings
 
 It is the main desktop host for manual runtime and renderer validation.

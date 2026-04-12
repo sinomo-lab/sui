@@ -29,9 +29,11 @@ use sui_runtime::{
     window_performance_text_caches, window_scene_statistics_detail_mode,
 };
 use sui_widget_book::{
-    BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, WidgetBookState,
-    build_button_grid_benchmark_application, build_widget_book_application,
-    build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
+    BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS,
+    RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE, WidgetBookState,
+    build_button_grid_benchmark_application, build_retained_text_benchmark_application,
+    build_widget_book_application, build_widget_book_gallery, default_widget_book_state,
+    register_widget_book_images,
 };
 use winit::{
     application::ApplicationHandler,
@@ -1527,11 +1529,14 @@ struct ScrollBenchmarkFrameSample {
     total_time_ms: f64,
     draw_count: usize,
     pass_count: usize,
+    visible_layer_count: usize,
     visible_tile_count: usize,
     reused_tile_count: usize,
     regenerated_tile_count: usize,
+    direct_packet_count: usize,
     uploaded_vertex_bytes: u64,
     text_vertex_bytes: u64,
+    text_glyph_instance_count: usize,
     tile_memory_bytes: u64,
     tile_generation_time_us: u64,
     composition_time_us: u64,
@@ -1616,11 +1621,14 @@ impl ScrollBenchmarkFrameSample {
             total_time_ms: snapshot.total_time_ms,
             draw_count: snapshot.renderer_submission.draw_count,
             pass_count: snapshot.renderer_submission.pass_count,
+            visible_layer_count: snapshot.renderer_submission.visible_layer_count,
             visible_tile_count: snapshot.renderer_submission.visible_tile_count,
             reused_tile_count: snapshot.renderer_submission.reused_tile_count,
             regenerated_tile_count: snapshot.renderer_submission.regenerated_tile_count,
+            direct_packet_count: snapshot.renderer_submission.direct_packet_count,
             uploaded_vertex_bytes: snapshot.renderer_submission.uploaded_vertex_bytes,
             text_vertex_bytes: snapshot.renderer_submission.text_vertex_bytes,
+            text_glyph_instance_count: snapshot.renderer_submission.text_glyph_instance_count,
             tile_memory_bytes: snapshot.renderer_submission.tile_memory_bytes,
             tile_generation_time_us: snapshot.renderer_submission.tile_generation_time_us,
             composition_time_us: snapshot.renderer_submission.composition_time_us,
@@ -3150,6 +3158,208 @@ fn run_widget_book_scroll_benchmark(
     Ok(())
 }
 
+fn run_retained_text_scroll_benchmark() -> Result<()> {
+    const SCROLL_STEP_PX: f32 = -36.0;
+    const WARMUP_FRAMES: usize = 24;
+    const MEASURED_FRAMES: usize = 160;
+
+    let harness =
+        DesktopHarness::launch_with_vsync(|| build_retained_text_benchmark_application().build(), false)?;
+    let window_id = harness.main_window_id();
+
+    set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+    harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+    let initial_snapshot = harness.snapshot(window_id)?;
+    let scroll_view = find_node(
+        &initial_snapshot,
+        SemanticsRole::ScrollView,
+        RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
+    );
+    let scroll_point = node_center(scroll_view.bounds);
+    let mut previous_frame_index = initial_snapshot
+        .performance
+        .as_ref()
+        .expect("retained text benchmark should publish an initial performance snapshot")
+        .frame_index;
+
+    move_cursor(&harness, window_id, scroll_point)?;
+
+    let mut frame_samples = Vec::with_capacity(MEASURED_FRAMES);
+    let benchmark_start = Instant::now();
+
+    for frame in 0..(WARMUP_FRAMES + MEASURED_FRAMES) {
+        harness.dispatch(
+            window_id,
+            HostInputEvent::MouseWheel {
+                delta: ScrollKind::Pixels(Vector::new(0.0, SCROLL_STEP_PX)),
+            },
+        )?;
+
+        let snapshot = harness.snapshot(window_id)?;
+        let performance = snapshot
+            .performance
+            .as_ref()
+            .expect("retained text benchmark should publish performance snapshots");
+
+        if performance.frame_index == previous_frame_index {
+            return Err(Error::new(format!(
+                "retained text benchmark did not render a new frame for scroll step {}",
+                frame + 1,
+            )));
+        }
+
+        previous_frame_index = performance.frame_index;
+
+        if frame >= WARMUP_FRAMES {
+            frame_samples.push(ScrollBenchmarkFrameSample::from_snapshot(performance));
+        }
+    }
+
+    let benchmark_elapsed_ms = benchmark_start.elapsed().as_secs_f64() * 1000.0;
+
+    assert_eq!(initial_snapshot.title, RETAINED_TEXT_BENCHMARK_TITLE);
+    assert_eq!(frame_samples.len(), MEASURED_FRAMES);
+
+    let valid_count = frame_samples.len();
+    let frame_times_ms: Vec<_> = frame_samples
+        .iter()
+        .map(|sample| sample.total_time_ms)
+        .collect();
+    let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+    let avg_ms = total_frame_time_ms / valid_count as f64;
+    let max_ms = frame_times_ms
+        .iter()
+        .copied()
+        .max_by(|a, b| a.total_cmp(b))
+        .unwrap_or(0.0);
+    let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+    let mut sorted_times = frame_times_ms.clone();
+    sorted_times.sort_by(|a, b| a.total_cmp(b));
+    let p95_ms = sorted_times[p95_index];
+    let avg_visible_layers = frame_samples
+        .iter()
+        .map(|sample| sample.visible_layer_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_visible_tiles = frame_samples
+        .iter()
+        .map(|sample| sample.visible_tile_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_reused_tiles = frame_samples
+        .iter()
+        .map(|sample| sample.reused_tile_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_regenerated_tiles = frame_samples
+        .iter()
+        .map(|sample| sample.regenerated_tile_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_direct_packets = frame_samples
+        .iter()
+        .map(|sample| sample.direct_packet_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_uploaded_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.uploaded_vertex_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.text_vertex_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_glyph_instances = frame_samples
+        .iter()
+        .map(|sample| sample.text_glyph_instance_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_tile_generation_ms = frame_samples
+        .iter()
+        .map(|sample| sample.tile_generation_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_retained_packet_build_ms = frame_samples
+        .iter()
+        .map(|sample| sample.retained_packet_build_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_miss_count = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_miss_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_upload_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_upload_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_surface_acquire_ms = frame_samples
+        .iter()
+        .map(|sample| sample.surface_acquire_time_us as f64 / 1000.0)
+        .sum::<f64>()
+        / valid_count as f64;
+    let max_uploaded_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.uploaded_vertex_bytes)
+        .max()
+        .unwrap_or(0);
+    let max_text_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.text_vertex_bytes)
+        .max()
+        .unwrap_or(0);
+    let avg_text_bytes_per_glyph = if avg_text_glyph_instances > 0.0 {
+        avg_text_vertex_bytes / avg_text_glyph_instances
+    } else {
+        0.0
+    };
+
+    println!("\n=== Retained Text Scroll Benchmark ===");
+    println!("warmup frames:    {WARMUP_FRAMES}");
+    println!("frames measured:  {valid_count}");
+    println!("scroll step:      {:.0} px/frame", SCROLL_STEP_PX.abs());
+    println!("wall-clock time:  {benchmark_elapsed_ms:.1} ms");
+    println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+    println!("max frame time:   {max_ms:.3} ms");
+    println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+    println!("avg layers:       {avg_visible_layers:.2}");
+    println!("avg packets:      {avg_direct_packets:.2}");
+    println!("avg visible tiles:{avg_visible_tiles:.2}");
+    println!("avg reused tiles: {avg_reused_tiles:.2}");
+    println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
+    println!("avg upload bytes: {:.0}", avg_uploaded_vertex_bytes);
+    println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
+    println!("avg glyphs:       {avg_text_glyph_instances:.2}");
+    println!("avg bytes/glyph:  {avg_text_bytes_per_glyph:.2}");
+    println!("max upload bytes: {max_uploaded_vertex_bytes}");
+    println!("max text bytes:   {max_text_vertex_bytes}");
+    println!("avg atlas misses: {avg_text_atlas_miss_count:.2}");
+    println!("avg atlas upload: {:.0}", avg_text_atlas_upload_bytes);
+    println!("avg tile gen:     {avg_tile_generation_ms:.3} ms");
+    println!("avg packet build: {avg_retained_packet_build_ms:.3} ms");
+    println!("avg surface acq:  {avg_surface_acquire_ms:.3} ms");
+    println!("======================================\n");
+
+    assert!(
+        avg_text_glyph_instances > 0.0,
+        "retained text benchmark should render glyph instances on every measured frame",
+    );
+    assert!(
+        avg_text_vertex_bytes > 0.0,
+        "retained text benchmark should upload text payloads while scrolling",
+    );
+    assert!(
+        max_uploaded_vertex_bytes > 0,
+        "retained text benchmark should upload geometry while scrolling",
+    );
+
+    Ok(())
+}
+
 fn run_button_grid_resize_benchmark() -> Result<()> {
     const FRAME_BUDGET_MS: f64 = 1000.0 / 60.0;
     const WARMUP_FRAMES: usize = 12;
@@ -3809,6 +4019,16 @@ fn desktop_button_grid_64_resize_fps_benchmark() -> Result<()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     run_button_grid_resize_benchmark()
+}
+
+#[test]
+#[ignore = "diagnostic benchmark for text-heavy retained scroll upload cost"]
+fn desktop_retained_text_scroll_upload_benchmark() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    run_retained_text_scroll_benchmark()
 }
 
 #[test]

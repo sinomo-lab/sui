@@ -47,6 +47,8 @@ cargo test -p sui-widget-book -- --nocapture
 
 `cargo run -p sui-dev` launches the desktop development host.
 
+The `sui-dev` host includes the widget book, focused benchmark views, and renderer settings in one floating workspace.
+
 `cargo test -p sui-widget-book -- --nocapture` writes visual artifacts under `target/ui-artifacts/sui-widget-book`.
 
 ## Mental Model

@@ -21,6 +21,7 @@ pub const WINDOW_TITLE: &str = "SUI Widget Book";
 pub const WINDOW_DESCRIPTION: &str =
     "Development gallery for common built-in widgets in sui-widgets";
 pub const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
+pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
 pub const BUTTON_GRID_ROWS: usize = 8;
 pub const BUTTON_GRID_COLUMNS: usize = 8;
 pub const NAME_INPUT_LABEL: &str = "Name";
@@ -50,6 +51,7 @@ pub const PROGRESS_NAME: &str = "Export progress";
 pub const SPINNER_NAME: &str = "Background work";
 pub const SUMMARY_NAME: &str = "Widget book summary";
 pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
+pub const RETAINED_TEXT_BENCHMARK_SCROLL_NAME: &str = "Retained text benchmark scroll";
 pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
 pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare light and dark themes";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
@@ -1368,6 +1370,169 @@ pub fn build_button_grid_benchmark_application() -> Application {
                 "Focused benchmark surface for measuring the initial frame cost of a 64-button grid.",
                 build_button_grid_benchmark(),
             )),
+    )
+}
+
+pub fn build_retained_text_benchmark() -> impl Widget {
+    const SECTION_COUNT: usize = 72;
+    const PARAGRAPHS_PER_SECTION: usize = 4;
+
+    let mut content = Stack::vertical()
+        .spacing(18.0)
+        .alignment(Alignment::Stretch)
+        .with_child(panel(
+        "Retained text wall",
+        "Focused benchmark surface for measuring text-heavy cached scroll regeneration without the live overlay or mixed control chrome.",
+        Stack::vertical()
+            .spacing(10.0)
+            .alignment(Alignment::Stretch)
+            .with_child(
+                SizedBox::new().width(900.0).with_child(
+                    Label::new(
+                        "The outer scroll view stays cached, the visible content stays dominated by wrapped labels, and the benchmark scrolls through enough sections to keep retained tiles regenerating with mostly atlas text payloads.",
+                    )
+                    .font_size(14.0)
+                    .line_height(20.0)
+                    .color(Color::rgba(0.38, 0.46, 0.56, 1.0)),
+                ),
+            )
+            .with_child(
+                SizedBox::new().width(900.0).with_child(
+                    Label::new(
+                        "Each section deliberately uses several long paragraphs so the per-frame upload delta is shaped by text submission rather than button chrome, icons, or image content.",
+                    )
+                    .font_size(14.0)
+                    .line_height(20.0)
+                    .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                ),
+            ),
+    ));
+
+    for section_index in 0..SECTION_COUNT {
+        let (title, subtitle) = retained_text_benchmark_section(section_index);
+        let mut body = Stack::vertical()
+            .spacing(8.0)
+            .alignment(Alignment::Stretch);
+
+        for paragraph_index in 0..PARAGRAPHS_PER_SECTION {
+            body = body.with_child(
+                SizedBox::new().width(900.0).with_child(
+                    Label::new(retained_text_benchmark_paragraph(
+                        section_index,
+                        paragraph_index,
+                    ))
+                    .font_size(14.0)
+                    .line_height(20.0)
+                    .color(Color::rgba(0.36, 0.44, 0.53, 1.0)),
+                ),
+            );
+        }
+
+        content = content.with_child(Background::new(
+            Color::rgba(0.985, 0.99, 1.0, 1.0),
+            Padding::all(
+                18.0,
+                Stack::vertical()
+                    .spacing(10.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Label::new(title)
+                            .font_size(20.0)
+                            .line_height(24.0)
+                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
+                    )
+                    .with_child(
+                        Label::new(subtitle)
+                            .font_size(14.0)
+                            .line_height(19.0)
+                            .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
+                    )
+                    .with_child(body),
+            ),
+        ));
+    }
+
+    ScrollView::vertical(Padding::all(
+        24.0,
+        SizedBox::new().width(948.0).with_child(content),
+    ))
+    .name(RETAINED_TEXT_BENCHMARK_SCROLL_NAME)
+}
+
+pub fn build_retained_text_benchmark_application() -> Application {
+    Application::new().window(
+        WindowBuilder::new()
+            .title(RETAINED_TEXT_BENCHMARK_TITLE)
+            .root(build_retained_text_benchmark()),
+    )
+}
+
+fn retained_text_benchmark_section(section_index: usize) -> (String, String) {
+    const THEMES: [(&str, &str); 6] = [
+        (
+            "Atlas residency",
+            "Repeated prose keeps the retained packet mix biased toward atlas glyph work.",
+        ),
+        (
+            "Viewport churn",
+            "Small scroll deltas expose new wrapped lines while leaving most state unchanged.",
+        ),
+        (
+            "Packet rebuilds",
+            "Retained packets should stay text-heavy instead of expanding glyph quads into generic geometry.",
+        ),
+        (
+            "Glyph density",
+            "Wide paragraphs keep each visible tile loaded with enough glyph instances to show byte deltas clearly.",
+        ),
+        (
+            "Cache locality",
+            "Stable content and repeated vocabulary encourage glyph atlas reuse after the initial warmup.",
+        ),
+        (
+            "Scroll pacing",
+            "No-vsync harness runs isolate renderer prep and upload cost from present back-pressure.",
+        ),
+    ];
+
+    let (topic, subtitle) = THEMES[section_index % THEMES.len()];
+    (
+        format!("Section {:02} · {topic}", section_index + 1),
+        subtitle.to_string(),
+    )
+}
+
+fn retained_text_benchmark_paragraph(section_index: usize, paragraph_index: usize) -> String {
+    const OPENERS: [&str; 6] = [
+        "Atlas uploads should now track per-glyph instance payloads instead of six transient vertices per shaped glyph.",
+        "This retained scroll surface keeps the scene composition simple so upload accounting is easier to read.",
+        "Visible paragraphs change a little on each wheel tick, which keeps regenerated tile strips centered on text.",
+        "Repeated headings and body copy help stabilize glyph atlas misses after the initial scroll warmup.",
+        "The benchmark is intentionally prose-heavy because text submission is the renderer path under inspection.",
+        "Scroll delta size is fixed so frame samples stay comparable across runs and git revisions.",
+    ];
+    const DETAILS: [&str; 6] = [
+        "Long wrapped lines are useful here because they raise glyph count without introducing extra widget complexity.",
+        "Retained caches should still avoid rebuilding unrelated packets while the scroll layer reveals fresh text bands.",
+        "Frame summaries can then compare upload bytes, glyph counts, and timing without guessing how much non-text work leaked into the sample.",
+        "The same prose appears in varied combinations so the atlas can reuse cached glyph shapes while the instance buffer still changes per frame.",
+        "This also mirrors the next line-window phase, where large text surfaces should only submit visible lines to the renderer.",
+        "Running the harness with vsync disabled keeps the benchmark focused on renderer cost rather than swapchain pacing.",
+    ];
+
+    let opener = OPENERS[(section_index + paragraph_index) % OPENERS.len()];
+    let detail = DETAILS[(section_index * 3 + paragraph_index) % DETAILS.len()];
+    let cadence = 12 + ((section_index + paragraph_index) % 9);
+    let packet_hint = 4 + ((section_index * 5 + paragraph_index) % 7);
+
+    format!(
+        "Section {:02}, paragraph {}. {} {} The visible cadence in this sample targets about {} wrapped lines per viewport slice, while adjacent retained packets typically contribute around {} neighboring text blocks before the next wheel event moves the window again.",
+        section_index + 1,
+        paragraph_index + 1,
+        opener,
+        detail,
+        cadence,
+        packet_hint,
     )
 }
 
