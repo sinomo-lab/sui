@@ -18,7 +18,8 @@ use sui_scene::{
 };
 use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, TextLayout, TextLayoutHandle,
-    TextMeasurement, TextRun, TextStyle, TextSystem,
+    ShapedTextWindow, TextDocument, TextLayoutRequest, TextMeasurement, TextRun, TextStyle,
+    TextSystem,
 };
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
@@ -1017,6 +1018,11 @@ impl MeasureCtx {
             .measure_text(text, style, self.font_registry.as_ref())
     }
 
+    pub fn measure_document(&self, document: TextDocument) -> sui_core::Result<TextMeasurement> {
+        self.text_system
+            .measure_document(document, self.font_registry.as_ref())
+    }
+
     pub fn shape_text(
         &self,
         text: impl Into<String>,
@@ -1041,6 +1047,20 @@ impl MeasureCtx {
             style,
             self.font_registry.as_ref(),
         )
+    }
+
+    pub fn layout_document(&self, request: TextLayoutRequest) -> sui_core::Result<TextLayout> {
+        self.text_system
+            .layout_document(request, self.font_registry.as_ref())
+    }
+
+    pub fn layout_document_persistent(
+        &self,
+        handle: Option<TextLayoutHandle>,
+        request: TextLayoutRequest,
+    ) -> sui_core::Result<PersistentTextLayout> {
+        self.text_system
+            .layout_document_persistent(handle, request, self.font_registry.as_ref())
     }
 
     pub fn image_size(&self, image: sui_core::ImageHandle) -> Option<Size> {
@@ -1268,6 +1288,17 @@ impl PaintCtx {
     pub fn draw_persistent_text_layout(&mut self, origin: Point, layout: &PersistentTextLayout) {
         self.scene
             .push(SceneCommand::DrawShapedText(ShapedText::new(origin, layout)));
+    }
+
+    pub fn draw_persistent_text_layout_window(
+        &mut self,
+        origin: Point,
+        layout: &PersistentTextLayout,
+        line_range: std::ops::Range<usize>,
+    ) {
+        self.scene.push(SceneCommand::DrawShapedTextWindow(
+            ShapedTextWindow::new(origin, layout, line_range),
+        ));
     }
 
     pub fn label(&mut self, rect: Rect, text: impl Into<String>, color: Color) {

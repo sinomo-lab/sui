@@ -1572,6 +1572,20 @@ impl SceneDrawOpBuilder<'_> {
                 diagnostics.text_command_count += 1;
                 Ok(())
             }
+            SceneCommand::DrawShapedTextWindow(text) => {
+                self.scratch_text_instances.clear();
+                self.text_engine.append_shaped_text_window(
+                    &mut self.scratch_text_instances,
+                    state,
+                    text,
+                    self.frame.text_layout_registry.as_ref(),
+                    viewport,
+                    self.frame.scale_factor,
+                )?;
+                push_text_draw_op(draw_ops, &self.scratch_text_instances, state);
+                diagnostics.text_command_count += 1;
+                Ok(())
+            }
             SceneCommand::DrawImage { rect, source } => {
                 self.scratch_vertices.clear();
                 let image = self.frame.image_registry.get(source.image).ok_or_else(|| {
@@ -1660,6 +1674,7 @@ impl SceneDrawOpBuilder<'_> {
             }
             SceneCommand::DrawText(_)
             | SceneCommand::DrawShapedText(_)
+            | SceneCommand::DrawShapedTextWindow(_)
             | SceneCommand::Label { .. } => {
                 diagnostics.text_command_time_ms += elapsed_ms;
             }
@@ -2059,6 +2074,38 @@ impl TextEngine {
         )
     }
 
+    pub(crate) fn append_shaped_text_window(
+        &mut self,
+        atlas_instances: &mut Vec<TextAtlasInstance>,
+        state: &SceneRasterState,
+        text: &sui_text::ShapedTextWindow,
+        text_layout_registry: &sui_text::TextLayoutRegistry,
+        viewport: Size,
+        raster_scale_factor: f32,
+    ) -> Result<()> {
+        if viewport.is_empty() {
+            return Ok(());
+        }
+
+        let layout = text.resolve(text_layout_registry).ok_or_else(|| {
+            Error::new(format!(
+                "text layout handle {} version {} is not available in the frame registry",
+                text.layout_handle.get(),
+                text.layout_version.get(),
+            ))
+        })?;
+
+        self.append_text_layout_window(
+            atlas_instances,
+            state,
+            text.origin,
+            layout,
+            text.line_range.clone(),
+            viewport,
+            raster_scale_factor,
+        )
+    }
+
     fn append_text_layout(
         &mut self,
         atlas_instances: &mut Vec<TextAtlasInstance>,
@@ -2077,11 +2124,68 @@ impl TextEngine {
             return Ok(());
         }
 
+        self.append_layout_glyphs(
+            atlas_instances,
+            state,
+            origin,
+            layout.glyph_instances(),
+            viewport,
+            raster_scale_factor,
+        )
+    }
+
+    fn append_text_layout_window(
+        &mut self,
+        atlas_instances: &mut Vec<TextAtlasInstance>,
+        state: &SceneRasterState,
+        origin: Point,
+        layout: &TextLayout,
+        line_range: std::ops::Range<usize>,
+        viewport: Size,
+        raster_scale_factor: f32,
+    ) -> Result<()> {
+        let line_window = layout.line_window(line_range);
+        if line_window.line_range.is_empty() {
+            return Ok(());
+        }
+
+        let translated_bounds = line_window.bounds().translate(origin.to_vector());
+        if translated_bounds.width() <= 0.0 || translated_bounds.height() <= 0.0 {
+            return Ok(());
+        }
+
+        if state.visible_rect(translated_bounds).is_none() {
+            return Ok(());
+        }
+
+        self.append_layout_glyphs(
+            atlas_instances,
+            state,
+            origin,
+            line_window.glyph_instances(),
+            viewport,
+            raster_scale_factor,
+        )
+    }
+
+    fn append_layout_glyphs<'a, I>(
+        &mut self,
+        atlas_instances: &mut Vec<TextAtlasInstance>,
+        state: &SceneRasterState,
+        origin: Point,
+        glyphs: I,
+        viewport: Size,
+        raster_scale_factor: f32,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = sui_text::TextGlyphInstance<'a>>,
+    {
+
         let mut active_face_index = None;
         let mut swash_face = None;
         let glyph_pixel_alignment_enabled = self.glyph_pixel_alignment_enabled;
 
-        for glyph in layout.glyph_instances() {
+        for glyph in glyphs {
             let face_index = glyph.glyph.face_index;
             if active_face_index != Some(face_index) {
                 active_face_index = Some(face_index);

@@ -6,7 +6,7 @@ use sui_core::{
     Color, DirtyRegion, Error, ImageHandle, Path, PathElement, Rect, Result, Size, Transform,
     Vector, WidgetId, WindowId,
 };
-use sui_text::{FontRegistry, ShapedText, TextLayoutRegistry, TextRun};
+use sui_text::{FontRegistry, ShapedText, ShapedTextWindow, TextLayoutRegistry, TextRun};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Brush {
@@ -298,6 +298,7 @@ pub enum SceneCommand {
     },
     DrawText(TextRun),
     DrawShapedText(ShapedText),
+    DrawShapedTextWindow(ShapedTextWindow),
     DrawImage {
         rect: Rect,
         source: ImageSource,
@@ -487,6 +488,9 @@ impl SceneBoundsState {
             ),
             SceneCommand::DrawText(text) => self.apply_rect(text.rect, clipped),
             SceneCommand::DrawShapedText(text) => self.apply_rect(text.translated_bounds(), clipped),
+            SceneCommand::DrawShapedTextWindow(text) => {
+                self.apply_rect(text.translated_bounds(), clipped)
+            }
             SceneCommand::DrawImage { rect, .. } => self.apply_rect(*rect, clipped),
             SceneCommand::PushClip { rect } => {
                 let clip = self.transform.transform_rect_bbox(*rect);
@@ -576,6 +580,9 @@ fn translate_command(command: &mut SceneCommand, delta: Vector) {
             text.rect = text.rect.translate(delta);
         }
         SceneCommand::DrawShapedText(text) => {
+            text.origin += delta;
+        }
+        SceneCommand::DrawShapedTextWindow(text) => {
             text.origin += delta;
         }
         SceneCommand::PushTransform { .. } => {}
@@ -763,7 +770,8 @@ mod tests {
         Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, WidgetId, WindowId,
     };
     use sui_text::{
-        FontRegistry, RegisteredFont, ShapedText, TextRun, TextStyle, TextSystem,
+        FontRegistry, RegisteredFont, ShapedText, ShapedTextWindow, TextRun, TextStyle,
+        TextSystem,
     };
 
     #[test]
@@ -788,6 +796,11 @@ mod tests {
             layout_version: shaped_layout.version(),
             bounds: shaped_layout.measurement().bounds,
         });
+        let shaped_window = SceneCommand::DrawShapedTextWindow(ShapedTextWindow::new(
+            Point::new(4.0, 8.0),
+            &shaped_layout,
+            0..1,
+        ));
         let image = SceneCommand::DrawImage {
             rect: Rect::new(0.0, 0.0, 32.0, 32.0),
             source: ImageSource::new(ImageHandle::new(7))
@@ -816,6 +829,7 @@ mod tests {
 
         assert!(matches!(text, SceneCommand::DrawText(_)));
         assert!(matches!(shaped_text, SceneCommand::DrawShapedText(_)));
+        assert!(matches!(shaped_window, SceneCommand::DrawShapedTextWindow(_)));
         assert!(matches!(image, SceneCommand::DrawImage { .. }));
         assert!(matches!(stroke, SceneCommand::StrokeRect { .. }));
         assert!(matches!(path_fill, SceneCommand::FillPath { .. }));

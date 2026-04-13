@@ -1,1 +1,1 @@
-pub use sui_widgets::{controls::*, media::*};
+pub use sui_widgets::{controls::*, media::*, TextSurface};

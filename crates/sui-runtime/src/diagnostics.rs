@@ -697,6 +697,7 @@ impl SceneStatistics {
             match command {
                 SceneCommand::DrawText(_)
                 | SceneCommand::DrawShapedText(_)
+                | SceneCommand::DrawShapedTextWindow(_)
                 | SceneCommand::Label { .. } => {
                     text_command_count += 1;
                 }
@@ -1024,6 +1025,7 @@ fn command_kind(command: &SceneCommand) -> &'static str {
         SceneCommand::StrokePath { .. } => "StrokePath",
         SceneCommand::DrawText(_) => "DrawText",
         SceneCommand::DrawShapedText(_) => "DrawShapedText",
+        SceneCommand::DrawShapedTextWindow(_) => "DrawShapedTextWindow",
         SceneCommand::DrawImage { .. } => "DrawImage",
         SceneCommand::PushClip { .. } => "PushClip",
         SceneCommand::PushClipPath { .. } => "PushClipPath",

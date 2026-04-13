@@ -2,7 +2,7 @@ use crate::{
     FontRegistry, RegisteredFont, TextDocument, TextLayoutCacheSnapshot, TextLayoutRequest,
     TextParagraph, TextSelection, TextSpan, TextStyle, TextSystem,
 };
-use sui_core::{Color, FontHandle, Size};
+use sui_core::{Color, FontHandle, Point, Size};
 
 fn load_test_font() -> RegisteredFont {
     load_system_font_for_family(fontdb::Family::SansSerif).expect("system sans-serif font available for text tests")
@@ -567,6 +567,35 @@ fn line_window_exposes_visible_layout_slice() {
     assert_eq!(window.lines().len(), 1);
     assert_eq!(window.glyphs().len(), layout.lines()[0].glyph_range.len());
     assert_eq!(window.glyph_instances().count(), window.glyphs().len());
+    assert!(window.bounds().height() > 0.0);
+}
+
+#[test]
+fn hit_testing_maps_points_back_to_text_offsets() {
+    let system = TextSystem::new();
+    let layout = system
+        .shape_text(
+            "this is a wrapped hit test line",
+            Size::new(75.0, 120.0),
+            TextStyle::new(Color::WHITE),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    assert!(layout.lines().len() >= 2);
+    let first_line = &layout.lines()[0];
+    let second_line = &layout.lines()[1];
+
+    let start = layout.hit_test_point(Point::new(first_line.rect.x(), first_line.rect.y() + 2.0));
+    let middle = layout.hit_test_point(Point::new(first_line.rect.x() + 24.0, first_line.rect.y() + 2.0));
+    let next_line = layout.hit_test_point(Point::new(
+        second_line.rect.x() + (second_line.rect.width() * 0.5),
+        second_line.rect.y() + (second_line.rect.height() * 0.5),
+    ));
+
+    assert_eq!(start.utf8_offset, 0);
+    assert!(middle.utf8_offset > start.utf8_offset);
+    assert!(next_line.utf8_offset > middle.utf8_offset);
 }
 
 #[test]

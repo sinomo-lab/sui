@@ -11,7 +11,7 @@ pub use cache::TextLayoutCacheSnapshot;
 pub use font::{FontRegistry, RegisteredFont, ResolvedTextFace};
 pub use model::{
     PersistentTextLayout, ShapedGlyph, ShapedText, TextAffinity, TextAlign, TextCaret,
-    TextCluster, TextCursor, TextDirection, TextDocument, TextFlowDirection,
+    ShapedTextWindow, TextCluster, TextCursor, TextDirection, TextDocument, TextFlowDirection,
     TextGlyphInstance, TextLayout, TextLayoutHandle, TextLayoutId, TextLayoutMetadata,
     TextLayoutRegistry, TextLayoutRequest, TextLayoutRun, TextLayoutVersion,
     TextLayoutView, TextLine, TextLineWindow, TextMeasurement, TextParagraph,

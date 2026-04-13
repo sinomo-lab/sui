@@ -468,6 +468,52 @@ impl TextLine {
             .map(|cluster| cluster.x_end)
             .unwrap_or(self.rect.max_x())
     }
+
+    pub(crate) fn offset_for_x(&self, x: f32) -> usize {
+        if self.clusters.is_empty() {
+            return self.byte_range.start;
+        }
+
+        let first = &self.clusters[0];
+        let first_min = first.x_start.min(first.x_end);
+        if x <= first_min {
+            return if first.x_start <= first.x_end {
+                first.range.start
+            } else {
+                first.range.end
+            };
+        }
+
+        for cluster in &self.clusters {
+            let cluster_min = cluster.x_start.min(cluster.x_end);
+            let cluster_max = cluster.x_start.max(cluster.x_end);
+            let midpoint = (cluster_min + cluster_max) * 0.5;
+            if x <= cluster_max {
+                let ascending = cluster.x_start <= cluster.x_end;
+                return if x <= midpoint {
+                    if ascending {
+                        cluster.range.start
+                    } else {
+                        cluster.range.end
+                    }
+                } else if ascending {
+                    cluster.range.end
+                } else {
+                    cluster.range.start
+                };
+            }
+        }
+
+        let last = self
+            .clusters
+            .last()
+            .expect("text lines with clusters should have a last cluster");
+        if last.x_start <= last.x_end {
+            last.range.end
+        } else {
+            last.range.start
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -596,6 +642,14 @@ pub struct TextLineWindow<'a> {
 impl<'a> TextLineWindow<'a> {
     pub fn lines(&self) -> &'a [TextLine] {
         &self.layout.data.lines[self.line_range.clone()]
+    }
+
+    pub fn bounds(&self) -> Rect {
+        self.lines()
+            .iter()
+            .map(|line| line.rect)
+            .reduce(|bounds, rect| bounds.union(rect))
+            .unwrap_or(Rect::ZERO)
     }
 
     pub fn runs(&self) -> &'a [TextLayoutRun] {
@@ -810,6 +864,15 @@ impl TextLayout {
         self.caret(TextCursor::new(utf8_offset)).rect
     }
 
+    pub fn hit_test_point(&self, point: Point) -> TextCursor {
+        if self.data.lines.is_empty() {
+            return TextCursor::default();
+        }
+
+        let line = &self.data.lines[self.line_index_for_y(point.y)];
+        TextCursor::new(line.offset_for_x(point.x))
+    }
+
     pub fn selection_geometry(&self, selection: &TextSelection) -> TextSelectionGeometry {
         let range = selection.sorted_range(self.data.text.len());
         if range.start == range.end {
@@ -869,6 +932,23 @@ impl TextLayout {
             .unwrap_or_else(|| self.data.lines.len().saturating_sub(1))
     }
 
+    fn line_index_for_y(&self, y: f32) -> usize {
+        self.data
+            .lines
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| {
+                let left_center = left.rect.y() + (left.rect.height() * 0.5);
+                let right_center = right.rect.y() + (right.rect.height() * 0.5);
+                (left_center - y)
+                    .abs()
+                    .partial_cmp(&(right_center - y).abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(index, _)| index)
+            .unwrap_or_else(|| self.data.lines.len().saturating_sub(1))
+    }
+
     pub(crate) fn with_document(mut self, document: TextDocument) -> Self {
         self.primary_style = document.primary_style();
         self.document = Arc::new(document);
@@ -914,6 +994,46 @@ impl ShapedText {
             layout_handle,
             layout_version: layout.version(),
             bounds: layout.measurement().bounds,
+        }
+    }
+
+    pub fn translated_bounds(&self) -> Rect {
+        self.bounds.translate(self.origin.to_vector())
+    }
+
+    pub fn resolve<'a>(&self, registry: &'a TextLayoutRegistry) -> Option<&'a TextLayout> {
+        let layout = registry.get(self.layout_handle)?;
+        (layout.version() == self.layout_version).then_some(layout)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShapedTextWindow {
+    pub origin: Point,
+    pub layout_handle: TextLayoutHandle,
+    pub layout_version: TextLayoutVersion,
+    pub line_range: Range<usize>,
+    pub bounds: Rect,
+}
+
+impl ShapedTextWindow {
+    pub fn new(origin: Point, layout: &PersistentTextLayout, line_range: Range<usize>) -> Self {
+        Self::from_layout(origin, layout.handle(), layout, line_range)
+    }
+
+    pub fn from_layout(
+        origin: Point,
+        layout_handle: TextLayoutHandle,
+        layout: &TextLayout,
+        line_range: Range<usize>,
+    ) -> Self {
+        let window = layout.line_window(line_range);
+        Self {
+            origin,
+            layout_handle,
+            layout_version: layout.version(),
+            line_range: window.line_range.clone(),
+            bounds: window.bounds(),
         }
     }
 

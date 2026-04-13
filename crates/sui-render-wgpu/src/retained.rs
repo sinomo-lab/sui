@@ -967,6 +967,7 @@ impl RetainedCompositorState {
             | SceneCommand::StrokePath { .. }
             | SceneCommand::DrawText(_)
             | SceneCommand::DrawShapedText(_)
+            | SceneCommand::DrawShapedTextWindow(_)
             | SceneCommand::DrawImage { .. }
             | SceneCommand::Layer(_)
             | SceneCommand::Label { .. } => {}
@@ -2706,6 +2707,15 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
             hash_point(hasher, text.origin);
             text.layout_handle.get().hash(hasher);
             text.layout_version.get().hash(hasher);
+            hash_rect(hasher, text.bounds);
+        }
+        SceneCommand::DrawShapedTextWindow(text) => {
+            15u8.hash(hasher);
+            hash_point(hasher, text.origin);
+            text.layout_handle.get().hash(hasher);
+            text.layout_version.get().hash(hasher);
+            text.line_range.start.hash(hasher);
+            text.line_range.end.hash(hasher);
             hash_rect(hasher, text.bounds);
         }
         SceneCommand::DrawImage { rect, source } => {

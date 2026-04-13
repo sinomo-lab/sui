@@ -58,7 +58,7 @@ pub use sui_scene::{
 };
 pub use sui_text::{
     FontRegistry, PersistentTextLayout, RegisteredFont, ResolvedTextFace, ShapedGlyph,
-    ShapedText, TextAffinity, TextAlign, TextCluster, TextCursor, TextDirection,
+    ShapedText, ShapedTextWindow, TextAffinity, TextAlign, TextCluster, TextCursor, TextDirection,
     TextDocument, TextFlowDirection, TextGlyphInstance, TextLayout, TextLayoutHandle,
     TextLayoutId, TextLayoutMetadata, TextLayoutRegistry, TextLayoutRequest,
     TextLayoutRun, TextLayoutVersion, TextLayoutView, TextLine, TextLineWindow,
@@ -71,7 +71,7 @@ pub use sui_widgets::{
     ControlTypography, DataGrid, DefaultTheme, FloatingStack, FloatingViewConfig,
     FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState, Image, ImageFit, ListItem,
     ListView, PathBar, ResizablePane, SplitView, Table, TableColumn, TableColumnAlignment,
-    TableRow, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme,
+    TableRow, TextSurface, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme,
     ThemeColors, ThemeContainers, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
     ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken,
     ThemeTracking, TreeItem, TreeView,
