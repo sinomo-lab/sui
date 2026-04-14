@@ -728,7 +728,7 @@ impl Widget for Button {
             ctx.draw_persistent_text_layout(
                 Point::new(
                     label_rect.x() - layout_bounds.x(),
-                    label_rect.y() - layout_bounds.y(),
+                    label_rect.y(),
                 ),
                 layout,
             );
@@ -4243,6 +4243,19 @@ mod tests {
             .expect("text draw command present")
     }
 
+    fn first_shaped_text<'a>(output: &'a RenderOutput) -> &'a sui_text::ShapedText {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawShapedText(text) => Some(text),
+                _ => None,
+            })
+            .expect("shaped text draw command present")
+    }
+
     fn text_run_for(output: &RenderOutput, text: &str) -> sui_text::TextRun {
         output
             .frame
@@ -4264,10 +4277,23 @@ mod tests {
             .expect("text draw command present")
     }
 
-    fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
-        let top = -measurement.cap_height.unwrap_or(measurement.ascent);
-        let bottom = measurement.descent * 0.5;
+    fn visual_center(measurement: sui_text::TextMeasurement, optical_centering: bool) -> f32 {
+        let top = if optical_centering {
+            -measurement.cap_height.unwrap_or(measurement.ascent)
+        } else {
+            -measurement.ascent
+        };
+        let bottom = if optical_centering {
+            measurement.descent * 0.5
+        } else {
+            measurement.descent
+        };
+
         (top + bottom) * 0.5
+    }
+
+    fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
+        visual_center(measurement, true)
     }
 
     fn layer_descriptor_for(
@@ -4510,16 +4536,16 @@ mod tests {
         );
         let geometric = runtime.render(window_id).unwrap();
         clear_window_render_options(window_id);
-        let text = first_text_run(&geometric);
-        let layout = TextSystem::new()
-            .shape_text_run(&text, &FontRegistry::new())
-            .expect("button label should shape");
+        let text = first_shaped_text(&geometric);
+        let layout = text
+            .resolve(geometric.frame.text_layout_registry.as_ref())
+            .expect("button label layout should resolve");
         let line = layout
             .lines()
             .first()
             .expect("button label should contain one line");
         let actual_visual_center =
-            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+            text.origin.y + line.baseline + visual_center(layout.measurement(), false);
         let control_center = geometric.frame.viewport.height * 0.5;
 
         assert!((actual_visual_center - control_center).abs() < 0.75);
@@ -4528,16 +4554,34 @@ mod tests {
     #[test]
     fn button_label_visual_center_matches_control_center() {
         let output = render(Button::new("Go").min_width(140.0));
-        let text = first_text_run(&output);
-        let layout = TextSystem::new()
-            .shape_text_run(&text, &FontRegistry::new())
-            .expect("button label should shape");
+        let text = first_shaped_text(&output);
+        let layout = text
+            .resolve(output.frame.text_layout_registry.as_ref())
+            .expect("button label layout should resolve");
         let line = layout
             .lines()
             .first()
             .expect("button label should contain one line");
         let actual_visual_center =
-            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+            text.origin.y + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn button_persistent_label_visual_center_matches_control_center() {
+        let output = render(Button::new("Apply").min_width(140.0));
+        let text = first_shaped_text(&output);
+        let layout = text
+            .resolve(output.frame.text_layout_registry.as_ref())
+            .expect("button label layout should resolve");
+        let line = layout
+            .lines()
+            .first()
+            .expect("button label should contain one line");
+        let actual_visual_center =
+            text.origin.y + line.baseline + optical_visual_center(layout.measurement());
         let control_center = output.frame.viewport.height * 0.5;
 
         assert!((actual_visual_center - control_center).abs() < 0.75);
