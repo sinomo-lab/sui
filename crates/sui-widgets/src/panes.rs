@@ -1354,7 +1354,6 @@ impl Widget for FloatingStack {
                 && self.bring_to_front(index)
             {
                 ctx.request_ordering();
-                ctx.request_paint();
                 ctx.request_hit_test();
             }
         }
