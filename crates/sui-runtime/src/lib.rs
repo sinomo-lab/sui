@@ -2862,7 +2862,6 @@ mod tests {
 
         fn layer_options(&self) -> LayerOptions {
             LayerOptions {
-                cache_policy: sui_scene::LayerCachePolicy::Cached,
                 composition_mode: sui_scene::LayerCompositionMode::Scroll,
             }
         }

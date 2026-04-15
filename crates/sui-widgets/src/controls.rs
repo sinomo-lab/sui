@@ -8,7 +8,7 @@ use sui_runtime::{
     EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, StackSurfaceOptions, Widget,
     window_render_options,
 };
-use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
+use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{PersistentTextLayout, TextMeasurement, TextStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3257,7 +3257,6 @@ impl Widget for Select {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: LayerCachePolicy::Direct,
             composition_mode: if self.expanded {
                 LayerCompositionMode::Overlay
             } else {
@@ -4163,7 +4162,7 @@ mod tests {
         Application, RenderOutput, Runtime, Widget, WindowBuilder, WindowRenderOptions,
         clear_window_render_options, set_window_render_options,
     };
-    use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+    use sui_scene::{LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
     use sui_text::{FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -5140,7 +5139,6 @@ mod tests {
             layer_descriptor_for(&output, select.id).expect("select layer descriptor present");
 
         assert_eq!(select.state.expanded, Some(true));
-        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Direct);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
         Ok(())
     }

@@ -9,7 +9,7 @@ use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
     EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, Widget,
 };
-use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
+use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{
     PersistentTextLayout, TextCursor, TextDirection, TextSelection, TextStyle, TextWrap,
 };
@@ -1047,7 +1047,6 @@ impl Widget for TextSurface {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: LayerCachePolicy::Cached,
             composition_mode: LayerCompositionMode::Scroll,
         }
     }

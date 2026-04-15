@@ -1088,19 +1088,19 @@ mod tests {
         sorted.sort_by(|a, b| a.total_cmp(b));
         let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
         let p95_ms = sorted[p95_index];
-        let avg_visible_tiles = measured_samples
+        let avg_visible_layers = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.visible_tile_count as f64)
+            .map(|sample| sample.renderer_submission.visible_layer_count as f64)
             .sum::<f64>()
             / valid_count as f64;
-        let avg_regenerated_tiles = measured_samples
+        let avg_direct_packets = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.regenerated_tile_count as f64)
+            .map(|sample| sample.renderer_submission.direct_packet_count as f64)
             .sum::<f64>()
             / valid_count as f64;
-        let avg_tile_generation_ms = measured_samples
+        let avg_state_update_ms = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.tile_generation_time_us as f64 / 1000.0)
+            .map(|sample| sample.renderer_submission.retained_state_update_time_us as f64 / 1000.0)
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_build_ms = measured_samples
@@ -1218,9 +1218,9 @@ mod tests {
         println!("avg draws:        {avg_draws:.2}");
         println!("avg vertex bytes: {:.0}", avg_uploaded_vertex_bytes);
         println!("avg text bytes:   {:.0} ({avg_glyph_instances:.2} glyphs)", avg_text_vertex_bytes);
-        println!("avg visible tiles:{avg_visible_tiles:.2}");
-        println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
-        println!("avg tile gen:     {avg_tile_generation_ms:.3} ms");
+        println!("avg visible layers:{avg_visible_layers:.2}");
+        println!("avg direct packets:{avg_direct_packets:.2}");
+        println!("avg state update:  {avg_state_update_ms:.3} ms");
         println!("avg packet build: {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
         println!(
             "avg packet why:   new {avg_packet_rebuild_new:.2} | coord {avg_packet_rebuild_coordinate_space:.2} | sig {avg_packet_rebuild_signature:.2} | scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2}"

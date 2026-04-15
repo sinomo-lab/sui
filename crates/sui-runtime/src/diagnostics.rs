@@ -185,12 +185,8 @@ pub struct RendererSubmissionDiagnostics {
     pub text_glyph_instance_count: usize,
     pub text_vertex_bytes: u64,
     pub visible_layer_count: usize,
-    pub visible_tile_count: usize,
-    pub reused_tile_count: usize,
-    pub regenerated_tile_count: usize,
     pub direct_packet_count: usize,
-    pub tile_memory_bytes: u64,
-    pub tile_generation_time_us: u64,
+    pub retained_state_update_time_us: u64,
     pub composition_time_us: u64,
     pub retained_scene_traversal_time_us: u64,
     pub retained_packet_build_time_us: u64,
@@ -260,12 +256,8 @@ impl RendererSubmissionDiagnostics {
         text_glyph_instance_count: usize,
         text_vertex_bytes: u64,
         visible_layer_count: usize,
-        visible_tile_count: usize,
-        reused_tile_count: usize,
-        regenerated_tile_count: usize,
         direct_packet_count: usize,
-        tile_memory_bytes: u64,
-        tile_generation_time_us: u64,
+        retained_state_update_time_us: u64,
         composition_time_us: u64,
         retained_scene_traversal_time_us: u64,
         retained_packet_build_time_us: u64,
@@ -301,12 +293,8 @@ impl RendererSubmissionDiagnostics {
             text_glyph_instance_count,
             text_vertex_bytes,
             visible_layer_count,
-            visible_tile_count,
-            reused_tile_count,
-            regenerated_tile_count,
             direct_packet_count,
-            tile_memory_bytes,
-            tile_generation_time_us,
+            retained_state_update_time_us,
             composition_time_us,
             retained_scene_traversal_time_us,
             retained_packet_build_time_us,
@@ -1100,9 +1088,8 @@ mod tests {
             17,
             vec![FramePhaseSample::new(FramePhase::Renderer, 2.5)],
             RendererSubmissionDiagnostics::new(
-                3, 9, 4096, 128, 3584, 4, 12, 10, 2, 7, 16384, 230, 90, 310, 120, 2, 1, 0, 1,
-                1, 0, 5, 80, 440, 210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640,
-                180, 70, 560,
+                3, 9, 4096, 128, 3584, 4, 7, 230, 90, 310, 120, 2, 1, 0, 1, 1, 0, 5, 80,
+                440, 210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -1128,10 +1115,8 @@ mod tests {
         assert_eq!(snapshot.renderer_submission.pass_count, 3);
         assert_eq!(snapshot.renderer_submission.draw_count, 9);
         assert_eq!(snapshot.renderer_submission.uploaded_vertex_bytes, 4096);
-        assert_eq!(snapshot.renderer_submission.visible_tile_count, 12);
-        assert_eq!(snapshot.renderer_submission.reused_tile_count, 10);
-        assert_eq!(snapshot.renderer_submission.regenerated_tile_count, 2);
-        assert_eq!(snapshot.renderer_submission.tile_memory_bytes, 16384);
+        assert_eq!(snapshot.renderer_submission.direct_packet_count, 7);
+        assert_eq!(snapshot.renderer_submission.retained_state_update_time_us, 230);
         assert_eq!(
             snapshot
                 .renderer_submission

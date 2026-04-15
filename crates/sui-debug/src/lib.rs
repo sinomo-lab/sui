@@ -908,40 +908,27 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         ))
         .tone(upload_tone(renderer_submission.uploaded_vertex_bytes)),
         DebugMetric::new(
-            "Visible tiles",
-            renderer_submission.visible_tile_count.to_string(),
+            "Visible layers",
+            renderer_submission.visible_layer_count.to_string(),
         )
         .detail(format!(
-            "{} visible layers and {} retained direct packets composed this frame",
-            renderer_submission.visible_layer_count, renderer_submission.direct_packet_count,
+            "{} retained direct packets composed across visible widget layers this frame",
+            renderer_submission.direct_packet_count,
         ))
         .tone(DebugTone::Neutral),
         DebugMetric::new(
-            "Tile reuse",
-            format!(
-                "{} reused / {} regen",
-                renderer_submission.reused_tile_count, renderer_submission.regenerated_tile_count,
-            ),
+            "Direct packets",
+            renderer_submission.direct_packet_count.to_string(),
         )
-        .detail("Retained tile reuse versus regeneration for the current frame")
-        .tone(if renderer_submission.regenerated_tile_count == 0 {
-            DebugTone::Success
-        } else {
-            DebugTone::Neutral
-        }),
-        DebugMetric::new(
-            "Tile memory",
-            format_byte_size(renderer_submission.tile_memory_bytes),
-        )
-        .detail("Approximate retained tile payload memory currently held by the compositor")
+        .detail("Retained packet fragments submitted directly without tile indirection")
         .tone(DebugTone::Neutral),
         DebugMetric::new(
-            "Tile gen",
-            format_duration_ms(renderer_submission.tile_generation_time_us as f64 / 1000.0),
+            "State update",
+            format_duration_ms(renderer_submission.retained_state_update_time_us as f64 / 1000.0),
         )
-        .detail("Time spent regenerating dirty or newly visible tiles")
+        .detail("Time spent reconciling retained compositor state before composition")
         .tone(duration_tone(
-            renderer_submission.tile_generation_time_us as f64 / 1000.0,
+            renderer_submission.retained_state_update_time_us as f64 / 1000.0,
         )),
         DebugMetric::new(
             "Compose",

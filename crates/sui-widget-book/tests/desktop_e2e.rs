@@ -1225,11 +1225,10 @@ fn normalized_scene_snapshot(scene: &sui::Scene) -> Vec<String> {
     let mut snapshot = Vec::new();
     scene.visit_commands(&mut |command| match command {
         SceneCommand::Layer(layer) => snapshot.push(format!(
-            "Layer|{:?}|{:?}|{:?}|{:?}|{:?}",
+            "Layer|{:?}|{:?}|{:?}|{:?}",
             layer.descriptor.bounds,
             layer.descriptor.content_bounds,
             layer.descriptor.paint_bounds,
-            layer.descriptor.cache_policy,
             layer.descriptor.composition_mode,
         )),
         SceneCommand::DrawShapedText(text) => snapshot.push(format!(
@@ -1361,12 +1360,8 @@ fn publish_frame_performance(
                 renderer_stats.text_glyph_instance_count,
                 renderer_stats.text_vertex_bytes,
                 renderer_stats.visible_layer_count,
-                renderer_stats.visible_tile_count,
-                renderer_stats.reused_tile_count,
-                renderer_stats.regenerated_tile_count,
                 renderer_stats.direct_packet_count,
-                renderer_stats.tile_memory_bytes,
-                renderer_stats.tile_generation_time_us,
+                renderer_stats.retained_state_update_time_us,
                 renderer_stats.composition_time_us,
                 renderer_stats.retained_scene_traversal_time_us,
                 renderer_stats.retained_packet_build_time_us,
@@ -1639,15 +1634,15 @@ impl ScrollBenchmarkFrameSample {
             draw_count: snapshot.renderer_submission.draw_count,
             pass_count: snapshot.renderer_submission.pass_count,
             visible_layer_count: snapshot.renderer_submission.visible_layer_count,
-            visible_tile_count: snapshot.renderer_submission.visible_tile_count,
-            reused_tile_count: snapshot.renderer_submission.reused_tile_count,
-            regenerated_tile_count: snapshot.renderer_submission.regenerated_tile_count,
+            visible_tile_count: snapshot.renderer_submission.visible_layer_count,
+            reused_tile_count: 0,
+            regenerated_tile_count: snapshot.renderer_submission.direct_packet_count,
             direct_packet_count: snapshot.renderer_submission.direct_packet_count,
             uploaded_vertex_bytes: snapshot.renderer_submission.uploaded_vertex_bytes,
             text_vertex_bytes: snapshot.renderer_submission.text_vertex_bytes,
             text_glyph_instance_count: snapshot.renderer_submission.text_glyph_instance_count,
-            tile_memory_bytes: snapshot.renderer_submission.tile_memory_bytes,
-            tile_generation_time_us: snapshot.renderer_submission.tile_generation_time_us,
+            tile_memory_bytes: 0,
+            tile_generation_time_us: snapshot.renderer_submission.retained_state_update_time_us,
             composition_time_us: snapshot.renderer_submission.composition_time_us,
             retained_scene_traversal_time_us: snapshot
                 .renderer_submission
@@ -3071,16 +3066,16 @@ fn run_widget_book_scroll_benchmark(
             snapshot.renderer_submission.pass_count
         );
         println!(
-            "  tiles visible:   {}",
-            snapshot.renderer_submission.visible_tile_count
+            "  layers visible:  {}",
+            snapshot.renderer_submission.visible_layer_count
         );
         println!(
-            "  tiles reused:    {}",
-            snapshot.renderer_submission.reused_tile_count
+            "  direct packets:  {}",
+            snapshot.renderer_submission.direct_packet_count
         );
         println!(
-            "  tiles regen:     {}",
-            snapshot.renderer_submission.regenerated_tile_count
+            "  state update us: {}",
+            snapshot.renderer_submission.retained_state_update_time_us
         );
         println!(
             "  glyph instances: {}",

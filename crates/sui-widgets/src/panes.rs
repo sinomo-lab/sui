@@ -8,7 +8,7 @@ use sui_runtime::{
     ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
     StackHostOptions, StackOrderPolicy, Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
+use sui_scene::{LayerCompositionMode, StrokeStyle};
 
 use crate::DefaultTheme;
 
@@ -748,11 +748,6 @@ impl Widget for FloatingViewSurface {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: if self.state.active_resize_view() == Some(self.view_id) {
-                LayerCachePolicy::Direct
-            } else {
-                LayerCachePolicy::Cached
-            },
             composition_mode: LayerCompositionMode::Normal,
         }
     }
@@ -824,11 +819,6 @@ impl Widget for FloatingViewHost {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: if self.state.active_resize_view() == Some(self.view_id) {
-                LayerCachePolicy::Direct
-            } else {
-                LayerCachePolicy::Cached
-            },
             composition_mode: LayerCompositionMode::Scroll,
         }
     }

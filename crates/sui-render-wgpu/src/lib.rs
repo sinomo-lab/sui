@@ -200,12 +200,8 @@ pub struct RendererFrameStats {
     pub text_glyph_instance_count: usize,
     pub text_vertex_bytes: u64,
     pub visible_layer_count: usize,
-    pub visible_tile_count: usize,
-    pub reused_tile_count: usize,
-    pub regenerated_tile_count: usize,
     pub direct_packet_count: usize,
-    pub tile_memory_bytes: u64,
-    pub tile_generation_time_us: u64,
+    pub retained_state_update_time_us: u64,
     pub composition_time_us: u64,
     pub retained_scene_traversal_time_us: u64,
     pub retained_packet_build_time_us: u64,
@@ -296,12 +292,8 @@ impl RendererFrameStats {
             text_glyph_instance_count: 0,
             text_vertex_bytes: 0,
             visible_layer_count: 0,
-            visible_tile_count: 0,
-            reused_tile_count: 0,
-            regenerated_tile_count: 0,
             direct_packet_count: 0,
-            tile_memory_bytes: 0,
-            tile_generation_time_us: 0,
+            retained_state_update_time_us: 0,
             composition_time_us: 0,
             retained_scene_traversal_time_us: 0,
             retained_packet_build_time_us: 0,
@@ -350,12 +342,9 @@ impl RendererFrameStats {
 
     fn with_compositor_stats(mut self, stats: RetainedCompositorFrameStats) -> Self {
         self.visible_layer_count = stats.visible_layers;
-        self.visible_tile_count = stats.visible_tiles;
-        self.reused_tile_count = stats.reused_tiles;
-        self.regenerated_tile_count = stats.regenerated_tiles;
         self.direct_packet_count = stats.direct_packets;
-        self.tile_memory_bytes = stats.tile_memory_bytes as u64;
-        self.tile_generation_time_us = (stats.tile_generation_time_ms * 1000.0).round() as u64;
+        self.retained_state_update_time_us =
+            (stats.state_update_time_ms * 1000.0).round() as u64;
         self.composition_time_us = (stats.composition_time_ms * 1000.0).round() as u64;
         self.retained_scene_traversal_time_us =
             (stats.scene_traversal_time_ms * 1000.0).round() as u64;
@@ -440,7 +429,6 @@ pub struct WgpuRenderer {
     active_text_atlas_texture_index: usize,
     analytic_path_cache: HashMap<u64, CachedAnalyticPathGpu>,
     compositors: HashMap<WindowId, RetainedCompositorState>,
-    retained_tile_arenas: HashMap<WindowId, RetainedTileVertexArena>,
     surfaces: HashMap<WindowId, SurfaceState>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
     frame_resources: FrameResources,
@@ -671,7 +659,6 @@ impl WgpuRenderer {
         self.text_atlas_textures.clear();
         self.active_text_atlas_texture_index = 0;
         self.compositors.clear();
-        self.retained_tile_arenas.clear();
         self.last_frames.clear();
         self.last_frame_stats.clear();
     }
@@ -692,7 +679,6 @@ impl WgpuRenderer {
         self.last_frames.remove(&window_id);
         self.last_frame_stats.remove(&window_id);
         self.compositors.remove(&window_id);
-        self.retained_tile_arenas.remove(&window_id);
     }
 
     pub fn render(&mut self, frame: &SceneFrame) -> Result<()> {
@@ -1211,28 +1197,12 @@ impl WgpuRenderer {
         let mut uses_text_atlas = false;
         let resource_collection_started = diagnostics_enabled.then(|| Instant::now());
         for fragment in &submission.fragments {
-            match fragment {
-                RetainedFrameFragment::Transient(draw_ops) => {
-                    uses_text_atlas |= collect_draw_op_resources(
-                        draw_ops,
-                        &mut analytic_paths,
-                        &mut image_handles,
-                    );
-                }
-                RetainedFrameFragment::Tile { address, .. } => {
-                    let Some(compositor) = self.compositors.get(&frame.window_id) else {
-                        continue;
-                    };
-                    let Some(entry) = compositor.tiles.get(address) else {
-                        continue;
-                    };
-                    uses_text_atlas |= collect_draw_op_resources(
-                        entry.draw_ops(),
-                        &mut analytic_paths,
-                        &mut image_handles,
-                    );
-                }
-            }
+            let RetainedFrameFragment::Transient(draw_ops) = fragment;
+            uses_text_atlas |= collect_draw_op_resources(
+                draw_ops,
+                &mut analytic_paths,
+                &mut image_handles,
+            );
         }
         let resource_collection_time_us = resource_collection_started
             .map(|started| started.elapsed().as_micros() as u64)
@@ -1286,147 +1256,53 @@ impl WgpuRenderer {
         let mut batch_prepare_time_us = 0u64;
         let mut gpu_upload_time_us = 0u64;
 
-        let retained_tile_upload_started = diagnostics_enabled.then(|| Instant::now());
-        let retained_tile_uploaded_vertex_bytes =
-            self.prepare_retained_tile_geometry(frame.window_id, &submission)?;
-        if let Some(started) = retained_tile_upload_started {
-            gpu_upload_time_us += started.elapsed().as_micros() as u64;
-        }
-        if diagnostics_enabled {
-            uploaded_vertex_bytes += retained_tile_uploaded_vertex_bytes;
-        }
-
         for fragment in submission.fragments {
-            match fragment {
-                RetainedFrameFragment::Transient(draw_ops) => {
-                    let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
-                    let prepared =
-                        prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
-                    if let Some(started) = batch_prepare_started {
-                        batch_prepare_time_us += started.elapsed().as_micros() as u64;
-                    }
-                    if diagnostics_enabled {
-                        let (_, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
-                        draw_count += fragment_draw_count;
-                        uploaded_vertex_bytes += (prepared.scene_vertices.len() as u64
-                            + prepared.clip_vertices.len() as u64)
-                            * VERTEX_SIZE
-                            + prepared.text_instances.len() as u64 * TEXT_ATLAS_INSTANCE_SIZE;
-                    }
+            let RetainedFrameFragment::Transient(draw_ops) = fragment;
+            let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
+            let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
+            if let Some(started) = batch_prepare_started {
+                batch_prepare_time_us += started.elapsed().as_micros() as u64;
+            }
+            if diagnostics_enabled {
+                let (_, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
+                draw_count += fragment_draw_count;
+                uploaded_vertex_bytes += (prepared.scene_vertices.len() as u64
+                    + prepared.clip_vertices.len() as u64)
+                    * VERTEX_SIZE
+                    + prepared.text_instances.len() as u64 * TEXT_ATLAS_INSTANCE_SIZE;
+            }
 
-                    if prepared.passes.is_empty() {
-                        continue;
-                    }
+            if prepared.passes.is_empty() {
+                continue;
+            }
 
-                    let shared = self
-                        .shared
-                        .as_ref()
-                        .expect("renderer shared state initialized");
-                    needs_stencil |= prepared
-                        .passes
-                        .iter()
-                        .any(|pass| !pass.clip_paths.is_empty());
-                    let gpu_upload_started = diagnostics_enabled.then(|| Instant::now());
-                    prepared_fragments.push(PreparedFragmentSubmission {
-                        passes: prepared.passes,
-                        scene_buffer: create_static_vertex_buffer(
-                            &shared.device,
-                            "SUI transient fragment scene",
-                            &prepared.scene_vertices,
-                        ),
-                        clip_buffer: create_static_vertex_buffer(
-                            &shared.device,
-                            "SUI transient fragment clip",
-                            &prepared.clip_vertices,
-                        ),
-                        text_instance_buffer: create_static_text_instance_buffer(
-                            &shared.device,
-                            "SUI transient fragment text instances",
-                            &prepared.text_instances,
-                        ),
-                        translation: Vector::ZERO,
-                    });
-                    if let Some(started) = gpu_upload_started {
-                        gpu_upload_time_us += started.elapsed().as_micros() as u64;
-                    }
-                }
-                RetainedFrameFragment::Tile { address, clip_rect } => {
-                    let (passes, scene_buffer, clip_buffer, text_instance_buffer, translation) = {
-                        let (scene_buffer, clip_buffer, text_instance_buffer) = self
-                            .retained_tile_arenas
-                            .get(&frame.window_id)
-                            .map(|arena| {
-                                (
-                                    arena.scene_buffer.clone(),
-                                    arena.clip_buffer.clone(),
-                                    arena.text_instance_buffer.clone(),
-                                )
-                            })
-                            .unwrap_or((None, None, None));
-                        let compositor = self
-                            .compositors
-                            .get_mut(&frame.window_id)
-                            .expect("window compositor retained for tile submission");
-                        let entry = compositor.tiles.get_mut(&address).ok_or_else(|| {
-                            Error::new(format!(
-                                "missing retained tile for layer {} at ({}, {})",
-                                address.layer.get(),
-                                address.tile_x,
-                                address.tile_y
-                            ))
-                        })?;
-                        let geometry = entry
-                            .gpu_geometry
-                            .as_ref()
-                            .expect("tile GPU geometry created before retained submission");
-                        let submission_clip_rect = clip_rect.map(|rect| {
-                            let scale = frame.scale_factor.max(0.001);
-                            let min_x = (rect.x() * scale).round() / scale;
-                            let min_y = (rect.y() * scale).round() / scale;
-                            let max_x = ((rect.x() + rect.width()) * scale).round() / scale;
-                            let max_y = ((rect.y() + rect.height()) * scale).round() / scale;
-                            Rect::from_points(Point::new(min_x, min_y), Point::new(max_x, max_y))
-                        });
-                        let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
-                        let passes = prepare_cached_passes(
-                            &entry.cached_passes,
-                            frame.viewport,
-                            framebuffer_size,
-                            entry.translation,
-                            submission_clip_rect,
-                            geometry.scene_range.start,
-                            geometry.clip_range.start,
-                            geometry.text_range.start,
-                        );
-                        if let Some(started) = batch_prepare_started {
-                            batch_prepare_time_us += started.elapsed().as_micros() as u64;
-                        }
-                        (
-                            passes,
-                            scene_buffer,
-                            clip_buffer,
-                            text_instance_buffer,
-                            entry.translation,
-                        )
-                    };
-                    if diagnostics_enabled {
-                        let (_, fragment_draw_count) = prepared_batch_counts(&passes);
-                        draw_count += fragment_draw_count;
-                    }
-
-                    if passes.is_empty() {
-                        continue;
-                    }
-
-                    needs_stencil |= passes.iter().any(|pass| !pass.clip_paths.is_empty());
-                    prepared_fragments.push(PreparedFragmentSubmission {
-                        passes,
-                        scene_buffer,
-                        clip_buffer,
-                        text_instance_buffer,
-                        translation,
-                    });
-                }
+            let shared = self
+                .shared
+                .as_ref()
+                .expect("renderer shared state initialized");
+            needs_stencil |= prepared.passes.iter().any(|pass| !pass.clip_paths.is_empty());
+            let gpu_upload_started = diagnostics_enabled.then(|| Instant::now());
+            prepared_fragments.push(PreparedFragmentSubmission {
+                passes: prepared.passes,
+                scene_buffer: create_static_vertex_buffer(
+                    &shared.device,
+                    "SUI transient fragment scene",
+                    &prepared.scene_vertices,
+                ),
+                clip_buffer: create_static_vertex_buffer(
+                    &shared.device,
+                    "SUI transient fragment clip",
+                    &prepared.clip_vertices,
+                ),
+                text_instance_buffer: create_static_text_instance_buffer(
+                    &shared.device,
+                    "SUI transient fragment text instances",
+                    &prepared.text_instances,
+                ),
+                translation: Vector::ZERO,
+            });
+            if let Some(started) = gpu_upload_started {
+                gpu_upload_time_us += started.elapsed().as_micros() as u64;
             }
         }
 
@@ -2120,45 +1996,6 @@ impl WgpuRenderer {
         ))
     }
 
-    fn prepare_retained_tile_geometry(
-        &mut self,
-        window_id: WindowId,
-        submission: &RetainedFrameSubmission,
-    ) -> Result<u64> {
-        let WgpuRenderer {
-            shared,
-            compositors,
-            retained_tile_arenas,
-            ..
-        } = self;
-        let shared = shared
-            .as_ref()
-            .expect("renderer shared state initialized before retained tile upload");
-        let compositor = compositors.get_mut(&window_id).ok_or_else(|| {
-            Error::new(format!(
-                "missing compositor state for window {} during retained tile upload",
-                window_id.get()
-            ))
-        })?;
-        let arena = retained_tile_arenas.entry(window_id).or_default();
-
-        let visible_tiles = collect_visible_retained_tiles(submission);
-        if visible_tiles.is_empty() {
-            return Ok(0);
-        }
-
-        let plan = plan_retained_tile_upload(compositor, &visible_tiles)?;
-        if plan.needs_rebuild(arena) {
-            return rebuild_retained_tile_geometry(shared, compositor, arena);
-        }
-
-        let mut uploaded_vertex_bytes =
-            append_retained_tile_geometry(shared, compositor, arena, &plan)?;
-        uploaded_vertex_bytes +=
-            refresh_retained_tile_geometry(shared, compositor, arena, &plan.in_place_tiles)?;
-        Ok(uploaded_vertex_bytes)
-    }
-
     fn create_surface_state(
         &mut self,
         window: Arc<Window>,
@@ -2214,7 +2051,6 @@ impl Default for WgpuRenderer {
             active_text_atlas_texture_index: 0,
             analytic_path_cache: HashMap::new(),
             compositors: HashMap::new(),
-            retained_tile_arenas: HashMap::new(),
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
             frame_resources: FrameResources::default(),
@@ -2588,8 +2424,8 @@ mod tests {
         CachedGlyphAtlas, CachedGlyphMesh, ClipState, CompositionContainerId,
         DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedClipPath,
         PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
-        PreparedVertices, RendererFrameStats, RetainedCompositorState, RetainedFrameFragment,
-        RetainedLayerRenderMode, RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine,
+        PreparedVertices, RendererFrameStats, RetainedCompositorState,
+        RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine,
         TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, VERTEX_SIZE, Vertex, WgpuRenderer,
         append_cached_path_mesh, batch_draw_ops, build_vertices, prepare_frame_batches,
         SwashImageContent, SwashSource, SwashStrikeWith,
@@ -2605,7 +2441,7 @@ mod tests {
         WidgetId, WindowId,
     };
     use sui_scene::{
-        ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, RegisteredImage, Scene,
+        ImageRegistry, ImageSource, LayerCompositionMode, RegisteredImage, Scene,
         SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
         SceneLayerUpdateKind, StrokeStyle,
     };
@@ -2613,6 +2449,23 @@ mod tests {
         FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, TextLayoutRegistry, TextRun,
         TextStyle, TextSystem,
     };
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum LayerCachePolicy {
+        Auto,
+        Direct,
+        Cached,
+    }
+
+    trait TestSceneLayerDescriptorExt {
+        fn with_cache_policy(self, _cache_policy: LayerCachePolicy) -> Self;
+    }
+
+    impl TestSceneLayerDescriptorExt for SceneLayerDescriptor {
+        fn with_cache_policy(self, _cache_policy: LayerCachePolicy) -> Self {
+            self
+        }
+    }
 
     fn load_test_font() -> RegisteredFont {
         let mut font_db = fontdb::Database::new();
@@ -2653,16 +2506,6 @@ mod tests {
         compositor: &mut RetainedCompositorState,
     ) -> sui_core::Result<DrawOpArena> {
         compositor.prepare_frame(frame, text_engine, DEFAULT_FEATHER_WIDTH)
-    }
-
-    fn prepare_submission_with_compositor(
-        frame: &SceneFrame,
-        text_engine: &mut TextEngine,
-        compositor: &mut RetainedCompositorState,
-    ) -> sui_core::Result<Vec<RetainedFrameFragment>> {
-        Ok(compositor
-            .prepare_frame_submission(frame, text_engine, DEFAULT_FEATHER_WIDTH)?
-            .fragments)
     }
 
     fn packet_signature(
@@ -3673,8 +3516,8 @@ mod tests {
         assert_eq!(stats.pass_count, 2);
         assert_eq!(stats.draw_count, 4);
         assert_eq!(stats.uploaded_vertex_bytes, 15 * VERTEX_SIZE);
-        assert_eq!(stats.visible_tile_count, 0);
-        assert_eq!(stats.tile_memory_bytes, 0);
+        assert_eq!(stats.visible_layer_count, 0);
+        assert_eq!(stats.retained_state_update_time_us, 0);
     }
 
     #[test]
@@ -3909,7 +3752,6 @@ mod tests {
         let draw_ops = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
         assert!(!draw_ops.draw_ops.is_empty());
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
         assert_eq!(compositor.path_cache.stats(), (0, 0, 0));
         assert_eq!(draw_ops.analytic_paths.len(), 2);
         assert!(
@@ -3973,7 +3815,6 @@ mod tests {
         let draw_ops = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
         assert!(!draw_ops.draw_ops.is_empty());
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
         assert_eq!(compositor.path_cache.stats(), (0, 0, 0));
         assert_eq!(draw_ops.analytic_paths.len(), 2);
         assert!(
@@ -4472,7 +4313,6 @@ mod tests {
             .map(|draw_op| draw_op.clip_rect)
             .collect::<Vec<_>>();
 
-        assert!(compositor.last_frame_stats.regenerated_tiles > 0);
         assert_ne!(first_clip_rects, second_clip_rects);
     }
 
@@ -4545,359 +4385,6 @@ mod tests {
             container: CompositionContainerId::Layer(replacement_layer_id),
             segment_index: 0,
         }));
-    }
-
-    #[test]
-    fn retained_compositor_reuses_cached_tiles_until_damage_intersects_them() {
-        let layer_id = WidgetId::new(71);
-        let descriptor = SceneLayerDescriptor::new(
-            SceneLayerId::from_widget(layer_id),
-            layer_id,
-            Rect::new(0.0, 0.0, 512.0, 128.0),
-        )
-        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_cache_policy(LayerCachePolicy::Cached);
-
-        let mut layer_scene = Scene::new();
-        layer_scene.push(SceneCommand::FillRect {
-            rect: Rect::new(0.0, 0.0, 512.0, 128.0),
-            brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
-        });
-
-        let mut scene = Scene::new();
-        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
-            descriptor.clone(),
-            layer_scene,
-        )));
-
-        let mut frame = SceneFrame {
-            window_id: WindowId::new(31),
-            viewport: Size::new(512.0, 128.0),
-            surface_size: Size::new(512.0, 128.0),
-            scale_factor: 1.0,
-            dirty_regions: Vec::new(),
-            layer_updates: vec![
-                SceneLayerUpdate::from_descriptor(
-                    SceneLayerUpdateKind::Content,
-                    descriptor.clone(),
-                )
-                .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
-            ],
-            scene,
-            font_registry: Arc::new(FontRegistry::new()),
-            image_registry: Arc::new(ImageRegistry::new()),
-            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
-        };
-
-        let mut text_engine = TextEngine::new().unwrap();
-        let mut compositor = RetainedCompositorState::default();
-        let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        assert!(!first.draw_ops.is_empty());
-        assert_eq!(
-            compositor.layers[&SceneLayerId::from_widget(layer_id)].render_mode,
-            RetainedLayerRenderMode::CachedTiles
-        );
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
-
-        frame.layer_updates.clear();
-        let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        assert_eq!(first.scene_vertices, second.scene_vertices);
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
-
-        let mut updated_layer_scene = Scene::new();
-        updated_layer_scene.push(SceneCommand::FillRect {
-            rect: Rect::new(0.0, 0.0, 512.0, 128.0),
-            brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
-        });
-        updated_layer_scene.push(SceneCommand::FillRect {
-            rect: Rect::new(24.0, 24.0, 48.0, 48.0),
-            brush: Color::rgba(0.0, 1.0, 0.0, 1.0).into(),
-        });
-        assert!(frame.scene.replace_layer(
-            layer_id,
-            SceneLayer::from_descriptor(descriptor.clone(), updated_layer_scene),
-        ));
-        frame.layer_updates = vec![
-            SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor.clone())
-                .with_damage(Rect::new(0.0, 0.0, 128.0, 128.0)),
-        ];
-
-        let third = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        assert_ne!(second.scene_vertices, third.scene_vertices);
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
-    }
-
-    #[test]
-    fn retained_submission_keeps_reused_cached_tiles_as_tile_fragments() {
-        let layer_id = WidgetId::new(107);
-        let descriptor = SceneLayerDescriptor::new(
-            SceneLayerId::from_widget(layer_id),
-            layer_id,
-            Rect::new(0.0, 0.0, 512.0, 128.0),
-        )
-        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_cache_policy(LayerCachePolicy::Cached);
-
-        let mut layer_scene = Scene::new();
-        layer_scene.push(SceneCommand::FillRect {
-            rect: Rect::new(0.0, 0.0, 512.0, 128.0),
-            brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
-        });
-
-        let mut scene = Scene::new();
-        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
-            descriptor.clone(),
-            layer_scene,
-        )));
-
-        let mut frame = SceneFrame {
-            window_id: WindowId::new(41),
-            viewport: Size::new(512.0, 128.0),
-            surface_size: Size::new(512.0, 128.0),
-            scale_factor: 1.0,
-            dirty_regions: Vec::new(),
-            layer_updates: vec![
-                SceneLayerUpdate::from_descriptor(
-                    SceneLayerUpdateKind::Content,
-                    descriptor.clone(),
-                )
-                .with_damage(descriptor.paint_bounds),
-            ],
-            scene,
-            font_registry: Arc::new(FontRegistry::new()),
-            image_registry: Arc::new(ImageRegistry::new()),
-            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
-        };
-
-        let mut text_engine = TextEngine::new().unwrap();
-        let mut compositor = RetainedCompositorState::default();
-        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        frame.layer_updates.clear();
-        let fragments =
-            prepare_submission_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
-        assert_eq!(fragments.len(), 2);
-        assert!(
-            fragments
-                .iter()
-                .all(|fragment| matches!(fragment, RetainedFrameFragment::Tile { .. }))
-        );
-    }
-
-    #[test]
-    fn retained_compositor_reuses_cached_tiles_across_layer_translation() {
-        let layer_id = WidgetId::new(74);
-        let descriptor = SceneLayerDescriptor::new(
-            SceneLayerId::from_widget(layer_id),
-            layer_id,
-            Rect::new(0.0, 0.0, 512.0, 128.0),
-        )
-        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_cache_policy(LayerCachePolicy::Cached)
-        .with_composition_mode(LayerCompositionMode::Scroll);
-
-        let build_scene = |x: f32| {
-            let mut layer_scene = Scene::new();
-            layer_scene.push(SceneCommand::PushClip {
-                rect: Rect::new(x, 0.0, 512.0, 128.0),
-            });
-            layer_scene.push(SceneCommand::FillRect {
-                rect: Rect::new(x, 0.0, 512.0, 128.0),
-                brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
-            });
-            layer_scene.push(SceneCommand::PopClip);
-
-            let translated = descriptor
-                .clone()
-                .with_content_bounds(Rect::new(x, 0.0, 512.0, 128.0))
-                .with_paint_bounds(Rect::new(x, 0.0, 512.0, 128.0));
-
-            let mut scene = Scene::new();
-            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
-                SceneLayerDescriptor::new(
-                    SceneLayerId::from_widget(layer_id),
-                    layer_id,
-                    Rect::new(x, 0.0, 512.0, 128.0),
-                )
-                .with_content_bounds(Rect::new(x, 0.0, 512.0, 128.0))
-                .with_paint_bounds(Rect::new(x, 0.0, 512.0, 128.0))
-                .with_cache_policy(translated.cache_policy)
-                .with_composition_mode(translated.composition_mode),
-                layer_scene,
-            )));
-            scene
-        };
-
-        let mut frame = SceneFrame {
-            window_id: WindowId::new(34),
-            viewport: Size::new(512.0, 128.0),
-            surface_size: Size::new(512.0, 128.0),
-            scale_factor: 1.0,
-            dirty_regions: Vec::new(),
-            layer_updates: vec![
-                SceneLayerUpdate::from_descriptor(
-                    SceneLayerUpdateKind::Content,
-                    descriptor.clone(),
-                )
-                .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
-            ],
-            scene: build_scene(0.0),
-            font_registry: Arc::new(FontRegistry::new()),
-            image_registry: Arc::new(ImageRegistry::new()),
-            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
-        };
-
-        let mut text_engine = TextEngine::new().unwrap();
-        let mut compositor = RetainedCompositorState::default();
-        let _first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-        let first_tile = compositor.layers[&SceneLayerId::from_widget(layer_id)].visible_tiles[0];
-        let first_clip_rect = compositor.tiles[&first_tile].cached_passes[0].draws[0].clip_rect;
-
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
-
-        let translated_descriptor = SceneLayerDescriptor::new(
-            SceneLayerId::from_widget(layer_id),
-            layer_id,
-            Rect::new(64.0, 0.0, 512.0, 128.0),
-        )
-        .with_content_bounds(Rect::new(64.0, 0.0, 512.0, 128.0))
-        .with_paint_bounds(Rect::new(64.0, 0.0, 512.0, 128.0))
-        .with_cache_policy(LayerCachePolicy::Cached)
-        .with_composition_mode(LayerCompositionMode::Scroll);
-        frame.scene = build_scene(64.0);
-        frame.layer_updates = vec![SceneLayerUpdate::from_descriptor(
-            SceneLayerUpdateKind::Transform,
-            translated_descriptor,
-        )];
-
-        let _second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-        let translated_tile =
-            compositor.layers[&SceneLayerId::from_widget(layer_id)].visible_tiles[0];
-        let translated_clip_rect =
-            compositor.tiles[&translated_tile].cached_passes[0].draws[0].clip_rect;
-        let translated_offset = compositor.tiles[&translated_tile].translation;
-
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
-        assert_eq!(first_clip_rect, Some(Rect::new(0.0, 0.0, 384.0, 128.0)));
-        assert_eq!(
-            translated_clip_rect,
-            Some(Rect::new(0.0, 0.0, 384.0, 128.0))
-        );
-        assert_eq!(translated_offset, Vector::new(64.0, 0.0));
-    }
-
-    #[test]
-    fn retained_compositor_keeps_cached_tiles_when_unrelated_content_changes() {
-        let cached_id = WidgetId::new(104);
-        let overlay_id = WidgetId::new(105);
-
-        let cached_descriptor = SceneLayerDescriptor::new(
-            SceneLayerId::from_widget(cached_id),
-            cached_id,
-            Rect::new(0.0, 0.0, 512.0, 128.0),
-        )
-        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_cache_policy(LayerCachePolicy::Cached)
-        .with_composition_mode(LayerCompositionMode::Scroll);
-        let overlay_descriptor = SceneLayerDescriptor::new(
-            SceneLayerId::from_widget(overlay_id),
-            overlay_id,
-            Rect::new(24.0, 24.0, 64.0, 40.0),
-        )
-        .with_content_bounds(Rect::new(24.0, 24.0, 64.0, 40.0))
-        .with_paint_bounds(Rect::new(24.0, 24.0, 64.0, 40.0))
-        .with_cache_policy(LayerCachePolicy::Direct);
-
-        let build_scene = |overlay_brush: Color| {
-            let mut cached_scene = Scene::new();
-            cached_scene.push(SceneCommand::FillRect {
-                rect: Rect::new(0.0, 0.0, 512.0, 128.0),
-                brush: Color::rgba(0.2, 0.2, 0.2, 1.0).into(),
-            });
-
-            let mut overlay_scene = Scene::new();
-            overlay_scene.push(SceneCommand::FillRect {
-                rect: overlay_descriptor.bounds,
-                brush: overlay_brush.into(),
-            });
-
-            let mut scene = Scene::new();
-            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
-                cached_descriptor.clone(),
-                cached_scene,
-            )));
-            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
-                overlay_descriptor.clone(),
-                overlay_scene,
-            )));
-            scene
-        };
-
-        let mut frame = SceneFrame {
-            window_id: WindowId::new(35),
-            viewport: Size::new(512.0, 128.0),
-            surface_size: Size::new(512.0, 128.0),
-            scale_factor: 1.0,
-            dirty_regions: Vec::new(),
-            layer_updates: vec![
-                SceneLayerUpdate::from_descriptor(
-                    SceneLayerUpdateKind::Content,
-                    cached_descriptor.clone(),
-                )
-                .with_damage(cached_descriptor.paint_bounds),
-                SceneLayerUpdate::from_descriptor(
-                    SceneLayerUpdateKind::Content,
-                    overlay_descriptor.clone(),
-                )
-                .with_damage(overlay_descriptor.paint_bounds),
-            ],
-            scene: build_scene(Color::rgba(0.8, 0.2, 0.2, 1.0)),
-            font_registry: Arc::new(FontRegistry::new()),
-            image_registry: Arc::new(ImageRegistry::new()),
-            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
-        };
-
-        let mut text_engine = TextEngine::new().unwrap();
-        let mut compositor = RetainedCompositorState::default();
-        let _first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
-
-        frame.scene = build_scene(Color::rgba(0.2, 0.8, 0.2, 1.0));
-        frame.layer_updates = vec![
-            SceneLayerUpdate::from_descriptor(
-                SceneLayerUpdateKind::Content,
-                overlay_descriptor.clone(),
-            )
-            .with_damage(overlay_descriptor.paint_bounds),
-        ];
-
-        let _second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 0);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 2);
     }
 
     #[test]
@@ -5269,8 +4756,6 @@ mod tests {
         let mut compositor = RetainedCompositorState::default();
         let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
-
         assert!(frame.scene.replace_layer(
             parent_id,
             SceneLayer::from_descriptor(
@@ -5287,10 +4772,6 @@ mod tests {
         ];
 
         let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
     }
 
     #[test]
@@ -5371,8 +4852,6 @@ mod tests {
         let mut compositor = RetainedCompositorState::default();
         let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
-
         assert!(frame.scene.replace_layer(
             parent_id,
             SceneLayer::from_descriptor(parent_descriptor.clone(), build_parent_scene(340.0)),
@@ -5386,10 +4865,6 @@ mod tests {
         ];
 
         let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 0);
     }
 
     #[test]
@@ -5549,8 +5024,6 @@ mod tests {
         let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
         assert_ne!(first.scene_vertices, second.scene_vertices);
-        assert!(compositor.last_frame_stats.regenerated_tiles > 0);
-
         let mut renderer = WgpuRenderer::default();
         renderer.render(&first_frame).unwrap();
         let before = renderer
@@ -5666,9 +5139,6 @@ mod tests {
         let mut compositor = RetainedCompositorState::default();
         let first = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 2);
-
         frame.scene = build_scene(Color::rgba(0.0, 1.0, 0.0, 1.0));
         frame.layer_updates = vec![
             SceneLayerUpdate::from_descriptor(
@@ -5681,76 +5151,6 @@ mod tests {
         let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
         assert_ne!(first.scene_vertices, second.scene_vertices);
-        assert_eq!(compositor.last_frame_stats.visible_tiles, 2);
-        assert_eq!(compositor.last_frame_stats.regenerated_tiles, 1);
-        assert_eq!(compositor.last_frame_stats.reused_tiles, 1);
-    }
-
-    #[test]
-    fn retained_compositor_prunes_removed_cached_layer_tiles() {
-        let removed_id = WidgetId::new(91);
-        let removed_descriptor = SceneLayerDescriptor::new(
-            SceneLayerId::from_widget(removed_id),
-            removed_id,
-            Rect::new(0.0, 0.0, 512.0, 128.0),
-        )
-        .with_content_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_paint_bounds(Rect::new(0.0, 0.0, 512.0, 128.0))
-        .with_cache_policy(LayerCachePolicy::Cached);
-
-        let mut first_scene = Scene::new();
-        first_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
-            removed_descriptor.clone(),
-            {
-                let mut scene = Scene::new();
-                scene.push(SceneCommand::FillRect {
-                    rect: Rect::new(0.0, 0.0, 512.0, 128.0),
-                    brush: Color::rgba(0.8, 0.2, 0.2, 1.0).into(),
-                });
-                scene
-            },
-        )));
-
-        let mut frame = SceneFrame {
-            window_id: WindowId::new(33),
-            viewport: Size::new(512.0, 128.0),
-            surface_size: Size::new(512.0, 128.0),
-            scale_factor: 1.0,
-            dirty_regions: Vec::new(),
-            layer_updates: vec![
-                SceneLayerUpdate::from_descriptor(
-                    SceneLayerUpdateKind::Content,
-                    removed_descriptor.clone(),
-                )
-                .with_damage(Rect::new(0.0, 0.0, 512.0, 128.0)),
-            ],
-            scene: first_scene,
-            font_registry: Arc::new(FontRegistry::new()),
-            image_registry: Arc::new(ImageRegistry::new()),
-            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
-        };
-
-        let mut text_engine = TextEngine::new().unwrap();
-        let mut compositor = RetainedCompositorState::default();
-        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-        assert!(
-            compositor
-                .tiles
-                .keys()
-                .any(|address| address.layer == SceneLayerId::from_widget(removed_id))
-        );
-
-        frame.scene = Scene::new();
-        frame.layer_updates.clear();
-
-        let _ = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
-
-        assert!(
-            compositor
-                .tiles
-                .keys()
-                .all(|address| address.layer != SceneLayerId::from_widget(removed_id))
-        );
     }
 
     #[test]

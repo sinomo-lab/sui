@@ -17,8 +17,8 @@ use sui_core::{
 };
 use sui_layout::Constraints;
 use sui_scene::{
-    Brush, ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, Scene, SceneCommand,
-    SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle,
+    Brush, ImageRegistry, ImageSource, LayerCompositionMode, Scene, SceneCommand, SceneLayer,
+    SceneLayerDescriptor, SceneLayerId, StrokeStyle,
 };
 use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, TextLayout, TextLayoutHandle,
@@ -87,7 +87,6 @@ pub trait Widget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayerOptions {
-    pub cache_policy: LayerCachePolicy,
     pub composition_mode: LayerCompositionMode,
 }
 
@@ -128,7 +127,6 @@ impl Default for StackSurfaceOptions {
 impl Default for LayerOptions {
     fn default() -> Self {
         Self {
-            cache_policy: LayerCachePolicy::Auto,
             composition_mode: LayerCompositionMode::Normal,
         }
     }
@@ -621,7 +619,6 @@ impl WidgetPod {
                 .paint_bounds()
                 .unwrap_or(self.layout_state.arranged_bounds),
         )
-        .with_cache_policy(options.cache_policy)
         .with_composition_mode(options.composition_mode)
     }
 

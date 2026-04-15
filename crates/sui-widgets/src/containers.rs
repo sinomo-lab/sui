@@ -9,7 +9,7 @@ use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx,
     SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::{Brush, LayerCachePolicy, LayerCompositionMode};
+use sui_scene::{Brush, LayerCompositionMode};
 
 pub struct Padding {
     insets: Insets,
@@ -566,7 +566,6 @@ pub struct VirtualScrollView {
     name: Option<String>,
     padding: Insets,
     spacing: f32,
-    cache_policy: LayerCachePolicy,
     offset_y: f32,
     last_arranged_offset_y: f32,
     content_height: f32,
@@ -581,7 +580,6 @@ impl VirtualScrollView {
             name: None,
             padding: Insets::ZERO,
             spacing: 0.0,
-            cache_policy: LayerCachePolicy::Cached,
             offset_y: 0.0,
             last_arranged_offset_y: 0.0,
             content_height: 0.0,
@@ -603,11 +601,6 @@ impl VirtualScrollView {
 
     pub fn spacing(mut self, spacing: f32) -> Self {
         self.spacing = spacing.max(0.0);
-        self
-    }
-
-    pub fn cache_policy(mut self, cache_policy: LayerCachePolicy) -> Self {
-        self.cache_policy = cache_policy;
         self
     }
 
@@ -720,10 +713,8 @@ impl VirtualScrollView {
     }
 
     fn update_visible_range(&mut self, viewport_height: f32) {
-        // Extend the visible window by a buffer zone so that small scrolls
-        // do not change the set of painted children.  This keeps the scene
-        // content stable, allowing the tile cache to reuse previously
-        // generated tiles instead of regenerating them from scratch.
+        // Extend the visible window by a buffer zone so small scrolls keep a
+        // stable widget set and avoid unnecessary repaint churn.
         self.visible_range = self.visible_range_for_offset(viewport_height, self.offset_y);
     }
 
@@ -853,7 +844,6 @@ impl Widget for ScrollView {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: LayerCachePolicy::Cached,
             composition_mode: LayerCompositionMode::Scroll,
         }
     }
@@ -1051,7 +1041,6 @@ impl Widget for VirtualScrollView {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: self.cache_policy,
             composition_mode: LayerCompositionMode::Scroll,
         }
     }
@@ -1247,7 +1236,7 @@ mod tests {
         RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot,
         WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
-    use sui_scene::{Brush, LayerCachePolicy, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+    use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
 
     struct FixedBox {
         size: Size,
@@ -1364,7 +1353,6 @@ mod tests {
 
         fn layer_options(&self) -> LayerOptions {
             LayerOptions {
-                cache_policy: LayerCachePolicy::Direct,
                 composition_mode: LayerCompositionMode::Normal,
             }
         }
@@ -1501,7 +1489,6 @@ mod tests {
 
         fn layer_options(&self) -> LayerOptions {
             LayerOptions {
-                cache_policy: LayerCachePolicy::Cached,
                 composition_mode: LayerCompositionMode::Scroll,
             }
         }
@@ -1739,7 +1726,7 @@ mod tests {
     }
 
     #[test]
-    fn scroll_view_uses_cached_scroll_layer_metadata() {
+    fn scroll_view_uses_scroll_layer_metadata() {
         let (output, _) = render_root(SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
             ScrollView::vertical(FixedBox::new(
                 Size::new(80.0, 120.0),
@@ -1756,12 +1743,11 @@ mod tests {
         let descriptor =
             layer_descriptor_for(&output, scroll_id).expect("scroll view layer present");
 
-        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Cached);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
     }
 
     #[test]
-    fn virtual_scroll_view_uses_cached_scroll_layer_metadata() {
+    fn virtual_scroll_view_uses_scroll_layer_metadata() {
         let (output, _) = render_root(
             SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
                 VirtualScrollView::new()
@@ -1785,7 +1771,6 @@ mod tests {
         let descriptor =
             layer_descriptor_for(&output, scroll_id).expect("virtual scroll view layer present");
 
-        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Cached);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
     }
 

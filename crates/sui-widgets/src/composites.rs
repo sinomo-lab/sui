@@ -8,7 +8,7 @@ use sui_runtime::{
     StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
     window_render_options,
 };
-use sui_scene::{LayerCachePolicy, LayerCompositionMode, StrokeStyle};
+use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{TextMeasurement, TextStyle};
 
 use crate::{Button, ControlMetrics, DefaultTheme};
@@ -1272,7 +1272,6 @@ impl Widget for Tooltip {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: LayerCachePolicy::Direct,
             composition_mode: if self.hovered {
                 LayerCompositionMode::Overlay
             } else {
@@ -1489,7 +1488,6 @@ impl Widget for Popover {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: LayerCachePolicy::Direct,
             composition_mode: if self.open {
                 LayerCompositionMode::Overlay
             } else {
@@ -1882,7 +1880,6 @@ impl Widget for ContextMenu {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: LayerCachePolicy::Direct,
             composition_mode: if self.open {
                 LayerCompositionMode::Overlay
             } else {
@@ -2265,7 +2262,6 @@ impl Widget for Dialog {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
-            cache_policy: LayerCachePolicy::Direct,
             composition_mode: if self.shown {
                 if self.modal {
                     LayerCompositionMode::Effect
@@ -2758,7 +2754,7 @@ mod tests {
         Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
         WindowBuilder,
     };
-    use sui_scene::{LayerCachePolicy, LayerCompositionMode, SceneLayerDescriptor};
+    use sui_scene::{LayerCompositionMode, SceneLayerDescriptor};
     use sui_text::{FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -3159,7 +3155,6 @@ mod tests {
         let descriptor =
             layer_descriptor_for(&output, popover.id).expect("popover layer descriptor present");
 
-        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Direct);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
     }
 
@@ -3228,7 +3223,6 @@ mod tests {
         let descriptor =
             layer_descriptor_for(&output, dialog.id).expect("dialog layer descriptor present");
 
-        assert_eq!(descriptor.cache_policy, LayerCachePolicy::Direct);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Effect);
     }
 

@@ -74,7 +74,6 @@ pub struct SceneLayerDescriptor {
     pub stack_order: usize,
     pub transient_owner_surface: Option<WidgetId>,
     pub is_stack_surface: bool,
-    pub cache_policy: LayerCachePolicy,
     pub composition_mode: LayerCompositionMode,
 }
 
@@ -90,7 +89,6 @@ impl SceneLayerDescriptor {
             stack_order: 0,
             transient_owner_surface: None,
             is_stack_surface: false,
-            cache_policy: LayerCachePolicy::Auto,
             composition_mode: LayerCompositionMode::Normal,
         }
     }
@@ -128,11 +126,6 @@ impl SceneLayerDescriptor {
         self
     }
 
-    pub const fn with_cache_policy(mut self, cache_policy: LayerCachePolicy) -> Self {
-        self.cache_policy = cache_policy;
-        self
-    }
-
     pub const fn with_composition_mode(mut self, composition_mode: LayerCompositionMode) -> Self {
         self.composition_mode = composition_mode;
         self
@@ -167,13 +160,6 @@ impl From<WidgetId> for SceneLayerId {
     fn from(value: WidgetId) -> Self {
         Self::from_widget(value)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LayerCachePolicy {
-    Auto,
-    Direct,
-    Cached,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -761,8 +747,8 @@ impl SceneFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, ImageRegistry, ImageSource, LayerCachePolicy, LayerCompositionMode, RegisteredImage,
-        Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId,
+        Brush, ImageRegistry, ImageSource, LayerCompositionMode, RegisteredImage, Scene,
+        SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId,
         SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
     };
     use std::sync::Arc;
@@ -876,7 +862,6 @@ mod tests {
         )
         .with_content_bounds(Rect::new(0.0, 0.0, 80.0, 32.0))
         .with_paint_bounds(Rect::new(2.0, 3.0, 40.0, 20.0))
-        .with_cache_policy(LayerCachePolicy::Cached)
         .with_composition_mode(LayerCompositionMode::Scroll);
         let update = SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Transform, descriptor)
             .with_damage(Rect::new(1.0, 2.0, 42.0, 24.0));
