@@ -1230,6 +1230,14 @@ fn normalized_scene_snapshot(scene: &sui::Scene) -> Vec<String> {
             layer.descriptor.cache_policy,
             layer.descriptor.composition_mode,
         )),
+        SceneCommand::DrawShapedText(text) => snapshot.push(format!(
+            "DrawShapedText|{:?}|{:?}",
+            text.origin, text.bounds,
+        )),
+        SceneCommand::DrawShapedTextWindow(text) => snapshot.push(format!(
+            "DrawShapedTextWindow|{:?}|{:?}|{}..{}",
+            text.origin, text.bounds, text.line_range.start, text.line_range.end,
+        )),
         other => snapshot.push(format!("{:?}", other)),
     });
     snapshot
