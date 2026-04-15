@@ -2751,7 +2751,7 @@ mod tests {
     use crate::FloatingStack;
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
-        PointerEventKind, SemanticsNode, SemanticsRole, SemanticsValue, Size, WidgetId,
+        PointerEventKind, Rect, SemanticsNode, SemanticsRole, SemanticsValue, Size, WidgetId,
     };
     use sui_layout::Constraints;
     use sui_runtime::{
@@ -2789,6 +2789,18 @@ mod tests {
             .iter()
             .find_map(|command| match command {
                 sui_scene::SceneCommand::DrawText(text) => Some(text.clone()),
+                sui_scene::SceneCommand::DrawShapedText(text) => text
+                    .resolve(output.frame.text_layout_registry.as_ref())
+                    .map(|layout| sui_text::TextRun {
+                        rect: Rect::new(
+                            text.origin.x,
+                            text.origin.y,
+                            layout.box_size().width,
+                            layout.box_size().height,
+                        ),
+                        text: layout.text().to_string(),
+                        style: layout.style().clone(),
+                    }),
                 _ => None,
             })
             .expect("text draw command present")
@@ -2802,6 +2814,19 @@ mod tests {
             .iter()
             .find_map(|command| match command {
                 sui_scene::SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
+                sui_scene::SceneCommand::DrawShapedText(run) => run
+                    .resolve(output.frame.text_layout_registry.as_ref())
+                    .filter(|layout| layout.text() == text)
+                    .map(|layout| sui_text::TextRun {
+                        rect: Rect::new(
+                            run.origin.x,
+                            run.origin.y,
+                            layout.box_size().width,
+                            layout.box_size().height,
+                        ),
+                        text: layout.text().to_string(),
+                        style: layout.style().clone(),
+                    }),
                 _ => None,
             })
             .expect("text draw command present")

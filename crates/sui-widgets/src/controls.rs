@@ -4234,7 +4234,12 @@ mod tests {
                 SceneCommand::DrawShapedText(text) => text
                     .resolve(output.frame.text_layout_registry.as_ref())
                     .map(|layout| sui_text::TextRun {
-                        rect: layout.measurement().bounds.translate(text.origin.to_vector()),
+                        rect: Rect::new(
+                            text.origin.x,
+                            text.origin.y,
+                            layout.box_size().width,
+                            layout.box_size().height,
+                        ),
                         text: layout.text().to_string(),
                         style: layout.style().clone(),
                     }),
@@ -4268,7 +4273,12 @@ mod tests {
                     .resolve(output.frame.text_layout_registry.as_ref())
                     .filter(|layout| layout.text() == text)
                     .map(|layout| sui_text::TextRun {
-                        rect: layout.measurement().bounds.translate(run.origin.to_vector()),
+                        rect: Rect::new(
+                            run.origin.x,
+                            run.origin.y,
+                            layout.box_size().width,
+                            layout.box_size().height,
+                        ),
                         text: layout.text().to_string(),
                         style: layout.style().clone(),
                     }),
@@ -4336,7 +4346,7 @@ mod tests {
         assert!(output.frame.viewport.height >= 16.0);
         assert!(matches!(
             output.frame.scene.commands()[0],
-            SceneCommand::DrawText(_)
+            SceneCommand::DrawShapedText(_)
         ));
         assert_eq!(output.semantics[0].role, SemanticsRole::Text);
         assert_eq!(output.semantics[0].name.as_deref(), Some("Hello SUI"));
@@ -4684,16 +4694,7 @@ mod tests {
         theme.palette.text = Color::rgba(0.78, 0.82, 0.90, 1.0);
 
         let output = render(Label::new("Body").theme(theme));
-        let label = output
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawText(text) => Some(text),
-                _ => None,
-            })
-            .expect("label draw command present");
+        let label = first_text_run(&output);
 
         assert_eq!(label.style.font_size, 15.0);
         assert_eq!(label.style.line_height, 22.0);

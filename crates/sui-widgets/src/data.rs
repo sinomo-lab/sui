@@ -2091,10 +2091,22 @@ mod tests {
     fn text_rects_for(output: &RenderOutput, text: &str) -> Vec<Rect> {
         let mut rects = Vec::new();
         output.frame.scene.visit_commands(&mut |command| {
-            if let SceneCommand::DrawText(run) = command {
-                if run.text == text {
-                    rects.push(run.rect);
+            match command {
+                SceneCommand::DrawText(run) if run.text == text => rects.push(run.rect),
+                SceneCommand::DrawShapedText(run) => {
+                    if let Some(layout) = run
+                        .resolve(output.frame.text_layout_registry.as_ref())
+                        .filter(|layout| layout.text() == text)
+                    {
+                        rects.push(Rect::new(
+                            run.origin.x,
+                            run.origin.y,
+                            layout.box_size().width,
+                            layout.box_size().height,
+                        ));
+                    }
                 }
+                _ => {}
             }
         });
 
@@ -2104,10 +2116,26 @@ mod tests {
     fn text_runs_for(output: &RenderOutput, text: &str) -> Vec<sui_text::TextRun> {
         let mut runs = Vec::new();
         output.frame.scene.visit_commands(&mut |command| {
-            if let SceneCommand::DrawText(run) = command {
-                if run.text == text {
-                    runs.push(run.clone());
+            match command {
+                SceneCommand::DrawText(run) if run.text == text => runs.push(run.clone()),
+                SceneCommand::DrawShapedText(run) => {
+                    if let Some(layout) = run
+                        .resolve(output.frame.text_layout_registry.as_ref())
+                        .filter(|layout| layout.text() == text)
+                    {
+                        runs.push(sui_text::TextRun {
+                            rect: Rect::new(
+                                run.origin.x,
+                                run.origin.y,
+                                layout.box_size().width,
+                                layout.box_size().height,
+                            ),
+                            text: layout.text().to_string(),
+                            style: layout.style().clone(),
+                        });
+                    }
                 }
+                _ => {}
             }
         });
 

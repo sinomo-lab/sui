@@ -1,6 +1,10 @@
-use std::sync::{
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
+    },
 };
 use std::time::Instant;
 
@@ -1273,11 +1277,22 @@ impl PaintCtx {
     }
 
     pub fn draw_text(&mut self, rect: Rect, text: impl Into<String>, style: TextStyle) {
-        self.scene.push(SceneCommand::DrawText(TextRun {
+        let run = TextRun {
             rect,
             text: text.into(),
             style,
-        }));
+        };
+
+        match self.text_system.shape_text_run_persistent(
+            Some(stable_text_run_handle(&run)),
+            &run,
+            self.font_registry.as_ref(),
+        ) {
+            Ok(layout) => self
+                .scene
+                .push(SceneCommand::DrawShapedText(ShapedText::new(rect.origin, &layout))),
+            Err(_) => self.scene.push(SceneCommand::DrawText(run)),
+        }
     }
 
     pub fn draw_text_layout(&mut self, origin: Point, layout: &TextLayout) {
@@ -1414,6 +1429,21 @@ impl PaintCtx {
             kind,
         ));
     }
+}
+
+fn stable_text_run_handle(run: &TextRun) -> TextLayoutHandle {
+    let mut hasher = DefaultHasher::new();
+    run.text.hash(&mut hasher);
+    run.rect.size.width.to_bits().hash(&mut hasher);
+    run.rect.size.height.to_bits().hash(&mut hasher);
+    run.style.font.map(|font| font.get()).hash(&mut hasher);
+    run.style.font_size.to_bits().hash(&mut hasher);
+    run.style.line_height.to_bits().hash(&mut hasher);
+    run.style.color.red.to_bits().hash(&mut hasher);
+    run.style.color.green.to_bits().hash(&mut hasher);
+    run.style.color.blue.to_bits().hash(&mut hasher);
+    run.style.color.alpha.to_bits().hash(&mut hasher);
+    TextLayoutHandle::new(hasher.finish().max(1))
 }
 
 #[derive(Debug, Clone)]
@@ -1752,7 +1782,7 @@ mod tests {
         ));
         assert!(matches!(
             paint.scene().commands()[1],
-            SceneCommand::DrawText(_)
+            SceneCommand::DrawShapedText(_)
         ));
         assert!(matches!(
             paint.scene().commands()[2],
