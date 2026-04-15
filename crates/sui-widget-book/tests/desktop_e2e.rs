@@ -30,8 +30,10 @@ use sui_runtime::{
 };
 use sui_widget_book::{
     BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS,
-    RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE, WidgetBookState,
-    build_button_grid_benchmark_application, build_retained_text_benchmark_application,
+    RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE,
+    TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
+    TEXT_EDITING_BENCHMARK_TITLE, WidgetBookState, build_button_grid_benchmark_application,
+    build_retained_text_benchmark_application, build_text_editing_benchmark_application,
     build_widget_book_application, build_widget_book_gallery, default_widget_book_state,
     register_widget_book_images,
 };
@@ -1443,6 +1445,13 @@ fn node_center(bounds: Rect) -> Point {
     Point::new(
         bounds.x() + (bounds.width() * 0.5),
         bounds.y() + (bounds.height() * 0.5),
+    )
+}
+
+fn interpolate_point(start: Point, end: Point, t: f32) -> Point {
+    Point::new(
+        start.x + ((end.x - start.x) * t),
+        start.y + ((end.y - start.y) * t),
     )
 }
 
@@ -3368,6 +3377,225 @@ fn run_retained_text_scroll_benchmark() -> Result<()> {
     Ok(())
 }
 
+fn run_text_editing_benchmark() -> Result<()> {
+    const EDIT_COMMITS: [&str; 10] = [
+        " // typed atlas reuse",
+        "\nlet pending_frame = cache_hits + 1;",
+        "\n// bidi check: abc אבג 123 مرحبا",
+        "\nlet emoji = \"🙂✅🎨\";",
+        "\nlet ime_probe = \"候補\";",
+        "\nlet syntax_band = highlight_rows.len();",
+        "\n// fallback sample: Ж 中 नमस्ते",
+        "\nrecord_selection_delta(cursor, viewport);",
+        "\nlet scroll_budget_ms = 16.67;",
+        "\ncommit_overlay_sample(frame_index);",
+    ];
+    const SELECTION_STEPS: usize = 8;
+    const EDITOR_SCROLL_FRAMES: usize = 18;
+    const SYNTAX_SCROLL_FRAMES: usize = 28;
+    const SCROLL_STEP_PX: f32 = -34.0;
+
+    let harness = DesktopHarness::launch_with_vsync(
+        || build_text_editing_benchmark_application().build(),
+        false,
+    )?;
+    let window_id = harness.main_window_id();
+
+    set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+    harness.dispatch(window_id, HostInputEvent::Focused(true))?;
+
+    let initial_snapshot = harness.snapshot(window_id)?;
+    let editor = find_node(
+        &initial_snapshot,
+        SemanticsRole::TextInput,
+        TEXT_EDITING_BENCHMARK_EDITOR_NAME,
+    );
+    let syntax_scroll = find_node(
+        &initial_snapshot,
+        SemanticsRole::ScrollView,
+        TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
+    );
+    let editor_point = node_center(editor.bounds);
+    let syntax_point = node_center(syntax_scroll.bounds);
+    let mut previous_frame_index = initial_snapshot
+        .performance
+        .as_ref()
+        .expect("text editing benchmark should publish an initial performance snapshot")
+        .frame_index;
+    let mut frame_samples = Vec::new();
+    let benchmark_started = Instant::now();
+
+    let mut record_frame = |stage: &str, step: usize| -> Result<()> {
+        let snapshot = harness.snapshot(window_id)?;
+        let performance = snapshot
+            .performance
+            .as_ref()
+            .expect("text editing benchmark should publish performance snapshots");
+
+        if performance.frame_index == previous_frame_index {
+            return Err(Error::new(format!(
+                "text editing benchmark did not render a new frame during {stage} step {}",
+                step + 1,
+            )));
+        }
+
+        previous_frame_index = performance.frame_index;
+        frame_samples.push(ScrollBenchmarkFrameSample::from_snapshot(performance));
+        Ok(())
+    };
+
+    click_at(&harness, window_id, editor_point)?;
+
+    for (step, text) in EDIT_COMMITS.iter().enumerate() {
+        harness.dispatch(
+            window_id,
+            HostInputEvent::ImeCommit {
+                text: (*text).to_string(),
+            },
+        )?;
+        record_frame("typing", step)?;
+    }
+
+    let selection_start = Point::new(editor.bounds.x() + 92.0, editor.bounds.y() + 64.0);
+    let selection_end = Point::new(editor.bounds.x() + editor.bounds.width() - 84.0, editor.bounds.y() + 64.0);
+    move_cursor(&harness, window_id, selection_start)?;
+    harness.dispatch(
+        window_id,
+        HostInputEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Left,
+        },
+    )?;
+    for step in 0..SELECTION_STEPS {
+        let t = (step + 1) as f32 / SELECTION_STEPS as f32;
+        harness.dispatch(
+            window_id,
+            HostInputEvent::CursorMoved {
+                position: interpolate_point(selection_start, selection_end, t),
+            },
+        )?;
+        record_frame("selection drag", step)?;
+    }
+    harness.dispatch(
+        window_id,
+        HostInputEvent::MouseInput {
+            state: ElementState::Released,
+            button: MouseButton::Left,
+        },
+    )?;
+
+    move_cursor(&harness, window_id, editor_point)?;
+    for step in 0..EDITOR_SCROLL_FRAMES {
+        harness.dispatch(
+            window_id,
+            HostInputEvent::MouseWheel {
+                delta: ScrollKind::Pixels(Vector::new(0.0, SCROLL_STEP_PX)),
+            },
+        )?;
+        record_frame("editor scroll", step)?;
+    }
+
+    move_cursor(&harness, window_id, syntax_point)?;
+    for step in 0..SYNTAX_SCROLL_FRAMES {
+        harness.dispatch(
+            window_id,
+            HostInputEvent::MouseWheel {
+                delta: ScrollKind::Pixels(Vector::new(0.0, SCROLL_STEP_PX)),
+            },
+        )?;
+        record_frame("syntax scroll", step)?;
+    }
+
+    let benchmark_elapsed_ms = benchmark_started.elapsed().as_secs_f64() * 1000.0;
+    let valid_count = frame_samples.len();
+    let frame_times_ms: Vec<_> = frame_samples
+        .iter()
+        .map(|sample| sample.total_time_ms)
+        .collect();
+    let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+    let avg_ms = total_frame_time_ms / valid_count as f64;
+    let max_ms = frame_times_ms
+        .iter()
+        .copied()
+        .max_by(|a, b| a.total_cmp(b))
+        .unwrap_or(0.0);
+    let mut sorted_times = frame_times_ms.clone();
+    sorted_times.sort_by(|a, b| a.total_cmp(b));
+    let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+    let p95_ms = sorted_times[p95_index];
+    let avg_uploaded_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.uploaded_vertex_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.text_vertex_bytes as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_glyph_instances = frame_samples
+        .iter()
+        .map(|sample| sample.text_glyph_instance_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_visible_tiles = frame_samples
+        .iter()
+        .map(|sample| sample.visible_tile_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_regenerated_tiles = frame_samples
+        .iter()
+        .map(|sample| sample.regenerated_tile_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let avg_text_atlas_miss_count = frame_samples
+        .iter()
+        .map(|sample| sample.text_atlas_miss_count as f64)
+        .sum::<f64>()
+        / valid_count as f64;
+    let max_uploaded_vertex_bytes = frame_samples
+        .iter()
+        .map(|sample| sample.uploaded_vertex_bytes)
+        .max()
+        .unwrap_or(0);
+
+    assert_eq!(initial_snapshot.title, TEXT_EDITING_BENCHMARK_TITLE);
+    assert_eq!(
+        valid_count,
+        EDIT_COMMITS.len() + SELECTION_STEPS + EDITOR_SCROLL_FRAMES + SYNTAX_SCROLL_FRAMES,
+    );
+
+    println!("\n=== Text Editing Benchmark ===");
+    println!("frames measured:  {valid_count}");
+    println!("wall-clock time:  {benchmark_elapsed_ms:.1} ms");
+    println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+    println!("max frame time:   {max_ms:.3} ms");
+    println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+    println!("avg upload bytes: {:.0}", avg_uploaded_vertex_bytes);
+    println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
+    println!("avg glyphs:       {avg_text_glyph_instances:.2}");
+    println!("avg visible tiles:{avg_visible_tiles:.2}");
+    println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
+    println!("avg atlas misses: {avg_text_atlas_miss_count:.2}");
+    println!("max upload bytes: {max_uploaded_vertex_bytes}");
+    println!("==============================\n");
+
+    assert!(
+        avg_text_glyph_instances > 0.0,
+        "text editing benchmark should render glyph instances on every measured frame",
+    );
+    assert!(
+        avg_text_vertex_bytes > 0.0,
+        "text editing benchmark should submit text payloads while typing and scrolling",
+    );
+    assert!(
+        max_uploaded_vertex_bytes > 0,
+        "text editing benchmark should upload geometry during interaction",
+    );
+
+    Ok(())
+}
+
 fn run_button_grid_resize_benchmark() -> Result<()> {
     const FRAME_BUDGET_MS: f64 = 1000.0 / 60.0;
     const WARMUP_FRAMES: usize = 12;
@@ -4037,6 +4265,15 @@ fn desktop_retained_text_scroll_upload_benchmark() -> Result<()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     run_retained_text_scroll_benchmark()
+}
+
+#[test]
+fn desktop_text_editing_benchmark_reports_frame_samples() -> Result<()> {
+    let _guard = DESKTOP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    run_text_editing_benchmark()
 }
 
 #[test]

@@ -1,6 +1,7 @@
 use crate::{
-    FontRegistry, RegisteredFont, TextDocument, TextLayoutCacheSnapshot, TextLayoutRequest,
-    TextParagraph, TextSelection, TextSpan, TextStyle, TextSystem,
+    FontRegistry, RegisteredFont, TextDirection, TextDocument, TextFlowDirection,
+    TextLayoutCacheSnapshot, TextLayoutRequest, TextParagraph, TextParagraphStyle,
+    TextSelection, TextSpan, TextStyle, TextSystem,
 };
 use sui_core::{Color, FontHandle, Point, Size};
 
@@ -596,6 +597,79 @@ fn hit_testing_maps_points_back_to_text_offsets() {
     assert_eq!(start.utf8_offset, 0);
     assert!(middle.utf8_offset > start.utf8_offset);
     assert!(next_line.utf8_offset > middle.utf8_offset);
+}
+
+#[test]
+fn auto_direction_layout_exposes_mixed_ltr_and_rtl_runs() {
+    let system = TextSystem::new();
+    let layout = system
+        .shape_text(
+            "cursor abc אבג 123 مرحبا",
+            Size::new(320.0, 40.0),
+            TextStyle::new(Color::WHITE),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    let directions = layout
+        .runs()
+        .iter()
+        .map(|run| run.direction)
+        .collect::<std::collections::HashSet<_>>();
+
+    assert!(directions.contains(&TextFlowDirection::LeftToRight));
+    assert!(directions.contains(&TextFlowDirection::RightToLeft));
+    assert_cluster_run_ranges(&layout);
+}
+
+#[test]
+fn explicit_rtl_paragraph_places_caret_progression_from_the_right() {
+    let system = TextSystem::new();
+    let document = TextDocument {
+        paragraphs: vec![TextParagraph {
+            style: TextParagraphStyle {
+                direction: TextDirection::RightToLeft,
+                ..Default::default()
+            },
+            spans: vec![TextSpan::new("שלום עולם", TextStyle::new(Color::WHITE))],
+        }],
+    };
+
+    let layout = system
+        .layout_document(
+            TextLayoutRequest::new(document).with_box_size(Size::new(240.0, 40.0)),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    let start_caret = layout.caret_rect(0);
+    let end_caret = layout.caret_rect(layout.text().len());
+
+    assert_eq!(layout.lines()[0].direction, TextFlowDirection::RightToLeft);
+    assert!(
+        start_caret.x() >= end_caret.x(),
+        "expected RTL caret progression to begin at the right edge, start={start_caret:?} end={end_caret:?}"
+    );
+}
+
+#[test]
+fn wrapped_selection_geometry_spans_multiple_lines() {
+    let system = TextSystem::new();
+    let layout = system
+        .shape_text(
+            "The validation surface should preserve selection rectangles across wrapped lines without collapsing everything into one strip.",
+            Size::new(96.0, 160.0),
+            TextStyle::new(Color::WHITE),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    let rects = layout.selection_rects(10..72);
+    let bounds = layout.selection_bounds(10..72);
+
+    assert!(layout.lines().len() >= 2);
+    assert!(rects.len() >= 2, "expected multi-line selection geometry, got {rects:?}");
+    assert!(bounds.is_some());
 }
 
 #[test]

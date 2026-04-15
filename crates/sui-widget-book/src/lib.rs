@@ -5,7 +5,8 @@ use std::{cell::RefCell, rc::Rc};
 use sui::prelude::*;
 use sui::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, Rect, SceneStatisticsDetailMode,
-    SemanticsNode, SemanticsRole, SemanticsValue, TextStyle, TimerToken, Vector,
+    SemanticsNode, SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextWrap,
+    TextSurface, TimerToken, Vector,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId, WindowPerformanceSnapshot,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_scene_statistics_detail_mode,
@@ -22,6 +23,8 @@ pub const WINDOW_DESCRIPTION: &str =
     "Development gallery for common built-in widgets in sui-widgets";
 pub const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
 pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
+pub const TEXT_VALIDATION_VIEW_TITLE: &str = "SUI Text Validation";
+pub const TEXT_EDITING_BENCHMARK_TITLE: &str = "SUI Text Editing Benchmark";
 pub const BUTTON_GRID_ROWS: usize = 8;
 pub const BUTTON_GRID_COLUMNS: usize = 8;
 pub const NAME_INPUT_LABEL: &str = "Name";
@@ -52,6 +55,11 @@ pub const SPINNER_NAME: &str = "Background work";
 pub const SUMMARY_NAME: &str = "Widget book summary";
 pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
 pub const RETAINED_TEXT_BENCHMARK_SCROLL_NAME: &str = "Retained text benchmark scroll";
+pub const TEXT_VALIDATION_SCROLL_NAME: &str = "Text validation scroll";
+pub const TEXT_VALIDATION_EDITOR_NAME: &str = "Validation editor";
+pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark editor";
+pub const TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME: &str =
+    "Text editing benchmark syntax preview";
 pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
 pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare light and dark themes";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
@@ -1467,6 +1475,166 @@ pub fn build_retained_text_benchmark_application() -> Application {
     )
 }
 
+pub fn build_text_validation_surface() -> impl Widget {
+    let content = Stack::vertical()
+        .spacing(18.0)
+        .alignment(Alignment::Stretch)
+        .with_child(panel(
+            "Mixed scripts and fallback",
+            "Validate mixed-script shaping, emoji fallback, and bidirectional runs against one stable visual surface.",
+            Stack::vertical()
+                .spacing(8.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    SizedBox::new().width(900.0).with_child(
+                        Label::new("Latin, Cyrillic, Hebrew, Arabic, Devanagari, and Han: SUI validates editor text in English, Привет, שלום, مرحبا, नमस्ते, 中文.")
+                            .font_size(15.0)
+                            .line_height(22.0)
+                            .color(Color::rgba(0.16, 0.22, 0.30, 1.0)),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(900.0).with_child(
+                        Label::new("Emoji and fallback coverage: status ready 🙂, warning ⚠, success ✅, palette 🎨, atlas 🔤, mixed fallback 中 and Ж in one line.")
+                            .font_size(15.0)
+                            .line_height(22.0)
+                            .color(Color::rgba(0.18, 0.25, 0.35, 1.0)),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(900.0).with_child(
+                        Label::new("Bidirectional sample: layout anchor -> abc אבג 123 مرحبا <- editor overlay should preserve readable ordering.")
+                            .font_size(15.0)
+                            .line_height(22.0)
+                            .color(Color::rgba(0.22, 0.30, 0.39, 1.0)),
+                    ),
+                ),
+        ))
+        .with_child(panel(
+            "Wrapping and line breaking",
+            "Constrained paragraphs keep the validation surface honest about line windows, wrapping, and caret placement near soft wraps.",
+            Stack::horizontal()
+                .spacing(18.0)
+                .alignment(Alignment::Start)
+                .with_child(
+                    SizedBox::new().width(300.0).with_child(
+                        Label::new("A narrow validation column should wrap mixed punctuation, inline numbers like 2026, and fallback text such as 漢字 without collapsing the selection geometry into one long strip.")
+                            .font_size(14.0)
+                            .line_height(20.0)
+                            .color(Color::rgba(0.29, 0.35, 0.43, 1.0)),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(300.0).with_child(
+                        Label::new("A second constrained column helps compare where the renderer slices visible lines when long technical prose, bidi fragments, and emoji comments all sit in the same viewport.")
+                            .font_size(14.0)
+                            .line_height(20.0)
+                            .color(Color::rgba(0.29, 0.35, 0.43, 1.0)),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(260.0).with_child(
+                        Label::new("Expected focus: stable wraps, readable fallback glyphs, and no clipping around caret or selection overlays.")
+                            .font_size(13.0)
+                            .line_height(19.0)
+                            .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
+                    ),
+                ),
+        ))
+        .with_child(panel(
+            "Interactive text surface",
+            "This editor-sized surface is the manual validation target for caret, selection, scrolling, IME commit, and mixed-script editing behavior.",
+            Stack::vertical()
+                .spacing(10.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    SizedBox::new().width(900.0).with_child(
+                        Label::new("Focus the surface, type with IME or keyboard input, extend selection with Shift+Arrow, and wheel-scroll to inspect visible-line extraction.")
+                            .font_size(13.0)
+                            .line_height(19.0)
+                            .color(Color::rgba(0.43, 0.50, 0.58, 1.0)),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new()
+                        .width(900.0)
+                        .height(260.0)
+                        .with_child(
+                            TextSurface::new(TEXT_VALIDATION_EDITOR_NAME)
+                                .value(text_validation_editor_seed())
+                                .wrap(TextWrap::Word)
+                                .direction(TextDirection::Auto)
+                                .min_width(900.0)
+                                .min_height(260.0)
+                                .text_style(TextStyle {
+                                    font_size: 14.0,
+                                    line_height: 20.0,
+                                    color: Color::rgba(0.15, 0.19, 0.25, 1.0),
+                                    ..TextStyle::default()
+                                }),
+                        ),
+                ),
+        ));
+
+    ScrollView::vertical(Padding::all(
+        24.0,
+        SizedBox::new().width(980.0).with_child(content),
+    ))
+    .name(TEXT_VALIDATION_SCROLL_NAME)
+}
+
+pub fn build_text_editing_benchmark() -> impl Widget {
+    let editor_panel = panel(
+        "Editable code surface",
+        "Benchmark typing, selection, and wheel scrolling against one long text surface with editor-like line length and comment density.",
+        SizedBox::new()
+            .width(560.0)
+            .height(700.0)
+            .with_child(
+                TextSurface::new(TEXT_EDITING_BENCHMARK_EDITOR_NAME)
+                    .value(text_editing_benchmark_document())
+                    .direction(TextDirection::LeftToRight)
+                    .min_width(560.0)
+                    .min_height(700.0)
+                    .text_style(TextStyle {
+                        font_size: 13.0,
+                        line_height: 18.0,
+                        color: Color::rgba(0.13, 0.17, 0.23, 1.0),
+                        ..TextStyle::default()
+                    }),
+            ),
+    );
+    let syntax_panel = panel(
+        "Syntax-highlight preview",
+        "A scrollable code-preview column keeps the benchmark honest about syntax-color churn instead of measuring only plain-text editing.",
+        SizedBox::new()
+            .width(520.0)
+            .height(700.0)
+            .with_child(build_text_editing_syntax_preview()),
+    );
+
+    Padding::all(
+        24.0,
+        SplitView::horizontal(editor_panel, syntax_panel)
+            .ratio(0.54)
+            .min_first(420.0)
+            .min_second(360.0)
+            .divider_thickness(12.0),
+    )
+}
+
+pub fn build_text_editing_benchmark_application() -> Application {
+    Application::new().window(
+        WindowBuilder::new().title(TEXT_EDITING_BENCHMARK_TITLE).root(
+            LivePerformanceRoot::new(
+                TEXT_EDITING_BENCHMARK_TITLE,
+                "Focused benchmark surface for editor-style typing, selection, scrolling, and syntax-highlight preview cost.",
+                build_text_editing_benchmark(),
+            ),
+        ),
+    )
+}
+
 fn retained_text_benchmark_section(section_index: usize) -> (String, String) {
     const THEMES: [(&str, &str); 6] = [
         (
@@ -1534,6 +1702,156 @@ fn retained_text_benchmark_paragraph(section_index: usize, paragraph_index: usiz
         cadence,
         packet_hint,
     )
+}
+
+fn text_validation_editor_seed() -> String {
+    [
+        "Validation checklist",
+        "- Mixed script: English, العربية, עברית, हिन्दी, 中文, and emoji 🙂 should stay readable.",
+        "- Wrapping: long diagnostics must reflow without selection gaps when the viewport narrows.",
+        "- IME: composition commits should land near the caret instead of invalidating the whole surface.",
+        "- Caret: moving across bidi boundaries should preserve stable layout handles and visible overlays.",
+        "",
+        "Type here to confirm the runtime still exposes semantics-first text input for automated tests.",
+    ]
+    .join("\n")
+}
+
+fn text_editing_benchmark_document() -> String {
+    let mut lines = Vec::new();
+    lines.push("// Text editing benchmark: long code-like document with mixed comments and repeated glyph traffic".to_string());
+    lines.push("mod editor_benchmark {".to_string());
+    for index in 0..240 {
+        let indent = if index % 6 == 0 { "        " } else { "    " };
+        let keyword = ["let", "if", "match", "while", "for", "return"][index % 6];
+        let symbol = [
+            "shape_visible_window",
+            "apply_incremental_edit",
+            "measure_selection_overlay",
+            "resolve_fallback_face",
+            "update_syntax_cache",
+            "record_scroll_sample",
+        ][(index * 3) % 6];
+        let comment = [
+            "// atlas reuse should stay warm 🙂",
+            "// bidi note: abc אבג 123 مرحبا",
+            "// syntax colors keep changing across the preview pane",
+            "// fallback sample includes Ж, 中, and नमस्ते in comments",
+            "// selection overlays should repaint locally",
+            "// retained tiles should not rebuild unrelated code blocks",
+        ][(index * 5) % 6];
+        lines.push(format!(
+            "{indent}{keyword} row_{index:03} = {symbol}(cursor + {delta}, viewport_height - {trim}); {comment}",
+            delta = 3 + (index % 17),
+            trim = 1 + (index % 7),
+        ));
+        if index % 8 == 7 {
+            lines.push(format!(
+                "        // folded section {:02}: syntax_color = accent::{:?}; ime = \"候補{}\";",
+                (index / 8) + 1,
+                ["Keyword", "Type", "Comment", "Number"][index % 4],
+                index
+            ));
+        }
+    }
+    lines.push("}".to_string());
+    lines.join("\n")
+}
+
+fn build_text_editing_syntax_preview() -> impl Widget {
+    let mut content = Stack::vertical()
+        .spacing(2.0)
+        .alignment(Alignment::Stretch);
+
+    for line_index in 0..220 {
+        content = content.with_child(build_text_editing_syntax_line(line_index));
+    }
+
+    ScrollView::vertical(Padding::all(
+        12.0,
+        SizedBox::new().width(520.0).with_child(content),
+    ))
+    .name(TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME)
+}
+
+fn build_text_editing_syntax_line(line_index: usize) -> impl Widget {
+    let keyword = ["fn", "let", "match", "if", "while", "return"][line_index % 6];
+    let type_name = [
+        "EditorState",
+        "GlyphRun",
+        "SelectionOverlay",
+        "SyntaxPalette",
+        "VisibleWindow",
+        "BenchmarkFrame",
+    ][(line_index * 7) % 6];
+    let method = [
+        "shape_visible_window",
+        "collect_cache_delta",
+        "measure_cursor_band",
+        "update_highlight_rows",
+        "resolve_fallback_faces",
+        "commit_frame_sample",
+    ][(line_index * 11) % 6];
+    let accent = ["keyword", "type", "comment", "number"][line_index % 4];
+    let line = Stack::horizontal()
+        .spacing(0.0)
+        .alignment(Alignment::Start)
+        .with_child(
+            SizedBox::new().width(44.0).with_child(
+                Label::new(format!("{:>3}", line_index + 1))
+                    .font_size(12.0)
+                    .line_height(18.0)
+                    .color(Color::rgba(0.58, 0.64, 0.72, 1.0)),
+            ),
+        )
+        .with_child(
+            Label::new(format!("{keyword} "))
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.78, 0.34, 0.16, 1.0)),
+        )
+        .with_child(
+            Label::new(format!("sample_{line_index:03}: "))
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.15, 0.19, 0.26, 1.0)),
+        )
+        .with_child(
+            Label::new(format!("{type_name} "))
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.09, 0.43, 0.58, 1.0)),
+        )
+        .with_child(
+            Label::new(format!("= {method}("))
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.21, 0.27, 0.35, 1.0)),
+        )
+        .with_child(
+            Label::new(format!("{:.2}", 0.5 + ((line_index % 17) as f32 * 0.125)))
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.14, 0.49, 0.24, 1.0)),
+        )
+        .with_child(
+            Label::new(") ")
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.21, 0.27, 0.35, 1.0)),
+        )
+        .with_child(
+            Label::new(format!("// {accent} tint, abc אבג 123, glyph set 🙂{}", line_index % 9))
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.36, 0.45, 0.25, 1.0)),
+        );
+
+    if line_index % 2 == 0 {
+        Background::new(Color::rgba(0.978, 0.984, 0.994, 1.0), Padding::all(6.0, line))
+    } else {
+        Background::new(Color::rgba(0.958, 0.968, 0.984, 1.0), Padding::all(6.0, line))
+    }
 }
 
 fn widget_book_demo_image_pixels() -> Vec<u8> {
@@ -2346,12 +2664,15 @@ mod tests {
         DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, LIST_VIEW_NAME,
         LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
         POPOVER_NAME, POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
-        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME,
+        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
+        TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
+        TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME, build_text_validation_surface,
         build_widget_book_application, default_widget_book_state,
     };
     use sui::{
-        Application, Event, FramePhase, FramePhaseSample, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, PresentationLatencyDiagnostics,
+        Application, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState, KeyboardEvent,
+        Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        PresentationLatencyDiagnostics,
         RendererSubmissionDiagnostics, Result, SceneStatistics, SceneStatisticsDetailMode,
         SemanticsRole, SemanticsValue, Size, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
         Vector, Widget, WidgetPod, WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId,
@@ -2368,6 +2689,17 @@ mod tests {
 
     fn build_configured_widget_book_app() -> Result<TestApp> {
         TestApp::new(|| build_widget_book_application(configured_widget_book_state()).build())
+    }
+
+    fn build_text_validation_app() -> Result<TestApp> {
+        TestApp::new(|| {
+            Application::new().window(
+                WindowBuilder::new()
+                    .title(TEXT_VALIDATION_VIEW_TITLE)
+                    .root(build_text_validation_surface()),
+            )
+            .build()
+        })
     }
 
     fn force_direct_scene(scene: &Scene) -> Scene {
@@ -2746,6 +3078,61 @@ mod tests {
             "summary screenshot did not change after typing"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn text_validation_surface_supports_ime_selection_and_scrolling() -> Result<()> {
+        let app = build_text_validation_app()?;
+        let window = app.main_window()?;
+        let editor = window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(TEXT_VALIDATION_EDITOR_NAME);
+
+        editor.focus()?;
+        let before_selection = editor.capture_screenshot()?;
+        editor.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
+        editor.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate {
+            text: " // validated🙂".to_string(),
+        }))?;
+        editor.dispatch_event(Event::Ime(ImeEvent::CompositionCommit {
+            text: " // validated🙂".to_string(),
+        }))?;
+        editor.dispatch_event(Event::Ime(ImeEvent::CompositionEnd))?;
+
+        let mut shift_left = KeyboardEvent::new("ArrowLeft", KeyState::Pressed);
+        shift_left.modifiers.shift = true;
+        for _ in 0..6 {
+            editor.dispatch_event(Event::Keyboard(shift_left.clone()))?;
+        }
+
+        let after_selection = editor.capture_screenshot()?;
+        assert_ne!(before_selection, after_selection);
+
+        let editor_value = window
+            .snapshot()?
+            .accessibility
+            .nodes
+            .into_iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput
+                    && node.name.as_deref() == Some(TEXT_VALIDATION_EDITOR_NAME)
+            })
+            .and_then(|node| match node.value {
+                Some(SemanticsValue::Text(value)) => Some(value),
+                _ => None,
+            })
+            .expect("validation editor semantics value present after IME commit");
+        assert!(editor_value.contains("validated🙂"));
+
+        let scroll = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(TEXT_VALIDATION_SCROLL_NAME);
+        let before_scroll = scroll.capture_screenshot()?;
+        scroll.scroll_pixels(Vector::new(0.0, -220.0))?;
+        let after_scroll = scroll.capture_screenshot()?;
+
+        assert_ne!(before_scroll, after_scroll);
         Ok(())
     }
 
