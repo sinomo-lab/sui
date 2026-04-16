@@ -12,7 +12,7 @@ default = ["desktop", "wgpu"]
 desktop = ["wgpu", "dep:sui-platform"]
 mobile = []
 testing = []
-web = []
+web = ["wgpu", "dep:sui-platform"]
 wgpu = ["dep:sui-render-wgpu"]
 
 [dependencies]

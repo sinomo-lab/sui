@@ -1,9 +1,10 @@
 use std::{
     collections::HashMap,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
+use web_time::Instant;
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
     PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta, Size, Vector,
@@ -23,6 +24,9 @@ use winit::{
     keyboard::{Key, ModifiersState, NamedKey, PhysicalKey},
     window::{Window, WindowAttributes, WindowId as HostWindowId},
 };
+
+#[cfg(target_arch = "wasm32")]
+use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
 
 use crate::{AccessibilityBridge, headless::PlatformWindow, map_window_text_render_policy};
 
@@ -73,23 +77,39 @@ impl DesktopPlatform {
         &mut self.renderer
     }
 
-    pub fn run(&mut self, runtime: &mut Runtime) -> Result<Vec<PlatformWindow>> {
+    pub fn run(self, runtime: Runtime) -> Result<Vec<PlatformWindow>> {
         let event_loop = EventLoop::new().map_err(map_event_loop_error)?;
-        let mut app = DesktopApp::new(runtime, &mut self.renderer);
 
-        event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
-
-        if let Some(error) = app.last_error.take() {
-            return Err(error);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut app = DesktopApp::new(runtime, self.renderer);
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Err(error) = app.renderer.initialize_async(None).await {
+                    web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&error.to_string()));
+                    return;
+                }
+                event_loop.spawn_app(app);
+            });
+            Ok(Vec::new())
         }
 
-        Ok(app.snapshot_windows())
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut app = DesktopApp::new(runtime, self.renderer);
+            event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
+
+            if let Some(error) = app.last_error.take() {
+                return Err(error);
+            }
+
+            Ok(app.snapshot_windows())
+        }
     }
 }
 
-struct DesktopApp<'a> {
-    runtime: &'a mut Runtime,
-    renderer: &'a mut WgpuRenderer,
+struct DesktopApp {
+    runtime: Runtime,
+    renderer: WgpuRenderer,
     started_at: Instant,
     frame_clock: f64,
     windows: HashMap<WindowId, WindowState>,
@@ -97,8 +117,8 @@ struct DesktopApp<'a> {
     last_error: Option<Error>,
 }
 
-impl<'a> DesktopApp<'a> {
-    fn new(runtime: &'a mut Runtime, renderer: &'a mut WgpuRenderer) -> Self {
+impl DesktopApp {
+    fn new(runtime: Runtime, renderer: WgpuRenderer) -> Self {
         Self {
             runtime,
             renderer,
@@ -110,6 +130,7 @@ impl<'a> DesktopApp<'a> {
         }
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn snapshot_windows(&self) -> Vec<PlatformWindow> {
         self.windows.values().map(WindowState::snapshot).collect()
     }
@@ -138,18 +159,18 @@ impl<'a> DesktopApp<'a> {
             }
 
             let title = self.runtime.window_title(window_id)?.to_string();
-            let window = Arc::new(
-                event_loop
-                    .create_window(
-                        WindowAttributes::default()
-                            .with_title(title.clone())
-                            .with_inner_size(LogicalSize::new(
-                                DesktopPlatform::DEFAULT_WINDOW_SIZE.width,
-                                DesktopPlatform::DEFAULT_WINDOW_SIZE.height,
-                            )),
-                    )
-                    .map_err(map_os_error)?,
-            );
+            #[allow(unused_mut)]
+            let mut attributes = WindowAttributes::default()
+                .with_title(title.clone())
+                .with_inner_size(LogicalSize::new(
+                    DesktopPlatform::DEFAULT_WINDOW_SIZE.width,
+                    DesktopPlatform::DEFAULT_WINDOW_SIZE.height,
+                ));
+            #[cfg(target_arch = "wasm32")]
+            {
+                attributes = attributes.with_append(true);
+            }
+            let window = Arc::new(event_loop.create_window(attributes).map_err(map_os_error)?);
             window.set_ime_allowed(false);
 
             let host_id = window.id();
@@ -410,7 +431,7 @@ impl<'a> DesktopApp<'a> {
                     runtime_time_ms,
                     presentation_latency,
                     &output,
-                    self.renderer,
+                    &self.renderer,
                     renderer_time_ms,
                 );
 
@@ -669,7 +690,7 @@ impl<'a> DesktopApp<'a> {
     }
 }
 
-impl ApplicationHandler for DesktopApp<'_> {
+impl ApplicationHandler for DesktopApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Err(error) = self.drive_runtime(event_loop) {
             self.handle_error(event_loop, error);
@@ -694,6 +715,7 @@ impl ApplicationHandler for DesktopApp<'_> {
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct WindowState {
     id: WindowId,
     title: String,

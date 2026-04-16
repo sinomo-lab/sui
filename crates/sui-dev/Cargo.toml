@@ -7,13 +7,26 @@ rust-version.workspace = true
 publish = false
 default-run = "sui-dev"
 
+[features]
+default = ["native"]
+native = ["sui/desktop", "sui/wgpu", "sui-widget-book/native"]
+web = ["sui/web", "sui/wgpu", "sui-widget-book/web"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [[bin]]
 name = "sui-dev"
 path = "src/main.rs"
+required-features = ["native"]
 
 [dependencies]
-sui = { workspace = true }
-sui-widget-book = { workspace = true }
+sui = { path = "../sui", default-features = false }
+sui-widget-book = { path = "../sui-widget-book", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+wasm-bindgen = { workspace = true }
 
 [dev-dependencies]
 sui-scene = { workspace = true }

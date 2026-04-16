@@ -14,8 +14,10 @@ use sui::{
 use sui_runtime::LayerOptions;
 use sui_scene::LayerCompositionMode;
 
+#[cfg(feature = "artifacts")]
 mod visual_artifacts;
 
+#[cfg(feature = "artifacts")]
 pub use visual_artifacts::write_visual_artifacts;
 
 pub const WINDOW_TITLE: &str = "SUI Widget Book";
@@ -223,6 +225,7 @@ pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> App
     )
 }
 
+#[cfg(feature = "native")]
 pub fn run_desktop_widget_book() -> Result<()> {
     build_widget_book_application(default_widget_book_state()).run()
 }
@@ -2973,6 +2976,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "artifacts")]
     #[test]
     #[ignore = "slow; run `cargo run -p sui-widget-book` to generate artifacts"]
     fn widget_book_generates_visual_artifacts() -> Result<()> {

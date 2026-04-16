@@ -6,12 +6,23 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[features]
+default = ["native", "artifacts"]
+native = ["sui/desktop", "sui/wgpu"]
+web = ["sui/web", "sui/wgpu"]
+artifacts = ["dep:sui-testing"]
+
+[[bin]]
+name = "sui-widget-book"
+path = "src/main.rs"
+required-features = ["artifacts"]
+
 [dependencies]
-sui = { workspace = true }
+sui = { path = "../sui", default-features = false }
 sui-debug = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
-sui-testing = { workspace = true }
+sui-testing = { workspace = true, optional = true }
 
 [dev-dependencies]
 png = "0.17"

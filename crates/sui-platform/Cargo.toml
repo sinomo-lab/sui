@@ -10,3 +10,7 @@ sui-core = { workspace = true }
 sui-render-wgpu = { workspace = true }
 sui-runtime = { workspace = true }
 winit = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true, features = ["console"] }
+web-time = { workspace = true }

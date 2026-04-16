@@ -33,7 +33,7 @@ pub use sui_core::{
 };
 pub use sui_layout::Padding as Insets;
 pub use sui_layout::{Alignment, Axis, Constraints, Padding};
-#[cfg(feature = "desktop")]
+#[cfg(any(feature = "desktop", feature = "web"))]
 pub use sui_platform::{AccessibilitySnapshot, DesktopPlatform, HeadlessPlatform, PlatformWindow};
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{
@@ -302,23 +302,23 @@ impl Application {
         self.inner.build()
     }
 
-    #[cfg(feature = "desktop")]
+    #[cfg(any(feature = "desktop", feature = "web"))]
     pub fn run(self) -> Result<()> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
-        let mut runtime = self.build()?;
-        let mut platform = DesktopPlatform::new()
+        let runtime = self.build()?;
+        let platform = DesktopPlatform::new()
             .with_feathering_enabled(feathering_enabled)
             .with_feather_width(feather_width);
-        let _ = platform.run(&mut runtime)?;
+        let _ = platform.run(runtime)?;
         Ok(())
     }
 
-    #[cfg(not(feature = "desktop"))]
+    #[cfg(not(any(feature = "desktop", feature = "web")))]
     pub fn run(self) -> Result<()> {
         let _ = self;
         Err(Error::new(
-            "Application::run requires the `desktop` feature to provide a platform event loop",
+            "Application::run requires the `desktop` or `web` feature to provide a platform event loop",
         ))
     }
 }

@@ -1,2 +1,3 @@
 /target
 /.ai-test-logs
+/crates/sui-dev/web/dist

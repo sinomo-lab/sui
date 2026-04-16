@@ -1,0 +1,19 @@
+trunk-version = "^0.21.0"
+
+[build]
+target = "index.html"
+dist = "dist"
+public_url = "/"
+filehash = false
+minify = "on_release"
+no_default_features = true
+features = ["web"]
+
+[watch]
+watch = ["..", "../../"]
+ignore = ["dist", "../../target"]
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080
+open = false

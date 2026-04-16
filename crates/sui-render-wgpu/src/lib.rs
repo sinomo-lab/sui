@@ -952,6 +952,126 @@ impl WgpuRenderer {
         Ok(())
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub async fn initialize_async(
+        &mut self,
+        compatible_surface: Option<&wgpu::Surface<'_>>,
+    ) -> Result<()> {
+        if self.shared.is_some() {
+            return Ok(());
+        }
+
+        let adapter = self
+            .instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface,
+            })
+            .await
+            .map_err(|error| Error::new(format!("failed to acquire wgpu adapter: {error}")))?;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("SUI renderer device"),
+                ..Default::default()
+            })
+            .await
+            .map_err(|error| Error::new(format!("failed to create wgpu device: {error}")))?;
+
+        let image_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("SUI image bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let image_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SUI image sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let text_atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SUI text atlas sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let text_quad_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("SUI text atlas quad"),
+            contents: bytemuck::cast_slice(&TextAtlasQuadVertex::unit_quad()),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let analytic_path_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("SUI analytic path bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        self.shared = Some(SharedRenderer {
+            adapter,
+            device,
+            queue,
+            pipelines: HashMap::new(),
+            image_bind_group_layout,
+            analytic_path_bind_group_layout,
+            image_sampler,
+            text_atlas_sampler,
+            text_quad_buffer,
+        });
+
+        Ok(())
+    }
+
     fn render_surface(
         &mut self,
         frame: &SceneFrame,
