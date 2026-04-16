@@ -558,12 +558,37 @@ impl WindowTextRenderPolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WindowTextHinting {
+    None,
+    Slight { max_ppem: f32 },
+}
+
+impl Default for WindowTextHinting {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl WindowTextHinting {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Slight { max_ppem } if max_ppem.is_finite() && max_ppem > 0.0 => {
+                Self::Slight { max_ppem }
+            }
+            Self::Slight { .. } => Self::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowRenderOptions {
     pub feathering_enabled: bool,
     pub feather_width: f32,
     pub optical_vertical_text_alignment_enabled: bool,
     pub glyph_pixel_alignment_enabled: bool,
     pub text_render_policy: WindowTextRenderPolicy,
+    pub text_hinting: WindowTextHinting,
 }
 
 impl WindowRenderOptions {
@@ -574,6 +599,7 @@ impl WindowRenderOptions {
             optical_vertical_text_alignment_enabled: true,
             glyph_pixel_alignment_enabled: true,
             text_render_policy: WindowTextRenderPolicy::AutomaticByTextLuminance,
+            text_hinting: WindowTextHinting::None,
         }
     }
 
@@ -592,6 +618,11 @@ impl WindowRenderOptions {
         self
     }
 
+    pub const fn with_text_hinting(mut self, hinting: WindowTextHinting) -> Self {
+        self.text_hinting = hinting;
+        self
+    }
+
     pub fn clamped(self) -> Self {
         Self {
             feathering_enabled: self.feathering_enabled,
@@ -599,6 +630,7 @@ impl WindowRenderOptions {
             optical_vertical_text_alignment_enabled: self.optical_vertical_text_alignment_enabled,
             glyph_pixel_alignment_enabled: self.glyph_pixel_alignment_enabled,
             text_render_policy: self.text_render_policy.normalized(),
+            text_hinting: self.text_hinting.normalized(),
         }
     }
 }

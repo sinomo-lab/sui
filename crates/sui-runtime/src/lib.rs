@@ -27,7 +27,7 @@ pub use diagnostics::{
     SceneStatistics, SceneStatisticsDetailMode,
     TextCacheDeltaDiagnostics, TextCacheDiagnostics, WidgetTimingPhase, WidgetTimingSample,
     WindowPerformanceSnapshot,
-    WindowPerformanceSummary, WindowRenderOptions, WindowTextRenderPolicy,
+    WindowPerformanceSummary, WindowRenderOptions, WindowTextHinting, WindowTextRenderPolicy,
     clear_window_performance_snapshot, clear_window_performance_snapshots,
     clear_window_render_options, publish_window_performance_snapshot, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,

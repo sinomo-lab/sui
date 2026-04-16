@@ -28,7 +28,10 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
 
-use crate::{AccessibilityBridge, headless::PlatformWindow, map_window_text_render_policy};
+use crate::{
+    AccessibilityBridge, headless::PlatformWindow, map_window_text_hinting,
+    map_window_text_render_policy,
+};
 
 #[derive(Debug, Default)]
 pub struct DesktopPlatform {
@@ -389,6 +392,9 @@ impl DesktopApp {
                 self.renderer.set_runtime_text_coverage_policy_override(
                     render_options
                         .map(|options| map_window_text_render_policy(options.text_render_policy)),
+                );
+                self.renderer.set_runtime_text_hinting_override(
+                    render_options.map(|options| map_window_text_hinting(options.text_hinting)),
                 );
                 self.renderer.set_runtime_glyph_pixel_alignment_override(
                     render_options.map(|options| options.glyph_pixel_alignment_enabled),

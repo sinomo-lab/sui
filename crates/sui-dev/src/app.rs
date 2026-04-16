@@ -2,8 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton, PointerEventKind,
-    SemanticsNode, SemanticsRole, TextCoveragePolicy, WgpuRenderer, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowEvent, WindowTextRenderPolicy, prelude::*,
+    SemanticsNode, SemanticsRole, TextCoveragePolicy, TextHinting, WgpuRenderer,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowRenderOptions, WindowTextHinting,
+    WindowTextRenderPolicy, prelude::*,
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_retained_text_benchmark,
@@ -26,6 +27,8 @@ const OPTICAL_TEXT_CENTERING_TOGGLE_LABEL: &str = "Enable optical vertical text 
 const GLYPH_PIXEL_ALIGNMENT_TOGGLE_LABEL: &str = "Snap atlas glyphs to physical pixels";
 const TEXT_RENDER_POLICY_NAME: &str = "Text render policy";
 const TEXT_RENDER_GAMMA_NAME: &str = "Gamma exponent";
+const TEXT_HINTING_TOGGLE_LABEL: &str = "Enable slight small-text hinting";
+const TEXT_HINTING_MAX_PPEM_NAME: &str = "Hinting max ppem";
 const TEXT_RENDER_POLICY_OPTIONS: [&str; 4] =
     ["Automatic", "Linear", "Gamma", "TwoCoverageMinusCoverageSq"];
 
@@ -381,6 +384,13 @@ fn window_text_render_policy_from_renderer(policy: TextCoveragePolicy) -> Window
     }
 }
 
+fn window_text_hinting_from_renderer(hinting: TextHinting) -> WindowTextHinting {
+    match hinting.normalized() {
+        TextHinting::None => WindowTextHinting::None,
+        TextHinting::Slight { max_ppem } => WindowTextHinting::Slight { max_ppem },
+    }
+}
+
 fn text_render_policy_selected_index(policy: WindowTextRenderPolicy) -> usize {
     match policy.normalized() {
         WindowTextRenderPolicy::AutomaticByTextLuminance => 0,
@@ -417,7 +427,8 @@ impl RenderSettingsTab {
                 .with_glyph_pixel_alignment_enabled(renderer.glyph_pixel_alignment_enabled())
                 .with_text_render_policy(window_text_render_policy_from_renderer(
                     renderer.text_coverage_policy(),
-                ));
+                ))
+                .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()));
         let state = Rc::new(RefCell::new(initial));
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
@@ -425,6 +436,8 @@ impl RenderSettingsTab {
         let glyph_alignment_state = Rc::clone(&state);
         let text_policy_state = Rc::clone(&state);
         let gamma_state = Rc::clone(&state);
+        let hinting_toggle_state = Rc::clone(&state);
+        let hinting_max_ppem_state = Rc::clone(&state);
 
         let content = Padding::all(
             28.0,
@@ -510,8 +523,42 @@ impl RenderSettingsTab {
                     ),
                 )
                 .with_child(
+                    Checkbox::new(TEXT_HINTING_TOGGLE_LABEL)
+                        .checked(!matches!(initial.text_hinting, WindowTextHinting::None))
+                        .on_toggle(move |checked| {
+                            let mut state = hinting_toggle_state.borrow_mut();
+                            state.text_hinting = if checked {
+                                match state.text_hinting.normalized() {
+                                    WindowTextHinting::Slight { max_ppem } => {
+                                        WindowTextHinting::Slight { max_ppem }
+                                    }
+                                    WindowTextHinting::None => WindowTextHinting::Slight { max_ppem: 18.0 },
+                                }
+                            } else {
+                                WindowTextHinting::None
+                            };
+                        }),
+                )
+                .with_child(
+                    SizedBox::new().width(220.0).with_child(
+                        NumberInput::new(TEXT_HINTING_MAX_PPEM_NAME)
+                            .range(1.0, 64.0)
+                            .step(0.5)
+                            .precision(1)
+                            .value(match initial.text_hinting.normalized() {
+                                WindowTextHinting::Slight { max_ppem } => max_ppem as f64,
+                                WindowTextHinting::None => 18.0,
+                            })
+                            .on_change(move |value| {
+                                let max_ppem = value.clamp(1.0, 64.0) as f32;
+                                hinting_max_ppem_state.borrow_mut().text_hinting =
+                                    WindowTextHinting::Slight { max_ppem };
+                            }),
+                    ),
+                )
+                .with_child(
                     Label::new(
-                        "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected.",
+                        "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold.",
                     )
                     .font_size(13.0)
                     .line_height(18.0)

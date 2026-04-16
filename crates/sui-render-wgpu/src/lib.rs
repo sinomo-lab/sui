@@ -106,6 +106,74 @@ pub enum TextRenderMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextHinting {
+    None,
+    Slight { max_ppem: f32 },
+}
+
+impl Default for TextHinting {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl TextHinting {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Slight { max_ppem } if max_ppem.is_finite() && max_ppem > 0.0 => {
+                Self::Slight { max_ppem }
+            }
+            Self::Slight { .. } => Self::None,
+        }
+    }
+
+    pub fn should_hint(self, ppem: f32) -> bool {
+        match self.normalized() {
+            Self::None => false,
+            Self::Slight { max_ppem } => ppem.is_finite() && ppem <= max_ppem,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StemDarkening {
+    None,
+    Enabled { max_ppem: f32, amount: f32 },
+}
+
+impl Default for StemDarkening {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl StemDarkening {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Enabled { max_ppem, amount }
+                if max_ppem.is_finite() && max_ppem > 0.0 && amount.is_finite() && amount > 0.0 =>
+            {
+                Self::Enabled {
+                    max_ppem,
+                    amount: amount.clamp(0.0, 1.0),
+                }
+            }
+            Self::Enabled { .. } => Self::None,
+        }
+    }
+
+    pub fn effective_amount(self, ppem: f32) -> f32 {
+        match self.normalized() {
+            Self::None => 0.0,
+            Self::Enabled { max_ppem, amount } if ppem.is_finite() && ppem <= max_ppem => amount,
+            Self::Enabled { .. } => 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextCoveragePolicy {
     AutomaticByTextLuminance,
     Linear,
@@ -419,10 +487,14 @@ pub struct WgpuRenderer {
     feathering_enabled: bool,
     feather_width: f32,
     text_render_mode: TextRenderMode,
+    text_hinting: TextHinting,
+    stem_darkening: StemDarkening,
     text_coverage_policy: TextCoveragePolicy,
     glyph_pixel_alignment_enabled: bool,
     vsync_enabled: bool,
     runtime_feathering_override: Option<FeatheringOptions>,
+    runtime_text_hinting_override: Option<TextHinting>,
+    runtime_stem_darkening_override: Option<StemDarkening>,
     runtime_text_coverage_policy_override: Option<TextCoveragePolicy>,
     runtime_glyph_pixel_alignment_override: Option<bool>,
     runtime_diagnostics_enabled: bool,
@@ -548,6 +620,16 @@ impl WgpuRenderer {
         self
     }
 
+    pub fn with_text_hinting(mut self, hinting: TextHinting) -> Self {
+        self.set_text_hinting(hinting);
+        self
+    }
+
+    pub fn with_stem_darkening(mut self, darkening: StemDarkening) -> Self {
+        self.set_stem_darkening(darkening);
+        self
+    }
+
     pub fn with_glyph_pixel_alignment_enabled(mut self, enabled: bool) -> Self {
         self.set_glyph_pixel_alignment_enabled(enabled);
         self
@@ -585,6 +667,14 @@ impl WgpuRenderer {
 
     pub fn text_render_mode(&self) -> TextRenderMode {
         self.text_render_mode
+    }
+
+    pub fn text_hinting(&self) -> TextHinting {
+        self.text_hinting
+    }
+
+    pub fn stem_darkening(&self) -> StemDarkening {
+        self.stem_darkening
     }
 
     pub fn glyph_pixel_alignment_enabled(&self) -> bool {
@@ -626,6 +716,30 @@ impl WgpuRenderer {
         self.invalidate_text_render_state();
     }
 
+    pub fn set_text_hinting(&mut self, hinting: TextHinting) {
+        let hinting = hinting.normalized();
+        if self.text_hinting == hinting {
+            return;
+        }
+
+        self.text_hinting = hinting;
+        if let Some(text_engine) = self.text_engine.as_mut() {
+            text_engine.set_text_hinting(hinting);
+        }
+    }
+
+    pub fn set_stem_darkening(&mut self, darkening: StemDarkening) {
+        let darkening = darkening.normalized();
+        if self.stem_darkening == darkening {
+            return;
+        }
+
+        self.stem_darkening = darkening;
+        if let Some(text_engine) = self.text_engine.as_mut() {
+            text_engine.set_stem_darkening(darkening);
+        }
+    }
+
     pub fn set_glyph_pixel_alignment_enabled(&mut self, enabled: bool) {
         self.glyph_pixel_alignment_enabled = enabled;
         if let Some(text_engine) = self.text_engine.as_mut() {
@@ -643,6 +757,14 @@ impl WgpuRenderer {
 
     pub fn set_runtime_feathering_override(&mut self, feathering: Option<FeatheringOptions>) {
         self.runtime_feathering_override = feathering.map(FeatheringOptions::clamped);
+    }
+
+    pub fn set_runtime_text_hinting_override(&mut self, hinting: Option<TextHinting>) {
+        self.runtime_text_hinting_override = hinting.map(TextHinting::normalized);
+    }
+
+    pub fn set_runtime_stem_darkening_override(&mut self, darkening: Option<StemDarkening>) {
+        self.runtime_stem_darkening_override = darkening.map(StemDarkening::normalized);
     }
 
     pub fn set_runtime_text_coverage_policy_override(
@@ -670,6 +792,18 @@ impl WgpuRenderer {
         self.runtime_feathering_override
             .unwrap_or_else(|| self.feathering())
             .effective_width()
+    }
+
+    fn active_text_hinting(&self) -> TextHinting {
+        self.runtime_text_hinting_override
+            .unwrap_or(self.text_hinting)
+            .normalized()
+    }
+
+    fn active_stem_darkening(&self) -> StemDarkening {
+        self.runtime_stem_darkening_override
+            .unwrap_or(self.stem_darkening)
+            .normalized()
     }
 
     fn active_text_coverage_policy(&self) -> TextCoveragePolicy {
@@ -1299,6 +1433,8 @@ impl WgpuRenderer {
         let diagnostics_enabled = self.runtime_diagnostics_enabled;
         let feather_width = self.active_feather_width();
         let text_render_mode = self.text_render_mode();
+        let text_hinting = self.active_text_hinting();
+        let stem_darkening = self.active_stem_darkening();
         let text_coverage_policy = self.active_text_coverage_policy();
         let glyph_pixel_alignment_enabled = self.active_glyph_pixel_alignment_enabled();
         let mut atlas_retry_attempted = false;
@@ -1312,6 +1448,8 @@ impl WgpuRenderer {
                     .as_mut()
                     .expect("text engine initialized before draw-op construction");
                 text_engine.set_text_render_mode(text_render_mode);
+                text_engine.set_text_hinting(text_hinting);
+                text_engine.set_stem_darkening(stem_darkening);
                 text_engine.set_text_coverage_policy(text_coverage_policy);
                 text_engine.set_glyph_pixel_alignment_enabled(glyph_pixel_alignment_enabled);
                 text_engine.set_diagnostics_enabled(diagnostics_enabled);
@@ -2185,10 +2323,14 @@ impl Default for WgpuRenderer {
             feathering_enabled: true,
             feather_width: DEFAULT_FEATHER_WIDTH,
             text_render_mode: TextRenderMode::default(),
+            text_hinting: TextHinting::default(),
+            stem_darkening: StemDarkening::default(),
             text_coverage_policy: TextCoveragePolicy::default(),
             glyph_pixel_alignment_enabled: true,
             vsync_enabled: true,
             runtime_feathering_override: None,
+            runtime_text_hinting_override: None,
+            runtime_stem_darkening_override: None,
             runtime_text_coverage_policy_override: None,
             runtime_glyph_pixel_alignment_override: None,
             runtime_diagnostics_enabled: true,
@@ -2593,9 +2735,9 @@ mod tests {
         DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedClipPath,
         PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
         PreparedVertices, RendererFrameStats, RetainedCompositorState,
-        RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine, TextRenderMode,
-        TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, TextAtlasColorMode, VERTEX_SIZE,
-        Vertex, WgpuRenderer,
+        RetainedPacketId, ScissorRect, StemDarkening, TextCoveragePolicy, TextEngine,
+        TextHinting, TextRenderMode, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas,
+        TextAtlasColorMode, VERTEX_SIZE, Vertex, WgpuRenderer,
         append_cached_path_mesh, batch_draw_ops, build_vertices, prepare_frame_batches,
         SwashImageContent, SwashSource, SwashStrikeWith,
         scene::{
@@ -3254,6 +3396,13 @@ mod tests {
     #[test]
     fn text_render_mode_defaults_to_grayscale() {
         assert_eq!(TextRenderMode::default(), TextRenderMode::Grayscale);
+    }
+
+    #[test]
+    fn slight_hinting_enables_below_threshold() {
+        let config = TextHinting::Slight { max_ppem: 18.0 };
+        assert!(config.should_hint(14.0));
+        assert!(!config.should_hint(24.0));
     }
 
     #[test]

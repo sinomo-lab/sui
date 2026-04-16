@@ -37,7 +37,8 @@ pub use sui_layout::{Alignment, Axis, Constraints, Padding};
 pub use sui_platform::{AccessibilitySnapshot, DesktopPlatform, HeadlessPlatform, PlatformWindow};
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{
-    RendererCapabilities, RendererInterop, TextCoveragePolicy, WgpuRenderer,
+    RendererCapabilities, RendererInterop, StemDarkening, TextCoveragePolicy, TextHinting,
+    WgpuRenderer,
 };
 pub use sui_runtime::{
     Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta, EventCtx,
@@ -47,7 +48,7 @@ pub use sui_runtime::{
     StackHostOptions, StackOrderPolicy, StackSurfaceOptions, TextCacheDeltaDiagnostics,
     TextCacheDiagnostics, Widget, WidgetChildren, WidgetGeometrySnapshot, WidgetGraphSnapshot,
     WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
-    WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions,
+    WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions, WindowTextHinting,
     WindowTextRenderPolicy, clear_window_render_options, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_performance_summary, window_render_options, window_scene_statistics_detail_mode,

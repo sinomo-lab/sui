@@ -1487,6 +1487,8 @@ pub(crate) struct TextEngine {
     pub(crate) atlas: TextAtlas,
     swash_scale_context: SwashScaleContext,
     pub(crate) text_render_mode: TextRenderMode,
+    pub(crate) text_hinting: TextHinting,
+    pub(crate) stem_darkening: StemDarkening,
     pub(crate) coverage_policy: TextCoveragePolicy,
     pub(crate) glyph_pixel_alignment_enabled: bool,
     pub(crate) diagnostics_enabled: bool,
@@ -1541,6 +1543,8 @@ impl Default for TextEngine {
             atlas: TextAtlas::default(),
             swash_scale_context: SwashScaleContext::new(),
             text_render_mode: TextRenderMode::default(),
+            text_hinting: TextHinting::default(),
+            stem_darkening: StemDarkening::default(),
             coverage_policy: TextCoveragePolicy::default(),
             glyph_pixel_alignment_enabled: true,
             diagnostics_enabled: true,
@@ -1567,6 +1571,14 @@ impl TextEngine {
 
     pub(crate) fn set_text_render_mode(&mut self, mode: TextRenderMode) {
         self.text_render_mode = mode;
+    }
+
+    pub(crate) fn set_text_hinting(&mut self, hinting: TextHinting) {
+        self.text_hinting = hinting.normalized();
+    }
+
+    pub(crate) fn set_stem_darkening(&mut self, darkening: StemDarkening) {
+        self.stem_darkening = darkening.normalized();
     }
 
     pub(crate) fn set_text_coverage_policy(&mut self, policy: TextCoveragePolicy) {
@@ -1826,6 +1838,7 @@ impl TextEngine {
             glyph_id,
             scale_bucket,
             self.text_render_mode,
+            self.text_hinting,
             coverage_policy,
         );
         match self.glyph_cache.entry(key) {
@@ -1861,6 +1874,8 @@ impl TextEngine {
                     raster_scale_factor.max(1.0),
                     bucketed_logical_scale,
                     self.text_render_mode,
+                    self.text_hinting,
+                    self.stem_darkening,
                     coverage_policy,
                 )? {
                     if let Some(started) = atlas_miss_started {
@@ -1920,6 +1935,8 @@ fn build_cached_glyph_atlas(
     raster_scale_factor: f32,
     glyph_scale_logical: f32,
     text_render_mode: TextRenderMode,
+    text_hinting: TextHinting,
+    _stem_darkening: StemDarkening,
     coverage_policy: TextCoveragePolicy,
 ) -> Result<Option<CachedGlyphAtlas>> {
     let sources = [
@@ -1930,7 +1947,7 @@ fn build_cached_glyph_atlas(
     let mut scaler = scale_context
         .builder_with_id(face.font_ref, face.font_id)
         .size(font_size_physical)
-        .hint(false)
+        .hint(text_hinting.should_hint(font_size_physical))
         .build();
     let mut renderer = SwashRender::new(&sources);
     renderer.format(match text_render_mode {

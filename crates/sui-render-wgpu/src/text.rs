@@ -38,6 +38,7 @@ pub(crate) struct GlyphCacheKey {
     pub(crate) glyph_id: u16,
     pub(crate) scale_bucket: u32,
     pub(crate) atlas_color_mode: TextAtlasColorMode,
+    pub(crate) text_hinting: TextHintingCacheKey,
     pub(crate) coverage_policy: TextCoverageCacheKey,
 }
 
@@ -47,6 +48,7 @@ impl GlyphCacheKey {
         glyph_id: u16,
         scale_bucket: u32,
         text_render_mode: TextRenderMode,
+        text_hinting: TextHinting,
         coverage_policy: TextCoveragePolicy,
     ) -> Self {
         Self {
@@ -54,7 +56,25 @@ impl GlyphCacheKey {
             glyph_id,
             scale_bucket,
             atlas_color_mode: TextAtlasColorMode::from(text_render_mode),
+            text_hinting: TextHintingCacheKey::from(text_hinting),
             coverage_policy: TextCoverageCacheKey::from(coverage_policy),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TextHintingCacheKey {
+    None,
+    Slight { max_ppem_bits: u32 },
+}
+
+impl From<TextHinting> for TextHintingCacheKey {
+    fn from(value: TextHinting) -> Self {
+        match value.normalized() {
+            TextHinting::None => Self::None,
+            TextHinting::Slight { max_ppem } => Self::Slight {
+                max_ppem_bits: max_ppem.to_bits(),
+            },
         }
     }
 }
