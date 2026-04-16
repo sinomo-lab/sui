@@ -17,11 +17,27 @@ impl GlyphFaceCacheKey {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TextAtlasColorMode {
+    Grayscale,
+    LcdSubpixel,
+}
+
+impl From<TextRenderMode> for TextAtlasColorMode {
+    fn from(value: TextRenderMode) -> Self {
+        match value {
+            TextRenderMode::Grayscale => Self::Grayscale,
+            TextRenderMode::LcdSubpixel => Self::LcdSubpixel,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct GlyphCacheKey {
     pub(crate) face: GlyphFaceCacheKey,
     pub(crate) glyph_id: u16,
     pub(crate) scale_bucket: u32,
+    pub(crate) atlas_color_mode: TextAtlasColorMode,
     pub(crate) coverage_policy: TextCoverageCacheKey,
 }
 
@@ -30,12 +46,14 @@ impl GlyphCacheKey {
         face: GlyphFaceCacheKey,
         glyph_id: u16,
         scale_bucket: u32,
+        text_render_mode: TextRenderMode,
         coverage_policy: TextCoveragePolicy,
     ) -> Self {
         Self {
             face,
             glyph_id,
             scale_bucket,
+            atlas_color_mode: TextAtlasColorMode::from(text_render_mode),
             coverage_policy: TextCoverageCacheKey::from(coverage_policy),
         }
     }
@@ -86,6 +104,7 @@ pub(crate) struct CachedGlyphAtlas {
     pub(crate) size: Size,
     pub(crate) uv_min: [f32; 2],
     pub(crate) uv_max: [f32; 2],
+    pub(crate) color_mode: TextAtlasColorMode,
     pub(crate) is_color: bool,
 }
 

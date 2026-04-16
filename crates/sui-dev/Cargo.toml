@@ -27,6 +27,7 @@ sui-widget-book = { path = "../sui-widget-book", default-features = false }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
 wasm-bindgen = { workspace = true }
+web-sys = { workspace = true, features = ["Window", "Location"] }
 
 [dev-dependencies]
 sui-scene = { workspace = true }

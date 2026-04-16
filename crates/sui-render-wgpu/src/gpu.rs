@@ -409,16 +409,18 @@ pub(crate) struct TextAtlasInstance {
     pub(crate) uv_min: [f32; 2],
     pub(crate) uv_max: [f32; 2],
     pub(crate) color: [f32; 4],
+    pub(crate) metadata: [f32; 2],
 }
 
 impl TextAtlasInstance {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         1 => Float32x2,
         2 => Float32x2,
         3 => Float32x2,
         4 => Float32x2,
         5 => Float32x2,
-        6 => Float32x4
+        6 => Float32x4,
+        7 => Float32x2
     ];
 
     pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {

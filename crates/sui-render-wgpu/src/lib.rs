@@ -98,6 +98,13 @@ impl FeatheringOptions {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextRenderMode {
+    #[default]
+    Grayscale,
+    LcdSubpixel,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextCoveragePolicy {
     AutomaticByTextLuminance,
@@ -411,6 +418,7 @@ pub struct WgpuRenderer {
     instance: wgpu::Instance,
     feathering_enabled: bool,
     feather_width: f32,
+    text_render_mode: TextRenderMode,
     text_coverage_policy: TextCoveragePolicy,
     glyph_pixel_alignment_enabled: bool,
     vsync_enabled: bool,
@@ -535,6 +543,11 @@ impl WgpuRenderer {
         self
     }
 
+    pub fn with_text_render_mode(mut self, mode: TextRenderMode) -> Self {
+        self.set_text_render_mode(mode);
+        self
+    }
+
     pub fn with_glyph_pixel_alignment_enabled(mut self, enabled: bool) -> Self {
         self.set_glyph_pixel_alignment_enabled(enabled);
         self
@@ -570,6 +583,10 @@ impl WgpuRenderer {
         self.text_coverage_policy
     }
 
+    pub fn text_render_mode(&self) -> TextRenderMode {
+        self.text_render_mode
+    }
+
     pub fn glyph_pixel_alignment_enabled(&self) -> bool {
         self.glyph_pixel_alignment_enabled
     }
@@ -593,6 +610,18 @@ impl WgpuRenderer {
         self.text_coverage_policy = policy;
         if let Some(text_engine) = self.text_engine.as_mut() {
             text_engine.set_text_coverage_policy(policy);
+        }
+        self.invalidate_text_render_state();
+    }
+
+    pub fn set_text_render_mode(&mut self, mode: TextRenderMode) {
+        if self.text_render_mode == mode {
+            return;
+        }
+
+        self.text_render_mode = mode;
+        if let Some(text_engine) = self.text_engine.as_mut() {
+            text_engine.set_text_render_mode(mode);
         }
         self.invalidate_text_render_state();
     }
@@ -1269,6 +1298,7 @@ impl WgpuRenderer {
     fn prepare_scene_submission(&mut self, frame: &SceneFrame) -> Result<PreparedSceneSubmission> {
         let diagnostics_enabled = self.runtime_diagnostics_enabled;
         let feather_width = self.active_feather_width();
+        let text_render_mode = self.text_render_mode();
         let text_coverage_policy = self.active_text_coverage_policy();
         let glyph_pixel_alignment_enabled = self.active_glyph_pixel_alignment_enabled();
         let mut atlas_retry_attempted = false;
@@ -1281,6 +1311,7 @@ impl WgpuRenderer {
                     .text_engine
                     .as_mut()
                     .expect("text engine initialized before draw-op construction");
+                text_engine.set_text_render_mode(text_render_mode);
                 text_engine.set_text_coverage_policy(text_coverage_policy);
                 text_engine.set_glyph_pixel_alignment_enabled(glyph_pixel_alignment_enabled);
                 text_engine.set_diagnostics_enabled(diagnostics_enabled);
@@ -2153,6 +2184,7 @@ impl Default for WgpuRenderer {
             instance: wgpu::Instance::default(),
             feathering_enabled: true,
             feather_width: DEFAULT_FEATHER_WIDTH,
+            text_render_mode: TextRenderMode::default(),
             text_coverage_policy: TextCoveragePolicy::default(),
             glyph_pixel_alignment_enabled: true,
             vsync_enabled: true,
@@ -2362,6 +2394,7 @@ struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) tex_coords: vec2<f32>,
+    @location(2) metadata: vec2<f32>,
 };
 
 @group(0) @binding(0)
@@ -2379,11 +2412,13 @@ fn vs_main(
     @location(4) uv_min: vec2<f32>,
     @location(5) uv_max: vec2<f32>,
     @location(6) color: vec4<f32>,
+    @location(7) metadata: vec2<f32>,
 ) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0);
     out.color = color;
     out.tex_coords = uv_min + local_pos * (uv_max - uv_min);
+    out.metadata = metadata;
     return out;
 }
 
@@ -2394,6 +2429,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let opacity = -in.color.a;
         let alpha = sampled.a * opacity;
         return vec4<f32>(sampled.rgb * alpha, alpha);
+    }
+
+    if in.metadata.x > 0.5 {
+        let coverage = sampled.rgb;
+        let max_coverage = max(max(coverage.r, coverage.g), coverage.b);
+        let premul = in.color.rgb * coverage * in.color.a;
+        return vec4<f32>(premul, in.color.a * max_coverage);
+    }
+
+    if in.metadata.y > 0.5 {
+        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
+        let alpha = in.color.a * coverage;
+        return vec4<f32>(in.color.rgb * alpha, alpha);
     }
 
     let coverage = sampled.a;
@@ -2545,13 +2593,15 @@ mod tests {
         DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedClipPath,
         PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
         PreparedVertices, RendererFrameStats, RetainedCompositorState,
-        RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine,
-        TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, VERTEX_SIZE, Vertex, WgpuRenderer,
+        RetainedPacketId, ScissorRect, TextCoveragePolicy, TextEngine, TextRenderMode,
+        TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, TextAtlasColorMode, VERTEX_SIZE,
+        Vertex, WgpuRenderer,
         append_cached_path_mesh, batch_draw_ops, build_vertices, prepare_frame_batches,
         SwashImageContent, SwashSource, SwashStrikeWith,
         scene::{
-            CachedDrawBatch, CachedPassBatch, append_cached_glyph_atlas, glyph_raster_offset,
-            linearized_color_unorm, prepare_cached_passes, swash_image_to_rgba,
+            CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
+            convert_subpixel_texel_for_mode, glyph_raster_offset, linearized_color_unorm,
+            prepare_cached_passes, swash_image_to_rgba,
         },
         shader_color, to_ndc,
     };
@@ -3014,6 +3064,7 @@ mod tests {
             size: Size::new(8.0, 10.0),
             uv_min: [0.25, 0.5],
             uv_max: [0.5, 0.75],
+            color_mode: TextAtlasColorMode::Grayscale,
             is_color: false,
         };
         let glyph = ShapedGlyph {
@@ -3079,6 +3130,7 @@ mod tests {
             size: Size::new(8.0, 10.0),
             uv_min: [0.25, 0.5],
             uv_max: [0.5, 0.75],
+            color_mode: TextAtlasColorMode::Grayscale,
             is_color: true,
         };
         let glyph = ShapedGlyph {
@@ -3133,7 +3185,7 @@ mod tests {
             data: vec![66, 42, 213, 128],
         };
 
-        let rasterized = swash_image_to_rgba(&image, TextCoveragePolicy::Linear)
+        let rasterized = swash_image_to_rgba(&image, TextRenderMode::Grayscale, TextCoveragePolicy::Linear)
             .expect("color glyph should convert into atlas pixels");
 
         assert!(rasterized.is_color);
@@ -3197,6 +3249,38 @@ mod tests {
             TextCoveragePolicy::AutomaticByTextLuminance.resolved_for_text_color(Color::WHITE),
             TextCoveragePolicy::TwoCoverageMinusCoverageSq
         );
+    }
+
+    #[test]
+    fn text_render_mode_defaults_to_grayscale() {
+        assert_eq!(TextRenderMode::default(), TextRenderMode::Grayscale);
+    }
+
+    #[test]
+    fn lcd_text_render_mode_has_distinct_cache_identity() {
+        assert_ne!(
+            TextAtlasColorMode::from(TextRenderMode::Grayscale),
+            TextAtlasColorMode::from(TextRenderMode::LcdSubpixel),
+        );
+    }
+
+    #[test]
+    fn subpixel_mask_preserves_distinct_rgb_channels_in_lcd_mode() {
+        let converted = convert_subpixel_texel_for_mode(
+            [255, 128, 32, 255],
+            TextRenderMode::LcdSubpixel,
+            TextCoveragePolicy::Linear,
+        );
+        assert_eq!(converted, [255, 128, 32, 255]);
+    }
+
+    #[test]
+    fn lcd_text_requires_axis_aligned_pixel_snapped_path() {
+        assert!(allows_lcd_text(Transform::IDENTITY, true));
+        assert!(!allows_lcd_text(Transform::rotation(std::f32::consts::FRAC_PI_4), true));
+        assert!(!allows_lcd_text(Transform::scale(-1.0, 1.0), true));
+        assert!(!allows_lcd_text(Transform::rotation(std::f32::consts::PI), true));
+        assert!(!allows_lcd_text(Transform::IDENTITY, false));
     }
 
     #[test]

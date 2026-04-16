@@ -10,8 +10,8 @@ no_default_features = true
 features = ["web"]
 
 [watch]
-watch = ["..", "../../"]
-ignore = ["dist", "../../target"]
+watch = ["..", "../../", "../../../"]
+ignore = ["dist", "../../../target"]
 
 [serve]
 addresses = ["127.0.0.1"]

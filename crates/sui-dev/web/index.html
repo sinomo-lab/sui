@@ -28,6 +28,7 @@
       main {
         flex: 1;
         display: flex;
+        min-height: 0;
       }
 
       canvas {
@@ -35,7 +36,114 @@
         height: 100%;
         display: block;
       }
+
+      #benchmark-results {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 1000;
+        min-width: 320px;
+        max-width: min(420px, calc(100vw - 32px));
+        padding: 12px 14px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+        background: rgba(10, 15, 24, 0.92);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        backdrop-filter: blur(10px);
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        white-space: pre-wrap;
+      }
+
+      #benchmark-results:empty {
+        display: none;
+      }
     </style>
+    <script>
+      (() => {
+        const params = new URLSearchParams(window.location.search);
+        const benchmark = params.get("benchmark");
+        if (!benchmark) {
+          return;
+        }
+
+        const clamp = (value, min, max, fallback) => {
+          const parsed = Number.parseInt(value ?? "", 10);
+          if (!Number.isFinite(parsed)) {
+            return fallback;
+          }
+          return Math.min(max, Math.max(min, parsed));
+        };
+
+        const warmupFrames = clamp(params.get("warmup"), 0, 2000, 60);
+        const measuredFrames = clamp(params.get("frames"), 1, 10000, 180);
+        const output = document.createElement("pre");
+        output.id = "benchmark-results";
+        output.textContent = `Preparing benchmark ${benchmark}...`;
+        document.addEventListener("DOMContentLoaded", () => {
+          document.body.appendChild(output);
+        });
+
+        const percentile = (values, ratio) => {
+          if (!values.length) return 0;
+          const sorted = [...values].sort((a, b) => a - b);
+          const index = Math.min(sorted.length - 1, Math.floor(sorted.length * ratio));
+          return sorted[index];
+        };
+
+        const finalize = (samples, startedAt) => {
+          const totalMs = samples.reduce((sum, value) => sum + value, 0);
+          const avgMs = totalMs / samples.length;
+          const minMs = Math.min(...samples);
+          const maxMs = Math.max(...samples);
+          const p95Ms = percentile(samples, 0.95);
+          const result = {
+            benchmark,
+            warmupFrames,
+            measuredFrames: samples.length,
+            wallClockMs: Number((performance.now() - startedAt).toFixed(2)),
+            avgFrameMs: Number(avgMs.toFixed(3)),
+            minFrameMs: Number(minMs.toFixed(3)),
+            maxFrameMs: Number(maxMs.toFixed(3)),
+            p95FrameMs: Number(p95Ms.toFixed(3)),
+            avgFps: Number((1000 / avgMs).toFixed(2)),
+            p95Fps: Number((1000 / p95Ms).toFixed(2)),
+          };
+          window.__suiBenchmarkResult = result;
+          output.textContent = JSON.stringify(result, null, 2);
+          console.log("SUI_BENCHMARK_RESULT " + JSON.stringify(result));
+        };
+
+        window.addEventListener(
+          "TrunkApplicationStarted",
+          () => {
+            const deltas = [];
+            let previous = null;
+            let frame = 0;
+            const startedAt = performance.now();
+
+            const tick = (timestamp) => {
+              if (previous !== null) {
+                if (frame >= warmupFrames) {
+                  deltas.push(timestamp - previous);
+                }
+              }
+              previous = timestamp;
+              frame += 1;
+
+              if (deltas.length >= measuredFrames) {
+                finalize(deltas, startedAt);
+                return;
+              }
+
+              requestAnimationFrame(tick);
+            };
+
+            requestAnimationFrame(tick);
+          },
+          { once: true },
+        );
+      })();
+    </script>
     <link
       data-trunk
       rel="rust"

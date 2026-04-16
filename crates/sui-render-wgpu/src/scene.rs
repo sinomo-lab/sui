@@ -1486,6 +1486,7 @@ pub(crate) struct TextEngine {
     pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphAtlas>,
     pub(crate) atlas: TextAtlas,
     swash_scale_context: SwashScaleContext,
+    pub(crate) text_render_mode: TextRenderMode,
     pub(crate) coverage_policy: TextCoveragePolicy,
     pub(crate) glyph_pixel_alignment_enabled: bool,
     pub(crate) diagnostics_enabled: bool,
@@ -1539,6 +1540,7 @@ impl Default for TextEngine {
             glyph_cache: HashMap::new(),
             atlas: TextAtlas::default(),
             swash_scale_context: SwashScaleContext::new(),
+            text_render_mode: TextRenderMode::default(),
             coverage_policy: TextCoveragePolicy::default(),
             glyph_pixel_alignment_enabled: true,
             diagnostics_enabled: true,
@@ -1561,6 +1563,10 @@ impl TextEngine {
         if !enabled {
             self.frame_stats = TextFrameStats::default();
         }
+    }
+
+    pub(crate) fn set_text_render_mode(&mut self, mode: TextRenderMode) {
+        self.text_render_mode = mode;
     }
 
     pub(crate) fn set_text_coverage_policy(&mut self, policy: TextCoveragePolicy) {
@@ -1815,7 +1821,13 @@ impl TextEngine {
     ) -> Result<Option<&CachedGlyphAtlas>> {
         let atlas_physical_scale = glyph_scale * raster_scale_factor.max(1.0);
         let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
-        let key = GlyphCacheKey::new(face_key, glyph_id, scale_bucket, coverage_policy);
+        let key = GlyphCacheKey::new(
+            face_key,
+            glyph_id,
+            scale_bucket,
+            self.text_render_mode,
+            coverage_policy,
+        );
         match self.glyph_cache.entry(key) {
             Entry::Occupied(entry) => {
                 if self.diagnostics_enabled {
@@ -1848,6 +1860,7 @@ impl TextEngine {
                     swash_face.ppem_for_scale(bucketed_physical_scale),
                     raster_scale_factor.max(1.0),
                     bucketed_logical_scale,
+                    self.text_render_mode,
                     coverage_policy,
                 )? {
                     if let Some(started) = atlas_miss_started {
@@ -1906,6 +1919,7 @@ fn build_cached_glyph_atlas(
     font_size_physical: f32,
     raster_scale_factor: f32,
     glyph_scale_logical: f32,
+    text_render_mode: TextRenderMode,
     coverage_policy: TextCoveragePolicy,
 ) -> Result<Option<CachedGlyphAtlas>> {
     let sources = [
@@ -1919,7 +1933,10 @@ fn build_cached_glyph_atlas(
         .hint(false)
         .build();
     let mut renderer = SwashRender::new(&sources);
-    renderer.format(SwashFormat::Subpixel);
+    renderer.format(match text_render_mode {
+        TextRenderMode::Grayscale => SwashFormat::Alpha,
+        TextRenderMode::LcdSubpixel => SwashFormat::Subpixel,
+    });
     let Some(image) = renderer.render(&mut scaler, glyph_id) else {
         return Ok(None);
     };
@@ -1928,7 +1945,7 @@ fn build_cached_glyph_atlas(
 
     let width = image.placement.width as usize;
     let height = image.placement.height as usize;
-    let Some(rasterized) = swash_image_to_rgba(&image, coverage_policy) else {
+    let Some(rasterized) = swash_image_to_rgba(&image, text_render_mode, coverage_policy) else {
         return Ok(None);
     };
 
@@ -1939,6 +1956,7 @@ fn build_cached_glyph_atlas(
             size: Size::ZERO,
             uv_min: [0.0, 0.0],
             uv_max: [0.0, 0.0],
+            color_mode: TextAtlasColorMode::from(text_render_mode),
             is_color: rasterized.is_color,
         }));
     }
@@ -1965,6 +1983,7 @@ fn build_cached_glyph_atlas(
         ),
         uv_min: [logical_uv_min_x * inv_width, logical_uv_min_y * inv_height],
         uv_max: [logical_uv_max_x * inv_width, logical_uv_max_y * inv_height],
+        color_mode: TextAtlasColorMode::from(text_render_mode),
         is_color: rasterized.is_color,
     }))
 }
@@ -1986,6 +2005,7 @@ pub(crate) struct SwashRasterizedGlyph {
 
 pub(crate) fn swash_image_to_rgba(
     image: &swash::scale::image::Image,
+    text_render_mode: TextRenderMode,
     coverage_policy: TextCoveragePolicy,
 ) -> Option<SwashRasterizedGlyph> {
     let width = usize::try_from(image.placement.width).ok()?;
@@ -2019,27 +2039,17 @@ pub(crate) fn swash_image_to_rgba(
             })
         }
         SwashImageContent::SubpixelMask => {
-            let mut coverage = vec![0; pixel_count];
             if image.data.len() < pixel_count.checked_mul(4)? {
                 return None;
             }
 
-            for (source, target) in image.data.chunks_exact(4).zip(coverage.iter_mut()) {
-                let grayscale = (u16::from(source[0]) + u16::from(source[1]) + u16::from(source[2])) / 3;
-                *target = grayscale as u8;
-            }
-
-            if coverage.iter().all(|value| *value == 0 || *value == 255) {
-                coverage = soften_binary_coverage(&coverage, width, height);
-            }
-
             let mut pixels = vec![0; pixel_count.checked_mul(4)?];
-            for (coverage, pixel) in coverage.into_iter().zip(pixels.chunks_exact_mut(4)) {
-                let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
-                pixel[0] = 255;
-                pixel[1] = 255;
-                pixel[2] = 255;
-                pixel[3] = alpha;
+            for (source, pixel) in image.data.chunks_exact(4).zip(pixels.chunks_exact_mut(4)) {
+                pixel.copy_from_slice(&convert_subpixel_texel_for_mode(
+                    [source[0], source[1], source[2], source[3]],
+                    text_render_mode,
+                    coverage_policy,
+                ));
             }
 
             Some(SwashRasterizedGlyph {
@@ -2072,6 +2082,27 @@ pub(crate) fn linearized_color_unorm(channel: u8) -> u8 {
     (srgb_transfer_to_linear(channel as f32 / 255.0) * 255.0)
         .round()
         .clamp(0.0, 255.0) as u8
+}
+
+pub(crate) fn convert_subpixel_texel_for_mode(
+    source: [u8; 4],
+    text_render_mode: TextRenderMode,
+    coverage_policy: TextCoveragePolicy,
+) -> [u8; 4] {
+    match text_render_mode {
+        TextRenderMode::Grayscale => {
+            let coverage = ((u16::from(source[0]) + u16::from(source[1]) + u16::from(source[2])) / 3) as u8;
+            let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
+            [255, 255, 255, alpha]
+        }
+        TextRenderMode::LcdSubpixel => {
+            let red = (coverage_policy.apply(source[0] as f32 / 255.0) * 255.0).round() as u8;
+            let green = (coverage_policy.apply(source[1] as f32 / 255.0) * 255.0).round() as u8;
+            let blue = (coverage_policy.apply(source[2] as f32 / 255.0) * 255.0).round() as u8;
+            let alpha = red.max(green).max(blue);
+            [red, green, blue, alpha]
+        }
+    }
 }
 
 fn soften_binary_coverage(coverage: &[u8], width: usize, height: usize) -> Vec<u8> {
@@ -2197,6 +2228,8 @@ fn build_text_atlas_instance(
     let bottom_left = to_ndc(bottom_left.x, bottom_left.y, viewport);
     let _bottom_right = to_ndc(bottom_right.x, bottom_right.y, viewport);
 
+    let atlas_contains_lcd_subpixels = matches!(atlas.color_mode, TextAtlasColorMode::LcdSubpixel);
+
     Some(TextAtlasInstance {
         top_left,
         x_axis: [top_right[0] - top_left[0], top_right[1] - top_left[1]],
@@ -2204,7 +2237,16 @@ fn build_text_atlas_instance(
         uv_min: atlas.uv_min,
         uv_max: atlas.uv_max,
         color: rgba,
+        metadata: [
+            (atlas_contains_lcd_subpixels
+                && allows_lcd_text(transform, glyph_pixel_alignment_enabled)) as u8 as f32,
+            atlas_contains_lcd_subpixels as u8 as f32,
+        ],
     })
+}
+
+pub(crate) fn allows_lcd_text(transform: Transform, glyph_pixel_alignment_enabled: bool) -> bool {
+    glyph_pixel_alignment_enabled && transform_is_lcd_safe(transform)
 }
 
 #[cfg(test)]
@@ -2291,6 +2333,12 @@ fn snapped_glyph_quad(
 
 fn transform_is_axis_aligned(transform: Transform) -> bool {
     transform.xy.abs() <= f32::EPSILON && transform.yx.abs() <= f32::EPSILON
+}
+
+fn transform_is_lcd_safe(transform: Transform) -> bool {
+    transform_is_axis_aligned(transform)
+        && transform.xx > 0.0
+        && transform.yy > 0.0
 }
 
 fn snap_to_physical_pixel(value: f32, raster_scale_factor: f32) -> f32 {
