@@ -26,6 +26,7 @@ pub const WINDOW_DESCRIPTION: &str =
 pub const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
 pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
 pub const TEXT_RENDERING_COMPARISON_TITLE: &str = "SUI Text Rendering Comparison";
+pub const COLOR_VALIDATION_VIEW_TITLE: &str = "SUI Color Validation";
 pub const TEXT_VALIDATION_VIEW_TITLE: &str = "SUI Text Validation";
 pub const TEXT_EDITING_BENCHMARK_TITLE: &str = "SUI Text Editing Benchmark";
 pub const BUTTON_GRID_ROWS: usize = 8;
@@ -59,6 +60,7 @@ pub const SUMMARY_NAME: &str = "Widget book summary";
 pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
 pub const RETAINED_TEXT_BENCHMARK_SCROLL_NAME: &str = "Retained text benchmark scroll";
 pub const TEXT_RENDERING_COMPARISON_SCROLL_NAME: &str = "Text rendering comparison scroll";
+pub const COLOR_VALIDATION_SCROLL_NAME: &str = "Color validation scroll";
 pub const TEXT_VALIDATION_SCROLL_NAME: &str = "Text validation scroll";
 pub const TEXT_VALIDATION_EDITOR_NAME: &str = "Validation editor";
 pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark editor";
@@ -1545,6 +1547,102 @@ pub fn build_text_rendering_comparison_application() -> Application {
     )
 }
 
+pub fn build_color_validation_surface() -> impl Widget {
+    ScrollView::vertical(Padding::all(
+        24.0,
+        Stack::vertical()
+            .spacing(18.0)
+            .alignment(Alignment::Stretch)
+            .with_child(panel(
+                "Wide-gamut reference swatches",
+                "Reference surface for validating that sRGB and Display-P3 colors stay distinct in the renderer's linear working space before final display output. Use it to compare known-sRGB swatches against wider-gamut counterparts while iterating on HDR and color-management changes.",
+                Stack::vertical()
+                    .spacing(16.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(build_color_validation_row(
+                        "Red primary",
+                        "Display-P3 red should preserve its native primaries instead of being treated as an sRGB red with only transfer decoding.",
+                        [
+                            ("sRGB reference red", Color::rgba(1.0, 0.0, 0.0, 1.0)),
+                            ("Display P3 reference red", Color::display_p3(1.0, 0.0, 0.0, 1.0)),
+                        ],
+                    ))
+                    .with_child(build_color_validation_row(
+                        "Green primary",
+                        "The Display-P3 green sample intentionally lives outside the sRGB gamut. Compare it against the clipped sRGB control when checking wide-gamut correctness.",
+                        [
+                            ("sRGB clipped lime", Color::rgba(0.0, 1.0, 0.0, 1.0)),
+                            ("Display P3 vivid lime", Color::display_p3(0.0, 1.0, 0.0, 1.0)),
+                        ],
+                    )),
+            )),
+    ))
+    .name(COLOR_VALIDATION_SCROLL_NAME)
+}
+
+pub fn build_color_validation_application() -> Application {
+    Application::new().window(
+        WindowBuilder::new().title(COLOR_VALIDATION_VIEW_TITLE).root(
+            LivePerformanceRoot::new(
+                COLOR_VALIDATION_VIEW_TITLE,
+                "Reference surface for validating sRGB versus Display-P3 color handling while HDR support lands in phases.",
+                build_color_validation_surface(),
+            ),
+        ),
+    )
+}
+
+fn build_color_validation_row(
+    title: &'static str,
+    description: &'static str,
+    swatches: [(&'static str, Color); 2],
+) -> impl Widget {
+    NamedSection::new(
+        title,
+        Background::new(
+            Color::rgba(0.985, 0.99, 1.0, 1.0),
+            Padding::all(
+                18.0,
+                Stack::vertical()
+                    .spacing(12.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Label::new(title)
+                            .font_size(18.0)
+                            .line_height(22.0)
+                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
+                    )
+                    .with_child(
+                        Label::new(description)
+                            .font_size(14.0)
+                            .line_height(20.0)
+                            .color(Color::rgba(0.40, 0.47, 0.56, 1.0)),
+                    )
+                    .with_child(
+                        Stack::horizontal()
+                            .spacing(18.0)
+                            .alignment(Alignment::Center)
+                            .with_child(build_color_validation_swatch(swatches[0].0, swatches[0].1))
+                            .with_child(build_color_validation_swatch(swatches[1].0, swatches[1].1)),
+                    ),
+            ),
+        ),
+    )
+}
+
+fn build_color_validation_swatch(name: &'static str, color: Color) -> impl Widget {
+    Stack::vertical()
+        .spacing(8.0)
+        .alignment(Alignment::Center)
+        .with_child(ColorSwatch::new(name, color).size(Size::new(132.0, 56.0)))
+        .with_child(
+            Label::new(name)
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.16, 0.21, 0.28, 1.0)),
+        )
+}
+
 fn build_text_rendering_mode_card(
     title: &'static str,
     subtitle: &'static str,
@@ -2917,6 +3015,10 @@ mod tests {
         build_text_rendering_comparison_application().build()
     }
 
+    fn build_color_validation_runtime() -> Result<sui::Runtime> {
+        super::build_color_validation_application().build()
+    }
+
     fn build_overlay_placeholder_app() -> Result<TestApp> {
         TestApp::new(|| {
             Application::new()
@@ -2957,6 +3059,37 @@ mod tests {
             assert!(semantics.iter().any(|node| {
                 node.role == SemanticsRole::GenericContainer
                     && node.name.as_deref() == Some(mode_name)
+            }));
+        }
+    }
+
+    #[test]
+    fn color_validation_surface_exposes_wide_gamut_reference_swatches() {
+        let mut runtime = build_color_validation_runtime().expect("color validation runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime.render(window_id).expect("color validation surface should render");
+
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("color validation semantics should exist");
+
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Window
+                && node.name.as_deref() == Some(super::COLOR_VALIDATION_VIEW_TITLE)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::ScrollView
+                && node.name.as_deref() == Some(super::COLOR_VALIDATION_SCROLL_NAME)
+        }));
+
+        for swatch_name in [
+            "sRGB reference red",
+            "Display P3 reference red",
+            "sRGB clipped lime",
+            "Display P3 vivid lime",
+        ] {
+            assert!(semantics.iter().any(|node| {
+                node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some(swatch_name)
             }));
         }
     }

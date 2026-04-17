@@ -21,8 +21,8 @@ use lyon_tessellation::{
     StrokeVertexConstructor, VertexBuffers,
 };
 use sui_core::{
-    Color, ColorSpace, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result,
-    Size, Transform, Vector, WindowId,
+    Color, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result, Size,
+    Transform, Vector, WindowId,
 };
 use sui_scene::{
     Brush, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame, SceneLayer,
@@ -3175,6 +3175,32 @@ mod tests {
         assert!((rgba[1] - 0.02315).abs() < 0.0001);
         assert!((rgba[2] - 0.66539).abs() < 0.0001);
         assert_eq!(rgba[3], 1.0);
+    }
+
+    #[test]
+    fn shader_color_converts_display_p3_primaries_into_linear_srgb_working_space() {
+        let rgba = shader_color(Color::display_p3(1.0, 0.0, 0.0, 1.0));
+
+        assert!((rgba[0] - 1.22494).abs() < 0.0001);
+        assert!((rgba[1] + 0.04205).abs() < 0.0001);
+        assert!((rgba[2] + 0.01963).abs() < 0.0001);
+        assert_eq!(rgba[3], 1.0);
+    }
+
+    #[test]
+    fn shader_color_preserves_linear_display_p3_channels_before_gamut_conversion() {
+        let encoded = shader_color(Color::display_p3(0.5, 0.25, 0.75, 1.0));
+        let linear = shader_color(Color::linear_display_p3(
+            0.21404114,
+            0.05087609,
+            0.52252156,
+            1.0,
+        ));
+
+        for index in 0..3 {
+            assert!((encoded[index] - linear[index]).abs() < 0.0001);
+        }
+        assert_eq!(linear[3], 1.0);
     }
 
     #[test]
