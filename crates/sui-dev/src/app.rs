@@ -8,8 +8,9 @@ use sui::{
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_retained_text_benchmark,
-    build_text_editing_benchmark, build_text_validation_surface, build_widget_book_gallery,
-    default_widget_book_state, register_widget_book_images,
+    build_text_editing_benchmark, build_text_rendering_comparison_surface,
+    build_text_validation_surface, build_widget_book_gallery, default_widget_book_state,
+    register_widget_book_images,
 };
 
 const WINDOW_TITLE: &str = "SUI Dev";
@@ -18,6 +19,7 @@ const WINDOW_DESCRIPTION: &str =
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
 const BUTTON_GRID_TAB_LABEL: &str = "64 buttons";
 const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
+const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
 const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
 const SETTINGS_TAB_LABEL: &str = "Settings";
@@ -740,6 +742,15 @@ pub fn build_dev_workspace_with_widget_book_bounds(
             .min_size(Size::new(320.0, 260.0))
             .visible(false),
         build_retained_text_benchmark(),
+    );
+    views.push_view(
+        FloatingViewConfig::new(
+            TEXT_RENDERING_COMPARISON_TAB_LABEL,
+            Rect::new(980.0, 72.0, 520.0, 420.0),
+        )
+        .min_size(Size::new(420.0, 320.0))
+        .visible(false),
+        build_text_rendering_comparison_surface(),
     );
     views.push_view(
         FloatingViewConfig::new(TEXT_VALIDATION_TAB_LABEL, Rect::new(720.0, 72.0, 460.0, 380.0))

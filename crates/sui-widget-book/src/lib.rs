@@ -25,6 +25,7 @@ pub const WINDOW_DESCRIPTION: &str =
     "Development gallery for common built-in widgets in sui-widgets";
 pub const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
 pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
+pub const TEXT_RENDERING_COMPARISON_TITLE: &str = "SUI Text Rendering Comparison";
 pub const TEXT_VALIDATION_VIEW_TITLE: &str = "SUI Text Validation";
 pub const TEXT_EDITING_BENCHMARK_TITLE: &str = "SUI Text Editing Benchmark";
 pub const BUTTON_GRID_ROWS: usize = 8;
@@ -57,6 +58,7 @@ pub const SPINNER_NAME: &str = "Background work";
 pub const SUMMARY_NAME: &str = "Widget book summary";
 pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
 pub const RETAINED_TEXT_BENCHMARK_SCROLL_NAME: &str = "Retained text benchmark scroll";
+pub const TEXT_RENDERING_COMPARISON_SCROLL_NAME: &str = "Text rendering comparison scroll";
 pub const TEXT_VALIDATION_SCROLL_NAME: &str = "Text validation scroll";
 pub const TEXT_VALIDATION_EDITOR_NAME: &str = "Validation editor";
 pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark editor";
@@ -1460,6 +1462,187 @@ pub fn build_retained_text_benchmark_application() -> Application {
     )
 }
 
+pub fn build_text_rendering_comparison_surface() -> impl Widget {
+    let mut mode_cards = Stack::vertical().spacing(18.0).alignment(Alignment::Stretch);
+
+    for (title, subtitle, notes) in [
+        (
+            "Grayscale baseline",
+            "Baseline grayscale coverage for dark-on-light and light-on-dark UI text.",
+            "Use this as the control sample for repeated stems like ill, scroll, minimum, Hello, Ж, and 中.",
+        ),
+        (
+            "Grayscale + hinting",
+            "Small-text hinting below the configured threshold.",
+            "Compare 10–14 px labels, mixed-script captions, and medium UI text against the baseline.",
+        ),
+        (
+            "Grayscale + stem darkening",
+            "Conservative stroke-weight boost for thin dark-on-light text.",
+            "Look for stronger stems without muddying medium-size text or emoji fallback.",
+        ),
+        (
+            "LCD subpixel",
+            "Subpixel coverage path for axis-aligned pixel-snapped text.",
+            "Check repeated stems, color-fringe-aware edge detail, and automatic grayscale fallback expectations.",
+        ),
+        (
+            "LCD subpixel + hinting",
+            "Subpixel path plus small-text hinting.",
+            "Focus on tiny Latin labels, mixed-script tool captions, and editor-like status lines.",
+        ),
+        (
+            "LCD subpixel + hinting + stem darkening",
+            "Most aggressive small-text experiment in the current plan.",
+            "Validate tiny UI text, dark/light contrast pairs, and make sure medium text still reads cleanly.",
+        ),
+    ] {
+        mode_cards = mode_cards.with_child(build_text_rendering_mode_card(title, subtitle, notes));
+    }
+
+    ScrollView::vertical(Padding::all(
+        24.0,
+        Stack::vertical()
+            .spacing(18.0)
+            .alignment(Alignment::Stretch)
+            .with_child(panel(
+                "Text rendering mode matrix",
+                "Compare the same representative text samples across grayscale, hinted, darkened, and LCD-oriented rendering modes. The current surface is intended as a visual checklist for repeated stems, mixed scripts, and contrast-sensitive UI labels.",
+                Stack::vertical()
+                    .spacing(10.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        SizedBox::new().width(980.0).with_child(
+                            Label::new("Samples include dark text on light background, light text on dark background, small label text, medium UI copy, mixed-script runs, and repeated stems such as ill, scroll, minimum, Hello, Ж, and 中.")
+                                .font_size(14.0)
+                                .line_height(20.0)
+                                .color(Color::rgba(0.38, 0.46, 0.56, 1.0)),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(980.0).with_child(
+                            Label::new("Use the dev workspace renderer settings to switch the active mode, then compare how each reference card should look when the chosen policy is active. This keeps one stable validation surface for native and wasm runs.")
+                                .font_size(14.0)
+                                .line_height(20.0)
+                                .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                        ),
+                    ),
+            ))
+            .with_child(mode_cards),
+    ))
+    .name(TEXT_RENDERING_COMPARISON_SCROLL_NAME)
+}
+
+pub fn build_text_rendering_comparison_application() -> Application {
+    Application::new().window(
+        WindowBuilder::new().title(TEXT_RENDERING_COMPARISON_TITLE).root(
+            LivePerformanceRoot::new(
+                TEXT_RENDERING_COMPARISON_TITLE,
+                "Side-by-side validation surface for grayscale, hinted, darkened, and LCD-oriented text rendering modes.",
+                build_text_rendering_comparison_surface(),
+            ),
+        ),
+    )
+}
+
+fn build_text_rendering_mode_card(
+    title: &'static str,
+    subtitle: &'static str,
+    notes: &'static str,
+) -> impl Widget {
+    NamedSection::new(
+        title,
+        Background::new(
+            Color::rgba(0.985, 0.99, 1.0, 1.0),
+            Padding::all(
+                18.0,
+                Stack::vertical()
+                    .spacing(14.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Label::new(title)
+                            .font_size(20.0)
+                            .line_height(24.0)
+                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
+                    )
+                    .with_child(
+                        Label::new(subtitle)
+                            .font_size(14.0)
+                            .line_height(19.0)
+                            .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
+                    )
+                    .with_child(
+                        Stack::horizontal()
+                            .spacing(16.0)
+                            .alignment(Alignment::Start)
+                            .with_child(Background::new(
+                                Color::rgba(0.995, 0.998, 1.0, 1.0),
+                                Padding::all(
+                                    16.0,
+                                    Stack::vertical()
+                                        .spacing(8.0)
+                                        .alignment(Alignment::Stretch)
+                                        .with_child(
+                                            Label::new("Dark on light")
+                                                .font_size(13.0)
+                                                .line_height(18.0)
+                                                .color(Color::rgba(0.43, 0.50, 0.58, 1.0)),
+                                        )
+                                        .with_child(
+                                            Label::new("ill scroll minimum Hello Ж 中")
+                                                .font_size(12.0)
+                                                .line_height(16.0)
+                                                .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
+                                        )
+                                        .with_child(
+                                            Label::new("Toolbar 12 px · glyph atlas · Привет · 中文")
+                                                .font_size(14.0)
+                                                .line_height(19.0)
+                                                .color(Color::rgba(0.14, 0.19, 0.26, 1.0)),
+                                        ),
+                                ),
+                            ))
+                            .with_child(Background::new(
+                                Color::rgba(0.14, 0.18, 0.24, 1.0),
+                                Padding::all(
+                                    16.0,
+                                    Stack::vertical()
+                                        .spacing(8.0)
+                                        .alignment(Alignment::Stretch)
+                                        .with_child(
+                                            Label::new("Light on dark")
+                                                .font_size(13.0)
+                                                .line_height(18.0)
+                                                .color(Color::rgba(0.70, 0.78, 0.86, 1.0)),
+                                        )
+                                        .with_child(
+                                            Label::new("ill scroll minimum Hello Ж 中")
+                                                .font_size(12.0)
+                                                .line_height(16.0)
+                                                .color(Color::rgba(0.95, 0.97, 1.0, 1.0)),
+                                        )
+                                        .with_child(
+                                            Label::new("Status · שלום · مرحبا · नमस्ते · 中文")
+                                                .font_size(14.0)
+                                                .line_height(19.0)
+                                                .color(Color::rgba(0.90, 0.94, 1.0, 1.0)),
+                                        ),
+                                ),
+                            )),
+                    )
+                    .with_child(
+                        SizedBox::new().width(980.0).with_child(
+                            Label::new(notes)
+                                .font_size(13.0)
+                                .line_height(19.0)
+                                .color(Color::rgba(0.41, 0.48, 0.56, 1.0)),
+                        ),
+                    ),
+            ),
+        ),
+    )
+}
+
 pub fn build_text_validation_surface() -> impl Widget {
     let content = Stack::vertical()
         .spacing(18.0)
@@ -1907,6 +2090,51 @@ where
                 .with_child(body),
         ),
     )
+}
+
+struct NamedSection {
+    name: String,
+    content: SingleChild,
+}
+
+impl NamedSection {
+    fn new(name: impl Into<String>, content: impl Widget + 'static) -> Self {
+        Self {
+            name: name.into(),
+            content: SingleChild::new(content),
+        }
+    }
+}
+
+impl Widget for NamedSection {
+    fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.content.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.content.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.content.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::GenericContainer, ctx.bounds());
+        node.name = Some(self.name.clone());
+        ctx.push(node);
+        self.content.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.content.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.content.visit_children_mut(visitor);
+    }
 }
 
 fn theme_preview_card(
@@ -2648,10 +2876,11 @@ mod tests {
         DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, LivePerformanceDisplay,
         LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
         POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
+        TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
         TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
         TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
-        TOOLTIP_TRIGGER_LABEL, build_text_validation_surface, build_widget_book_application,
-        default_widget_book_state,
+        TOOLTIP_TRIGGER_LABEL, build_text_rendering_comparison_application,
+        build_text_validation_surface, build_widget_book_application, default_widget_book_state,
     };
     use sui::{
         Application, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState, KeyboardEvent,
@@ -2684,6 +2913,10 @@ mod tests {
         })
     }
 
+    fn build_text_rendering_comparison_runtime() -> Result<sui::Runtime> {
+        build_text_rendering_comparison_application().build()
+    }
+
     fn build_overlay_placeholder_app() -> Result<TestApp> {
         TestApp::new(|| {
             Application::new()
@@ -2694,6 +2927,38 @@ mod tests {
                 )
                 .build()
         })
+    }
+
+    #[test]
+    fn text_rendering_comparison_surface_exposes_all_render_modes() {
+        let mut runtime = build_text_rendering_comparison_runtime().expect("comparison runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime.render(window_id).expect("comparison surface should render");
+
+        let semantics = runtime.semantics(window_id).expect("comparison semantics should exist");
+
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Window
+                && node.name.as_deref() == Some(TEXT_RENDERING_COMPARISON_TITLE)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::ScrollView
+                && node.name.as_deref() == Some(TEXT_RENDERING_COMPARISON_SCROLL_NAME)
+        }));
+
+        for mode_name in [
+            "Grayscale baseline",
+            "Grayscale + hinting",
+            "Grayscale + stem darkening",
+            "LCD subpixel",
+            "LCD subpixel + hinting",
+            "LCD subpixel + hinting + stem darkening",
+        ] {
+            assert!(semantics.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(mode_name)
+            }));
+        }
     }
 
     #[test]
