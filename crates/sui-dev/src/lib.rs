@@ -5,8 +5,8 @@ pub use app::{build_dev_application, build_dev_application_with_widget_book_boun
 use sui::Application;
 use sui_widget_book::{
     build_button_grid_benchmark_application, build_retained_text_benchmark_application,
-    build_text_editing_benchmark_application, build_widget_book_application,
-    default_widget_book_state,
+    build_text_editing_benchmark_application, build_text_rendering_comparison_application,
+    build_widget_book_application, default_widget_book_state,
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -15,6 +15,7 @@ enum WebBenchmarkKind {
     ButtonGrid,
     RetainedText,
     TextEditing,
+    TextComparison,
     WidgetBook,
     DevWorkspace,
 }
@@ -54,6 +55,9 @@ fn parse_web_launch_mode(query: &str) -> WebLaunchMode {
                     "button-grid" => Some(WebBenchmarkKind::ButtonGrid),
                     "retained-text" => Some(WebBenchmarkKind::RetainedText),
                     "text-editing" => Some(WebBenchmarkKind::TextEditing),
+                    "text-comparison" | "comparison-surface" => {
+                        Some(WebBenchmarkKind::TextComparison)
+                    }
                     "widget-book" => Some(WebBenchmarkKind::WidgetBook),
                     "dev" | "workspace" => Some(WebBenchmarkKind::DevWorkspace),
                     _ => None,
@@ -81,6 +85,7 @@ fn build_application_for_web_mode(mode: &WebLaunchMode) -> Application {
         Some(WebBenchmarkKind::ButtonGrid) => build_button_grid_benchmark_application(),
         Some(WebBenchmarkKind::RetainedText) => build_retained_text_benchmark_application(),
         Some(WebBenchmarkKind::TextEditing) => build_text_editing_benchmark_application(),
+        Some(WebBenchmarkKind::TextComparison) => build_text_rendering_comparison_application(),
         Some(WebBenchmarkKind::WidgetBook) => {
             build_widget_book_application(default_widget_book_state())
         }
@@ -129,6 +134,20 @@ mod tests {
         assert_eq!(mode.benchmark, Some(WebBenchmarkKind::ButtonGrid));
         assert_eq!(mode.frames, 240);
         assert_eq!(mode.warmup_frames, 30);
+    }
+
+    #[test]
+    fn parses_text_comparison_web_benchmark_mode() {
+        let mode = parse_web_launch_mode("benchmark=text-comparison&frames=240&warmup=30");
+        assert_eq!(mode.benchmark, Some(WebBenchmarkKind::TextComparison));
+        assert_eq!(mode.frames, 240);
+        assert_eq!(mode.warmup_frames, 30);
+    }
+
+    #[test]
+    fn parses_comparison_surface_alias() {
+        let mode = parse_web_launch_mode("benchmark=comparison-surface");
+        assert_eq!(mode.benchmark, Some(WebBenchmarkKind::TextComparison));
     }
 
     #[test]
