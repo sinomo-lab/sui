@@ -262,3 +262,125 @@ The immediate refactor should establish a persistent text model and renderer pat
 When tradeoffs appear during this refactor, prefer choices that improve the foundation for international text and creative-tool text workflows, even if they require breaking changes to the current API.
 
 The text subsystem must serve both everyday UI text and demanding editor-style applications.
+
+## Current Text Rendering Model
+
+The sections above describe the long-term direction. The current implementation now also has a concrete runtime text rendering model that is important to preserve while the broader refactor continues.
+
+### Window-level runtime controls
+
+The active window carries a `WindowRenderOptions` bundle with the text-related controls that the dev workspace and validation surfaces expose:
+
+- `text_render_policy`, which defaults to `AutomaticByTextLuminance`
+- `text_hinting`, which defaults to `None`
+- `stem_darkening`, which defaults to `None`
+- `glyph_pixel_alignment_enabled`, which defaults to `true`
+
+These controls are window-scoped runtime presentation settings. They are not currently independent per sample card inside the comparison surface.
+
+### Grayscale coverage vs LCD/subpixel rendering
+
+SUI now distinguishes between two separate concerns:
+
+1. **Text render mode** — grayscale atlas rendering versus LCD/subpixel atlas rendering
+2. **Text coverage policy** — how grayscale coverage is mapped into final alpha for dark and light text
+
+`TextRenderMode` currently defaults to `Grayscale`. LCD/subpixel rendering is available through `TextRenderMode::LcdSubpixel`, but it is intentionally conservative.
+
+`TextCoveragePolicy::AutomaticByTextLuminance` is the default grayscale coverage policy. It resolves by text color luminance:
+
+- dark text resolves to `Linear`
+- light text resolves to `TwoCoverageMinusCoverageSq`
+
+That gives dark-on-light and light-on-dark UI text different grayscale coverage behavior without forcing callers to pick different policies manually.
+
+### When LCD/subpixel text is allowed
+
+LCD/subpixel text is only considered safe when the path stays compatible with physical subpixel layout. The current renderer requires:
+
+- glyph pixel alignment to be enabled
+- an axis-aligned transform
+- positive X and Y scale components
+
+In practice, rotated, mirrored, or otherwise non-LCD-safe transforms fall back to grayscale expectations instead of trying to preserve LCD sampling through an unsafe transform.
+
+### Hinting and stem darkening thresholds
+
+The current small-text controls are deliberately threshold-based rather than always-on:
+
+- `TextHinting::Slight { max_ppem }` only applies when the effective ppem is at or below `max_ppem`
+- `StemDarkening::Enabled { max_ppem, amount }` only contributes when the effective ppem is at or below `max_ppem`
+- the darkening amount is normalized and clamped into the `0.0..=1.0` range
+
+The dev workspace currently seeds these controls with practical small-text defaults when they are first enabled:
+
+- slight hinting default threshold: `18.0` ppem
+- stem darkening default threshold: `18.0` ppem
+- stem darkening default amount: `0.08`
+
+This keeps medium-size UI text from being over-corrected while still helping small labels and repeated stems.
+
+### Comparison and validation surfaces
+
+The widget-book comparison surface is meant to make text behavior legible at a glance across:
+
+- grayscale baseline
+- grayscale + hinting
+- grayscale + stem darkening
+- LCD subpixel
+- LCD subpixel + hinting
+- LCD subpixel + hinting + stem darkening
+
+That surface is a visual checklist for dark-on-light text, light-on-dark text, repeated stems, mixed scripts, and contrast-sensitive UI labels. The mode cards are reference views; the actual runtime renderer settings remain window-level.
+
+## Validation And Benchmark Workflow
+
+The current validation workflow for the text rendering model should cover both native and wasm entry points.
+
+### Native checks
+
+Use targeted native checks first:
+
+```bash
+cargo check -p sui-widget-book
+cargo check -p sui-dev
+cargo test -p sui-widget-book --lib tests::text_rendering_comparison_surface_exposes_all_render_modes -- --exact
+cargo test -p sui-dev --lib tests::parses_text_comparison_web_benchmark_mode -- --exact
+cargo test -p sui-dev --lib tests::parses_comparison_surface_alias -- --exact
+```
+
+### Wasm checks
+
+Use the web target to verify that the benchmark launch path still builds:
+
+```bash
+cargo check -p sui-dev --target wasm32-unknown-unknown --no-default-features --features web
+trunk build --config crates/sui-dev/web/Trunk.toml
+```
+
+### Web benchmark URLs
+
+The web entry point now supports focused benchmark presets through the query string:
+
+```text
+http://127.0.0.1:8080/?benchmark=button-grid
+http://127.0.0.1:8080/?benchmark=retained-text
+http://127.0.0.1:8080/?benchmark=text-editing
+http://127.0.0.1:8080/?benchmark=text-comparison
+http://127.0.0.1:8080/?benchmark=comparison-surface
+http://127.0.0.1:8080/?benchmark=widget-book
+http://127.0.0.1:8080/?benchmark=dev
+```
+
+The `text-comparison` and `comparison-surface` aliases should launch the side-by-side text rendering checklist introduced for grayscale, hinted, darkened, and LCD-oriented validation.
+
+## Near-term Future Work
+
+The current model is intentionally conservative. A few follow-up directions remain important:
+
+- keep the grayscale fallback rules conservative for transforms that are not LCD-safe
+- continue benchmarking native and wasm text-heavy surfaces as renderer work lands
+- make the dedicated text surface path cheaper for editor-style workloads
+- add an optional analytic or vector-oriented path for large transformed text, where LCD atlas sampling is not the right fit
+
+That future vector or analytic path should complement the current atlas-backed UI text model, not replace the small-text LCD-safe path that now exists.
