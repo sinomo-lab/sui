@@ -3,8 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use sui::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton, PointerEventKind,
     SemanticsNode, SemanticsRole, TextCoveragePolicy, TextHinting, WgpuRenderer,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowRenderOptions, WindowTextHinting,
-    WindowTextRenderPolicy, prelude::*,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowRenderOptions,
+    WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy, prelude::*,
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_retained_text_benchmark,
@@ -29,6 +29,9 @@ const TEXT_RENDER_POLICY_NAME: &str = "Text render policy";
 const TEXT_RENDER_GAMMA_NAME: &str = "Gamma exponent";
 const TEXT_HINTING_TOGGLE_LABEL: &str = "Enable slight small-text hinting";
 const TEXT_HINTING_MAX_PPEM_NAME: &str = "Hinting max ppem";
+const STEM_DARKENING_TOGGLE_LABEL: &str = "Enable small-text stem darkening";
+const STEM_DARKENING_AMOUNT_NAME: &str = "Stem darkening amount";
+const STEM_DARKENING_MAX_PPEM_NAME: &str = "Stem darkening max ppem";
 const TEXT_RENDER_POLICY_OPTIONS: [&str; 4] =
     ["Automatic", "Linear", "Gamma", "TwoCoverageMinusCoverageSq"];
 
@@ -391,6 +394,15 @@ fn window_text_hinting_from_renderer(hinting: TextHinting) -> WindowTextHinting 
     }
 }
 
+fn window_stem_darkening_from_renderer(darkening: sui::StemDarkening) -> WindowStemDarkening {
+    match darkening.normalized() {
+        sui::StemDarkening::None => WindowStemDarkening::None,
+        sui::StemDarkening::Enabled { max_ppem, amount } => {
+            WindowStemDarkening::Enabled { max_ppem, amount }
+        }
+    }
+}
+
 fn text_render_policy_selected_index(policy: WindowTextRenderPolicy) -> usize {
     match policy.normalized() {
         WindowTextRenderPolicy::AutomaticByTextLuminance => 0,
@@ -428,7 +440,10 @@ impl RenderSettingsTab {
                 .with_text_render_policy(window_text_render_policy_from_renderer(
                     renderer.text_coverage_policy(),
                 ))
-                .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()));
+                .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
+                .with_stem_darkening(window_stem_darkening_from_renderer(
+                    renderer.stem_darkening(),
+                ));
         let state = Rc::new(RefCell::new(initial));
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
@@ -438,6 +453,9 @@ impl RenderSettingsTab {
         let gamma_state = Rc::clone(&state);
         let hinting_toggle_state = Rc::clone(&state);
         let hinting_max_ppem_state = Rc::clone(&state);
+        let stem_darkening_toggle_state = Rc::clone(&state);
+        let stem_darkening_amount_state = Rc::clone(&state);
+        let stem_darkening_max_ppem_state = Rc::clone(&state);
 
         let content = Padding::all(
             28.0,
@@ -557,8 +575,78 @@ impl RenderSettingsTab {
                     ),
                 )
                 .with_child(
+                    Checkbox::new(STEM_DARKENING_TOGGLE_LABEL)
+                        .checked(!matches!(initial.stem_darkening, WindowStemDarkening::None))
+                        .on_toggle(move |checked| {
+                            let mut state = stem_darkening_toggle_state.borrow_mut();
+                            state.stem_darkening = if checked {
+                                match state.stem_darkening.normalized() {
+                                    WindowStemDarkening::Enabled { max_ppem, amount } => {
+                                        WindowStemDarkening::Enabled { max_ppem, amount }
+                                    }
+                                    WindowStemDarkening::None => WindowStemDarkening::Enabled {
+                                        max_ppem: 18.0,
+                                        amount: 0.08,
+                                    },
+                                }
+                            } else {
+                                WindowStemDarkening::None
+                            };
+                        }),
+                )
+                .with_child(
+                    SizedBox::new().width(220.0).with_child(
+                        NumberInput::new(STEM_DARKENING_AMOUNT_NAME)
+                            .range(0.0, 1.0)
+                            .step(0.01)
+                            .precision(2)
+                            .value(match initial.stem_darkening.normalized() {
+                                WindowStemDarkening::Enabled { amount, .. } => amount as f64,
+                                WindowStemDarkening::None => 0.08,
+                            })
+                            .on_change(move |value| {
+                                let amount = value.clamp(0.0, 1.0) as f32;
+                                let max_ppem = match stem_darkening_amount_state
+                                    .borrow()
+                                    .stem_darkening
+                                    .normalized()
+                                {
+                                    WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem,
+                                    WindowStemDarkening::None => 18.0,
+                                };
+                                stem_darkening_amount_state.borrow_mut().stem_darkening =
+                                    WindowStemDarkening::Enabled { max_ppem, amount };
+                            }),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(220.0).with_child(
+                        NumberInput::new(STEM_DARKENING_MAX_PPEM_NAME)
+                            .range(1.0, 64.0)
+                            .step(0.5)
+                            .precision(1)
+                            .value(match initial.stem_darkening.normalized() {
+                                WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem as f64,
+                                WindowStemDarkening::None => 18.0,
+                            })
+                            .on_change(move |value| {
+                                let max_ppem = value.clamp(1.0, 64.0) as f32;
+                                let amount = match stem_darkening_max_ppem_state
+                                    .borrow()
+                                    .stem_darkening
+                                    .normalized()
+                                {
+                                    WindowStemDarkening::Enabled { amount, .. } => amount,
+                                    WindowStemDarkening::None => 0.08,
+                                };
+                                stem_darkening_max_ppem_state.borrow_mut().stem_darkening =
+                                    WindowStemDarkening::Enabled { max_ppem, amount };
+                            }),
+                    ),
+                )
+                .with_child(
                     Label::new(
-                        "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold.",
+                        "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold.",
                     )
                     .font_size(13.0)
                     .line_height(18.0)

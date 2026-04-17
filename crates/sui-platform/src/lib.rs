@@ -7,11 +7,11 @@ mod headless;
 use std::time::Instant;
 
 use sui_core::WindowId;
-use sui_render_wgpu::{TextCoveragePolicy, TextHinting, WgpuRenderer};
+use sui_render_wgpu::{StemDarkening, TextCoveragePolicy, TextHinting, WgpuRenderer};
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
     RendererSubmissionDiagnostics, SceneStatistics, TextCacheDiagnostics,
-    WindowPerformanceSnapshot, WindowTextHinting, WindowTextRenderPolicy,
+    WindowPerformanceSnapshot, WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy,
     clear_window_performance_snapshot, clear_window_performance_snapshots,
     publish_window_performance_snapshot, window_performance_text_caches,
     window_scene_statistics_detail_mode,
@@ -43,6 +43,15 @@ pub(crate) fn map_window_text_hinting(hinting: WindowTextHinting) -> TextHinting
     match hinting.normalized() {
         WindowTextHinting::None => TextHinting::None,
         WindowTextHinting::Slight { max_ppem } => TextHinting::Slight { max_ppem },
+    }
+}
+
+pub(crate) fn map_window_stem_darkening(darkening: WindowStemDarkening) -> StemDarkening {
+    match darkening.normalized() {
+        WindowStemDarkening::None => StemDarkening::None,
+        WindowStemDarkening::Enabled { max_ppem, amount } => {
+            StemDarkening::Enabled { max_ppem, amount }
+        }
     }
 }
 

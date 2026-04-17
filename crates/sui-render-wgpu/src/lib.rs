@@ -2741,7 +2741,8 @@ mod tests {
         append_cached_path_mesh, batch_draw_ops, build_vertices, prepare_frame_batches,
         SwashImageContent, SwashSource, SwashStrikeWith,
         scene::{
-            CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
+            CachedDrawBatch, CachedPassBatch, allows_lcd_text,
+            append_cached_glyph_atlas, apply_stem_darkening_to_coverage,
             convert_subpixel_texel_for_mode, glyph_raster_offset, linearized_color_unorm,
             prepare_cached_passes, swash_image_to_rgba,
         },
@@ -3327,7 +3328,13 @@ mod tests {
             data: vec![66, 42, 213, 128],
         };
 
-        let rasterized = swash_image_to_rgba(&image, TextRenderMode::Grayscale, TextCoveragePolicy::Linear)
+        let rasterized = swash_image_to_rgba(
+            &image,
+            14.0,
+            TextRenderMode::Grayscale,
+            StemDarkening::None,
+            TextCoveragePolicy::Linear,
+        )
             .expect("color glyph should convert into atlas pixels");
 
         assert!(rasterized.is_color);
@@ -3406,6 +3413,22 @@ mod tests {
     }
 
     #[test]
+    fn stem_darkening_applies_only_below_threshold() {
+        let config = StemDarkening::Enabled {
+            max_ppem: 18.0,
+            amount: 0.08,
+        };
+        assert!(config.effective_amount(14.0) > 0.0);
+        assert_eq!(config.effective_amount(24.0), 0.0);
+    }
+
+    #[test]
+    fn stem_darkening_boosts_partial_coverage() {
+        let darkened = apply_stem_darkening_to_coverage(128, 0.1);
+        assert!(darkened > 128);
+    }
+
+    #[test]
     fn lcd_text_render_mode_has_distinct_cache_identity() {
         assert_ne!(
             TextAtlasColorMode::from(TextRenderMode::Grayscale),
@@ -3418,6 +3441,7 @@ mod tests {
         let converted = convert_subpixel_texel_for_mode(
             [255, 128, 32, 255],
             TextRenderMode::LcdSubpixel,
+            0.0,
             TextCoveragePolicy::Linear,
         );
         assert_eq!(converted, [255, 128, 32, 255]);

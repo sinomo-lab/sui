@@ -1839,6 +1839,7 @@ impl TextEngine {
             scale_bucket,
             self.text_render_mode,
             self.text_hinting,
+            self.stem_darkening,
             coverage_policy,
         );
         match self.glyph_cache.entry(key) {
@@ -1936,7 +1937,7 @@ fn build_cached_glyph_atlas(
     glyph_scale_logical: f32,
     text_render_mode: TextRenderMode,
     text_hinting: TextHinting,
-    _stem_darkening: StemDarkening,
+    stem_darkening: StemDarkening,
     coverage_policy: TextCoveragePolicy,
 ) -> Result<Option<CachedGlyphAtlas>> {
     let sources = [
@@ -1962,7 +1963,13 @@ fn build_cached_glyph_atlas(
 
     let width = image.placement.width as usize;
     let height = image.placement.height as usize;
-    let Some(rasterized) = swash_image_to_rgba(&image, text_render_mode, coverage_policy) else {
+    let Some(rasterized) = swash_image_to_rgba(
+        &image,
+        font_size_physical,
+        text_render_mode,
+        stem_darkening,
+        coverage_policy,
+    ) else {
         return Ok(None);
     };
 
@@ -2022,12 +2029,16 @@ pub(crate) struct SwashRasterizedGlyph {
 
 pub(crate) fn swash_image_to_rgba(
     image: &swash::scale::image::Image,
+    ppem: f32,
     text_render_mode: TextRenderMode,
+    stem_darkening: StemDarkening,
     coverage_policy: TextCoveragePolicy,
 ) -> Option<SwashRasterizedGlyph> {
     let width = usize::try_from(image.placement.width).ok()?;
     let height = usize::try_from(image.placement.height).ok()?;
     let pixel_count = width.checked_mul(height)?;
+
+    let stem_darkening_amount = stem_darkening.effective_amount(ppem);
 
     match image.content {
         SwashImageContent::Mask => {
@@ -2043,6 +2054,7 @@ pub(crate) fn swash_image_to_rgba(
 
             let mut pixels = vec![0; pixel_count.checked_mul(4)?];
             for (coverage, pixel) in coverage.into_iter().zip(pixels.chunks_exact_mut(4)) {
+                let coverage = apply_stem_darkening_to_coverage(coverage, stem_darkening_amount);
                 let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
                 pixel[0] = 255;
                 pixel[1] = 255;
@@ -2065,6 +2077,7 @@ pub(crate) fn swash_image_to_rgba(
                 pixel.copy_from_slice(&convert_subpixel_texel_for_mode(
                     [source[0], source[1], source[2], source[3]],
                     text_render_mode,
+                    stem_darkening_amount,
                     coverage_policy,
                 ));
             }
@@ -2104,22 +2117,38 @@ pub(crate) fn linearized_color_unorm(channel: u8) -> u8 {
 pub(crate) fn convert_subpixel_texel_for_mode(
     source: [u8; 4],
     text_render_mode: TextRenderMode,
+    stem_darkening_amount: f32,
     coverage_policy: TextCoveragePolicy,
 ) -> [u8; 4] {
     match text_render_mode {
         TextRenderMode::Grayscale => {
-            let coverage = ((u16::from(source[0]) + u16::from(source[1]) + u16::from(source[2])) / 3) as u8;
+            let coverage =
+                ((u16::from(source[0]) + u16::from(source[1]) + u16::from(source[2])) / 3) as u8;
+            let coverage = apply_stem_darkening_to_coverage(coverage, stem_darkening_amount);
             let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
             [255, 255, 255, alpha]
         }
         TextRenderMode::LcdSubpixel => {
-            let red = (coverage_policy.apply(source[0] as f32 / 255.0) * 255.0).round() as u8;
-            let green = (coverage_policy.apply(source[1] as f32 / 255.0) * 255.0).round() as u8;
-            let blue = (coverage_policy.apply(source[2] as f32 / 255.0) * 255.0).round() as u8;
+            let red = apply_stem_darkening_to_coverage(source[0], stem_darkening_amount);
+            let green = apply_stem_darkening_to_coverage(source[1], stem_darkening_amount);
+            let blue = apply_stem_darkening_to_coverage(source[2], stem_darkening_amount);
+            let red = (coverage_policy.apply(red as f32 / 255.0) * 255.0).round() as u8;
+            let green = (coverage_policy.apply(green as f32 / 255.0) * 255.0).round() as u8;
+            let blue = (coverage_policy.apply(blue as f32 / 255.0) * 255.0).round() as u8;
             let alpha = red.max(green).max(blue);
             [red, green, blue, alpha]
         }
     }
+}
+
+pub(crate) fn apply_stem_darkening_to_coverage(coverage: u8, amount: f32) -> u8 {
+    let amount = amount.clamp(0.0, 1.0);
+    if amount <= f32::EPSILON {
+        return coverage;
+    }
+
+    let coverage = coverage as f32 / 255.0;
+    (((coverage + ((1.0 - coverage) * amount)).clamp(0.0, 1.0)) * 255.0).round() as u8
 }
 
 fn soften_binary_coverage(coverage: &[u8], width: usize, height: usize) -> Vec<u8> {

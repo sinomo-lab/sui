@@ -48,8 +48,9 @@ pub use sui_runtime::{
     StackHostOptions, StackOrderPolicy, StackSurfaceOptions, TextCacheDeltaDiagnostics,
     TextCacheDiagnostics, Widget, WidgetChildren, WidgetGeometrySnapshot, WidgetGraphSnapshot,
     WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
-    WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions, WindowTextHinting,
-    WindowTextRenderPolicy, clear_window_render_options, set_window_render_options,
+    WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions,
+    WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy,
+    clear_window_render_options, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_performance_summary, window_render_options, window_scene_statistics_detail_mode,
 };

@@ -29,8 +29,8 @@ use winit::{
 use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
 
 use crate::{
-    AccessibilityBridge, headless::PlatformWindow, map_window_text_hinting,
-    map_window_text_render_policy,
+    AccessibilityBridge, headless::PlatformWindow, map_window_stem_darkening,
+    map_window_text_hinting, map_window_text_render_policy,
 };
 
 #[derive(Debug, Default)]
@@ -395,6 +395,9 @@ impl DesktopApp {
                 );
                 self.renderer.set_runtime_text_hinting_override(
                     render_options.map(|options| map_window_text_hinting(options.text_hinting)),
+                );
+                self.renderer.set_runtime_stem_darkening_override(
+                    render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
                 );
                 self.renderer.set_runtime_glyph_pixel_alignment_override(
                     render_options.map(|options| options.glyph_pixel_alignment_enabled),

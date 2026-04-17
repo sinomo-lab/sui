@@ -582,6 +582,35 @@ impl WindowTextHinting {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WindowStemDarkening {
+    None,
+    Enabled { max_ppem: f32, amount: f32 },
+}
+
+impl Default for WindowStemDarkening {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl WindowStemDarkening {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Enabled { max_ppem, amount }
+                if max_ppem.is_finite() && max_ppem > 0.0 && amount.is_finite() && amount > 0.0 =>
+            {
+                Self::Enabled {
+                    max_ppem,
+                    amount: amount.clamp(0.0, 1.0),
+                }
+            }
+            Self::Enabled { .. } => Self::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowRenderOptions {
     pub feathering_enabled: bool,
     pub feather_width: f32,
@@ -589,6 +618,7 @@ pub struct WindowRenderOptions {
     pub glyph_pixel_alignment_enabled: bool,
     pub text_render_policy: WindowTextRenderPolicy,
     pub text_hinting: WindowTextHinting,
+    pub stem_darkening: WindowStemDarkening,
 }
 
 impl WindowRenderOptions {
@@ -600,6 +630,7 @@ impl WindowRenderOptions {
             glyph_pixel_alignment_enabled: true,
             text_render_policy: WindowTextRenderPolicy::AutomaticByTextLuminance,
             text_hinting: WindowTextHinting::None,
+            stem_darkening: WindowStemDarkening::None,
         }
     }
 
@@ -623,6 +654,11 @@ impl WindowRenderOptions {
         self
     }
 
+    pub const fn with_stem_darkening(mut self, darkening: WindowStemDarkening) -> Self {
+        self.stem_darkening = darkening;
+        self
+    }
+
     pub fn clamped(self) -> Self {
         Self {
             feathering_enabled: self.feathering_enabled,
@@ -631,6 +667,7 @@ impl WindowRenderOptions {
             glyph_pixel_alignment_enabled: self.glyph_pixel_alignment_enabled,
             text_render_policy: self.text_render_policy.normalized(),
             text_hinting: self.text_hinting.normalized(),
+            stem_darkening: self.stem_darkening.normalized(),
         }
     }
 }

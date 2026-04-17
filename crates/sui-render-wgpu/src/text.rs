@@ -39,6 +39,7 @@ pub(crate) struct GlyphCacheKey {
     pub(crate) scale_bucket: u32,
     pub(crate) atlas_color_mode: TextAtlasColorMode,
     pub(crate) text_hinting: TextHintingCacheKey,
+    pub(crate) stem_darkening: StemDarkeningCacheKey,
     pub(crate) coverage_policy: TextCoverageCacheKey,
 }
 
@@ -49,6 +50,7 @@ impl GlyphCacheKey {
         scale_bucket: u32,
         text_render_mode: TextRenderMode,
         text_hinting: TextHinting,
+        stem_darkening: StemDarkening,
         coverage_policy: TextCoveragePolicy,
     ) -> Self {
         Self {
@@ -57,6 +59,7 @@ impl GlyphCacheKey {
             scale_bucket,
             atlas_color_mode: TextAtlasColorMode::from(text_render_mode),
             text_hinting: TextHintingCacheKey::from(text_hinting),
+            stem_darkening: StemDarkeningCacheKey::from(stem_darkening),
             coverage_policy: TextCoverageCacheKey::from(coverage_policy),
         }
     }
@@ -74,6 +77,24 @@ impl From<TextHinting> for TextHintingCacheKey {
             TextHinting::None => Self::None,
             TextHinting::Slight { max_ppem } => Self::Slight {
                 max_ppem_bits: max_ppem.to_bits(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum StemDarkeningCacheKey {
+    None,
+    Enabled { max_ppem_bits: u32, amount_bits: u32 },
+}
+
+impl From<StemDarkening> for StemDarkeningCacheKey {
+    fn from(value: StemDarkening) -> Self {
+        match value.normalized() {
+            StemDarkening::None => Self::None,
+            StemDarkening::Enabled { max_ppem, amount } => Self::Enabled {
+                max_ppem_bits: max_ppem.to_bits(),
+                amount_bits: amount.to_bits(),
             },
         }
     }
