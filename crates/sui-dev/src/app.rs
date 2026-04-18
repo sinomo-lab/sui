@@ -3,8 +3,10 @@ use std::{cell::RefCell, rc::Rc};
 use sui::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton, PointerEventKind,
     SemanticsNode, SemanticsRole, TextCoveragePolicy, TextHinting, WgpuRenderer,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowRenderOptions,
-    WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy, prelude::*,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowColorManagementMode,
+    WindowDynamicRangeMode, WindowEvent, WindowId, WindowOutputColorPrimaries, WindowRenderOptions,
+    WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy, WindowToneMappingMode,
+    prelude::*, window_output_diagnostics,
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_retained_text_benchmark,
@@ -34,8 +36,18 @@ const TEXT_HINTING_MAX_PPEM_NAME: &str = "Hinting max ppem";
 const STEM_DARKENING_TOGGLE_LABEL: &str = "Enable small-text stem darkening";
 const STEM_DARKENING_AMOUNT_NAME: &str = "Stem darkening amount";
 const STEM_DARKENING_MAX_PPEM_NAME: &str = "Stem darkening max ppem";
+const COLOR_MANAGEMENT_MODE_NAME: &str = "Color management";
+const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
+const DYNAMIC_RANGE_MODE_NAME: &str = "Dynamic range";
+const TONE_MAPPING_MODE_NAME: &str = "Tone mapping";
+const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
 const TEXT_RENDER_POLICY_OPTIONS: [&str; 4] =
     ["Automatic", "Linear", "Gamma", "TwoCoverageMinusCoverageSq"];
+const COLOR_MANAGEMENT_MODE_OPTIONS: [&str; 4] =
+    ["Automatic", "Force SDR", "Prefer wide gamut", "Prefer HDR"];
+const OUTPUT_PRIMARIES_OPTIONS: [&str; 3] = ["Automatic", "sRGB", "Display P3"];
+const DYNAMIC_RANGE_MODE_OPTIONS: [&str; 3] = ["Automatic", "SDR", "HDR"];
+const TONE_MAPPING_MODE_OPTIONS: [&str; 3] = ["Automatic", "Clamp", "Reinhard"];
 
 const SIDEBAR_TITLE: &str = "Available views";
 
@@ -427,6 +439,146 @@ fn update_text_render_policy_selection(state: &mut WindowRenderOptions, index: u
     };
 }
 
+fn color_management_mode_selected_index(mode: WindowColorManagementMode) -> usize {
+    match mode {
+        WindowColorManagementMode::Automatic => 0,
+        WindowColorManagementMode::ForceSdr => 1,
+        WindowColorManagementMode::PreferWideGamut => 2,
+        WindowColorManagementMode::PreferHdr => 3,
+    }
+}
+
+fn update_color_management_mode_selection(state: &mut WindowRenderOptions, index: usize) {
+    state.color_management_mode = match index {
+        0 => WindowColorManagementMode::Automatic,
+        1 => WindowColorManagementMode::ForceSdr,
+        2 => WindowColorManagementMode::PreferWideGamut,
+        3 => WindowColorManagementMode::PreferHdr,
+        _ => state.color_management_mode,
+    };
+}
+
+fn output_primaries_selected_index(primaries: WindowOutputColorPrimaries) -> usize {
+    match primaries {
+        WindowOutputColorPrimaries::Automatic => 0,
+        WindowOutputColorPrimaries::Srgb => 1,
+        WindowOutputColorPrimaries::DisplayP3 => 2,
+    }
+}
+
+fn update_output_primaries_selection(state: &mut WindowRenderOptions, index: usize) {
+    state.output_color_primaries = match index {
+        0 => WindowOutputColorPrimaries::Automatic,
+        1 => WindowOutputColorPrimaries::Srgb,
+        2 => WindowOutputColorPrimaries::DisplayP3,
+        _ => state.output_color_primaries,
+    };
+}
+
+fn dynamic_range_mode_selected_index(mode: WindowDynamicRangeMode) -> usize {
+    match mode {
+        WindowDynamicRangeMode::Automatic => 0,
+        WindowDynamicRangeMode::StandardDynamicRange => 1,
+        WindowDynamicRangeMode::HighDynamicRange => 2,
+    }
+}
+
+fn update_dynamic_range_mode_selection(state: &mut WindowRenderOptions, index: usize) {
+    state.dynamic_range_mode = match index {
+        0 => WindowDynamicRangeMode::Automatic,
+        1 => WindowDynamicRangeMode::StandardDynamicRange,
+        2 => WindowDynamicRangeMode::HighDynamicRange,
+        _ => state.dynamic_range_mode,
+    };
+}
+
+fn tone_mapping_mode_selected_index(mode: WindowToneMappingMode) -> usize {
+    match mode {
+        WindowToneMappingMode::Automatic => 0,
+        WindowToneMappingMode::Clamp => 1,
+        WindowToneMappingMode::Reinhard => 2,
+    }
+}
+
+fn update_tone_mapping_mode_selection(state: &mut WindowRenderOptions, index: usize) {
+    state.tone_mapping_mode = match index {
+        0 => WindowToneMappingMode::Automatic,
+        1 => WindowToneMappingMode::Clamp,
+        2 => WindowToneMappingMode::Reinhard,
+        _ => state.tone_mapping_mode,
+    };
+}
+
+fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
+    let Some(diagnostics) = window_output_diagnostics(window_id) else {
+        return vec!["Waiting for first presented frame…".to_string()];
+    };
+
+    vec![
+        format!("Requested mode: {:?}", diagnostics.requested_color_management_mode),
+        format!("Requested primaries: {:?}", diagnostics.requested_output_primaries),
+        format!("Requested dynamic range: {:?}", diagnostics.requested_dynamic_range_mode),
+        format!("Requested tone mapping: {:?}", diagnostics.requested_tone_mapping_mode),
+        format!("Detected primaries: {:?}", diagnostics.display_capabilities.preferred_primaries),
+        format!("Detected dynamic range: {:?}", diagnostics.display_capabilities.preferred_dynamic_range),
+        format!("Wide gamut: {} | HDR: {} | Native HDR: {}",
+            diagnostics.display_capabilities.supports_wide_gamut,
+            diagnostics.display_capabilities.supports_hdr,
+            diagnostics.display_capabilities.native_hdr_presentation_supported,
+        ),
+        format!("Active strategy: {:?}", diagnostics.active_output_strategy),
+        diagnostics.display_capabilities.notes,
+    ]
+}
+
+struct OutputDiagnosticsPanel;
+
+impl Widget for OutputDiagnosticsPanel {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(
+            constraints.max.width.min(640.0),
+            if constraints.max.height.is_finite() { 200.0 } else { 200.0 },
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = DefaultTheme::default().palette;
+        let border = StrokeStyle::default();
+        ctx.fill_rect(ctx.bounds(), palette.surface.with_alpha(0.35));
+        ctx.stroke_rect(ctx.bounds(), palette.border.with_alpha(0.85), border);
+
+        ctx.draw_text(
+            Rect::new(ctx.bounds().x() + 14.0, ctx.bounds().y() + 12.0, ctx.bounds().width() - 28.0, 20.0),
+            OUTPUT_DIAGNOSTICS_TITLE,
+            TextStyle {
+                font_size: 14.0,
+                line_height: 18.0,
+                color: palette.text,
+                ..TextStyle::default()
+            },
+        );
+
+        let lines = output_diagnostics_lines(ctx.window_id());
+        for (index, line) in lines.iter().enumerate() {
+            ctx.draw_text(
+                Rect::new(
+                    ctx.bounds().x() + 14.0,
+                    ctx.bounds().y() + 40.0 + index as f32 * 18.0,
+                    ctx.bounds().width() - 28.0,
+                    18.0,
+                ),
+                line,
+                TextStyle {
+                    font_size: 11.0,
+                    line_height: 15.0,
+                    color: palette.text.with_alpha(0.9),
+                    ..TextStyle::default()
+                },
+            );
+        }
+    }
+}
+
 struct RenderSettingsTab {
     content: SingleChild,
     state: Rc<RefCell<WindowRenderOptions>>,
@@ -458,6 +610,10 @@ impl RenderSettingsTab {
         let stem_darkening_toggle_state = Rc::clone(&state);
         let stem_darkening_amount_state = Rc::clone(&state);
         let stem_darkening_max_ppem_state = Rc::clone(&state);
+        let color_management_state = Rc::clone(&state);
+        let output_primaries_state = Rc::clone(&state);
+        let dynamic_range_state = Rc::clone(&state);
+        let tone_mapping_state = Rc::clone(&state);
 
         let content = Padding::all(
             28.0,
@@ -647,8 +803,53 @@ impl RenderSettingsTab {
                     ),
                 )
                 .with_child(
+                    SizedBox::new().width(280.0).with_child(
+                        Select::new(COLOR_MANAGEMENT_MODE_NAME)
+                            .options(COLOR_MANAGEMENT_MODE_OPTIONS)
+                            .selected(color_management_mode_selected_index(initial.color_management_mode))
+                            .on_change(move |index, _| {
+                                let mut state = color_management_state.borrow_mut();
+                                update_color_management_mode_selection(&mut state, index);
+                            }),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(240.0).with_child(
+                        Select::new(OUTPUT_PRIMARIES_NAME)
+                            .options(OUTPUT_PRIMARIES_OPTIONS)
+                            .selected(output_primaries_selected_index(initial.output_color_primaries))
+                            .on_change(move |index, _| {
+                                let mut state = output_primaries_state.borrow_mut();
+                                update_output_primaries_selection(&mut state, index);
+                            }),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(240.0).with_child(
+                        Select::new(DYNAMIC_RANGE_MODE_NAME)
+                            .options(DYNAMIC_RANGE_MODE_OPTIONS)
+                            .selected(dynamic_range_mode_selected_index(initial.dynamic_range_mode))
+                            .on_change(move |index, _| {
+                                let mut state = dynamic_range_state.borrow_mut();
+                                update_dynamic_range_mode_selection(&mut state, index);
+                            }),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(240.0).with_child(
+                        Select::new(TONE_MAPPING_MODE_NAME)
+                            .options(TONE_MAPPING_MODE_OPTIONS)
+                            .selected(tone_mapping_mode_selected_index(initial.tone_mapping_mode))
+                            .on_change(move |index, _| {
+                                let mut state = tone_mapping_state.borrow_mut();
+                                update_tone_mapping_mode_selection(&mut state, index);
+                            }),
+                    ),
+                )
+                .with_child(OutputDiagnosticsPanel)
+                .with_child(
                     Label::new(
-                        "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold.",
+                        "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy and surface diagnostics panel shows the detected monitor/output path after each redraw.",
                     )
                     .font_size(13.0)
                     .line_height(18.0)

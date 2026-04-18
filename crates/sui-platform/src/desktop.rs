@@ -12,7 +12,7 @@ use sui_core::{
 };
 use sui_render_wgpu::{FeatheringOptions, WgpuRenderer};
 use sui_runtime::{
-    PresentationLatencyDiagnostics, Runtime, window_render_options,
+    PresentationLatencyDiagnostics, Runtime, WindowRenderOptions, window_render_options,
     window_scene_statistics_detail_mode,
 };
 use winit::{
@@ -29,8 +29,9 @@ use winit::{
 use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
 
 use crate::{
-    AccessibilityBridge, headless::PlatformWindow, map_window_stem_darkening,
-    map_window_text_hinting, map_window_text_render_policy,
+    AccessibilityBridge, WindowOutputDiagnostics, detect_window_display_capabilities,
+    headless::PlatformWindow, map_window_color_management, map_window_stem_darkening,
+    map_window_text_hinting, map_window_text_render_policy, publish_window_output_diagnostics,
 };
 
 #[derive(Debug, Default)]
@@ -138,6 +139,17 @@ impl DesktopApp {
         self.windows.values().map(WindowState::snapshot).collect()
     }
 
+    fn refresh_window_display_capabilities(&mut self, window_id: WindowId) -> Result<()> {
+        let capabilities = self
+            .windows
+            .get(&window_id)
+            .map(|window| detect_window_display_capabilities(window.window.as_ref()))
+            .ok_or_else(|| Error::new(format!("missing window {}", window_id.get())))?;
+        self.renderer
+            .set_window_display_capabilities(window_id, capabilities)?;
+        Ok(())
+    }
+
     fn sync_windows(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
         let runtime_window_ids = self.runtime.window_ids();
 
@@ -200,6 +212,7 @@ impl DesktopApp {
                     window,
                 },
             );
+            self.refresh_window_display_capabilities(window_id)?;
 
             self.process_event(
                 event_loop,
@@ -385,6 +398,7 @@ impl DesktopApp {
                 self.renderer
                     .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 let render_options = window_render_options(window_id);
+                self.refresh_window_display_capabilities(window_id)?;
                 self.renderer
                     .set_runtime_feathering_override(render_options.map(|options| {
                         FeatheringOptions::new(options.feathering_enabled, options.feather_width)
@@ -402,7 +416,36 @@ impl DesktopApp {
                 self.renderer.set_runtime_glyph_pixel_alignment_override(
                     render_options.map(|options| options.glyph_pixel_alignment_enabled),
                 );
+                self.renderer.set_window_color_management(
+                    window_id,
+                    render_options
+                        .map(|options| {
+                            map_window_color_management(
+                                options.color_management_mode,
+                                options.output_color_primaries,
+                                options.dynamic_range_mode,
+                            )
+                        })
+                        .unwrap_or_default(),
+                )?;
                 self.renderer.render(&output.frame)?;
+                if let (Some(display_capabilities), Some(active_output_strategy)) = (
+                    self.renderer.window_display_capabilities(window_id),
+                    self.renderer.window_output_strategy(window_id),
+                ) {
+                    let options = render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
+                    publish_window_output_diagnostics(
+                        window_id,
+                        WindowOutputDiagnostics {
+                            display_capabilities,
+                            requested_color_management_mode: options.color_management_mode,
+                            requested_output_primaries: options.output_color_primaries,
+                            requested_dynamic_range_mode: options.dynamic_range_mode,
+                            requested_tone_mapping_mode: options.tone_mapping_mode,
+                            active_output_strategy,
+                        },
+                    );
+                }
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
                 let presented_at_ms = self.current_time_ms();
                 if let Some(window) = self.windows.get(&window_id) {

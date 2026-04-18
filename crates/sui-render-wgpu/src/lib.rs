@@ -67,6 +67,122 @@ impl Default for RendererCapabilities {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DisplayColorPrimaries {
+    #[default]
+    Srgb,
+    DisplayP3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DynamicRangeMode {
+    #[default]
+    StandardDynamicRange,
+    HighDynamicRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DisplayTransferFunction {
+    #[default]
+    Srgb,
+    LinearExtended,
+    Pq,
+    Hlg,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DisplayCapabilities {
+    pub supports_wide_gamut: bool,
+    pub supports_hdr: bool,
+    pub preferred_primaries: DisplayColorPrimaries,
+    pub preferred_dynamic_range: DynamicRangeMode,
+    pub max_luminance_nits: Option<f32>,
+    pub sdr_white_nits: Option<f32>,
+    pub max_content_headroom: Option<f32>,
+    pub native_hdr_presentation_supported: bool,
+    pub notes: String,
+}
+
+impl Default for DisplayCapabilities {
+    fn default() -> Self {
+        Self {
+            supports_wide_gamut: false,
+            supports_hdr: false,
+            preferred_primaries: DisplayColorPrimaries::Srgb,
+            preferred_dynamic_range: DynamicRangeMode::StandardDynamicRange,
+            max_luminance_nits: None,
+            sdr_white_nits: None,
+            max_content_headroom: None,
+            native_hdr_presentation_supported: false,
+            notes: "Default SDR capability profile".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RequestedOutputColorPrimaries {
+    #[default]
+    Automatic,
+    Srgb,
+    DisplayP3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RequestedDynamicRangeMode {
+    #[default]
+    Automatic,
+    StandardDynamicRange,
+    HighDynamicRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RequestedColorManagementMode {
+    #[default]
+    Automatic,
+    ForceSdr,
+    PreferWideGamut,
+    PreferHdr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ColorManagementMode {
+    pub mode: RequestedColorManagementMode,
+    pub output_primaries: RequestedOutputColorPrimaries,
+    pub dynamic_range: RequestedDynamicRangeMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputStrategy {
+    SdrSurface {
+        format: wgpu::TextureFormat,
+    },
+    WideGamutSurface {
+        format: wgpu::TextureFormat,
+        primaries: DisplayColorPrimaries,
+    },
+    HdrNativeSurface {
+        format: wgpu::TextureFormat,
+        primaries: DisplayColorPrimaries,
+        transfer: DisplayTransferFunction,
+    },
+    HdrIntermediateThenToneMap {
+        intermediate_format: wgpu::TextureFormat,
+        surface_format: wgpu::TextureFormat,
+        primaries: DisplayColorPrimaries,
+    },
+}
+
+impl OutputStrategy {
+    pub const fn surface_format(self) -> wgpu::TextureFormat {
+        match self {
+            Self::SdrSurface { format }
+            | Self::WideGamutSurface { format, .. }
+            | Self::HdrNativeSurface { format, .. } => format,
+            Self::HdrIntermediateThenToneMap { surface_format, .. } => surface_format,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RendererInterop {
     pub raw_wgpu_enabled: bool,
 }
@@ -755,6 +871,38 @@ impl WgpuRenderer {
         self.vsync_enabled = enabled;
     }
 
+    pub fn set_window_display_capabilities(
+        &mut self,
+        window_id: WindowId,
+        capabilities: DisplayCapabilities,
+    ) -> Result<()> {
+        if let Some(surface) = self.surfaces.get_mut(&window_id) {
+            surface.display_capabilities = capabilities;
+        }
+        self.configure_existing_surface(window_id)
+    }
+
+    pub fn window_display_capabilities(&self, window_id: WindowId) -> Option<DisplayCapabilities> {
+        self.surfaces
+            .get(&window_id)
+            .map(|surface| surface.display_capabilities.clone())
+    }
+
+    pub fn set_window_color_management(
+        &mut self,
+        window_id: WindowId,
+        color_management: ColorManagementMode,
+    ) -> Result<()> {
+        if let Some(surface) = self.surfaces.get_mut(&window_id) {
+            surface.color_management = color_management;
+        }
+        self.configure_existing_surface(window_id)
+    }
+
+    pub fn window_output_strategy(&self, window_id: WindowId) -> Option<OutputStrategy> {
+        self.surfaces.get(&window_id).map(|surface| surface.output_strategy)
+    }
+
     pub fn set_runtime_feathering_override(&mut self, feathering: Option<FeatheringOptions>) {
         self.runtime_feathering_override = feathering.map(FeatheringOptions::clamped);
     }
@@ -1241,7 +1389,7 @@ impl WgpuRenderer {
         size: (u32, u32),
     ) -> Result<RendererFrameStats> {
         self.ensure_shared(None)?;
-        self.configure_surface_if_needed(frame.window_id, size)?;
+        self.resize_surface(frame.window_id, size)?;
 
         let prepared = self.prepare_scene_submission(frame)?;
 
@@ -1383,16 +1531,27 @@ impl WgpuRenderer {
         self.submit_prepared_scene(prepared, format, &view)
     }
 
-    fn configure_surface_if_needed(&mut self, window_id: WindowId, size: (u32, u32)) -> Result<()> {
+    fn resize_surface(&mut self, window_id: WindowId, size: (u32, u32)) -> Result<()> {
         let surface = self
             .surfaces
-            .get_mut(&window_id)
+            .get(&window_id)
             .ok_or_else(|| Error::new(format!("missing surface for window {}", window_id.get())))?;
 
         if surface.config.width == size.0 && surface.config.height == size.1 {
             return Ok(());
         }
 
+        self.configure_surface(window_id, size)
+    }
+
+    fn configure_existing_surface(&mut self, window_id: WindowId) -> Result<()> {
+        let size = {
+            let surface = self
+                .surfaces
+                .get(&window_id)
+                .ok_or_else(|| Error::new(format!("missing surface for window {}", window_id.get())))?;
+            (surface.config.width.max(1), surface.config.height.max(1))
+        };
         self.configure_surface(window_id, size)
     }
 
@@ -1406,14 +1565,17 @@ impl WgpuRenderer {
             .get_mut(&window_id)
             .ok_or_else(|| Error::new(format!("missing surface for window {}", window_id.get())))?;
 
-        let config = configure_surface(
+        let (config, output_strategy) = configure_surface(
             &surface.surface,
             &shared.adapter,
             &shared.device,
             size,
             self.vsync_enabled,
+            surface.display_capabilities.clone(),
+            surface.color_management,
         )?;
         surface.config = config;
+        surface.output_strategy = output_strategy;
         Ok(())
     }
 
@@ -2300,18 +2462,25 @@ impl WgpuRenderer {
             .shared
             .as_ref()
             .expect("renderer shared state initialized");
-        let config = configure_surface(
+        let default_capabilities = DisplayCapabilities::default();
+        let default_color_management = ColorManagementMode::default();
+        let (config, output_strategy) = configure_surface(
             &surface,
             &shared.adapter,
             &shared.device,
             size,
             self.vsync_enabled,
+            default_capabilities.clone(),
+            default_color_management,
         )?;
 
         Ok(SurfaceState {
             window,
             surface,
             config,
+            display_capabilities: default_capabilities,
+            color_management: default_color_management,
+            output_strategy,
         })
     }
 }
@@ -2731,20 +2900,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CachedGlyphAtlas, CachedGlyphMesh, ClipState, CompositionContainerId,
-        DEFAULT_FEATHER_WIDTH, DrawOp, DrawOpArena, DrawOpKind, PreparedClipPath,
-        PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
-        PreparedVertices, RendererFrameStats, RetainedCompositorState,
-        RetainedPacketId, ScissorRect, StemDarkening, TextCoveragePolicy, TextEngine,
-        TextHinting, TextRenderMode, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas,
-        TextAtlasColorMode, VERTEX_SIZE, Vertex, WgpuRenderer,
-        append_cached_path_mesh, batch_draw_ops, build_vertices, prepare_frame_batches,
-        SwashImageContent, SwashSource, SwashStrikeWith,
+        CachedGlyphAtlas, CachedGlyphMesh, ClipState, ColorManagementMode,
+        CompositionContainerId, DEFAULT_FEATHER_WIDTH, DisplayCapabilities,
+        DisplayColorPrimaries, DisplayTransferFunction, DrawOp, DrawOpArena, DrawOpKind,
+        DynamicRangeMode, OutputStrategy, PreparedClipPath, PreparedDrawBatch,
+        PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch, PreparedVertices,
+        RendererFrameStats, RetainedCompositorState, RetainedPacketId, ScissorRect,
+        StemDarkening, TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode,
+        TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, TextAtlasColorMode, VERTEX_SIZE,
+        Vertex, WgpuRenderer, RequestedColorManagementMode, RequestedDynamicRangeMode,
+        RequestedOutputColorPrimaries, append_cached_path_mesh, batch_draw_ops, build_vertices,
+        prepare_frame_batches, SwashImageContent, SwashSource, SwashStrikeWith,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text,
             append_cached_glyph_atlas, apply_stem_darkening_to_coverage,
             convert_subpixel_texel_for_mode, glyph_raster_offset, linearized_color_unorm,
-            prepare_cached_passes, swash_image_to_rgba,
+            prepare_cached_passes, select_output_strategy, swash_image_to_rgba,
         },
         shader_color, to_ndc,
     };
@@ -3185,6 +3356,92 @@ mod tests {
         assert!((rgba[1] + 0.04205).abs() < 0.0001);
         assert!((rgba[2] + 0.01963).abs() < 0.0001);
         assert_eq!(rgba[3], 1.0);
+    }
+
+    #[test]
+    fn select_output_strategy_prefers_wide_gamut_when_requested_and_supported() {
+        let strategy = select_output_strategy(
+            &[wgpu::TextureFormat::Bgra8UnormSrgb],
+            DisplayCapabilities {
+                supports_wide_gamut: true,
+                preferred_primaries: DisplayColorPrimaries::DisplayP3,
+                ..DisplayCapabilities::default()
+            },
+            ColorManagementMode {
+                mode: RequestedColorManagementMode::PreferWideGamut,
+                output_primaries: RequestedOutputColorPrimaries::DisplayP3,
+                dynamic_range: RequestedDynamicRangeMode::Automatic,
+            },
+        );
+
+        assert_eq!(
+            strategy,
+            OutputStrategy::WideGamutSurface {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::DisplayP3,
+            }
+        );
+    }
+
+    #[test]
+    fn select_output_strategy_uses_hdr_intermediate_when_hdr_is_requested_without_native_support() {
+        let strategy = select_output_strategy(
+            &[wgpu::TextureFormat::Bgra8UnormSrgb],
+            DisplayCapabilities {
+                supports_wide_gamut: true,
+                supports_hdr: true,
+                preferred_primaries: DisplayColorPrimaries::DisplayP3,
+                preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
+                native_hdr_presentation_supported: false,
+                ..DisplayCapabilities::default()
+            },
+            ColorManagementMode {
+                mode: RequestedColorManagementMode::PreferHdr,
+                output_primaries: RequestedOutputColorPrimaries::DisplayP3,
+                dynamic_range: RequestedDynamicRangeMode::HighDynamicRange,
+            },
+        );
+
+        assert_eq!(
+            strategy,
+            OutputStrategy::HdrIntermediateThenToneMap {
+                intermediate_format: wgpu::TextureFormat::Rgba16Float,
+                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::DisplayP3,
+            }
+        );
+    }
+
+    #[test]
+    fn select_output_strategy_uses_native_hdr_surface_when_supported() {
+        let strategy = select_output_strategy(
+            &[
+                wgpu::TextureFormat::Rgba16Float,
+                wgpu::TextureFormat::Bgra8UnormSrgb,
+            ],
+            DisplayCapabilities {
+                supports_wide_gamut: true,
+                supports_hdr: true,
+                preferred_primaries: DisplayColorPrimaries::DisplayP3,
+                preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
+                native_hdr_presentation_supported: true,
+                ..DisplayCapabilities::default()
+            },
+            ColorManagementMode {
+                mode: RequestedColorManagementMode::PreferHdr,
+                output_primaries: RequestedOutputColorPrimaries::DisplayP3,
+                dynamic_range: RequestedDynamicRangeMode::HighDynamicRange,
+            },
+        );
+
+        assert_eq!(
+            strategy,
+            OutputStrategy::HdrNativeSurface {
+                format: wgpu::TextureFormat::Rgba16Float,
+                primaries: DisplayColorPrimaries::DisplayP3,
+                transfer: DisplayTransferFunction::LinearExtended,
+            }
+        );
     }
 
     #[test]

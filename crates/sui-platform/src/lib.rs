@@ -2,15 +2,20 @@
 
 mod accessibility;
 mod desktop;
+mod display_capabilities;
 mod headless;
 
 use std::time::Instant;
 
 use sui_core::WindowId;
-use sui_render_wgpu::{StemDarkening, TextCoveragePolicy, TextHinting, WgpuRenderer};
+use sui_render_wgpu::{
+    ColorManagementMode, RequestedColorManagementMode, RequestedDynamicRangeMode,
+    RequestedOutputColorPrimaries, StemDarkening, TextCoveragePolicy, TextHinting, WgpuRenderer,
+};
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
     RendererSubmissionDiagnostics, SceneStatistics, TextCacheDiagnostics,
+    WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowPerformanceSnapshot, WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy,
     clear_window_performance_snapshot, clear_window_performance_snapshots,
     publish_window_performance_snapshot, window_performance_text_caches,
@@ -20,10 +25,16 @@ use sui_runtime::{
 pub(crate) use accessibility::AccessibilityBridge;
 pub use accessibility::AccessibilitySnapshot;
 pub use desktop::DesktopPlatform;
+pub use display_capabilities::{
+    WindowOutputDiagnostics, clear_window_output_diagnostics,
+    clear_window_output_diagnostics_all, detect_window_display_capabilities,
+    publish_window_output_diagnostics, window_output_diagnostics,
+};
 pub use headless::{HeadlessPlatform, PlatformWindow};
 
 pub(crate) fn reset_window_performance_store() {
     clear_window_performance_snapshots();
+    clear_window_output_diagnostics_all();
 }
 
 pub(crate) fn map_window_text_render_policy(policy: WindowTextRenderPolicy) -> TextCoveragePolicy {
@@ -55,8 +66,38 @@ pub(crate) fn map_window_stem_darkening(darkening: WindowStemDarkening) -> StemD
     }
 }
 
+pub(crate) fn map_window_color_management(
+    mode: WindowColorManagementMode,
+    primaries: WindowOutputColorPrimaries,
+    dynamic_range: WindowDynamicRangeMode,
+) -> ColorManagementMode {
+    ColorManagementMode {
+        mode: match mode {
+            WindowColorManagementMode::Automatic => RequestedColorManagementMode::Automatic,
+            WindowColorManagementMode::ForceSdr => RequestedColorManagementMode::ForceSdr,
+            WindowColorManagementMode::PreferWideGamut => {
+                RequestedColorManagementMode::PreferWideGamut
+            }
+            WindowColorManagementMode::PreferHdr => RequestedColorManagementMode::PreferHdr,
+        },
+        output_primaries: match primaries {
+            WindowOutputColorPrimaries::Automatic => RequestedOutputColorPrimaries::Automatic,
+            WindowOutputColorPrimaries::Srgb => RequestedOutputColorPrimaries::Srgb,
+            WindowOutputColorPrimaries::DisplayP3 => RequestedOutputColorPrimaries::DisplayP3,
+        },
+        dynamic_range: match dynamic_range {
+            WindowDynamicRangeMode::Automatic => RequestedDynamicRangeMode::Automatic,
+            WindowDynamicRangeMode::StandardDynamicRange => {
+                RequestedDynamicRangeMode::StandardDynamicRange
+            }
+            WindowDynamicRangeMode::HighDynamicRange => RequestedDynamicRangeMode::HighDynamicRange,
+        },
+    }
+}
+
 pub(crate) fn clear_window_performance(window_id: WindowId) {
     clear_window_performance_snapshot(window_id);
+    clear_window_output_diagnostics(window_id);
 }
 
 pub(crate) fn publish_frame_performance(

@@ -610,6 +610,39 @@ impl WindowStemDarkening {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowOutputColorPrimaries {
+    #[default]
+    Automatic,
+    Srgb,
+    DisplayP3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowDynamicRangeMode {
+    #[default]
+    Automatic,
+    StandardDynamicRange,
+    HighDynamicRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowToneMappingMode {
+    #[default]
+    Automatic,
+    Clamp,
+    Reinhard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowColorManagementMode {
+    #[default]
+    Automatic,
+    ForceSdr,
+    PreferWideGamut,
+    PreferHdr,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowRenderOptions {
     pub feathering_enabled: bool,
@@ -619,6 +652,10 @@ pub struct WindowRenderOptions {
     pub text_render_policy: WindowTextRenderPolicy,
     pub text_hinting: WindowTextHinting,
     pub stem_darkening: WindowStemDarkening,
+    pub output_color_primaries: WindowOutputColorPrimaries,
+    pub dynamic_range_mode: WindowDynamicRangeMode,
+    pub tone_mapping_mode: WindowToneMappingMode,
+    pub color_management_mode: WindowColorManagementMode,
 }
 
 impl WindowRenderOptions {
@@ -631,6 +668,10 @@ impl WindowRenderOptions {
             text_render_policy: WindowTextRenderPolicy::AutomaticByTextLuminance,
             text_hinting: WindowTextHinting::None,
             stem_darkening: WindowStemDarkening::None,
+            output_color_primaries: WindowOutputColorPrimaries::Automatic,
+            dynamic_range_mode: WindowDynamicRangeMode::Automatic,
+            tone_mapping_mode: WindowToneMappingMode::Automatic,
+            color_management_mode: WindowColorManagementMode::Automatic,
         }
     }
 
@@ -659,6 +700,29 @@ impl WindowRenderOptions {
         self
     }
 
+    pub const fn with_output_color_primaries(
+        mut self,
+        primaries: WindowOutputColorPrimaries,
+    ) -> Self {
+        self.output_color_primaries = primaries;
+        self
+    }
+
+    pub const fn with_dynamic_range_mode(mut self, mode: WindowDynamicRangeMode) -> Self {
+        self.dynamic_range_mode = mode;
+        self
+    }
+
+    pub const fn with_tone_mapping_mode(mut self, mode: WindowToneMappingMode) -> Self {
+        self.tone_mapping_mode = mode;
+        self
+    }
+
+    pub const fn with_color_management_mode(mut self, mode: WindowColorManagementMode) -> Self {
+        self.color_management_mode = mode;
+        self
+    }
+
     pub fn clamped(self) -> Self {
         Self {
             feathering_enabled: self.feathering_enabled,
@@ -668,6 +732,10 @@ impl WindowRenderOptions {
             text_render_policy: self.text_render_policy.normalized(),
             text_hinting: self.text_hinting.normalized(),
             stem_darkening: self.stem_darkening.normalized(),
+            output_color_primaries: self.output_color_primaries,
+            dynamic_range_mode: self.dynamic_range_mode,
+            tone_mapping_mode: self.tone_mapping_mode,
+            color_management_mode: self.color_management_mode,
         }
     }
 }
@@ -1111,8 +1179,9 @@ mod tests {
     use super::{
         CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics, SceneStatistics,
         SceneStatisticsDetailMode, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
+        WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
         WindowPerformanceSnapshot, WindowRenderOptions, WindowTextRenderPolicy,
-        clear_window_performance_snapshot, set_window_render_options,
+        WindowToneMappingMode, clear_window_performance_snapshot, set_window_render_options,
         set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
     };
@@ -1314,7 +1383,11 @@ mod tests {
         set_window_render_options(
             window_id,
             WindowRenderOptions::new(false, -2.0)
-                .with_text_render_policy(WindowTextRenderPolicy::Gamma(-1.0)),
+                .with_text_render_policy(WindowTextRenderPolicy::Gamma(-1.0))
+                .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
+                .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
+                .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
+                .with_color_management_mode(WindowColorManagementMode::PreferHdr),
         );
 
         assert_eq!(
@@ -1322,6 +1395,10 @@ mod tests {
             Some(
                 WindowRenderOptions::new(false, 0.0)
                     .with_text_render_policy(WindowTextRenderPolicy::Linear)
+                    .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
+                    .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
+                    .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
+                    .with_color_management_mode(WindowColorManagementMode::PreferHdr)
             )
         );
 
@@ -1330,7 +1407,11 @@ mod tests {
             WindowRenderOptions::new(true, 1.0)
                 .with_optical_vertical_text_alignment_enabled(false)
                 .with_glyph_pixel_alignment_enabled(false)
-                .with_text_render_policy(WindowTextRenderPolicy::TwoCoverageMinusCoverageSq),
+                .with_text_render_policy(WindowTextRenderPolicy::TwoCoverageMinusCoverageSq)
+                .with_output_color_primaries(WindowOutputColorPrimaries::Srgb)
+                .with_dynamic_range_mode(WindowDynamicRangeMode::StandardDynamicRange)
+                .with_tone_mapping_mode(WindowToneMappingMode::Clamp)
+                .with_color_management_mode(WindowColorManagementMode::ForceSdr),
         );
 
         assert_eq!(
@@ -1340,6 +1421,10 @@ mod tests {
                     .with_glyph_pixel_alignment_enabled(false)
                     .with_optical_vertical_text_alignment_enabled(false)
                     .with_text_render_policy(WindowTextRenderPolicy::TwoCoverageMinusCoverageSq)
+                    .with_output_color_primaries(WindowOutputColorPrimaries::Srgb)
+                    .with_dynamic_range_mode(WindowDynamicRangeMode::StandardDynamicRange)
+                    .with_tone_mapping_mode(WindowToneMappingMode::Clamp)
+                    .with_color_management_mode(WindowColorManagementMode::ForceSdr)
             )
         );
 

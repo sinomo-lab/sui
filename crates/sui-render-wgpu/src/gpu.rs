@@ -330,6 +330,9 @@ pub(crate) struct SurfaceState {
     pub(crate) window: Arc<Window>,
     pub(crate) surface: wgpu::Surface<'static>,
     pub(crate) config: wgpu::SurfaceConfiguration,
+    pub(crate) display_capabilities: DisplayCapabilities,
+    pub(crate) color_management: ColorManagementMode,
+    pub(crate) output_strategy: OutputStrategy,
 }
 
 pub(crate) struct OffscreenTarget {

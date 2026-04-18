@@ -3371,18 +3371,105 @@ fn preferred_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::Tex
         .or_else(|| formats.first().copied())
 }
 
-pub(crate) fn configure_surface(
+fn preferred_hdr_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
+    formats
+        .iter()
+        .copied()
+        .find(|format| matches!(format, wgpu::TextureFormat::Rgba16Float))
+}
+
+fn requested_output_primaries(
+    capabilities: DisplayCapabilities,
+    requested: ColorManagementMode,
+) -> DisplayColorPrimaries {
+    match requested.output_primaries {
+        RequestedOutputColorPrimaries::Automatic => {
+            if capabilities.supports_wide_gamut {
+                capabilities.preferred_primaries
+            } else {
+                DisplayColorPrimaries::Srgb
+            }
+        }
+        RequestedOutputColorPrimaries::Srgb => DisplayColorPrimaries::Srgb,
+        RequestedOutputColorPrimaries::DisplayP3 => {
+            if capabilities.supports_wide_gamut {
+                DisplayColorPrimaries::DisplayP3
+            } else {
+                DisplayColorPrimaries::Srgb
+            }
+        }
+    }
+}
+
+pub(crate) fn select_output_strategy(
+    formats: &[wgpu::TextureFormat],
+    capabilities: DisplayCapabilities,
+    requested: ColorManagementMode,
+) -> OutputStrategy {
+    let sdr_format = preferred_surface_format(formats).unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
+    let primaries = requested_output_primaries(capabilities.clone(), requested);
+    let wants_hdr = matches!(requested.mode, RequestedColorManagementMode::PreferHdr)
+        || matches!(requested.dynamic_range, RequestedDynamicRangeMode::HighDynamicRange);
+    let wants_wide_gamut = matches!(
+        requested.mode,
+        RequestedColorManagementMode::PreferWideGamut | RequestedColorManagementMode::PreferHdr
+    ) || matches!(requested.output_primaries, RequestedOutputColorPrimaries::DisplayP3);
+
+    if matches!(requested.mode, RequestedColorManagementMode::ForceSdr) {
+        return OutputStrategy::SdrSurface { format: sdr_format };
+    }
+
+    if wants_hdr {
+        if capabilities.supports_hdr {
+            if capabilities.native_hdr_presentation_supported {
+                if let Some(format) = preferred_hdr_surface_format(formats) {
+                    return OutputStrategy::HdrNativeSurface {
+                        format,
+                        primaries,
+                        transfer: DisplayTransferFunction::LinearExtended,
+                    };
+                }
+            }
+
+            return OutputStrategy::HdrIntermediateThenToneMap {
+                intermediate_format: wgpu::TextureFormat::Rgba16Float,
+                surface_format: sdr_format,
+                primaries,
+            };
+        }
+
+        if wants_wide_gamut && capabilities.supports_wide_gamut {
+            return OutputStrategy::WideGamutSurface {
+                format: sdr_format,
+                primaries,
+            };
+        }
+
+        return OutputStrategy::SdrSurface { format: sdr_format };
+    }
+
+    if wants_wide_gamut && capabilities.supports_wide_gamut {
+        return OutputStrategy::WideGamutSurface {
+            format: sdr_format,
+            primaries,
+        };
+    }
+
+    OutputStrategy::SdrSurface { format: sdr_format }
+}
+
+fn configure_surface_for_strategy(
     surface: &wgpu::Surface<'static>,
     adapter: &wgpu::Adapter,
     device: &wgpu::Device,
     size: (u32, u32),
     vsync_enabled: bool,
+    strategy: OutputStrategy,
 ) -> Result<wgpu::SurfaceConfiguration> {
     let mut config = surface
         .get_default_config(adapter, size.0, size.1)
         .ok_or_else(|| Error::new("wgpu adapter does not support presenting to this surface"))?;
-    config.format = preferred_surface_format(&surface.get_capabilities(adapter).formats)
-        .unwrap_or(config.format);
+    config.format = strategy.surface_format();
     config.present_mode = if vsync_enabled {
         wgpu::PresentMode::AutoVsync
     } else {
@@ -3390,4 +3477,30 @@ pub(crate) fn configure_surface(
     };
     surface.configure(device, &config);
     Ok(config)
+}
+
+pub(crate) fn configure_surface(
+    surface: &wgpu::Surface<'static>,
+    adapter: &wgpu::Adapter,
+    device: &wgpu::Device,
+    size: (u32, u32),
+    vsync_enabled: bool,
+    display_capabilities: DisplayCapabilities,
+    color_management: ColorManagementMode,
+) -> Result<(wgpu::SurfaceConfiguration, OutputStrategy)> {
+    let surface_capabilities = surface.get_capabilities(adapter);
+    let strategy = select_output_strategy(
+        &surface_capabilities.formats,
+        display_capabilities,
+        color_management,
+    );
+    let config = configure_surface_for_strategy(
+        surface,
+        adapter,
+        device,
+        size,
+        vsync_enabled,
+        strategy,
+    )?;
+    Ok((config, strategy))
 }

@@ -34,7 +34,10 @@ pub use sui_core::{
 pub use sui_layout::Padding as Insets;
 pub use sui_layout::{Alignment, Axis, Constraints, Padding};
 #[cfg(any(feature = "desktop", feature = "web"))]
-pub use sui_platform::{AccessibilitySnapshot, DesktopPlatform, HeadlessPlatform, PlatformWindow};
+pub use sui_platform::{
+    AccessibilitySnapshot, DesktopPlatform, HeadlessPlatform, PlatformWindow,
+    WindowOutputDiagnostics, window_output_diagnostics,
+};
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{
     RendererCapabilities, RendererInterop, StemDarkening, TextCoveragePolicy, TextHinting,
@@ -50,6 +53,8 @@ pub use sui_runtime::{
     WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions,
     WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy,
+    WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
+    WindowToneMappingMode,
     clear_window_render_options, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_performance_summary, window_render_options, window_scene_statistics_detail_mode,
