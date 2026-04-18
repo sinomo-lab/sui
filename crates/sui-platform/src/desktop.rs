@@ -57,6 +57,11 @@ impl DesktopPlatform {
         self
     }
 
+    pub fn with_vsync_enabled(mut self, enabled: bool) -> Self {
+        self.set_vsync_enabled(enabled);
+        self
+    }
+
     pub fn renderer(&self) -> &WgpuRenderer {
         &self.renderer
     }
@@ -69,12 +74,20 @@ impl DesktopPlatform {
         self.renderer.feathering_enabled()
     }
 
+    pub fn vsync_enabled(&self) -> bool {
+        self.renderer.vsync_enabled()
+    }
+
     pub fn set_feather_width(&mut self, feather_width: f32) {
         self.renderer.set_feather_width(feather_width);
     }
 
     pub fn set_feathering_enabled(&mut self, enabled: bool) {
         self.renderer.set_feathering_enabled(enabled);
+    }
+
+    pub fn set_vsync_enabled(&mut self, enabled: bool) {
+        self.renderer.set_vsync_enabled(enabled);
     }
 
     pub fn renderer_mut(&mut self) -> &mut WgpuRenderer {

@@ -2,10 +2,14 @@ mod app;
 
 pub use app::{build_dev_application, build_dev_application_with_widget_book_bounds};
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::env;
+
 use sui::Application;
 use sui::{
-    WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-    WindowRenderOptions, WindowToneMappingMode,
+    DesktopPlatform, WindowColorManagementMode, WindowDynamicRangeMode,
+    WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
+    set_window_render_options,
 };
 use sui_widget_book::{
     build_button_grid_benchmark_application, build_color_validation_application,
@@ -13,6 +17,93 @@ use sui_widget_book::{
     build_text_rendering_comparison_application, build_widget_book_application,
     default_widget_book_state,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+const DESKTOP_NO_VSYNC_ENV: &str = "SUI_DEV_NO_VSYNC";
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DesktopLaunchMode {
+    vsync_enabled: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for DesktopLaunchMode {
+    fn default() -> Self {
+        Self {
+            vsync_enabled: true,
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn env_requests_no_vsync(raw_value: Option<&str>) -> bool {
+    raw_value.is_some_and(|value| {
+        !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "false" | "no" | "off"
+        )
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_desktop_launch_mode<I, S>(
+    args: I,
+    env_disables_vsync: bool,
+) -> sui::Result<DesktopLaunchMode>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut mode = DesktopLaunchMode {
+        vsync_enabled: !env_disables_vsync,
+    };
+
+    for arg in args {
+        match arg.as_ref() {
+            "--no-vsync" => mode.vsync_enabled = false,
+            "--vsync" => mode.vsync_enabled = true,
+            "" => {}
+            other => {
+                return Err(sui::Error::new(format!(
+                    "unsupported sui-dev argument `{other}`; supported flags: --no-vsync, --vsync"
+                )));
+            }
+        }
+    }
+
+    Ok(mode)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_desktop_launch_mode() -> sui::Result<DesktopLaunchMode> {
+    parse_desktop_launch_mode(
+        env::args().skip(1),
+        env_requests_no_vsync(env::var(DESKTOP_NO_VSYNC_ENV).ok().as_deref()),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_desktop_with_vsync(vsync_enabled: bool) -> sui::Result<()> {
+    let app = build_dev_application();
+    let feathering_enabled = app.feathering_enabled();
+    let feather_width = app.feather_width();
+    let initial_window_render_options = app.initial_window_render_options();
+    let runtime = app.build()?;
+
+    if let Some(options) = initial_window_render_options {
+        for window_id in runtime.window_ids() {
+            set_window_render_options(window_id, options);
+        }
+    }
+
+    let platform = DesktopPlatform::new()
+        .with_feathering_enabled(feathering_enabled)
+        .with_feather_width(feather_width)
+        .with_vsync_enabled(vsync_enabled);
+    let _ = platform.run(runtime)?;
+    Ok(())
+}
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -354,7 +445,16 @@ fn build_application_for_web_mode(mode: &WebLaunchMode) -> Application {
 }
 
 pub fn run_desktop() -> sui::Result<()> {
-    build_dev_application().run()
+    #[cfg(target_arch = "wasm32")]
+    {
+        build_dev_application().run()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let launch_mode = current_desktop_launch_mode()?;
+        run_desktop_with_vsync(launch_mode.vsync_enabled)
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -657,6 +757,47 @@ mod tests {
         assert!(report.contains("first_canvas_id=sui-main-canvas"));
         assert!(report.contains("first_canvas_size=1920x1080"));
         assert!(report.contains("first_canvas_data_url_len=128"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_launch_mode_defaults_to_vsync() {
+        let mode = parse_desktop_launch_mode(Vec::<&str>::new(), false).unwrap();
+        assert!(mode.vsync_enabled);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_launch_mode_honors_no_vsync_sources() {
+        let cli_mode = parse_desktop_launch_mode(["--no-vsync"], false).unwrap();
+        let env_mode = parse_desktop_launch_mode(Vec::<&str>::new(), true).unwrap();
+
+        assert!(!cli_mode.vsync_enabled);
+        assert!(!env_mode.vsync_enabled);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_launch_mode_allows_cli_override_back_to_vsync() {
+        let mode = parse_desktop_launch_mode(["--vsync"], true).unwrap();
+        assert!(mode.vsync_enabled);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_launch_mode_rejects_unknown_flags() {
+        let error = parse_desktop_launch_mode(["--bogus"], false).unwrap_err();
+        assert!(error.to_string().contains("unsupported sui-dev argument"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_no_vsync_env_parser_understands_falsey_values() {
+        assert!(!env_requests_no_vsync(None));
+        assert!(!env_requests_no_vsync(Some("0")));
+        assert!(!env_requests_no_vsync(Some("false")));
+        assert!(env_requests_no_vsync(Some("1")));
+        assert!(env_requests_no_vsync(Some("true")));
     }
 
     #[test]
