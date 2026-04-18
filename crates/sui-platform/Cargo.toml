@@ -12,5 +12,5 @@ sui-runtime = { workspace = true }
 winit = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
-web-sys = { workspace = true, features = ["console"] }
+web-sys = { workspace = true, features = ["console", "Window", "Location"] }
 web-time = { workspace = true }

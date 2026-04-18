@@ -238,6 +238,7 @@ pub struct Application {
     feathering_enabled: bool,
     #[cfg(feature = "wgpu")]
     feather_width: f32,
+    initial_window_render_options: Option<WindowRenderOptions>,
 }
 
 impl Default for Application {
@@ -248,6 +249,7 @@ impl Default for Application {
             feathering_enabled: WgpuRenderer::new().feathering_enabled(),
             #[cfg(feature = "wgpu")]
             feather_width: WgpuRenderer::new().feather_width(),
+            initial_window_render_options: None,
         }
     }
 }
@@ -284,6 +286,15 @@ impl Application {
         self.feather_width
     }
 
+    pub fn with_window_render_options(mut self, options: WindowRenderOptions) -> Self {
+        self.initial_window_render_options = Some(options.clamped());
+        self
+    }
+
+    pub fn initial_window_render_options(&self) -> Option<WindowRenderOptions> {
+        self.initial_window_render_options
+    }
+
     pub fn register_font(&mut self, handle: FontHandle, font: RegisteredFont) -> Result<()> {
         self.inner.register_font(handle, font)
     }
@@ -313,7 +324,13 @@ impl Application {
     pub fn run(self) -> Result<()> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
+        let initial_window_render_options = self.initial_window_render_options;
         let runtime = self.build()?;
+        if let Some(options) = initial_window_render_options {
+            for window_id in runtime.window_ids() {
+                set_window_render_options(window_id, options);
+            }
+        }
         let platform = DesktopPlatform::new()
             .with_feathering_enabled(feathering_enabled)
             .with_feather_width(feather_width);
@@ -377,7 +394,10 @@ mod tests {
 
     use super::{DefaultTheme, Theme};
     #[cfg(feature = "wgpu")]
-    use crate::Application;
+    use crate::{
+        Application, WindowColorManagementMode, WindowDynamicRangeMode,
+        WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
+    };
 
     #[derive(Debug, PartialEq)]
     struct CustomWidgetTheme {
@@ -443,13 +463,20 @@ mod tests {
     #[cfg(feature = "wgpu")]
     #[test]
     fn application_feather_width_is_configurable() {
+        let options = WindowRenderOptions::new(true, 1.5)
+            .with_color_management_mode(WindowColorManagementMode::PreferHdr)
+            .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
+            .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
+            .with_tone_mapping_mode(WindowToneMappingMode::Reinhard);
         let app = Application::new()
             .with_feathering_enabled(false)
-            .with_feather_width(2.25);
+            .with_feather_width(2.25)
+            .with_window_render_options(options);
         let clamped = Application::new().with_feather_width(-1.0);
 
         assert!(!app.feathering_enabled());
         assert_eq!(app.feather_width(), 2.25);
         assert_eq!(clamped.feather_width(), 0.0);
+        assert_eq!(app.initial_window_render_options(), Some(options));
     }
 }
