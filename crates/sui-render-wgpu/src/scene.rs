@@ -3378,6 +3378,34 @@ fn preferred_hdr_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu:
         .find(|format| matches!(format, wgpu::TextureFormat::Rgba16Float))
 }
 
+pub(crate) fn output_transform_requires_intermediate(strategy: OutputStrategy) -> bool {
+    matches!(
+        strategy,
+        OutputStrategy::HdrNativeSurface { .. } | OutputStrategy::HdrIntermediateThenToneMap { .. }
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn tone_map_linear_color(
+    color: [f32; 4],
+    mode: RequestedToneMappingMode,
+) -> [f32; 4] {
+    let transform = |channel: f32| match mode {
+        RequestedToneMappingMode::Automatic | RequestedToneMappingMode::Clamp => channel.clamp(0.0, 1.0),
+        RequestedToneMappingMode::Reinhard => {
+            let channel = channel.max(0.0);
+            channel / (1.0 + channel)
+        }
+    };
+
+    [
+        transform(color[0]),
+        transform(color[1]),
+        transform(color[2]),
+        color[3].clamp(0.0, 1.0),
+    ]
+}
+
 fn requested_output_primaries(
     capabilities: DisplayCapabilities,
     requested: ColorManagementMode,

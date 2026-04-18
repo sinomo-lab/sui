@@ -10,14 +10,15 @@ use std::time::Instant;
 use sui_core::WindowId;
 use sui_render_wgpu::{
     ColorManagementMode, RequestedColorManagementMode, RequestedDynamicRangeMode,
-    RequestedOutputColorPrimaries, StemDarkening, TextCoveragePolicy, TextHinting, WgpuRenderer,
+    RequestedOutputColorPrimaries, RequestedToneMappingMode, StemDarkening, TextCoveragePolicy,
+    TextHinting, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
     RendererSubmissionDiagnostics, SceneStatistics, TextCacheDiagnostics,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowPerformanceSnapshot, WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy,
-    clear_window_performance_snapshot, clear_window_performance_snapshots,
+    WindowToneMappingMode, clear_window_performance_snapshot, clear_window_performance_snapshots,
     publish_window_performance_snapshot, window_performance_text_caches,
     window_scene_statistics_detail_mode,
 };
@@ -70,6 +71,7 @@ pub(crate) fn map_window_color_management(
     mode: WindowColorManagementMode,
     primaries: WindowOutputColorPrimaries,
     dynamic_range: WindowDynamicRangeMode,
+    tone_mapping: WindowToneMappingMode,
 ) -> ColorManagementMode {
     ColorManagementMode {
         mode: match mode {
@@ -91,6 +93,11 @@ pub(crate) fn map_window_color_management(
                 RequestedDynamicRangeMode::StandardDynamicRange
             }
             WindowDynamicRangeMode::HighDynamicRange => RequestedDynamicRangeMode::HighDynamicRange,
+        },
+        tone_mapping: match tone_mapping {
+            WindowToneMappingMode::Automatic => RequestedToneMappingMode::Automatic,
+            WindowToneMappingMode::Clamp => RequestedToneMappingMode::Clamp,
+            WindowToneMappingMode::Reinhard => RequestedToneMappingMode::Reinhard,
         },
     }
 }

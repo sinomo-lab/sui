@@ -424,6 +424,7 @@ impl DesktopApp {
                                 options.color_management_mode,
                                 options.output_color_primaries,
                                 options.dynamic_range_mode,
+                                options.tone_mapping_mode,
                             )
                         })
                         .unwrap_or_default(),

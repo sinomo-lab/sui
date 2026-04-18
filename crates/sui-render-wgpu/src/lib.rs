@@ -144,10 +144,19 @@ pub enum RequestedColorManagementMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RequestedToneMappingMode {
+    #[default]
+    Automatic,
+    Clamp,
+    Reinhard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ColorManagementMode {
     pub mode: RequestedColorManagementMode,
     pub output_primaries: RequestedOutputColorPrimaries,
     pub dynamic_range: RequestedDynamicRangeMode,
+    pub tone_mapping: RequestedToneMappingMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -627,6 +636,7 @@ pub struct WgpuRenderer {
     compositors: HashMap<WindowId, RetainedCompositorState>,
     surfaces: HashMap<WindowId, SurfaceState>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
+    intermediate_targets: HashMap<WindowId, OffscreenTarget>,
     frame_resources: FrameResources,
 }
 
@@ -661,6 +671,22 @@ pub struct RgbaImage {
     width: u32,
     height: u32,
     pixels: Vec<u8>,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+struct OutputTransformUniform {
+    tone_mapping_mode: u32,
+    _padding: [u32; 3],
+}
+
+impl OutputTransformUniform {
+    const fn new(tone_mapping_mode: u32) -> Self {
+        Self {
+            tone_mapping_mode,
+            _padding: [0; 3],
+        }
+    }
 }
 
 impl RgbaImage {
@@ -981,12 +1007,14 @@ impl WgpuRenderer {
 
         self.surfaces.insert(window_id, state);
         self.offscreen_targets.remove(&window_id);
+        self.intermediate_targets.remove(&window_id);
         Ok(())
     }
 
     pub fn remove_window(&mut self, window_id: WindowId) {
         self.surfaces.remove(&window_id);
         self.offscreen_targets.remove(&window_id);
+        self.intermediate_targets.remove(&window_id);
         self.last_frames.remove(&window_id);
         self.last_frame_stats.remove(&window_id);
         self.compositors.remove(&window_id);
@@ -1247,6 +1275,32 @@ impl WgpuRenderer {
                     },
                 ],
             });
+        let output_transform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("SUI output transform bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
 
         self.shared = Some(SharedRenderer {
             adapter,
@@ -1255,6 +1309,7 @@ impl WgpuRenderer {
             pipelines: HashMap::new(),
             image_bind_group_layout,
             analytic_path_bind_group_layout,
+            output_transform_bind_group_layout,
             image_sampler,
             text_atlas_sampler,
             text_quad_buffer,
@@ -1367,6 +1422,32 @@ impl WgpuRenderer {
                     },
                 ],
             });
+        let output_transform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("SUI output transform bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
 
         self.shared = Some(SharedRenderer {
             adapter,
@@ -1375,6 +1456,7 @@ impl WgpuRenderer {
             pipelines: HashMap::new(),
             image_bind_group_layout,
             analytic_path_bind_group_layout,
+            output_transform_bind_group_layout,
             image_sampler,
             text_atlas_sampler,
             text_quad_buffer,
@@ -1399,20 +1481,44 @@ impl WgpuRenderer {
             return Ok(RendererFrameStats::default());
         };
 
-        let format = {
+        let (format, strategy, tone_mapping) = {
             let surface = self.surfaces.get(&frame.window_id).ok_or_else(|| {
                 Error::new(format!(
                     "missing surface for window {}",
                     frame.window_id.get()
                 ))
             })?;
-            surface.config.format
+            (
+                surface.config.format,
+                surface.output_strategy,
+                surface.color_management.tone_mapping,
+            )
         };
         let view = frame_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut frame_stats = self.submit_prepared_scene(prepared, format, &view)?;
+        let mut frame_stats = if output_transform_requires_intermediate(strategy) {
+            let intermediate_view = self.ensure_intermediate_target(frame.window_id, size)?;
+            let intermediate_format = self
+                .intermediate_targets
+                .get(&frame.window_id)
+                .map(|target| target.format)
+                .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
+            let mut frame_stats =
+                self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
+            self.submit_output_transform_pass(
+                &intermediate_view,
+                &view,
+                format,
+                strategy,
+                tone_mapping,
+                &mut frame_stats,
+            )?;
+            frame_stats
+        } else {
+            self.submit_prepared_scene(prepared, format, &view)?
+        };
         frame_stats.surface_acquire_time_us = surface_acquire_time_us;
         let surface_present_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
         frame_texture.present();
@@ -1474,12 +1580,42 @@ impl WgpuRenderer {
     ) -> Result<RendererFrameStats> {
         self.ensure_shared(None)?;
 
-        let format = wgpu::TextureFormat::Bgra8UnormSrgb;
+        let final_format = wgpu::TextureFormat::Bgra8UnormSrgb;
+        let final_view = self.ensure_offscreen_target(frame.window_id, size, final_format)?;
+        let prepared = self.prepare_scene_submission(frame)?;
+        let intermediate_view = self.ensure_intermediate_target(frame.window_id, size)?;
+        let intermediate_format = self
+            .intermediate_targets
+            .get(&frame.window_id)
+            .map(|target| target.format)
+            .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
+        let mut frame_stats =
+            self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
+        self.submit_output_transform_pass(
+            &intermediate_view,
+            &final_view,
+            final_format,
+            OutputStrategy::HdrIntermediateThenToneMap {
+                intermediate_format,
+                surface_format: final_format,
+                primaries: DisplayColorPrimaries::Srgb,
+            },
+            RequestedToneMappingMode::Clamp,
+            &mut frame_stats,
+        )?;
+        Ok(frame_stats)
+    }
+
+    fn ensure_offscreen_target(
+        &mut self,
+        window_id: WindowId,
+        size: (u32, u32),
+        format: wgpu::TextureFormat,
+    ) -> Result<wgpu::TextureView> {
         let recreate = self
             .offscreen_targets
-            .get(&frame.window_id)
+            .get(&window_id)
             .is_none_or(|target| target.size != size || target.format != format);
-
         if recreate {
             let shared = self
                 .shared
@@ -1499,9 +1635,8 @@ impl WgpuRenderer {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
-
             self.offscreen_targets.insert(
-                frame.window_id,
+                window_id,
                 OffscreenTarget {
                     texture,
                     format,
@@ -1509,26 +1644,130 @@ impl WgpuRenderer {
                 },
             );
         }
+        self.offscreen_targets
+            .get(&window_id)
+            .map(|target| target.texture.create_view(&wgpu::TextureViewDescriptor::default()))
+            .ok_or_else(|| Error::new(format!("missing target for window {}", window_id.get())))
+    }
 
-        let prepared = self.prepare_scene_submission(frame)?;
-        let (format, view) = {
-            let target = self
-                .offscreen_targets
-                .get(&frame.window_id)
-                .ok_or_else(|| {
-                    Error::new(format!(
-                        "missing offscreen target for window {}",
-                        frame.window_id.get()
-                    ))
-                })?;
-            (
-                target.format,
-                target
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-            )
+    fn ensure_intermediate_target(
+        &mut self,
+        window_id: WindowId,
+        size: (u32, u32),
+    ) -> Result<wgpu::TextureView> {
+        let format = wgpu::TextureFormat::Rgba16Float;
+        let recreate = self
+            .intermediate_targets
+            .get(&window_id)
+            .is_none_or(|target| target.size != size || target.format != format);
+        if recreate {
+            let shared = self
+                .shared
+                .as_ref()
+                .expect("renderer shared state initialized");
+            let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("SUI HDR intermediate frame"),
+                size: wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            self.intermediate_targets.insert(
+                window_id,
+                OffscreenTarget {
+                    texture,
+                    format,
+                    size,
+                },
+            );
+        }
+        self.intermediate_targets
+            .get(&window_id)
+            .map(|target| target.texture.create_view(&wgpu::TextureViewDescriptor::default()))
+            .ok_or_else(|| Error::new(format!("missing target for window {}", window_id.get())))
+    }
+
+    fn submit_output_transform_pass(
+        &mut self,
+        source_view: &wgpu::TextureView,
+        destination_view: &wgpu::TextureView,
+        destination_format: wgpu::TextureFormat,
+        strategy: OutputStrategy,
+        requested_tone_mapping: RequestedToneMappingMode,
+        frame_stats: &mut RendererFrameStats,
+    ) -> Result<()> {
+        let resolved_tone_mapping = match requested_tone_mapping {
+            RequestedToneMappingMode::Automatic => match strategy {
+                OutputStrategy::HdrNativeSurface { .. } => 0,
+                OutputStrategy::HdrIntermediateThenToneMap { .. } => 2,
+                _ => 1,
+            },
+            RequestedToneMappingMode::Clamp => 1,
+            RequestedToneMappingMode::Reinhard => 2,
         };
-        self.submit_prepared_scene(prepared, format, &view)
+        let shared = self
+            .shared
+            .as_mut()
+            .expect("renderer shared state initialized");
+        let uniform = OutputTransformUniform::new(resolved_tone_mapping);
+        let uniform_buffer = shared
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("SUI output transform uniform"),
+                contents: bytemuck::bytes_of(&uniform),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SUI output transform bind group"),
+            layout: &shared.output_transform_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = shared
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("SUI output transform encoder"),
+            });
+        {
+            let pipeline = shared.output_transform_pipeline(destination_format);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("SUI output transform pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: destination_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        shared.queue.submit([encoder.finish()]);
+        frame_stats.pass_count += 1;
+        Ok(())
     }
 
     fn resize_surface(&mut self, window_id: WindowId, size: (u32, u32)) -> Result<()> {
@@ -2516,6 +2755,7 @@ impl Default for WgpuRenderer {
             compositors: HashMap::new(),
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
+            intermediate_targets: HashMap::new(),
             frame_resources: FrameResources::default(),
         }
     }
@@ -2897,6 +3137,61 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+const OUTPUT_TRANSFORM_SHADER_SOURCE: &str = r#"
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+}
+
+struct OutputUniform {
+    tone_mapping_mode: u32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
+}
+
+@group(0) @binding(0)
+var scene_texture: texture_2d<f32>;
+
+@group(0) @binding(1)
+var<uniform> output_uniform: OutputUniform;
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -3.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(3.0, 1.0),
+    );
+    var out: VsOut;
+    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    return out;
+}
+
+fn tone_map(color: vec3<f32>) -> vec3<f32> {
+    switch output_uniform.tone_mapping_mode {
+        case 0u: {
+            return max(color, vec3<f32>(0.0));
+        }
+        case 2u: {
+            let positive = max(color, vec3<f32>(0.0));
+            return positive / (vec3<f32>(1.0) + positive);
+        }
+        default: {
+            return clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+        }
+    }
+}
+
+@fragment
+fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let dims = textureDimensions(scene_texture);
+    let max_coord = vec2<i32>(max(vec2<u32>(1u), dims) - vec2<u32>(1u));
+    let coords = clamp(vec2<i32>(position.xy), vec2<i32>(0), max_coord);
+    let color = textureLoad(scene_texture, coords, 0);
+    return vec4<f32>(tone_map(color.rgb), clamp(color.a, 0.0, 1.0));
+}
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2909,13 +3204,14 @@ mod tests {
         StemDarkening, TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode,
         TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, TextAtlasColorMode, VERTEX_SIZE,
         Vertex, WgpuRenderer, RequestedColorManagementMode, RequestedDynamicRangeMode,
-        RequestedOutputColorPrimaries, append_cached_path_mesh, batch_draw_ops, build_vertices,
+        RequestedOutputColorPrimaries, RequestedToneMappingMode, append_cached_path_mesh, batch_draw_ops, build_vertices,
         prepare_frame_batches, SwashImageContent, SwashSource, SwashStrikeWith,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text,
             append_cached_glyph_atlas, apply_stem_darkening_to_coverage,
             convert_subpixel_texel_for_mode, glyph_raster_offset, linearized_color_unorm,
-            prepare_cached_passes, select_output_strategy, swash_image_to_rgba,
+            output_transform_requires_intermediate, prepare_cached_passes, select_output_strategy,
+            swash_image_to_rgba, tone_map_linear_color,
         },
         shader_color, to_ndc,
     };
@@ -3371,6 +3667,7 @@ mod tests {
                 mode: RequestedColorManagementMode::PreferWideGamut,
                 output_primaries: RequestedOutputColorPrimaries::DisplayP3,
                 dynamic_range: RequestedDynamicRangeMode::Automatic,
+                tone_mapping: RequestedToneMappingMode::Automatic,
             },
         );
 
@@ -3399,6 +3696,7 @@ mod tests {
                 mode: RequestedColorManagementMode::PreferHdr,
                 output_primaries: RequestedOutputColorPrimaries::DisplayP3,
                 dynamic_range: RequestedDynamicRangeMode::HighDynamicRange,
+                tone_mapping: RequestedToneMappingMode::Automatic,
             },
         );
 
@@ -3431,6 +3729,7 @@ mod tests {
                 mode: RequestedColorManagementMode::PreferHdr,
                 output_primaries: RequestedOutputColorPrimaries::DisplayP3,
                 dynamic_range: RequestedDynamicRangeMode::HighDynamicRange,
+                tone_mapping: RequestedToneMappingMode::Automatic,
             },
         );
 
@@ -3442,6 +3741,49 @@ mod tests {
                 transfer: DisplayTransferFunction::LinearExtended,
             }
         );
+    }
+
+    #[test]
+    fn hdr_output_transform_requires_intermediate_for_hdr_strategies() {
+        assert!(output_transform_requires_intermediate(
+            OutputStrategy::HdrIntermediateThenToneMap {
+                intermediate_format: wgpu::TextureFormat::Rgba16Float,
+                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::DisplayP3,
+            }
+        ));
+        assert!(output_transform_requires_intermediate(
+            OutputStrategy::HdrNativeSurface {
+                format: wgpu::TextureFormat::Rgba16Float,
+                primaries: DisplayColorPrimaries::DisplayP3,
+                transfer: DisplayTransferFunction::LinearExtended,
+            }
+        ));
+        assert!(!output_transform_requires_intermediate(OutputStrategy::SdrSurface {
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        }));
+    }
+
+    #[test]
+    fn reinhard_tone_mapping_compresses_extended_linear_values() {
+        let transformed = tone_map_linear_color(
+            [4.0, 1.0, 0.5, 1.0],
+            RequestedToneMappingMode::Reinhard,
+        );
+
+        assert!(transformed[0] < 1.0);
+        assert!(transformed[0] > transformed[1]);
+        assert_eq!(transformed[3], 1.0);
+    }
+
+    #[test]
+    fn clamp_tone_mapping_limits_linear_values_to_sdr_range() {
+        let transformed = tone_map_linear_color(
+            [2.5, 1.25, 0.5, 1.0],
+            RequestedToneMappingMode::Clamp,
+        );
+
+        assert_eq!(transformed, [1.0, 1.0, 0.5, 1.0]);
     }
 
     #[test]
