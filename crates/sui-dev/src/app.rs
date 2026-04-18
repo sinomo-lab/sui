@@ -41,6 +41,7 @@ const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
 const DYNAMIC_RANGE_MODE_NAME: &str = "Dynamic range";
 const TONE_MAPPING_MODE_NAME: &str = "Tone mapping";
 const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
+const SETTINGS_SCROLL_NAME: &str = "Settings controls";
 const TEXT_RENDER_POLICY_OPTIONS: [&str; 4] =
     ["Automatic", "Linear", "Gamma", "TwoCoverageMinusCoverageSq"];
 const COLOR_MANAGEMENT_MODE_OPTIONS: [&str; 4] =
@@ -579,6 +580,88 @@ impl Widget for OutputDiagnosticsPanel {
     }
 }
 
+struct RenderSettingsScrollPane {
+    spacing: f32,
+    content: SingleChild,
+    scroll_bar: SingleChild,
+}
+
+impl RenderSettingsScrollPane {
+    fn new<W, S>(content: W, scroll_bar: S) -> Self
+    where
+        W: Widget + 'static,
+        S: Widget + 'static,
+    {
+        Self {
+            spacing: 10.0,
+            content: SingleChild::new(content),
+            scroll_bar: SingleChild::new(scroll_bar),
+        }
+    }
+}
+
+impl Widget for RenderSettingsScrollPane {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let scroll_bar_size = self.scroll_bar.measure(
+            ctx,
+            Constraints::new(Size::ZERO, Size::new(f32::INFINITY, constraints.max.height)),
+        );
+        let content_constraints = Constraints::new(
+            Size::new(
+                (constraints.min.width - scroll_bar_size.width - self.spacing).max(0.0),
+                constraints.min.height,
+            ),
+            Size::new(
+                (constraints.max.width - scroll_bar_size.width - self.spacing).max(0.0),
+                constraints.max.height,
+            ),
+        );
+        let content_size = self.content.measure(ctx, content_constraints);
+        constraints.clamp(Size::new(
+            content_size.width + scroll_bar_size.width + self.spacing,
+            content_size.height.max(scroll_bar_size.height),
+        ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let scroll_bar_size = self.scroll_bar.child().measured_size();
+        let content_width = (bounds.width() - scroll_bar_size.width - self.spacing).max(0.0);
+        self.content.arrange(
+            ctx,
+            Rect::new(bounds.x(), bounds.y(), content_width, bounds.height()),
+        );
+        self.scroll_bar.arrange(
+            ctx,
+            Rect::new(
+                bounds.max_x() - scroll_bar_size.width,
+                bounds.y(),
+                scroll_bar_size.width,
+                bounds.height(),
+            ),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.content.paint(ctx);
+        self.scroll_bar.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.content.semantics(ctx);
+        self.scroll_bar.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.content.visit_children(visitor);
+        self.scroll_bar.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.content.visit_children_mut(visitor);
+        self.scroll_bar.visit_children_mut(visitor);
+    }
+}
+
 struct RenderSettingsTab {
     content: SingleChild,
     state: Rc<RefCell<WindowRenderOptions>>,
@@ -614,247 +697,257 @@ impl RenderSettingsTab {
         let output_primaries_state = Rc::clone(&state);
         let dynamic_range_state = Rc::clone(&state);
         let tone_mapping_state = Rc::clone(&state);
+        let scroll_state = ScrollState::new();
 
-        let content = Padding::all(
-            28.0,
-            Stack::vertical()
-                .spacing(18.0)
-                .alignment(Alignment::Stretch)
-                .with_child(
-                    Label::new("Renderer settings")
-                        .font_size(24.0)
-                        .line_height(30.0)
-                        .color(Color::rgba(0.14, 0.18, 0.24, 1.0)),
-                )
-                .with_child(
-                    Label::new(
-                        "These controls update the active window's runtime presentation, atlas glyph alignment, and grayscale text coverage policy on the next redraw.",
+        let content = RenderSettingsScrollPane::new(
+            ScrollView::vertical(Padding::all(
+                28.0,
+                Stack::vertical()
+                    .spacing(18.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Label::new("Renderer settings")
+                            .font_size(24.0)
+                            .line_height(30.0)
+                            .color(Color::rgba(0.14, 0.18, 0.24, 1.0)),
                     )
-                    .font_size(14.0)
-                    .line_height(20.0)
-                    .color(Color::rgba(0.40, 0.47, 0.56, 1.0)),
-                )
-                .with_child(
-                    Checkbox::new(FEATHERING_TOGGLE_LABEL)
-                        .checked(initial.feathering_enabled)
-                        .on_toggle(move |checked| {
-                            toggle_state.borrow_mut().feathering_enabled = checked;
-                        }),
-                )
-                .with_child(
-                    Checkbox::new(OPTICAL_TEXT_CENTERING_TOGGLE_LABEL)
-                        .checked(initial.optical_vertical_text_alignment_enabled)
-                        .on_toggle(move |checked| {
-                            text_centering_state
-                                .borrow_mut()
-                                .optical_vertical_text_alignment_enabled = checked;
-                        }),
-                )
-                .with_child(
-                    Checkbox::new(GLYPH_PIXEL_ALIGNMENT_TOGGLE_LABEL)
-                        .checked(initial.glyph_pixel_alignment_enabled)
-                        .on_toggle(move |checked| {
-                            glyph_alignment_state.borrow_mut().glyph_pixel_alignment_enabled =
-                                checked;
-                        }),
-                )
-                .with_child(
-                    SizedBox::new().width(220.0).with_child(
-                        NumberInput::new(FEATHER_WIDTH_NAME)
-                            .range(0.0, 8.0)
-                            .step(0.05)
-                            .precision(2)
-                            .value(initial.feather_width as f64)
-                            .on_change(move |value| {
-                                width_state.borrow_mut().feather_width = value.max(0.0) as f32;
+                    .with_child(
+                        Label::new(
+                            "These controls update the active window's runtime presentation, atlas glyph alignment, and grayscale text coverage policy on the next redraw.",
+                        )
+                        .font_size(14.0)
+                        .line_height(20.0)
+                        .color(Color::rgba(0.40, 0.47, 0.56, 1.0)),
+                    )
+                    .with_child(
+                        Checkbox::new(FEATHERING_TOGGLE_LABEL)
+                            .checked(initial.feathering_enabled)
+                            .on_toggle(move |checked| {
+                                toggle_state.borrow_mut().feathering_enabled = checked;
                             }),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(280.0).with_child(
-                        Select::new(TEXT_RENDER_POLICY_NAME)
-                            .options(TEXT_RENDER_POLICY_OPTIONS)
-                            .selected(text_render_policy_selected_index(initial.text_render_policy))
-                            .on_change(move |index, _| {
-                                let mut state = text_policy_state.borrow_mut();
-                                update_text_render_policy_selection(&mut state, index);
+                    )
+                    .with_child(
+                        Checkbox::new(OPTICAL_TEXT_CENTERING_TOGGLE_LABEL)
+                            .checked(initial.optical_vertical_text_alignment_enabled)
+                            .on_toggle(move |checked| {
+                                text_centering_state
+                                    .borrow_mut()
+                                    .optical_vertical_text_alignment_enabled = checked;
                             }),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(220.0).with_child(
-                        NumberInput::new(TEXT_RENDER_GAMMA_NAME)
-                            .range(0.1, 4.0)
-                            .step(0.05)
-                            .precision(2)
-                            .value(match initial.text_render_policy.normalized() {
-                                WindowTextRenderPolicy::Gamma(gamma) => gamma as f64,
-                                _ => 1.4,
-                            })
-                            .on_change(move |value| {
-                                let gamma = value.clamp(0.1, 4.0) as f32;
-                                gamma_state.borrow_mut().text_render_policy =
-                                    WindowTextRenderPolicy::Gamma(gamma);
+                    )
+                    .with_child(
+                        Checkbox::new(GLYPH_PIXEL_ALIGNMENT_TOGGLE_LABEL)
+                            .checked(initial.glyph_pixel_alignment_enabled)
+                            .on_toggle(move |checked| {
+                                glyph_alignment_state.borrow_mut().glyph_pixel_alignment_enabled =
+                                    checked;
                             }),
-                    ),
-                )
-                .with_child(
-                    Checkbox::new(TEXT_HINTING_TOGGLE_LABEL)
-                        .checked(!matches!(initial.text_hinting, WindowTextHinting::None))
-                        .on_toggle(move |checked| {
-                            let mut state = hinting_toggle_state.borrow_mut();
-                            state.text_hinting = if checked {
-                                match state.text_hinting.normalized() {
-                                    WindowTextHinting::Slight { max_ppem } => {
-                                        WindowTextHinting::Slight { max_ppem }
+                    )
+                    .with_child(
+                        SizedBox::new().width(220.0).with_child(
+                            NumberInput::new(FEATHER_WIDTH_NAME)
+                                .range(0.0, 8.0)
+                                .step(0.05)
+                                .precision(2)
+                                .value(initial.feather_width as f64)
+                                .on_change(move |value| {
+                                    width_state.borrow_mut().feather_width = value.max(0.0) as f32;
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(280.0).with_child(
+                            Select::new(TEXT_RENDER_POLICY_NAME)
+                                .options(TEXT_RENDER_POLICY_OPTIONS)
+                                .selected(text_render_policy_selected_index(initial.text_render_policy))
+                                .on_change(move |index, _| {
+                                    let mut state = text_policy_state.borrow_mut();
+                                    update_text_render_policy_selection(&mut state, index);
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(220.0).with_child(
+                            NumberInput::new(TEXT_RENDER_GAMMA_NAME)
+                                .range(0.1, 4.0)
+                                .step(0.05)
+                                .precision(2)
+                                .value(match initial.text_render_policy.normalized() {
+                                    WindowTextRenderPolicy::Gamma(gamma) => gamma as f64,
+                                    _ => 1.4,
+                                })
+                                .on_change(move |value| {
+                                    let gamma = value.clamp(0.1, 4.0) as f32;
+                                    gamma_state.borrow_mut().text_render_policy =
+                                        WindowTextRenderPolicy::Gamma(gamma);
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        Checkbox::new(TEXT_HINTING_TOGGLE_LABEL)
+                            .checked(!matches!(initial.text_hinting, WindowTextHinting::None))
+                            .on_toggle(move |checked| {
+                                let mut state = hinting_toggle_state.borrow_mut();
+                                state.text_hinting = if checked {
+                                    match state.text_hinting.normalized() {
+                                        WindowTextHinting::Slight { max_ppem } => {
+                                            WindowTextHinting::Slight { max_ppem }
+                                        }
+                                        WindowTextHinting::None => {
+                                            WindowTextHinting::Slight { max_ppem: 18.0 }
+                                        }
                                     }
-                                    WindowTextHinting::None => WindowTextHinting::Slight { max_ppem: 18.0 },
-                                }
-                            } else {
-                                WindowTextHinting::None
-                            };
-                        }),
-                )
-                .with_child(
-                    SizedBox::new().width(220.0).with_child(
-                        NumberInput::new(TEXT_HINTING_MAX_PPEM_NAME)
-                            .range(1.0, 64.0)
-                            .step(0.5)
-                            .precision(1)
-                            .value(match initial.text_hinting.normalized() {
-                                WindowTextHinting::Slight { max_ppem } => max_ppem as f64,
-                                WindowTextHinting::None => 18.0,
-                            })
-                            .on_change(move |value| {
-                                let max_ppem = value.clamp(1.0, 64.0) as f32;
-                                hinting_max_ppem_state.borrow_mut().text_hinting =
-                                    WindowTextHinting::Slight { max_ppem };
-                            }),
-                    ),
-                )
-                .with_child(
-                    Checkbox::new(STEM_DARKENING_TOGGLE_LABEL)
-                        .checked(!matches!(initial.stem_darkening, WindowStemDarkening::None))
-                        .on_toggle(move |checked| {
-                            let mut state = stem_darkening_toggle_state.borrow_mut();
-                            state.stem_darkening = if checked {
-                                match state.stem_darkening.normalized() {
-                                    WindowStemDarkening::Enabled { max_ppem, amount } => {
-                                        WindowStemDarkening::Enabled { max_ppem, amount }
-                                    }
-                                    WindowStemDarkening::None => WindowStemDarkening::Enabled {
-                                        max_ppem: 18.0,
-                                        amount: 0.08,
-                                    },
-                                }
-                            } else {
-                                WindowStemDarkening::None
-                            };
-                        }),
-                )
-                .with_child(
-                    SizedBox::new().width(220.0).with_child(
-                        NumberInput::new(STEM_DARKENING_AMOUNT_NAME)
-                            .range(0.0, 1.0)
-                            .step(0.01)
-                            .precision(2)
-                            .value(match initial.stem_darkening.normalized() {
-                                WindowStemDarkening::Enabled { amount, .. } => amount as f64,
-                                WindowStemDarkening::None => 0.08,
-                            })
-                            .on_change(move |value| {
-                                let amount = value.clamp(0.0, 1.0) as f32;
-                                let max_ppem = match stem_darkening_amount_state
-                                    .borrow()
-                                    .stem_darkening
-                                    .normalized()
-                                {
-                                    WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem,
-                                    WindowStemDarkening::None => 18.0,
+                                } else {
+                                    WindowTextHinting::None
                                 };
-                                stem_darkening_amount_state.borrow_mut().stem_darkening =
-                                    WindowStemDarkening::Enabled { max_ppem, amount };
                             }),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(220.0).with_child(
-                        NumberInput::new(STEM_DARKENING_MAX_PPEM_NAME)
-                            .range(1.0, 64.0)
-                            .step(0.5)
-                            .precision(1)
-                            .value(match initial.stem_darkening.normalized() {
-                                WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem as f64,
-                                WindowStemDarkening::None => 18.0,
-                            })
-                            .on_change(move |value| {
-                                let max_ppem = value.clamp(1.0, 64.0) as f32;
-                                let amount = match stem_darkening_max_ppem_state
-                                    .borrow()
-                                    .stem_darkening
-                                    .normalized()
-                                {
-                                    WindowStemDarkening::Enabled { amount, .. } => amount,
+                    )
+                    .with_child(
+                        SizedBox::new().width(220.0).with_child(
+                            NumberInput::new(TEXT_HINTING_MAX_PPEM_NAME)
+                                .range(1.0, 64.0)
+                                .step(0.5)
+                                .precision(1)
+                                .value(match initial.text_hinting.normalized() {
+                                    WindowTextHinting::Slight { max_ppem } => max_ppem as f64,
+                                    WindowTextHinting::None => 18.0,
+                                })
+                                .on_change(move |value| {
+                                    let max_ppem = value.clamp(1.0, 64.0) as f32;
+                                    hinting_max_ppem_state.borrow_mut().text_hinting =
+                                        WindowTextHinting::Slight { max_ppem };
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        Checkbox::new(STEM_DARKENING_TOGGLE_LABEL)
+                            .checked(!matches!(initial.stem_darkening, WindowStemDarkening::None))
+                            .on_toggle(move |checked| {
+                                let mut state = stem_darkening_toggle_state.borrow_mut();
+                                state.stem_darkening = if checked {
+                                    match state.stem_darkening.normalized() {
+                                        WindowStemDarkening::Enabled { max_ppem, amount } => {
+                                            WindowStemDarkening::Enabled { max_ppem, amount }
+                                        }
+                                        WindowStemDarkening::None => {
+                                            WindowStemDarkening::Enabled {
+                                                max_ppem: 18.0,
+                                                amount: 0.08,
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    WindowStemDarkening::None
+                                };
+                            }),
+                    )
+                    .with_child(
+                        SizedBox::new().width(220.0).with_child(
+                            NumberInput::new(STEM_DARKENING_AMOUNT_NAME)
+                                .range(0.0, 1.0)
+                                .step(0.01)
+                                .precision(2)
+                                .value(match initial.stem_darkening.normalized() {
+                                    WindowStemDarkening::Enabled { amount, .. } => amount as f64,
                                     WindowStemDarkening::None => 0.08,
-                                };
-                                stem_darkening_max_ppem_state.borrow_mut().stem_darkening =
-                                    WindowStemDarkening::Enabled { max_ppem, amount };
-                            }),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(280.0).with_child(
-                        Select::new(COLOR_MANAGEMENT_MODE_NAME)
-                            .options(COLOR_MANAGEMENT_MODE_OPTIONS)
-                            .selected(color_management_mode_selected_index(initial.color_management_mode))
-                            .on_change(move |index, _| {
-                                let mut state = color_management_state.borrow_mut();
-                                update_color_management_mode_selection(&mut state, index);
-                            }),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(240.0).with_child(
-                        Select::new(OUTPUT_PRIMARIES_NAME)
-                            .options(OUTPUT_PRIMARIES_OPTIONS)
-                            .selected(output_primaries_selected_index(initial.output_color_primaries))
-                            .on_change(move |index, _| {
-                                let mut state = output_primaries_state.borrow_mut();
-                                update_output_primaries_selection(&mut state, index);
-                            }),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(240.0).with_child(
-                        Select::new(DYNAMIC_RANGE_MODE_NAME)
-                            .options(DYNAMIC_RANGE_MODE_OPTIONS)
-                            .selected(dynamic_range_mode_selected_index(initial.dynamic_range_mode))
-                            .on_change(move |index, _| {
-                                let mut state = dynamic_range_state.borrow_mut();
-                                update_dynamic_range_mode_selection(&mut state, index);
-                            }),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(240.0).with_child(
-                        Select::new(TONE_MAPPING_MODE_NAME)
-                            .options(TONE_MAPPING_MODE_OPTIONS)
-                            .selected(tone_mapping_mode_selected_index(initial.tone_mapping_mode))
-                            .on_change(move |index, _| {
-                                let mut state = tone_mapping_state.borrow_mut();
-                                update_tone_mapping_mode_selection(&mut state, index);
-                            }),
-                    ),
-                )
-                .with_child(OutputDiagnosticsPanel)
-                .with_child(
-                    Label::new(
-                        "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy and surface diagnostics panel shows the detected monitor/output path after each redraw.",
+                                })
+                                .on_change(move |value| {
+                                    let amount = value.clamp(0.0, 1.0) as f32;
+                                    let max_ppem = match stem_darkening_amount_state
+                                        .borrow()
+                                        .stem_darkening
+                                        .normalized()
+                                    {
+                                        WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem,
+                                        WindowStemDarkening::None => 18.0,
+                                    };
+                                    stem_darkening_amount_state.borrow_mut().stem_darkening =
+                                        WindowStemDarkening::Enabled { max_ppem, amount };
+                                }),
+                        ),
                     )
-                    .font_size(13.0)
-                    .line_height(18.0)
-                    .color(Color::rgba(0.45, 0.52, 0.60, 1.0)),
-                ),
+                    .with_child(
+                        SizedBox::new().width(220.0).with_child(
+                            NumberInput::new(STEM_DARKENING_MAX_PPEM_NAME)
+                                .range(1.0, 64.0)
+                                .step(0.5)
+                                .precision(1)
+                                .value(match initial.stem_darkening.normalized() {
+                                    WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem as f64,
+                                    WindowStemDarkening::None => 18.0,
+                                })
+                                .on_change(move |value| {
+                                    let max_ppem = value.clamp(1.0, 64.0) as f32;
+                                    let amount = match stem_darkening_max_ppem_state
+                                        .borrow()
+                                        .stem_darkening
+                                        .normalized()
+                                    {
+                                        WindowStemDarkening::Enabled { amount, .. } => amount,
+                                        WindowStemDarkening::None => 0.08,
+                                    };
+                                    stem_darkening_max_ppem_state.borrow_mut().stem_darkening =
+                                        WindowStemDarkening::Enabled { max_ppem, amount };
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(280.0).with_child(
+                            Select::new(COLOR_MANAGEMENT_MODE_NAME)
+                                .options(COLOR_MANAGEMENT_MODE_OPTIONS)
+                                .selected(color_management_mode_selected_index(initial.color_management_mode))
+                                .on_change(move |index, _| {
+                                    let mut state = color_management_state.borrow_mut();
+                                    update_color_management_mode_selection(&mut state, index);
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(240.0).with_child(
+                            Select::new(OUTPUT_PRIMARIES_NAME)
+                                .options(OUTPUT_PRIMARIES_OPTIONS)
+                                .selected(output_primaries_selected_index(initial.output_color_primaries))
+                                .on_change(move |index, _| {
+                                    let mut state = output_primaries_state.borrow_mut();
+                                    update_output_primaries_selection(&mut state, index);
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(240.0).with_child(
+                            Select::new(DYNAMIC_RANGE_MODE_NAME)
+                                .options(DYNAMIC_RANGE_MODE_OPTIONS)
+                                .selected(dynamic_range_mode_selected_index(initial.dynamic_range_mode))
+                                .on_change(move |index, _| {
+                                    let mut state = dynamic_range_state.borrow_mut();
+                                    update_dynamic_range_mode_selection(&mut state, index);
+                                }),
+                        ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(240.0).with_child(
+                            Select::new(TONE_MAPPING_MODE_NAME)
+                                .options(TONE_MAPPING_MODE_OPTIONS)
+                                .selected(tone_mapping_mode_selected_index(initial.tone_mapping_mode))
+                                .on_change(move |index, _| {
+                                    let mut state = tone_mapping_state.borrow_mut();
+                                    update_tone_mapping_mode_selection(&mut state, index);
+                                }),
+                        ),
+                    )
+                    .with_child(OutputDiagnosticsPanel)
+                    .with_child(
+                        Label::new(
+                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy and surface diagnostics panel shows the detected monitor/output path after each redraw.",
+                        )
+                        .font_size(13.0)
+                        .line_height(18.0)
+                        .color(Color::rgba(0.45, 0.52, 0.60, 1.0)),
+                    ),
+            ))
+            .state(scroll_state.clone())
+            .name(SETTINGS_SCROLL_NAME),
+            ScrollBar::vertical(scroll_state).name("Settings scroll bar"),
         );
 
         Self {
@@ -1281,6 +1374,85 @@ mod tests {
             SemanticsRole::ColorSwatch,
             sui_widget_book::COLOR_SWATCH_NAME,
         )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn settings_view_scrolls_without_repainting_outside_its_floating_bounds() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+
+        let before_snapshot = window.snapshot()?;
+        let settings_view = find_named_node(&before_snapshot, SemanticsRole::Window, SETTINGS_TAB_LABEL);
+        let settings_scroll = find_named_node(
+            &before_snapshot,
+            SemanticsRole::ScrollView,
+            SETTINGS_SCROLL_NAME,
+        );
+        let viewport = viewport_bounds(&before_snapshot);
+        let probes = leak_probe_regions(settings_view.bounds, viewport);
+        assert!(
+            !probes.is_empty(),
+            "expected probe regions around the settings floating view, view={:?}, viewport={:?}",
+            settings_view.bounds,
+            viewport,
+        );
+
+        let interior_probe = Rect::new(
+            settings_scroll.bounds.x() + 16.0,
+            settings_scroll.bounds.y() + 16.0,
+            (settings_scroll.bounds.width() - 32.0).max(24.0),
+            (settings_scroll.bounds.height() - 32.0).max(24.0),
+        );
+        let scroll = window
+            .get_by_role(SemanticsRole::Window)
+            .with_name(SETTINGS_TAB_LABEL)
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(SETTINGS_SCROLL_NAME);
+
+        let before_frame = window.capture_screenshot()?;
+        for _ in 0..4 {
+            scroll.scroll_pixels(Vector::new(0.0, -160.0))?;
+        }
+
+        let after_snapshot = window.snapshot()?;
+        let after_frame = window.capture_screenshot()?;
+
+        let before_interior = before_frame.crop(scale_bounds_for_screenshot(
+            interior_probe,
+            &before_snapshot,
+            &before_frame,
+        ))?;
+        let after_interior = after_frame.crop(scale_bounds_for_screenshot(
+            interior_probe,
+            &after_snapshot,
+            &after_frame,
+        ))?;
+        assert!(
+            pixel_diff_count(&before_interior, &after_interior) > 0,
+            "expected scrolling the settings scroll view to change pixels inside the scroll viewport",
+        );
+
+        for probe in probes {
+            let before_crop = before_frame.crop(scale_bounds_for_screenshot(
+                probe,
+                &before_snapshot,
+                &before_frame,
+            ))?;
+            let after_crop = after_frame.crop(scale_bounds_for_screenshot(
+                probe,
+                &after_snapshot,
+                &after_frame,
+            ))?;
+            let diff_count = pixel_diff_count(&before_crop, &after_crop);
+            assert_eq!(
+                diff_count,
+                0,
+                "scrolling the settings view changed pixels outside the floating bounds in probe {:?}",
+                probe,
+            );
+        }
 
         Ok(())
     }

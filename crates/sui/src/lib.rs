@@ -16,7 +16,8 @@ pub use composites::{
     TabBar, Tabs, Tooltip, TooltipPlacement,
 };
 pub use containers::{
-    Align, Background, ScrollAxes, ScrollView, SizedBox, Stack, VirtualScrollView,
+    Align, Background, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox, Stack,
+    VirtualScrollView,
 };
 pub use controls::{
     Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput,
@@ -375,7 +376,8 @@ pub mod prelude {
         Label, ListItem, ListView, MeasureCtx, Menu, MenuItem, Modal, MultilineTextInput,
         NumberInput, PaintCtx, Path, PathBar, PathBuilder, Point, PointerEvent, Popover,
         ProgressBar, RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage,
-        ResizablePane, Result, ScrollAxes, ScrollView, Select, SemanticsCtx, Separator,
+        ResizablePane, Result, ScrollAxes, ScrollBar, ScrollState, ScrollView, Select,
+        SemanticsCtx, Separator,
         ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox, Spinner, SplitView, Stack,
         StrokeStyle, Style, Switch, TabBar, Table, TableColumn, TableColumnAlignment, TableRow,
         Tabs, TextArea, TextInput, TextLayout, TextMeasurement, TextStyle, Theme,

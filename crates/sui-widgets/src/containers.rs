@@ -1,15 +1,18 @@
-use std::ops::Range;
+use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use sui_core::{
-    Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point, Rect, ScrollDelta,
-    SemanticsAction, SemanticsNode, SemanticsRole, Size, Vector,
+    Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path, Point,
+    PointerButton, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode,
+    SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
 };
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx,
     SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::{Brush, LayerCompositionMode};
+use sui_scene::{Brush, LayerCompositionMode, StrokeStyle};
+
+use crate::DefaultTheme;
 
 pub struct Padding {
     insets: Insets,
@@ -451,9 +454,474 @@ impl ScrollAxes {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ScrollState {
+    inner: Rc<RefCell<ScrollStateInner>>,
+}
+
+#[derive(Debug, Clone)]
+struct ScrollStateInner {
+    axes: ScrollAxes,
+    viewport: Size,
+    content_size: Size,
+    offset: Vector,
+    scroll_view_id: Option<WidgetId>,
+    scroll_content_id: Option<WidgetId>,
+    scroll_bar_ids: Vec<WidgetId>,
+}
+
+impl ScrollState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn viewport_size(&self) -> Size {
+        self.inner.borrow().viewport
+    }
+
+    pub fn content_size(&self) -> Size {
+        self.inner.borrow().content_size
+    }
+
+    pub fn current_offset(&self) -> Vector {
+        let inner = self.inner.borrow();
+        clamp_shared_offset(inner.axes, inner.viewport, inner.content_size, inner.offset)
+    }
+
+    pub fn max_offset(&self) -> Vector {
+        let inner = self.inner.borrow();
+        shared_max_offset(inner.viewport, inner.content_size)
+    }
+
+    fn bind_scroll_view(&self, scroll_view_id: WidgetId, scroll_content_id: WidgetId) {
+        let mut inner = self.inner.borrow_mut();
+        inner.scroll_view_id = Some(scroll_view_id);
+        inner.scroll_content_id = Some(scroll_content_id);
+    }
+
+    fn bind_scroll_bar(&self, scroll_bar_id: WidgetId) {
+        let mut inner = self.inner.borrow_mut();
+        if !inner.scroll_bar_ids.contains(&scroll_bar_id) {
+            inner.scroll_bar_ids.push(scroll_bar_id);
+        }
+    }
+
+    fn sync_metrics(&self, axes: ScrollAxes, viewport: Size, content_size: Size) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        let next_offset = clamp_shared_offset(axes, viewport, content_size, inner.offset);
+        let changed = inner.axes != axes
+            || inner.viewport != viewport
+            || inner.content_size != content_size
+            || inner.offset != next_offset;
+        inner.axes = axes;
+        inner.viewport = viewport;
+        inner.content_size = content_size;
+        inner.offset = next_offset;
+        changed
+    }
+
+    fn set_offset(&self, offset: Vector) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        let next_offset = if inner.viewport == Size::ZERO && inner.content_size == Size::ZERO {
+            axis_limited_offset(inner.axes, offset)
+        } else {
+            clamp_shared_offset(inner.axes, inner.viewport, inner.content_size, offset)
+        };
+        if inner.offset == next_offset {
+            return false;
+        }
+        inner.offset = next_offset;
+        true
+    }
+
+    fn subscribers(&self) -> ScrollStateSubscribers {
+        let inner = self.inner.borrow();
+        ScrollStateSubscribers {
+            scroll_view_id: inner.scroll_view_id,
+            scroll_content_id: inner.scroll_content_id,
+            scroll_bar_ids: inner.scroll_bar_ids.clone(),
+        }
+    }
+}
+
+impl Default for ScrollState {
+    fn default() -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(ScrollStateInner {
+                axes: ScrollAxes::Vertical,
+                viewport: Size::ZERO,
+                content_size: Size::ZERO,
+                offset: Vector::ZERO,
+                scroll_view_id: None,
+                scroll_content_id: None,
+                scroll_bar_ids: Vec::new(),
+            })),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ScrollStateSubscribers {
+    scroll_view_id: Option<WidgetId>,
+    scroll_content_id: Option<WidgetId>,
+    scroll_bar_ids: Vec<WidgetId>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VerticalScrollBarMetrics {
+    track: Rect,
+    thumb: Rect,
+    max_scroll: f32,
+}
+
+pub struct ScrollBar {
+    theme: Box<DefaultTheme>,
+    state: ScrollState,
+    name: Option<String>,
+    width: f32,
+    min_thumb_length: f32,
+    hovered: bool,
+    dragging: bool,
+    pointer_id: Option<u64>,
+    drag_thumb_offset_y: f32,
+}
+
+impl ScrollBar {
+    pub fn vertical(state: ScrollState) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            state,
+            name: None,
+            width: 12.0,
+            min_thumb_length: 28.0,
+            hovered: false,
+            dragging: false,
+            pointer_id: None,
+            drag_thumb_offset_y: 0.0,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width.max(8.0);
+        self
+    }
+
+    fn track_rect(&self, bounds: Rect) -> Rect {
+        let horizontal_inset = ((bounds.width() - self.width) * 0.5).max(0.0);
+        Rect::new(
+            bounds.x() + horizontal_inset,
+            bounds.y(),
+            self.width.min(bounds.width()),
+            bounds.height(),
+        )
+    }
+
+    fn metrics(&self, bounds: Rect) -> Option<VerticalScrollBarMetrics> {
+        let viewport = self.state.viewport_size();
+        let content = self.state.content_size();
+        if viewport.height <= 0.0 || content.height <= viewport.height || bounds.height() <= 0.0 {
+            return None;
+        }
+
+        let track = self.track_rect(bounds);
+        let ratio = (viewport.height / content.height).clamp(0.08, 1.0);
+        let thumb_height = (track.height() * ratio)
+            .max(self.min_thumb_length)
+            .min(track.height());
+        let max_scroll = (content.height - viewport.height).max(0.0);
+        let travel = (track.height() - thumb_height).max(0.0);
+        let offset = self.state.current_offset().y.clamp(0.0, max_scroll.max(0.0));
+        let thumb_y = track.y()
+            + if travel <= f32::EPSILON || max_scroll <= f32::EPSILON {
+                0.0
+            } else {
+                travel * (offset / max_scroll)
+            };
+
+        Some(VerticalScrollBarMetrics {
+            track,
+            thumb: Rect::new(track.x(), thumb_y, track.width(), thumb_height),
+            max_scroll,
+        })
+    }
+
+    fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
+        if self.hovered != hovered {
+            self.hovered = hovered;
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
+    fn request_dependents<C>(&self, ctx: &mut C, source_widget_id: WidgetId)
+    where
+        C: ScrollInvalidationCtx,
+    {
+        let subscribers = self.state.subscribers();
+        if let Some(scroll_view_id) = subscribers.scroll_view_id
+            && scroll_view_id != source_widget_id
+        {
+            request_scroll_view_refresh(ctx, scroll_view_id, subscribers.scroll_content_id);
+        }
+        for scroll_bar_id in subscribers.scroll_bar_ids {
+            if scroll_bar_id != source_widget_id {
+                request_scroll_bar_refresh(ctx, scroll_bar_id);
+            }
+        }
+    }
+
+    fn set_offset_y<C>(&mut self, ctx: &mut C, source_widget_id: WidgetId, offset_y: f32) -> bool
+    where
+        C: ScrollInvalidationCtx,
+    {
+        let current = self.state.current_offset();
+        if !self.state.set_offset(Vector::new(current.x, offset_y)) {
+            return false;
+        }
+        self.request_dependents(ctx, source_widget_id);
+        true
+    }
+
+    fn set_from_pointer_position<C>(
+        &mut self,
+        ctx: &mut C,
+        source_widget_id: WidgetId,
+        metrics: VerticalScrollBarMetrics,
+        pointer_y: f32,
+        drag_anchor: f32,
+    ) -> bool
+    where
+        C: ScrollInvalidationCtx,
+    {
+        let travel = (metrics.track.height() - metrics.thumb.height()).max(0.0);
+        let thumb_y = (pointer_y - drag_anchor)
+            .clamp(metrics.track.y(), metrics.track.max_y() - metrics.thumb.height());
+        let fraction = if travel <= f32::EPSILON {
+            0.0
+        } else {
+            (thumb_y - metrics.track.y()) / travel
+        };
+        self.set_offset_y(ctx, source_widget_id, metrics.max_scroll * fraction)
+    }
+
+    fn page_step(&self) -> f32 {
+        let viewport = self.state.viewport_size();
+        (viewport.height * 0.85).max(40.0)
+    }
+}
+
+impl Widget for ScrollBar {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        let metrics = self.metrics(ctx.bounds());
+
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+                if self.dragging && self.pointer_id == Some(pointer.pointer_id)
+                    && let Some(metrics) = metrics
+                    && self.set_from_pointer_position(
+                        ctx,
+                        ctx.widget_id(),
+                        metrics,
+                        pointer.position.y,
+                        self.drag_thumb_offset_y,
+                    )
+                {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Enter => {
+                self.set_hovered(true, ctx);
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                if !self.dragging || self.pointer_id != Some(pointer.pointer_id) {
+                    self.set_hovered(false, ctx);
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                let Some(metrics) = metrics else {
+                    return;
+                };
+
+                self.dragging = true;
+                self.pointer_id = Some(pointer.pointer_id);
+                self.hovered = true;
+                self.drag_thumb_offset_y = if metrics.thumb.contains(pointer.position) {
+                    pointer.position.y - metrics.thumb.y()
+                } else {
+                    metrics.thumb.height() * 0.5
+                };
+                let _ = self.set_from_pointer_position(
+                    ctx,
+                    ctx.widget_id(),
+                    metrics,
+                    pointer.position.y,
+                    self.drag_thumb_offset_y,
+                );
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.request_focus();
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self.pointer_id == Some(pointer.pointer_id) =>
+            {
+                if self.dragging
+                    && let Some(metrics) = metrics
+                {
+                    let _ = self.set_from_pointer_position(
+                        ctx,
+                        ctx.widget_id(),
+                        metrics,
+                        pointer.position.y,
+                        self.drag_thumb_offset_y,
+                    );
+                }
+                self.dragging = false;
+                self.pointer_id = None;
+                self.hovered = ctx.bounds().contains(pointer.position);
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Cancel
+                    && self.pointer_id == Some(pointer.pointer_id) =>
+            {
+                self.dragging = false;
+                self.pointer_id = None;
+                self.hovered = false;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                let max_scroll = self.state.max_offset().y;
+                if max_scroll <= f32::EPSILON {
+                    return;
+                }
+
+                let current = self.state.current_offset().y;
+                let next = match key.key.as_str() {
+                    "ArrowUp" => Some(current - 40.0),
+                    "ArrowDown" => Some(current + 40.0),
+                    "PageUp" => Some(current - self.page_step()),
+                    "PageDown" => Some(current + self.page_step()),
+                    "Home" => Some(0.0),
+                    "End" => Some(max_scroll),
+                    _ => None,
+                };
+
+                if let Some(next) = next {
+                    if self.set_offset_y(ctx, ctx.widget_id(), next) {
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                    }
+                    ctx.set_handled();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.state.bind_scroll_bar(ctx.widget_id());
+        constraints.clamp(Size::new(self.width, constraints.max.height.max(0.0).max(40.0)))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let Some(metrics) = self.metrics(ctx.bounds()) else {
+            return;
+        };
+
+        let palette = self.theme.palette;
+        let track = metrics.track;
+        let thumb = metrics.thumb;
+        let track_radius = (track.width() * 0.5).min(track.height() * 0.5);
+        let thumb_radius = (thumb.width() * 0.5).min(thumb.height() * 0.5);
+        ctx.fill(
+            Path::rounded_rect(track, track_radius),
+            palette.surface_pressed.with_alpha(0.7),
+        );
+        ctx.fill(
+            Path::rounded_rect(thumb, thumb_radius),
+            if self.dragging {
+                palette.accent_pressed
+            } else if self.hovered || ctx.is_focused() {
+                palette.accent_hover
+            } else {
+                palette.border_hover
+            }
+            .with_alpha(0.95),
+        );
+        ctx.stroke(
+            Path::rounded_rect(thumb, thumb_radius),
+            if ctx.is_focused() {
+                palette.focus_ring
+            } else {
+                palette.border.with_alpha(0.9)
+            },
+            StrokeStyle::new(physical_pixels(ctx, self.theme.metrics.border_width).max(1.0)),
+        );
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let max_scroll = self.state.max_offset().y.max(0.0);
+        let current = self.state.current_offset().y.clamp(0.0, max_scroll.max(0.0));
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Slider, ctx.bounds());
+        node.name = self.name.clone();
+        node.value = Some(SemanticsValue::Range {
+            value: f64::from(current),
+            min: 0.0,
+            max: f64::from(max_scroll),
+        });
+        node.state.disabled = max_scroll <= f32::EPSILON;
+        node.state.focused = ctx.is_focused();
+        node.state.hovered = self.hovered;
+        node.actions = vec![
+            SemanticsAction::Focus,
+            SemanticsAction::Increment,
+            SemanticsAction::Decrement,
+            SemanticsAction::SetValue,
+        ];
+        ctx.push(node);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
 pub struct ScrollView {
     axes: ScrollAxes,
     name: Option<String>,
+    state: Option<ScrollState>,
     offset: Vector,
     content_size: Size,
     child: SingleChild,
@@ -467,6 +935,7 @@ impl ScrollView {
         Self {
             axes: ScrollAxes::Vertical,
             name: None,
+            state: None,
             offset: Vector::ZERO,
             content_size: Size::ZERO,
             child: SingleChild::new(child),
@@ -504,12 +973,22 @@ impl ScrollView {
         self
     }
 
+    pub fn state(mut self, state: ScrollState) -> Self {
+        self.state = Some(state);
+        self
+    }
+
     pub const fn current_offset(&self) -> Vector {
         self.offset
     }
 
     pub fn set_offset(&mut self, offset: Vector) {
-        self.offset = offset;
+        if let Some(state) = &self.state {
+            let _ = state.set_offset(offset);
+            self.offset = state.current_offset();
+        } else {
+            self.offset = offset;
+        }
     }
 
     pub fn child(&self) -> &WidgetPod {
@@ -549,6 +1028,7 @@ impl ScrollView {
         let next = self.clamp_offset(viewport, self.offset + delta);
         if next != self.offset {
             self.offset = next;
+            self.publish_state(ctx, viewport);
             ctx.request_arrange();
             ctx.request(InvalidationRequest::new(
                 InvalidationTarget::Widget(self.child.child().id()),
@@ -558,6 +1038,45 @@ impl ScrollView {
             true
         } else {
             false
+        }
+    }
+
+    fn sync_state<C>(&mut self, ctx: &mut C, viewport: Size)
+    where
+        C: ScrollInvalidationCtx + ScrollWidgetCtx,
+    {
+        let Some(state) = &self.state else {
+            self.offset = self.clamp_offset(viewport, self.offset);
+            return;
+        };
+
+        state.bind_scroll_view(ctx.widget_id(), self.child.child().id());
+        if state.sync_metrics(self.axes, viewport, self.content_size) {
+            for scroll_bar_id in state.subscribers().scroll_bar_ids {
+                request_scroll_bar_refresh(ctx, scroll_bar_id);
+            }
+        }
+        self.offset = self.clamp_offset(viewport, state.current_offset());
+        if state.set_offset(self.offset) {
+            for scroll_bar_id in state.subscribers().scroll_bar_ids {
+                request_scroll_bar_refresh(ctx, scroll_bar_id);
+            }
+        }
+    }
+
+    fn publish_state(&self, ctx: &mut EventCtx, viewport: Size) {
+        let Some(state) = &self.state else {
+            return;
+        };
+
+        state.bind_scroll_view(ctx.widget_id(), self.child.child().id());
+        let _ = state.sync_metrics(self.axes, viewport, self.content_size);
+        if state.set_offset(self.offset) {
+            for scroll_bar_id in state.subscribers().scroll_bar_ids {
+                if scroll_bar_id != ctx.widget_id() {
+                    request_scroll_bar_refresh(ctx, scroll_bar_id);
+                }
+            }
         }
     }
 }
@@ -821,12 +1340,13 @@ impl Widget for ScrollView {
                 child_size.height
             },
         ));
-        self.offset = self.clamp_offset(viewport, self.offset);
+        self.sync_state(ctx, viewport);
 
         viewport
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.sync_state(ctx, bounds.size);
         self.child.arrange(
             ctx,
             Rect::from_origin_size(
@@ -1084,6 +1604,127 @@ fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {
     }
 }
 
+fn axis_limited_offset(axes: ScrollAxes, offset: Vector) -> Vector {
+    Vector::new(
+        if axes.allows_horizontal() { offset.x.max(0.0) } else { 0.0 },
+        if axes.allows_vertical() { offset.y.max(0.0) } else { 0.0 },
+    )
+}
+
+fn shared_max_offset(viewport: Size, content_size: Size) -> Vector {
+    Vector::new(
+        (content_size.width - viewport.width).max(0.0),
+        (content_size.height - viewport.height).max(0.0),
+    )
+}
+
+fn clamp_shared_offset(
+    axes: ScrollAxes,
+    viewport: Size,
+    content_size: Size,
+    offset: Vector,
+) -> Vector {
+    let max = shared_max_offset(viewport, content_size);
+    Vector::new(
+        if axes.allows_horizontal() {
+            offset.x.clamp(0.0, max.x)
+        } else {
+            0.0
+        },
+        if axes.allows_vertical() {
+            offset.y.clamp(0.0, max.y)
+        } else {
+            0.0
+        },
+    )
+}
+
+trait ScrollInvalidationCtx {
+    fn push_invalidation(&mut self, request: InvalidationRequest);
+}
+
+trait ScrollWidgetCtx {
+    fn widget_id(&self) -> WidgetId;
+}
+
+impl ScrollInvalidationCtx for EventCtx {
+    fn push_invalidation(&mut self, request: InvalidationRequest) {
+        self.request(request);
+    }
+}
+
+impl ScrollInvalidationCtx for MeasureCtx {
+    fn push_invalidation(&mut self, request: InvalidationRequest) {
+        self.request(request);
+    }
+}
+
+impl ScrollInvalidationCtx for ArrangeCtx {
+    fn push_invalidation(&mut self, request: InvalidationRequest) {
+        self.request(request);
+    }
+}
+
+impl ScrollWidgetCtx for EventCtx {
+    fn widget_id(&self) -> WidgetId {
+        self.widget_id()
+    }
+}
+
+impl ScrollWidgetCtx for MeasureCtx {
+    fn widget_id(&self) -> WidgetId {
+        self.widget_id()
+    }
+}
+
+impl ScrollWidgetCtx for ArrangeCtx {
+    fn widget_id(&self) -> WidgetId {
+        self.widget_id()
+    }
+}
+
+fn request_scroll_bar_refresh<C>(ctx: &mut C, widget_id: WidgetId)
+where
+    C: ScrollInvalidationCtx,
+{
+    for kind in [
+        InvalidationKind::Paint,
+        InvalidationKind::HitTest,
+        InvalidationKind::Semantics,
+    ] {
+        ctx.push_invalidation(InvalidationRequest::new(
+            InvalidationTarget::Widget(widget_id),
+            kind,
+        ));
+    }
+}
+
+fn request_scroll_view_refresh<C>(ctx: &mut C, widget_id: WidgetId, content_id: Option<WidgetId>)
+where
+    C: ScrollInvalidationCtx,
+{
+    for kind in [InvalidationKind::Arrange, InvalidationKind::Semantics] {
+        ctx.push_invalidation(InvalidationRequest::new(
+            InvalidationTarget::Widget(widget_id),
+            kind,
+        ));
+    }
+    if let Some(content_id) = content_id {
+        ctx.push_invalidation(InvalidationRequest::new(
+            InvalidationTarget::Widget(content_id),
+            InvalidationKind::Transform,
+        ));
+    }
+}
+
+fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
+    if value <= 0.0 {
+        return 0.0;
+    }
+
+    ctx.dpi().physical_pixels_to_logical(value)
+}
+
 fn inset_constraints(constraints: Constraints, insets: Insets) -> Constraints {
     let horizontal = insets.left + insets.right;
     let vertical = insets.top + insets.bottom;
@@ -1222,13 +1863,14 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Align, Background, Padding, ScrollAxes, ScrollView, SizedBox, Stack, VirtualScrollView,
+        Align, Background, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox,
+        Stack, VirtualScrollView,
     };
     use crate::SplitView;
     use sui_core::{
         Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
-        PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode, SemanticsRole, Size,
-        Vector, WidgetId,
+        PointerButton, PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode,
+        SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
     };
     use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
     use sui_runtime::{
@@ -1516,6 +2158,88 @@ mod tests {
         }
     }
 
+    struct ScrollBarHost {
+        spacing: f32,
+        content: SingleChild,
+        scroll_bar: SingleChild,
+    }
+
+    impl ScrollBarHost {
+        fn new<W, S>(content: W, scroll_bar: S) -> Self
+        where
+            W: Widget + 'static,
+            S: Widget + 'static,
+        {
+            Self {
+                spacing: 0.0,
+                content: SingleChild::new(content),
+                scroll_bar: SingleChild::new(scroll_bar),
+            }
+        }
+    }
+
+    impl Widget for ScrollBarHost {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let scroll_bar_size = self.scroll_bar.measure(
+                ctx,
+                Constraints::new(Size::ZERO, Size::new(f32::INFINITY, constraints.max.height)),
+            );
+            let content_constraints = Constraints::new(
+                Size::new(
+                    (constraints.min.width - scroll_bar_size.width - self.spacing).max(0.0),
+                    constraints.min.height,
+                ),
+                Size::new(
+                    (constraints.max.width - scroll_bar_size.width - self.spacing).max(0.0),
+                    constraints.max.height,
+                ),
+            );
+            let content_size = self.content.measure(ctx, content_constraints);
+            constraints.clamp(Size::new(
+                content_size.width + scroll_bar_size.width + self.spacing,
+                content_size.height.max(scroll_bar_size.height),
+            ))
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            let scroll_bar_size = self.scroll_bar.child().measured_size();
+            let content_width = (bounds.width() - scroll_bar_size.width - self.spacing).max(0.0);
+            self.content.arrange(
+                ctx,
+                Rect::new(bounds.x(), bounds.y(), content_width, bounds.height()),
+            );
+            self.scroll_bar.arrange(
+                ctx,
+                Rect::new(
+                    bounds.max_x() - scroll_bar_size.width,
+                    bounds.y(),
+                    scroll_bar_size.width,
+                    bounds.height(),
+                ),
+            );
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.content.paint(ctx);
+            self.scroll_bar.paint(ctx);
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            self.content.semantics(ctx);
+            self.scroll_bar.semantics(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.content.visit_children(visitor);
+            self.scroll_bar.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.content.visit_children_mut(visitor);
+            self.scroll_bar.visit_children_mut(visitor);
+        }
+    }
+
     fn render_root<W>(root: W) -> (RenderOutput, WidgetGraphSnapshot)
     where
         W: Widget + 'static,
@@ -1722,7 +2446,12 @@ mod tests {
         let graph = runtime.widget_graph(window_id).unwrap();
 
         assert_eq!(graph.nodes[1].bounds, Rect::new(0.0, 0.0, 80.0, 40.0));
-        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
+        let content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
+            .expect("scroll content present");
+        assert_eq!(content.bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
     }
 
     #[test]
@@ -2122,5 +2851,87 @@ mod tests {
 
         assert_eq!(inner_content.bounds.y(), -64.0);
         assert_eq!(outer_content.bounds.y(), -24.0);
+    }
+
+    #[test]
+    fn scroll_bar_updates_after_wheel_scrolling_bound_scroll_view() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(92.0, 40.0)).with_child(ScrollBarHost::new(
+                ScrollView::vertical(FixedBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .state(state.clone())
+                .name("Scrollable content"),
+                ScrollBar::vertical(state).name("Scroll bar"),
+            )),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+
+        let output = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+
+        let content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
+            .expect("scroll content present");
+        assert_eq!(content.bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider && node.name.as_deref() == Some("Scroll bar"))
+            .expect("scroll bar semantics present");
+        assert_eq!(
+            scroll_bar.value,
+            Some(SemanticsValue::Range {
+                value: 32.0,
+                min: 0.0,
+                max: 80.0,
+            })
+        );
+    }
+
+    #[test]
+    fn scroll_bar_pointer_input_moves_bound_scroll_view() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(92.0, 40.0)).with_child(ScrollBarHost::new(
+                ScrollView::vertical(FixedBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .state(state.clone()),
+                ScrollBar::vertical(state),
+            )),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(86.0, 36.0));
+        down.button = Some(PointerButton::Primary);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+        let mut up = PointerEvent::new(PointerEventKind::Up, Point::new(86.0, 36.0));
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up)).unwrap();
+
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+
+        let content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
+            .expect("scroll content present");
+        assert_eq!(content.bounds, Rect::new(0.0, -80.0, 80.0, 120.0));
     }
 }

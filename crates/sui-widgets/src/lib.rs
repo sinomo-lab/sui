@@ -14,7 +14,8 @@ pub use composites::{
     TabBar, Tabs, Tooltip, TooltipPlacement,
 };
 pub use containers::{
-    Align, Background, Padding, ScrollAxes, ScrollView, SizedBox, Stack, VirtualScrollView,
+    Align, Background, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox, Stack,
+    VirtualScrollView,
 };
 pub use controls::{
     Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput,
