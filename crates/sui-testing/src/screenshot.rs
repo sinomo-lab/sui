@@ -5,7 +5,7 @@ use std::{
 };
 
 use sui_core::{Color, Error, Rect, Result};
-use sui_render_wgpu::RgbaImage;
+use sui_render_wgpu::{HdrRgbaImage, RgbaImage};
 
 use crate::snapshot::WindowSnapshot;
 
@@ -24,7 +24,93 @@ pub struct ArtifactBundle {
     pub widget_overlay: Option<Screenshot>,
 }
 
+pub fn write_hdr_exr(image: &HdrRgbaImage, path: impl AsRef<Path>) -> Result<()> {
+    use exr::prelude::write_rgba_file;
+
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io_error)?;
+    }
+
+    write_rgba_file(
+        path,
+        image.width() as usize,
+        image.height() as usize,
+        |x, y| {
+            let offset = (y * image.width() as usize + x) * 4;
+            let pixels = image.pixels();
+            (
+                pixels[offset],
+                pixels[offset + 1],
+                pixels[offset + 2],
+                pixels[offset + 3],
+            )
+        },
+    )
+    .map_err(exr_error)
+}
+
+pub fn hdr_luminance_heatmap(image: &HdrRgbaImage) -> Result<Screenshot> {
+    let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
+    for rgba in image.pixels().chunks_exact(4) {
+        let luminance = (rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722).max(0.0);
+        let normalized = (luminance / (1.0 + luminance)).clamp(0.0, 1.0);
+        let value = (normalized * 255.0).round() as u8;
+        pixels.extend_from_slice(&[value, value, value, 255]);
+    }
+    Screenshot::new(image.width(), image.height(), pixels)
+}
+
+pub fn hdr_headroom_heatmap(image: &HdrRgbaImage, sdr_white_level: f32) -> Result<Screenshot> {
+    let reference_white = if sdr_white_level.is_finite() && sdr_white_level > 0.0 {
+        sdr_white_level
+    } else {
+        1.0
+    };
+    let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
+    for rgba in image.pixels().chunks_exact(4) {
+        let headroom = (rgba[0].max(rgba[1]).max(rgba[2]) / reference_white).max(0.0);
+        let normalized = (headroom / (1.0 + headroom)).clamp(0.0, 1.0);
+        let red = (normalized * 255.0).round() as u8;
+        let blue = ((1.0 - normalized) * 96.0).round() as u8;
+        pixels.extend_from_slice(&[red, 32, blue, 255]);
+    }
+    Screenshot::new(image.width(), image.height(), pixels)
+}
+
+pub fn hdr_clip_mask(image: &HdrRgbaImage, threshold: f32) -> Result<Screenshot> {
+    let clip_threshold = if threshold.is_finite() && threshold > 0.0 {
+        threshold
+    } else {
+        1.0
+    };
+    let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
+    for rgba in image.pixels().chunks_exact(4) {
+        let clipped = rgba[0].max(rgba[1]).max(rgba[2]) > clip_threshold;
+        if clipped {
+            pixels.extend_from_slice(&[255, 64, 64, 255]);
+        } else {
+            pixels.extend_from_slice(&[0, 0, 0, 255]);
+        }
+    }
+    Screenshot::new(image.width(), image.height(), pixels)
+}
+
 impl Screenshot {
+    pub fn new(width: u32, height: u32, pixels: Vec<u8>) -> Result<Self> {
+        let expected_len = width as usize * height as usize * 4;
+        if pixels.len() != expected_len {
+            return Err(Error::new(format!(
+                "screenshot pixel buffer length {} does not match {}x{} image size",
+                pixels.len(),
+                width,
+                height
+            )));
+        }
+
+        Ok(Self { width, height, pixels })
+    }
+
     pub(crate) fn from_rgba_image(image: RgbaImage) -> Self {
         Self {
             width: image.width(),
@@ -350,4 +436,47 @@ where
     E: std::fmt::Display,
 {
     Error::new(format!("PNG error: {error}"))
+}
+
+fn exr_error<E>(error: E) -> Error
+where
+    E: std::fmt::Display,
+{
+    Error::new(format!("EXR error: {error}"))
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{HdrRgbaImage, Screenshot, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap};
+
+    #[test]
+    fn hdr_luminance_heatmap_returns_rgba8_image() {
+        let image = HdrRgbaImage::new(1, 1, vec![4.0, 2.0, 1.0, 1.0]).unwrap();
+        let heatmap = hdr_luminance_heatmap(&image).unwrap();
+        assert_eq!(heatmap.width(), 1);
+        assert_eq!(heatmap.height(), 1);
+        assert_eq!(heatmap.pixels().len(), 4);
+        assert_eq!(heatmap.pixels()[3], 255);
+    }
+
+    #[test]
+    fn hdr_headroom_heatmap_highlights_overbright_pixels() {
+        let image = HdrRgbaImage::new(1, 1, vec![2.0, 0.5, 0.5, 1.0]).unwrap();
+        let heatmap = hdr_headroom_heatmap(&image, 1.0).unwrap();
+        assert!(heatmap.pixels()[0] > heatmap.pixels()[2]);
+    }
+
+    #[test]
+    fn hdr_clip_mask_marks_pixels_above_threshold() {
+        let image = HdrRgbaImage::new(2, 1, vec![0.5, 0.5, 0.5, 1.0, 3.0, 0.0, 0.0, 1.0]).unwrap();
+        let mask = hdr_clip_mask(&image, 1.0).unwrap();
+        assert_eq!(&mask.pixels()[0..4], &[0, 0, 0, 255]);
+        assert_eq!(&mask.pixels()[4..8], &[255, 64, 64, 255]);
+    }
+
+    #[test]
+    fn screenshot_new_rejects_wrong_length() {
+        assert!(Screenshot::new(2, 2, vec![0; 4]).is_err());
+    }
 }

@@ -5,11 +5,10 @@ use std::{cell::RefCell, rc::Rc};
 use sui::prelude::*;
 use sui::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, Rect, SceneStatisticsDetailMode,
-    SemanticsNode, SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextWrap,
-    TextSurface, TimerToken, Vector,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId, WindowPerformanceSnapshot,
-    set_window_scene_statistics_detail_mode, window_performance_snapshot,
-    window_scene_statistics_detail_mode,
+    SemanticsNode, SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextSurface, TextWrap,
+    TimerToken, Vector, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
+    WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
+    window_performance_snapshot, window_scene_statistics_detail_mode,
 };
 use sui_runtime::LayerOptions;
 use sui_scene::LayerCompositionMode;
@@ -26,7 +25,7 @@ pub const WINDOW_DESCRIPTION: &str =
 pub const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
 pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
 pub const TEXT_RENDERING_COMPARISON_TITLE: &str = "SUI Text Rendering Comparison";
-pub const COLOR_VALIDATION_VIEW_TITLE: &str = "SUI Color Validation";
+pub const COLOR_VALIDATION_VIEW_TITLE: &str = "SUI HDR and Color Validation";
 pub const TEXT_VALIDATION_VIEW_TITLE: &str = "SUI Text Validation";
 pub const TEXT_EDITING_BENCHMARK_TITLE: &str = "SUI Text Editing Benchmark";
 pub const BUTTON_GRID_ROWS: usize = 8;
@@ -64,8 +63,7 @@ pub const COLOR_VALIDATION_SCROLL_NAME: &str = "Color validation scroll";
 pub const TEXT_VALIDATION_SCROLL_NAME: &str = "Text validation scroll";
 pub const TEXT_VALIDATION_EDITOR_NAME: &str = "Validation editor";
 pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark editor";
-pub const TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME: &str =
-    "Text editing benchmark syntax preview";
+pub const TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME: &str = "Text editing benchmark syntax preview";
 pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
 pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare light and dark themes";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
@@ -1407,9 +1405,7 @@ pub fn build_retained_text_benchmark() -> impl Widget {
 
     for section_index in 0..SECTION_COUNT {
         let (title, subtitle) = retained_text_benchmark_section(section_index);
-        let mut body = Stack::vertical()
-            .spacing(8.0)
-            .alignment(Alignment::Stretch);
+        let mut body = Stack::vertical().spacing(8.0).alignment(Alignment::Stretch);
 
         for paragraph_index in 0..PARAGRAPHS_PER_SECTION {
             body = body.with_child(
@@ -1465,7 +1461,9 @@ pub fn build_retained_text_benchmark_application() -> Application {
 }
 
 pub fn build_text_rendering_comparison_surface() -> impl Widget {
-    let mut mode_cards = Stack::vertical().spacing(18.0).alignment(Alignment::Stretch);
+    let mut mode_cards = Stack::vertical()
+        .spacing(18.0)
+        .alignment(Alignment::Stretch);
 
     for (title, subtitle, notes) in [
         (
@@ -1554,8 +1552,43 @@ pub fn build_color_validation_surface() -> impl Widget {
             .spacing(18.0)
             .alignment(Alignment::Stretch)
             .with_child(panel(
+                "HDR brightness and clipping probes",
+                "Start here when checking HDR. These rows show whether values above SDR reference white stay visually distinct. On SDR or clamp-heavy paths, the brighter swatches may collapse together. On HDR-capable paths, higher steps should remain separable and retain highlight structure.",
+                Stack::vertical()
+                    .spacing(16.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(build_color_validation_quad_row(
+                        "HDR white ladder",
+                        "Reference white is 1.0. Higher linear-light steps intentionally exceed SDR range. If 2.0, 4.0, and 8.0 all look identical, the path is clipping or tone mapping aggressively.",
+                        [
+                            ("Reference white 1.0", Color::linear_rgba(1.0, 1.0, 1.0, 1.0)),
+                            ("Highlight white 2.0", Color::linear_rgba(2.0, 2.0, 2.0, 1.0)),
+                            ("Highlight white 4.0", Color::linear_rgba(4.0, 4.0, 4.0, 1.0)),
+                            ("Highlight white 8.0", Color::linear_rgba(8.0, 8.0, 8.0, 1.0)),
+                        ],
+                    ))
+                    .with_child(build_color_validation_quad_row(
+                        "HDR color highlight ladder",
+                        "Colored highlights help catch cases where luminance is preserved but saturation shifts unexpectedly. Compare how orange and cyan energy above 1.0 behaves relative to SDR-bright controls.",
+                        [
+                            ("Orange highlight 1.0", Color::linear_rgba(1.0, 0.55, 0.18, 1.0)),
+                            ("Orange highlight 2.0", Color::linear_rgba(2.0, 1.1, 0.36, 1.0)),
+                            ("Cyan highlight 1.0", Color::linear_rgba(0.20, 0.80, 1.0, 1.0)),
+                            ("Cyan highlight 2.0", Color::linear_rgba(0.40, 1.60, 2.0, 1.0)),
+                        ],
+                    ))
+                    .with_child(build_color_validation_row(
+                        "SDR clipping reference",
+                        "This pair makes SDR clipping easy to spot. If the boosted sample looks no brighter than the baseline, the path is still constrained to SDR output at this stage.",
+                        [
+                            ("SDR white baseline", Color::linear_rgba(1.0, 1.0, 1.0, 1.0)),
+                            ("SDR clipped white 2.0", Color::linear_rgba(2.0, 2.0, 2.0, 1.0)),
+                        ],
+                    )),
+            ))
+            .with_child(panel(
                 "Wide-gamut reference swatches",
-                "Reference surface for validating that sRGB and Display-P3 colors stay distinct in the renderer's linear working space before final display output. Use it to compare known-sRGB swatches against wider-gamut counterparts while iterating on HDR and color-management changes.",
+                "Use these after the HDR ladder. This surface validates that sRGB and Display-P3 colors stay distinct in the renderer's linear working space before final display output.",
                 Stack::vertical()
                     .spacing(16.0)
                     .alignment(Alignment::Stretch)
@@ -1574,6 +1607,14 @@ pub fn build_color_validation_surface() -> impl Widget {
                             ("sRGB clipped lime", Color::rgba(0.0, 1.0, 0.0, 1.0)),
                             ("Display P3 vivid lime", Color::display_p3(0.0, 1.0, 0.0, 1.0)),
                         ],
+                    ))
+                    .with_child(build_color_validation_row(
+                        "Cyan accent mix",
+                        "A mixed-color sample helps catch cases where Display-P3 is incorrectly reduced to transfer decoding only. The P3 version should retain a more vivid cyan accent on wide-gamut outputs.",
+                        [
+                            ("sRGB accent cyan", Color::rgba(0.0, 0.78, 1.0, 1.0)),
+                            ("Display P3 accent cyan", Color::display_p3(0.0, 0.78, 1.0, 1.0)),
+                        ],
                     )),
             )),
     ))
@@ -1585,7 +1626,7 @@ pub fn build_color_validation_application() -> Application {
         WindowBuilder::new().title(COLOR_VALIDATION_VIEW_TITLE).root(
             LivePerformanceRoot::new(
                 COLOR_VALIDATION_VIEW_TITLE,
-                "Reference surface for validating sRGB versus Display-P3 color handling while HDR support lands in phases.",
+                "Reference surface for validating wide-gamut color handling, HDR brightness separation, and SDR clipping behavior while native HDR support lands in phases.",
                 build_color_validation_surface(),
             ),
         ),
@@ -1623,7 +1664,53 @@ fn build_color_validation_row(
                             .spacing(18.0)
                             .alignment(Alignment::Center)
                             .with_child(build_color_validation_swatch(swatches[0].0, swatches[0].1))
-                            .with_child(build_color_validation_swatch(swatches[1].0, swatches[1].1)),
+                            .with_child(build_color_validation_swatch(
+                                swatches[1].0,
+                                swatches[1].1,
+                            )),
+                    ),
+            ),
+        ),
+    )
+}
+
+fn build_color_validation_quad_row(
+    title: &'static str,
+    description: &'static str,
+    swatches: [(&'static str, Color); 4],
+) -> impl Widget {
+    NamedSection::new(
+        title,
+        Background::new(
+            Color::rgba(0.985, 0.99, 1.0, 1.0),
+            Padding::all(
+                18.0,
+                Stack::vertical()
+                    .spacing(12.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Label::new(title)
+                            .font_size(18.0)
+                            .line_height(22.0)
+                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
+                    )
+                    .with_child(
+                        Label::new(description)
+                            .font_size(14.0)
+                            .line_height(20.0)
+                            .color(Color::rgba(0.40, 0.47, 0.56, 1.0)),
+                    )
+                    .with_child(
+                        Stack::horizontal()
+                            .spacing(18.0)
+                            .alignment(Alignment::Center)
+                            .with_child(build_color_validation_swatch(swatches[0].0, swatches[0].1))
+                            .with_child(build_color_validation_swatch(swatches[1].0, swatches[1].1))
+                            .with_child(build_color_validation_swatch(swatches[2].0, swatches[2].1))
+                            .with_child(build_color_validation_swatch(
+                                swatches[3].0,
+                                swatches[3].1,
+                            )),
                     ),
             ),
         ),
@@ -1693,10 +1780,12 @@ fn build_text_rendering_mode_card(
                                                 .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
                                         )
                                         .with_child(
-                                            Label::new("Toolbar 12 px · glyph atlas · Привет · 中文")
-                                                .font_size(14.0)
-                                                .line_height(19.0)
-                                                .color(Color::rgba(0.14, 0.19, 0.26, 1.0)),
+                                            Label::new(
+                                                "Toolbar 12 px · glyph atlas · Привет · 中文",
+                                            )
+                                            .font_size(14.0)
+                                            .line_height(19.0)
+                                            .color(Color::rgba(0.14, 0.19, 0.26, 1.0)),
                                         ),
                                 ),
                             ))
@@ -1853,22 +1942,19 @@ pub fn build_text_editing_benchmark() -> impl Widget {
     let editor_panel = panel(
         "Editable code surface",
         "Benchmark typing, selection, and wheel scrolling against one long text surface with editor-like line length and comment density.",
-        SizedBox::new()
-            .width(560.0)
-            .height(700.0)
-            .with_child(
-                TextSurface::new(TEXT_EDITING_BENCHMARK_EDITOR_NAME)
-                    .value(text_editing_benchmark_document())
-                    .direction(TextDirection::LeftToRight)
-                    .min_width(560.0)
-                    .min_height(700.0)
-                    .text_style(TextStyle {
-                        font_size: 13.0,
-                        line_height: 18.0,
-                        color: Color::rgba(0.13, 0.17, 0.23, 1.0),
-                        ..TextStyle::default()
-                    }),
-            ),
+        SizedBox::new().width(560.0).height(700.0).with_child(
+            TextSurface::new(TEXT_EDITING_BENCHMARK_EDITOR_NAME)
+                .value(text_editing_benchmark_document())
+                .direction(TextDirection::LeftToRight)
+                .min_width(560.0)
+                .min_height(700.0)
+                .text_style(TextStyle {
+                    font_size: 13.0,
+                    line_height: 18.0,
+                    color: Color::rgba(0.13, 0.17, 0.23, 1.0),
+                    ..TextStyle::default()
+                }),
+        ),
     );
     let syntax_panel = panel(
         "Syntax-highlight preview",
@@ -2025,9 +2111,7 @@ fn text_editing_benchmark_document() -> String {
 }
 
 fn build_text_editing_syntax_preview() -> impl Widget {
-    let mut content = Stack::vertical()
-        .spacing(2.0)
-        .alignment(Alignment::Stretch);
+    let mut content = Stack::vertical().spacing(2.0).alignment(Alignment::Stretch);
 
     for line_index in 0..220 {
         content = content.with_child(build_text_editing_syntax_line(line_index));
@@ -2107,16 +2191,25 @@ fn build_text_editing_syntax_line(line_index: usize) -> impl Widget {
                 .color(Color::rgba(0.21, 0.27, 0.35, 1.0)),
         )
         .with_child(
-            Label::new(format!("// {accent} tint, abc אבג 123, glyph set 🙂{}", line_index % 9))
-                .font_size(13.0)
-                .line_height(18.0)
-                .color(Color::rgba(0.36, 0.45, 0.25, 1.0)),
+            Label::new(format!(
+                "// {accent} tint, abc אבג 123, glyph set 🙂{}",
+                line_index % 9
+            ))
+            .font_size(13.0)
+            .line_height(18.0)
+            .color(Color::rgba(0.36, 0.45, 0.25, 1.0)),
         );
 
     if line_index % 2 == 0 {
-        Background::new(Color::rgba(0.978, 0.984, 0.994, 1.0), Padding::all(6.0, line))
+        Background::new(
+            Color::rgba(0.978, 0.984, 0.994, 1.0),
+            Padding::all(6.0, line),
+        )
     } else {
-        Background::new(Color::rgba(0.958, 0.968, 0.984, 1.0), Padding::all(6.0, line))
+        Background::new(
+            Color::rgba(0.958, 0.968, 0.984, 1.0),
+            Padding::all(6.0, line),
+        )
     }
 }
 
@@ -2220,7 +2313,11 @@ impl Widget for NamedSection {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::GenericContainer, ctx.bounds());
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
         node.name = Some(self.name.clone());
         ctx.push(node);
         self.content.semantics(ctx);
@@ -2975,19 +3072,18 @@ mod tests {
         LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
         POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
         TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
-        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
-        TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
-        TOOLTIP_TRIGGER_LABEL, build_text_rendering_comparison_application,
-        build_text_validation_surface, build_widget_book_application, default_widget_book_state,
+        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
+        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
+        build_text_rendering_comparison_application, build_text_validation_surface,
+        build_widget_book_application, default_widget_book_state,
     };
     use sui::{
-        Application, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState, KeyboardEvent,
-        Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        PresentationLatencyDiagnostics,
-        RendererSubmissionDiagnostics, Result, SceneStatistics, SceneStatisticsDetailMode,
-        SemanticsRole, SemanticsValue, Size, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
-        Vector, Widget, WidgetPod, WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId,
-        WindowPerformanceSnapshot, window_scene_statistics_detail_mode,
+        Application, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState, KeyboardEvent, Point,
+        PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, Result, SceneStatistics,
+        SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size, TextCacheDeltaDiagnostics,
+        TextCacheDiagnostics, Vector, Widget, WidgetPod, WidgetPodVisitor, WindowBuilder,
+        WindowEvent, WindowId, WindowPerformanceSnapshot, window_scene_statistics_detail_mode,
     };
     use sui_runtime::publish_window_performance_snapshot;
     use sui_testing::prelude::*;
@@ -3002,12 +3098,13 @@ mod tests {
 
     fn build_text_validation_app() -> Result<TestApp> {
         TestApp::new(|| {
-            Application::new().window(
-                WindowBuilder::new()
-                    .title(TEXT_VALIDATION_VIEW_TITLE)
-                    .root(build_text_validation_surface()),
-            )
-            .build()
+            Application::new()
+                .window(
+                    WindowBuilder::new()
+                        .title(TEXT_VALIDATION_VIEW_TITLE)
+                        .root(build_text_validation_surface()),
+                )
+                .build()
         })
     }
 
@@ -3033,11 +3130,16 @@ mod tests {
 
     #[test]
     fn text_rendering_comparison_surface_exposes_all_render_modes() {
-        let mut runtime = build_text_rendering_comparison_runtime().expect("comparison runtime should build");
+        let mut runtime =
+            build_text_rendering_comparison_runtime().expect("comparison runtime should build");
         let window_id = runtime.window_ids()[0];
-        runtime.render(window_id).expect("comparison surface should render");
+        runtime
+            .render(window_id)
+            .expect("comparison surface should render");
 
-        let semantics = runtime.semantics(window_id).expect("comparison semantics should exist");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("comparison semantics should exist");
 
         assert!(semantics.iter().any(|node| {
             node.role == SemanticsRole::Window
@@ -3065,9 +3167,12 @@ mod tests {
 
     #[test]
     fn color_validation_surface_exposes_wide_gamut_reference_swatches() {
-        let mut runtime = build_color_validation_runtime().expect("color validation runtime should build");
+        let mut runtime =
+            build_color_validation_runtime().expect("color validation runtime should build");
         let window_id = runtime.window_ids()[0];
-        runtime.render(window_id).expect("color validation surface should render");
+        runtime
+            .render(window_id)
+            .expect("color validation surface should render");
 
         let semantics = runtime
             .semantics(window_id)
@@ -3087,6 +3192,18 @@ mod tests {
             "Display P3 reference red",
             "sRGB clipped lime",
             "Display P3 vivid lime",
+            "sRGB accent cyan",
+            "Display P3 accent cyan",
+            "Reference white 1.0",
+            "Highlight white 2.0",
+            "Highlight white 4.0",
+            "Highlight white 8.0",
+            "Orange highlight 1.0",
+            "Orange highlight 2.0",
+            "Cyan highlight 1.0",
+            "Cyan highlight 2.0",
+            "SDR white baseline",
+            "SDR clipped white 2.0",
         ] {
             assert!(semantics.iter().any(|node| {
                 node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some(swatch_name)
@@ -3805,8 +3922,8 @@ mod tests {
             7,
             vec![FramePhaseSample::new(FramePhase::Renderer, 1.5)],
             RendererSubmissionDiagnostics::new(
-                2, 6, 2048, 24, 1536, 3, 6, 420, 160, 210, 120, 3, 1, 0, 1, 1, 0, 4, 90,
-                440, 210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
+                2, 6, 2048, 24, 1536, 3, 6, 420, 160, 210, 120, 3, 1, 0, 1, 1, 0, 4, 90, 440, 210,
+                130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -3842,8 +3959,8 @@ mod tests {
                 FramePhaseSample::new(FramePhase::Renderer, 1.9),
             ],
             RendererSubmissionDiagnostics::new(
-                2, 6, 2048, 24, 1536, 3, 6, 420, 160, 210, 120, 3, 1, 0, 1, 1, 0, 4, 90,
-                440, 210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
+                2, 6, 2048, 24, 1536, 3, 6, 420, 160, 210, 120, 3, 1, 0, 1, 1, 0, 4, 90, 440, 210,
+                130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),

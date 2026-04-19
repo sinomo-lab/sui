@@ -357,6 +357,7 @@ pub(crate) struct SurfaceState {
     pub(crate) display_capabilities: DisplayCapabilities,
     pub(crate) color_management: ColorManagementMode,
     pub(crate) output_strategy: OutputStrategy,
+    pub(crate) available_surface_formats: Vec<wgpu::TextureFormat>,
 }
 
 pub(crate) struct OffscreenTarget {

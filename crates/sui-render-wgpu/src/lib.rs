@@ -1047,6 +1047,12 @@ impl WgpuRenderer {
         self.surfaces.get(&window_id).map(|surface| surface.output_strategy)
     }
 
+    pub fn window_surface_formats(&self, window_id: WindowId) -> Option<Vec<wgpu::TextureFormat>> {
+        self.surfaces
+            .get(&window_id)
+            .map(|surface| surface.available_surface_formats.clone())
+    }
+
     pub fn set_runtime_feathering_override(&mut self, feathering: Option<FeatheringOptions>) {
         self.runtime_feathering_override = feathering.map(FeatheringOptions::clamped);
     }
@@ -1217,7 +1223,7 @@ impl WgpuRenderer {
             ))
         })?;
 
-        self.render_offscreen(&frame, size)?;
+        self.render_debug_capture_stage(&frame, size, request.stage)?;
         self.capture_debug_frame(window_id, request)
     }
 
@@ -1229,9 +1235,7 @@ impl WgpuRenderer {
         let _ = request.encoding;
         let _ = request.sdr_visualization;
         match request.stage {
-            DebugCaptureStage::FinalComposed => {
-                self.capture_rgba(window_id).map(DebugCaptureArtifact::SdrRgba8)
-            }
+            DebugCaptureStage::FinalComposed => self.capture_final_composed_debug_artifact(window_id),
             DebugCaptureStage::HdrIntermediate => self
                 .capture_hdr_intermediate_rgba_f32(window_id)
                 .map(DebugCaptureArtifact::HdrLinearRgbaF32),
@@ -1274,6 +1278,49 @@ impl WgpuRenderer {
             8,
             "SUI HDR intermediate readback",
             "SUI HDR intermediate readback encoder",
+        )?;
+        let pixels = decode_rgba16f_pixels(&raw);
+        HdrRgbaImage::new(target.size.0, target.size.1, pixels)
+    }
+
+    fn capture_final_composed_debug_artifact(
+        &self,
+        window_id: WindowId,
+    ) -> Result<DebugCaptureArtifact> {
+        let target = self.offscreen_targets.get(&window_id).ok_or_else(|| {
+            Error::new(format!(
+                "window {} does not have an offscreen target available for final composed debug capture",
+                window_id.get()
+            ))
+        })?;
+
+        match target.format {
+            wgpu::TextureFormat::Bgra8UnormSrgb => {
+                self.capture_rgba(window_id).map(DebugCaptureArtifact::SdrRgba8)
+            }
+            wgpu::TextureFormat::Rgba16Float => self
+                .capture_hdr_offscreen_rgba_f32(window_id)
+                .map(DebugCaptureArtifact::HdrLinearRgbaF32),
+            other => Err(Error::new(format!(
+                "window {} uses unsupported final composed debug capture format {other:?}",
+                window_id.get()
+            ))),
+        }
+    }
+
+    fn capture_hdr_offscreen_rgba_f32(&self, window_id: WindowId) -> Result<HdrRgbaImage> {
+        let target = self.offscreen_targets.get(&window_id).ok_or_else(|| {
+            Error::new(format!(
+                "window {} does not have an offscreen HDR target available for debug capture",
+                window_id.get()
+            ))
+        })?;
+        let raw = self.readback_target_bytes(
+            &target.texture,
+            target.size,
+            8,
+            "SUI HDR final readback",
+            "SUI HDR final readback encoder",
         )?;
         let pixels = decode_rgba16f_pixels(&raw);
         HdrRgbaImage::new(target.size.0, target.size.1, pixels)
@@ -1760,6 +1807,57 @@ impl WgpuRenderer {
         Ok(Some((frame_texture, suboptimal, surface_acquire_time_us)))
     }
 
+    fn render_debug_capture_stage(
+        &mut self,
+        frame: &SceneFrame,
+        size: (u32, u32),
+        stage: DebugCaptureStage,
+    ) -> Result<RendererFrameStats> {
+        match stage {
+            DebugCaptureStage::HdrIntermediate => self.render_offscreen(frame, size),
+            DebugCaptureStage::FinalComposed => self.render_final_composed_offscreen(frame, size),
+        }
+    }
+
+    fn render_final_composed_offscreen(
+        &mut self,
+        frame: &SceneFrame,
+        size: (u32, u32),
+    ) -> Result<RendererFrameStats> {
+        self.ensure_shared(None)?;
+
+        let Some(surface_state) = self.surfaces.get(&frame.window_id) else {
+            return self.render_offscreen(frame, size);
+        };
+        let strategy = surface_state.output_strategy;
+        let requested_tone_mapping = surface_state.color_management.tone_mapping;
+        let final_format = strategy.surface_format();
+        let final_view = self.ensure_offscreen_target(frame.window_id, size, final_format)?;
+        let prepared = self.prepare_scene_submission(frame)?;
+
+        if output_transform_requires_intermediate(strategy) {
+            let intermediate_view = self.ensure_intermediate_target(frame.window_id, size)?;
+            let intermediate_format = self
+                .intermediate_targets
+                .get(&frame.window_id)
+                .map(|target| target.format)
+                .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
+            let mut frame_stats =
+                self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
+            self.submit_output_transform_pass(
+                &intermediate_view,
+                &final_view,
+                final_format,
+                strategy,
+                requested_tone_mapping,
+                &mut frame_stats,
+            )?;
+            Ok(frame_stats)
+        } else {
+            self.submit_prepared_scene(prepared, final_format, &final_view)
+        }
+    }
+
     fn render_offscreen(
         &mut self,
         frame: &SceneFrame,
@@ -1991,6 +2089,7 @@ impl WgpuRenderer {
             .get_mut(&window_id)
             .ok_or_else(|| Error::new(format!("missing surface for window {}", window_id.get())))?;
 
+        let available_surface_formats = surface.surface.get_capabilities(&shared.adapter).formats;
         let (config, output_strategy) = configure_surface(
             &surface.surface,
             &shared.adapter,
@@ -2002,6 +2101,7 @@ impl WgpuRenderer {
         )?;
         surface.config = config;
         surface.output_strategy = output_strategy;
+        surface.available_surface_formats = available_surface_formats;
         Ok(())
     }
 
@@ -2890,6 +2990,7 @@ impl WgpuRenderer {
             .expect("renderer shared state initialized");
         let default_capabilities = DisplayCapabilities::default();
         let default_color_management = ColorManagementMode::default();
+        let available_surface_formats = surface.get_capabilities(&shared.adapter).formats;
         let (config, output_strategy) = configure_surface(
             &surface,
             &shared.adapter,
@@ -2907,6 +3008,7 @@ impl WgpuRenderer {
             display_capabilities: default_capabilities,
             color_management: default_color_management,
             output_strategy,
+            available_surface_formats,
         })
     }
 }
@@ -3885,6 +3987,13 @@ mod tests {
         assert!((rgba[1] + 0.04205).abs() < 0.0001);
         assert!((rgba[2] + 0.01963).abs() < 0.0001);
         assert_eq!(rgba[3], 1.0);
+    }
+
+    #[test]
+    fn shader_color_preserves_extended_linear_srgb_values_for_hdr_content() {
+        let rgba = shader_color(Color::linear_rgba(2.0, 4.0, 8.0, 1.0));
+
+        assert_eq!(rgba, [2.0, 4.0, 8.0, 1.0]);
     }
 
     #[test]

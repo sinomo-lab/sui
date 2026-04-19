@@ -3352,7 +3352,8 @@ pub(crate) fn append_scene_mesh(vertices: &mut Vec<Vertex>, mesh: &SceneMesh, vi
 }
 
 pub(crate) fn shader_color(color: Color) -> [f32; 4] {
-    color.clamped().to_linear_srgb().to_array()
+    let linear = color.to_linear_srgb();
+    [linear.red, linear.green, linear.blue, linear.alpha.clamp(0.0, 1.0)]
 }
 
 fn srgb_transfer_to_linear(channel: f32) -> f32 {

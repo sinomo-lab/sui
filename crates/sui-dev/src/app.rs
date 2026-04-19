@@ -3,14 +3,14 @@ use std::{cell::RefCell, rc::Rc};
 use sui::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton, PointerEventKind,
     SemanticsNode, SemanticsRole, TextCoveragePolicy, TextHinting, WgpuRenderer,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowColorManagementMode,
-    WindowDynamicRangeMode, WindowEvent, WindowId, WindowOutputColorPrimaries, WindowRenderOptions,
-    WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy, WindowToneMappingMode,
-    prelude::*, window_output_diagnostics,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode,
+    WindowEvent, WindowId, WindowOutputColorPrimaries, WindowRenderOptions, WindowStemDarkening,
+    WindowTextHinting, WindowTextRenderPolicy, WindowToneMappingMode, prelude::*,
+    window_output_diagnostics,
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_retained_text_benchmark,
-    build_text_editing_benchmark, build_text_rendering_comparison_surface,
+    build_color_validation_surface, build_text_editing_benchmark, build_text_rendering_comparison_surface,
     build_text_validation_surface, build_widget_book_gallery, default_widget_book_state,
     register_widget_book_images,
 };
@@ -24,6 +24,7 @@ const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
 const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
 const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
+const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
 const SETTINGS_TAB_LABEL: &str = "Settings";
 const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
 const FEATHER_WIDTH_NAME: &str = "Feather width";
@@ -166,7 +167,10 @@ impl DesktopAutomationRoot {
     }
 
     fn target_bounds_for_elapsed(&self, elapsed: f64) -> Rect {
-        match self.mode.expect("automation mode should be active when ticking") {
+        match self
+            .mode
+            .expect("automation mode should be active when ticking")
+        {
             DesktopAutomationMode::ButtonGridResize => {
                 let phase = ((elapsed / Self::BENCH_DURATION_S) * 2.0).fract() as f32;
                 let triangle = if phase <= 0.5 {
@@ -225,7 +229,10 @@ impl DesktopAutomationRoot {
         let started_at = self.started_at.unwrap_or_else(|| ctx.current_time());
         let elapsed = (ctx.current_time() - started_at).max(0.0);
         let next_bounds = self.target_bounds_for_elapsed(elapsed);
-        if self.workspace.set_view_bounds(self.target_view_id, next_bounds) {
+        if self
+            .workspace
+            .set_view_bounds(self.target_view_id, next_bounds)
+        {
             request_window_refresh(ctx, true);
         }
         self.report_progress(ctx, false);
@@ -248,9 +255,7 @@ impl Widget for DesktopAutomationRoot {
                 | WindowEvent::Resized(_)
                 | WindowEvent::Focused(_)
                 | WindowEvent::ScaleFactorChanged { .. },
-            )
-                if self.mode.is_some() && self.timer.is_none() =>
-            {
+            ) if self.mode.is_some() && self.timer.is_none() => {
                 self.ensure_started(ctx);
             }
             Event::Wake(WakeEvent::Timer { token, .. })
@@ -323,23 +328,27 @@ impl ViewSidebar {
             return String::new();
         };
         match target.kind {
-            SidebarActionKind::Visibility => {
-                if view.visible { "Hide" } else { "Show" }.to_string()
+            SidebarActionKind::Visibility => if view.visible { "Hide" } else { "Show" }.to_string(),
+            SidebarActionKind::Maximize => if view.maximized {
+                "Restore"
+            } else {
+                "Maximize"
             }
-            SidebarActionKind::Maximize => {
-                if view.maximized { "Restore" } else { "Maximize" }.to_string()
-            }
+            .to_string(),
         }
     }
 
     fn apply_action(&mut self, target: SidebarActionTarget) -> bool {
         match target.kind {
-            SidebarActionKind::Visibility => self.workspace.toggle_view_visible(target.view_id).is_some(),
+            SidebarActionKind::Visibility => {
+                self.workspace.toggle_view_visible(target.view_id).is_some()
+            }
             SidebarActionKind::Maximize => {
                 let Some(view) = self.workspace.snapshot(target.view_id) else {
                     return false;
                 };
-                self.workspace.set_view_maximized(target.view_id, !view.maximized)
+                self.workspace
+                    .set_view_maximized(target.view_id, !view.maximized)
             }
         }
     }
@@ -453,7 +462,8 @@ impl Widget for ViewSidebar {
         self.rows.clear();
         let mut y = bounds.y() + 72.0;
         for view in self.workspace.snapshots() {
-            let row_bounds = Rect::new(bounds.x() + 16.0, y, (bounds.width() - 32.0).max(0.0), 44.0);
+            let row_bounds =
+                Rect::new(bounds.x() + 16.0, y, (bounds.width() - 32.0).max(0.0), 44.0);
             let maximize_width = 74.0;
             let visibility_width = 60.0;
             let gap = 8.0;
@@ -486,12 +496,22 @@ impl Widget for ViewSidebar {
 
         ctx.fill_bounds(Color::rgba(0.965, 0.972, 0.985, 1.0));
         ctx.stroke_rect(
-            Rect::new(ctx.bounds().max_x() - 1.0, ctx.bounds().y(), 1.0, ctx.bounds().height()),
+            Rect::new(
+                ctx.bounds().max_x() - 1.0,
+                ctx.bounds().y(),
+                1.0,
+                ctx.bounds().height(),
+            ),
             palette.border,
             border.clone(),
         );
         ctx.draw_text(
-            Rect::new(ctx.bounds().x() + 16.0, ctx.bounds().y() + 16.0, ctx.bounds().width() - 32.0, 22.0),
+            Rect::new(
+                ctx.bounds().x() + 16.0,
+                ctx.bounds().y() + 16.0,
+                ctx.bounds().width() - 32.0,
+                22.0,
+            ),
             SIDEBAR_TITLE,
             TextStyle {
                 font_size: 18.0,
@@ -501,7 +521,12 @@ impl Widget for ViewSidebar {
             },
         );
         ctx.draw_text(
-            Rect::new(ctx.bounds().x() + 16.0, ctx.bounds().y() + 40.0, ctx.bounds().width() - 32.0, 20.0),
+            Rect::new(
+                ctx.bounds().x() + 16.0,
+                ctx.bounds().y() + 40.0,
+                ctx.bounds().width() - 32.0,
+                20.0,
+            ),
             "Show, hide, or maximize each floating tool view.",
             TextStyle {
                 font_size: 12.0,
@@ -515,16 +540,27 @@ impl Widget for ViewSidebar {
             let Some(view) = self.workspace.snapshot(row.view_id) else {
                 continue;
             };
-            let hovered_row = self.hovered.is_some_and(|target| target.view_id == row.view_id);
+            let hovered_row = self
+                .hovered
+                .is_some_and(|target| target.view_id == row.view_id);
             let row_fill = if hovered_row {
                 Color::rgba(0.90, 0.93, 0.98, 1.0)
             } else {
                 palette.surface.with_alpha(0.72)
             };
             ctx.fill_rect(row.row_bounds, row_fill);
-            ctx.stroke_rect(row.row_bounds, palette.border.with_alpha(0.7), border.clone());
+            ctx.stroke_rect(
+                row.row_bounds,
+                palette.border.with_alpha(0.7),
+                border.clone(),
+            );
             ctx.draw_text(
-                Rect::new(row.row_bounds.x() + 12.0, row.row_bounds.y() + 11.0, (row.row_bounds.width() - 166.0).max(0.0), 20.0),
+                Rect::new(
+                    row.row_bounds.x() + 12.0,
+                    row.row_bounds.y() + 11.0,
+                    (row.row_bounds.width() - 166.0).max(0.0),
+                    20.0,
+                ),
                 view.title,
                 TextStyle {
                     font_size: 13.0,
@@ -554,7 +590,8 @@ impl Widget for ViewSidebar {
                 };
                 let hovered = self.hovered == Some(target);
                 let pressed = self.pressed == Some(target);
-                let is_primary = matches!(target.kind, SidebarActionKind::Maximize) && view.maximized;
+                let is_primary =
+                    matches!(target.kind, SidebarActionKind::Maximize) && view.maximized;
                 let fill = if pressed {
                     Color::rgba(0.80, 0.85, 0.93, 1.0)
                 } else if hovered {
@@ -572,7 +609,12 @@ impl Widget for ViewSidebar {
                 ctx.fill_rect(bounds, fill);
                 ctx.stroke_rect(bounds, stroke_color, border.clone());
                 ctx.draw_text(
-                    Rect::new(bounds.x() + 10.0, bounds.y() + 7.0, bounds.width() - 20.0, bounds.height() - 14.0),
+                    Rect::new(
+                        bounds.x() + 10.0,
+                        bounds.y() + 7.0,
+                        bounds.width() - 20.0,
+                        bounds.height() - 14.0,
+                    ),
                     self.button_label(target),
                     TextStyle {
                         font_size: 11.0,
@@ -724,20 +766,57 @@ fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
     };
 
     vec![
-        format!("Requested mode: {:?}", diagnostics.requested_color_management_mode),
-        format!("Requested primaries: {:?}", diagnostics.requested_output_primaries),
-        format!("Requested dynamic range: {:?}", diagnostics.requested_dynamic_range_mode),
-        format!("Requested tone mapping: {:?}", diagnostics.requested_tone_mapping_mode),
-        format!("Detected primaries: {:?}", diagnostics.display_capabilities.preferred_primaries),
-        format!("Detected dynamic range: {:?}", diagnostics.display_capabilities.preferred_dynamic_range),
-        format!("Wide gamut: {} | HDR: {} | Native HDR: {}",
+        format!(
+            "Requested mode: {:?}",
+            diagnostics.requested_color_management_mode
+        ),
+        format!(
+            "Requested primaries: {:?}",
+            diagnostics.requested_output_primaries
+        ),
+        format!(
+            "Requested dynamic range: {:?}",
+            diagnostics.requested_dynamic_range_mode
+        ),
+        format!(
+            "Requested tone mapping: {:?}",
+            diagnostics.requested_tone_mapping_mode
+        ),
+        format!(
+            "Detected primaries: {:?}",
+            diagnostics.display_capabilities.preferred_primaries
+        ),
+        format!(
+            "Detected dynamic range: {:?}",
+            diagnostics.display_capabilities.preferred_dynamic_range
+        ),
+        format!(
+            "Wide gamut: {} | HDR: {} | Native HDR: {}",
             diagnostics.display_capabilities.supports_wide_gamut,
             diagnostics.display_capabilities.supports_hdr,
-            diagnostics.display_capabilities.native_hdr_presentation_supported,
+            diagnostics
+                .display_capabilities
+                .native_hdr_presentation_supported,
         ),
         format!("Active strategy: {:?}", diagnostics.active_output_strategy),
         diagnostics.display_capabilities.notes,
     ]
+}
+
+fn labeled_settings_control<W>(label: &'static str, width: f32, control: W) -> impl Widget
+where
+    W: Widget + 'static,
+{
+    Stack::vertical()
+        .spacing(6.0)
+        .alignment(Alignment::Start)
+        .with_child(
+            Label::new(label)
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.20, 0.27, 0.35, 1.0)),
+        )
+        .with_child(SizedBox::new().width(width).with_child(control))
 }
 
 struct OutputDiagnosticsPanel;
@@ -746,7 +825,11 @@ impl Widget for OutputDiagnosticsPanel {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.clamp(Size::new(
             constraints.max.width.min(640.0),
-            if constraints.max.height.is_finite() { 200.0 } else { 200.0 },
+            if constraints.max.height.is_finite() {
+                200.0
+            } else {
+                200.0
+            },
         ))
     }
 
@@ -757,7 +840,12 @@ impl Widget for OutputDiagnosticsPanel {
         ctx.stroke_rect(ctx.bounds(), palette.border.with_alpha(0.85), border);
 
         ctx.draw_text(
-            Rect::new(ctx.bounds().x() + 14.0, ctx.bounds().y() + 12.0, ctx.bounds().width() - 28.0, 20.0),
+            Rect::new(
+                ctx.bounds().x() + 14.0,
+                ctx.bounds().y() + 12.0,
+                ctx.bounds().width() - 28.0,
+                20.0,
+            ),
             OUTPUT_DIAGNOSTICS_TITLE,
             TextStyle {
                 font_size: 14.0,
@@ -963,17 +1051,17 @@ impl RenderSettingsTab {
                                 }),
                         ),
                     )
-                    .with_child(
-                        SizedBox::new().width(280.0).with_child(
-                            Select::new(TEXT_RENDER_POLICY_NAME)
-                                .options(TEXT_RENDER_POLICY_OPTIONS)
-                                .selected(text_render_policy_selected_index(initial.text_render_policy))
-                                .on_change(move |index, _| {
-                                    let mut state = text_policy_state.borrow_mut();
-                                    update_text_render_policy_selection(&mut state, index);
-                                }),
-                        ),
-                    )
+                    .with_child(labeled_settings_control(
+                        TEXT_RENDER_POLICY_NAME,
+                        280.0,
+                        Select::new(TEXT_RENDER_POLICY_NAME)
+                            .options(TEXT_RENDER_POLICY_OPTIONS)
+                            .selected(text_render_policy_selected_index(initial.text_render_policy))
+                            .on_change(move |index, _| {
+                                let mut state = text_policy_state.borrow_mut();
+                                update_text_render_policy_selection(&mut state, index);
+                            }),
+                    ))
                     .with_child(
                         SizedBox::new().width(220.0).with_child(
                             NumberInput::new(TEXT_RENDER_GAMMA_NAME)
@@ -1099,50 +1187,50 @@ impl RenderSettingsTab {
                                 }),
                         ),
                     )
-                    .with_child(
-                        SizedBox::new().width(280.0).with_child(
-                            Select::new(COLOR_MANAGEMENT_MODE_NAME)
-                                .options(COLOR_MANAGEMENT_MODE_OPTIONS)
-                                .selected(color_management_mode_selected_index(initial.color_management_mode))
-                                .on_change(move |index, _| {
-                                    let mut state = color_management_state.borrow_mut();
-                                    update_color_management_mode_selection(&mut state, index);
-                                }),
-                        ),
-                    )
-                    .with_child(
-                        SizedBox::new().width(240.0).with_child(
-                            Select::new(OUTPUT_PRIMARIES_NAME)
-                                .options(OUTPUT_PRIMARIES_OPTIONS)
-                                .selected(output_primaries_selected_index(initial.output_color_primaries))
-                                .on_change(move |index, _| {
-                                    let mut state = output_primaries_state.borrow_mut();
-                                    update_output_primaries_selection(&mut state, index);
-                                }),
-                        ),
-                    )
-                    .with_child(
-                        SizedBox::new().width(240.0).with_child(
-                            Select::new(DYNAMIC_RANGE_MODE_NAME)
-                                .options(DYNAMIC_RANGE_MODE_OPTIONS)
-                                .selected(dynamic_range_mode_selected_index(initial.dynamic_range_mode))
-                                .on_change(move |index, _| {
-                                    let mut state = dynamic_range_state.borrow_mut();
-                                    update_dynamic_range_mode_selection(&mut state, index);
-                                }),
-                        ),
-                    )
-                    .with_child(
-                        SizedBox::new().width(240.0).with_child(
-                            Select::new(TONE_MAPPING_MODE_NAME)
-                                .options(TONE_MAPPING_MODE_OPTIONS)
-                                .selected(tone_mapping_mode_selected_index(initial.tone_mapping_mode))
-                                .on_change(move |index, _| {
-                                    let mut state = tone_mapping_state.borrow_mut();
-                                    update_tone_mapping_mode_selection(&mut state, index);
-                                }),
-                        ),
-                    )
+                    .with_child(labeled_settings_control(
+                        COLOR_MANAGEMENT_MODE_NAME,
+                        280.0,
+                        Select::new(COLOR_MANAGEMENT_MODE_NAME)
+                            .options(COLOR_MANAGEMENT_MODE_OPTIONS)
+                            .selected(color_management_mode_selected_index(initial.color_management_mode))
+                            .on_change(move |index, _| {
+                                let mut state = color_management_state.borrow_mut();
+                                update_color_management_mode_selection(&mut state, index);
+                            }),
+                    ))
+                    .with_child(labeled_settings_control(
+                        OUTPUT_PRIMARIES_NAME,
+                        240.0,
+                        Select::new(OUTPUT_PRIMARIES_NAME)
+                            .options(OUTPUT_PRIMARIES_OPTIONS)
+                            .selected(output_primaries_selected_index(initial.output_color_primaries))
+                            .on_change(move |index, _| {
+                                let mut state = output_primaries_state.borrow_mut();
+                                update_output_primaries_selection(&mut state, index);
+                            }),
+                    ))
+                    .with_child(labeled_settings_control(
+                        DYNAMIC_RANGE_MODE_NAME,
+                        240.0,
+                        Select::new(DYNAMIC_RANGE_MODE_NAME)
+                            .options(DYNAMIC_RANGE_MODE_OPTIONS)
+                            .selected(dynamic_range_mode_selected_index(initial.dynamic_range_mode))
+                            .on_change(move |index, _| {
+                                let mut state = dynamic_range_state.borrow_mut();
+                                update_dynamic_range_mode_selection(&mut state, index);
+                            }),
+                    ))
+                    .with_child(labeled_settings_control(
+                        TONE_MAPPING_MODE_NAME,
+                        240.0,
+                        Select::new(TONE_MAPPING_MODE_NAME)
+                            .options(TONE_MAPPING_MODE_OPTIONS)
+                            .selected(tone_mapping_mode_selected_index(initial.tone_mapping_mode))
+                            .on_change(move |index, _| {
+                                let mut state = tone_mapping_state.borrow_mut();
+                                update_tone_mapping_mode_selection(&mut state, index);
+                            }),
+                    ))
                     .with_child(OutputDiagnosticsPanel)
                     .with_child(
                         Label::new(
@@ -1240,9 +1328,12 @@ pub fn build_dev_workspace_with_widget_book_bounds(
         build_button_grid_benchmark(),
     );
     views.push_view(
-        FloatingViewConfig::new(RETAINED_TEXT_TAB_LABEL, Rect::new(860.0, 420.0, 360.0, 260.0))
-            .min_size(Size::new(320.0, 260.0))
-            .visible(false),
+        FloatingViewConfig::new(
+            RETAINED_TEXT_TAB_LABEL,
+            Rect::new(860.0, 420.0, 360.0, 260.0),
+        )
+        .min_size(Size::new(320.0, 260.0))
+        .visible(false),
         build_retained_text_benchmark(),
     );
     views.push_view(
@@ -1255,16 +1346,30 @@ pub fn build_dev_workspace_with_widget_book_bounds(
         build_text_rendering_comparison_surface(),
     );
     views.push_view(
-        FloatingViewConfig::new(TEXT_VALIDATION_TAB_LABEL, Rect::new(720.0, 72.0, 460.0, 380.0))
-            .min_size(Size::new(360.0, 280.0))
-            .visible(false),
+        FloatingViewConfig::new(
+            TEXT_VALIDATION_TAB_LABEL,
+            Rect::new(720.0, 72.0, 460.0, 380.0),
+        )
+        .min_size(Size::new(360.0, 280.0))
+        .visible(false),
         build_text_validation_surface(),
     );
     views.push_view(
-        FloatingViewConfig::new(TEXT_EDITING_TAB_LABEL, Rect::new(720.0, 470.0, 520.0, 360.0))
-            .min_size(Size::new(420.0, 300.0))
-            .visible(false),
+        FloatingViewConfig::new(
+            TEXT_EDITING_TAB_LABEL,
+            Rect::new(720.0, 470.0, 520.0, 360.0),
+        )
+        .min_size(Size::new(420.0, 300.0))
+        .visible(false),
         build_text_editing_benchmark(),
+    );
+    views.push_view(
+        FloatingViewConfig::new(
+            HDR_VALIDATION_TAB_LABEL,
+            Rect::new(980.0, 120.0, 620.0, 520.0),
+        )
+        .min_size(Size::new(460.0, 320.0)),
+        build_color_validation_surface(),
     );
     views.push_view(
         FloatingViewConfig::new(SETTINGS_TAB_LABEL, Rect::new(420.0, 440.0, 420.0, 320.0))
@@ -1325,29 +1430,58 @@ pub fn build_dev_application() -> Application {
     build_dev_application_with_widget_book_bounds(Rect::new(24.0, 24.0, 680.0, 760.0))
 }
 
-pub fn build_dev_application_with_automation(automation: Option<DesktopAutomationMode>) -> Application {
+pub fn build_dev_application_with_automation(
+    automation: Option<DesktopAutomationMode>,
+) -> Application {
     build_dev_application_with_widget_book_bounds_and_automation(
         Rect::new(24.0, 24.0, 680.0, 760.0),
         automation,
     )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::{thread, time::Duration};
+    use std::{
+        path::PathBuf,
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
 
     use sui::{
-        Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        Result, SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, StackOrderPolicy,
-        WindowEvent, WindowPerformanceSnapshot, Vector, set_window_scene_statistics_detail_mode,
-        window_performance_snapshot, window_scene_statistics_detail_mode,
+        Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
+        SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, StackOrderPolicy, Vector,
+        WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
+        WindowRenderOptions, WindowToneMappingMode, WindowEvent, WindowPerformanceSnapshot,
+        set_window_scene_statistics_detail_mode, window_performance_snapshot,
+        window_scene_statistics_detail_mode,
     };
-    use sui_testing::{Screenshot, TestApp, TestWindow, WindowSnapshot};
+    use sui_render_wgpu::{
+        DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
+        DebugSdrVisualization,
+    };
+    use sui_testing::{
+        Screenshot, TestApp, TestWindow, WindowSnapshot, hdr_clip_mask, hdr_headroom_heatmap,
+        hdr_luminance_heatmap, write_hdr_exr,
+    };
 
     const FRONTING_TEST_TITLE: &str = "Fronting test";
+
+    fn unique_debug_artifact_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time is after unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "sui-hdr-debug-{}-{}-{}",
+            std::process::id(),
+            nonce,
+            name
+        ));
+        std::fs::create_dir_all(&dir).expect("temporary HDR debug directory created");
+        dir
+    }
 
     struct SolidFill {
         color: Color,
@@ -1390,15 +1524,13 @@ mod tests {
             .min_second(420.0)
             .divider_thickness(12.0);
 
-        Application::new().window(
-            WindowBuilder::new()
-                .title(FRONTING_TEST_TITLE)
-                .root(LivePerformanceRoot::new(
-                    FRONTING_TEST_TITLE,
-                    "Floating workspace fronting regression.",
-                    root,
-                )),
-        )
+        Application::new().window(WindowBuilder::new().title(FRONTING_TEST_TITLE).root(
+            LivePerformanceRoot::new(
+                FRONTING_TEST_TITLE,
+                "Floating workspace fronting regression.",
+                root,
+            ),
+        ))
     }
 
     #[test]
@@ -1410,13 +1542,27 @@ mod tests {
         let window = app.main_window()?;
 
         let initial_snapshot = window.snapshot()?;
-        let initial_view = find_named_node(&initial_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
-        let resize_start = Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
-        let resize_end = Point::new(initial_view.bounds.x() + 420.0, initial_view.bounds.y() + 328.0);
+        let initial_view = find_named_node(
+            &initial_snapshot,
+            SemanticsRole::Window,
+            WIDGET_BOOK_TAB_LABEL,
+        );
+        let resize_start = Point::new(
+            initial_view.bounds.max_x() - 8.0,
+            initial_view.bounds.max_y() - 8.0,
+        );
+        let resize_end = Point::new(
+            initial_view.bounds.x() + 420.0,
+            initial_view.bounds.y() + 328.0,
+        );
         drag_pointer(&window, resize_start, resize_end)?;
 
         let before_snapshot = window.snapshot()?;
-        let view = find_named_node(&before_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
+        let view = find_named_node(
+            &before_snapshot,
+            SemanticsRole::Window,
+            WIDGET_BOOK_TAB_LABEL,
+        );
         assert!(
             view.bounds.width() <= 440.0,
             "expected the widget book floating view to shrink horizontally for the regression, before={:?} after={:?}",
@@ -1465,8 +1611,7 @@ mod tests {
             ))?;
             let diff_count = pixel_diff_count(&before_crop, &after_crop);
             assert_eq!(
-                diff_count,
-                0,
+                diff_count, 0,
                 "scrolling inside the shrunken widget book view changed pixels outside the view bounds in probe {:?}",
                 probe,
             );
@@ -1513,8 +1658,14 @@ mod tests {
         let after_frame = window.capture_screenshot()?;
         let after_pixel = sample_pixel(&after_frame, overlap_probe, &after_snapshot)?;
 
-        assert_ne!(before_pixel, after_pixel, "expected overlap pixel to change after fronting");
-        assert!(after_pixel[0] > after_pixel[1], "expected first view color to be frontmost after click, pixel={after_pixel:?}");
+        assert_ne!(
+            before_pixel, after_pixel,
+            "expected overlap pixel to change after fronting"
+        );
+        assert!(
+            after_pixel[0] > after_pixel[1],
+            "expected first view color to be frontmost after click, pixel={after_pixel:?}"
+        );
         Ok(())
     }
 
@@ -1540,7 +1691,10 @@ mod tests {
 
         let drag_start = Point::new(first_view.bounds.x() + 32.0, first_view.bounds.y() + 18.0);
         let drag_end = Point::new(drag_start.x + 24.0, drag_start.y + 8.0);
-        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, drag_start)))?;
+        root.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            drag_start,
+        )))?;
 
         let mut down = PointerEvent::new(PointerEventKind::Down, drag_start);
         down.button = Some(PointerButton::Primary);
@@ -1559,7 +1713,10 @@ mod tests {
             .iter()
             .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
             .expect("focus-fronted host should be present during drag");
-        assert_eq!(during_drag_host.surfaces.last().copied(), Some(first_surface));
+        assert_eq!(
+            during_drag_host.surfaces.last().copied(),
+            Some(first_surface)
+        );
         let during_drag_frame = window.capture_screenshot()?;
         let during_drag_pixel =
             sample_pixel(&during_drag_frame, overlap_probe, &during_drag_snapshot)?;
@@ -1582,15 +1739,28 @@ mod tests {
         let after_frame = window.capture_screenshot()?;
         let after_pixel = sample_pixel(&after_frame, overlap_probe, &after_snapshot)?;
 
-        assert_ne!(before_pixel, during_drag_pixel, "expected overlap pixel to change while dragging a fronted view");
-        assert!(during_drag_pixel[0] > during_drag_pixel[1], "expected dragged first view color to be frontmost during drag, pixel={during_drag_pixel:?}");
-        assert_ne!(before_pixel, after_pixel, "expected overlap pixel to stay changed after dragging a fronted view");
-        assert!(after_pixel[0] > after_pixel[1], "expected dragged first view color to remain frontmost, pixel={after_pixel:?}");
+        assert_ne!(
+            before_pixel, during_drag_pixel,
+            "expected overlap pixel to change while dragging a fronted view"
+        );
+        assert!(
+            during_drag_pixel[0] > during_drag_pixel[1],
+            "expected dragged first view color to be frontmost during drag, pixel={during_drag_pixel:?}"
+        );
+        assert_ne!(
+            before_pixel, after_pixel,
+            "expected overlap pixel to stay changed after dragging a fronted view"
+        );
+        assert!(
+            after_pixel[0] > after_pixel[1],
+            "expected dragged first view color to remain frontmost, pixel={after_pixel:?}"
+        );
         Ok(())
     }
 
     #[test]
-    fn widget_book_image_and_swatch_stories_do_not_leak_outside_shrunken_floating_view() -> Result<()> {
+    fn widget_book_image_and_swatch_stories_do_not_leak_outside_shrunken_floating_view()
+    -> Result<()> {
         let initial_bounds = Rect::new(320.0, 28.0, 560.0, 520.0);
         let app = TestApp::new(move || {
             build_dev_application_with_widget_book_bounds(initial_bounds).build()
@@ -1598,9 +1768,19 @@ mod tests {
         let window = app.main_window()?;
 
         let initial_snapshot = window.snapshot()?;
-        let initial_view = find_named_node(&initial_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
-        let resize_start = Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
-        let resize_end = Point::new(initial_view.bounds.x() + 420.0, initial_view.bounds.y() + 328.0);
+        let initial_view = find_named_node(
+            &initial_snapshot,
+            SemanticsRole::Window,
+            WIDGET_BOOK_TAB_LABEL,
+        );
+        let resize_start = Point::new(
+            initial_view.bounds.max_x() - 8.0,
+            initial_view.bounds.max_y() - 8.0,
+        );
+        let resize_end = Point::new(
+            initial_view.bounds.x() + 420.0,
+            initial_view.bounds.y() + 328.0,
+        );
         drag_pointer(&window, resize_start, resize_end)?;
 
         assert_story_exit_does_not_repaint_outside_view(
@@ -1623,7 +1803,8 @@ mod tests {
         let window = app.main_window()?;
 
         let before_snapshot = window.snapshot()?;
-        let settings_view = find_named_node(&before_snapshot, SemanticsRole::Window, SETTINGS_TAB_LABEL);
+        let settings_view =
+            find_named_node(&before_snapshot, SemanticsRole::Window, SETTINGS_TAB_LABEL);
         let settings_scroll = find_named_node(
             &before_snapshot,
             SemanticsRole::ScrollView,
@@ -1686,11 +1867,217 @@ mod tests {
             ))?;
             let diff_count = pixel_diff_count(&before_crop, &after_crop);
             assert_eq!(
-                diff_count,
-                0,
+                diff_count, 0,
                 "scrolling the settings view changed pixels outside the floating bounds in probe {:?}",
                 probe,
             );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn hdr_validation_view_is_present_in_dev_workspace() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        window
+            .get_by_role(SemanticsRole::Window)
+            .with_name(HDR_VALIDATION_TAB_LABEL)
+            .expect()
+            .to_be_visible()?;
+        Ok(())
+    }
+
+    #[test]
+    fn hdr_validation_surface_debug_capture_exports_intermediate_artifacts() -> Result<()> {
+        let options = WindowRenderOptions::new(true, 1.0)
+            .with_color_management_mode(WindowColorManagementMode::PreferHdr)
+            .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
+            .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
+            .with_tone_mapping_mode(WindowToneMappingMode::Automatic);
+        let app = TestApp::new_visible_no_vsync(move || {
+            sui_widget_book::build_color_validation_application()
+                .with_window_render_options(options)
+        })?;
+        let window = app.main_window()?;
+        let artifact = window.capture_debug_frame(DebugCaptureRequest {
+            stage: DebugCaptureStage::HdrIntermediate,
+            encoding: DebugCaptureEncoding::Exr,
+            sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+        })?;
+        let DebugCaptureArtifact::HdrLinearRgbaF32(image) = artifact else {
+            panic!("expected HDR debug capture artifact");
+        };
+
+        let max_channel = image
+            .pixels()
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        let artifact_dir = unique_debug_artifact_dir("color-validation");
+        write_hdr_exr(&image, artifact_dir.join("hdr-intermediate.exr"))?;
+        hdr_luminance_heatmap(&image)?.write_png(artifact_dir.join("luminance-map.png"))?;
+        hdr_headroom_heatmap(&image, 1.0)?.write_png(artifact_dir.join("headroom-map.png"))?;
+        hdr_clip_mask(&image, 1.0)?.write_png(artifact_dir.join("clip-mask.png"))?;
+
+        let diagnostics = window_output_diagnostics(window.id())
+            .expect("output diagnostics should be published for visible HDR debug capture");
+        std::fs::write(
+            artifact_dir.join("output-diagnostics.txt"),
+            format!(
+                "supports_hdr={}
+native_hdr_presentation_supported={}
+preferred_dynamic_range={:?}
+requested_color_management_mode={:?}
+requested_output_primaries={:?}
+requested_dynamic_range_mode={:?}
+requested_tone_mapping_mode={:?}
+active_output_strategy={:?}
+notes={}
+",
+                diagnostics.display_capabilities.supports_hdr,
+                diagnostics.display_capabilities.native_hdr_presentation_supported,
+                diagnostics.display_capabilities.preferred_dynamic_range,
+                diagnostics.requested_color_management_mode,
+                diagnostics.requested_output_primaries,
+                diagnostics.requested_dynamic_range_mode,
+                diagnostics.requested_tone_mapping_mode,
+                diagnostics.active_output_strategy,
+                diagnostics.display_capabilities.notes,
+            ),
+        )
+        .expect("write output diagnostics artifact");
+
+        let final_artifact = window.capture_debug_frame(DebugCaptureRequest {
+            stage: DebugCaptureStage::FinalComposed,
+            encoding: DebugCaptureEncoding::Exr,
+            sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+        })?;
+        let intermediate_max_channel = max_channel;
+        let intermediate_max_luminance = image
+            .pixels()
+            .chunks_exact(4)
+            .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let (final_max_channel, final_max_luminance, final_artifact_kind) = match final_artifact {
+            DebugCaptureArtifact::HdrLinearRgbaF32(final_image) => {
+                write_hdr_exr(&final_image, artifact_dir.join("final-composed.exr"))?;
+                hdr_luminance_heatmap(&final_image)?
+                    .write_png(artifact_dir.join("final-luminance-map.png"))?;
+                let max_channel = final_image
+                    .pixels()
+                    .iter()
+                    .copied()
+                    .fold(f32::NEG_INFINITY, f32::max);
+                let max_luminance = final_image
+                    .pixels()
+                    .chunks_exact(4)
+                    .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
+                    .fold(f32::NEG_INFINITY, f32::max);
+                (max_channel, max_luminance, "hdr")
+            }
+            DebugCaptureArtifact::SdrRgba8(final_image) => {
+                Screenshot::new(
+                    final_image.width(),
+                    final_image.height(),
+                    final_image.into_pixels(),
+                )?
+                .write_png(artifact_dir.join("final-composed.png"))?;
+                (1.0, 1.0, "sdr")
+            }
+        };
+        std::fs::write(
+            artifact_dir.join("capture-metrics.txt"),
+            format!(
+                "intermediate_max_channel={intermediate_max_channel}
+intermediate_max_luminance={intermediate_max_luminance}
+final_artifact_kind={final_artifact_kind}
+final_max_channel={final_max_channel}
+final_max_luminance={final_max_luminance}
+"
+            ),
+        )
+        .expect("write capture metrics artifact");
+
+        assert!(artifact_dir.join("hdr-intermediate.exr").exists());
+        assert!(artifact_dir.join("luminance-map.png").exists());
+        assert!(artifact_dir.join("headroom-map.png").exists());
+        assert!(artifact_dir.join("clip-mask.png").exists());
+        assert!(artifact_dir.join("output-diagnostics.txt").exists());
+        assert!(artifact_dir.join("capture-metrics.txt").exists());
+        assert!(
+            artifact_dir.join("final-composed.exr").exists()
+                || artifact_dir.join("final-composed.png").exists()
+        );
+        assert!(
+            max_channel > 1.0,
+            "expected HDR validation surface to emit >1.0 scene-linear values, got max_channel={max_channel}; artifacts at {}",
+            artifact_dir.display()
+        );
+        assert!(
+            final_max_channel >= 1.0,
+            "expected final composed capture to remain valid, got final_max_channel={final_max_channel}; artifacts at {}",
+            artifact_dir.display()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn hdr_validation_surface_scroll_reveals_overbright_hdr_probes() -> Result<()> {
+        let options = WindowRenderOptions::new(true, 1.0)
+            .with_color_management_mode(WindowColorManagementMode::PreferHdr)
+            .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
+            .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
+            .with_tone_mapping_mode(WindowToneMappingMode::Automatic);
+        let app = TestApp::new_visible_no_vsync(move || {
+            sui_widget_book::build_color_validation_application()
+                .with_window_render_options(options)
+        })?;
+        let window = app.main_window()?;
+        let scroll = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(sui_widget_book::COLOR_VALIDATION_SCROLL_NAME);
+        scroll.scroll_pixels(Vector::new(0.0, -900.0))?;
+
+        let artifact = window.capture_debug_frame(DebugCaptureRequest {
+            stage: DebugCaptureStage::HdrIntermediate,
+            encoding: DebugCaptureEncoding::Exr,
+            sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+        })?;
+        let DebugCaptureArtifact::HdrLinearRgbaF32(image) = artifact else {
+            panic!("expected HDR debug capture artifact after scrolling");
+        };
+
+        let max_luminance = image
+            .pixels()
+            .chunks_exact(4)
+            .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        assert!(
+            max_luminance > 1.0,
+            "expected scrolled HDR validation surface to expose overbright probes, got max_luminance={max_luminance}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn settings_view_exposes_visible_labels_for_render_selectors() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        let settings = window
+            .get_by_role(SemanticsRole::Window)
+            .with_name(SETTINGS_TAB_LABEL);
+
+        for label in [
+            TEXT_RENDER_POLICY_NAME,
+            COLOR_MANAGEMENT_MODE_NAME,
+            OUTPUT_PRIMARIES_NAME,
+            DYNAMIC_RANGE_MODE_NAME,
+            TONE_MAPPING_MODE_NAME,
+        ] {
+            settings.get_by_text(label).expect().to_be_visible()?;
         }
 
         Ok(())
@@ -1757,7 +2144,10 @@ mod tests {
     fn click_pointer(window: &TestWindow, position: Point) -> Result<()> {
         let root = window.root();
 
-        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, position)))?;
+        root.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            position,
+        )))?;
 
         let mut down = PointerEvent::new(PointerEventKind::Down, position);
         down.button = Some(PointerButton::Primary);
@@ -1772,7 +2162,10 @@ mod tests {
     fn scroll_pointer(window: &TestWindow, position: Point, delta: Vector) -> Result<()> {
         let root = window.root();
 
-        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, position)))?;
+        root.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            position,
+        )))?;
 
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, position);
         scroll.scroll_delta = Some(sui::ScrollDelta::Pixels(delta));
@@ -1789,7 +2182,10 @@ mod tests {
 
         let root = window.root();
 
-        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, from)))?;
+        root.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            from,
+        )))?;
 
         let mut down = PointerEvent::new(PointerEventKind::Down, from);
         down.button = Some(PointerButton::Primary);
@@ -1815,11 +2211,14 @@ mod tests {
 
         let mut up = PointerEvent::new(PointerEventKind::Up, to);
         up.button = Some(PointerButton::Primary);
-        root.dispatch_event(Event::Pointer(up))
-            .map(|_| samples)
+        root.dispatch_event(Event::Pointer(up)).map(|_| samples)
     }
 
-    fn find_named_node(snapshot: &WindowSnapshot, role: SemanticsRole, name: &str) -> SemanticsNode {
+    fn find_named_node(
+        snapshot: &WindowSnapshot,
+        role: SemanticsRole,
+        name: &str,
+    ) -> SemanticsNode {
         let matches = snapshot
             .accessibility
             .nodes
@@ -1851,10 +2250,15 @@ mod tests {
         set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
 
         let initial_snapshot = window.snapshot()?;
-        let initial_view =
-            find_named_node(&initial_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
-        let resize_start =
-            Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
+        let initial_view = find_named_node(
+            &initial_snapshot,
+            SemanticsRole::Window,
+            BUTTON_GRID_TAB_LABEL,
+        );
+        let resize_start = Point::new(
+            initial_view.bounds.max_x() - 8.0,
+            initial_view.bounds.max_y() - 8.0,
+        );
         let resize_end = Point::new(
             initial_view.bounds.x() + 760.0,
             initial_view.bounds.y() + 560.0,
@@ -1872,7 +2276,11 @@ mod tests {
         );
 
         let after_snapshot = window.snapshot()?;
-        let resized_view = find_named_node(&after_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
+        let resized_view = find_named_node(
+            &after_snapshot,
+            SemanticsRole::Window,
+            BUTTON_GRID_TAB_LABEL,
+        );
         assert!(
             resized_view.bounds.width() > initial_view.bounds.width(),
             "expected the 64-button view to grow during the resize benchmark, before={:?} after={:?}",
@@ -1940,25 +2348,37 @@ mod tests {
         let avg_packet_rebuild_coordinate_space = measured_samples
             .iter()
             .map(|sample| {
-                sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_coordinate_space_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_signature = measured_samples
             .iter()
             .map(|sample| {
-                sample.renderer_submission.retained_packet_rebuild_signature_count as f64
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_signature_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_scene = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_scene_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_state = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_state_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_surface_acquire_ms = measured_samples
@@ -2029,24 +2449,39 @@ mod tests {
 
         println!("\n=== SUI Dev 64-Button Resize Benchmark ===");
         println!("frames measured:  {valid_count}");
-        println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!(
+            "avg frame time:   {avg_ms:.3} ms ({:.0} fps)",
+            1000.0 / avg_ms
+        );
         println!("min frame time:   {min_ms:.3} ms");
         println!("max frame time:   {max_ms:.3} ms");
-        println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!(
+            "p95 frame time:   {p95_ms:.3} ms ({:.0} fps)",
+            1000.0 / p95_ms
+        );
         println!("avg scene cmds:   {avg_scene_commands:.2} ({avg_text_commands:.2} text)");
         println!("avg draws:        {avg_draws:.2}");
         println!("avg vertex bytes: {:.0}", avg_uploaded_vertex_bytes);
-        println!("avg text bytes:   {:.0} ({avg_glyph_instances:.2} glyphs)", avg_text_vertex_bytes);
+        println!(
+            "avg text bytes:   {:.0} ({avg_glyph_instances:.2} glyphs)",
+            avg_text_vertex_bytes
+        );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
         println!("avg state update:  {avg_state_update_ms:.3} ms");
-        println!("avg packet build: {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
+        println!(
+            "avg packet build: {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)"
+        );
         println!(
             "avg packet why:   new {avg_packet_rebuild_new:.2} | coord {avg_packet_rebuild_coordinate_space:.2} | sig {avg_packet_rebuild_signature:.2} | scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2}"
         );
         println!("avg atlas misses: {avg_text_atlas_miss_count:.2}");
-        println!("avg glyph cache Δ:{avg_glyph_cache_entries:.2} entries / {avg_glyph_cache_hits:.2} hits / {avg_glyph_cache_misses:.2} misses");
-        println!("avg path cache Δ: {avg_path_cache_hits:.2} hits / {avg_path_cache_misses:.2} misses");
+        println!(
+            "avg glyph cache Δ:{avg_glyph_cache_entries:.2} entries / {avg_glyph_cache_hits:.2} hits / {avg_glyph_cache_misses:.2} misses"
+        );
+        println!(
+            "avg path cache Δ: {avg_path_cache_hits:.2} hits / {avg_path_cache_misses:.2} misses"
+        );
         println!("avg surface acq:  {avg_surface_acquire_ms:.3} ms");
         println!("=========================================\n");
 
@@ -2071,7 +2506,9 @@ mod tests {
             .snapshots()
             .into_iter()
             .find(|view| view.title == RETAINED_TEXT_TAB_LABEL)
-            .expect("expected retained text benchmark view to be registered in the sui-dev workspace");
+            .expect(
+                "expected retained text benchmark view to be registered in the sui-dev workspace",
+            );
         assert_eq!(retained_text_view.min_size, Size::new(320.0, 260.0));
         assert!(
             !retained_text_view.visible,
@@ -2092,16 +2529,22 @@ mod tests {
         set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
 
         let initial_snapshot = window.snapshot()?;
-        let initial_view =
-            find_named_node(&initial_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
-        let resize_start =
-            Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
+        let initial_view = find_named_node(
+            &initial_snapshot,
+            SemanticsRole::Window,
+            BUTTON_GRID_TAB_LABEL,
+        );
+        let resize_start = Point::new(
+            initial_view.bounds.max_x() - 8.0,
+            initial_view.bounds.max_y() - 8.0,
+        );
         let resize_end = Point::new(
             initial_view.bounds.x() + 820.0,
             initial_view.bounds.y() + 620.0,
         );
 
-        let frame_samples = drag_pointer_with_samples(&window, resize_start, resize_end, DRAG_STEPS)?;
+        let frame_samples =
+            drag_pointer_with_samples(&window, resize_start, resize_end, DRAG_STEPS)?;
         let measured_samples = frame_samples
             .into_iter()
             .skip(WARMUP_SAMPLES)
@@ -2159,17 +2602,29 @@ mod tests {
             / valid_count as f64;
         let avg_packet_rebuild_scene = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_scene_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_state = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_state_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_coordinate_space = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_coordinate_space_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_surface_acquire_ms = measured_samples
@@ -2215,22 +2670,35 @@ mod tests {
 
         println!("\n=== SUI Dev Visible No-Vsync 64-Button Resize Benchmark ===");
         println!("frames measured:   {valid_count}");
-        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!(
+            "avg frame time:    {avg_ms:.3} ms ({:.0} fps)",
+            1000.0 / avg_ms
+        );
         println!("min frame time:    {min_ms:.3} ms");
         println!("max frame time:    {max_ms:.3} ms");
-        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!(
+            "p95 frame time:    {p95_ms:.3} ms ({:.0} fps)",
+            1000.0 / p95_ms
+        );
         println!("avg scene cmds:    {avg_scene_commands:.2} ({avg_text_commands:.2} text)");
         println!("avg draws:         {avg_draws:.2}");
         println!("avg vertex bytes:  {:.0}", avg_uploaded_vertex_bytes);
-        println!("avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)", avg_text_vertex_bytes);
+        println!(
+            "avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)",
+            avg_text_vertex_bytes
+        );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
         println!("avg state update:  {avg_state_update_ms:.3} ms");
-        println!("avg packet build:  {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
+        println!(
+            "avg packet build:  {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)"
+        );
         println!(
             "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
         );
-        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!(
+            "avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms"
+        );
         println!("==============================================\n");
 
         Ok(())
@@ -2247,9 +2715,15 @@ mod tests {
         set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
 
         let initial_snapshot = window.snapshot()?;
-        let widget_book_view =
-            find_named_node(&initial_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
-        let drag_start = Point::new(widget_book_view.bounds.x() + 64.0, widget_book_view.bounds.y() + 18.0);
+        let widget_book_view = find_named_node(
+            &initial_snapshot,
+            SemanticsRole::Window,
+            WIDGET_BOOK_TAB_LABEL,
+        );
+        let drag_start = Point::new(
+            widget_book_view.bounds.x() + 64.0,
+            widget_book_view.bounds.y() + 18.0,
+        );
         let drag_end = Point::new(drag_start.x + 280.0, drag_start.y + 140.0);
 
         let frame_samples = drag_pointer_with_samples(&window, drag_start, drag_end, DRAG_STEPS)?;
@@ -2310,17 +2784,29 @@ mod tests {
             / valid_count as f64;
         let avg_packet_rebuild_scene = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_scene_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_state = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_state_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_coordinate_space = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_coordinate_space_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_surface_acquire_ms = measured_samples
@@ -2366,22 +2852,35 @@ mod tests {
 
         println!("\n=== SUI Dev Visible No-Vsync Widget-Book Drag Benchmark ===");
         println!("frames measured:   {valid_count}");
-        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!(
+            "avg frame time:    {avg_ms:.3} ms ({:.0} fps)",
+            1000.0 / avg_ms
+        );
         println!("min frame time:    {min_ms:.3} ms");
         println!("max frame time:    {max_ms:.3} ms");
-        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!(
+            "p95 frame time:    {p95_ms:.3} ms ({:.0} fps)",
+            1000.0 / p95_ms
+        );
         println!("avg scene cmds:    {avg_scene_commands:.2} ({avg_text_commands:.2} text)");
         println!("avg draws:         {avg_draws:.2}");
         println!("avg vertex bytes:  {:.0}", avg_uploaded_vertex_bytes);
-        println!("avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)", avg_text_vertex_bytes);
+        println!(
+            "avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)",
+            avg_text_vertex_bytes
+        );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
         println!("avg state update:  {avg_state_update_ms:.3} ms");
-        println!("avg packet build:  {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
+        println!(
+            "avg packet build:  {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)"
+        );
         println!(
             "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
         );
-        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!(
+            "avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms"
+        );
         println!("===============================================\n");
 
         Ok(())
@@ -2399,7 +2898,9 @@ mod tests {
         thread::sleep(sample_duration);
         let final_snapshot = window.performance_snapshot()?;
         let elapsed_s = sample_duration.as_secs_f64();
-        let frame_delta = final_snapshot.frame_index.saturating_sub(initial.frame_index);
+        let frame_delta = final_snapshot
+            .frame_index
+            .saturating_sub(initial.frame_index);
         let fps = frame_delta as f64 / elapsed_s;
 
         println!("\n=== SUI Dev Visible No-Vsync Idle Benchmark ===");
@@ -2414,10 +2915,19 @@ mod tests {
         );
         println!(
             "last packet build: {:.3} ms (scene {} | state {} | coord {})",
-            final_snapshot.renderer_submission.retained_packet_build_time_us as f64 / 1000.0,
-            final_snapshot.renderer_submission.retained_packet_rebuild_scene_count,
-            final_snapshot.renderer_submission.retained_packet_rebuild_state_count,
-            final_snapshot.renderer_submission.retained_packet_rebuild_coordinate_space_count,
+            final_snapshot
+                .renderer_submission
+                .retained_packet_build_time_us as f64
+                / 1000.0,
+            final_snapshot
+                .renderer_submission
+                .retained_packet_rebuild_scene_count,
+            final_snapshot
+                .renderer_submission
+                .retained_packet_rebuild_state_count,
+            final_snapshot
+                .renderer_submission
+                .retained_packet_rebuild_coordinate_space_count,
         );
         println!("==============================================\n");
 
@@ -2448,11 +2958,9 @@ mod tests {
         while frame_samples.len() < TARGET_FRAMES && scroll_inputs < MAX_SCROLL_INPUTS {
             gallery.scroll_pixels(Vector::new(0.0, SCROLL_DELTA_Y))?;
             let _snapshot = window.snapshot()?;
-            if let Some(performance) = wait_for_frame_advance(
-                &window,
-                previous_frame_index,
-                Duration::from_millis(150),
-            )? {
+            if let Some(performance) =
+                wait_for_frame_advance(&window, previous_frame_index, Duration::from_millis(150))?
+            {
                 previous_frame_index = performance.frame_index;
                 frame_samples.push(performance);
             }
@@ -2526,17 +3034,29 @@ mod tests {
             / valid_count as f64;
         let avg_packet_rebuild_scene = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_scene_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_state = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_state_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_coordinate_space = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_coordinate_space_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_surface_acquire_ms = measured_samples
@@ -2582,22 +3102,35 @@ mod tests {
 
         println!("\n=== SUI Dev Visible No-Vsync Widget-Book Scroll Benchmark ===");
         println!("frames measured:   {valid_count}");
-        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!(
+            "avg frame time:    {avg_ms:.3} ms ({:.0} fps)",
+            1000.0 / avg_ms
+        );
         println!("min frame time:    {min_ms:.3} ms");
         println!("max frame time:    {max_ms:.3} ms");
-        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!(
+            "p95 frame time:    {p95_ms:.3} ms ({:.0} fps)",
+            1000.0 / p95_ms
+        );
         println!("avg scene cmds:    {avg_scene_commands:.2} ({avg_text_commands:.2} text)");
         println!("avg draws:         {avg_draws:.2}");
         println!("avg vertex bytes:  {:.0}", avg_uploaded_vertex_bytes);
-        println!("avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)", avg_text_vertex_bytes);
+        println!(
+            "avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)",
+            avg_text_vertex_bytes
+        );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
         println!("avg state update:  {avg_state_update_ms:.3} ms");
-        println!("avg packet build:  {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
+        println!(
+            "avg packet build:  {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)"
+        );
         println!(
             "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
         );
-        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!(
+            "avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms"
+        );
         println!("===============================================\n");
 
         Ok(())
@@ -2619,10 +3152,15 @@ mod tests {
         root.dispatch_event(Event::Window(WindowEvent::Focused(true)))?;
 
         let initial_snapshot = window.snapshot()?;
-        let initial_view =
-            find_named_node(&initial_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
-        let resize_start =
-            Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
+        let initial_view = find_named_node(
+            &initial_snapshot,
+            SemanticsRole::Window,
+            BUTTON_GRID_TAB_LABEL,
+        );
+        let resize_start = Point::new(
+            initial_view.bounds.max_x() - 8.0,
+            initial_view.bounds.max_y() - 8.0,
+        );
         let resize_end = Point::new(
             initial_view.bounds.x() + 820.0,
             initial_view.bounds.y() + 620.0,
@@ -2632,7 +3170,10 @@ mod tests {
         let mut previous_frame_index = latest_published_frame(&window)?.frame_index;
         let mut frame_samples = Vec::new();
 
-        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, resize_start)))?;
+        root.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            resize_start,
+        )))?;
 
         let mut down = PointerEvent::new(PointerEventKind::Down, resize_start);
         down.button = Some(PointerButton::Primary);
@@ -2690,7 +3231,11 @@ mod tests {
             pixel_diff_count(&before_frame, &after_frame) > 0,
             "expected real-time resize benchmark to change rendered pixels"
         );
-        let resized_view = find_named_node(&after_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
+        let resized_view = find_named_node(
+            &after_snapshot,
+            SemanticsRole::Window,
+            BUTTON_GRID_TAB_LABEL,
+        );
         assert!(
             resized_view.bounds.width() > initial_view.bounds.width() + 40.0,
             "expected button grid view to resize during the real-time benchmark, before={:?} after={:?}",
@@ -2742,17 +3287,29 @@ mod tests {
             / valid_count as f64;
         let avg_packet_rebuild_scene = frame_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_scene_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_state = frame_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_state_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_coordinate_space = frame_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_coordinate_space_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
 
@@ -2760,16 +3317,24 @@ mod tests {
         println!("frames captured:   {valid_count}");
         println!("elapsed:           {:.3} s", benchmark_elapsed_s);
         println!("observed fps:      {observed_fps:.1}");
-        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!(
+            "avg frame time:    {avg_ms:.3} ms ({:.0} fps)",
+            1000.0 / avg_ms
+        );
         println!("min frame time:    {min_ms:.3} ms");
         println!("max frame time:    {max_ms:.3} ms");
-        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!(
+            "p95 frame time:    {p95_ms:.3} ms ({:.0} fps)",
+            1000.0 / p95_ms
+        );
         println!("avg state update:  {avg_state_update_ms:.3} ms");
         println!("avg packet build:  {avg_packet_build_ms:.3} ms");
         println!(
             "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
         );
-        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!(
+            "avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms"
+        );
         println!("========================================================\n");
 
         Ok(())
@@ -2848,8 +3413,7 @@ mod tests {
             sui_widget_book::GALLERY_SCROLL_NAME,
         );
         assert_eq!(
-            after_gallery.bounds,
-            gallery.bounds,
+            after_gallery.bounds, gallery.bounds,
             "expected scrolling to keep the gallery viewport stable while its contents move"
         );
 
@@ -2902,17 +3466,29 @@ mod tests {
             / valid_count as f64;
         let avg_packet_rebuild_scene = frame_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_scene_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_state = frame_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_state_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_coordinate_space = frame_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuild_coordinate_space_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
 
@@ -2920,17 +3496,25 @@ mod tests {
         println!("frames captured:   {valid_count}");
         println!("elapsed:           {:.3} s", benchmark_elapsed_s);
         println!("observed fps:      {observed_fps:.1}");
-        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!(
+            "avg frame time:    {avg_ms:.3} ms ({:.0} fps)",
+            1000.0 / avg_ms
+        );
         println!("min frame time:    {min_ms:.3} ms");
         println!("max frame time:    {max_ms:.3} ms");
-        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!(
+            "p95 frame time:    {p95_ms:.3} ms ({:.0} fps)",
+            1000.0 / p95_ms
+        );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg state update:  {avg_state_update_ms:.3} ms");
         println!("avg packet build:  {avg_packet_build_ms:.3} ms");
         println!(
             "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
         );
-        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!(
+            "avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms"
+        );
         println!("============================================================\n");
 
         Ok(())
@@ -2945,7 +3529,9 @@ mod tests {
             .accessibility
             .nodes
             .iter()
-            .find(|node| node.role == SemanticsRole::Window && node.name.as_deref() == Some(WINDOW_TITLE))
+            .find(|node| {
+                node.role == SemanticsRole::Window && node.name.as_deref() == Some(WINDOW_TITLE)
+            })
             .map(|node| node.bounds)
             .unwrap_or(Rect::new(0.0, 0.0, 1280.0, 720.0))
     }
@@ -2964,7 +3550,11 @@ mod tests {
         scroll_story_until_visible(window, &gallery, role.clone(), name, 80)?;
         let before_snapshot = window.snapshot()?;
         let viewport = viewport_bounds(&before_snapshot);
-        let view = find_named_node(&before_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
+        let view = find_named_node(
+            &before_snapshot,
+            SemanticsRole::Window,
+            WIDGET_BOOK_TAB_LABEL,
+        );
         let probes = leak_probe_regions(view.bounds, viewport);
         assert!(
             !probes.is_empty(),
@@ -2993,12 +3583,9 @@ mod tests {
             ))?;
             let diff_count = pixel_diff_count(&before_crop, &after_crop);
             assert_eq!(
-                diff_count,
-                0,
+                diff_count, 0,
                 "scrolling story {:?} named {:?} fully outside the widget book viewport changed pixels outside the floating view in probe {:?}",
-                role,
-                name,
-                probe,
+                role, name, probe,
             );
         }
 
@@ -3208,3 +3795,6 @@ mod tests {
         Ok([rgba[0], rgba[1], rgba[2], rgba[3]])
     }
 }
+
+
+

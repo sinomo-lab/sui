@@ -13,14 +13,23 @@ use sui_core::{
     PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta, Size, Vector,
     WindowEvent, WindowId,
 };
-use sui_platform::{AccessibilitySnapshot, HeadlessPlatform};
-use sui_render_wgpu::WgpuRenderer;
+use sui_platform::{
+    AccessibilitySnapshot, HeadlessPlatform, WindowOutputDiagnostics,
+    detect_window_display_capabilities, publish_window_output_diagnostics,
+};
+use sui_render_wgpu::{
+    ColorManagementMode, DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions,
+    RequestedColorManagementMode, RequestedDynamicRangeMode, RequestedOutputColorPrimaries,
+    RequestedToneMappingMode, WgpuRenderer,
+};
 use sui_runtime::{
     CacheMetrics, FocusState, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
     RenderOutput, RendererSubmissionDiagnostics, Runtime, SceneStatistics, TextCacheDiagnostics,
-    WidgetGraphSnapshot, WindowPerformanceSnapshot, clear_window_performance_snapshots,
-    publish_window_performance_snapshot, window_performance_snapshot,
-    window_performance_text_caches, window_scene_statistics_detail_mode,
+    WidgetGraphSnapshot, WindowColorManagementMode, WindowDynamicRangeMode,
+    WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowToneMappingMode,
+    clear_window_performance_snapshots, publish_window_performance_snapshot,
+    window_performance_snapshot, window_performance_text_caches, window_render_options,
+    window_scene_statistics_detail_mode,
 };
 use winit::{
     application::ApplicationHandler,
@@ -39,6 +48,41 @@ use crate::{
 const DEFAULT_WINDOW_SIZE: sui_core::Size = sui_core::Size::new(1280.0, 720.0);
 const REDRAW_FLUSH_LIMIT: usize = 256;
 const LIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
+
+fn map_window_color_management_for_harness(
+    mode: WindowColorManagementMode,
+    primaries: WindowOutputColorPrimaries,
+    dynamic_range: WindowDynamicRangeMode,
+    tone_mapping: WindowToneMappingMode,
+) -> ColorManagementMode {
+    ColorManagementMode {
+        mode: match mode {
+            WindowColorManagementMode::Automatic => RequestedColorManagementMode::Automatic,
+            WindowColorManagementMode::ForceSdr => RequestedColorManagementMode::ForceSdr,
+            WindowColorManagementMode::PreferWideGamut => {
+                RequestedColorManagementMode::PreferWideGamut
+            }
+            WindowColorManagementMode::PreferHdr => RequestedColorManagementMode::PreferHdr,
+        },
+        output_primaries: match primaries {
+            WindowOutputColorPrimaries::Automatic => RequestedOutputColorPrimaries::Automatic,
+            WindowOutputColorPrimaries::Srgb => RequestedOutputColorPrimaries::Srgb,
+            WindowOutputColorPrimaries::DisplayP3 => RequestedOutputColorPrimaries::DisplayP3,
+        },
+        dynamic_range: match dynamic_range {
+            WindowDynamicRangeMode::Automatic => RequestedDynamicRangeMode::Automatic,
+            WindowDynamicRangeMode::StandardDynamicRange => {
+                RequestedDynamicRangeMode::StandardDynamicRange
+            }
+            WindowDynamicRangeMode::HighDynamicRange => RequestedDynamicRangeMode::HighDynamicRange,
+        },
+        tone_mapping: match tone_mapping {
+            WindowToneMappingMode::Automatic => RequestedToneMappingMode::Automatic,
+            WindowToneMappingMode::Clamp => RequestedToneMappingMode::Clamp,
+            WindowToneMappingMode::Reinhard => RequestedToneMappingMode::Reinhard,
+        },
+    }
+}
 
 pub(crate) struct Harness {
     backend: HarnessBackend,
@@ -115,6 +159,11 @@ enum HarnessCommand {
     Capture {
         window_id: WindowId,
         reply: SyncSender<Result<Screenshot>>,
+    },
+    CaptureDebug {
+        window_id: WindowId,
+        request: DebugCaptureRequest,
+        reply: SyncSender<Result<DebugCaptureArtifact>>,
     },
 }
 
@@ -355,6 +404,17 @@ impl Harness {
         }
     }
 
+    pub(crate) fn capture_debug_frame(
+        &mut self,
+        window_id: WindowId,
+        request: DebugCaptureRequest,
+    ) -> Result<DebugCaptureArtifact> {
+        match &mut self.backend {
+            HarnessBackend::Headless(harness) => harness.platform.capture_debug_frame(window_id, request),
+            HarnessBackend::Live(harness) => harness.capture_debug(window_id, request),
+        }
+    }
+
     pub(crate) fn capture_artifacts(&self, window_id: WindowId) -> Result<ArtifactBundle> {
         let snapshot = self.snapshot(window_id)?;
         let screenshot = self.capture_screenshot(window_id).ok();
@@ -494,6 +554,22 @@ impl LiveHarness {
             })
             .map_err(|_| Error::new("live harness service is unavailable"))?;
         recv_result(&reply_rx, "live harness capture", Duration::from_secs(5))
+    }
+
+    fn capture_debug(
+        &self,
+        window_id: WindowId,
+        request: DebugCaptureRequest,
+    ) -> Result<DebugCaptureArtifact> {
+        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+        self.proxy
+            .send_event(HarnessCommand::CaptureDebug {
+                window_id,
+                request,
+                reply: reply_tx,
+            })
+            .map_err(|_| Error::new("live harness service is unavailable"))?;
+        recv_result(&reply_rx, "live harness debug capture", Duration::from_secs(5))
     }
 
     fn fallback_snapshot(&self, window_id: WindowId) -> WindowSnapshot {
@@ -846,7 +922,57 @@ impl LiveHarnessApp {
                     window_scene_statistics_detail_mode(window_id).is_detailed();
                 self.renderer
                     .set_runtime_diagnostics_enabled(diagnostics_enabled);
+                let render_options = window_render_options(window_id);
+                let display_capabilities = self
+                    .windows
+                    .get(&window_id)
+                    .map(|window| detect_window_display_capabilities(window.window.as_ref()))
+                    .unwrap_or_default();
+                self.renderer
+                    .set_window_display_capabilities(window_id, display_capabilities)?;
+                self.renderer
+                    .set_runtime_feathering_override(render_options.map(|options| {
+                        FeatheringOptions::new(options.feathering_enabled, options.feather_width)
+                    }));
+                self.renderer
+                    .set_window_color_management(
+                        window_id,
+                        render_options
+                            .map(|options| {
+                                map_window_color_management_for_harness(
+                                    options.color_management_mode,
+                                    options.output_color_primaries,
+                                    options.dynamic_range_mode,
+                                    options.tone_mapping_mode,
+                                )
+                            })
+                            .unwrap_or_default(),
+                    )?;
                 self.renderer.render(&output.frame)?;
+                if let (Some(mut display_capabilities), Some(active_output_strategy)) = (
+                    self.renderer.window_display_capabilities(window_id),
+                    self.renderer.window_output_strategy(window_id),
+                ) {
+                    if let Some(formats) = self.renderer.window_surface_formats(window_id) {
+                        display_capabilities.notes.push_str(&format!(
+                            " Surface formats: {:?}.",
+                            formats
+                        ));
+                    }
+                    let options = render_options
+                        .unwrap_or_else(|| sui_runtime::WindowRenderOptions::new(true, 1.0));
+                    publish_window_output_diagnostics(
+                        window_id,
+                        WindowOutputDiagnostics {
+                            display_capabilities,
+                            requested_color_management_mode: options.color_management_mode,
+                            requested_output_primaries: options.output_color_primaries,
+                            requested_dynamic_range_mode: options.dynamic_range_mode,
+                            requested_tone_mapping_mode: options.tone_mapping_mode,
+                            active_output_strategy,
+                        },
+                    );
+                }
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
                 let presented_at_ms = self.current_time_ms();
                 if let Some(window) = self.windows.get(&window_id) {
@@ -1195,6 +1321,16 @@ impl LiveHarnessApp {
         Ok(Screenshot::from_rgba_image(image))
     }
 
+    fn capture_debug(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        request: DebugCaptureRequest,
+    ) -> Result<DebugCaptureArtifact> {
+        self.flush_pending_frames(event_loop)?;
+        self.renderer.capture_last_frame_debug(window_id, request)
+    }
+
     fn handle_command(&mut self, event_loop: &ActiveEventLoop, command: HarnessCommand) {
         match command {
             HarnessCommand::Launch {
@@ -1242,6 +1378,16 @@ impl LiveHarnessApp {
                 let _ = reply.send(
                     self.take_last_error()
                         .and_then(|()| self.capture(event_loop, window_id)),
+                );
+            }
+            HarnessCommand::CaptureDebug {
+                window_id,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(
+                    self.take_last_error()
+                        .and_then(|()| self.capture_debug(event_loop, window_id, request)),
                 );
             }
         }

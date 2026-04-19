@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{Error, Result};
-use sui_runtime::Runtime;
+use sui_runtime::{Runtime, set_window_render_options};
 
 use crate::{harness::Harness, window::TestWindow};
 
@@ -18,6 +18,19 @@ impl IntoTestRuntime for Runtime {
 impl IntoTestRuntime for sui_runtime::Application {
     fn into_test_runtime(self) -> Result<Runtime> {
         self.build()
+    }
+}
+
+impl IntoTestRuntime for sui::Application {
+    fn into_test_runtime(self) -> Result<Runtime> {
+        let initial_window_render_options = self.initial_window_render_options();
+        let runtime = self.build()?;
+        if let Some(options) = initial_window_render_options {
+            for window_id in runtime.window_ids() {
+                set_window_render_options(window_id, options);
+            }
+        }
+        Ok(runtime)
     }
 }
 

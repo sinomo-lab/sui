@@ -30,5 +30,6 @@ wasm-bindgen = { workspace = true }
 web-sys = { workspace = true, features = ["Window", "Location", "Document", "Navigator", "HtmlCollection", "Element", "HtmlCanvasElement"] }
 
 [dev-dependencies]
+sui-render-wgpu = { workspace = true }
 sui-scene = { workspace = true }
 sui-testing = { workspace = true }

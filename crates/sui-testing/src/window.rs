@@ -1,6 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{Result, SemanticsRole, WindowId};
+use sui_render_wgpu::{DebugCaptureArtifact, DebugCaptureRequest};
 use sui_runtime::WindowPerformanceSnapshot;
 
 use crate::{
@@ -50,6 +51,15 @@ impl TestWindow {
         let mut harness = self.harness.borrow_mut();
         harness.run_until_idle()?;
         harness.capture_artifacts(self.window_id)
+    }
+
+    pub fn capture_debug_frame(
+        &self,
+        request: DebugCaptureRequest,
+    ) -> Result<DebugCaptureArtifact> {
+        let mut harness = self.harness.borrow_mut();
+        harness.run_until_idle()?;
+        harness.capture_debug_frame(self.window_id, request)
     }
 
     pub fn performance_snapshot(&self) -> Result<WindowPerformanceSnapshot> {

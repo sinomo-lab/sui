@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, time::Instant};
 
 use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
-use sui_render_wgpu::{FeatheringOptions, RgbaImage, WgpuRenderer};
+use sui_render_wgpu::{DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions, RgbaImage, WgpuRenderer};
 use sui_runtime::{
     PresentationLatencyDiagnostics, Runtime, window_render_options,
     window_scene_statistics_detail_mode,
@@ -148,6 +148,14 @@ impl HeadlessPlatform {
 
     pub fn capture_rgba(&self, window_id: WindowId) -> Result<RgbaImage> {
         self.renderer.capture_rgba(window_id)
+    }
+
+    pub fn capture_debug_frame(
+        &mut self,
+        window_id: WindowId,
+        request: DebugCaptureRequest,
+    ) -> Result<DebugCaptureArtifact> {
+        self.renderer.capture_last_frame_debug(window_id, request)
     }
 
     pub fn accessibility_snapshot(&self, window_id: WindowId) -> Option<&AccessibilitySnapshot> {
