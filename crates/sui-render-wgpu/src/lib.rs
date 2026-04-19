@@ -3717,7 +3717,7 @@ mod tests {
     }
 
     #[test]
-    fn select_output_strategy_uses_native_hdr_surface_when_supported() {
+    fn select_output_strategy_uses_native_hdr_scrgb_surface_when_supported() {
         let strategy = select_output_strategy(
             &[
                 wgpu::TextureFormat::Rgba16Float,
@@ -3743,7 +3743,7 @@ mod tests {
             strategy,
             OutputStrategy::HdrNativeSurface {
                 format: wgpu::TextureFormat::Rgba16Float,
-                primaries: DisplayColorPrimaries::DisplayP3,
+                primaries: DisplayColorPrimaries::Srgb,
                 transfer: DisplayTransferFunction::LinearExtended,
             }
         );

@@ -3453,7 +3453,7 @@ pub(crate) fn select_output_strategy(
                 if let Some(format) = preferred_hdr_surface_format(formats) {
                     return OutputStrategy::HdrNativeSurface {
                         format,
-                        primaries,
+                        primaries: DisplayColorPrimaries::Srgb,
                         transfer: DisplayTransferFunction::LinearExtended,
                     };
                 }

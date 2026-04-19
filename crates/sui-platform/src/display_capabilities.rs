@@ -36,7 +36,10 @@ fn diagnostics_store() -> &'static RwLock<HashMap<WindowId, WindowOutputDiagnost
     STORE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-pub fn publish_window_output_diagnostics(window_id: WindowId, diagnostics: WindowOutputDiagnostics) {
+pub fn publish_window_output_diagnostics(
+    window_id: WindowId,
+    diagnostics: WindowOutputDiagnostics,
+) {
     let mut store = diagnostics_store()
         .write()
         .expect("window output diagnostics store lock should not be poisoned");
@@ -106,6 +109,253 @@ fn parse_web_capability_hints(query: &str) -> WebCapabilityHints {
     hints
 }
 
+#[cfg(any(target_os = "windows", test))]
+const WINDOWS_SDR_REFERENCE_WHITE_NITS: f32 = 80.0;
+#[cfg(any(target_os = "windows", test))]
+const SRGB_PRIMARIES: [[f32; 2]; 3] = [[0.64, 0.33], [0.30, 0.60], [0.15, 0.06]];
+#[cfg(any(target_os = "windows", test))]
+const DISPLAY_P3_PRIMARIES: [[f32; 2]; 3] = [[0.68, 0.32], [0.265, 0.69], [0.15, 0.06]];
+
+#[cfg(any(target_os = "windows", test))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum WindowsColorSpace {
+    #[default]
+    Srgb,
+    ScRgb,
+    Hdr10P2020,
+    Rgb2020,
+    Unknown,
+}
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, PartialEq)]
+struct WindowsAdvancedColorInfo {
+    monitor_name: String,
+    device_name: Option<String>,
+    bits_per_color: u32,
+    color_space: WindowsColorSpace,
+    red_primary: Option<[f32; 2]>,
+    green_primary: Option<[f32; 2]>,
+    blue_primary: Option<[f32; 2]>,
+    white_point: Option<[f32; 2]>,
+    min_luminance_nits: Option<f32>,
+    max_luminance_nits: Option<f32>,
+    max_full_frame_luminance_nits: Option<f32>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn finite_positive(value: Option<f32>) -> Option<f32> {
+    value.filter(|value| value.is_finite() && *value > 0.0)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn primary_triplet(info: &WindowsAdvancedColorInfo) -> Option<[[f32; 2]; 3]> {
+    Some([info.red_primary?, info.green_primary?, info.blue_primary?])
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn gamut_distance(primaries: [[f32; 2]; 3], reference: [[f32; 2]; 3]) -> f32 {
+    primaries
+        .into_iter()
+        .zip(reference)
+        .map(|(observed, expected)| {
+            let dx = observed[0] - expected[0];
+            let dy = observed[1] - expected[1];
+            dx * dx + dy * dy
+        })
+        .sum()
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn looks_like_display_p3(info: &WindowsAdvancedColorInfo) -> bool {
+    let Some(primaries) = primary_triplet(info) else {
+        return false;
+    };
+    if primaries.iter().flatten().any(|value| !value.is_finite()) {
+        return false;
+    }
+    gamut_distance(primaries, DISPLAY_P3_PRIMARIES) < gamut_distance(primaries, SRGB_PRIMARIES)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn display_capabilities_from_windows_advanced_color_info(
+    info: &WindowsAdvancedColorInfo,
+) -> DisplayCapabilities {
+    let hdr_active = matches!(
+        info.color_space,
+        WindowsColorSpace::ScRgb | WindowsColorSpace::Hdr10P2020
+    );
+    let display_p3_like = looks_like_display_p3(info);
+    let supports_wide_gamut = hdr_active
+        || display_p3_like
+        || matches!(info.color_space, WindowsColorSpace::Rgb2020)
+        || info.bits_per_color > 8;
+    let max_luminance_nits = finite_positive(info.max_luminance_nits);
+    let max_full_frame_luminance_nits = finite_positive(info.max_full_frame_luminance_nits);
+    let min_luminance_nits = finite_positive(info.min_luminance_nits);
+    let native_hdr_presentation_supported = hdr_active && info.bits_per_color >= 10;
+    let preferred_primaries = if hdr_active {
+        DisplayColorPrimaries::Srgb
+    } else if supports_wide_gamut {
+        DisplayColorPrimaries::DisplayP3
+    } else {
+        DisplayColorPrimaries::Srgb
+    };
+    let preferred_dynamic_range = if hdr_active {
+        sui_render_wgpu::DynamicRangeMode::HighDynamicRange
+    } else {
+        sui_render_wgpu::DynamicRangeMode::StandardDynamicRange
+    };
+    let sdr_white_nits = hdr_active.then_some(WINDOWS_SDR_REFERENCE_WHITE_NITS);
+    let max_content_headroom = if hdr_active {
+        max_luminance_nits.map(|nits| nits / WINDOWS_SDR_REFERENCE_WHITE_NITS)
+    } else {
+        None
+    };
+    let mode_summary = match info.color_space {
+        WindowsColorSpace::Hdr10P2020 => {
+            "Advanced Color enabled (PQ/P2020 monitor mode -> scRGB presentation path)"
+        }
+        WindowsColorSpace::ScRgb => "Advanced Color enabled (linear scRGB monitor mode)",
+        WindowsColorSpace::Rgb2020 => {
+            "Advanced Color disabled; monitor reports wide-gamut SDR primaries"
+        }
+        WindowsColorSpace::Srgb => {
+            if supports_wide_gamut {
+                "Advanced Color disabled; monitor looks like wide-gamut SDR"
+            } else {
+                "Advanced Color disabled; monitor reports SDR/sRGB"
+            }
+        }
+        WindowsColorSpace::Unknown => {
+            "Advanced Color state unknown; using conservative Windows capability mapping"
+        }
+    };
+    let gamut_summary = match preferred_primaries {
+        DisplayColorPrimaries::Srgb if hdr_active => {
+            "native HDR surface uses scRGB / P709 primaries"
+        }
+        DisplayColorPrimaries::DisplayP3 => {
+            "wide-gamut SDR path prefers Display-P3-style primaries"
+        }
+        DisplayColorPrimaries::Srgb => "SDR path prefers sRGB primaries",
+    };
+
+    DisplayCapabilities {
+        supports_wide_gamut,
+        supports_hdr: hdr_active,
+        preferred_primaries,
+        preferred_dynamic_range,
+        max_luminance_nits,
+        sdr_white_nits,
+        max_content_headroom,
+        native_hdr_presentation_supported,
+        notes: format!(
+            "Windows monitor {}{}: {}; {}; bits_per_color={}; min_luminance_nits={:?}; max_full_frame_luminance_nits={:?}; white_point={:?}",
+            info.monitor_name,
+            info.device_name
+                .as_ref()
+                .map(|name| format!(" ({name})"))
+                .unwrap_or_default(),
+            mode_summary,
+            gamut_summary,
+            info.bits_per_color,
+            min_luminance_nits,
+            max_full_frame_luminance_nits,
+            info.white_point,
+        ),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn detect_windows_monitor_capabilities(
+    window: &Window,
+    monitor_name: &str,
+) -> Option<DisplayCapabilities> {
+    use std::ffi::c_void;
+
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dxgi::Common::{
+        DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
+        DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020, DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020,
+    };
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1, IDXGIOutput, IDXGIOutput6,
+    };
+    use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromWindow};
+    use windows::core::Interface;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    fn decode_wide_string(buffer: &[u16]) -> String {
+        let end = buffer
+            .iter()
+            .position(|&ch| ch == 0)
+            .unwrap_or(buffer.len());
+        String::from_utf16_lossy(&buffer[..end])
+    }
+
+    fn map_color_space(
+        color_space: windows::Win32::Graphics::Dxgi::Common::DXGI_COLOR_SPACE_TYPE,
+    ) -> WindowsColorSpace {
+        if color_space == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 {
+            WindowsColorSpace::Hdr10P2020
+        } else if color_space == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 {
+            WindowsColorSpace::ScRgb
+        } else if color_space == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020 {
+            WindowsColorSpace::Rgb2020
+        } else if color_space == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709 {
+            WindowsColorSpace::Srgb
+        } else {
+            WindowsColorSpace::Unknown
+        }
+    }
+
+    let hwnd = match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(handle) => HWND(handle.hwnd.get() as *mut c_void),
+        _ => return None,
+    };
+    let target_monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    if target_monitor.0.is_null() {
+        return None;
+    }
+
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1().ok()? };
+    let mut adapter_index = 0;
+    while let Ok(adapter) = unsafe { factory.EnumAdapters1::<IDXGIAdapter1>(adapter_index) } {
+        let mut output_index = 0;
+        while let Ok(output) = unsafe { adapter.EnumOutputs::<IDXGIOutput>(output_index) } {
+            let Ok(output6) = output.cast::<IDXGIOutput6>() else {
+                output_index += 1;
+                continue;
+            };
+            let Ok(desc) = (unsafe { output6.GetDesc1() }) else {
+                output_index += 1;
+                continue;
+            };
+            if desc.Monitor == target_monitor {
+                let info = WindowsAdvancedColorInfo {
+                    monitor_name: monitor_name.to_string(),
+                    device_name: Some(decode_wide_string(&desc.DeviceName)),
+                    bits_per_color: desc.BitsPerColor,
+                    color_space: map_color_space(desc.ColorSpace),
+                    red_primary: Some(desc.RedPrimary),
+                    green_primary: Some(desc.GreenPrimary),
+                    blue_primary: Some(desc.BluePrimary),
+                    white_point: Some(desc.WhitePoint),
+                    min_luminance_nits: Some(desc.MinLuminance),
+                    max_luminance_nits: Some(desc.MaxLuminance),
+                    max_full_frame_luminance_nits: Some(desc.MaxFullFrameLuminance),
+                };
+                return Some(display_capabilities_from_windows_advanced_color_info(&info));
+            }
+            output_index += 1;
+        }
+        adapter_index += 1;
+    }
+    None
+}
+
 pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilities {
     let monitor_name = window
         .current_monitor()
@@ -114,15 +364,17 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
 
     #[cfg(target_os = "windows")]
     {
-        return DisplayCapabilities {
-            supports_wide_gamut: true,
-            supports_hdr: false,
-            preferred_primaries: DisplayColorPrimaries::DisplayP3,
-            notes: format!(
-                "Windows monitor {monitor_name}: conservative phase-2 heuristic assumes wide-gamut SDR may be available; native HDR detection is not wired yet"
-            ),
-            ..DisplayCapabilities::default()
-        };
+        return detect_windows_monitor_capabilities(window, &monitor_name).unwrap_or_else(|| {
+            DisplayCapabilities {
+                supports_wide_gamut: false,
+                supports_hdr: false,
+                preferred_primaries: DisplayColorPrimaries::Srgb,
+                notes: format!(
+                    "Windows monitor {monitor_name}: DXGI Advanced Color probe failed; falling back to SDR/sRGB defaults"
+                ),
+                ..DisplayCapabilities::default()
+            }
+        });
     }
 
     #[cfg(target_os = "macos")]
@@ -160,10 +412,7 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
             native_hdr_presentation_supported: hints.float16_canvas && hints.extended_tone_mapping,
             notes: format!(
                 "Web output on {monitor_name}: query hints -> float16_canvas={} display_p3={} extended_tone_mapping={} hdr={}.",
-                hints.float16_canvas,
-                hints.display_p3,
-                hints.extended_tone_mapping,
-                hints.hdr,
+                hints.float16_canvas, hints.display_p3, hints.extended_tone_mapping, hints.hdr,
             ),
             ..DisplayCapabilities::default()
         };
@@ -185,7 +434,11 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
 
 #[cfg(test)]
 mod tests {
-    use super::parse_web_capability_hints;
+    use super::{
+        DisplayColorPrimaries, WindowsAdvancedColorInfo, WindowsColorSpace,
+        display_capabilities_from_windows_advanced_color_info, parse_web_capability_hints,
+    };
+    use sui_render_wgpu::DynamicRangeMode;
 
     #[test]
     fn parse_web_capability_hints_detects_phase4_query_preferences() {
@@ -198,5 +451,70 @@ mod tests {
         assert!(hints.extended_tone_mapping);
         assert!(hints.wide_gamut);
         assert!(hints.hdr);
+    }
+
+    #[test]
+    fn windows_hdr_advanced_color_maps_to_scrgb_capabilities() {
+        let capabilities =
+            display_capabilities_from_windows_advanced_color_info(&WindowsAdvancedColorInfo {
+                monitor_name: "HDR Panel".to_string(),
+                device_name: Some("\\\\.\\DISPLAY1".to_string()),
+                bits_per_color: 10,
+                color_space: WindowsColorSpace::Hdr10P2020,
+                red_primary: Some([0.68, 0.32]),
+                green_primary: Some([0.265, 0.69]),
+                blue_primary: Some([0.15, 0.06]),
+                white_point: Some([0.3127, 0.3290]),
+                min_luminance_nits: Some(0.05),
+                max_luminance_nits: Some(1000.0),
+                max_full_frame_luminance_nits: Some(600.0),
+            });
+
+        assert!(capabilities.supports_hdr);
+        assert!(capabilities.native_hdr_presentation_supported);
+        assert!(capabilities.supports_wide_gamut);
+        assert_eq!(
+            capabilities.preferred_primaries,
+            DisplayColorPrimaries::Srgb
+        );
+        assert_eq!(
+            capabilities.preferred_dynamic_range,
+            DynamicRangeMode::HighDynamicRange
+        );
+        assert_eq!(capabilities.sdr_white_nits, Some(80.0));
+        assert_eq!(capabilities.max_content_headroom, Some(12.5));
+        assert!(capabilities.notes.contains("Advanced Color"));
+        assert!(capabilities.notes.contains("scRGB"));
+    }
+
+    #[test]
+    fn windows_sdr_display_p3_monitor_maps_to_wide_gamut_sdr_capabilities() {
+        let capabilities =
+            display_capabilities_from_windows_advanced_color_info(&WindowsAdvancedColorInfo {
+                monitor_name: "Wide Gamut SDR".to_string(),
+                device_name: Some("\\\\.\\DISPLAY2".to_string()),
+                bits_per_color: 8,
+                color_space: WindowsColorSpace::Srgb,
+                red_primary: Some([0.68, 0.32]),
+                green_primary: Some([0.265, 0.69]),
+                blue_primary: Some([0.15, 0.06]),
+                white_point: Some([0.3127, 0.3290]),
+                min_luminance_nits: None,
+                max_luminance_nits: Some(300.0),
+                max_full_frame_luminance_nits: Some(280.0),
+            });
+
+        assert!(capabilities.supports_wide_gamut);
+        assert!(!capabilities.supports_hdr);
+        assert!(!capabilities.native_hdr_presentation_supported);
+        assert_eq!(
+            capabilities.preferred_primaries,
+            DisplayColorPrimaries::DisplayP3
+        );
+        assert_eq!(
+            capabilities.preferred_dynamic_range,
+            DynamicRangeMode::StandardDynamicRange
+        );
+        assert!(capabilities.notes.contains("wide-gamut SDR"));
     }
 }
