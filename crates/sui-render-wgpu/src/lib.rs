@@ -15,6 +15,7 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
+use half::f16;
 use lyon_path::{Path as LyonPath, builder::PathBuilder as LyonPathBuilder, math::point};
 use lyon_tessellation::{
     BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor, StrokeVertex,
@@ -189,6 +190,46 @@ impl OutputStrategy {
             Self::HdrIntermediateThenToneMap { surface_format, .. } => surface_format,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DebugCaptureStage {
+    HdrIntermediate,
+    #[default]
+    FinalComposed,
+}
+
+impl DebugCaptureStage {
+    pub const fn is_hdr_capable(self) -> bool {
+        matches!(self, Self::HdrIntermediate)
+    }
+
+    pub const fn uses_hdr_intermediate(self) -> bool {
+        matches!(self, Self::HdrIntermediate)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DebugSdrVisualization {
+    #[default]
+    ToneMappedColor,
+    LuminanceHeatmap,
+    HeadroomHeatmap,
+    ClipMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DebugCaptureEncoding {
+    Exr,
+    #[default]
+    Png,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DebugCaptureRequest {
+    pub stage: DebugCaptureStage,
+    pub encoding: DebugCaptureEncoding,
+    pub sdr_visualization: DebugSdrVisualization,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -673,6 +714,19 @@ pub struct RgbaImage {
     pixels: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct HdrRgbaImage {
+    width: u32,
+    height: u32,
+    pixels: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DebugCaptureArtifact {
+    SdrRgba8(RgbaImage),
+    HdrLinearRgbaF32(HdrRgbaImage),
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 struct OutputTransformUniform {
@@ -725,6 +779,42 @@ impl RgbaImage {
     }
 }
 
+impl HdrRgbaImage {
+    pub fn new(width: u32, height: u32, pixels: Vec<f32>) -> Result<Self> {
+        let expected_len = width as usize * height as usize * 4;
+        if pixels.len() != expected_len {
+            return Err(Error::new(format!(
+                "HDR RGBA image pixel buffer length {} does not match {}x{} image size",
+                pixels.len(),
+                width,
+                height
+            )));
+        }
+
+        Ok(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn pixels(&self) -> &[f32] {
+        &self.pixels
+    }
+
+    pub fn into_pixels(self) -> Vec<f32> {
+        self.pixels
+    }
+}
+
 const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 const DEFAULT_FEATHER_WIDTH: f32 = 1.0;
 const TEXT_ATLAS_RETRY_ERROR_MESSAGE: &str = "text atlas capacity exceeded; retry with reset";
@@ -735,6 +825,28 @@ fn text_atlas_retry_error() -> Error {
 
 fn is_text_atlas_retry_error(error: &Error) -> bool {
     error.message() == TEXT_ATLAS_RETRY_ERROR_MESSAGE
+}
+
+fn strip_padded_readback_rows(
+    mapped: &[u8],
+    bytes_per_row: usize,
+    padded_bytes_per_row: usize,
+    rows: usize,
+) -> Vec<u8> {
+    let mut tightly_packed = Vec::with_capacity(bytes_per_row * rows);
+    for row in 0..rows {
+        let start = row * padded_bytes_per_row;
+        tightly_packed.extend_from_slice(&mapped[start..start + bytes_per_row]);
+    }
+    tightly_packed
+}
+
+fn decode_rgba16f_pixels(raw: &[u8]) -> Vec<f32> {
+    let mut pixels = Vec::with_capacity(raw.len() / 2);
+    for chunk in raw.chunks_exact(2) {
+        pixels.push(f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32());
+    }
+    pixels
 }
 
 impl WgpuRenderer {
@@ -1077,6 +1189,20 @@ impl WgpuRenderer {
     }
 
     pub fn capture_last_frame_rgba(&mut self, window_id: WindowId) -> Result<RgbaImage> {
+        match self.capture_last_frame_debug(window_id, DebugCaptureRequest::default())? {
+            DebugCaptureArtifact::SdrRgba8(image) => Ok(image),
+            DebugCaptureArtifact::HdrLinearRgbaF32(_) => Err(Error::new(format!(
+                "window {} returned an HDR debug artifact when SDR RGBA capture was requested",
+                window_id.get()
+            ))),
+        }
+    }
+
+    pub fn capture_last_frame_debug(
+        &mut self,
+        window_id: WindowId,
+        request: DebugCaptureRequest,
+    ) -> Result<DebugCaptureArtifact> {
         let frame = self.last_frames.get(&window_id).cloned().ok_or_else(|| {
             Error::new(format!(
                 "window {} does not have a previously rendered frame available for capture",
@@ -1092,27 +1218,85 @@ impl WgpuRenderer {
         })?;
 
         self.render_offscreen(&frame, size)?;
-        self.capture_rgba(window_id)
+        self.capture_debug_frame(window_id, request)
+    }
+
+    pub fn capture_debug_frame(
+        &self,
+        window_id: WindowId,
+        request: DebugCaptureRequest,
+    ) -> Result<DebugCaptureArtifact> {
+        let _ = request.encoding;
+        let _ = request.sdr_visualization;
+        match request.stage {
+            DebugCaptureStage::FinalComposed => {
+                self.capture_rgba(window_id).map(DebugCaptureArtifact::SdrRgba8)
+            }
+            DebugCaptureStage::HdrIntermediate => self
+                .capture_hdr_intermediate_rgba_f32(window_id)
+                .map(DebugCaptureArtifact::HdrLinearRgbaF32),
+        }
     }
 
     pub fn capture_rgba(&self, window_id: WindowId) -> Result<RgbaImage> {
-        let shared = self
-            .shared
-            .as_ref()
-            .ok_or_else(|| Error::new("renderer has not initialized a wgpu device yet"))?;
         let target = self.offscreen_targets.get(&window_id).ok_or_else(|| {
             Error::new(format!(
                 "window {} does not have an offscreen render target available for screenshot capture",
                 window_id.get()
             ))
         })?;
+        let raw = self.readback_target_bytes(
+            &target.texture,
+            target.size,
+            4,
+            "SUI screenshot readback",
+            "SUI screenshot readback encoder",
+        )?;
 
-        let bytes_per_row = target.size.0 * 4;
+        let mut pixels = Vec::with_capacity((target.size.0 * target.size.1 * 4) as usize);
+        for chunk in raw.chunks_exact(4) {
+            pixels.extend_from_slice(&[chunk[2], chunk[1], chunk[0], chunk[3]]);
+        }
+
+        RgbaImage::new(target.size.0, target.size.1, pixels)
+    }
+
+    pub fn capture_hdr_intermediate_rgba_f32(&self, window_id: WindowId) -> Result<HdrRgbaImage> {
+        let target = self.intermediate_targets.get(&window_id).ok_or_else(|| {
+            Error::new(format!(
+                "window {} does not have an HDR intermediate target available for debug capture",
+                window_id.get()
+            ))
+        })?;
+        let raw = self.readback_target_bytes(
+            &target.texture,
+            target.size,
+            8,
+            "SUI HDR intermediate readback",
+            "SUI HDR intermediate readback encoder",
+        )?;
+        let pixels = decode_rgba16f_pixels(&raw);
+        HdrRgbaImage::new(target.size.0, target.size.1, pixels)
+    }
+
+    fn readback_target_bytes(
+        &self,
+        texture: &wgpu::Texture,
+        size: (u32, u32),
+        bytes_per_pixel: u32,
+        buffer_label: &'static str,
+        encoder_label: &'static str,
+    ) -> Result<Vec<u8>> {
+        let shared = self
+            .shared
+            .as_ref()
+            .ok_or_else(|| Error::new("renderer has not initialized a wgpu device yet"))?;
+        let bytes_per_row = size.0 * bytes_per_pixel;
         let padded_bytes_per_row = bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let buffer_size = padded_bytes_per_row as u64 * target.size.1 as u64;
+        let buffer_size = padded_bytes_per_row as u64 * size.1 as u64;
         let buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("SUI screenshot readback"),
+            label: Some(buffer_label),
             size: buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
@@ -1121,11 +1305,11 @@ impl WgpuRenderer {
         let mut encoder = shared
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("SUI screenshot readback encoder"),
+                label: Some(encoder_label),
             });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &target.texture,
+                texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -1135,12 +1319,12 @@ impl WgpuRenderer {
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(target.size.1),
+                    rows_per_image: Some(size.1),
                 },
             },
             wgpu::Extent3d {
-                width: target.size.0,
-                height: target.size.1,
+                width: size.0,
+                height: size.1,
                 depth_or_array_layers: 1,
             },
         );
@@ -1171,18 +1355,15 @@ impl WgpuRenderer {
             })?;
 
         let mapped = slice.get_mapped_range();
-        let mut pixels = Vec::with_capacity((target.size.0 * target.size.1 * 4) as usize);
-        for row in 0..target.size.1 as usize {
-            let start = row * padded_bytes_per_row as usize;
-            let row_slice = &mapped[start..start + bytes_per_row as usize];
-            for chunk in row_slice.chunks_exact(4) {
-                pixels.extend_from_slice(&[chunk[2], chunk[1], chunk[0], chunk[3]]);
-            }
-        }
+        let tightly_packed = strip_padded_readback_rows(
+            &mapped,
+            bytes_per_row as usize,
+            padded_bytes_per_row as usize,
+            size.1 as usize,
+        );
         drop(mapped);
         buffer.unmap();
-
-        RgbaImage::new(target.size.0, target.size.1, pixels)
+        Ok(tightly_packed)
     }
 
     fn ensure_shared(&mut self, compatible_surface: Option<&wgpu::Surface<'_>>) -> Result<()> {
@@ -1682,7 +1863,7 @@ impl WgpuRenderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             self.intermediate_targets.insert(
@@ -3202,7 +3383,9 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 mod tests {
     use super::{
         CachedGlyphAtlas, CachedGlyphMesh, ClipState, ColorManagementMode,
-        CompositionContainerId, DEFAULT_FEATHER_WIDTH, DisplayCapabilities,
+        CompositionContainerId, DebugCaptureEncoding, DebugCaptureRequest,
+        DebugCaptureStage, DebugSdrVisualization, DEFAULT_FEATHER_WIDTH, DisplayCapabilities,
+        decode_rgba16f_pixels, strip_padded_readback_rows,
         DisplayColorPrimaries, DisplayTransferFunction, DrawOp, DrawOpArena, DrawOpKind,
         DynamicRangeMode, OutputStrategy, PreparedClipPath, PreparedDrawBatch,
         PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch, PreparedVertices,
@@ -3250,6 +3433,50 @@ mod tests {
     impl TestSceneLayerDescriptorExt for SceneLayerDescriptor {
         fn with_cache_policy(self, _cache_policy: LayerCachePolicy) -> Self {
             self
+        }
+    }
+
+    #[test]
+    fn debug_capture_stage_helpers_classify_hdr_and_final_outputs() {
+        assert!(DebugCaptureStage::HdrIntermediate.is_hdr_capable());
+        assert!(DebugCaptureStage::HdrIntermediate.uses_hdr_intermediate());
+        assert!(!DebugCaptureStage::FinalComposed.is_hdr_capable());
+        assert!(!DebugCaptureStage::FinalComposed.uses_hdr_intermediate());
+
+        assert_eq!(DebugCaptureStage::default(), DebugCaptureStage::FinalComposed);
+        assert_eq!(DebugCaptureEncoding::default(), DebugCaptureEncoding::Png);
+        assert_eq!(DebugSdrVisualization::default(), DebugSdrVisualization::ToneMappedColor);
+        assert_eq!(
+            DebugCaptureRequest::default(),
+            DebugCaptureRequest {
+                stage: DebugCaptureStage::FinalComposed,
+                encoding: DebugCaptureEncoding::Png,
+                sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+            }
+        );
+    }
+
+    #[test]
+    fn strip_padded_float_readback_rows_preserves_pixel_order() {
+        let mapped = vec![
+            1u8, 2, 3, 4, 9, 9, 9, 9,
+            5, 6, 7, 8, 8, 8, 8, 8,
+        ];
+        let stripped = strip_padded_readback_rows(&mapped, 4, 8, 2);
+        assert_eq!(stripped, vec![1u8, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn decode_rgba16f_pixels_converts_half_float_channels_to_f32() {
+        let samples = [0.0f32, 1.0, 2.0, 0.5, 4.0, 8.0, 0.25, 1.0];
+        let mut raw = Vec::new();
+        for sample in samples {
+            raw.extend_from_slice(&half::f16::from_f32(sample).to_bits().to_le_bytes());
+        }
+        let decoded = decode_rgba16f_pixels(&raw);
+        assert_eq!(decoded.len(), 8);
+        for (actual, expected) in decoded.into_iter().zip(samples) {
+            assert!((actual - expected).abs() < 0.001, "expected {expected}, got {actual}");
         }
     }
 

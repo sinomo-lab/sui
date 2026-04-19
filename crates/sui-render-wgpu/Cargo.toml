@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 bytemuck = { workspace = true }
+half = "2"
 fontdb = { workspace = true }
 lyon_path = { workspace = true }
 lyon_tessellation = { workspace = true }
