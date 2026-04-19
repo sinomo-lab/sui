@@ -15,3 +15,6 @@ wasm-bindgen-futures = { workspace = true }
 web-sys = { workspace = true, features = ["console", "Window", "Location"] }
 web-time = { workspace = true }
 sui-platform-windows = { path = "../sui-platform-windows" }
+
+[dev-dependencies]
+sui-layout = { path = "../sui-layout" }

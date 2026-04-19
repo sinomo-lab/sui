@@ -407,15 +407,20 @@ struct QueuedEvent {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, f32::consts::TAU, rc::Rc};
 
     use super::HeadlessPlatform;
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, Rect, Result, SemanticsNode, SemanticsRole,
-        TimerToken, WakeEvent, WindowEvent,
+        Size, TimerToken, WakeEvent, WindowEvent,
     };
+    use sui_layout::Constraints;
     use sui_runtime::{
-        Application, EventCtx, PaintCtx, Runtime, SemanticsCtx, Widget, WindowBuilder,
+        Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, Runtime,
+        SceneStatisticsDetailMode, SemanticsCtx, Widget, WindowBuilder,
+        WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
+        WindowRenderOptions, WindowToneMappingMode, set_window_render_options,
+        set_window_scene_statistics_detail_mode, window_performance_snapshot,
     };
 
     #[derive(Default)]
@@ -598,5 +603,172 @@ mod tests {
 
         assert!(platform.feathering_enabled());
         assert_eq!(platform.feather_width(), 0.0);
+    }
+
+    const HDR_BENCH_STEP_S: f64 = 1.0 / 120.0;
+    const HDR_BENCH_FRAMES: usize = 120;
+    const HDR_BENCH_WIDTH: f32 = 1280.0;
+    const HDR_BENCH_HEIGHT: f32 = 720.0;
+    const HDR_BENCH_COLS: usize = 48;
+    const HDR_BENCH_ROWS: usize = 27;
+
+    struct AnimatedHdrGrid {
+        phase: f32,
+        timer: Option<TimerToken>,
+    }
+
+    impl AnimatedHdrGrid {
+        fn new() -> Self {
+            Self {
+                phase: 0.0,
+                timer: None,
+            }
+        }
+
+        fn arm(&mut self, ctx: &mut EventCtx) {
+            if self.timer.is_none() {
+                self.timer = Some(ctx.schedule_timer_after(HDR_BENCH_STEP_S));
+            }
+        }
+    }
+
+    impl Widget for AnimatedHdrGrid {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Window(WindowEvent::Resized(_)) => {
+                    self.arm(ctx);
+                    ctx.request_paint();
+                }
+                Event::Wake(WakeEvent::Timer { token, .. }) if self.timer == Some(*token) => {
+                    self.phase = (self.phase + 0.035) % TAU;
+                    self.timer = Some(ctx.schedule_timer_after(HDR_BENCH_STEP_S));
+                    ctx.request_paint();
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(HDR_BENCH_WIDTH, HDR_BENCH_HEIGHT))
+        }
+
+        fn arrange(&mut self, _ctx: &mut ArrangeCtx, _bounds: Rect) {}
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.clear(Color::linear_rgba(0.08, 0.09, 0.11, 1.0));
+            let cell_w = HDR_BENCH_WIDTH / HDR_BENCH_COLS as f32;
+            let cell_h = HDR_BENCH_HEIGHT / HDR_BENCH_ROWS as f32;
+            for row in 0..HDR_BENCH_ROWS {
+                for col in 0..HDR_BENCH_COLS {
+                    let x = col as f32 * cell_w;
+                    let y = row as f32 * cell_h;
+                    let t = self.phase + row as f32 * 0.19 + col as f32 * 0.11;
+                    let r = 0.5 + 3.5 * (0.5 + 0.5 * t.sin());
+                    let g = 0.25 + 2.25 * (0.5 + 0.5 * (t * 1.3).cos());
+                    let b = 0.15 + 1.85 * (0.5 + 0.5 * (t * 0.7 + 1.2).sin());
+                    ctx.fill_rect(
+                        Rect::new(x, y, cell_w + 1.0, cell_h + 1.0),
+                        Color::linear_rgba(r, g, b, 1.0),
+                    );
+                }
+            }
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Window, ctx.bounds());
+            node.name = Some("Animated HDR Grid".to_string());
+            ctx.push(node);
+        }
+    }
+
+    fn mean(values: &[f64]) -> f64 {
+        if values.is_empty() {
+            0.0
+        } else {
+            values.iter().sum::<f64>() / values.len() as f64
+        }
+    }
+
+    fn percentile(sorted: &[f64], p: f64) -> f64 {
+        if sorted.is_empty() {
+            return 0.0;
+        }
+        let rank = ((sorted.len() - 1) as f64 * p).round() as usize;
+        sorted[rank]
+    }
+
+    #[test]
+    #[ignore = "hardware Vulkan benchmark; run explicitly on a machine with a working headless GPU path"]
+    fn steady_state_headless_hdr_grid_benchmark_emits_advancing_frames() -> Result<()> {
+        let options = WindowRenderOptions::new(true, 1.0)
+            .with_color_management_mode(WindowColorManagementMode::PreferHdr)
+            .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
+            .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
+            .with_tone_mapping_mode(WindowToneMappingMode::Automatic);
+
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Animated HDR Grid")
+                    .root(AnimatedHdrGrid::new()),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        set_window_render_options(window_id, options);
+        set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+
+        let mut runtime = runtime;
+        let mut platform = HeadlessPlatform::new();
+        let mut totals = Vec::with_capacity(HDR_BENCH_FRAMES);
+        let mut commands = Vec::with_capacity(HDR_BENCH_FRAMES);
+        let mut dirty = Vec::with_capacity(HDR_BENCH_FRAMES);
+        let mut last_frame = 0u64;
+        let mut iterations = 0usize;
+        let max_iterations = 20_000usize;
+
+        while totals.len() < HDR_BENCH_FRAMES && iterations < max_iterations {
+            let _ = platform.pump(&mut runtime)?;
+            if let Some(snapshot) = window_performance_snapshot(window_id) {
+                if snapshot.frame_index != last_frame {
+                    last_frame = snapshot.frame_index;
+                    totals.push(snapshot.total_time_ms);
+                    commands.push(snapshot.scene.command_count as f64);
+                    dirty.push(snapshot.scene.dirty_coverage as f64);
+                }
+            }
+            platform.advance_time(HDR_BENCH_STEP_S);
+            iterations += 1;
+        }
+
+        let mut totals_sorted = totals.clone();
+        totals_sorted.sort_by(|a, b| a.total_cmp(b));
+
+        println!("benchmark=steady-state-headless-hdr-grid");
+        println!("iterations={iterations}");
+        println!("frames={}", totals.len());
+        println!("nominal_fps={:.2}", 1.0 / HDR_BENCH_STEP_S);
+        println!("frame_total_ms_avg={:.3}", mean(&totals));
+        println!("frame_total_ms_p50={:.3}", percentile(&totals_sorted, 0.50));
+        println!("frame_total_ms_p95={:.3}", percentile(&totals_sorted, 0.95));
+        println!(
+            "frame_total_ms_max={:.3}",
+            totals_sorted.last().copied().unwrap_or(0.0)
+        );
+        println!("command_count_avg={:.1}", mean(&commands));
+        println!("dirty_coverage_avg={:.2}", mean(&dirty));
+
+        assert_eq!(
+            totals.len(),
+            HDR_BENCH_FRAMES,
+            "expected {} benchmark frames, got {} after {} iterations",
+            HDR_BENCH_FRAMES,
+            totals.len(),
+            iterations
+        );
+        assert!(mean(&totals) > 0.0, "expected positive frame timings");
+
+        Ok(())
     }
 }

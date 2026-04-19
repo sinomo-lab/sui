@@ -2079,6 +2079,7 @@ name = "sui-platform"
 version = "0.1.0"
 dependencies = [
  "sui-core",
+ "sui-layout",
  "sui-platform-windows",
  "sui-render-wgpu",
  "sui-runtime",
