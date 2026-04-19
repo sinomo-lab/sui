@@ -52,6 +52,11 @@ const TONE_MAPPING_MODE_OPTIONS: [&str; 3] = ["Automatic", "Clamp", "Reinhard"];
 
 const SIDEBAR_TITLE: &str = "Available views";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopAutomationMode {
+    ButtonGridResize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SidebarActionKind {
     Visibility,
@@ -78,6 +83,209 @@ struct ViewSidebar {
     hovered: Option<SidebarActionTarget>,
     pressed: Option<SidebarActionTarget>,
     pointer_id: Option<u64>,
+}
+
+fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
+    ctx.request(InvalidationRequest::new(
+        InvalidationTarget::Window(ctx.window_id()),
+        InvalidationKind::Measure,
+    ));
+    if include_ordering {
+        ctx.request(InvalidationRequest::new(
+            InvalidationTarget::Window(ctx.window_id()),
+            InvalidationKind::Ordering,
+        ));
+    }
+    ctx.request(InvalidationRequest::new(
+        InvalidationTarget::Window(ctx.window_id()),
+        InvalidationKind::Paint,
+    ));
+    ctx.request(InvalidationRequest::new(
+        InvalidationTarget::Window(ctx.window_id()),
+        InvalidationKind::HitTest,
+    ));
+    ctx.request(InvalidationRequest::new(
+        InvalidationTarget::Window(ctx.window_id()),
+        InvalidationKind::Semantics,
+    ));
+}
+
+struct DesktopAutomationRoot {
+    workspace: FloatingWorkspaceState,
+    target_view_id: u64,
+    initial_bounds: Rect,
+    content: SingleChild,
+    mode: Option<DesktopAutomationMode>,
+    timer: Option<TimerToken>,
+    started_at: Option<f64>,
+    last_report_at: Option<f64>,
+    last_report_frame_index: u64,
+}
+
+impl DesktopAutomationRoot {
+    const STEP_INTERVAL_S: f64 = 1.0 / 120.0;
+    const BENCH_DURATION_S: f64 = 3.0;
+    const REPORT_INTERVAL_S: f64 = 0.5;
+
+    fn new<T: Widget + 'static>(
+        workspace: FloatingWorkspaceState,
+        target_view_id: u64,
+        initial_bounds: Rect,
+        mode: Option<DesktopAutomationMode>,
+        content: T,
+    ) -> Self {
+        Self {
+            workspace,
+            target_view_id,
+            initial_bounds,
+            content: SingleChild::new(content),
+            mode,
+            timer: None,
+            started_at: None,
+            last_report_at: None,
+            last_report_frame_index: 0,
+        }
+    }
+
+    fn ensure_started(&mut self, ctx: &mut EventCtx) {
+        if self.timer.is_some() {
+            return;
+        }
+
+        let now = ctx.current_time();
+        self.started_at = Some(now);
+        self.last_report_at = Some(now);
+        self.last_report_frame_index = sui::window_performance_snapshot(ctx.window_id())
+            .map(|snapshot| snapshot.frame_index)
+            .unwrap_or(0);
+        self.timer = Some(ctx.schedule_timer_after(Self::STEP_INTERVAL_S));
+        println!(
+            "[sui-dev automation] started {:?} on view {}",
+            self.mode, self.target_view_id
+        );
+    }
+
+    fn target_bounds_for_elapsed(&self, elapsed: f64) -> Rect {
+        match self.mode.expect("automation mode should be active when ticking") {
+            DesktopAutomationMode::ButtonGridResize => {
+                let phase = ((elapsed / Self::BENCH_DURATION_S) * 2.0).fract() as f32;
+                let triangle = if phase <= 0.5 {
+                    phase * 2.0
+                } else {
+                    (1.0 - phase) * 2.0
+                };
+                Rect::new(
+                    self.initial_bounds.x(),
+                    self.initial_bounds.y(),
+                    self.initial_bounds.width() + 420.0 * triangle,
+                    self.initial_bounds.height() + 280.0 * triangle,
+                )
+            }
+        }
+    }
+
+    fn report_progress(&mut self, ctx: &EventCtx, force: bool) {
+        let now = ctx.current_time();
+        let Some(last_report_at) = self.last_report_at else {
+            self.last_report_at = Some(now);
+            return;
+        };
+        if !force && now - last_report_at < Self::REPORT_INTERVAL_S {
+            return;
+        }
+
+        let Some(snapshot) = sui::window_performance_snapshot(ctx.window_id()) else {
+            self.last_report_at = Some(now);
+            return;
+        };
+
+        let frame_delta = snapshot
+            .frame_index
+            .saturating_sub(self.last_report_frame_index);
+        let elapsed = (now - last_report_at).max(f64::EPSILON);
+        let fps = frame_delta as f64 / elapsed;
+        println!(
+            "[sui-dev automation] t={now:.3}s fps={fps:.1} frame={} total={:.3}ms acq={:.3}ms pres={:.3}ms build={:.3}ms state={:.3}ms",
+            snapshot.frame_index,
+            snapshot.total_time_ms,
+            snapshot.renderer_submission.surface_acquire_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.surface_present_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.retained_packet_build_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.retained_state_update_time_us as f64 / 1000.0,
+        );
+        self.last_report_at = Some(now);
+        self.last_report_frame_index = snapshot.frame_index;
+    }
+
+    fn tick(&mut self, ctx: &mut EventCtx) {
+        if self.mode.is_none() {
+            return;
+        }
+        self.ensure_started(ctx);
+        let started_at = self.started_at.unwrap_or_else(|| ctx.current_time());
+        let elapsed = (ctx.current_time() - started_at).max(0.0);
+        let next_bounds = self.target_bounds_for_elapsed(elapsed);
+        if self.workspace.set_view_bounds(self.target_view_id, next_bounds) {
+            request_window_refresh(ctx, true);
+        }
+        self.report_progress(ctx, false);
+
+        if elapsed < Self::BENCH_DURATION_S {
+            self.timer = Some(ctx.schedule_timer_after(Self::STEP_INTERVAL_S));
+        } else {
+            self.timer = None;
+            self.report_progress(ctx, true);
+            println!("[sui-dev automation] completed {:?}", self.mode);
+        }
+    }
+}
+
+impl Widget for DesktopAutomationRoot {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Window(
+                WindowEvent::RedrawRequested
+                | WindowEvent::Resized(_)
+                | WindowEvent::Focused(_)
+                | WindowEvent::ScaleFactorChanged { .. },
+            )
+                if self.mode.is_some() && self.timer.is_none() =>
+            {
+                self.ensure_started(ctx);
+            }
+            Event::Wake(WakeEvent::Timer { token, .. })
+                if self.mode.is_some() && self.timer == Some(*token) =>
+            {
+                self.tick(ctx);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.content.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.content.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.content.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.content.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.content.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.content.visit_children_mut(visitor);
+    }
 }
 
 impl ViewSidebar {
@@ -1067,8 +1275,17 @@ pub fn build_dev_workspace_with_widget_book_bounds(
     (workspace, views)
 }
 
-pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
+pub fn build_dev_application_with_widget_book_bounds_and_automation(
+    widget_book_bounds: Rect,
+    automation: Option<DesktopAutomationMode>,
+) -> Application {
     let (workspace, views) = build_dev_workspace_with_widget_book_bounds(widget_book_bounds);
+    let button_grid_view_id = workspace
+        .snapshots()
+        .into_iter()
+        .find(|view| view.title == BUTTON_GRID_TAB_LABEL)
+        .map(|view| (view.id, view.bounds))
+        .expect("expected button grid view in dev workspace");
 
     let root = SplitView::horizontal(ViewSidebar::new(workspace.clone()), views)
         .name("Development workspace split")
@@ -1076,6 +1293,14 @@ pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -
         .min_first(236.0)
         .min_second(420.0)
         .divider_thickness(12.0);
+
+    let root = DesktopAutomationRoot::new(
+        workspace.clone(),
+        button_grid_view_id.0,
+        button_grid_view_id.1,
+        automation,
+        root,
+    );
 
     let mut app = Application::new();
     register_widget_book_images(&mut app);
@@ -1092,8 +1317,19 @@ pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -
     app
 }
 
+pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
+    build_dev_application_with_widget_book_bounds_and_automation(widget_book_bounds, None)
+}
+
 pub fn build_dev_application() -> Application {
     build_dev_application_with_widget_book_bounds(Rect::new(24.0, 24.0, 680.0, 760.0))
+}
+
+pub fn build_dev_application_with_automation(automation: Option<DesktopAutomationMode>) -> Application {
+    build_dev_application_with_widget_book_bounds_and_automation(
+        Rect::new(24.0, 24.0, 680.0, 760.0),
+        automation,
+    )
 }
 
 
@@ -1101,10 +1337,13 @@ pub fn build_dev_application() -> Application {
 mod tests {
     use super::*;
 
+    use std::{thread, time::Duration};
+
     use sui::{
         Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
         Result, SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, StackOrderPolicy,
-        WindowPerformanceSnapshot, Vector, set_window_scene_statistics_detail_mode,
+        WindowEvent, WindowPerformanceSnapshot, Vector, set_window_scene_statistics_detail_mode,
+        window_performance_snapshot, window_scene_statistics_detail_mode,
     };
     use sui_testing::{Screenshot, TestApp, TestWindow, WindowSnapshot};
 
@@ -1461,6 +1700,60 @@ mod tests {
         drag_pointer_with_samples(window, from, to, 1).map(|_| ())
     }
 
+    fn wait_for_frame_advance(
+        window: &TestWindow,
+        previous_frame_index: u64,
+        timeout: Duration,
+    ) -> Result<Option<WindowPerformanceSnapshot>> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            window.run_until_idle()?;
+            let performance = window.performance_snapshot()?;
+            if performance.frame_index > previous_frame_index {
+                return Ok(Some(performance));
+            }
+
+            if std::time::Instant::now() >= deadline {
+                return Ok(None);
+            }
+
+            thread::sleep(Duration::from_millis(16));
+        }
+    }
+
+    fn latest_published_frame(window: &TestWindow) -> Result<WindowPerformanceSnapshot> {
+        window_performance_snapshot(window.id()).ok_or_else(|| {
+            sui::Error::new(format!(
+                "window {} does not have a published performance snapshot yet",
+                window.id().get()
+            ))
+        })
+    }
+
+    fn live_performance_toggle_point(snapshot: &WindowSnapshot) -> Point {
+        let overlay = find_named_node(
+            snapshot,
+            SemanticsRole::GenericContainer,
+            "Live performance overlay",
+        );
+        Point::new(overlay.bounds.max_x() - 50.0, overlay.bounds.y() + 18.0)
+    }
+
+    fn ensure_live_overlay_detail_mode(window: &TestWindow) -> Result<()> {
+        if window_scene_statistics_detail_mode(window.id()) == SceneStatisticsDetailMode::Detailed {
+            return Ok(());
+        }
+
+        let snapshot = window.snapshot()?;
+        click_pointer(window, live_performance_toggle_point(&snapshot))?;
+        assert_eq!(
+            window_scene_statistics_detail_mode(window.id()),
+            SceneStatisticsDetailMode::Detailed,
+            "expected live performance overlay toggle to enable detailed mode"
+        );
+        Ok(())
+    }
+
     fn click_pointer(window: &TestWindow, position: Point) -> Result<()> {
         let root = window.root();
 
@@ -1474,6 +1767,16 @@ mod tests {
         let mut up = PointerEvent::new(PointerEventKind::Up, position);
         up.button = Some(PointerButton::Primary);
         root.dispatch_event(Event::Pointer(up)).map(|_| ())
+    }
+
+    fn scroll_pointer(window: &TestWindow, position: Point, delta: Vector) -> Result<()> {
+        let root = window.root();
+
+        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, position)))?;
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, position);
+        scroll.scroll_delta = Some(sui::ScrollDelta::Pixels(delta));
+        root.dispatch_event(Event::Pointer(scroll)).map(|_| ())
     }
 
     fn drag_pointer_with_samples(
@@ -1774,6 +2077,861 @@ mod tests {
             !retained_text_view.visible,
             "expected retained text benchmark view to be available from the sidebar without changing the default sui-dev layout",
         );
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for no-vsync full-workspace resize cost on the live path"]
+    fn dev_workspace_button_grid_resize_live_no_vsync_benchmark() -> Result<()> {
+        const DRAG_STEPS: usize = 36;
+        const WARMUP_SAMPLES: usize = 6;
+
+        let app = TestApp::new_visible_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+
+        let initial_snapshot = window.snapshot()?;
+        let initial_view =
+            find_named_node(&initial_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
+        let resize_start =
+            Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
+        let resize_end = Point::new(
+            initial_view.bounds.x() + 820.0,
+            initial_view.bounds.y() + 620.0,
+        );
+
+        let frame_samples = drag_pointer_with_samples(&window, resize_start, resize_end, DRAG_STEPS)?;
+        let measured_samples = frame_samples
+            .into_iter()
+            .skip(WARMUP_SAMPLES)
+            .collect::<Vec<_>>();
+        assert!(
+            !measured_samples.is_empty(),
+            "expected no-vsync resize benchmark to record measured frame samples"
+        );
+
+        let frame_times_ms = measured_samples
+            .iter()
+            .map(|sample| sample.total_time_ms)
+            .collect::<Vec<_>>();
+        let valid_count = frame_times_ms.len();
+        let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+        let avg_ms = total_frame_time_ms / valid_count as f64;
+        let min_ms = frame_times_ms
+            .iter()
+            .copied()
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let max_ms = frame_times_ms
+            .iter()
+            .copied()
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let mut sorted = frame_times_ms.clone();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_ms = sorted[p95_index];
+        let avg_visible_layers = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.visible_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_direct_packets = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.direct_packet_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_state_update_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_state_update_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_build_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_build_count = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_scene = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_state = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_coordinate_space = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_surface_acquire_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_acquire_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_surface_present_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_present_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_draws = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.draw_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_uploaded_vertex_bytes = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.uploaded_vertex_bytes as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_text_vertex_bytes = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.text_vertex_bytes as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_glyph_instances = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.text_glyph_instance_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_scene_commands = measured_samples
+            .iter()
+            .map(|sample| sample.scene.command_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_text_commands = measured_samples
+            .iter()
+            .map(|sample| sample.scene.text_command_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+
+        println!("\n=== SUI Dev Visible No-Vsync 64-Button Resize Benchmark ===");
+        println!("frames measured:   {valid_count}");
+        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!("min frame time:    {min_ms:.3} ms");
+        println!("max frame time:    {max_ms:.3} ms");
+        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!("avg scene cmds:    {avg_scene_commands:.2} ({avg_text_commands:.2} text)");
+        println!("avg draws:         {avg_draws:.2}");
+        println!("avg vertex bytes:  {:.0}", avg_uploaded_vertex_bytes);
+        println!("avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)", avg_text_vertex_bytes);
+        println!("avg visible layers:{avg_visible_layers:.2}");
+        println!("avg direct packets:{avg_direct_packets:.2}");
+        println!("avg state update:  {avg_state_update_ms:.3} ms");
+        println!("avg packet build:  {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
+        println!(
+            "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
+        );
+        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!("==============================================\n");
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for dragging the large widget-book floating view in the full dev workspace"]
+    fn dev_workspace_widget_book_drag_live_no_vsync_benchmark() -> Result<()> {
+        const DRAG_STEPS: usize = 42;
+        const WARMUP_SAMPLES: usize = 6;
+
+        let app = TestApp::new_visible_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+
+        let initial_snapshot = window.snapshot()?;
+        let widget_book_view =
+            find_named_node(&initial_snapshot, SemanticsRole::Window, WIDGET_BOOK_TAB_LABEL);
+        let drag_start = Point::new(widget_book_view.bounds.x() + 64.0, widget_book_view.bounds.y() + 18.0);
+        let drag_end = Point::new(drag_start.x + 280.0, drag_start.y + 140.0);
+
+        let frame_samples = drag_pointer_with_samples(&window, drag_start, drag_end, DRAG_STEPS)?;
+        let measured_samples = frame_samples
+            .into_iter()
+            .skip(WARMUP_SAMPLES)
+            .collect::<Vec<_>>();
+        assert!(
+            !measured_samples.is_empty(),
+            "expected widget-book drag benchmark to record measured frame samples"
+        );
+
+        let frame_times_ms = measured_samples
+            .iter()
+            .map(|sample| sample.total_time_ms)
+            .collect::<Vec<_>>();
+        let valid_count = frame_times_ms.len();
+        let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+        let avg_ms = total_frame_time_ms / valid_count as f64;
+        let min_ms = frame_times_ms
+            .iter()
+            .copied()
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let max_ms = frame_times_ms
+            .iter()
+            .copied()
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let mut sorted = frame_times_ms.clone();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_ms = sorted[p95_index];
+        let avg_visible_layers = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.visible_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_direct_packets = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.direct_packet_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_state_update_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_state_update_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_build_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_build_count = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_scene = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_state = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_coordinate_space = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_surface_acquire_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_acquire_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_surface_present_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_present_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_draws = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.draw_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_uploaded_vertex_bytes = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.uploaded_vertex_bytes as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_text_vertex_bytes = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.text_vertex_bytes as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_glyph_instances = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.text_glyph_instance_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_scene_commands = measured_samples
+            .iter()
+            .map(|sample| sample.scene.command_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_text_commands = measured_samples
+            .iter()
+            .map(|sample| sample.scene.text_command_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+
+        println!("\n=== SUI Dev Visible No-Vsync Widget-Book Drag Benchmark ===");
+        println!("frames measured:   {valid_count}");
+        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!("min frame time:    {min_ms:.3} ms");
+        println!("max frame time:    {max_ms:.3} ms");
+        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!("avg scene cmds:    {avg_scene_commands:.2} ({avg_text_commands:.2} text)");
+        println!("avg draws:         {avg_draws:.2}");
+        println!("avg vertex bytes:  {:.0}", avg_uploaded_vertex_bytes);
+        println!("avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)", avg_text_vertex_bytes);
+        println!("avg visible layers:{avg_visible_layers:.2}");
+        println!("avg direct packets:{avg_direct_packets:.2}");
+        println!("avg state update:  {avg_state_update_ms:.3} ms");
+        println!("avg packet build:  {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
+        println!(
+            "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
+        );
+        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!("===============================================\n");
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for steady-state visible no-vsync redraw rate in the full dev workspace"]
+    fn dev_workspace_idle_visible_no_vsync_benchmark() -> Result<()> {
+        let app = TestApp::new_visible_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+
+        let initial = window.performance_snapshot()?;
+        let sample_duration = Duration::from_millis(1500);
+        thread::sleep(sample_duration);
+        let final_snapshot = window.performance_snapshot()?;
+        let elapsed_s = sample_duration.as_secs_f64();
+        let frame_delta = final_snapshot.frame_index.saturating_sub(initial.frame_index);
+        let fps = frame_delta as f64 / elapsed_s;
+
+        println!("\n=== SUI Dev Visible No-Vsync Idle Benchmark ===");
+        println!("sample duration:   {:.3} s", elapsed_s);
+        println!("frame delta:       {frame_delta}");
+        println!("observed fps:      {fps:.1}");
+        println!("last frame time:   {:.3} ms", final_snapshot.total_time_ms);
+        println!(
+            "last surface:      acq {:.3} ms | pres {:.3} ms",
+            final_snapshot.renderer_submission.surface_acquire_time_us as f64 / 1000.0,
+            final_snapshot.renderer_submission.surface_present_time_us as f64 / 1000.0,
+        );
+        println!(
+            "last packet build: {:.3} ms (scene {} | state {} | coord {})",
+            final_snapshot.renderer_submission.retained_packet_build_time_us as f64 / 1000.0,
+            final_snapshot.renderer_submission.retained_packet_rebuild_scene_count,
+            final_snapshot.renderer_submission.retained_packet_rebuild_state_count,
+            final_snapshot.renderer_submission.retained_packet_rebuild_coordinate_space_count,
+        );
+        println!("==============================================\n");
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for visible no-vsync widget-book gallery scrolling in the full dev workspace"]
+    fn dev_workspace_widget_book_scroll_live_no_vsync_benchmark() -> Result<()> {
+        const TARGET_FRAMES: usize = 24;
+        const MAX_SCROLL_INPUTS: usize = 96;
+        const WARMUP_SAMPLES: usize = 4;
+        const SCROLL_DELTA_Y: f32 = -80.0;
+
+        let app = TestApp::new_visible_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+
+        let gallery = window
+            .get_by_role(SemanticsRole::Window)
+            .with_name(WIDGET_BOOK_TAB_LABEL)
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
+
+        let mut previous_frame_index = window.performance_snapshot()?.frame_index;
+        let mut frame_samples = Vec::with_capacity(TARGET_FRAMES);
+        let mut scroll_inputs = 0usize;
+        while frame_samples.len() < TARGET_FRAMES && scroll_inputs < MAX_SCROLL_INPUTS {
+            gallery.scroll_pixels(Vector::new(0.0, SCROLL_DELTA_Y))?;
+            let _snapshot = window.snapshot()?;
+            if let Some(performance) = wait_for_frame_advance(
+                &window,
+                previous_frame_index,
+                Duration::from_millis(150),
+            )? {
+                previous_frame_index = performance.frame_index;
+                frame_samples.push(performance);
+            }
+            scroll_inputs += 1;
+        }
+        if frame_samples.len() < TARGET_FRAMES {
+            println!("\n=== SUI Dev Visible No-Vsync Widget-Book Scroll Benchmark ===");
+            println!("scroll inputs:     {scroll_inputs}");
+            println!("frames captured:   {}", frame_samples.len());
+            println!(
+                "note: live TestApp scroll input did not publish enough post-scroll frames for a reliable benchmark; a desktop-host harness is likely required for this path"
+            );
+            println!("===============================================\n");
+            return Ok(());
+        }
+
+        let measured_samples = frame_samples
+            .into_iter()
+            .skip(WARMUP_SAMPLES)
+            .collect::<Vec<_>>();
+        assert!(
+            !measured_samples.is_empty(),
+            "expected no-vsync widget-book scroll benchmark to record measured frame samples"
+        );
+
+        let frame_times_ms = measured_samples
+            .iter()
+            .map(|sample| sample.total_time_ms)
+            .collect::<Vec<_>>();
+        let valid_count = frame_times_ms.len();
+        let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+        let avg_ms = total_frame_time_ms / valid_count as f64;
+        let min_ms = frame_times_ms
+            .iter()
+            .copied()
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let max_ms = frame_times_ms
+            .iter()
+            .copied()
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let mut sorted = frame_times_ms.clone();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_ms = sorted[p95_index];
+        let avg_visible_layers = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.visible_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_direct_packets = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.direct_packet_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_state_update_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_state_update_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_build_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_build_count = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_scene = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_state = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_coordinate_space = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_surface_acquire_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_acquire_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_surface_present_ms = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_present_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_draws = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.draw_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_uploaded_vertex_bytes = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.uploaded_vertex_bytes as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_text_vertex_bytes = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.text_vertex_bytes as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_glyph_instances = measured_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.text_glyph_instance_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_scene_commands = measured_samples
+            .iter()
+            .map(|sample| sample.scene.command_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_text_commands = measured_samples
+            .iter()
+            .map(|sample| sample.scene.text_command_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+
+        println!("\n=== SUI Dev Visible No-Vsync Widget-Book Scroll Benchmark ===");
+        println!("frames measured:   {valid_count}");
+        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!("min frame time:    {min_ms:.3} ms");
+        println!("max frame time:    {max_ms:.3} ms");
+        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!("avg scene cmds:    {avg_scene_commands:.2} ({avg_text_commands:.2} text)");
+        println!("avg draws:         {avg_draws:.2}");
+        println!("avg vertex bytes:  {:.0}", avg_uploaded_vertex_bytes);
+        println!("avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)", avg_text_vertex_bytes);
+        println!("avg visible layers:{avg_visible_layers:.2}");
+        println!("avg direct packets:{avg_direct_packets:.2}");
+        println!("avg state update:  {avg_state_update_ms:.3} ms");
+        println!("avg packet build:  {avg_packet_build_ms:.3} ms ({avg_packet_build_count:.2} packets)");
+        println!(
+            "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
+        );
+        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!("===============================================\n");
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for real-time visible no-vsync resize pacing in the full dev workspace"]
+    fn dev_workspace_button_grid_resize_realtime_visible_no_vsync_benchmark() -> Result<()> {
+        const DRAG_STEPS: usize = 180;
+        const INPUT_INTERVAL: Duration = Duration::from_millis(4);
+        const TAIL_POLL_DURATION: Duration = Duration::from_millis(220);
+
+        let app = TestApp::new_visible_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+        ensure_live_overlay_detail_mode(&window)?;
+
+        let root = window.root();
+        root.dispatch_event(Event::Window(WindowEvent::Focused(true)))?;
+
+        let initial_snapshot = window.snapshot()?;
+        let initial_view =
+            find_named_node(&initial_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
+        let resize_start =
+            Point::new(initial_view.bounds.max_x() - 8.0, initial_view.bounds.max_y() - 8.0);
+        let resize_end = Point::new(
+            initial_view.bounds.x() + 820.0,
+            initial_view.bounds.y() + 620.0,
+        );
+        let before_frame = window.capture_screenshot()?;
+
+        let mut previous_frame_index = latest_published_frame(&window)?.frame_index;
+        let mut frame_samples = Vec::new();
+
+        root.dispatch_event(Event::Pointer(PointerEvent::new(PointerEventKind::Move, resize_start)))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, resize_start);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        root.dispatch_event(Event::Pointer(down))?;
+
+        let benchmark_start = std::time::Instant::now();
+        let total_delta = resize_end - resize_start;
+        let mut previous_position = resize_start;
+        for step in 1..=DRAG_STEPS {
+            let progress = step as f32 / DRAG_STEPS as f32;
+            let position = Point::new(
+                resize_start.x + (total_delta.x * progress),
+                resize_start.y + (total_delta.y * progress),
+            );
+            let mut moved = PointerEvent::new(PointerEventKind::Move, position);
+            moved.buttons = PointerButtons::new(1);
+            moved.delta = position - previous_position;
+            root.dispatch_event(Event::Pointer(moved))?;
+            previous_position = position;
+
+            thread::sleep(INPUT_INTERVAL);
+            if let Some(snapshot) = window_performance_snapshot(window.id())
+                .filter(|snapshot| snapshot.frame_index > previous_frame_index)
+            {
+                previous_frame_index = snapshot.frame_index;
+                frame_samples.push(snapshot);
+            }
+        }
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, resize_end);
+        up.button = Some(PointerButton::Primary);
+        root.dispatch_event(Event::Pointer(up))?;
+
+        let tail_deadline = std::time::Instant::now() + TAIL_POLL_DURATION;
+        while std::time::Instant::now() < tail_deadline {
+            thread::sleep(INPUT_INTERVAL);
+            if let Some(snapshot) = window_performance_snapshot(window.id())
+                .filter(|snapshot| snapshot.frame_index > previous_frame_index)
+            {
+                previous_frame_index = snapshot.frame_index;
+                frame_samples.push(snapshot);
+            }
+        }
+
+        let benchmark_elapsed_s = benchmark_start.elapsed().as_secs_f64();
+        assert!(
+            !frame_samples.is_empty(),
+            "expected real-time resize benchmark to capture at least one published frame"
+        );
+
+        let after_snapshot = window.snapshot()?;
+        let after_frame = window.capture_screenshot()?;
+        assert!(
+            pixel_diff_count(&before_frame, &after_frame) > 0,
+            "expected real-time resize benchmark to change rendered pixels"
+        );
+        let resized_view = find_named_node(&after_snapshot, SemanticsRole::Window, BUTTON_GRID_TAB_LABEL);
+        assert!(
+            resized_view.bounds.width() > initial_view.bounds.width() + 40.0,
+            "expected button grid view to resize during the real-time benchmark, before={:?} after={:?}",
+            initial_view.bounds,
+            resized_view.bounds,
+        );
+
+        let frame_times_ms = frame_samples
+            .iter()
+            .map(|sample| sample.total_time_ms)
+            .collect::<Vec<_>>();
+        let valid_count = frame_times_ms.len();
+        let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+        let avg_ms = total_frame_time_ms / valid_count as f64;
+        let min_ms = frame_times_ms
+            .iter()
+            .copied()
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let max_ms = frame_times_ms
+            .iter()
+            .copied()
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let mut sorted = frame_times_ms.clone();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_ms = sorted[p95_index];
+        let observed_fps = valid_count as f64 / benchmark_elapsed_s;
+        let avg_surface_acquire_ms = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_acquire_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_surface_present_ms = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_present_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_state_update_ms = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_state_update_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_build_ms = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_scene = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_state = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_coordinate_space = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+
+        println!("\n=== SUI Dev Realtime Visible No-Vsync 64-Button Resize Benchmark ===");
+        println!("frames captured:   {valid_count}");
+        println!("elapsed:           {:.3} s", benchmark_elapsed_s);
+        println!("observed fps:      {observed_fps:.1}");
+        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!("min frame time:    {min_ms:.3} ms");
+        println!("max frame time:    {max_ms:.3} ms");
+        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!("avg state update:  {avg_state_update_ms:.3} ms");
+        println!("avg packet build:  {avg_packet_build_ms:.3} ms");
+        println!(
+            "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
+        );
+        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!("========================================================\n");
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for real-time visible no-vsync widget-book scrolling in the full dev workspace"]
+    fn dev_workspace_widget_book_scroll_realtime_visible_no_vsync_benchmark() -> Result<()> {
+        const SCROLL_EVENTS: usize = 160;
+        const INPUT_INTERVAL: Duration = Duration::from_millis(8);
+        const TAIL_POLL_DURATION: Duration = Duration::from_millis(220);
+        const SCROLL_DELTA_Y: f32 = -48.0;
+
+        let app = TestApp::new_visible_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+        ensure_live_overlay_detail_mode(&window)?;
+
+        let root = window.root();
+        root.dispatch_event(Event::Window(WindowEvent::Focused(true)))?;
+
+        let initial_snapshot = window.snapshot()?;
+        let gallery = find_named_node(
+            &initial_snapshot,
+            SemanticsRole::ScrollView,
+            sui_widget_book::GALLERY_SCROLL_NAME,
+        );
+        let scroll_point = Point::new(
+            gallery.bounds.x() + gallery.bounds.width() * 0.5,
+            gallery.bounds.y() + gallery.bounds.height() * 0.5,
+        );
+        let before_frame = window.capture_screenshot()?;
+
+        let mut previous_frame_index = latest_published_frame(&window)?.frame_index;
+        let mut frame_samples = Vec::new();
+
+        let benchmark_start = std::time::Instant::now();
+        for _ in 0..SCROLL_EVENTS {
+            scroll_pointer(&window, scroll_point, Vector::new(0.0, SCROLL_DELTA_Y))?;
+
+            thread::sleep(INPUT_INTERVAL);
+            if let Some(snapshot) = window_performance_snapshot(window.id())
+                .filter(|snapshot| snapshot.frame_index > previous_frame_index)
+            {
+                previous_frame_index = snapshot.frame_index;
+                frame_samples.push(snapshot);
+            }
+        }
+
+        let tail_deadline = std::time::Instant::now() + TAIL_POLL_DURATION;
+        while std::time::Instant::now() < tail_deadline {
+            thread::sleep(INPUT_INTERVAL);
+            if let Some(snapshot) = window_performance_snapshot(window.id())
+                .filter(|snapshot| snapshot.frame_index > previous_frame_index)
+            {
+                previous_frame_index = snapshot.frame_index;
+                frame_samples.push(snapshot);
+            }
+        }
+
+        let benchmark_elapsed_s = benchmark_start.elapsed().as_secs_f64();
+        assert!(
+            !frame_samples.is_empty(),
+            "expected real-time widget-book scroll benchmark to capture at least one published frame"
+        );
+
+        let after_snapshot = window.snapshot()?;
+        let after_frame = window.capture_screenshot()?;
+        assert!(
+            pixel_diff_count(&before_frame, &after_frame) > 0,
+            "expected real-time widget-book scroll benchmark to change rendered pixels"
+        );
+        let after_gallery = find_named_node(
+            &after_snapshot,
+            SemanticsRole::ScrollView,
+            sui_widget_book::GALLERY_SCROLL_NAME,
+        );
+        assert_eq!(
+            after_gallery.bounds,
+            gallery.bounds,
+            "expected scrolling to keep the gallery viewport stable while its contents move"
+        );
+
+        let frame_times_ms = frame_samples
+            .iter()
+            .map(|sample| sample.total_time_ms)
+            .collect::<Vec<_>>();
+        let valid_count = frame_times_ms.len();
+        let total_frame_time_ms: f64 = frame_times_ms.iter().sum();
+        let avg_ms = total_frame_time_ms / valid_count as f64;
+        let min_ms = frame_times_ms
+            .iter()
+            .copied()
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let max_ms = frame_times_ms
+            .iter()
+            .copied()
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0);
+        let mut sorted = frame_times_ms.clone();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_ms = sorted[p95_index];
+        let observed_fps = valid_count as f64 / benchmark_elapsed_s;
+        let avg_surface_acquire_ms = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_acquire_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_surface_present_ms = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.surface_present_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_state_update_ms = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_state_update_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_build_ms = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_build_time_us as f64 / 1000.0)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_visible_layers = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.visible_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_scene = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_scene_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_state = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_state_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_packet_rebuild_coordinate_space = frame_samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuild_coordinate_space_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+
+        println!("\n=== SUI Dev Realtime Visible No-Vsync Widget-Book Scroll Benchmark ===");
+        println!("frames captured:   {valid_count}");
+        println!("elapsed:           {:.3} s", benchmark_elapsed_s);
+        println!("observed fps:      {observed_fps:.1}");
+        println!("avg frame time:    {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+        println!("min frame time:    {min_ms:.3} ms");
+        println!("max frame time:    {max_ms:.3} ms");
+        println!("p95 frame time:    {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+        println!("avg visible layers:{avg_visible_layers:.2}");
+        println!("avg state update:  {avg_state_update_ms:.3} ms");
+        println!("avg packet build:  {avg_packet_build_ms:.3} ms");
+        println!(
+            "avg packet why:    scene {avg_packet_rebuild_scene:.2} | state {avg_packet_rebuild_state:.2} | coord {avg_packet_rebuild_coordinate_space:.2}"
+        );
+        println!("avg surface:       acq {avg_surface_acquire_ms:.3} ms | pres {avg_surface_present_ms:.3} ms");
+        println!("============================================================\n");
 
         Ok(())
     }

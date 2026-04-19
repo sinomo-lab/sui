@@ -1,30 +1,36 @@
 mod app;
 
 pub use app::{build_dev_application, build_dev_application_with_widget_book_bounds};
+#[cfg(not(target_arch = "wasm32"))]
+use app::{DesktopAutomationMode, build_dev_application_with_automation};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::env;
 
 use sui::Application;
 use sui::{
-    DesktopPlatform, WindowColorManagementMode, WindowDynamicRangeMode,
-    WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
-    set_window_render_options,
+    DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform,
+    SceneStatisticsDetailMode, SemanticsRole, WindowColorManagementMode,
+    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowRenderOptions,
+    WindowToneMappingMode, set_window_render_options, set_window_scene_statistics_detail_mode,
 };
 use sui_widget_book::{
     build_button_grid_benchmark_application, build_color_validation_application,
     build_retained_text_benchmark_application, build_text_editing_benchmark_application,
     build_text_rendering_comparison_application, build_widget_book_application,
-    default_widget_book_state,
+    default_widget_book_state, GALLERY_SCROLL_NAME,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
 const DESKTOP_NO_VSYNC_ENV: &str = "SUI_DEV_NO_VSYNC";
+#[cfg(not(target_arch = "wasm32"))]
+const DESKTOP_AUTOMATION_ENV: &str = "SUI_DEV_AUTOMATION";
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DesktopLaunchMode {
     vsync_enabled: bool,
+    automation: Option<DesktopLaunchAutomation>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -32,7 +38,54 @@ impl Default for DesktopLaunchMode {
     fn default() -> Self {
         Self {
             vsync_enabled: true,
+            automation: None,
         }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopLaunchAutomation {
+    ButtonGridResize,
+    WidgetBookScroll,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_desktop_automation(raw_value: Option<&str>) -> sui::Result<Option<DesktopLaunchAutomation>> {
+    match raw_value.map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some("button-grid-resize") => Ok(Some(DesktopLaunchAutomation::ButtonGridResize)),
+        Some("widget-book-scroll") => Ok(Some(DesktopLaunchAutomation::WidgetBookScroll)),
+        Some(other) => Err(sui::Error::new(format!(
+            "unsupported sui-dev automation `{other}`; supported values: button-grid-resize, widget-book-scroll"
+        ))),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn app_automation_mode(mode: Option<DesktopLaunchAutomation>) -> Option<DesktopAutomationMode> {
+    match mode {
+        Some(DesktopLaunchAutomation::ButtonGridResize) => Some(DesktopAutomationMode::ButtonGridResize),
+        Some(DesktopLaunchAutomation::WidgetBookScroll) | None => None,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn platform_automation_config(mode: Option<DesktopLaunchAutomation>) -> Option<DesktopAutomationConfig> {
+    match mode {
+        Some(DesktopLaunchAutomation::WidgetBookScroll) => Some(DesktopAutomationConfig {
+            label: "widget-book-scroll".to_string(),
+            target_role: SemanticsRole::ScrollView,
+            target_name: GALLERY_SCROLL_NAME.to_string(),
+            action: DesktopAutomationAction::ScrollPixels {
+                delta: sui::Vector::new(0.0, -48.0),
+            },
+            step_interval: std::time::Duration::from_millis(8),
+            duration: std::time::Duration::from_secs(4),
+            report_interval: std::time::Duration::from_millis(500),
+            startup_timeout: std::time::Duration::from_secs(2),
+        }),
+        Some(DesktopLaunchAutomation::ButtonGridResize) | None => None,
     }
 }
 
@@ -50,6 +103,7 @@ fn env_requests_no_vsync(raw_value: Option<&str>) -> bool {
 fn parse_desktop_launch_mode<I, S>(
     args: I,
     env_disables_vsync: bool,
+    env_automation: Option<DesktopLaunchAutomation>,
 ) -> sui::Result<DesktopLaunchMode>
 where
     I: IntoIterator<Item = S>,
@@ -57,16 +111,20 @@ where
 {
     let mut mode = DesktopLaunchMode {
         vsync_enabled: !env_disables_vsync,
+        automation: env_automation,
     };
 
     for arg in args {
         match arg.as_ref() {
             "--no-vsync" => mode.vsync_enabled = false,
             "--vsync" => mode.vsync_enabled = true,
+            value if value.starts_with("--automation=") => {
+                mode.automation = parse_desktop_automation(value.split_once('=').map(|(_, rhs)| rhs))?;
+            }
             "" => {}
             other => {
                 return Err(sui::Error::new(format!(
-                    "unsupported sui-dev argument `{other}`; supported flags: --no-vsync, --vsync"
+                    "unsupported sui-dev argument `{other}`; supported flags: --no-vsync, --vsync, --automation=<button-grid-resize|widget-book-scroll>"
                 )));
             }
         }
@@ -80,12 +138,18 @@ fn current_desktop_launch_mode() -> sui::Result<DesktopLaunchMode> {
     parse_desktop_launch_mode(
         env::args().skip(1),
         env_requests_no_vsync(env::var(DESKTOP_NO_VSYNC_ENV).ok().as_deref()),
+        parse_desktop_automation(env::var(DESKTOP_AUTOMATION_ENV).ok().as_deref())?,
     )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_desktop_with_vsync(vsync_enabled: bool) -> sui::Result<()> {
     let app = build_dev_application();
+    run_desktop_application(app, vsync_enabled)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_desktop_application(app: Application, vsync_enabled: bool) -> sui::Result<()> {
     let feathering_enabled = app.feathering_enabled();
     let feather_width = app.feather_width();
     let initial_window_render_options = app.initial_window_render_options();
@@ -101,6 +165,36 @@ pub fn run_desktop_with_vsync(vsync_enabled: bool) -> sui::Result<()> {
         .with_feathering_enabled(feathering_enabled)
         .with_feather_width(feather_width)
         .with_vsync_enabled(vsync_enabled);
+    let _ = platform.run(runtime)?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_desktop_application_with_mode(launch_mode: DesktopLaunchMode) -> sui::Result<()> {
+    let app = build_dev_application_with_automation(app_automation_mode(launch_mode.automation));
+    let feathering_enabled = app.feathering_enabled();
+    let feather_width = app.feather_width();
+    let initial_window_render_options = app.initial_window_render_options();
+    let runtime = app.build()?;
+
+    if let Some(options) = initial_window_render_options {
+        for window_id in runtime.window_ids() {
+            set_window_render_options(window_id, options);
+        }
+    }
+
+    let mut platform = DesktopPlatform::new()
+        .with_feathering_enabled(feathering_enabled)
+        .with_feather_width(feather_width)
+        .with_vsync_enabled(launch_mode.vsync_enabled);
+    if let Some(automation) = platform_automation_config(launch_mode.automation) {
+        platform = platform.with_automation(automation);
+    }
+    if launch_mode.automation.is_some() {
+        for window_id in runtime.window_ids() {
+            set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+        }
+    }
     let _ = platform.run(runtime)?;
     Ok(())
 }
@@ -453,7 +547,7 @@ pub fn run_desktop() -> sui::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let launch_mode = current_desktop_launch_mode()?;
-        run_desktop_with_vsync(launch_mode.vsync_enabled)
+        run_desktop_application_with_mode(launch_mode)
     }
 }
 
@@ -762,15 +856,16 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn desktop_launch_mode_defaults_to_vsync() {
-        let mode = parse_desktop_launch_mode(Vec::<&str>::new(), false).unwrap();
+        let mode = parse_desktop_launch_mode(Vec::<&str>::new(), false, None).unwrap();
         assert!(mode.vsync_enabled);
+        assert_eq!(mode.automation, None);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn desktop_launch_mode_honors_no_vsync_sources() {
-        let cli_mode = parse_desktop_launch_mode(["--no-vsync"], false).unwrap();
-        let env_mode = parse_desktop_launch_mode(Vec::<&str>::new(), true).unwrap();
+        let cli_mode = parse_desktop_launch_mode(["--no-vsync"], false, None).unwrap();
+        let env_mode = parse_desktop_launch_mode(Vec::<&str>::new(), true, None).unwrap();
 
         assert!(!cli_mode.vsync_enabled);
         assert!(!env_mode.vsync_enabled);
@@ -779,15 +874,43 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn desktop_launch_mode_allows_cli_override_back_to_vsync() {
-        let mode = parse_desktop_launch_mode(["--vsync"], true).unwrap();
+        let mode = parse_desktop_launch_mode(["--vsync"], true, None).unwrap();
         assert!(mode.vsync_enabled);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn desktop_launch_mode_accepts_automation_sources() {
+        let cli_mode =
+            parse_desktop_launch_mode(["--automation=button-grid-resize"], false, None).unwrap();
+        let env_mode =
+            parse_desktop_launch_mode(Vec::<&str>::new(), false, Some(DesktopLaunchAutomation::ButtonGridResize))
+                .unwrap();
+
+        assert_eq!(cli_mode.automation, Some(DesktopLaunchAutomation::ButtonGridResize));
+        assert_eq!(env_mode.automation, Some(DesktopLaunchAutomation::ButtonGridResize));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_launch_mode_accepts_widget_book_scroll_automation() {
+        let mode =
+            parse_desktop_launch_mode(["--automation=widget-book-scroll"], false, None).unwrap();
+        assert_eq!(mode.automation, Some(DesktopLaunchAutomation::WidgetBookScroll));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn desktop_launch_mode_rejects_unknown_flags() {
-        let error = parse_desktop_launch_mode(["--bogus"], false).unwrap_err();
+        let error = parse_desktop_launch_mode(["--bogus"], false, None).unwrap_err();
         assert!(error.to_string().contains("unsupported sui-dev argument"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_launch_mode_rejects_unknown_automation() {
+        let error = parse_desktop_automation(Some("bogus")).unwrap_err();
+        assert!(error.to_string().contains("unsupported sui-dev automation"));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

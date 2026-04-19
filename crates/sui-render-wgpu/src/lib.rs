@@ -903,6 +903,9 @@ impl WgpuRenderer {
         capabilities: DisplayCapabilities,
     ) -> Result<()> {
         if let Some(surface) = self.surfaces.get_mut(&window_id) {
+            if surface.display_capabilities == capabilities {
+                return Ok(());
+            }
             surface.display_capabilities = capabilities;
         }
         self.configure_existing_surface(window_id)
@@ -920,6 +923,9 @@ impl WgpuRenderer {
         color_management: ColorManagementMode,
     ) -> Result<()> {
         if let Some(surface) = self.surfaces.get_mut(&window_id) {
+            if surface.color_management == color_management {
+                return Ok(());
+            }
             surface.color_management = color_management;
         }
         self.configure_existing_surface(window_id)

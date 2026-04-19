@@ -44,6 +44,44 @@ impl TestApp {
         Ok(Self { harness })
     }
 
+    pub fn new_with_vsync<F, A>(build: F, vsync_enabled: bool) -> Result<Self>
+    where
+        F: FnOnce() -> A + Send + 'static,
+        A: IntoTestRuntime,
+    {
+        let harness = Rc::new(RefCell::new(Harness::new_live_with_vsync(move || {
+            build().into_test_runtime()
+        }, vsync_enabled)?));
+        Ok(Self { harness })
+    }
+
+    pub fn new_with_options<F, A>(build: F, vsync_enabled: bool, visible: bool) -> Result<Self>
+    where
+        F: FnOnce() -> A + Send + 'static,
+        A: IntoTestRuntime,
+    {
+        let harness = Rc::new(RefCell::new(Harness::new_live_with_options(move || {
+            build().into_test_runtime()
+        }, vsync_enabled, visible)?));
+        Ok(Self { harness })
+    }
+
+    pub fn new_no_vsync<F, A>(build: F) -> Result<Self>
+    where
+        F: FnOnce() -> A + Send + 'static,
+        A: IntoTestRuntime,
+    {
+        Self::new_with_vsync(build, false)
+    }
+
+    pub fn new_visible_no_vsync<F, A>(build: F) -> Result<Self>
+    where
+        F: FnOnce() -> A + Send + 'static,
+        A: IntoTestRuntime,
+    {
+        Self::new_with_options(build, false, true)
+    }
+
     pub fn from_runtime(runtime: Runtime) -> Result<Self> {
         let harness = Rc::new(RefCell::new(Harness::new_headless(runtime)?));
         Ok(Self { harness })

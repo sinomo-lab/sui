@@ -36,8 +36,8 @@ pub use sui_layout::Padding as Insets;
 pub use sui_layout::{Alignment, Axis, Constraints, Padding};
 #[cfg(any(feature = "desktop", feature = "web"))]
 pub use sui_platform::{
-    AccessibilitySnapshot, DesktopPlatform, HeadlessPlatform, PlatformWindow,
-    WindowOutputDiagnostics, window_output_diagnostics,
+    AccessibilitySnapshot, DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform,
+    HeadlessPlatform, PlatformWindow, WindowOutputDiagnostics, window_output_diagnostics,
 };
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{

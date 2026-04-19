@@ -25,7 +25,7 @@ use sui_runtime::{
 
 pub(crate) use accessibility::AccessibilityBridge;
 pub use accessibility::AccessibilitySnapshot;
-pub use desktop::DesktopPlatform;
+pub use desktop::{DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform};
 pub use display_capabilities::{
     WindowOutputDiagnostics, clear_window_output_diagnostics,
     clear_window_output_diagnostics_all, detect_window_display_capabilities,

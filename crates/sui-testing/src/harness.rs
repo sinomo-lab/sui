@@ -93,6 +93,8 @@ enum HostInputEvent {
 enum HarnessCommand {
     Launch {
         build_runtime: RuntimeBuilder,
+        vsync_enabled: bool,
+        visible: bool,
         reply: SyncSender<Result<()>>,
     },
     Flush {
@@ -151,6 +153,8 @@ impl Default for PointerState {
 struct LiveHarnessApp {
     runtime: Runtime,
     renderer: WgpuRenderer,
+    vsync_enabled: bool,
+    window_visible: bool,
     started_at: Instant,
     frame_clock: f64,
     windows: HashMap<WindowId, LiveWindowState>,
@@ -182,6 +186,24 @@ impl Harness {
     where
         F: FnOnce() -> Result<Runtime> + Send + 'static,
     {
+        Self::new_live_with_options(build_runtime, true, false)
+    }
+
+    pub(crate) fn new_live_with_vsync<F>(build_runtime: F, vsync_enabled: bool) -> Result<Self>
+    where
+        F: FnOnce() -> Result<Runtime> + Send + 'static,
+    {
+        Self::new_live_with_options(build_runtime, vsync_enabled, false)
+    }
+
+    pub(crate) fn new_live_with_options<F>(
+        build_runtime: F,
+        vsync_enabled: bool,
+        visible: bool,
+    ) -> Result<Self>
+    where
+        F: FnOnce() -> Result<Runtime> + Send + 'static,
+    {
         let guard = LIVE_TEST_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -190,6 +212,8 @@ impl Harness {
         proxy
             .send_event(HarnessCommand::Launch {
                 build_runtime: Box::new(build_runtime),
+                vsync_enabled,
+                visible,
                 reply: reply_tx,
             })
             .map_err(|_| Error::new("live test harness service is unavailable"))?;
@@ -509,6 +533,8 @@ impl LiveHarnessApp {
         Self {
             runtime: Runtime::new(),
             renderer: WgpuRenderer::default(),
+            vsync_enabled: true,
+            window_visible: false,
             started_at: Instant::now(),
             frame_clock: 0.0,
             windows: HashMap::new(),
@@ -529,7 +555,7 @@ impl LiveHarnessApp {
         self.windows.clear();
         self.host_to_runtime.clear();
         self.runtime = Runtime::new();
-        self.renderer = WgpuRenderer::default();
+        self.renderer = WgpuRenderer::default().with_vsync_enabled(self.vsync_enabled);
         self.started_at = Instant::now();
         self.frame_clock = 0.0;
         clear_window_performance_snapshots();
@@ -547,7 +573,11 @@ impl LiveHarnessApp {
         &mut self,
         event_loop: &ActiveEventLoop,
         build_runtime: RuntimeBuilder,
+        vsync_enabled: bool,
+        visible: bool,
     ) -> Result<()> {
+        self.vsync_enabled = vsync_enabled;
+        self.window_visible = visible;
         self.reset_runtime_state();
         self.last_error = None;
         self.runtime = build_runtime()?;
@@ -581,7 +611,7 @@ impl LiveHarnessApp {
                 event_loop
                     .create_window(
                         WindowAttributes::default()
-                            .with_visible(false)
+                            .with_visible(self.window_visible)
                             .with_title(title.clone())
                             .with_inner_size(LogicalSize::new(
                                 DEFAULT_WINDOW_SIZE.width,
@@ -1169,9 +1199,16 @@ impl LiveHarnessApp {
         match command {
             HarnessCommand::Launch {
                 build_runtime,
+                vsync_enabled,
+                visible,
                 reply,
             } => {
-                let _ = reply.send(self.launch_runtime(event_loop, build_runtime));
+                let _ = reply.send(self.launch_runtime(
+                    event_loop,
+                    build_runtime,
+                    vsync_enabled,
+                    visible,
+                ));
             }
             HarnessCommand::Flush { reply } => {
                 let _ = reply.send(

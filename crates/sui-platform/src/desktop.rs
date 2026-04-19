@@ -7,13 +7,13 @@ use std::{
 use web_time::Instant;
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
-    PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta, Size, Vector,
-    WindowEvent, WindowId,
+    PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta,
+    SemanticsRole, Size, Vector, WindowEvent, WindowId,
 };
 use sui_render_wgpu::{FeatheringOptions, WgpuRenderer};
 use sui_runtime::{
-    PresentationLatencyDiagnostics, Runtime, WindowRenderOptions, window_render_options,
-    window_scene_statistics_detail_mode,
+    PresentationLatencyDiagnostics, Runtime, WindowPerformanceSnapshot, WindowRenderOptions,
+    window_performance_snapshot, window_render_options, window_scene_statistics_detail_mode,
 };
 use winit::{
     application::ApplicationHandler,
@@ -37,6 +37,72 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct DesktopPlatform {
     renderer: WgpuRenderer,
+    automation: Option<DesktopAutomationConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DesktopAutomationAction {
+    ScrollPixels { delta: Vector },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DesktopAutomationConfig {
+    pub label: String,
+    pub target_role: SemanticsRole,
+    pub target_name: String,
+    pub action: DesktopAutomationAction,
+    pub step_interval: Duration,
+    pub duration: Duration,
+    pub report_interval: Duration,
+    pub startup_timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+struct DesktopAutomationState {
+    config: DesktopAutomationConfig,
+    armed_at: Instant,
+    started_at: Option<Instant>,
+    next_step_at: Instant,
+    last_report_at: Option<Instant>,
+    last_report_frame_index: u64,
+    target_window_id: Option<WindowId>,
+    pointer_primed: bool,
+    shutdown_requested: bool,
+}
+
+impl DesktopAutomationState {
+    fn new(config: DesktopAutomationConfig) -> Self {
+        let now = Instant::now();
+        Self {
+            config,
+            armed_at: now,
+            started_at: None,
+            next_step_at: now,
+            last_report_at: None,
+            last_report_frame_index: 0,
+            target_window_id: None,
+            pointer_primed: false,
+            shutdown_requested: false,
+        }
+    }
+
+    fn next_deadline(&self) -> Option<Instant> {
+        if self.shutdown_requested {
+            return None;
+        }
+
+        let mut next = self.next_step_at;
+        if let Some(started_at) = self.started_at {
+            next = next.min(started_at + self.config.duration);
+            if let Some(last_report_at) = self.last_report_at {
+                next = next.min(last_report_at + self.config.report_interval);
+            }
+        } else {
+            next = next.min(self.armed_at + self.config.startup_timeout);
+        }
+
+        Some(next)
+    }
 }
 
 impl DesktopPlatform {
@@ -59,6 +125,11 @@ impl DesktopPlatform {
 
     pub fn with_vsync_enabled(mut self, enabled: bool) -> Self {
         self.set_vsync_enabled(enabled);
+        self
+    }
+
+    pub fn with_automation(mut self, automation: DesktopAutomationConfig) -> Self {
+        self.automation = Some(automation);
         self
     }
 
@@ -112,7 +183,7 @@ impl DesktopPlatform {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let mut app = DesktopApp::new(runtime, self.renderer);
+            let mut app = DesktopApp::new(runtime, self.renderer, self.automation);
             event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
 
             if let Some(error) = app.last_error.take() {
@@ -127,6 +198,7 @@ impl DesktopPlatform {
 struct DesktopApp {
     runtime: Runtime,
     renderer: WgpuRenderer,
+    automation: Option<DesktopAutomationState>,
     started_at: Instant,
     frame_clock: f64,
     windows: HashMap<WindowId, WindowState>,
@@ -135,10 +207,15 @@ struct DesktopApp {
 }
 
 impl DesktopApp {
-    fn new(runtime: Runtime, renderer: WgpuRenderer) -> Self {
+    fn new(
+        runtime: Runtime,
+        renderer: WgpuRenderer,
+        automation: Option<DesktopAutomationConfig>,
+    ) -> Self {
         Self {
             runtime,
             renderer,
+            automation: automation.map(DesktopAutomationState::new),
             started_at: Instant::now(),
             frame_clock: 0.0,
             windows: HashMap::new(),
@@ -213,6 +290,7 @@ impl DesktopApp {
                 WindowState {
                     id: window_id,
                     title,
+                    display_capabilities_dirty: false,
                     awaiting_performance_bootstrap: true,
                     redraw_requested: false,
                     redraw_requested_at_ms: None,
@@ -280,6 +358,21 @@ impl DesktopApp {
             self.request_redraw_if_needed(window_id)?;
         }
 
+        self.drive_automation(event_loop)?;
+        if self
+            .automation
+            .as_ref()
+            .is_some_and(|automation| automation.shutdown_requested)
+        {
+            let window_ids = self.runtime.window_ids();
+            for window_id in window_ids {
+                self.runtime.remove_window(window_id)?;
+                crate::clear_window_performance(window_id);
+            }
+            self.sync_windows(event_loop)?;
+            return Ok(());
+        }
+
         self.update_control_flow(event_loop)?;
         Ok(())
     }
@@ -327,6 +420,18 @@ impl DesktopApp {
                 (Some(current), Some(candidate)) => Some(current.min(candidate)),
                 (None, Some(candidate)) => Some(candidate),
                 (current, None) => current,
+            };
+        }
+
+        if let Some(automation_deadline) = self
+            .automation
+            .as_ref()
+            .and_then(DesktopAutomationState::next_deadline)
+        {
+            let candidate = (automation_deadline - self.started_at).as_secs_f64();
+            next_deadline = match next_deadline {
+                Some(current) => Some(current.min(candidate)),
+                None => Some(candidate),
             };
         }
 
@@ -411,7 +516,16 @@ impl DesktopApp {
                 self.renderer
                     .set_runtime_diagnostics_enabled(diagnostics_enabled);
                 let render_options = window_render_options(window_id);
-                self.refresh_window_display_capabilities(window_id)?;
+                if self
+                    .windows
+                    .get(&window_id)
+                    .is_some_and(|window| window.display_capabilities_dirty)
+                {
+                    self.refresh_window_display_capabilities(window_id)?;
+                    if let Some(window) = self.windows.get_mut(&window_id) {
+                        window.display_capabilities_dirty = false;
+                    }
+                }
                 self.renderer
                     .set_runtime_feathering_override(render_options.map(|options| {
                         FeatheringOptions::new(options.feathering_enabled, options.feather_width)
@@ -557,6 +671,7 @@ impl DesktopApp {
             WinitWindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let suggested_size = self.windows.get_mut(&window_id).map(|window| {
                     window.scale_factor = scale_factor;
+                    window.display_capabilities_dirty = true;
                     physical_size_to_logical_size(window.window.inner_size(), scale_factor)
                 });
                 self.process_event(
@@ -754,6 +869,289 @@ impl DesktopApp {
         self.last_error = Some(error);
         event_loop.exit();
     }
+
+    fn drive_automation(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        let now = Instant::now();
+        let mut state = match self.automation.take() {
+            Some(state) => state,
+            None => return Ok(()),
+        };
+
+        if state.shutdown_requested {
+            self.automation = Some(state);
+            return Ok(());
+        }
+
+        if state.started_at.is_none() && now >= state.armed_at + state.config.startup_timeout {
+            println!(
+                "[desktop automation:{}] timed out waiting for target {:?} named {:?}",
+                state.config.label, state.config.target_role, state.config.target_name
+            );
+            state.shutdown_requested = true;
+            self.automation = Some(state);
+            return Ok(());
+        }
+
+        if let Some((window_id, target_point)) = self.find_automation_target(&state) {
+            if state.started_at.is_none() {
+                state.started_at = Some(now);
+                state.last_report_at = Some(now);
+                state.last_report_frame_index = window_performance_snapshot(window_id)
+                    .map(|snapshot| snapshot.frame_index)
+                    .unwrap_or(0);
+                state.target_window_id = Some(window_id);
+                println!(
+                    "[desktop automation:{}] started on window {}",
+                    state.config.label,
+                    window_id.get()
+                );
+                self.process_event(
+                    event_loop,
+                    window_id,
+                    Event::Window(WindowEvent::Focused(true)),
+                )?;
+            }
+
+            if !state.pointer_primed {
+                self.inject_pointer_move(event_loop, window_id, target_point, true)?;
+                state.pointer_primed = true;
+            }
+
+            self.report_automation_progress(&mut state, false);
+
+            let started_at = state.started_at.expect("automation should have started");
+            if now >= started_at + state.config.duration {
+                self.report_automation_progress(&mut state, true);
+                println!("[desktop automation:{}] completed", state.config.label);
+                state.shutdown_requested = true;
+                self.automation = Some(state);
+                return Ok(());
+            }
+
+            if now >= state.next_step_at {
+                self.inject_automation_action(event_loop, window_id, target_point, &state.config.action)?;
+                state.next_step_at = now + state.config.step_interval;
+            }
+        }
+
+        self.automation = Some(state);
+        Ok(())
+    }
+
+    fn find_automation_target(
+        &self,
+        state: &DesktopAutomationState,
+    ) -> Option<(WindowId, Point)> {
+        self.windows.iter().find_map(|(window_id, window)| {
+            let snapshot = window.accessibility.snapshot()?;
+            let node = snapshot.nodes.iter().find(|node| {
+                node.role == state.config.target_role
+                    && node.name.as_deref() == Some(state.config.target_name.as_str())
+            })?;
+            let point = if node.role == SemanticsRole::ScrollView {
+                Point::new(
+                    node.bounds.x() + node.bounds.width().min(48.0),
+                    node.bounds.y() + node.bounds.height() * 0.5,
+                )
+            } else {
+                Point::new(
+                    node.bounds.x() + node.bounds.width() * 0.5,
+                    node.bounds.y() + node.bounds.height() * 0.5,
+                )
+            };
+            Some((
+                *window_id,
+                point,
+            ))
+        })
+    }
+
+    fn report_automation_progress(
+        &self,
+        state: &mut DesktopAutomationState,
+        force: bool,
+    ) {
+        let Some(window_id) = state.target_window_id else {
+            return;
+        };
+        let now = Instant::now();
+        let Some(last_report_at) = state.last_report_at else {
+            state.last_report_at = Some(now);
+            return;
+        };
+        if !force && now < last_report_at + state.config.report_interval {
+            return;
+        }
+        let Some(snapshot) = window_performance_snapshot(window_id) else {
+            state.last_report_at = Some(now);
+            return;
+        };
+        let elapsed = (now - last_report_at).as_secs_f64().max(f64::EPSILON);
+        let frame_delta = snapshot
+            .frame_index
+            .saturating_sub(state.last_report_frame_index);
+        let observed_fps = frame_delta as f64 / elapsed;
+        Self::print_automation_snapshot(&state.config.label, observed_fps, &snapshot);
+        state.last_report_at = Some(now);
+        state.last_report_frame_index = snapshot.frame_index;
+    }
+
+    fn print_automation_snapshot(
+        label: &str,
+        observed_fps: f64,
+        snapshot: &WindowPerformanceSnapshot,
+    ) {
+        let slowest_phase = snapshot
+            .slowest_phase()
+            .map(|sample| format!("{}:{:.3}ms", sample.phase.label(), sample.duration_ms))
+            .unwrap_or_else(|| "n/a".to_string());
+        let phase_breakdown = if snapshot.phase_timings.is_empty() {
+            "n/a".to_string()
+        } else {
+            snapshot
+                .phase_timings
+                .iter()
+                .map(|sample| format!("{}={:.3}", sample.phase.label(), sample.duration_ms))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let renderer_breakdown = format!(
+            "comp={:.3},traverse={:.3},batch={:.3},upload={:.3},encode={:.3},submit={:.3},res={:.3},bind={:.3},atlas_miss={}({:.3}ms)",
+            snapshot.renderer_submission.composition_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.retained_scene_traversal_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.batch_prepare_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.gpu_upload_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.pass_encode_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.queue_submit_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.resource_collection_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.bind_group_prepare_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.text_atlas_miss_count,
+            snapshot.renderer_submission.text_atlas_miss_time_us as f64 / 1000.0,
+        );
+        let hotspot = snapshot
+            .retained_packet_hotspot
+            .as_ref()
+            .map(|hotspot| {
+                format!(
+                    "widget={:?},total={:.3}ms,cmds={},text={},paths={},rects={}",
+                    hotspot.owner_widget_id,
+                    hotspot.total_time_us as f64 / 1000.0,
+                    hotspot.command_count,
+                    hotspot.text_command_count,
+                    hotspot.path_command_count,
+                    hotspot.rect_command_count,
+                )
+            })
+            .unwrap_or_else(|| "n/a".to_string());
+        println!(
+            "[desktop automation:{label}] observed_fps={observed_fps:.1} frame={} total={:.3}ms slowest={} dirty={:.1}% cmds={} acq={:.3}ms pres={:.3}ms build={:.3}ms state={:.3}ms layers={} draws={} phases=[{}] renderer=[{}] hotspot=[{}]",
+            snapshot.frame_index,
+            snapshot.total_time_ms,
+            slowest_phase,
+            snapshot.scene.dirty_coverage,
+            snapshot.scene.command_count,
+            snapshot.renderer_submission.surface_acquire_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.surface_present_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.retained_packet_build_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.retained_state_update_time_us as f64 / 1000.0,
+            snapshot.renderer_submission.visible_layer_count,
+            snapshot.renderer_submission.draw_count,
+            phase_breakdown,
+            renderer_breakdown,
+            hotspot,
+        );
+    }
+
+    fn inject_automation_action(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        target_point: Point,
+        action: &DesktopAutomationAction,
+    ) -> Result<()> {
+        match action {
+            DesktopAutomationAction::ScrollPixels { delta } => {
+                self.inject_pointer_move(event_loop, window_id, target_point, false)?;
+                let (buttons, modifiers) = self
+                    .windows
+                    .get(&window_id)
+                    .map(|window| (window.pointer.buttons, window.pointer.modifiers))
+                    .ok_or_else(|| Error::new(format!("missing window {}", window_id.get())))?;
+                self.process_event(
+                    event_loop,
+                    window_id,
+                    Event::Pointer(PointerEvent {
+                        pointer_id: 1,
+                        kind: PointerEventKind::Scroll,
+                        position: target_point,
+                        delta: Vector::ZERO,
+                        scroll_delta: Some(ScrollDelta::Pixels(*delta)),
+                        button: None,
+                        buttons,
+                        modifiers,
+                        pointer_kind: PointerKind::Mouse,
+                        is_primary: true,
+                    }),
+                )
+            }
+        }
+    }
+
+    fn inject_pointer_move(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        position: Point,
+        emit_enter: bool,
+    ) -> Result<()> {
+        let (previous, buttons, modifiers) = {
+            let window = self
+                .windows
+                .get(&window_id)
+                .ok_or_else(|| Error::new(format!("missing window {}", window_id.get())))?;
+            (window.pointer.position, window.pointer.buttons, window.pointer.modifiers)
+        };
+
+        if emit_enter {
+            self.process_event(
+                event_loop,
+                window_id,
+                Event::Pointer(PointerEvent {
+                    pointer_id: 1,
+                    kind: PointerEventKind::Enter,
+                    position,
+                    delta: Vector::ZERO,
+                    scroll_delta: None,
+                    button: None,
+                    buttons,
+                    modifiers,
+                    pointer_kind: PointerKind::Mouse,
+                    is_primary: true,
+                }),
+            )?;
+        }
+
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            window.pointer.position = position;
+        }
+
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::Pointer(PointerEvent {
+                pointer_id: 1,
+                kind: PointerEventKind::Move,
+                position,
+                delta: Vector::new(position.x - previous.x, position.y - previous.y),
+                scroll_delta: None,
+                button: None,
+                buttons,
+                modifiers,
+                pointer_kind: PointerKind::Mouse,
+                is_primary: true,
+            }),
+        )
+    }
 }
 
 impl ApplicationHandler for DesktopApp {
@@ -785,6 +1183,7 @@ impl ApplicationHandler for DesktopApp {
 struct WindowState {
     id: WindowId,
     title: String,
+    display_capabilities_dirty: bool,
     awaiting_performance_bootstrap: bool,
     redraw_requested: bool,
     redraw_requested_at_ms: Option<f64>,
