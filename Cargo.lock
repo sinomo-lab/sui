@@ -2022,14 +2022,21 @@ name = "sui-platform"
 version = "0.1.0"
 dependencies = [
  "sui-core",
+ "sui-platform-windows",
  "sui-render-wgpu",
  "sui-runtime",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
- "windows 0.61.3",
  "winit",
+]
+
+[[package]]
+name = "sui-platform-windows"
+version = "0.1.0"
+dependencies = [
+ "windows 0.61.3",
 ]
 
 [[package]]

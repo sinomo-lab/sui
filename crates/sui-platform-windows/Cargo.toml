@@ -1,0 +1,11 @@
+[package]
+name = "sui-platform-windows"
+version.workspace = true
+description = "Windows Advanced Color / DXGI probing helpers for SUI."
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi"] }

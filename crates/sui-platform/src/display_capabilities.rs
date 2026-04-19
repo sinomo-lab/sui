@@ -273,87 +273,40 @@ fn detect_windows_monitor_capabilities(
     window: &Window,
     monitor_name: &str,
 ) -> Option<DisplayCapabilities> {
-    use std::ffi::c_void;
-
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Dxgi::Common::{
-        DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
-        DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020, DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020,
+    use sui_platform_windows::{
+        WindowsAdvancedColorProbe, WindowsAdvancedColorSpace, probe_monitor_for_hwnd,
     };
-    use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1, IDXGIOutput, IDXGIOutput6,
-    };
-    use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromWindow};
-    use windows::core::Interface;
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    fn decode_wide_string(buffer: &[u16]) -> String {
-        let end = buffer
-            .iter()
-            .position(|&ch| ch == 0)
-            .unwrap_or(buffer.len());
-        String::from_utf16_lossy(&buffer[..end])
-    }
-
-    fn map_color_space(
-        color_space: windows::Win32::Graphics::Dxgi::Common::DXGI_COLOR_SPACE_TYPE,
-    ) -> WindowsColorSpace {
-        if color_space == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 {
-            WindowsColorSpace::Hdr10P2020
-        } else if color_space == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 {
-            WindowsColorSpace::ScRgb
-        } else if color_space == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020 {
-            WindowsColorSpace::Rgb2020
-        } else if color_space == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709 {
-            WindowsColorSpace::Srgb
-        } else {
-            WindowsColorSpace::Unknown
+    fn map_probe_color_space(color_space: WindowsAdvancedColorSpace) -> WindowsColorSpace {
+        match color_space {
+            WindowsAdvancedColorSpace::Srgb => WindowsColorSpace::Srgb,
+            WindowsAdvancedColorSpace::ScRgb => WindowsColorSpace::ScRgb,
+            WindowsAdvancedColorSpace::Hdr10P2020 => WindowsColorSpace::Hdr10P2020,
+            WindowsAdvancedColorSpace::Rgb2020 => WindowsColorSpace::Rgb2020,
+            WindowsAdvancedColorSpace::Unknown => WindowsColorSpace::Unknown,
         }
     }
 
     let hwnd = match window.window_handle().ok()?.as_raw() {
-        RawWindowHandle::Win32(handle) => HWND(handle.hwnd.get() as *mut c_void),
+        RawWindowHandle::Win32(handle) => handle.hwnd.get() as isize,
         _ => return None,
     };
-    let target_monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
-    if target_monitor.0.is_null() {
-        return None;
-    }
-
-    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1().ok()? };
-    let mut adapter_index = 0;
-    while let Ok(adapter) = unsafe { factory.EnumAdapters1::<IDXGIAdapter1>(adapter_index) } {
-        let mut output_index = 0;
-        while let Ok(output) = unsafe { adapter.EnumOutputs::<IDXGIOutput>(output_index) } {
-            let Ok(output6) = output.cast::<IDXGIOutput6>() else {
-                output_index += 1;
-                continue;
-            };
-            let Ok(desc) = (unsafe { output6.GetDesc1() }) else {
-                output_index += 1;
-                continue;
-            };
-            if desc.Monitor == target_monitor {
-                let info = WindowsAdvancedColorInfo {
-                    monitor_name: monitor_name.to_string(),
-                    device_name: Some(decode_wide_string(&desc.DeviceName)),
-                    bits_per_color: desc.BitsPerColor,
-                    color_space: map_color_space(desc.ColorSpace),
-                    red_primary: Some(desc.RedPrimary),
-                    green_primary: Some(desc.GreenPrimary),
-                    blue_primary: Some(desc.BluePrimary),
-                    white_point: Some(desc.WhitePoint),
-                    min_luminance_nits: Some(desc.MinLuminance),
-                    max_luminance_nits: Some(desc.MaxLuminance),
-                    max_full_frame_luminance_nits: Some(desc.MaxFullFrameLuminance),
-                };
-                return Some(display_capabilities_from_windows_advanced_color_info(&info));
-            }
-            output_index += 1;
-        }
-        adapter_index += 1;
-    }
-    None
+    let probe: WindowsAdvancedColorProbe = probe_monitor_for_hwnd(hwnd)?;
+    let info = WindowsAdvancedColorInfo {
+        monitor_name: monitor_name.to_string(),
+        device_name: probe.device_name,
+        bits_per_color: probe.bits_per_color,
+        color_space: map_probe_color_space(probe.color_space),
+        red_primary: probe.red_primary,
+        green_primary: probe.green_primary,
+        blue_primary: probe.blue_primary,
+        white_point: probe.white_point,
+        min_luminance_nits: probe.min_luminance_nits,
+        max_luminance_nits: probe.max_luminance_nits,
+        max_full_frame_luminance_nits: probe.max_full_frame_luminance_nits,
+    };
+    Some(display_capabilities_from_windows_advanced_color_info(&info))
 }
 
 pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilities {
