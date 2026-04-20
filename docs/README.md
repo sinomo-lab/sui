@@ -15,6 +15,8 @@ Suggested reading order:
 5. [renderer-architecture.md](./renderer-architecture.md) for scene, compositor, and renderer details.
 6. [testing.md](./testing.md) for headless tests, desktop harness tests, and visual artifacts.
 7. [design.md](./design.md) for the long-term product and API direction.
+8. [hdr-native-interface-manifesto.md](./hdr-native-interface-manifesto.md) for the intended HDR-native visual language and design constraints.
+9. [hdr-theme-token-schema-proposal.md](./hdr-theme-token-schema-proposal.md) for the proposed HDR-aware theme and token model.
 
 ## Workspace At A Glance
 

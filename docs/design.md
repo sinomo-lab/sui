@@ -9,6 +9,8 @@
 - [Text System Direction](./text-system.md)
 - [Rendering Architecture](./renderer-architecture.md)
 - [Testing Guide](./testing.md)
+- [HDR-Native Interface Manifesto](./hdr-native-interface-manifesto.md)
+- [HDR Theme And Token Schema Proposal](./hdr-theme-token-schema-proposal.md)
 
 The documents above describe the current codebase. This file remains the higher-level design target for the framework.
 

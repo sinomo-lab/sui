@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui::{
-    InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton, PointerEventKind,
-    SemanticsNode, SemanticsRole, TextCoveragePolicy, TextHinting, WgpuRenderer,
+    HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton,
+    PointerEventKind, SemanticsNode, SemanticsRole, TextCoveragePolicy, TextHinting, WgpuRenderer,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode,
     WindowEvent, WindowId, WindowOutputColorPrimaries, WindowRenderOptions, WindowStemDarkening,
     WindowTextHinting, WindowTextRenderPolicy, WindowToneMappingMode, prelude::*,
@@ -13,6 +13,7 @@ use sui_widget_book::{
     build_retained_text_benchmark, build_text_editing_benchmark,
     build_text_rendering_comparison_surface, build_text_validation_surface,
     build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
+    set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
 };
 
 const WINDOW_TITLE: &str = "SUI Dev";
@@ -41,7 +42,9 @@ const COLOR_MANAGEMENT_MODE_NAME: &str = "Color management";
 const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
 const DYNAMIC_RANGE_MODE_NAME: &str = "Dynamic range";
 const TONE_MAPPING_MODE_NAME: &str = "Tone mapping";
+const HDR_THEME_MODE_NAME: &str = "HDR theme mode";
 const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
+const HDR_THEME_INSPECTION_TITLE: &str = "HDR theme mode inspection";
 const SETTINGS_SCROLL_NAME: &str = "Settings controls";
 const TEXT_RENDER_POLICY_OPTIONS: [&str; 4] =
     ["Automatic", "Linear", "Gamma", "TwoCoverageMinusCoverageSq"];
@@ -50,6 +53,12 @@ const COLOR_MANAGEMENT_MODE_OPTIONS: [&str; 4] =
 const OUTPUT_PRIMARIES_OPTIONS: [&str; 3] = ["Automatic", "sRGB", "Display P3"];
 const DYNAMIC_RANGE_MODE_OPTIONS: [&str; 3] = ["Automatic", "SDR", "HDR"];
 const TONE_MAPPING_MODE_OPTIONS: [&str; 3] = ["Automatic", "Clamp", "Reinhard"];
+const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
+    "Disabled (SDR baseline)",
+    "Wide-gamut only",
+    "Constrained HDR",
+    "Full HDR",
+];
 
 const SIDEBAR_TITLE: &str = "Available views";
 
@@ -760,6 +769,69 @@ fn update_tone_mapping_mode_selection(state: &mut WindowRenderOptions, index: us
     };
 }
 
+fn hdr_theme_mode_label(mode: HdrThemeMode) -> &'static str {
+    match mode {
+        HdrThemeMode::Disabled => "Disabled (SDR baseline)",
+        HdrThemeMode::WideGamutOnly => "Wide-gamut only",
+        HdrThemeMode::ConstrainedHdr => "Constrained HDR",
+        HdrThemeMode::FullHdr => "Full HDR",
+    }
+}
+
+fn hdr_theme_mode_selected_index(mode: HdrThemeMode) -> usize {
+    match mode {
+        HdrThemeMode::Disabled => 0,
+        HdrThemeMode::WideGamutOnly => 1,
+        HdrThemeMode::ConstrainedHdr => 2,
+        HdrThemeMode::FullHdr => 3,
+    }
+}
+
+fn hdr_theme_mode_from_index(index: usize) -> HdrThemeMode {
+    match index {
+        1 => HdrThemeMode::WideGamutOnly,
+        2 => HdrThemeMode::ConstrainedHdr,
+        3 => HdrThemeMode::FullHdr,
+        _ => HdrThemeMode::Disabled,
+    }
+}
+
+fn output_policy_label(strategy_debug: &str) -> &'static str {
+    if strategy_debug.starts_with("Hdr") {
+        "HDR"
+    } else if strategy_debug.starts_with("WideGamut") {
+        "Wide gamut"
+    } else {
+        "SDR"
+    }
+}
+
+fn hdr_theme_inspection_lines(window_id: WindowId) -> Vec<String> {
+    let current_mode = widget_book_hdr_theme_mode();
+    let mut lines = vec![format!(
+        "Current theme mode: {}",
+        hdr_theme_mode_label(current_mode)
+    )];
+
+    if let Some(diagnostics) = window_output_diagnostics(window_id) {
+        let strategy_debug = format!("{:?}", diagnostics.active_output_strategy);
+        lines.push(format!(
+            "Window output policy: {}",
+            output_policy_label(&strategy_debug)
+        ));
+        lines.push(format!(
+            "Requested presentation: {:?} / {:?}",
+            diagnostics.requested_color_management_mode, diagnostics.requested_dynamic_range_mode
+        ));
+        lines.push(format!("Active strategy: {strategy_debug}"));
+    } else {
+        lines.push("Window output policy: waiting for first presented frame".to_string());
+        lines.push("Requested presentation: waiting for output diagnostics".to_string());
+    }
+
+    lines
+}
+
 fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
     let Some(diagnostics) = window_output_diagnostics(window_id) else {
         return vec!["Waiting for first presented frame…".to_string()];
@@ -817,6 +889,69 @@ where
                 .color(Color::rgba(0.20, 0.27, 0.35, 1.0)),
         )
         .with_child(SizedBox::new().width(width).with_child(control))
+}
+
+struct HdrThemeInspectionPanel;
+
+impl Widget for HdrThemeInspectionPanel {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(constraints.max.width.min(640.0), 112.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = DefaultTheme::default().palette;
+        let border = StrokeStyle::default();
+        ctx.fill_rect(ctx.bounds(), palette.surface.with_alpha(0.35));
+        ctx.stroke_rect(ctx.bounds(), palette.border.with_alpha(0.85), border);
+
+        ctx.draw_text(
+            Rect::new(
+                ctx.bounds().x() + 14.0,
+                ctx.bounds().y() + 12.0,
+                ctx.bounds().width() - 28.0,
+                20.0,
+            ),
+            HDR_THEME_INSPECTION_TITLE,
+            TextStyle {
+                font_size: 14.0,
+                line_height: 18.0,
+                color: palette.text,
+                ..TextStyle::default()
+            },
+        );
+
+        for (index, line) in hdr_theme_inspection_lines(ctx.window_id())
+            .iter()
+            .enumerate()
+        {
+            ctx.draw_text(
+                Rect::new(
+                    ctx.bounds().x() + 14.0,
+                    ctx.bounds().y() + 40.0 + index as f32 * 18.0,
+                    ctx.bounds().width() - 28.0,
+                    18.0,
+                ),
+                line,
+                TextStyle {
+                    font_size: 11.0,
+                    line_height: 15.0,
+                    color: palette.text.with_alpha(0.9),
+                    ..TextStyle::default()
+                },
+            );
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(HDR_THEME_INSPECTION_TITLE.to_string());
+        node.description = Some(hdr_theme_inspection_lines(ctx.window_id()).join("\n"));
+        ctx.push(node);
+    }
 }
 
 struct OutputDiagnosticsPanel;
@@ -962,6 +1097,7 @@ struct RenderSettingsTab {
     content: SingleChild,
     state: Rc<RefCell<WindowRenderOptions>>,
     applied: Option<WindowRenderOptions>,
+    last_hdr_theme_mode: HdrThemeMode,
 }
 
 impl RenderSettingsTab {
@@ -993,6 +1129,7 @@ impl RenderSettingsTab {
         let output_primaries_state = Rc::clone(&state);
         let dynamic_range_state = Rc::clone(&state);
         let tone_mapping_state = Rc::clone(&state);
+        let current_hdr_theme_mode = widget_book_hdr_theme_mode();
         let scroll_state = ScrollState::new();
 
         let content = RenderSettingsScrollPane::new(
@@ -1231,10 +1368,21 @@ impl RenderSettingsTab {
                                 update_tone_mapping_mode_selection(&mut state, index);
                             }),
                     ))
+                    .with_child(labeled_settings_control(
+                        HDR_THEME_MODE_NAME,
+                        280.0,
+                        Select::new(HDR_THEME_MODE_NAME)
+                            .options(HDR_THEME_MODE_OPTIONS)
+                            .selected(hdr_theme_mode_selected_index(current_hdr_theme_mode))
+                            .on_change(move |index, _| {
+                                set_widget_book_hdr_theme_mode(hdr_theme_mode_from_index(index));
+                            }),
+                    ))
+                    .with_child(HdrThemeInspectionPanel)
                     .with_child(OutputDiagnosticsPanel)
                     .with_child(
                         Label::new(
-                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy and surface diagnostics panel shows the detected monitor/output path after each redraw.",
+                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)
@@ -1250,6 +1398,7 @@ impl RenderSettingsTab {
             content: SingleChild::new(content),
             state,
             applied: None,
+            last_hdr_theme_mode: current_hdr_theme_mode,
         }
     }
 
@@ -1273,6 +1422,13 @@ impl RenderSettingsTab {
 
 impl Widget for RenderSettingsTab {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        let current_hdr_theme_mode = widget_book_hdr_theme_mode();
+        if current_hdr_theme_mode != self.last_hdr_theme_mode {
+            self.last_hdr_theme_mode = current_hdr_theme_mode;
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+
         let rerender = !matches!(event, Event::Window(WindowEvent::RedrawRequested))
             && ctx.phase() != sui::EventPhase::Capture;
 
@@ -1313,6 +1469,7 @@ fn build_render_settings_tab() -> impl Widget {
 pub fn build_dev_workspace_with_widget_book_bounds(
     widget_book_bounds: Rect,
 ) -> (FloatingWorkspaceState, FloatingWorkspace) {
+    set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
     let widget_book_state = default_widget_book_state();
     let workspace = FloatingWorkspaceState::new();
 
@@ -2082,11 +2239,46 @@ final_max_luminance={final_max_luminance}
             OUTPUT_PRIMARIES_NAME,
             DYNAMIC_RANGE_MODE_NAME,
             TONE_MAPPING_MODE_NAME,
+            HDR_THEME_MODE_NAME,
         ] {
             settings.get_by_text(label).expect().to_be_visible()?;
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn settings_view_exposes_hdr_theme_mode_controls() {
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("dev application should render for settings semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("dev application semantics should exist");
+
+        assert!(
+            semantics
+                .iter()
+                .any(|node| { node.name.as_deref() == Some(HDR_THEME_MODE_NAME) })
+        );
+
+        let inspection = semantics
+            .into_iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(HDR_THEME_INSPECTION_TITLE)
+            })
+            .expect("HDR theme inspection semantics node should be present");
+        let description = inspection
+            .description
+            .as_deref()
+            .expect("HDR theme inspection semantics description should be present");
+        assert!(description.contains("Current theme mode: Disabled (SDR baseline)"));
+        assert!(description.contains("Window output policy:"));
     }
 
     fn drag_pointer(window: &TestWindow, from: Point, to: Point) -> Result<()> {

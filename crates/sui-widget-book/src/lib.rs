@@ -1,13 +1,18 @@
 #![forbid(unsafe_code)]
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{OnceLock, RwLock},
+};
 
 use sui::prelude::*;
 use sui::{
-    InvalidationKind, InvalidationRequest, InvalidationTarget, Rect, SceneStatisticsDetailMode,
-    SemanticsNode, SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextSurface, TextWrap,
-    TimerToken, Vector, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
-    WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
+    HdrLuminanceTokens, HdrThemeMode, HdrThemeTokens, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, Rect, SceneStatisticsDetailMode, SemanticColorToken, SemanticsNode,
+    SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextSurface, TextWrap, TimerToken,
+    Vector, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
+    WindowPerformanceSnapshot, resolve_semantic_color, set_window_scene_statistics_detail_mode,
     window_performance_snapshot, window_scene_statistics_detail_mode,
 };
 use sui_runtime::LayerOptions;
@@ -68,6 +73,8 @@ pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
 pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare light and dark themes";
 pub const LIGHT_THEME_PREVIEW_CARD_NAME: &str = "Light theme preview card";
 pub const DARK_THEME_PREVIEW_CARD_NAME: &str = "Dark theme preview card";
+pub const HDR_THEME_LAB_NAME: &str = "HDR theme mode lab";
+pub const HDR_THEME_LAB_ACTIVE_PREVIEW_NAME: &str = "Current HDR theme mode preview";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
 pub const DARK_PREVIEW_ACTION_LABEL: &str = "Dark preview action";
 pub const LIGHT_PREVIEW_INPUT_LABEL: &str = "Light preview query";
@@ -87,6 +94,23 @@ const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
 const BLEND_MODE_OPTIONS: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
 const TAB_BAR_OPTIONS: [&str; 3] = ["Canvas", "Inspector", "Export"];
 const TAB_PANEL_OPTIONS: [&str; 3] = ["Layout", "Data", "History"];
+
+fn hdr_theme_lab_mode_store() -> &'static RwLock<HdrThemeMode> {
+    static STORE: OnceLock<RwLock<HdrThemeMode>> = OnceLock::new();
+    STORE.get_or_init(|| RwLock::new(HdrThemeMode::Disabled))
+}
+
+pub fn widget_book_hdr_theme_mode() -> HdrThemeMode {
+    *hdr_theme_lab_mode_store()
+        .read()
+        .expect("widget-book HDR theme mode lock should not be poisoned")
+}
+
+pub fn set_widget_book_hdr_theme_mode(mode: HdrThemeMode) {
+    *hdr_theme_lab_mode_store()
+        .write()
+        .expect("widget-book HDR theme mode lock should not be poisoned") = mode;
+}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WidgetBookState {
@@ -214,6 +238,8 @@ pub fn register_widget_book_images(application: &mut Application) {
 }
 
 pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
+    set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
+
     let mut application = Application::new();
     register_widget_book_images(&mut application);
 
@@ -699,6 +725,388 @@ impl Widget for ThemePreviewShowcase {
     }
 }
 
+fn hdr_theme_mode_title(mode: HdrThemeMode) -> &'static str {
+    match mode {
+        HdrThemeMode::Disabled => "SDR baseline",
+        HdrThemeMode::WideGamutOnly => "Wide-gamut-only",
+        HdrThemeMode::ConstrainedHdr => "Constrained HDR",
+        HdrThemeMode::FullHdr => "Full HDR",
+    }
+}
+
+fn hdr_theme_mode_explanation(mode: HdrThemeMode) -> &'static str {
+    match mode {
+        HdrThemeMode::Disabled => {
+            "Uses the SDR fallback path only. Wide-gamut and HDR token branches stay available in the theme, but built-in widgets resolve to the existing SDR palette and luminance ceilings."
+        }
+        HdrThemeMode::WideGamutOnly => {
+            "Prefers richer gamut variants while keeping luminance pinned to reference white. This validates color-volume differences without introducing above-white UI chrome."
+        }
+        HdrThemeMode::ConstrainedHdr => {
+            "Allows a modest lift for accents, focused states, and emissive indicators while still treating reference white as the visual anchor."
+        }
+        HdrThemeMode::FullHdr => {
+            "Allows the same semantic tokens to push farther into HDR headroom so popup arrivals and indicator energy can separate more clearly from the constrained path."
+        }
+    }
+}
+
+fn hdr_theme_lab_section_name(mode: HdrThemeMode) -> &'static str {
+    match mode {
+        HdrThemeMode::Disabled => "SDR baseline comparison",
+        HdrThemeMode::WideGamutOnly => "Wide-gamut-only comparison",
+        HdrThemeMode::ConstrainedHdr => "Constrained HDR comparison",
+        HdrThemeMode::FullHdr => "Full HDR comparison",
+    }
+}
+
+fn hdr_theme_lab_theme(mode: HdrThemeMode) -> DefaultTheme {
+    let mut theme = DefaultTheme::dark();
+    theme.hdr = HdrThemeTokens::from_default_theme(theme);
+    theme.hdr.mode = mode;
+    theme.hdr.color_roles.surface = SemanticColorToken::from_sdr(theme.colors.base_100)
+        .with_wide_gamut(Color::display_p3(0.13, 0.16, 0.23, 1.0))
+        .with_hdr(Color::linear_display_p3(0.18, 0.21, 0.30, 1.0));
+    theme.hdr.color_roles.surface_elevated = SemanticColorToken::from_sdr(theme.colors.base_200)
+        .with_wide_gamut(Color::display_p3(0.16, 0.19, 0.28, 1.0))
+        .with_hdr(Color::linear_display_p3(0.24, 0.27, 0.38, 1.0));
+    theme.hdr.color_roles.surface_outline = SemanticColorToken::from_sdr(theme.colors.base_300)
+        .with_wide_gamut(Color::display_p3(0.33, 0.39, 0.50, 1.0))
+        .with_hdr(Color::linear_display_p3(0.42, 0.48, 0.62, 1.0));
+    theme.hdr.color_roles.text = SemanticColorToken::from_sdr(theme.colors.base_content)
+        .with_wide_gamut(Color::display_p3(0.92, 0.95, 0.99, 1.0))
+        .with_hdr(Color::linear_display_p3(1.02, 1.04, 1.10, 1.0));
+    theme.hdr.color_roles.text_muted =
+        SemanticColorToken::from_sdr(theme.colors.base_content.with_alpha(0.74))
+            .with_wide_gamut(Color::display_p3(0.75, 0.80, 0.89, 1.0))
+            .with_hdr(Color::linear_display_p3(0.86, 0.90, 0.98, 1.0));
+    theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.colors.primary)
+        .with_wide_gamut(Color::display_p3(0.18, 0.74, 0.96, 1.0))
+        .with_hdr(Color::linear_display_p3(0.38, 1.08, 1.36, 1.0));
+    theme.hdr.color_roles.accent_text = SemanticColorToken::from_sdr(theme.colors.primary_content)
+        .with_wide_gamut(Color::display_p3(0.03, 0.08, 0.12, 1.0))
+        .with_hdr(Color::linear_display_p3(0.10, 0.14, 0.20, 1.0));
+    theme.hdr.color_roles.secondary = SemanticColorToken::from_sdr(theme.colors.secondary)
+        .with_wide_gamut(Color::display_p3(0.43, 0.66, 0.98, 1.0))
+        .with_hdr(Color::linear_display_p3(0.60, 0.94, 1.24, 1.0));
+    theme.hdr.color_roles.warning = SemanticColorToken::from_sdr(theme.colors.warning)
+        .with_wide_gamut(Color::display_p3(0.98, 0.68, 0.18, 1.0))
+        .with_hdr(Color::linear_display_p3(1.28, 0.82, 0.24, 1.0));
+    theme.hdr.color_roles.info = SemanticColorToken::from_sdr(theme.colors.info)
+        .with_wide_gamut(Color::display_p3(0.40, 0.78, 0.98, 1.0))
+        .with_hdr(Color::linear_display_p3(0.58, 1.04, 1.30, 1.0));
+    theme.hdr.luminance = HdrLuminanceTokens::constrained_defaults();
+    theme.hdr.policy.max_large_area_lift = 1.18;
+    theme.hdr.policy.max_constrained_lift = 1.32;
+    theme.hdr.policy.max_emissive_lift = 1.75;
+    theme.hdr.effects.pulse.speed = 1.1;
+    theme.hdr.effects.pulse.color = Some(resolve_semantic_color(
+        theme.hdr.color_roles.warning,
+        HdrThemeMode::FullHdr,
+    ));
+
+    match mode {
+        HdrThemeMode::Disabled | HdrThemeMode::WideGamutOnly => {}
+        HdrThemeMode::ConstrainedHdr => {
+            theme.hdr.luminance.focused = 1.08;
+            theme.hdr.luminance.semantic_accent = 1.16;
+            theme.hdr.luminance.emissive_indicator = 1.30;
+            theme.hdr.luminance.alert_pulse = 1.22;
+        }
+        HdrThemeMode::FullHdr => {
+            theme.hdr.luminance.focused = 1.14;
+            theme.hdr.luminance.semantic_accent = 1.26;
+            theme.hdr.luminance.emissive_indicator = 1.62;
+            theme.hdr.luminance.alert_pulse = 1.48;
+            theme.hdr.policy.max_large_area_lift = 1.28;
+            theme.hdr.policy.max_emissive_lift = 1.95;
+            theme.hdr.materials.raised.specular_strength = 0.18;
+            theme.hdr.materials.raised.rim_light_strength = 0.14;
+            theme.hdr.effects.glow.intensity = 0.32;
+            theme.hdr.effects.pulse.intensity = 0.54;
+        }
+    }
+
+    theme
+}
+
+fn hdr_theme_lab_card(
+    section_name: impl Into<String>,
+    mode: HdrThemeMode,
+    prefix: impl Into<String>,
+    lead_text: impl Into<String>,
+) -> impl Widget {
+    let section_name = section_name.into();
+    let prefix = prefix.into();
+    let lead_text = lead_text.into();
+    let theme = hdr_theme_lab_theme(mode);
+    let indicator_color = resolve_semantic_color(theme.hdr.color_roles.accent, theme.hdr.mode);
+    let button_label = format!("{prefix} sample action");
+    let switch_label = format!("{prefix} sample live indicator");
+    let popover_name = format!("{prefix} attention popover");
+    let popover_trigger_label = format!("{prefix} attention trigger");
+    let swatch_name = format!("{prefix} emissive indicator");
+
+    NamedSection::new(
+        section_name,
+        Background::new(
+            theme.palette.border.with_alpha(0.92),
+            Padding::all(
+                1.0,
+                Background::new(
+                    theme.palette.surface,
+                    Padding::all(
+                        16.0,
+                        Stack::vertical()
+                            .spacing(12.0)
+                            .alignment(Alignment::Stretch)
+                            .with_child(
+                                Label::new(hdr_theme_mode_title(mode))
+                                    .font_size(18.0)
+                                    .line_height(22.0)
+                                    .color(theme.palette.text),
+                            )
+                            .with_child(
+                                Label::new(lead_text)
+                                    .font_size(13.0)
+                                    .line_height(18.0)
+                                    .color(theme.palette.placeholder),
+                            )
+                            .with_child(
+                                Label::new(format!(
+                                    "Token mode: {} · accent peak {:.2}× · indicator peak {:.2}× · alert peak {:.2}×",
+                                    hdr_theme_mode_title(mode),
+                                    theme.hdr.luminance.semantic_accent,
+                                    theme.hdr.luminance.emissive_indicator,
+                                    theme.hdr.luminance.alert_pulse,
+                                ))
+                                .font_size(12.0)
+                                .line_height(17.0)
+                                .color(theme.palette.placeholder),
+                            )
+                            .with_child(
+                                Stack::horizontal()
+                                    .spacing(12.0)
+                                    .alignment(Alignment::Center)
+                                    .with_child(
+                                        SizedBox::new().width(186.0).with_child(
+                                            Button::new(button_label).min_width(176.0).theme(theme),
+                                        ),
+                                    )
+                                    .with_child(
+                                        ColorSwatch::new(swatch_name, indicator_color)
+                                            .size(Size::new(64.0, 28.0)),
+                                    )
+                                    .with_child(
+                                        Label::new("The swatch mirrors the accent token resolved for the current gamut/HDR mode.")
+                                            .font_size(12.0)
+                                            .line_height(17.0)
+                                            .color(theme.palette.placeholder),
+                                    ),
+                            )
+                            .with_child(
+                                Switch::new(switch_label)
+                                    .on(!matches!(mode, HdrThemeMode::Disabled))
+                                    .theme(theme),
+                            )
+                            .with_child(
+                                SizedBox::new().width(260.0).with_child(
+                                    Popover::new(
+                                        popover_name,
+                                        Button::new(popover_trigger_label)
+                                            .min_width(220.0)
+                                            .theme(theme),
+                                        Stack::vertical()
+                                            .spacing(8.0)
+                                            .alignment(Alignment::Stretch)
+                                            .with_child(
+                                                Label::new("Small popup surfaces are where constrained vs full HDR arrival cues become easiest to validate.")
+                                                    .font_size(13.0)
+                                                    .line_height(18.0)
+                                                    .color(theme.palette.text),
+                                            )
+                                            .with_child(
+                                                Label::new("Use this trigger to compare popup chrome, border lift, and arrival emphasis against the matching button and switch.")
+                                                    .font_size(12.0)
+                                                    .line_height(17.0)
+                                                    .color(theme.palette.placeholder),
+                                            ),
+                                    )
+                                    .theme(theme),
+                                ),
+                            ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+struct HdrThemeLabShowcase {
+    active_mode: HdrThemeMode,
+    active_preview: SingleChild,
+    sdr_card: SingleChild,
+    wide_gamut_card: SingleChild,
+    constrained_card: SingleChild,
+    full_hdr_card: SingleChild,
+}
+
+impl HdrThemeLabShowcase {
+    const SECTION_GAP: f32 = 14.0;
+
+    fn new() -> Self {
+        let active_mode = widget_book_hdr_theme_mode();
+        Self {
+            active_mode,
+            active_preview: SingleChild::new(Self::build_active_preview(active_mode)),
+            sdr_card: SingleChild::new(hdr_theme_lab_card(
+                hdr_theme_lab_section_name(HdrThemeMode::Disabled),
+                HdrThemeMode::Disabled,
+                hdr_theme_mode_title(HdrThemeMode::Disabled),
+                hdr_theme_mode_explanation(HdrThemeMode::Disabled),
+            )),
+            wide_gamut_card: SingleChild::new(hdr_theme_lab_card(
+                hdr_theme_lab_section_name(HdrThemeMode::WideGamutOnly),
+                HdrThemeMode::WideGamutOnly,
+                hdr_theme_mode_title(HdrThemeMode::WideGamutOnly),
+                hdr_theme_mode_explanation(HdrThemeMode::WideGamutOnly),
+            )),
+            constrained_card: SingleChild::new(hdr_theme_lab_card(
+                hdr_theme_lab_section_name(HdrThemeMode::ConstrainedHdr),
+                HdrThemeMode::ConstrainedHdr,
+                hdr_theme_mode_title(HdrThemeMode::ConstrainedHdr),
+                hdr_theme_mode_explanation(HdrThemeMode::ConstrainedHdr),
+            )),
+            full_hdr_card: SingleChild::new(hdr_theme_lab_card(
+                hdr_theme_lab_section_name(HdrThemeMode::FullHdr),
+                HdrThemeMode::FullHdr,
+                hdr_theme_mode_title(HdrThemeMode::FullHdr),
+                hdr_theme_mode_explanation(HdrThemeMode::FullHdr),
+            )),
+        }
+    }
+
+    fn build_active_preview(mode: HdrThemeMode) -> impl Widget {
+        hdr_theme_lab_card(
+            HDR_THEME_LAB_ACTIVE_PREVIEW_NAME,
+            mode,
+            format!("Current {} preview", hdr_theme_mode_title(mode)),
+            format!(
+                "This preview follows the shared HDR theme mode currently selected by the dev host: {}. Use it to compare the active styling path against the four fixed comparison cards below.",
+                hdr_theme_mode_title(mode),
+            ),
+        )
+    }
+
+    fn sync_active_preview(&mut self) -> bool {
+        let next_mode = widget_book_hdr_theme_mode();
+        if next_mode == self.active_mode {
+            return false;
+        }
+
+        self.active_mode = next_mode;
+        self.active_preview = SingleChild::new(Self::build_active_preview(next_mode));
+        true
+    }
+}
+
+impl Widget for HdrThemeLabShowcase {
+    fn event(&mut self, ctx: &mut EventCtx, _event: &Event) {
+        if self.sync_active_preview() {
+            ctx.request_measure();
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let max_width = if constraints.max.width.is_finite() {
+            constraints.max.width.max(320.0)
+        } else {
+            760.0
+        };
+        let child_constraints = Constraints::new(Size::ZERO, Size::new(max_width, f32::INFINITY));
+        let mut height = 0.0;
+        let mut width: f32 = 0.0;
+
+        for child in [
+            &mut self.active_preview,
+            &mut self.sdr_card,
+            &mut self.wide_gamut_card,
+            &mut self.constrained_card,
+            &mut self.full_hdr_card,
+        ] {
+            let size = child.measure(ctx, child_constraints);
+            width = width.max(size.width);
+            height += size.height;
+        }
+
+        height += Self::SECTION_GAP * 4.0;
+        constraints.clamp(Size::new(width, height))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let mut y = bounds.y();
+        for child in [
+            &mut self.active_preview,
+            &mut self.sdr_card,
+            &mut self.wide_gamut_card,
+            &mut self.constrained_card,
+            &mut self.full_hdr_card,
+        ] {
+            let size = child.child().measured_size();
+            child.arrange(
+                ctx,
+                Rect::new(bounds.x(), y, bounds.width().min(size.width), size.height),
+            );
+            y += size.height + Self::SECTION_GAP;
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.active_preview.paint(ctx);
+        self.sdr_card.paint(ctx);
+        self.wide_gamut_card.paint(ctx);
+        self.constrained_card.paint(ctx);
+        self.full_hdr_card.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(HDR_THEME_LAB_NAME.to_string());
+        node.description = Some(format!(
+            "Compares the same button, switch, emissive indicator, and popup trigger across SDR baseline, wide-gamut-only, constrained HDR, and full HDR. The shared preview currently uses {}.",
+            hdr_theme_mode_title(self.active_mode),
+        ));
+        ctx.push(node);
+        self.active_preview.semantics(ctx);
+        self.sdr_card.semantics(ctx);
+        self.wide_gamut_card.semantics(ctx);
+        self.constrained_card.semantics(ctx);
+        self.full_hdr_card.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.active_preview.visit_children(visitor);
+        self.sdr_card.visit_children(visitor);
+        self.wide_gamut_card.visit_children(visitor);
+        self.constrained_card.visit_children(visitor);
+        self.full_hdr_card.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.active_preview.visit_children_mut(visitor);
+        self.sdr_card.visit_children_mut(visitor);
+        self.wide_gamut_card.visit_children_mut(visitor);
+        self.constrained_card.visit_children_mut(visitor);
+        self.full_hdr_card.visit_children_mut(visitor);
+    }
+}
+
 pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
@@ -757,6 +1165,11 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                 "Theme preview",
                 "Flip the compare toggle to inspect the simplified light and dark daisy-style themes with the same control composition.",
                 ThemePreviewShowcase::new(Rc::clone(&state)),
+            ))
+            .with_child(panel(
+                "HDR theme lab",
+                "Compare the same tokenized theme across SDR baseline, wide-gamut-only, constrained HDR, and full HDR. The first card follows the shared mode currently selected by the dev host.",
+                HdrThemeLabShowcase::new(),
             ))
             .with_child(panel(
                 "Common controls",
@@ -3108,10 +3521,10 @@ mod tests {
     };
     use sui::{
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
-        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
-        PointerEventKind, PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, Result,
-        SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size,
-        SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
+        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, Result, SceneStatistics,
+        SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size, SizedBox,
+        TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
         WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
         window_scene_statistics_detail_mode,
     };
@@ -3356,6 +3769,124 @@ mod tests {
                 node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some(swatch_name)
             }));
         }
+    }
+
+    #[test]
+    fn hdr_theme_lab_exposes_mode_comparison_sections() {
+        let mut runtime = build_widget_book_application(default_widget_book_state())
+            .build()
+            .expect("widget book runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("widget book should render for HDR lab semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("widget book semantics should exist");
+
+        for section_name in [
+            super::HDR_THEME_LAB_NAME,
+            super::HDR_THEME_LAB_ACTIVE_PREVIEW_NAME,
+            super::hdr_theme_lab_section_name(super::HdrThemeMode::Disabled),
+            super::hdr_theme_lab_section_name(super::HdrThemeMode::WideGamutOnly),
+            super::hdr_theme_lab_section_name(super::HdrThemeMode::ConstrainedHdr),
+            super::hdr_theme_lab_section_name(super::HdrThemeMode::FullHdr),
+        ] {
+            assert!(semantics.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(section_name)
+            }));
+        }
+
+        for (button_name, switch_name) in [
+            (
+                format!(
+                    "{} sample action",
+                    super::hdr_theme_mode_title(super::HdrThemeMode::Disabled)
+                ),
+                format!(
+                    "{} sample live indicator",
+                    super::hdr_theme_mode_title(super::HdrThemeMode::Disabled)
+                ),
+            ),
+            (
+                format!(
+                    "{} sample action",
+                    super::hdr_theme_mode_title(super::HdrThemeMode::WideGamutOnly)
+                ),
+                format!(
+                    "{} sample live indicator",
+                    super::hdr_theme_mode_title(super::HdrThemeMode::WideGamutOnly)
+                ),
+            ),
+            (
+                format!(
+                    "{} sample action",
+                    super::hdr_theme_mode_title(super::HdrThemeMode::ConstrainedHdr)
+                ),
+                format!(
+                    "{} sample live indicator",
+                    super::hdr_theme_mode_title(super::HdrThemeMode::ConstrainedHdr)
+                ),
+            ),
+            (
+                format!(
+                    "{} sample action",
+                    super::hdr_theme_mode_title(super::HdrThemeMode::FullHdr)
+                ),
+                format!(
+                    "{} sample live indicator",
+                    super::hdr_theme_mode_title(super::HdrThemeMode::FullHdr)
+                ),
+            ),
+        ] {
+            assert!(semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some(button_name.as_str())
+            }));
+            assert!(semantics.iter().any(|node| {
+                node.role == SemanticsRole::Switch
+                    && node.name.as_deref() == Some(switch_name.as_str())
+            }));
+        }
+    }
+
+    #[test]
+    fn hdr_theme_lab_includes_emissive_indicator_and_popup_examples() {
+        let mut runtime = build_widget_book_application(default_widget_book_state())
+            .build()
+            .expect("widget book runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("widget book should render for HDR lab semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("widget book semantics should exist");
+        let full_hdr_title = super::hdr_theme_mode_title(super::HdrThemeMode::FullHdr);
+        let swatch_name = format!("{full_hdr_title} emissive indicator");
+        let popover_name = format!("{full_hdr_title} attention popover");
+        let popover_trigger = format!("{full_hdr_title} attention trigger");
+
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::ColorSwatch
+                && node.name.as_deref() == Some(swatch_name.as_str())
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(popover_trigger.as_str())
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Popover
+                && node.name.as_deref() == Some(popover_name.as_str())
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.description.as_deref().is_some_and(|description| {
+                    description.contains("button, switch, emissive indicator, and popup trigger")
+                })
+                && node.name.as_deref() == Some(super::HDR_THEME_LAB_NAME)
+        }));
     }
 
     #[test]
@@ -3768,7 +4299,6 @@ mod tests {
 
         let diff = screenshot_diff_image(&normalized_live_switch, &normalized_reference_switch)?;
         write_screenshot(artifact_dir.join("switch-diff.png"), &diff)?;
-
         let diff_count = screenshot_diff_count(&normalized_live_switch, &normalized_reference_switch);
         fs::write(
             artifact_dir.join("comparison.txt"),
