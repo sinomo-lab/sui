@@ -11,8 +11,9 @@ use sui::{
     HdrLuminanceTokens, HdrThemeMode, HdrThemeTokens, InvalidationKind, InvalidationRequest,
     InvalidationTarget, Rect, SceneStatisticsDetailMode, SemanticColorToken, SemanticsNode,
     SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextSurface, TextWrap, TimerToken,
-    Vector, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId,
-    WindowPerformanceSnapshot, resolve_semantic_color, set_window_scene_statistics_detail_mode,
+    Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole, WidgetPodMutVisitor,
+    WidgetPodVisitor, WindowEvent, WindowId, WindowPerformanceSnapshot,
+    resolve_semantic_color, resolve_widget_hdr_style, set_window_scene_statistics_detail_mode,
     window_performance_snapshot, window_scene_statistics_detail_mode,
 };
 use sui_runtime::LayerOptions;
@@ -782,19 +783,19 @@ fn hdr_theme_lab_theme(mode: HdrThemeMode) -> DefaultTheme {
             .with_hdr(Color::linear_display_p3(0.86, 0.90, 0.98, 1.0));
     theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.colors.primary)
         .with_wide_gamut(Color::display_p3(0.18, 0.74, 0.96, 1.0))
-        .with_hdr(Color::linear_display_p3(0.38, 1.08, 1.36, 1.0));
+        .with_hdr(Color::linear_display_p3(0.78, 2.40, 3.20, 1.0));
     theme.hdr.color_roles.accent_text = SemanticColorToken::from_sdr(theme.colors.primary_content)
         .with_wide_gamut(Color::display_p3(0.03, 0.08, 0.12, 1.0))
         .with_hdr(Color::linear_display_p3(0.10, 0.14, 0.20, 1.0));
     theme.hdr.color_roles.secondary = SemanticColorToken::from_sdr(theme.colors.secondary)
         .with_wide_gamut(Color::display_p3(0.43, 0.66, 0.98, 1.0))
-        .with_hdr(Color::linear_display_p3(0.60, 0.94, 1.24, 1.0));
+        .with_hdr(Color::linear_display_p3(0.96, 1.72, 2.42, 1.0));
     theme.hdr.color_roles.warning = SemanticColorToken::from_sdr(theme.colors.warning)
         .with_wide_gamut(Color::display_p3(0.98, 0.68, 0.18, 1.0))
-        .with_hdr(Color::linear_display_p3(1.28, 0.82, 0.24, 1.0));
+        .with_hdr(Color::linear_display_p3(3.00, 1.50, 0.30, 1.0));
     theme.hdr.color_roles.info = SemanticColorToken::from_sdr(theme.colors.info)
         .with_wide_gamut(Color::display_p3(0.40, 0.78, 0.98, 1.0))
-        .with_hdr(Color::linear_display_p3(0.58, 1.04, 1.30, 1.0));
+        .with_hdr(Color::linear_display_p3(0.88, 2.00, 2.90, 1.0));
     theme.hdr.luminance = HdrLuminanceTokens::constrained_defaults();
     theme.hdr.policy.max_large_area_lift = 1.18;
     theme.hdr.policy.max_constrained_lift = 1.32;
@@ -810,16 +811,16 @@ fn hdr_theme_lab_theme(mode: HdrThemeMode) -> DefaultTheme {
         HdrThemeMode::ConstrainedHdr => {
             theme.hdr.luminance.focused = 1.08;
             theme.hdr.luminance.semantic_accent = 1.16;
-            theme.hdr.luminance.emissive_indicator = 1.30;
-            theme.hdr.luminance.alert_pulse = 1.22;
+            theme.hdr.luminance.emissive_indicator = 1.55;
+            theme.hdr.luminance.alert_pulse = 1.42;
         }
         HdrThemeMode::FullHdr => {
-            theme.hdr.luminance.focused = 1.14;
-            theme.hdr.luminance.semantic_accent = 1.26;
-            theme.hdr.luminance.emissive_indicator = 1.62;
-            theme.hdr.luminance.alert_pulse = 1.48;
-            theme.hdr.policy.max_large_area_lift = 1.28;
-            theme.hdr.policy.max_emissive_lift = 1.95;
+            theme.hdr.luminance.focused = 1.18;
+            theme.hdr.luminance.semantic_accent = 1.34;
+            theme.hdr.luminance.emissive_indicator = 2.40;
+            theme.hdr.luminance.alert_pulse = 2.05;
+            theme.hdr.policy.max_large_area_lift = 1.36;
+            theme.hdr.policy.max_emissive_lift = 2.60;
             theme.hdr.materials.raised.specular_strength = 0.18;
             theme.hdr.materials.raised.rim_light_strength = 0.14;
             theme.hdr.effects.glow.intensity = 0.32;
@@ -840,7 +841,23 @@ fn hdr_theme_lab_card(
     let prefix = prefix.into();
     let lead_text = lead_text.into();
     let theme = hdr_theme_lab_theme(mode);
-    let indicator_color = resolve_semantic_color(theme.hdr.color_roles.accent, theme.hdr.mode);
+    let indicator_style = resolve_widget_hdr_style(
+        &theme.hdr,
+        WidgetColorRole::Accent,
+        WidgetLuminanceRole::EmissiveIndicator,
+        WidgetMaterialRole::Flat,
+        None,
+    );
+    let indicator_color = Color::new(
+        indicator_style.color.space,
+        indicator_style.color.red.clamp(0.0, indicator_style.peak_lift),
+        indicator_style
+            .color
+            .green
+            .clamp(0.0, indicator_style.peak_lift),
+        indicator_style.color.blue.clamp(0.0, indicator_style.peak_lift),
+        indicator_style.color.alpha,
+    );
     let button_label = format!("{prefix} sample action");
     let switch_label = format!("{prefix} sample live indicator");
     let popover_name = format!("{prefix} attention popover");
@@ -932,6 +949,7 @@ fn hdr_theme_lab_card(
                                                     .color(theme.palette.placeholder),
                                             ),
                                     )
+                                    .open(true)
                                     .theme(theme),
                                 ),
                             ),
@@ -3522,13 +3540,14 @@ mod tests {
     use sui::{
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
         KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, Result, SceneStatistics,
-        SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size, SizedBox,
-        TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
+        PresentationLatencyDiagnostics, RenderOutput, RendererSubmissionDiagnostics, Result,
+        SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size,
+        SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
         WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
         window_scene_statistics_detail_mode,
     };
     use sui_runtime::publish_window_performance_snapshot;
+    use sui_scene::{Brush, SceneCommand};
     use sui_testing::prelude::*;
 
     fn build_default_widget_book_app() -> Result<TestApp> {
@@ -3557,6 +3576,24 @@ mod tests {
 
     fn build_color_validation_runtime() -> Result<sui::Runtime> {
         super::build_color_validation_application().build()
+    }
+
+    fn solid_fill_max_channel(output: &RenderOutput) -> f32 {
+        let mut max_channel = 0.0_f32;
+        output.frame.scene.visit_commands(&mut |command| match command {
+            SceneCommand::FillRect {
+                brush: Brush::Solid(color),
+                ..
+            }
+            | SceneCommand::FillPath {
+                brush: Brush::Solid(color),
+                ..
+            } => {
+                max_channel = max_channel.max(color.red.max(color.green.max(color.blue)));
+            }
+            _ => {}
+        });
+        max_channel
     }
 
     fn build_overlay_placeholder_app() -> Result<TestApp> {
@@ -3887,6 +3924,57 @@ mod tests {
                 })
                 && node.name.as_deref() == Some(super::HDR_THEME_LAB_NAME)
         }));
+    }
+
+    #[test]
+    fn hdr_theme_lab_full_hdr_emits_stronger_headroom_than_constrained() {
+        let mut constrained_runtime = Application::new()
+            .window(
+                WindowBuilder::new().title("Constrained HDR lab").root(super::hdr_theme_lab_card(
+                    "Constrained HDR isolated",
+                    super::HdrThemeMode::ConstrainedHdr,
+                    "Constrained HDR isolated",
+                    "Constrained HDR isolated preview",
+                )),
+            )
+            .build()
+            .expect("constrained HDR lab runtime should build");
+        let constrained_window = constrained_runtime.window_ids()[0];
+        let constrained_output = constrained_runtime
+            .render(constrained_window)
+            .expect("constrained HDR lab should render");
+
+        let mut full_runtime = Application::new()
+            .window(
+                WindowBuilder::new().title("Full HDR lab").root(super::hdr_theme_lab_card(
+                    "Full HDR isolated",
+                    super::HdrThemeMode::FullHdr,
+                    "Full HDR isolated",
+                    "Full HDR isolated preview",
+                )),
+            )
+            .build()
+            .expect("full HDR lab runtime should build");
+        let full_window = full_runtime.window_ids()[0];
+        let full_output = full_runtime
+            .render(full_window)
+            .expect("full HDR lab should render");
+
+        let constrained_max = solid_fill_max_channel(&constrained_output);
+        let full_max = solid_fill_max_channel(&full_output);
+
+        assert!(
+            constrained_max > 1.0,
+            "constrained HDR lab should emit above-reference-white colors, got {constrained_max}"
+        );
+        assert!(
+            full_max > constrained_max,
+            "full HDR lab should exceed constrained HDR scene headroom, got full={full_max} constrained={constrained_max}"
+        );
+        assert!(
+            full_max >= 2.0,
+            "full HDR lab should emit clearly HDR-bright values, got {full_max}"
+        );
     }
 
     #[test]
