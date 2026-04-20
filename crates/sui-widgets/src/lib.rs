@@ -4,6 +4,7 @@ pub mod composites;
 pub mod containers;
 pub mod controls;
 pub mod data;
+pub mod hdr_theme;
 pub mod media;
 pub mod panes;
 pub mod text_surface;
@@ -25,6 +26,13 @@ pub use controls::{
 pub use data::{
     Breadcrumb, BreadcrumbItem, DataGrid, ListItem, ListView, PathBar, Table, TableColumn,
     TableColumnAlignment, TableRow, TreeItem, TreeView,
+};
+pub use hdr_theme::{
+    EffectToken, HdrColorRoles, HdrEffectTokens, HdrLuminanceTokens, HdrMaterialTokens,
+    HdrPolicyTokens, HdrThemeMode, HdrThemeTokens, MaterialToken, ResolvedEffectStyle,
+    ResolvedHdrStyle, ResolvedMaterialStyle, SemanticColorToken, WidgetColorRole, WidgetEffectRole,
+    WidgetLuminanceRole, WidgetMaterialRole, resolve_effect_role, resolve_luminance_role,
+    resolve_material_role, resolve_semantic_color, resolve_widget_hdr_style,
 };
 pub use media::{ColorPicker, ColorSwatch, Image, ImageFit};
 pub use panes::{

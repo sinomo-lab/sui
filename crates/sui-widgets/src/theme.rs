@@ -3,6 +3,8 @@ use sui_core::Color;
 use sui_layout::Padding as Insets;
 use sui_text::TextStyle;
 
+use crate::hdr_theme::HdrThemeTokens;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeFontStack {
     pub primary: &'static str,
@@ -773,6 +775,7 @@ pub struct DefaultTheme {
     pub blur: ThemeBlurScale,
     pub perspective: ThemePerspective,
     pub aspect: ThemeAspectRatios,
+    pub hdr: HdrThemeTokens,
     pub palette: ControlPalette,
     pub typography: ControlTypography,
     pub metrics: ControlMetrics,
@@ -795,6 +798,7 @@ impl DefaultTheme {
         let text = ThemeTextScale::default();
         let radius = ThemeRadii::default();
         let spacing = 4.0;
+        let hdr = HdrThemeTokens::from_colors(colors);
 
         Self {
             fonts: ThemeFontFamilies::default(),
@@ -811,6 +815,7 @@ impl DefaultTheme {
             blur: ThemeBlurScale::default(),
             perspective: ThemePerspective::default(),
             aspect: ThemeAspectRatios::default(),
+            hdr,
             palette: ControlPalette::from_colors(&colors),
             typography: ControlTypography::from_text_scale(&text),
             metrics: ControlMetrics::from_tokens(spacing, radius),
@@ -818,6 +823,7 @@ impl DefaultTheme {
     }
 
     pub fn sync_derived_fields(&mut self) {
+        self.hdr.sync_semantic_defaults(self.colors);
         self.palette = ControlPalette::from_colors(&self.colors);
         self.typography = ControlTypography::from_text_scale(&self.text);
         self.metrics = ControlMetrics::from_tokens(self.spacing, self.radius);
@@ -902,6 +908,7 @@ fn oklch(lightness_percent: f32, chroma: f32, hue: f32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{Color, DefaultTheme, ThemeColorScheme};
+    use crate::hdr_theme::HdrThemeMode;
 
     #[test]
     fn default_theme_uses_body_text_scale_for_typography() {
@@ -915,6 +922,30 @@ mod tests {
     }
 
     #[test]
+    fn default_theme_initializes_hdr_tokens() {
+        let theme = DefaultTheme::default();
+
+        assert_eq!(theme.hdr.mode, HdrThemeMode::Disabled);
+        assert_eq!(theme.hdr.color_roles.surface.sdr, theme.colors.base_100);
+        assert_eq!(theme.hdr.color_roles.accent.sdr, theme.colors.primary);
+        assert_eq!(
+            theme.hdr.color_roles.accent_text.sdr,
+            theme.colors.primary_content
+        );
+    }
+
+    #[test]
+    fn light_and_dark_themes_derive_hdr_role_colors_from_semantics() {
+        let light = DefaultTheme::light();
+        let dark = DefaultTheme::dark();
+
+        assert_eq!(light.hdr.color_roles.surface.sdr, light.colors.base_100);
+        assert_eq!(light.hdr.color_roles.text.sdr, light.colors.base_content);
+        assert_eq!(dark.hdr.color_roles.surface.sdr, dark.colors.base_100);
+        assert_eq!(dark.hdr.color_roles.accent.sdr, dark.colors.primary);
+    }
+
+    #[test]
     fn sync_derived_fields_updates_semantic_palette_and_typography() {
         let mut theme = DefaultTheme::default();
         theme.colors.primary = Color::rgba(0.2, 0.3, 0.4, 1.0);
@@ -925,6 +956,27 @@ mod tests {
         assert_eq!(theme.palette.accent, Color::rgba(0.2, 0.3, 0.4, 1.0));
         assert_eq!(theme.typography.body_font_size, 11.0);
         assert_eq!(theme.typography.body_line_height, 15.0);
+    }
+
+    #[test]
+    fn sync_derived_fields_updates_hdr_semantic_fallbacks() {
+        let mut theme = DefaultTheme::default();
+        let preserved_wide_gamut = Color::display_p3(0.9, 0.4, 0.2, 1.0);
+        let preserved_hdr = Color::linear_display_p3(1.6, 0.5, 0.3, 1.0);
+
+        theme.hdr.color_roles.accent.wide_gamut = Some(preserved_wide_gamut);
+        theme.hdr.color_roles.accent.hdr = Some(preserved_hdr);
+        theme.colors.primary = Color::rgba(0.2, 0.3, 0.4, 1.0);
+        theme.colors.base_100 = Color::rgba(0.96, 0.97, 0.98, 1.0);
+        theme.sync_derived_fields();
+
+        assert_eq!(theme.hdr.color_roles.surface.sdr, theme.colors.base_100);
+        assert_eq!(theme.hdr.color_roles.accent.sdr, theme.colors.primary);
+        assert_eq!(
+            theme.hdr.color_roles.accent.wide_gamut,
+            Some(preserved_wide_gamut)
+        );
+        assert_eq!(theme.hdr.color_roles.accent.hdr, Some(preserved_hdr));
     }
 
     #[test]

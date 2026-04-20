@@ -74,13 +74,18 @@ pub use sui_text::{
 };
 pub use sui_widgets::{
     Breadcrumb, BreadcrumbItem, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette,
-    ControlTypography, DataGrid, DefaultTheme, FloatingStack, FloatingViewConfig,
-    FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState, Image, ImageFit, ListItem,
-    ListView, PathBar, ResizablePane, SplitView, Table, TableColumn, TableColumnAlignment,
-    TableRow, TextSurface, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme,
-    ThemeColors, ThemeContainers, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
-    ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken,
-    ThemeTracking, TreeItem, TreeView,
+    ControlTypography, DataGrid, DefaultTheme, EffectToken, FloatingStack, FloatingViewConfig,
+    FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState, HdrColorRoles,
+    HdrEffectTokens, HdrLuminanceTokens, HdrMaterialTokens, HdrPolicyTokens, HdrThemeMode,
+    HdrThemeTokens, Image, ImageFit, ListItem, ListView, MaterialToken, PathBar, ResizablePane,
+    ResolvedEffectStyle, ResolvedHdrStyle, ResolvedMaterialStyle, SemanticColorToken, SplitView,
+    Table, TableColumn, TableColumnAlignment, TableRow, TextSurface, ThemeAspectRatios,
+    ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers,
+    ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemePerspective,
+    ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking, TreeItem, TreeView,
+    WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
+    resolve_effect_role, resolve_luminance_role, resolve_material_role, resolve_semantic_color,
+    resolve_widget_hdr_style,
 };
 
 pub trait ThemeExtension: Any + Send + Sync {}
@@ -391,7 +396,7 @@ pub mod prelude {
 mod tests {
     use std::sync::Arc;
 
-    use super::{DefaultTheme, Theme};
+    use super::{DefaultTheme, HdrThemeMode, HdrThemeTokens, Theme};
     #[cfg(feature = "wgpu")]
     use crate::{
         Application, WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
@@ -424,6 +429,35 @@ mod tests {
                 radius: 6.0,
                 density: 2,
             })
+        );
+    }
+
+    #[test]
+    fn theme_extensions_round_trip_hdr_theme_tokens() {
+        let mut defaults = DefaultTheme::dark();
+        defaults.metrics.min_height = 30.0;
+        defaults.hdr.mode = HdrThemeMode::WideGamutOnly;
+
+        let hdr_tokens = HdrThemeTokens {
+            mode: HdrThemeMode::FullHdr,
+            ..HdrThemeTokens::default()
+        };
+
+        let theme = Theme::new()
+            .with_default_widgets(defaults)
+            .with_extension(hdr_tokens);
+
+        assert_eq!(theme.default_widgets.metrics.min_height, 30.0);
+        assert_eq!(theme.default_widgets.hdr.mode, HdrThemeMode::WideGamutOnly);
+        assert!(theme.has_extension::<HdrThemeTokens>());
+        assert_eq!(theme.extension::<HdrThemeTokens>(), Some(&hdr_tokens));
+        assert_eq!(
+            Arc::as_ref(
+                &theme
+                    .extension_arc::<HdrThemeTokens>()
+                    .expect("hdr theme tokens extension present")
+            ),
+            &hdr_tokens
         );
     }
 
