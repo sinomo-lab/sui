@@ -623,10 +623,11 @@ impl ControlPalette {
     pub fn from_colors(colors: &ThemeColors) -> Self {
         let border = mix(colors.base_300, colors.base_content, 0.12);
         let border_hover = mix(colors.base_300, colors.base_content, 0.24);
+        let placeholder = mix(colors.base_content, colors.base_100, 0.4);
 
         Self {
             text: colors.base_content,
-            placeholder: colors.base_content.with_alpha(0.6),
+            placeholder,
             surface: colors.base_100,
             surface_hover: colors.base_200,
             surface_pressed: colors.base_300,
