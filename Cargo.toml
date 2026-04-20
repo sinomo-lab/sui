@@ -23,8 +23,10 @@ incremental = false
 opt-level = 2
 
 [workspace.dependencies]
+avif-serialize = "0.8.8"
 bytemuck = { version = "1", features = ["derive"] }
 cosmic-text = "0.18.2"
+rav1e = { version = "0.8.1", default-features = false, features = ["threading"] }
 fontdb = "0.23"
 lyon_path = "1.0"
 lyon_tessellation = "1.0"
@@ -33,6 +35,7 @@ pollster = "0.4"
 rustybuzz = "0.20"
 swash = "0.2.7"
 sui = { path = "crates/sui" }
+sui-avif = { path = "crates/sui-avif" }
 sui-debug = { path = "crates/sui-debug" }
 sui-core = { path = "crates/sui-core" }
 sui-dev = { path = "crates/sui-dev" }

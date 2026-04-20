@@ -8,7 +8,7 @@ rust-version.workspace = true
 [dependencies]
 png = "0.17"
 exr = "1"
-ravif = { version = "0.13", default-features = false, features = ["threading"] }
+sui-avif = { workspace = true }
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
 sui-platform = { workspace = true }

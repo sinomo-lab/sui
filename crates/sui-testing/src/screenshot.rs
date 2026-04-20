@@ -4,6 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use sui_avif::{
+    Encoder as AvifEncoder, HdrEncodingOptions, RgbaF32Image, RgbaU8Image, SdrEncodingOptions,
+};
 use sui_core::{Color, Error, Rect, Result};
 use sui_render_wgpu::{HdrRgbaImage, RgbaImage};
 
@@ -55,30 +58,19 @@ pub fn write_hdr_avif(
     path: impl AsRef<Path>,
     sdr_white_level: f32,
 ) -> Result<()> {
-    let reference_white = if sdr_white_level.is_finite() && sdr_white_level > 0.0 {
+    let hdr_image =
+        RgbaF32Image::new(image.width(), image.height(), image.pixels()).map_err(avif_error)?;
+    let mut options = HdrEncodingOptions::default();
+    options.source_white_level = if sdr_white_level.is_finite() && sdr_white_level > 0.0 {
         sdr_white_level
     } else {
         1.0
     };
-    let mut pixels = Vec::with_capacity((image.width() * image.height()) as usize);
-    for rgba in image.pixels().chunks_exact(4) {
-        pixels.push(ravif::RGBA8::new(
-            linear_hdr_channel_to_avif_u8(rgba[0], reference_white),
-            linear_hdr_channel_to_avif_u8(rgba[1], reference_white),
-            linear_hdr_channel_to_avif_u8(rgba[2], reference_white),
-            linear_hdr_alpha_to_u8(rgba[3]),
-        ));
-    }
-    let encoded = ravif::Encoder::new()
+    let encoded = AvifEncoder::new()
         .with_quality(80.0)
         .with_alpha_quality(80.0)
         .with_speed(4)
-        .with_bit_depth(ravif::BitDepth::Ten)
-        .encode_rgba(ravif::Img::new(
-            pixels.as_slice(),
-            image.width() as usize,
-            image.height() as usize,
-        ))
+        .encode_hdr_rgba_f32(&hdr_image, &options)
         .map_err(avif_error)?;
     let path = path.as_ref();
     if let Some(parent) = path.parent() {
@@ -145,7 +137,11 @@ impl Screenshot {
             )));
         }
 
-        Ok(Self { width, height, pixels })
+        Ok(Self {
+            width,
+            height,
+            pixels,
+        })
     }
 
     pub(crate) fn from_rgba_image(image: RgbaImage) -> Self {
@@ -184,21 +180,12 @@ impl Screenshot {
     }
 
     pub fn write_avif(&self, path: impl AsRef<Path>) -> Result<()> {
-        let pixels = self
-            .pixels
-            .chunks_exact(4)
-            .map(|rgba| ravif::RGBA8::new(rgba[0], rgba[1], rgba[2], rgba[3]))
-            .collect::<Vec<_>>();
-        let encoded = ravif::Encoder::new()
+        let image = RgbaU8Image::new(self.width, self.height, &self.pixels).map_err(avif_error)?;
+        let encoded = AvifEncoder::new()
             .with_quality(80.0)
             .with_alpha_quality(80.0)
             .with_speed(4)
-            .with_bit_depth(ravif::BitDepth::Ten)
-            .encode_rgba(ravif::Img::new(
-                pixels.as_slice(),
-                self.width as usize,
-                self.height as usize,
-            ))
+            .encode_sdr_rgba8(&image, &SdrEncodingOptions::default())
             .map_err(avif_error)?;
         let path = path.as_ref();
         if let Some(parent) = path.parent() {
@@ -513,28 +500,13 @@ where
     Error::new(format!("EXR error: {error}"))
 }
 
-fn linear_hdr_channel_to_avif_u8(channel: f32, reference_white: f32) -> u8 {
-    let normalized = (channel.max(0.0) / reference_white.max(f32::EPSILON)).max(0.0);
-    let tone_mapped = normalized / (1.0 + normalized);
-    linear_to_srgb_u8(tone_mapped)
-}
-
-fn linear_hdr_alpha_to_u8(alpha: f32) -> u8 {
-    (alpha.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-fn linear_to_srgb_u8(linear: f32) -> u8 {
-    let encoded = if linear <= 0.003_130_8 {
-        linear * 12.92
-    } else {
-        (1.055 * linear.powf(1.0 / 2.4)) - 0.055
-    };
-    (encoded.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::{
         HdrRgbaImage, Screenshot, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap,
@@ -584,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn write_hdr_avif_creates_nonempty_file() {
+    fn write_hdr_avif_emits_hdr_container_signaling() {
         let image = HdrRgbaImage::new(2, 1, vec![4.0, 2.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0]).unwrap();
         let path = unique_test_path("hdr-avif");
 
@@ -593,6 +565,9 @@ mod tests {
         let bytes = fs::read(&path).unwrap();
         assert!(!bytes.is_empty());
         assert_eq!(&bytes[4..8], b"ftyp");
+        assert!(bytes.windows(4).any(|chunk| chunk == b"colr"));
+        assert!(bytes.windows(4).any(|chunk| chunk == b"clli"));
+        assert!(bytes.windows(4).any(|chunk| chunk == b"mdcv"));
     }
 
     fn unique_test_path(stem: &str) -> PathBuf {
