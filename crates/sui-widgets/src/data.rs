@@ -2090,8 +2090,10 @@ mod tests {
 
     fn text_rects_for(output: &RenderOutput, text: &str) -> Vec<Rect> {
         let mut rects = Vec::new();
-        output.frame.scene.visit_commands(&mut |command| {
-            match command {
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
                 SceneCommand::DrawText(run) if run.text == text => rects.push(run.rect),
                 SceneCommand::DrawShapedText(run) => {
                     if let Some(layout) = run
@@ -2107,16 +2109,17 @@ mod tests {
                     }
                 }
                 _ => {}
-            }
-        });
+            });
 
         rects
     }
 
     fn text_runs_for(output: &RenderOutput, text: &str) -> Vec<sui_text::TextRun> {
         let mut runs = Vec::new();
-        output.frame.scene.visit_commands(&mut |command| {
-            match command {
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
                 SceneCommand::DrawText(run) if run.text == text => runs.push(run.clone()),
                 SceneCommand::DrawShapedText(run) => {
                     if let Some(layout) = run
@@ -2136,8 +2139,7 @@ mod tests {
                     }
                 }
                 _ => {}
-            }
-        });
+            });
 
         runs
     }

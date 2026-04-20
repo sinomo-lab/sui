@@ -36,9 +36,8 @@ use sui_text::{
 use swash::{
     FontRef as SwashFontRef,
     scale::{
-        ScaleContext as SwashScaleContext, Source as SwashSource,
-        StrikeWith as SwashStrikeWith,
-        image::Content as SwashImageContent, Render as SwashRender,
+        Render as SwashRender, ScaleContext as SwashScaleContext, Source as SwashSource,
+        StrikeWith as SwashStrikeWith, image::Content as SwashImageContent,
     },
     zeno::Format as SwashFormat,
 };
@@ -584,8 +583,7 @@ impl RendererFrameStats {
     fn with_compositor_stats(mut self, stats: RetainedCompositorFrameStats) -> Self {
         self.visible_layer_count = stats.visible_layers;
         self.direct_packet_count = stats.direct_packets;
-        self.retained_state_update_time_us =
-            (stats.state_update_time_ms * 1000.0).round() as u64;
+        self.retained_state_update_time_us = (stats.state_update_time_ms * 1000.0).round() as u64;
         self.composition_time_us = (stats.composition_time_ms * 1000.0).round() as u64;
         self.retained_scene_traversal_time_us =
             (stats.scene_traversal_time_ms * 1000.0).round() as u64;
@@ -621,21 +619,24 @@ impl RendererFrameStats {
             (stats.packet_image_command_time_ms * 1000.0).round() as u64;
         self.retained_packet_rect_command_time_us =
             (stats.packet_rect_command_time_ms * 1000.0).round() as u64;
-        self.retained_packet_hotspot = stats.slowest_packet_build.map(|hotspot| RendererPacketHotspot {
-            container_layer_id: hotspot.container_layer_id,
-            owner_widget_id: hotspot.owner_widget_id,
-            segment_index: hotspot.segment_index,
-            total_time_us: (hotspot.total_time_ms * 1000.0).round() as u64,
-            scene_build_time_us: (hotspot.scene_build_time_ms * 1000.0).round() as u64,
-            command_count: hotspot.command_count,
-            text_command_count: hotspot.text_command_count,
-            path_command_count: hotspot.path_command_count,
-            rect_command_count: hotspot.rect_command_count,
-            text_command_time_us: (hotspot.text_command_time_ms * 1000.0).round() as u64,
-            path_command_time_us: (hotspot.path_command_time_ms * 1000.0).round() as u64,
-            rect_command_time_us: (hotspot.rect_command_time_ms * 1000.0).round() as u64,
-            text_sample: hotspot.text_sample,
-        });
+        self.retained_packet_hotspot =
+            stats
+                .slowest_packet_build
+                .map(|hotspot| RendererPacketHotspot {
+                    container_layer_id: hotspot.container_layer_id,
+                    owner_widget_id: hotspot.owner_widget_id,
+                    segment_index: hotspot.segment_index,
+                    total_time_us: (hotspot.total_time_ms * 1000.0).round() as u64,
+                    scene_build_time_us: (hotspot.scene_build_time_ms * 1000.0).round() as u64,
+                    command_count: hotspot.command_count,
+                    text_command_count: hotspot.text_command_count,
+                    path_command_count: hotspot.path_command_count,
+                    rect_command_count: hotspot.rect_command_count,
+                    text_command_time_us: (hotspot.text_command_time_ms * 1000.0).round() as u64,
+                    path_command_time_us: (hotspot.path_command_time_ms * 1000.0).round() as u64,
+                    rect_command_time_us: (hotspot.rect_command_time_ms * 1000.0).round() as u64,
+                    text_sample: hotspot.text_sample,
+                });
         self
     }
 
@@ -1044,7 +1045,9 @@ impl WgpuRenderer {
     }
 
     pub fn window_output_strategy(&self, window_id: WindowId) -> Option<OutputStrategy> {
-        self.surfaces.get(&window_id).map(|surface| surface.output_strategy)
+        self.surfaces
+            .get(&window_id)
+            .map(|surface| surface.output_strategy)
     }
 
     pub fn window_surface_formats(&self, window_id: WindowId) -> Option<Vec<wgpu::TextureFormat>> {
@@ -1235,7 +1238,9 @@ impl WgpuRenderer {
         let _ = request.encoding;
         let _ = request.sdr_visualization;
         match request.stage {
-            DebugCaptureStage::FinalComposed => self.capture_final_composed_debug_artifact(window_id),
+            DebugCaptureStage::FinalComposed => {
+                self.capture_final_composed_debug_artifact(window_id)
+            }
             DebugCaptureStage::HdrIntermediate => self
                 .capture_hdr_intermediate_rgba_f32(window_id)
                 .map(DebugCaptureArtifact::HdrLinearRgbaF32),
@@ -1295,9 +1300,9 @@ impl WgpuRenderer {
         })?;
 
         match target.format {
-            wgpu::TextureFormat::Bgra8UnormSrgb => {
-                self.capture_rgba(window_id).map(DebugCaptureArtifact::SdrRgba8)
-            }
+            wgpu::TextureFormat::Bgra8UnormSrgb => self
+                .capture_rgba(window_id)
+                .map(DebugCaptureArtifact::SdrRgba8),
             wgpu::TextureFormat::Rgba16Float => self
                 .capture_hdr_offscreen_rgba_f32(window_id)
                 .map(DebugCaptureArtifact::HdrLinearRgbaF32),
@@ -1931,7 +1936,11 @@ impl WgpuRenderer {
         }
         self.offscreen_targets
             .get(&window_id)
-            .map(|target| target.texture.create_view(&wgpu::TextureViewDescriptor::default()))
+            .map(|target| {
+                target
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            })
             .ok_or_else(|| Error::new(format!("missing target for window {}", window_id.get())))
     }
 
@@ -1961,7 +1970,9 @@ impl WgpuRenderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             self.intermediate_targets.insert(
@@ -1975,7 +1986,11 @@ impl WgpuRenderer {
         }
         self.intermediate_targets
             .get(&window_id)
-            .map(|target| target.texture.create_view(&wgpu::TextureViewDescriptor::default()))
+            .map(|target| {
+                target
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            })
             .ok_or_else(|| Error::new(format!("missing target for window {}", window_id.get())))
     }
 
@@ -2070,10 +2085,9 @@ impl WgpuRenderer {
 
     fn configure_existing_surface(&mut self, window_id: WindowId) -> Result<()> {
         let size = {
-            let surface = self
-                .surfaces
-                .get(&window_id)
-                .ok_or_else(|| Error::new(format!("missing surface for window {}", window_id.get())))?;
+            let surface = self.surfaces.get(&window_id).ok_or_else(|| {
+                Error::new(format!("missing surface for window {}", window_id.get()))
+            })?;
             (surface.config.width.max(1), surface.config.height.max(1))
         };
         self.configure_surface(window_id, size)
@@ -2175,11 +2189,8 @@ impl WgpuRenderer {
         let resource_collection_started = diagnostics_enabled.then(|| Instant::now());
         for fragment in &submission.fragments {
             let RetainedFrameFragment::Transient(draw_ops) = fragment;
-            uses_text_atlas |= collect_draw_op_resources(
-                draw_ops,
-                &mut analytic_paths,
-                &mut image_handles,
-            );
+            uses_text_atlas |=
+                collect_draw_op_resources(draw_ops, &mut analytic_paths, &mut image_handles);
         }
         let resource_collection_time_us = resource_collection_started
             .map(|started| started.elapsed().as_micros() as u64)
@@ -2257,7 +2268,10 @@ impl WgpuRenderer {
                 .shared
                 .as_ref()
                 .expect("renderer shared state initialized");
-            needs_stencil |= prepared.passes.iter().any(|pass| !pass.clip_paths.is_empty());
+            needs_stencil |= prepared
+                .passes
+                .iter()
+                .any(|pass| !pass.clip_paths.is_empty());
             let gpu_upload_started = diagnostics_enabled.then(|| Instant::now());
             prepared_fragments.push(PreparedFragmentSubmission {
                 passes: prepared.passes,
@@ -3484,27 +3498,25 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CachedGlyphAtlas, CachedGlyphMesh, ClipState, ColorManagementMode,
-        CompositionContainerId, DebugCaptureEncoding, DebugCaptureRequest,
-        DebugCaptureStage, DebugSdrVisualization, DEFAULT_FEATHER_WIDTH, DisplayCapabilities,
-        decode_rgba16f_pixels, strip_padded_readback_rows,
-        DisplayColorPrimaries, DisplayTransferFunction, DrawOp, DrawOpArena, DrawOpKind,
-        DynamicRangeMode, OutputStrategy, PreparedClipPath, PreparedDrawBatch,
-        PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch, PreparedVertices,
-        RendererFrameStats, RetainedCompositorState, RetainedPacketId, ScissorRect,
-        StemDarkening, TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode,
-        TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, TextAtlasColorMode, VERTEX_SIZE,
-        Vertex, WgpuRenderer, RequestedColorManagementMode, RequestedDynamicRangeMode,
-        RequestedOutputColorPrimaries, RequestedToneMappingMode, append_cached_path_mesh, batch_draw_ops, build_vertices,
-        prepare_frame_batches, SwashImageContent, SwashSource, SwashStrikeWith,
+        CachedGlyphAtlas, CachedGlyphMesh, ClipState, ColorManagementMode, CompositionContainerId,
+        DEFAULT_FEATHER_WIDTH, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
+        DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries, DisplayTransferFunction,
+        DrawOp, DrawOpArena, DrawOpKind, DynamicRangeMode, OutputStrategy, PreparedClipPath,
+        PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
+        PreparedVertices, RendererFrameStats, RequestedColorManagementMode,
+        RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
+        RetainedCompositorState, RetainedPacketId, ScissorRect, StemDarkening, SwashImageContent,
+        SwashSource, SwashStrikeWith, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas,
+        TextAtlasColorMode, TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode,
+        VERTEX_SIZE, Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
+        decode_rgba16f_pixels, prepare_frame_batches,
         scene::{
-            CachedDrawBatch, CachedPassBatch, allows_lcd_text,
-            append_cached_glyph_atlas, apply_stem_darkening_to_coverage,
-            convert_subpixel_texel_for_mode, glyph_raster_offset, linearized_color_unorm,
-            output_transform_requires_intermediate, prepare_cached_passes, select_output_strategy,
-            swash_image_to_rgba, tone_map_linear_color,
+            CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
+            apply_stem_darkening_to_coverage, convert_subpixel_texel_for_mode, glyph_raster_offset,
+            linearized_color_unorm, output_transform_requires_intermediate, prepare_cached_passes,
+            select_output_strategy, swash_image_to_rgba, tone_map_linear_color,
         },
-        shader_color, to_ndc,
+        shader_color, strip_padded_readback_rows, to_ndc,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -3512,8 +3524,8 @@ mod tests {
         WidgetId, WindowId,
     };
     use sui_scene::{
-        ImageRegistry, ImageSource, LayerCompositionMode, RegisteredImage, Scene,
-        SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
+        ImageRegistry, ImageSource, LayerCompositionMode, RegisteredImage, Scene, SceneCommand,
+        SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
         SceneLayerUpdateKind, StrokeStyle,
     };
     use sui_text::{
@@ -3545,9 +3557,15 @@ mod tests {
         assert!(!DebugCaptureStage::FinalComposed.is_hdr_capable());
         assert!(!DebugCaptureStage::FinalComposed.uses_hdr_intermediate());
 
-        assert_eq!(DebugCaptureStage::default(), DebugCaptureStage::FinalComposed);
+        assert_eq!(
+            DebugCaptureStage::default(),
+            DebugCaptureStage::FinalComposed
+        );
         assert_eq!(DebugCaptureEncoding::default(), DebugCaptureEncoding::Png);
-        assert_eq!(DebugSdrVisualization::default(), DebugSdrVisualization::ToneMappedColor);
+        assert_eq!(
+            DebugSdrVisualization::default(),
+            DebugSdrVisualization::ToneMappedColor
+        );
         assert_eq!(
             DebugCaptureRequest::default(),
             DebugCaptureRequest {
@@ -3560,10 +3578,7 @@ mod tests {
 
     #[test]
     fn strip_padded_float_readback_rows_preserves_pixel_order() {
-        let mapped = vec![
-            1u8, 2, 3, 4, 9, 9, 9, 9,
-            5, 6, 7, 8, 8, 8, 8, 8,
-        ];
+        let mapped = vec![1u8, 2, 3, 4, 9, 9, 9, 9, 5, 6, 7, 8, 8, 8, 8, 8];
         let stripped = strip_padded_readback_rows(&mapped, 4, 8, 2);
         assert_eq!(stripped, vec![1u8, 2, 3, 4, 5, 6, 7, 8]);
     }
@@ -3578,7 +3593,10 @@ mod tests {
         let decoded = decode_rgba16f_pixels(&raw);
         assert_eq!(decoded.len(), 8);
         for (actual, expected) in decoded.into_iter().zip(samples) {
-            assert!((actual - expected).abs() < 0.001, "expected {expected}, got {actual}");
+            assert!(
+                (actual - expected).abs() < 0.001,
+                "expected {expected}, got {actual}"
+            );
         }
     }
 
@@ -3750,14 +3768,11 @@ mod tests {
         .with_cache_policy(scroll_cache_policy)
         .with_composition_mode(LayerCompositionMode::Scroll);
 
-        let child_descriptor = SceneLayerDescriptor::new(
-            SceneLayerId::from_widget(child_id),
-            child_id,
-            child_bounds,
-        )
-        .with_content_bounds(child_bounds)
-        .with_paint_bounds(child_bounds)
-        .with_cache_policy(child_cache_policy);
+        let child_descriptor =
+            SceneLayerDescriptor::new(SceneLayerId::from_widget(child_id), child_id, child_bounds)
+                .with_content_bounds(child_bounds)
+                .with_paint_bounds(child_bounds)
+                .with_cache_policy(child_cache_policy);
 
         let mut child_scene = Scene::new();
         child_scene.push(SceneCommand::FillRect {
@@ -4105,17 +4120,17 @@ mod tests {
                 transfer: DisplayTransferFunction::LinearExtended,
             }
         ));
-        assert!(!output_transform_requires_intermediate(OutputStrategy::SdrSurface {
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-        }));
+        assert!(!output_transform_requires_intermediate(
+            OutputStrategy::SdrSurface {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            }
+        ));
     }
 
     #[test]
     fn reinhard_tone_mapping_compresses_extended_linear_values() {
-        let transformed = tone_map_linear_color(
-            [4.0, 1.0, 0.5, 1.0],
-            RequestedToneMappingMode::Reinhard,
-        );
+        let transformed =
+            tone_map_linear_color([4.0, 1.0, 0.5, 1.0], RequestedToneMappingMode::Reinhard);
 
         assert!(transformed[0] < 1.0);
         assert!(transformed[0] > transformed[1]);
@@ -4124,10 +4139,8 @@ mod tests {
 
     #[test]
     fn clamp_tone_mapping_limits_linear_values_to_sdr_range() {
-        let transformed = tone_map_linear_color(
-            [2.5, 1.25, 0.5, 1.0],
-            RequestedToneMappingMode::Clamp,
-        );
+        let transformed =
+            tone_map_linear_color([2.5, 1.25, 0.5, 1.0], RequestedToneMappingMode::Clamp);
 
         assert_eq!(transformed, [1.0, 1.0, 0.5, 1.0]);
     }
@@ -4136,10 +4149,7 @@ mod tests {
     fn shader_color_preserves_linear_display_p3_channels_before_gamut_conversion() {
         let encoded = shader_color(Color::display_p3(0.5, 0.25, 0.75, 1.0));
         let linear = shader_color(Color::linear_display_p3(
-            0.21404114,
-            0.05087609,
-            0.52252156,
-            1.0,
+            0.21404114, 0.05087609, 0.52252156, 1.0,
         ));
 
         for index in 0..3 {
@@ -4306,7 +4316,7 @@ mod tests {
             StemDarkening::None,
             TextCoveragePolicy::Linear,
         )
-            .expect("color glyph should convert into atlas pixels");
+        .expect("color glyph should convert into atlas pixels");
 
         assert!(rasterized.is_color);
         assert_eq!(rasterized.pixels.len(), 4);
@@ -4344,7 +4354,12 @@ mod tests {
         ];
         let opacity = 0.75;
         let alpha = sampled[3] * opacity;
-        let premultiplied = [sampled[0] * alpha, sampled[1] * alpha, sampled[2] * alpha, alpha];
+        let premultiplied = [
+            sampled[0] * alpha,
+            sampled[1] * alpha,
+            sampled[2] * alpha,
+            alpha,
+        ];
 
         assert!((premultiplied[0] - sampled[0] * 0.375).abs() < 0.0001);
         assert!((premultiplied[1] - sampled[1] * 0.375).abs() < 0.0001);
@@ -4421,9 +4436,15 @@ mod tests {
     #[test]
     fn lcd_text_requires_axis_aligned_pixel_snapped_path() {
         assert!(allows_lcd_text(Transform::IDENTITY, true));
-        assert!(!allows_lcd_text(Transform::rotation(std::f32::consts::FRAC_PI_4), true));
+        assert!(!allows_lcd_text(
+            Transform::rotation(std::f32::consts::FRAC_PI_4),
+            true
+        ));
         assert!(!allows_lcd_text(Transform::scale(-1.0, 1.0), true));
-        assert!(!allows_lcd_text(Transform::rotation(std::f32::consts::PI), true));
+        assert!(!allows_lcd_text(
+            Transform::rotation(std::f32::consts::PI),
+            true
+        ));
         assert!(!allows_lcd_text(Transform::IDENTITY, false));
     }
 
@@ -4534,7 +4555,8 @@ mod tests {
         let (outer_vertices, inner_vertices) = vertices.split_at(split);
         assert_eq!(outer_vertices.len(), inner_vertices.len());
 
-        for (index, (outer, inner)) in outer_vertices.iter().zip(inner_vertices.iter()).enumerate() {
+        for (index, (outer, inner)) in outer_vertices.iter().zip(inner_vertices.iter()).enumerate()
+        {
             let outer_x = logical_x_from_ndc(outer.position[0], viewport);
             let outer_y = logical_y_from_ndc(outer.position[1], viewport);
             let inner_x = logical_x_from_ndc(inner.position[0], viewport);
@@ -4552,7 +4574,10 @@ mod tests {
                 "vertex {index} changed y after translation normalization: outer={outer_y}, inner={inner_y}, delta_y={} ",
                 delta.y,
             );
-            assert_eq!(outer.tex_coords, inner.tex_coords, "vertex {index} UVs differ");
+            assert_eq!(
+                outer.tex_coords, inner.tex_coords,
+                "vertex {index} UVs differ"
+            );
             assert_eq!(outer.color, inner.color, "vertex {index} colors differ");
         }
     }
@@ -4603,10 +4628,19 @@ mod tests {
         let _ = build_vertices(&frame, &mut text_engine).unwrap();
         let dark_stats = text_engine.glyph_cache_stats();
 
-        assert!(linear_stats.0 > 0, "linear policy should populate the glyph cache");
-        assert!(linear_stats.2 > 0, "first pass should record glyph cache misses");
+        assert!(
+            linear_stats.0 > 0,
+            "linear policy should populate the glyph cache"
+        );
+        assert!(
+            linear_stats.2 > 0,
+            "first pass should record glyph cache misses"
+        );
         assert!(dark_stats.0 > linear_stats.0);
-        assert!(dark_stats.2 > linear_stats.2, "switching policy should add distinct cache entries");
+        assert!(
+            dark_stats.2 > linear_stats.2,
+            "switching policy should add distinct cache entries"
+        );
     }
 
     #[test]
@@ -5365,7 +5399,10 @@ mod tests {
         let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
 
         assert_eq!(compositor.last_frame_stats.packet_build_count, 0);
-        assert_eq!(first_signature, packet_signature(&compositor, layer_container));
+        assert_eq!(
+            first_signature,
+            packet_signature(&compositor, layer_container)
+        );
         assert_eq!(first.scene_vertices, second.scene_vertices);
     }
 
@@ -5702,11 +5739,13 @@ mod tests {
             surface_size: Size::new(220.0, 180.0),
             scale_factor: 1.0,
             dirty_regions: Vec::new(),
-            layer_updates: vec![SceneLayerUpdate::from_descriptor(
-                SceneLayerUpdateKind::Content,
-                scroll_descriptor.clone(),
-            )
-            .with_damage(scroll_descriptor.paint_bounds)],
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Content,
+                    scroll_descriptor.clone(),
+                )
+                .with_damage(scroll_descriptor.paint_bounds),
+            ],
             scene: build_scene(Rect::new(0.0, 0.0, 220.0, 180.0)),
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
@@ -5723,11 +5762,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         frame.scene = build_scene(Rect::new(0.0, 0.0, 220.0, 96.0));
-        frame.layer_updates = vec![SceneLayerUpdate::from_descriptor(
-            SceneLayerUpdateKind::Clip,
-            shell_descriptor.clone(),
-        )
-        .with_damage(shell_descriptor.paint_bounds)];
+        frame.layer_updates = vec![
+            SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Clip, shell_descriptor.clone())
+                .with_damage(shell_descriptor.paint_bounds),
+        ];
 
         let second = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
         let second_clip_rects = second
@@ -6779,16 +6817,8 @@ mod tests {
                 ),
             ];
 
-            for (
-                card_x,
-                surface,
-                accent,
-                secondary,
-                text_color,
-                subtle_text,
-                border,
-                title,
-            ) in card_specs
+            for (card_x, surface, accent, secondary, text_color, subtle_text, border, title) in
+                card_specs
             {
                 let card_rect = Rect::new(card_x, 24.0, 240.0, 172.0);
                 layer_scene.push(SceneCommand::FillPath {
@@ -6821,18 +6851,10 @@ mod tests {
                     },
                 }));
 
-                let swatch_colors = [
-                    Color::rgba(0.84, 0.87, 0.92, 1.0),
-                    accent,
-                    secondary,
-                ];
+                let swatch_colors = [Color::rgba(0.84, 0.87, 0.92, 1.0), accent, secondary];
                 for (index, swatch_color) in swatch_colors.into_iter().enumerate() {
-                    let swatch_rect = Rect::new(
-                        card_x + 24.0 + (index as f32 * 72.0),
-                        124.0,
-                        60.0,
-                        32.0,
-                    );
+                    let swatch_rect =
+                        Rect::new(card_x + 24.0 + (index as f32 * 72.0), 124.0, 60.0, 32.0);
                     layer_scene.push(SceneCommand::FillPath {
                         path: Path::rounded_rect(swatch_rect, 10.0),
                         brush: swatch_color.into(),
@@ -7656,8 +7678,7 @@ mod tests {
                 2,
                 2,
                 vec![
-                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64,
-                    255,
+                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64, 255,
                 ],
             )
             .unwrap(),
@@ -7842,8 +7863,7 @@ mod tests {
                 2,
                 2,
                 vec![
-                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64,
-                    255,
+                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64, 255,
                 ],
             )
             .unwrap(),
@@ -7988,8 +8008,7 @@ mod tests {
                 2,
                 2,
                 vec![
-                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64,
-                    255,
+                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64, 255,
                 ],
             )
             .unwrap(),
@@ -8126,8 +8145,7 @@ mod tests {
                 2,
                 2,
                 vec![
-                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64,
-                    255,
+                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64, 255,
                 ],
             )
             .unwrap(),
@@ -8299,8 +8317,7 @@ mod tests {
                 2,
                 2,
                 vec![
-                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64,
-                    255,
+                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64, 255,
                 ],
             )
             .unwrap(),
@@ -8535,8 +8552,7 @@ mod tests {
                 2,
                 2,
                 vec![
-                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64,
-                    255,
+                    220, 232, 246, 255, 64, 156, 232, 255, 64, 156, 232, 255, 255, 175, 64, 255,
                 ],
             )
             .unwrap(),
@@ -9148,16 +9164,8 @@ mod tests {
                 ),
             ];
 
-            for (
-                card_x,
-                surface,
-                accent,
-                secondary,
-                text_color,
-                subtle_text,
-                border,
-                title,
-            ) in card_specs
+            for (card_x, surface, accent, secondary, text_color, subtle_text, border, title) in
+                card_specs
             {
                 let card_rect = Rect::new(card_x, 24.0, 240.0, 172.0);
                 layer_scene.push(SceneCommand::FillPath {

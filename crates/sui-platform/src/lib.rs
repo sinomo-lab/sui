@@ -27,9 +27,9 @@ pub(crate) use accessibility::AccessibilityBridge;
 pub use accessibility::AccessibilitySnapshot;
 pub use desktop::{DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform};
 pub use display_capabilities::{
-    WindowOutputDiagnostics, clear_window_output_diagnostics,
-    clear_window_output_diagnostics_all, detect_window_display_capabilities,
-    publish_window_output_diagnostics, window_output_diagnostics,
+    WindowOutputDiagnostics, clear_window_output_diagnostics, clear_window_output_diagnostics_all,
+    detect_window_display_capabilities, publish_window_output_diagnostics,
+    window_output_diagnostics,
 };
 pub use headless::{HeadlessPlatform, PlatformWindow};
 
@@ -255,25 +255,23 @@ pub(crate) fn publish_frame_performance(
         )
         .with_presentation_latency(presentation_latency)
         .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
-        .with_retained_packet_hotspot(
-            renderer_stats.retained_packet_hotspot.clone().map(|hotspot| {
-                sui_runtime::RetainedPacketHotspotDiagnostics {
-                    container_layer_id: hotspot.container_layer_id,
-                    owner_widget_id: hotspot.owner_widget_id,
-                    segment_index: hotspot.segment_index,
-                    total_time_us: hotspot.total_time_us,
-                    scene_build_time_us: hotspot.scene_build_time_us,
-                    command_count: hotspot.command_count,
-                    text_command_count: hotspot.text_command_count,
-                    path_command_count: hotspot.path_command_count,
-                    rect_command_count: hotspot.rect_command_count,
-                    text_command_time_us: hotspot.text_command_time_us,
-                    path_command_time_us: hotspot.path_command_time_us,
-                    rect_command_time_us: hotspot.rect_command_time_us,
-                    text_sample: hotspot.text_sample,
-                }
-            }),
-        )
+        .with_retained_packet_hotspot(renderer_stats.retained_packet_hotspot.clone().map(
+            |hotspot| sui_runtime::RetainedPacketHotspotDiagnostics {
+                container_layer_id: hotspot.container_layer_id,
+                owner_widget_id: hotspot.owner_widget_id,
+                segment_index: hotspot.segment_index,
+                total_time_us: hotspot.total_time_us,
+                scene_build_time_us: hotspot.scene_build_time_us,
+                command_count: hotspot.command_count,
+                text_command_count: hotspot.text_command_count,
+                path_command_count: hotspot.path_command_count,
+                rect_command_count: hotspot.rect_command_count,
+                text_command_time_us: hotspot.text_command_time_us,
+                path_command_time_us: hotspot.path_command_time_us,
+                rect_command_time_us: hotspot.rect_command_time_us,
+                text_sample: hotspot.text_sample,
+            },
+        ))
         .with_widget_timings(output.diagnostics.widget_timings.clone()),
     );
 }

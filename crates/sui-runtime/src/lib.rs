@@ -24,13 +24,11 @@ use sui_text::{FontRegistry, RegisteredFont, TextSystem};
 pub use diagnostics::{
     CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
     RenderDiagnostics, RendererSubmissionDiagnostics, RetainedPacketHotspotDiagnostics,
-    SceneStatistics, SceneStatisticsDetailMode,
-    TextCacheDeltaDiagnostics, TextCacheDiagnostics, WidgetTimingPhase, WidgetTimingSample,
-    WindowPerformanceSnapshot,
-    WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening, WindowTextHinting,
-    WindowTextRenderPolicy, WindowColorManagementMode, WindowDynamicRangeMode,
-    WindowOutputColorPrimaries, WindowToneMappingMode,
-    clear_window_performance_snapshot, clear_window_performance_snapshots,
+    SceneStatistics, SceneStatisticsDetailMode, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
+    WidgetTimingPhase, WidgetTimingSample, WindowColorManagementMode, WindowDynamicRangeMode,
+    WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowPerformanceSummary,
+    WindowRenderOptions, WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy,
+    WindowToneMappingMode, clear_window_performance_snapshot, clear_window_performance_snapshots,
     clear_window_render_options, publish_window_performance_snapshot, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_performance_summary, window_performance_text_caches, window_render_options,
@@ -1475,32 +1473,31 @@ impl WindowState {
                 None
             };
 
-            let (scene, paint_invalidations, ime_composition_rect) = if self.last_frame.is_none()
-                || repaint_layers.contains(&self.root.id())
-            {
-                self.paint_full_scene(
-                    dpi_info,
-                    Arc::clone(&text_system),
-                    Arc::clone(&font_registry),
-                )
-            } else if repaint_layers.is_empty() {
-                (
-                    self.last_frame
-                        .as_ref()
-                        .map(|frame| frame.scene.clone())
-                        .unwrap_or_default(),
-                    Vec::new(),
-                    baseline_ime_composition_rect,
-                )
-            } else {
-                self.repaint_dirty_layers(
-                    dpi_info,
-                    &repaint_layers,
-                    baseline_ime_composition_rect,
-                    Arc::clone(&text_system),
-                    Arc::clone(&font_registry),
-                )
-            };
+            let (scene, paint_invalidations, ime_composition_rect) =
+                if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
+                    self.paint_full_scene(
+                        dpi_info,
+                        Arc::clone(&text_system),
+                        Arc::clone(&font_registry),
+                    )
+                } else if repaint_layers.is_empty() {
+                    (
+                        self.last_frame
+                            .as_ref()
+                            .map(|frame| frame.scene.clone())
+                            .unwrap_or_default(),
+                        Vec::new(),
+                        baseline_ime_composition_rect,
+                    )
+                } else {
+                    self.repaint_dirty_layers(
+                        dpi_info,
+                        &repaint_layers,
+                        baseline_ime_composition_rect,
+                        Arc::clone(&text_system),
+                        Arc::clone(&font_registry),
+                    )
+                };
             let mut scene = scene;
             for translation in &composition_only_transforms {
                 let _ = scene.translate_layer(translation.widget_id, translation.delta);

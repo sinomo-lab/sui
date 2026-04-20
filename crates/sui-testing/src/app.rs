@@ -62,9 +62,10 @@ impl TestApp {
         F: FnOnce() -> A + Send + 'static,
         A: IntoTestRuntime,
     {
-        let harness = Rc::new(RefCell::new(Harness::new_live_with_vsync(move || {
-            build().into_test_runtime()
-        }, vsync_enabled)?));
+        let harness = Rc::new(RefCell::new(Harness::new_live_with_vsync(
+            move || build().into_test_runtime(),
+            vsync_enabled,
+        )?));
         Ok(Self { harness })
     }
 
@@ -73,9 +74,11 @@ impl TestApp {
         F: FnOnce() -> A + Send + 'static,
         A: IntoTestRuntime,
     {
-        let harness = Rc::new(RefCell::new(Harness::new_live_with_options(move || {
-            build().into_test_runtime()
-        }, vsync_enabled, visible)?));
+        let harness = Rc::new(RefCell::new(Harness::new_live_with_options(
+            move || build().into_test_runtime(),
+            vsync_enabled,
+            visible,
+        )?));
         Ok(Self { harness })
     }
 

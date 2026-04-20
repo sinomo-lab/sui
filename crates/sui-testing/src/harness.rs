@@ -410,7 +410,9 @@ impl Harness {
         request: DebugCaptureRequest,
     ) -> Result<DebugCaptureArtifact> {
         match &mut self.backend {
-            HarnessBackend::Headless(harness) => harness.platform.capture_debug_frame(window_id, request),
+            HarnessBackend::Headless(harness) => {
+                harness.platform.capture_debug_frame(window_id, request)
+            }
             HarnessBackend::Live(harness) => harness.capture_debug(window_id, request),
         }
     }
@@ -569,7 +571,11 @@ impl LiveHarness {
                 reply: reply_tx,
             })
             .map_err(|_| Error::new("live harness service is unavailable"))?;
-        recv_result(&reply_rx, "live harness debug capture", Duration::from_secs(5))
+        recv_result(
+            &reply_rx,
+            "live harness debug capture",
+            Duration::from_secs(5),
+        )
     }
 
     fn fallback_snapshot(&self, window_id: WindowId) -> WindowSnapshot {
@@ -934,30 +940,28 @@ impl LiveHarnessApp {
                     .set_runtime_feathering_override(render_options.map(|options| {
                         FeatheringOptions::new(options.feathering_enabled, options.feather_width)
                     }));
-                self.renderer
-                    .set_window_color_management(
-                        window_id,
-                        render_options
-                            .map(|options| {
-                                map_window_color_management_for_harness(
-                                    options.color_management_mode,
-                                    options.output_color_primaries,
-                                    options.dynamic_range_mode,
-                                    options.tone_mapping_mode,
-                                )
-                            })
-                            .unwrap_or_default(),
-                    )?;
+                self.renderer.set_window_color_management(
+                    window_id,
+                    render_options
+                        .map(|options| {
+                            map_window_color_management_for_harness(
+                                options.color_management_mode,
+                                options.output_color_primaries,
+                                options.dynamic_range_mode,
+                                options.tone_mapping_mode,
+                            )
+                        })
+                        .unwrap_or_default(),
+                )?;
                 self.renderer.render(&output.frame)?;
                 if let (Some(mut display_capabilities), Some(active_output_strategy)) = (
                     self.renderer.window_display_capabilities(window_id),
                     self.renderer.window_output_strategy(window_id),
                 ) {
                     if let Some(formats) = self.renderer.window_surface_formats(window_id) {
-                        display_capabilities.notes.push_str(&format!(
-                            " Surface formats: {:?}.",
-                            formats
-                        ));
+                        display_capabilities
+                            .notes
+                            .push_str(&format!(" Surface formats: {:?}.", formats));
                     }
                     let options = render_options
                         .unwrap_or_else(|| sui_runtime::WindowRenderOptions::new(true, 1.0));
@@ -1788,25 +1792,23 @@ fn publish_frame_performance(
         )
         .with_presentation_latency(presentation_latency)
         .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
-        .with_retained_packet_hotspot(
-            renderer_stats.retained_packet_hotspot.clone().map(|hotspot| {
-                sui_runtime::RetainedPacketHotspotDiagnostics {
-                    container_layer_id: hotspot.container_layer_id,
-                    owner_widget_id: hotspot.owner_widget_id,
-                    segment_index: hotspot.segment_index,
-                    total_time_us: hotspot.total_time_us,
-                    scene_build_time_us: hotspot.scene_build_time_us,
-                    command_count: hotspot.command_count,
-                    text_command_count: hotspot.text_command_count,
-                    path_command_count: hotspot.path_command_count,
-                    rect_command_count: hotspot.rect_command_count,
-                    text_command_time_us: hotspot.text_command_time_us,
-                    path_command_time_us: hotspot.path_command_time_us,
-                    rect_command_time_us: hotspot.rect_command_time_us,
-                    text_sample: hotspot.text_sample,
-                }
-            }),
-        )
+        .with_retained_packet_hotspot(renderer_stats.retained_packet_hotspot.clone().map(
+            |hotspot| sui_runtime::RetainedPacketHotspotDiagnostics {
+                container_layer_id: hotspot.container_layer_id,
+                owner_widget_id: hotspot.owner_widget_id,
+                segment_index: hotspot.segment_index,
+                total_time_us: hotspot.total_time_us,
+                scene_build_time_us: hotspot.scene_build_time_us,
+                command_count: hotspot.command_count,
+                text_command_count: hotspot.text_command_count,
+                path_command_count: hotspot.path_command_count,
+                rect_command_count: hotspot.rect_command_count,
+                text_command_time_us: hotspot.text_command_time_us,
+                path_command_time_us: hotspot.path_command_time_us,
+                rect_command_time_us: hotspot.rect_command_time_us,
+                text_sample: hotspot.text_sample,
+            },
+        ))
         .with_widget_timings(output.diagnostics.widget_timings.clone()),
     );
 }

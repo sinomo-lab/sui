@@ -236,20 +236,21 @@ impl SharedRenderer {
                             immediate_size: 0,
                         }),
                 ),
-                PipelineKind::OutputTransform => Some(
-                    self.device
-                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                            label: Some("SUI output transform pipeline layout"),
-                            bind_group_layouts: &[Some(&self.output_transform_bind_group_layout)],
-                            immediate_size: 0,
-                        }),
-                ),
+                PipelineKind::OutputTransform => Some(self.device.create_pipeline_layout(
+                    &wgpu::PipelineLayoutDescriptor {
+                        label: Some("SUI output transform pipeline layout"),
+                        bind_group_layouts: &[Some(&self.output_transform_bind_group_layout)],
+                        immediate_size: 0,
+                    },
+                )),
                 PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => None,
             };
             let scene_vertex_layouts = [Vertex::layout()];
             let text_vertex_layouts = [TextAtlasQuadVertex::layout(), TextAtlasInstance::layout()];
             let vertex_buffers = match kind {
-                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => &text_vertex_layouts[..],
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
+                    &text_vertex_layouts[..]
+                }
                 PipelineKind::OutputTransform => &[][..],
                 _ => &scene_vertex_layouts[..],
             };

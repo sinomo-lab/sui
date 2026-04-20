@@ -640,7 +640,11 @@ impl ScrollBar {
             .min(track.height());
         let max_scroll = (content.height - viewport.height).max(0.0);
         let travel = (track.height() - thumb_height).max(0.0);
-        let offset = self.state.current_offset().y.clamp(0.0, max_scroll.max(0.0));
+        let offset = self
+            .state
+            .current_offset()
+            .y
+            .clamp(0.0, max_scroll.max(0.0));
         let thumb_y = track.y()
             + if travel <= f32::EPSILON || max_scroll <= f32::EPSILON {
                 0.0
@@ -704,8 +708,10 @@ impl ScrollBar {
         C: ScrollInvalidationCtx,
     {
         let travel = (metrics.track.height() - metrics.thumb.height()).max(0.0);
-        let thumb_y = (pointer_y - drag_anchor)
-            .clamp(metrics.track.y(), metrics.track.max_y() - metrics.thumb.height());
+        let thumb_y = (pointer_y - drag_anchor).clamp(
+            metrics.track.y(),
+            metrics.track.max_y() - metrics.thumb.height(),
+        );
         let fraction = if travel <= f32::EPSILON {
             0.0
         } else {
@@ -727,7 +733,8 @@ impl Widget for ScrollBar {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
-                if self.dragging && self.pointer_id == Some(pointer.pointer_id)
+                if self.dragging
+                    && self.pointer_id == Some(pointer.pointer_id)
                     && let Some(metrics) = metrics
                     && self.set_from_pointer_position(
                         ctx,
@@ -847,7 +854,10 @@ impl Widget for ScrollBar {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.state.bind_scroll_bar(ctx.widget_id());
-        constraints.clamp(Size::new(self.width, constraints.max.height.max(0.0).max(40.0)))
+        constraints.clamp(Size::new(
+            self.width,
+            constraints.max.height.max(0.0).max(40.0),
+        ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -888,7 +898,11 @@ impl Widget for ScrollBar {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let max_scroll = self.state.max_offset().y.max(0.0);
-        let current = self.state.current_offset().y.clamp(0.0, max_scroll.max(0.0));
+        let current = self
+            .state
+            .current_offset()
+            .y
+            .clamp(0.0, max_scroll.max(0.0));
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Slider, ctx.bounds());
         node.name = self.name.clone();
         node.value = Some(SemanticsValue::Range {
@@ -1606,8 +1620,16 @@ fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {
 
 fn axis_limited_offset(axes: ScrollAxes, offset: Vector) -> Vector {
     Vector::new(
-        if axes.allows_horizontal() { offset.x.max(0.0) } else { 0.0 },
-        if axes.allows_vertical() { offset.y.max(0.0) } else { 0.0 },
+        if axes.allows_horizontal() {
+            offset.x.max(0.0)
+        } else {
+            0.0
+        },
+        if axes.allows_vertical() {
+            offset.y.max(0.0)
+        } else {
+            0.0
+        },
     )
 }
 
@@ -2577,12 +2599,20 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
 
         assert_eq!(*counts.borrow(), vec![1]);
-        assert!(output.frame.layer_updates.iter().any(|update| {
-            update.kind == sui_scene::SceneLayerUpdateKind::Transform
-        }));
-        assert!(output.frame.layer_updates.iter().all(|update| {
-            update.kind != sui_scene::SceneLayerUpdateKind::Content
-        }));
+        assert!(
+            output
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| { update.kind == sui_scene::SceneLayerUpdateKind::Transform })
+        );
+        assert!(
+            output
+                .frame
+                .layer_updates
+                .iter()
+                .all(|update| { update.kind != sui_scene::SceneLayerUpdateKind::Content })
+        );
     }
 
     #[test]
@@ -2692,16 +2722,10 @@ mod tests {
                 .iter()
                 .any(|update| { update.kind == sui_scene::SceneLayerUpdateKind::Transform })
         );
-        assert!(
-            output
-                .frame
-                .layer_updates
-                .iter()
-                .any(|update| {
-                    update.kind == sui_scene::SceneLayerUpdateKind::Content
-                        && update.damage == Some(Rect::new(0.0, 76.0, 80.0, 4.0))
-                })
-        );
+        assert!(output.frame.layer_updates.iter().any(|update| {
+            update.kind == sui_scene::SceneLayerUpdateKind::Content
+                && update.damage == Some(Rect::new(0.0, 76.0, 80.0, 4.0))
+        }));
     }
 
     #[test]
@@ -2857,15 +2881,17 @@ mod tests {
     fn scroll_bar_updates_after_wheel_scrolling_bound_scroll_view() {
         let state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(92.0, 40.0)).with_child(ScrollBarHost::new(
-                ScrollView::vertical(FixedBox::new(
-                    Size::new(80.0, 120.0),
-                    Color::rgba(0.2, 0.3, 0.7, 1.0),
-                ))
-                .state(state.clone())
-                .name("Scrollable content"),
-                ScrollBar::vertical(state).name("Scroll bar"),
-            )),
+            SizedBox::new()
+                .size(Size::new(92.0, 40.0))
+                .with_child(ScrollBarHost::new(
+                    ScrollView::vertical(FixedBox::new(
+                        Size::new(80.0, 120.0),
+                        Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    ))
+                    .state(state.clone())
+                    .name("Scrollable content"),
+                    ScrollBar::vertical(state).name("Scroll bar"),
+                )),
         );
 
         let _ = runtime.render(window_id).unwrap();
@@ -2888,7 +2914,9 @@ mod tests {
         let scroll_bar = output
             .semantics
             .iter()
-            .find(|node| node.role == SemanticsRole::Slider && node.name.as_deref() == Some("Scroll bar"))
+            .find(|node| {
+                node.role == SemanticsRole::Slider && node.name.as_deref() == Some("Scroll bar")
+            })
             .expect("scroll bar semantics present");
         assert_eq!(
             scroll_bar.value,
@@ -2904,14 +2932,16 @@ mod tests {
     fn scroll_bar_pointer_input_moves_bound_scroll_view() {
         let state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(92.0, 40.0)).with_child(ScrollBarHost::new(
-                ScrollView::vertical(FixedBox::new(
-                    Size::new(80.0, 120.0),
-                    Color::rgba(0.2, 0.3, 0.7, 1.0),
-                ))
-                .state(state.clone()),
-                ScrollBar::vertical(state),
-            )),
+            SizedBox::new()
+                .size(Size::new(92.0, 40.0))
+                .with_child(ScrollBarHost::new(
+                    ScrollView::vertical(FixedBox::new(
+                        Size::new(80.0, 120.0),
+                        Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    ))
+                    .state(state.clone()),
+                    ScrollBar::vertical(state),
+                )),
         );
 
         let _ = runtime.render(window_id).unwrap();

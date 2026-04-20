@@ -1,6 +1,9 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
-use cosmic_text::{fontdb, Attrs, Family, FontSystem, Metrics};
+use cosmic_text::{Attrs, Family, FontSystem, Metrics, fontdb};
 use sui_core::{Error, FontHandle, Rect, Result};
 use ttf_parser::GlyphId;
 
@@ -241,7 +244,9 @@ impl FontContext {
             .with_face_data(font_id, |font_data, face_index| {
                 ResolvedTextFace::from_bytes(Arc::<[u8]>::from(font_data.to_vec()), face_index)
             })
-            .ok_or_else(|| Error::new("failed to access font face data from cosmic-text database"))?;
+            .ok_or_else(|| {
+                Error::new("failed to access font face data from cosmic-text database")
+            })?;
 
         self.shared_faces
             .lock()
@@ -308,7 +313,8 @@ impl TextSystemState {
         let mut explicit_fonts = HashMap::new();
 
         for (handle, font) in &font_registry.fonts {
-            let ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(font.bytes().to_vec())));
+            let ids =
+                font_db.load_font_source(fontdb::Source::Binary(Arc::new(font.bytes().to_vec())));
             let face_info = ids
                 .iter()
                 .find_map(|id| {
@@ -316,18 +322,15 @@ impl TextSystemState {
                         .face(*id)
                         .filter(|face_info| face_info.index == font.face_index())
                 })
-                .ok_or_else(|| Error::new("failed to register custom font face in text database"))?;
+                .ok_or_else(|| {
+                    Error::new("failed to register custom font face in text database")
+                })?;
             let family_name = face_info
                 .families
                 .first()
                 .map(|(name, _language)| name.clone())
                 .unwrap_or_else(|| face_info.post_script_name.clone());
-            explicit_fonts.insert(
-                *handle,
-                ExplicitFontSpec {
-                    family_name,
-                },
-            );
+            explicit_fonts.insert(*handle, ExplicitFontSpec { family_name });
         }
 
         let font_system = FontSystem::new_with_locale_and_db(self.locale.clone(), font_db);

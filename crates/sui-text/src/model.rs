@@ -346,11 +346,7 @@ impl TextSelection {
     pub(crate) fn sorted_range(&self, text_len: usize) -> Range<usize> {
         let start = self.anchor.utf8_offset.min(text_len);
         let end = self.focus.utf8_offset.min(text_len);
-        if start <= end {
-            start..end
-        } else {
-            end..start
-        }
+        if start <= end { start..end } else { end..start }
     }
 }
 
@@ -606,7 +602,9 @@ impl TextLayoutRegistry {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (TextLayoutHandle, &TextLayout)> {
-        self.layouts.iter().map(|(handle, layout)| (*handle, layout))
+        self.layouts
+            .iter()
+            .map(|(handle, layout)| (*handle, layout))
     }
 
     pub(crate) fn insert(&mut self, handle: TextLayoutHandle, layout: TextLayout) {
@@ -665,7 +663,8 @@ impl<'a> TextLineWindow<'a> {
     }
 
     pub fn glyph_instances(&self) -> impl ExactSizeIterator<Item = TextGlyphInstance<'a>> + 'a {
-        (self.glyph_range.start..self.glyph_range.end).map(|index| self.layout.glyph_instance(index))
+        (self.glyph_range.start..self.glyph_range.end)
+            .map(|index| self.layout.glyph_instance(index))
     }
 }
 
@@ -820,19 +819,25 @@ impl TextLayout {
         let (run_range, cluster_range, glyph_range) = if clamped_line_range.is_empty() {
             (0..0, 0..0, 0..0)
         } else {
-            collapse_range(self.data.lines[clamped_line_range.clone()].iter().map(|line| line.run_range.clone()))
-                .zip(collapse_range(
-                    self.data.lines[clamped_line_range.clone()]
-                        .iter()
-                        .map(|line| line.cluster_range.clone()),
-                ))
-                .zip(collapse_range(
-                    self.data.lines[clamped_line_range.clone()]
-                        .iter()
-                        .map(|line| line.glyph_range.clone()),
-                ))
-                .map(|((run_range, cluster_range), glyph_range)| (run_range, cluster_range, glyph_range))
-                .unwrap_or((0..0, 0..0, 0..0))
+            collapse_range(
+                self.data.lines[clamped_line_range.clone()]
+                    .iter()
+                    .map(|line| line.run_range.clone()),
+            )
+            .zip(collapse_range(
+                self.data.lines[clamped_line_range.clone()]
+                    .iter()
+                    .map(|line| line.cluster_range.clone()),
+            ))
+            .zip(collapse_range(
+                self.data.lines[clamped_line_range.clone()]
+                    .iter()
+                    .map(|line| line.glyph_range.clone()),
+            ))
+            .map(|((run_range, cluster_range), glyph_range)| {
+                (run_range, cluster_range, glyph_range)
+            })
+            .unwrap_or((0..0, 0..0, 0..0))
         };
 
         TextLineWindow {
@@ -903,7 +908,10 @@ impl TextLayout {
             ));
         }
 
-        let bounds = rects.iter().copied().reduce(|bounds, rect| bounds.union(rect));
+        let bounds = rects
+            .iter()
+            .copied()
+            .reduce(|bounds, rect| bounds.union(rect));
         TextSelectionGeometry { rects, bounds }
     }
 
@@ -988,7 +996,11 @@ impl ShapedText {
         }
     }
 
-    pub fn from_layout(origin: Point, layout_handle: TextLayoutHandle, layout: &TextLayout) -> Self {
+    pub fn from_layout(
+        origin: Point,
+        layout_handle: TextLayoutHandle,
+        layout: &TextLayout,
+    ) -> Self {
         Self {
             origin,
             layout_handle,

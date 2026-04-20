@@ -1,10 +1,5 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use web_time::Instant;
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
     PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta,
@@ -15,6 +10,7 @@ use sui_runtime::{
     PresentationLatencyDiagnostics, Runtime, WindowPerformanceSnapshot, WindowRenderOptions,
     window_performance_snapshot, window_render_options, window_scene_statistics_detail_mode,
 };
+use web_time::Instant;
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
@@ -561,7 +557,8 @@ impl DesktopApp {
                     self.renderer.window_display_capabilities(window_id),
                     self.renderer.window_output_strategy(window_id),
                 ) {
-                    let options = render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
+                    let options =
+                        render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
                     publish_window_output_diagnostics(
                         window_id,
                         WindowOutputDiagnostics {
@@ -929,7 +926,12 @@ impl DesktopApp {
             }
 
             if now >= state.next_step_at {
-                self.inject_automation_action(event_loop, window_id, target_point, &state.config.action)?;
+                self.inject_automation_action(
+                    event_loop,
+                    window_id,
+                    target_point,
+                    &state.config.action,
+                )?;
                 state.next_step_at = now + state.config.step_interval;
             }
         }
@@ -938,10 +940,7 @@ impl DesktopApp {
         Ok(())
     }
 
-    fn find_automation_target(
-        &self,
-        state: &DesktopAutomationState,
-    ) -> Option<(WindowId, Point)> {
+    fn find_automation_target(&self, state: &DesktopAutomationState) -> Option<(WindowId, Point)> {
         self.windows.iter().find_map(|(window_id, window)| {
             let snapshot = window.accessibility.snapshot()?;
             let node = snapshot.nodes.iter().find(|node| {
@@ -959,18 +958,11 @@ impl DesktopApp {
                     node.bounds.y() + node.bounds.height() * 0.5,
                 )
             };
-            Some((
-                *window_id,
-                point,
-            ))
+            Some((*window_id, point))
         })
     }
 
-    fn report_automation_progress(
-        &self,
-        state: &mut DesktopAutomationState,
-        force: bool,
-    ) {
+    fn report_automation_progress(&self, state: &mut DesktopAutomationState, force: bool) {
         let Some(window_id) = state.target_window_id else {
             return;
         };
@@ -1018,7 +1010,10 @@ impl DesktopApp {
         let renderer_breakdown = format!(
             "comp={:.3},traverse={:.3},batch={:.3},upload={:.3},encode={:.3},submit={:.3},res={:.3},bind={:.3},atlas_miss={}({:.3}ms)",
             snapshot.renderer_submission.composition_time_us as f64 / 1000.0,
-            snapshot.renderer_submission.retained_scene_traversal_time_us as f64 / 1000.0,
+            snapshot
+                .renderer_submission
+                .retained_scene_traversal_time_us as f64
+                / 1000.0,
             snapshot.renderer_submission.batch_prepare_time_us as f64 / 1000.0,
             snapshot.renderer_submission.gpu_upload_time_us as f64 / 1000.0,
             snapshot.renderer_submission.pass_encode_time_us as f64 / 1000.0,
@@ -1109,7 +1104,11 @@ impl DesktopApp {
                 .windows
                 .get(&window_id)
                 .ok_or_else(|| Error::new(format!("missing window {}", window_id.get())))?;
-            (window.pointer.position, window.pointer.buttons, window.pointer.modifiers)
+            (
+                window.pointer.position,
+                window.pointer.buttons,
+                window.pointer.modifiers,
+            )
         };
 
         if emit_enter {

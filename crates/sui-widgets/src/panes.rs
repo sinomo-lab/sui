@@ -91,7 +91,10 @@ impl FloatingWorkspaceState {
             id,
             title: config.title,
             bounds: config.bounds,
-            min_size: Size::new(config.min_size.width.max(120.0), config.min_size.height.max(120.0)),
+            min_size: Size::new(
+                config.min_size.width.max(120.0),
+                config.min_size.height.max(120.0),
+            ),
             visible: config.visible,
             surface_widget_id: None,
         });
@@ -118,15 +121,19 @@ impl FloatingWorkspaceState {
 
     pub fn snapshot(&self, view_id: u64) -> Option<FloatingViewSnapshot> {
         let inner = self.inner.borrow();
-        inner.views.iter().find(|view| view.id == view_id).map(|view| FloatingViewSnapshot {
-            id: view.id,
-            title: view.title.clone(),
-            bounds: view.bounds,
-            min_size: view.min_size,
-            visible: view.visible,
-            maximized: inner.maximized_view == Some(view.id),
-            surface_widget_id: view.surface_widget_id,
-        })
+        inner
+            .views
+            .iter()
+            .find(|view| view.id == view_id)
+            .map(|view| FloatingViewSnapshot {
+                id: view.id,
+                title: view.title.clone(),
+                bounds: view.bounds,
+                min_size: view.min_size,
+                visible: view.visible,
+                maximized: inner.maximized_view == Some(view.id),
+                surface_widget_id: view.surface_widget_id,
+            })
     }
 
     pub fn set_view_surface_widget(&self, view_id: u64, widget_id: WidgetId) -> bool {
@@ -203,18 +210,19 @@ impl FloatingWorkspaceState {
         };
         if maximized {
             inner.views[index].visible = true;
-            let ordering_changed = if let Some(order_index) = inner.z_order.iter().position(|id| *id == view_id) {
-                if order_index + 1 == inner.z_order.len() {
-                    false
+            let ordering_changed =
+                if let Some(order_index) = inner.z_order.iter().position(|id| *id == view_id) {
+                    if order_index + 1 == inner.z_order.len() {
+                        false
+                    } else {
+                        let id = inner.z_order.remove(order_index);
+                        inner.z_order.push(id);
+                        true
+                    }
                 } else {
-                    let id = inner.z_order.remove(order_index);
-                    inner.z_order.push(id);
+                    inner.z_order.push(view_id);
                     true
-                }
-            } else {
-                inner.z_order.push(view_id);
-                true
-            };
+                };
             if inner.maximized_view == Some(view_id) {
                 return ordering_changed;
             }
@@ -244,7 +252,12 @@ impl FloatingWorkspaceState {
             .z_order
             .iter()
             .copied()
-            .filter(|id| inner.views.iter().any(|view| view.id == *id && view.visible))
+            .filter(|id| {
+                inner
+                    .views
+                    .iter()
+                    .any(|view| view.id == *id && view.visible)
+            })
             .collect()
     }
 
@@ -333,10 +346,7 @@ impl FloatingWorkspace {
             child,
         ));
         self.state.set_view_surface_widget(view_id, child.id());
-        self.views.push(FloatingWorkspaceEntry {
-            view_id,
-            child,
-        });
+        self.views.push(FloatingWorkspaceEntry { view_id, child });
         view_id
     }
 
@@ -370,7 +380,9 @@ impl FloatingWorkspace {
                     });
                 }
 
-                if !view.maximized && floating_view_title_bar_rect(&self.theme, bounds).contains(position) {
+                if !view.maximized
+                    && floating_view_title_bar_rect(&self.theme, bounds).contains(position)
+                {
                     return Some(FloatingWorkspaceHit {
                         view_id: view.id,
                         region: FloatingWorkspaceHitRegion::TitleBar,
@@ -408,7 +420,8 @@ impl FloatingWorkspace {
                 gesture.initial_bounds.height() + delta.y,
             ),
         };
-        let clamped = clamp_floating_view_bounds(&self.theme, host_bounds, next_bounds, view.min_size);
+        let clamped =
+            clamp_floating_view_bounds(&self.theme, host_bounds, next_bounds, view.min_size);
         if !self.state.set_view_bounds(view.id, clamped) {
             return None;
         }
@@ -427,10 +440,9 @@ impl Widget for FloatingWorkspace {
                         .as_ref()
                         .is_some_and(|gesture| gesture.pointer_id == pointer.pointer_id) =>
             {
-                let resizing = self
-                    .gesture
-                    .as_ref()
-                    .is_some_and(|gesture| matches!(gesture.kind, FloatingWorkspaceGestureKind::Resize));
+                let resizing = self.gesture.as_ref().is_some_and(|gesture| {
+                    matches!(gesture.kind, FloatingWorkspaceGestureKind::Resize)
+                });
                 let refresh_target = if resizing {
                     self.gesture
                         .as_ref()
@@ -614,7 +626,9 @@ impl Widget for FloatingWorkspace {
 
         for view_id in self.active_view_ids() {
             if let Some(entry) = self.entry(view_id) {
-                if dirty_region.is_some_and(|region| entry.child.bounds().intersection(region).is_none()) {
+                if dirty_region
+                    .is_some_and(|region| entry.child.bounds().intersection(region).is_none())
+                {
                     continue;
                 }
                 entry.child.paint(ctx);
@@ -633,7 +647,11 @@ impl Widget for FloatingWorkspace {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::GenericContainer, ctx.bounds());
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
         node.name = self.name.clone();
         node.state.focused = ctx.is_focused();
         ctx.push(node);
@@ -1494,12 +1512,7 @@ fn floating_view_content_rect(theme: &DefaultTheme, bounds: Rect, maximized: boo
 }
 
 fn floating_view_resize_handle_rect(bounds: Rect) -> Rect {
-    Rect::new(
-        bounds.max_x() - 18.0,
-        bounds.max_y() - 18.0,
-        18.0,
-        18.0,
-    )
+    Rect::new(bounds.max_x() - 18.0, bounds.max_y() - 18.0, 18.0, 18.0)
 }
 
 fn clamp_floating_view_bounds(
@@ -1511,12 +1524,14 @@ fn clamp_floating_view_bounds(
     let title_height = floating_view_title_bar_height(theme);
     let max_width = host_bounds.width().max(0.0);
     let max_height = host_bounds.height().max(0.0);
-    let width = bounds
-        .width()
-        .clamp(min_size.width.min(max_width), max_width.max(min_size.width.min(max_width)));
-    let height = bounds
-        .height()
-        .clamp(min_size.height.min(max_height), max_height.max(min_size.height.min(max_height)));
+    let width = bounds.width().clamp(
+        min_size.width.min(max_width),
+        max_width.max(min_size.width.min(max_width)),
+    );
+    let height = bounds.height().clamp(
+        min_size.height.min(max_height),
+        max_height.max(min_size.height.min(max_height)),
+    );
     let min_visible_width = width.min(56.0);
     let min_visible_height = height.min(title_height.max(32.0));
     let max_x = (host_bounds.max_x() - min_visible_width).max(host_bounds.x());
@@ -1559,12 +1574,18 @@ fn request_widget_refresh(
 ) {
     let target = InvalidationTarget::Widget(widget_id);
     if include_measure {
-        ctx.request(InvalidationRequest::new(target, InvalidationKind::Measure).with_region(region));
+        ctx.request(
+            InvalidationRequest::new(target, InvalidationKind::Measure).with_region(region),
+        );
     } else {
-        ctx.request(InvalidationRequest::new(target, InvalidationKind::Arrange).with_region(region));
+        ctx.request(
+            InvalidationRequest::new(target, InvalidationKind::Arrange).with_region(region),
+        );
     }
     if include_ordering {
-        ctx.request(InvalidationRequest::new(target, InvalidationKind::Ordering).with_region(region));
+        ctx.request(
+            InvalidationRequest::new(target, InvalidationKind::Ordering).with_region(region),
+        );
     }
     ctx.request(InvalidationRequest::new(target, InvalidationKind::Paint).with_region(region));
     ctx.request(InvalidationRequest::new(target, InvalidationKind::HitTest).with_region(region));
@@ -1704,7 +1725,10 @@ mod tests {
         ];
 
         for (channel, target) in pixel.into_iter().map(i16::from).zip(expected) {
-            assert!((channel - target).abs() <= 1, "pixel channel {channel} did not match expected {target}");
+            assert!(
+                (channel - target).abs() <= 1,
+                "pixel channel {channel} did not match expected {target}"
+            );
         }
     }
 
@@ -1851,7 +1875,10 @@ mod tests {
         );
 
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(520.0).height(360.0).with_child(workspace),
+            SizedBox::new()
+                .width(520.0)
+                .height(360.0)
+                .with_child(workspace),
         );
 
         let _ = runtime.render(window_id)?;
@@ -1888,7 +1915,10 @@ mod tests {
         );
 
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(420.0).height(260.0).with_child(workspace),
+            SizedBox::new()
+                .width(420.0)
+                .height(260.0)
+                .with_child(workspace),
         );
 
         let _ = runtime.render(window_id)?;
@@ -1950,7 +1980,10 @@ mod tests {
         );
 
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(420.0).height(260.0).with_child(workspace),
+            SizedBox::new()
+                .width(420.0)
+                .height(260.0)
+                .with_child(workspace),
         );
         let mut renderer = WgpuRenderer::default();
 
@@ -2005,7 +2038,10 @@ mod tests {
         );
 
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(420.0).height(260.0).with_child(workspace),
+            SizedBox::new()
+                .width(420.0)
+                .height(260.0)
+                .with_child(workspace),
         );
         let mut renderer = WgpuRenderer::default();
 
@@ -2051,7 +2087,10 @@ mod tests {
             SizedBox::new().width(520.0).height(360.0).with_child(
                 FloatingWorkspace::new(state)
                     .with_view(
-                        FloatingViewConfig::new("Popover view", Rect::new(24.0, 24.0, 240.0, 180.0)),
+                        FloatingViewConfig::new(
+                            "Popover view",
+                            Rect::new(24.0, 24.0, 240.0, 180.0),
+                        ),
                         crate::Padding::all(
                             16.0,
                             crate::Popover::new(
@@ -2083,7 +2122,12 @@ mod tests {
             .expect("popover graph node present");
 
         assert_ne!(node.stack_host, graph.root);
-        assert!(graph.stack_hosts.iter().any(|host| host.host == node.stack_host));
+        assert!(
+            graph
+                .stack_hosts
+                .iter()
+                .any(|host| host.host == node.stack_host)
+        );
         Ok(())
     }
 
@@ -2102,7 +2146,10 @@ mod tests {
         state.set_view_maximized(second_id, true);
 
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(520.0).height(360.0).with_child(workspace),
+            SizedBox::new()
+                .width(520.0)
+                .height(360.0)
+                .with_child(workspace),
         );
 
         let _ = runtime.render(window_id)?;

@@ -3012,8 +3012,7 @@ mod tests {
     #[test]
     fn menu_row_label_visual_center_matches_row_center() {
         let output = render(
-            Menu::new("App menu")
-                .items([MenuItem::new("New File"), MenuItem::new("Open...")]),
+            Menu::new("App menu").items([MenuItem::new("New File"), MenuItem::new("Open...")]),
         );
         let text = text_run_for(&output, "New File");
         let layout = TextSystem::new()
@@ -3033,13 +3032,14 @@ mod tests {
 
     #[test]
     fn context_menu_row_label_visual_center_matches_row_center() -> Result<(), String> {
-        let (mut runtime, window_id) = build_runtime(ContextMenu::new(
-            "Canvas menu",
-            crate::Button::new("Open menu"),
-        )
-        .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]));
+        let (mut runtime, window_id) = build_runtime(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
+        );
 
-        let closed = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let closed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         let trigger = closed
             .semantics
             .iter()
@@ -3058,7 +3058,9 @@ mod tests {
             .handle_event(window_id, Event::Pointer(down))
             .map_err(|error| error.to_string())?;
 
-        let output = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         let context = output
             .semantics
             .iter()

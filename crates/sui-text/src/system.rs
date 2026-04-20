@@ -1,7 +1,7 @@
 use std::{
-    sync::atomic::{AtomicU64, Ordering},
     cell::RefCell,
     collections::HashMap,
+    sync::atomic::{AtomicU64, Ordering},
     sync::{Arc, Mutex, OnceLock},
     time::Instant,
 };
@@ -9,6 +9,7 @@ use std::{
 use sui_core::{Error, Result, Size};
 
 use crate::{
+    FontRegistry,
     cache::{TextLayoutCache, TextLayoutCacheSnapshot},
     flatten::FlattenedTextDocument,
     font::{FaceCacheKey, FontContext, ResolvedSpanInput, TextSystemState},
@@ -17,7 +18,6 @@ use crate::{
         PersistentTextLayout, TextDocument, TextLayout, TextLayoutHandle, TextLayoutRegistry,
         TextLayoutRequest, TextMeasurement, TextRun, TextStyle,
     },
-    FontRegistry,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -120,7 +120,10 @@ impl TextSystem {
         style: TextStyle,
         font_registry: &FontRegistry,
     ) -> Result<TextMeasurement> {
-        self.measure_document(TextDocument::from_plain_text(text.into(), style), font_registry)
+        self.measure_document(
+            TextDocument::from_plain_text(text.into(), style),
+            font_registry,
+        )
     }
 
     pub fn measure_document(
@@ -244,7 +247,13 @@ impl TextSystem {
                 .as_ref()
                 .map(|started| started.elapsed().as_micros() as u64)
                 .unwrap_or(0);
-            record_text_timing(total_time_us, prelookup_time_us, cache_lookup_time_us, 0, true);
+            record_text_timing(
+                total_time_us,
+                prelookup_time_us,
+                cache_lookup_time_us,
+                0,
+                true,
+            );
             return Ok(cached.with_document(normalized_document));
         }
 
@@ -267,7 +276,12 @@ impl TextSystem {
             .as_ref()
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
-        self.store_layout(&normalized_document, &span_face_keys, box_size, layout.clone())?;
+        self.store_layout(
+            &normalized_document,
+            &span_face_keys,
+            box_size,
+            layout.clone(),
+        )?;
         let total_time_us = total_started
             .as_ref()
             .map(|started| started.elapsed().as_micros() as u64)
@@ -292,7 +306,11 @@ impl TextSystem {
     }
 
     fn alloc_layout_handle(&self) -> TextLayoutHandle {
-        TextLayoutHandle::new(self.next_layout_handle.fetch_add(1, Ordering::Relaxed).max(1))
+        TextLayoutHandle::new(
+            self.next_layout_handle
+                .fetch_add(1, Ordering::Relaxed)
+                .max(1),
+        )
     }
 
     fn store_persistent_layout(
@@ -318,13 +336,7 @@ impl TextSystem {
         flattened
             .spans
             .iter()
-            .map(|span| {
-                font_context.resolve_span(
-                    span.id.clone(),
-                    span.text.clone(),
-                    &span.style,
-                )
-            })
+            .map(|span| font_context.resolve_span(span.id.clone(), span.text.clone(), &span.style))
             .collect()
     }
 
@@ -351,7 +363,10 @@ impl TextSystem {
                             face_key
                         } else {
                             let font = font_registry.get(handle).ok_or_else(|| {
-                                Error::new(format!("font handle {} is not registered", handle.get()))
+                                Error::new(format!(
+                                    "font handle {} is not registered",
+                                    handle.get()
+                                ))
                             })?;
                             let face_key = FaceCacheKey::from_registered_font(font);
                             explicit_face_keys.insert(handle, face_key);

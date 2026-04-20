@@ -10,13 +10,13 @@ mod system;
 pub use cache::TextLayoutCacheSnapshot;
 pub use font::{FontRegistry, RegisteredFont, ResolvedTextFace};
 pub use model::{
-    PersistentTextLayout, ShapedGlyph, ShapedText, TextAffinity, TextAlign, TextCaret,
-    ShapedTextWindow, TextCluster, TextCursor, TextDirection, TextDocument, TextFlowDirection,
+    PersistentTextLayout, ShapedGlyph, ShapedText, ShapedTextWindow, TextAffinity, TextAlign,
+    TextCaret, TextCluster, TextCursor, TextDirection, TextDocument, TextFlowDirection,
     TextGlyphInstance, TextLayout, TextLayoutHandle, TextLayoutId, TextLayoutMetadata,
-    TextLayoutRegistry, TextLayoutRequest, TextLayoutRun, TextLayoutVersion,
-    TextLayoutView, TextLine, TextLineWindow, TextMeasurement, TextParagraph,
-    TextParagraphLayout, TextParagraphStyle, TextRun, TextRunView, TextSelection,
-    TextSelectionGeometry, TextSpan, TextSpanId, TextStyle, TextWrap, TextWritingMode,
+    TextLayoutRegistry, TextLayoutRequest, TextLayoutRun, TextLayoutVersion, TextLayoutView,
+    TextLine, TextLineWindow, TextMeasurement, TextParagraph, TextParagraphLayout,
+    TextParagraphStyle, TextRun, TextRunView, TextSelection, TextSelectionGeometry, TextSpan,
+    TextSpanId, TextStyle, TextWrap, TextWritingMode,
 };
 pub use system::{
     RuntimeTextTimingDiagnostics, TextSystem, begin_text_timing_collection,

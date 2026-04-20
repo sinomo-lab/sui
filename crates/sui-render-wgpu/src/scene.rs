@@ -1195,12 +1195,10 @@ impl SceneDrawOpBuilder<'_> {
                 state.pop_transform();
                 Ok(())
             }
-            SceneCommand::Layer(layer) => {
-                Err(Error::new(format!(
-                    "retained direct packet compiler encountered nested layer {}",
-                    layer.layer_id().get()
-                )))
-            }
+            SceneCommand::Layer(layer) => Err(Error::new(format!(
+                "retained direct packet compiler encountered nested layer {}",
+                layer.layer_id().get()
+            ))),
             SceneCommand::Label { rect, text, color } => {
                 self.scratch_text_instances.clear();
                 self.text_engine.append_text_run(
@@ -1758,7 +1756,6 @@ impl TextEngine {
     where
         I: IntoIterator<Item = sui_text::TextGlyphInstance<'a>>,
     {
-
         let mut active_face_index = None;
         let mut swash_face = None;
         let glyph_pixel_alignment_enabled = self.glyph_pixel_alignment_enabled;
@@ -2285,7 +2282,8 @@ fn build_text_atlas_instance(
         color: rgba,
         metadata: [
             (atlas_contains_lcd_subpixels
-                && allows_lcd_text(transform, glyph_pixel_alignment_enabled)) as u8 as f32,
+                && allows_lcd_text(transform, glyph_pixel_alignment_enabled)) as u8
+                as f32,
             atlas_contains_lcd_subpixels as u8 as f32,
         ],
     })
@@ -2382,9 +2380,7 @@ fn transform_is_axis_aligned(transform: Transform) -> bool {
 }
 
 fn transform_is_lcd_safe(transform: Transform) -> bool {
-    transform_is_axis_aligned(transform)
-        && transform.xx > 0.0
-        && transform.yy > 0.0
+    transform_is_axis_aligned(transform) && transform.xx > 0.0 && transform.yy > 0.0
 }
 
 fn snap_to_physical_pixel(value: f32, raster_scale_factor: f32) -> f32 {
@@ -3080,26 +3076,31 @@ impl DrawOpArena {
                             .collect(),
                     }
                 }));
-            self.draw_ops
-                .extend(transformed.draw_ops.iter().cloned().filter_map(|mut draw_op| {
-                    draw_op.vertices = match draw_op.kind {
-                        DrawOpKind::TextAtlas => draw_op.vertices.offset(text_delta),
-                        _ => draw_op.vertices.offset(scene_delta),
-                    };
-                    draw_op.clip_state_index += clip_state_base;
-                    let Some(clip_rect) =
-                        resolve_fragment_clip_rect(draw_op.clip_rect, external_clip_rect)
-                    else {
-                        return None;
-                    };
-                    draw_op.clip_rect = clip_rect;
-                    if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
-                        draw_op.kind = DrawOpKind::AnalyticPath {
-                            id: analytic_id_map[&id],
+            self.draw_ops.extend(
+                transformed
+                    .draw_ops
+                    .iter()
+                    .cloned()
+                    .filter_map(|mut draw_op| {
+                        draw_op.vertices = match draw_op.kind {
+                            DrawOpKind::TextAtlas => draw_op.vertices.offset(text_delta),
+                            _ => draw_op.vertices.offset(scene_delta),
                         };
-                    }
-                    Some(draw_op)
-                }));
+                        draw_op.clip_state_index += clip_state_base;
+                        let Some(clip_rect) =
+                            resolve_fragment_clip_rect(draw_op.clip_rect, external_clip_rect)
+                        else {
+                            return None;
+                        };
+                        draw_op.clip_rect = clip_rect;
+                        if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
+                            draw_op.kind = DrawOpKind::AnalyticPath {
+                                id: analytic_id_map[&id],
+                            };
+                        }
+                        Some(draw_op)
+                    }),
+            );
             return Ok(());
         }
 
@@ -3353,7 +3354,12 @@ pub(crate) fn append_scene_mesh(vertices: &mut Vec<Vertex>, mesh: &SceneMesh, vi
 
 pub(crate) fn shader_color(color: Color) -> [f32; 4] {
     let linear = color.to_linear_srgb();
-    [linear.red, linear.green, linear.blue, linear.alpha.clamp(0.0, 1.0)]
+    [
+        linear.red,
+        linear.green,
+        linear.blue,
+        linear.alpha.clamp(0.0, 1.0),
+    ]
 }
 
 fn srgb_transfer_to_linear(channel: f32) -> f32 {
@@ -3387,12 +3393,11 @@ pub(crate) fn output_transform_requires_intermediate(strategy: OutputStrategy) -
 }
 
 #[cfg(test)]
-pub(crate) fn tone_map_linear_color(
-    color: [f32; 4],
-    mode: RequestedToneMappingMode,
-) -> [f32; 4] {
+pub(crate) fn tone_map_linear_color(color: [f32; 4], mode: RequestedToneMappingMode) -> [f32; 4] {
     let transform = |channel: f32| match mode {
-        RequestedToneMappingMode::Automatic | RequestedToneMappingMode::Clamp => channel.clamp(0.0, 1.0),
+        RequestedToneMappingMode::Automatic | RequestedToneMappingMode::Clamp => {
+            channel.clamp(0.0, 1.0)
+        }
         RequestedToneMappingMode::Reinhard => {
             let channel = channel.max(0.0);
             channel / (1.0 + channel)
@@ -3435,14 +3440,21 @@ pub(crate) fn select_output_strategy(
     capabilities: DisplayCapabilities,
     requested: ColorManagementMode,
 ) -> OutputStrategy {
-    let sdr_format = preferred_surface_format(formats).unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
+    let sdr_format =
+        preferred_surface_format(formats).unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
     let primaries = requested_output_primaries(capabilities.clone(), requested);
     let wants_hdr = matches!(requested.mode, RequestedColorManagementMode::PreferHdr)
-        || matches!(requested.dynamic_range, RequestedDynamicRangeMode::HighDynamicRange);
+        || matches!(
+            requested.dynamic_range,
+            RequestedDynamicRangeMode::HighDynamicRange
+        );
     let wants_wide_gamut = matches!(
         requested.mode,
         RequestedColorManagementMode::PreferWideGamut | RequestedColorManagementMode::PreferHdr
-    ) || matches!(requested.output_primaries, RequestedOutputColorPrimaries::DisplayP3);
+    ) || matches!(
+        requested.output_primaries,
+        RequestedOutputColorPrimaries::DisplayP3
+    );
 
     if matches!(requested.mode, RequestedColorManagementMode::ForceSdr) {
         return OutputStrategy::SdrSurface { format: sdr_format };
@@ -3523,13 +3535,7 @@ pub(crate) fn configure_surface(
         display_capabilities,
         color_management,
     );
-    let config = configure_surface_for_strategy(
-        surface,
-        adapter,
-        device,
-        size,
-        vsync_enabled,
-        strategy,
-    )?;
+    let config =
+        configure_surface_for_strategy(surface, adapter, device, size, vsync_enabled, strategy)?;
     Ok((config, strategy))
 }

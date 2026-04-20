@@ -1,6 +1,6 @@
 use std::{
-    collections::{BTreeMap, HashMap},
     collections::hash_map::DefaultHasher,
+    collections::{BTreeMap, HashMap},
     hash::{Hash, Hasher},
     ops::Range,
     sync::Arc,
@@ -206,7 +206,9 @@ pub(crate) fn layout_document(
 
         for run in prepared_line.runs {
             let run_index = layout_runs.len();
-            for glyph in &mut shaped_glyphs[(glyph_start + run.glyph_range.start)..(glyph_start + run.glyph_range.end)] {
+            for glyph in &mut shaped_glyphs
+                [(glyph_start + run.glyph_range.start)..(glyph_start + run.glyph_range.end)]
+            {
                 glyph.run_index = run_index;
             }
 
@@ -215,7 +217,8 @@ pub(crate) fn layout_document(
                 line_index,
                 span_id: resolved_spans[run.span_metadata].id.clone(),
                 byte_range: run.byte_range,
-                glyph_range: (glyph_start + run.glyph_range.start)..(glyph_start + run.glyph_range.end),
+                glyph_range: (glyph_start + run.glyph_range.start)
+                    ..(glyph_start + run.glyph_range.end),
                 cluster_range: cluster_start..cluster_start,
                 rect: run.rect.translate(Vector::new(0.0, block_top)),
                 baseline: prepared_line.baseline + block_top,
@@ -228,13 +231,10 @@ pub(crate) fn layout_document(
             let byte_range = cluster.range.clone();
             let glyph_range =
                 (glyph_start + cluster.glyph_range.start)..(glyph_start + cluster.glyph_range.end);
-            let run_range = overlapping_run_range(
-                &layout_runs[run_start..],
-                line_index,
-                &byte_range,
-            )
-            .map(|range| (run_start + range.start)..(run_start + range.end))
-            .unwrap_or(run_start..run_start);
+            let run_range =
+                overlapping_run_range(&layout_runs[run_start..], line_index, &byte_range)
+                    .map(|range| (run_start + range.start)..(run_start + range.end))
+                    .unwrap_or(run_start..run_start);
             layout_clusters.push(TextCluster {
                 paragraph_index: prepared_line.paragraph_index,
                 line_index,
@@ -280,9 +280,8 @@ pub(crate) fn layout_document(
     let paragraph_layouts = paragraphs
         .into_iter()
         .map(|paragraph| {
-            let (run_range, cluster_range, glyph_range) = collapse_line_component_ranges(
-                &layout_lines[paragraph.line_range.clone()],
-            );
+            let (run_range, cluster_range, glyph_range) =
+                collapse_line_component_ranges(&layout_lines[paragraph.line_range.clone()]);
             TextParagraphLayout {
                 paragraph_index: paragraph.paragraph_index,
                 byte_range: paragraph.byte_range,
@@ -296,7 +295,8 @@ pub(crate) fn layout_document(
         })
         .collect::<Vec<_>>();
 
-    let bounds = measured_bounds.unwrap_or_else(|| Rect::new(0.0, block_top, measured_width, natural_height));
+    let bounds = measured_bounds
+        .unwrap_or_else(|| Rect::new(0.0, block_top, measured_width, natural_height));
     let measurement = TextMeasurement {
         width: measured_width,
         height: natural_height,
@@ -360,15 +360,23 @@ fn prepare_paragraph(
 
     let metrics = cosmic_text::Metrics::new(primary_style.font_size, primary_style.line_height);
     let mut buffer = Buffer::new(&mut font_context.font_system, metrics);
-    buffer.set_wrap(&mut font_context.font_system, map_wrap(paragraph.style.wrap));
+    buffer.set_wrap(
+        &mut font_context.font_system,
+        map_wrap(paragraph.style.wrap),
+    );
     buffer.set_hinting(&mut font_context.font_system, Hinting::Disabled);
     buffer.set_size(&mut font_context.font_system, box_width, None);
 
     let prefix = direction_prefix(paragraph.style.direction);
     let suffix = if prefix.is_empty() { "" } else { "\u{202C}" };
     let prefix_len = prefix.len();
-    let paragraph_len = paragraph.byte_range.end.saturating_sub(paragraph.byte_range.start);
-    let default_family_name = paragraph_spans.first().and_then(|span| span.family_name.clone());
+    let paragraph_len = paragraph
+        .byte_range
+        .end
+        .saturating_sub(paragraph.byte_range.start);
+    let default_family_name = paragraph_spans
+        .first()
+        .and_then(|span| span.family_name.clone());
     let default_attrs = default_attrs_for_style(
         &primary_style,
         default_family_name.as_deref(),
@@ -394,7 +402,9 @@ fn prepare_paragraph(
 
     buffer.set_rich_text(
         &mut font_context.font_system,
-        rich_spans.iter().map(|(text, attrs)| (text.as_str(), attrs.clone())),
+        rich_spans
+            .iter()
+            .map(|(text, attrs)| (text.as_str(), attrs.clone())),
         &default_attrs,
         cosmic_text::Shaping::Advanced,
         map_align(paragraph.style.align, paragraph.style.direction),
@@ -407,7 +417,10 @@ fn prepare_paragraph(
     let paragraph_rtl = buffer_line
         .shape_opt()
         .map(|shape| shape.rtl)
-        .unwrap_or(matches!(paragraph.style.direction, TextDirection::RightToLeft));
+        .unwrap_or(matches!(
+            paragraph.style.direction,
+            TextDirection::RightToLeft
+        ));
     let layout_lines = buffer_line
         .layout_opt()
         .ok_or_else(|| Error::new("cosmic-text paragraph buffer did not produce layout lines"))?;
@@ -429,7 +442,8 @@ fn prepare_paragraph(
                 if glyph.metadata == DIRECTION_SENTINEL_METADATA {
                     return None;
                 }
-                let adjusted = adjust_working_range(glyph.start, glyph.end, prefix_len, paragraph_len);
+                let adjusted =
+                    adjust_working_range(glyph.start, glyph.end, prefix_len, paragraph_len);
                 if adjusted.start >= adjusted.end {
                     return None;
                 }
@@ -444,7 +458,7 @@ fn prepare_paragraph(
             TextFlowDirection::LeftToRight
         };
         let line_left = visible_glyphs
-                .iter()
+            .iter()
             .map(|(glyph, _)| glyph.x)
             .reduce(f32::min)
             .unwrap_or_else(|| {
@@ -461,7 +475,11 @@ fn prepare_paragraph(
             None => line_rect,
         });
 
-        let clusters = build_cluster_geometries(&visible_glyphs, paragraph.byte_range.start, line_byte_range.clone());
+        let clusters = build_cluster_geometries(
+            &visible_glyphs,
+            paragraph.byte_range.start,
+            line_byte_range.clone(),
+        );
         let prepared_glyphs = build_prepared_glyphs(
             &visible_glyphs,
             paragraph.byte_range.start,
@@ -472,7 +490,13 @@ fn prepare_paragraph(
             face_metrics,
             max_cap_height,
         )?;
-        let runs = build_run_segments(&visible_glyphs, &prepared_glyphs, paragraph.byte_range.start, line_top, line_height);
+        let runs = build_run_segments(
+            &visible_glyphs,
+            &prepared_glyphs,
+            paragraph.byte_range.start,
+            line_top,
+            line_height,
+        );
 
         prepared_lines.push(PreparedLine {
             paragraph_index: paragraph.index,
@@ -492,7 +516,8 @@ fn prepare_paragraph(
     }
 
     Ok(PreparedParagraphResult {
-        paragraph_rect: paragraph_rect.unwrap_or_else(|| Rect::new(0.0, 0.0, 0.0, metrics.line_height)),
+        paragraph_rect: paragraph_rect
+            .unwrap_or_else(|| Rect::new(0.0, 0.0, 0.0, metrics.line_height)),
         lines: prepared_lines,
     })
 }
@@ -518,7 +543,8 @@ fn build_prepared_glyphs(
         let origin_y = baseline - (glyph.font_size * glyph.y_offset);
         let bounds = faces[face_index].glyph_bounds(glyph.glyph_id, origin_x, origin_y, scale);
         if let Some(cap_height) = metrics.cap_height.map(|value| value * scale) {
-            *max_cap_height = Some(max_cap_height.map_or(cap_height, |current| current.max(cap_height)));
+            *max_cap_height =
+                Some(max_cap_height.map_or(cap_height, |current| current.max(cap_height)));
         }
 
         prepared.push(PreparedGlyph {
@@ -622,7 +648,8 @@ fn build_cluster_geometries(
 
     let mut clusters = BTreeMap::<usize, (Range<usize>, f32, f32, bool, Range<usize>)>::new();
     for (glyph_index, (glyph, adjusted_range)) in visible_glyphs.iter().enumerate() {
-        let range = (paragraph_start + adjusted_range.start)..(paragraph_start + adjusted_range.end);
+        let range =
+            (paragraph_start + adjusted_range.start)..(paragraph_start + adjusted_range.end);
         let key = range.start;
         let left = glyph.x;
         let right = glyph.x + glyph.w;
@@ -635,7 +662,10 @@ fn build_cluster_geometries(
                 glyph_range.end = glyph_index + 1;
             }
             None => {
-                clusters.insert(key, (range, left, right, rtl, glyph_index..(glyph_index + 1)));
+                clusters.insert(
+                    key,
+                    (range, left, right, rtl, glyph_index..(glyph_index + 1)),
+                );
             }
         }
     }
@@ -682,7 +712,9 @@ fn build_cluster_geometries(
     geometries
 }
 
-fn collapse_line_component_ranges(lines: &[TextLine]) -> (Range<usize>, Range<usize>, Range<usize>) {
+fn collapse_line_component_ranges(
+    lines: &[TextLine],
+) -> (Range<usize>, Range<usize>, Range<usize>) {
     let run_range = collapse_range(lines.iter().map(|line| line.run_range.clone())).unwrap_or(0..0);
     let cluster_range =
         collapse_range(lines.iter().map(|line| line.cluster_range.clone())).unwrap_or(0..0);
@@ -862,7 +894,8 @@ fn overlapping_run_range(
     cluster_byte_range: &Range<usize>,
 ) -> Option<Range<usize>> {
     contiguous_overlap_range(runs.iter().enumerate().filter_map(|(index, run)| {
-        if run.line_index == line_index && byte_ranges_overlap(cluster_byte_range, &run.byte_range) {
+        if run.line_index == line_index && byte_ranges_overlap(cluster_byte_range, &run.byte_range)
+        {
             Some(index)
         } else {
             None
@@ -876,7 +909,8 @@ fn overlapping_cluster_range(
     run_byte_range: &Range<usize>,
 ) -> Option<Range<usize>> {
     contiguous_overlap_range(clusters.iter().enumerate().filter_map(|(index, cluster)| {
-        if cluster.line_index == line_index && byte_ranges_overlap(&cluster.byte_range, run_byte_range)
+        if cluster.line_index == line_index
+            && byte_ranges_overlap(&cluster.byte_range, run_byte_range)
         {
             Some(index)
         } else {
@@ -945,7 +979,9 @@ fn ensure_face_metrics(
         .map_err(|_| Error::new("failed to parse text face metrics"))?;
     let units_per_em = face.units_per_em();
     if units_per_em == 0 {
-        return Err(Error::new("text face reported an invalid units-per-em value"));
+        return Err(Error::new(
+            "text face reported an invalid units-per-em value",
+        ));
     }
 
     face_metrics[face_index] = Some(FaceMetrics {
@@ -1013,7 +1049,10 @@ fn default_attrs_for_style<'a>(
     metadata: usize,
 ) -> cosmic_text::Attrs<'a> {
     let attrs = cosmic_text::Attrs::new()
-        .metrics(cosmic_text::Metrics::new(style.font_size, style.line_height))
+        .metrics(cosmic_text::Metrics::new(
+            style.font_size,
+            style.line_height,
+        ))
         .metadata(metadata);
     match family_name {
         Some(name) => attrs.family(cosmic_text::Family::Name(name)),

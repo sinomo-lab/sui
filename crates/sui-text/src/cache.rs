@@ -238,9 +238,11 @@ impl TextLayoutCache {
             .entries
             .get(&hash)
             .and_then(|bucket| {
-                bucket
-                    .iter()
-                    .find(|entry| entry.key.matches_document(document, span_face_keys, box_size))
+                bucket.iter().find(|entry| {
+                    entry
+                        .key
+                        .matches_document(document, span_face_keys, box_size)
+                })
             })
             .map(|entry| entry.layout.clone());
         if cached.is_some() {

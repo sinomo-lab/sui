@@ -1226,8 +1226,8 @@ mod tests {
             17,
             vec![FramePhaseSample::new(FramePhase::Renderer, 2.5)],
             RendererSubmissionDiagnostics::new(
-                3, 9, 4096, 128, 3584, 4, 7, 230, 90, 310, 120, 2, 1, 0, 1, 1, 0, 5, 80,
-                440, 210, 130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
+                3, 9, 4096, 128, 3584, 4, 7, 230, 90, 310, 120, 2, 1, 0, 1, 1, 0, 5, 80, 440, 210,
+                130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -1254,7 +1254,10 @@ mod tests {
         assert_eq!(snapshot.renderer_submission.draw_count, 9);
         assert_eq!(snapshot.renderer_submission.uploaded_vertex_bytes, 4096);
         assert_eq!(snapshot.renderer_submission.direct_packet_count, 7);
-        assert_eq!(snapshot.renderer_submission.retained_state_update_time_us, 230);
+        assert_eq!(
+            snapshot.renderer_submission.retained_state_update_time_us,
+            230
+        );
         assert_eq!(
             snapshot
                 .renderer_submission

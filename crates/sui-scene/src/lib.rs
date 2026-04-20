@@ -473,7 +473,9 @@ impl SceneBoundsState {
                 clipped,
             ),
             SceneCommand::DrawText(text) => self.apply_rect(text.rect, clipped),
-            SceneCommand::DrawShapedText(text) => self.apply_rect(text.translated_bounds(), clipped),
+            SceneCommand::DrawShapedText(text) => {
+                self.apply_rect(text.translated_bounds(), clipped)
+            }
             SceneCommand::DrawShapedTextWindow(text) => {
                 self.apply_rect(text.translated_bounds(), clipped)
             }
@@ -748,16 +750,15 @@ impl SceneFrame {
 mod tests {
     use super::{
         Brush, ImageRegistry, ImageSource, LayerCompositionMode, RegisteredImage, Scene,
-        SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId,
-        SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
+        SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
+        SceneLayerUpdateKind, StrokeStyle,
     };
     use std::sync::Arc;
     use sui_core::{
         Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, WidgetId, WindowId,
     };
     use sui_text::{
-        FontRegistry, RegisteredFont, ShapedText, ShapedTextWindow, TextRun, TextStyle,
-        TextSystem,
+        FontRegistry, RegisteredFont, ShapedText, ShapedTextWindow, TextRun, TextStyle, TextSystem,
     };
 
     #[test]
@@ -815,7 +816,10 @@ mod tests {
 
         assert!(matches!(text, SceneCommand::DrawText(_)));
         assert!(matches!(shaped_text, SceneCommand::DrawShapedText(_)));
-        assert!(matches!(shaped_window, SceneCommand::DrawShapedTextWindow(_)));
+        assert!(matches!(
+            shaped_window,
+            SceneCommand::DrawShapedTextWindow(_)
+        ));
         assert!(matches!(image, SceneCommand::DrawImage { .. }));
         assert!(matches!(stroke, SceneCommand::StrokeRect { .. }));
         assert!(matches!(path_fill, SceneCommand::FillPath { .. }));

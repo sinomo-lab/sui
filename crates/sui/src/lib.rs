@@ -52,27 +52,25 @@ pub use sui_runtime::{
     StackHostOptions, StackOrderPolicy, StackSurfaceOptions, TextCacheDeltaDiagnostics,
     TextCacheDiagnostics, Widget, WidgetChildren, WidgetGeometrySnapshot, WidgetGraphSnapshot,
     WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
-    WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions,
-    WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-    WindowToneMappingMode,
-    clear_window_render_options, set_window_render_options,
-    set_window_scene_statistics_detail_mode, window_performance_snapshot,
-    window_performance_summary, window_render_options, window_scene_statistics_detail_mode,
+    WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening,
+    WindowTextHinting, WindowTextRenderPolicy, WindowToneMappingMode, clear_window_render_options,
+    set_window_render_options, set_window_scene_statistics_detail_mode,
+    window_performance_snapshot, window_performance_summary, window_render_options,
+    window_scene_statistics_detail_mode,
 };
 pub use sui_scene::{
     Brush, ImageRegistry, ImageSource, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand,
     SceneFrame, StrokeStyle,
 };
 pub use sui_text::{
-    FontRegistry, PersistentTextLayout, RegisteredFont, ResolvedTextFace, ShapedGlyph,
-    ShapedText, ShapedTextWindow, TextAffinity, TextAlign, TextCluster, TextCursor, TextDirection,
-    TextDocument, TextFlowDirection, TextGlyphInstance, TextLayout, TextLayoutHandle,
-    TextLayoutId, TextLayoutMetadata, TextLayoutRegistry, TextLayoutRequest,
-    TextLayoutRun, TextLayoutVersion, TextLayoutView, TextLine, TextLineWindow,
-    TextMeasurement, TextParagraph, TextParagraphLayout, TextParagraphStyle, TextRun,
-    TextRunView, TextSelection, TextSelectionGeometry, TextSpan, TextSpanId, TextStyle,
-    TextWrap, TextWritingMode,
+    FontRegistry, PersistentTextLayout, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText,
+    ShapedTextWindow, TextAffinity, TextAlign, TextCluster, TextCursor, TextDirection,
+    TextDocument, TextFlowDirection, TextGlyphInstance, TextLayout, TextLayoutHandle, TextLayoutId,
+    TextLayoutMetadata, TextLayoutRegistry, TextLayoutRequest, TextLayoutRun, TextLayoutVersion,
+    TextLayoutView, TextLine, TextLineWindow, TextMeasurement, TextParagraph, TextParagraphLayout,
+    TextParagraphStyle, TextRun, TextRunView, TextSelection, TextSelectionGeometry, TextSpan,
+    TextSpanId, TextStyle, TextWrap, TextWritingMode,
 };
 pub use sui_widgets::{
     Breadcrumb, BreadcrumbItem, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette,
@@ -375,18 +373,17 @@ pub mod prelude {
         IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImeEvent, Insets, KeyboardEvent,
         Label, ListItem, ListView, MeasureCtx, Menu, MenuItem, Modal, MultilineTextInput,
         NumberInput, PaintCtx, Path, PathBar, PathBuilder, Point, PointerEvent, Popover,
-        ProgressBar, RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage,
-        ResizablePane, Result, ScrollAxes, ScrollBar, ScrollState, ScrollView, Select,
-        SemanticsCtx, Separator,
+        ProgressBar, RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage, ResizablePane,
+        Result, ScrollAxes, ScrollBar, ScrollState, ScrollView, Select, SemanticsCtx, Separator,
         ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox, Spinner, SplitView, Stack,
         StrokeStyle, Style, Switch, TabBar, Table, TableColumn, TableColumnAlignment, TableRow,
         Tabs, TextArea, TextInput, TextLayout, TextMeasurement, TextStyle, Theme,
         ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,
         ThemeContainers, ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack,
-        ThemeFontWeights, ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadows,
-        ThemeTextScale, ThemeTextToken, ThemeTracking, TimerToken, Tooltip, TooltipPlacement,
-        Transform, TreeItem, TreeView, VirtualScrollView, WakeEvent, Widget, WidgetChildren,
-        WidgetPod, WindowBuilder, WindowRenderOptions, containers::Padding, set_window_render_options,
+        ThemeFontWeights, ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale,
+        ThemeTextToken, ThemeTracking, TimerToken, Tooltip, TooltipPlacement, Transform, TreeItem,
+        TreeView, VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
+        WindowRenderOptions, containers::Padding, set_window_render_options,
     };
 }
 
@@ -397,8 +394,8 @@ mod tests {
     use super::{DefaultTheme, Theme};
     #[cfg(feature = "wgpu")]
     use crate::{
-        Application, WindowColorManagementMode, WindowDynamicRangeMode,
-        WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
+        Application, WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
+        WindowRenderOptions, WindowToneMappingMode,
     };
 
     #[derive(Debug, PartialEq)]

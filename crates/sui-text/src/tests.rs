@@ -1,12 +1,13 @@
 use crate::{
     FontRegistry, RegisteredFont, TextDirection, TextDocument, TextFlowDirection,
-    TextLayoutCacheSnapshot, TextLayoutRequest, TextParagraph, TextParagraphStyle,
-    TextSelection, TextSpan, TextStyle, TextSystem,
+    TextLayoutCacheSnapshot, TextLayoutRequest, TextParagraph, TextParagraphStyle, TextSelection,
+    TextSpan, TextStyle, TextSystem,
 };
 use sui_core::{Color, FontHandle, Point, Size};
 
 fn load_test_font() -> RegisteredFont {
-    load_system_font_for_family(fontdb::Family::SansSerif).expect("system sans-serif font available for text tests")
+    load_system_font_for_family(fontdb::Family::SansSerif)
+        .expect("system sans-serif font available for text tests")
 }
 
 fn load_system_font_for_family(family: fontdb::Family<'static>) -> Option<RegisteredFont> {
@@ -22,10 +23,9 @@ fn load_system_font_for_family(family: fontdb::Family<'static>) -> Option<Regist
         })
         .or_else(|| font_db.faces().next().map(|face| face.id))?;
 
-    font_db
-        .with_face_data(font_id, |font_data, face_index| {
-            RegisteredFont::from_bytes(font_data.to_vec()).with_face_index(face_index)
-        })
+    font_db.with_face_data(font_id, |font_data, face_index| {
+        RegisteredFont::from_bytes(font_data.to_vec()).with_face_index(face_index)
+    })
 }
 
 fn load_distinct_test_fonts() -> Option<(RegisteredFont, RegisteredFont)> {
@@ -63,16 +63,15 @@ fn find_fallback_font_case() -> Option<(RegisteredFont, char)> {
         let mut fallback_found = false;
 
         for face_info in font_db.faces() {
-            let Some(Some((supports_ascii, supports_candidate))) = font_db.with_face_data(
-                face_info.id,
-                |font_data, face_index| {
+            let Some(Some((supports_ascii, supports_candidate))) =
+                font_db.with_face_data(face_info.id, |font_data, face_index| {
                     let face = ttf_parser::Face::parse(font_data, face_index).ok()?;
                     Some((
                         face.glyph_index('A').is_some(),
                         face.glyph_index(candidate).is_some(),
                     ))
-                },
-            ) else {
+                })
+            else {
                 continue;
             };
 
@@ -169,10 +168,12 @@ fn text_system_shapes_text_and_reports_geometry() {
     assert_eq!(layout.caret_rect(3).width(), 1.0);
     assert!(!layout.selection_rects(1..8).is_empty());
     assert!(layout.selection_bounds(1..8).is_some());
-    assert!(layout
-        .selection_geometry(&TextSelection::new(Default::default(), Default::default()))
-        .rects
-        .is_empty());
+    assert!(
+        layout
+            .selection_geometry(&TextSelection::new(Default::default(), Default::default()))
+            .rects
+            .is_empty()
+    );
 }
 
 #[test]
@@ -323,7 +324,10 @@ fn text_system_reuses_cached_registered_font_layouts_across_color_changes() {
     assert_eq!(second.id(), layout.id());
     assert_eq!(second.version(), layout.version());
     assert_eq!(second.glyphs(), layout.glyphs());
-    assert_eq!(second.run_face(0).shared_bytes(), layout.run_face(0).shared_bytes());
+    assert_eq!(
+        second.run_face(0).shared_bytes(),
+        layout.run_face(0).shared_bytes()
+    );
 }
 
 #[test]
@@ -409,13 +413,20 @@ fn layout_document_preserves_mixed_faces_on_runs_and_glyphs() {
         .map(|run| run.face_index)
         .collect::<std::collections::BTreeSet<_>>();
     assert!(distinct_faces.len() >= 2);
-    assert!(layout.glyphs().iter().any(|glyph| glyph.face_index != layout.glyphs()[0].face_index));
+    assert!(
+        layout
+            .glyphs()
+            .iter()
+            .any(|glyph| glyph.face_index != layout.glyphs()[0].face_index)
+    );
     assert_eq!(layout.glyphs()[0].span_id.paragraph_index, 0);
     assert_eq!(layout.glyphs()[0].span_id.span_index, 0);
-    assert!(layout
-        .glyphs()
-        .iter()
-        .any(|glyph| glyph.span_id.span_index == 1));
+    assert!(
+        layout
+            .glyphs()
+            .iter()
+            .any(|glyph| glyph.span_id.span_index == 1)
+    );
     assert_cluster_run_ranges(&layout);
 }
 
@@ -444,13 +455,19 @@ fn fallback_layout_exposes_non_explicit_faces_on_runs_and_glyphs() {
 
     let primary_bytes = explicit_font.shared_bytes();
     assert!(layout.faces().len() >= 2);
-    assert!(layout.runs().iter().enumerate().any(|(index, _)| {
-        layout.run_face(index).shared_bytes() != primary_bytes
-    }));
-    assert!(layout
-        .glyphs()
-        .iter()
-        .any(|glyph| layout.glyph_face(glyph).shared_bytes() != primary_bytes));
+    assert!(
+        layout
+            .runs()
+            .iter()
+            .enumerate()
+            .any(|(index, _)| { layout.run_face(index).shared_bytes() != primary_bytes })
+    );
+    assert!(
+        layout
+            .glyphs()
+            .iter()
+            .any(|glyph| layout.glyph_face(glyph).shared_bytes() != primary_bytes)
+    );
     for glyph in layout.glyphs() {
         assert_eq!(glyph.face_index, layout.runs()[glyph.run_index].face_index);
     }
@@ -510,7 +527,10 @@ fn fallback_faces_keep_stable_shared_bytes_across_layout_builds() {
     assert_eq!(first_fallback.face_index(), second_fallback.face_index());
     assert_eq!(first_fallback.data_len(), second_fallback.data_len());
     assert_eq!(first_fallback.data_ptr(), second_fallback.data_ptr());
-    assert_eq!(first_fallback.shared_bytes(), second_fallback.shared_bytes());
+    assert_eq!(
+        first_fallback.shared_bytes(),
+        second_fallback.shared_bytes()
+    );
 }
 
 #[test]
@@ -537,8 +557,14 @@ fn run_views_and_glyph_instances_expose_renderer_context() {
     assert_eq!(run_views.len(), layout.runs().len());
     assert_eq!(run_views[0].style.color, Color::WHITE);
     assert_eq!(run_views[1].style.color, Color::BLACK);
-    assert_eq!(run_views[0].glyphs.len(), layout.runs()[0].glyph_range.len());
-    assert_eq!(run_views[1].clusters.len(), layout.runs()[1].cluster_range.len());
+    assert_eq!(
+        run_views[0].glyphs.len(),
+        layout.runs()[0].glyph_range.len()
+    );
+    assert_eq!(
+        run_views[1].clusters.len(),
+        layout.runs()[1].cluster_range.len()
+    );
 
     let glyph_instances = layout.glyph_instances().collect::<Vec<_>>();
     assert_eq!(glyph_instances.len(), layout.glyphs().len());
@@ -546,8 +572,14 @@ fn run_views_and_glyph_instances_expose_renderer_context() {
         assert_eq!(instance.run.line_index, instance.glyph.line_index);
         assert_eq!(instance.line.paragraph_index, instance.run.paragraph_index);
         assert_eq!(instance.run.face_index, instance.glyph.face_index);
-        assert_eq!(instance.face.face_index(), layout.glyph_face(instance.glyph).face_index());
-        assert_eq!(instance.style.color, layout.glyph_style(instance.glyph).color);
+        assert_eq!(
+            instance.face.face_index(),
+            layout.glyph_face(instance.glyph).face_index()
+        );
+        assert_eq!(
+            instance.style.color,
+            layout.glyph_style(instance.glyph).color
+        );
     }
 }
 
@@ -588,7 +620,10 @@ fn hit_testing_maps_points_back_to_text_offsets() {
     let second_line = &layout.lines()[1];
 
     let start = layout.hit_test_point(Point::new(first_line.rect.x(), first_line.rect.y() + 2.0));
-    let middle = layout.hit_test_point(Point::new(first_line.rect.x() + 24.0, first_line.rect.y() + 2.0));
+    let middle = layout.hit_test_point(Point::new(
+        first_line.rect.x() + 24.0,
+        first_line.rect.y() + 2.0,
+    ));
     let next_line = layout.hit_test_point(Point::new(
         second_line.rect.x() + (second_line.rect.width() * 0.5),
         second_line.rect.y() + (second_line.rect.height() * 0.5),
@@ -668,7 +703,10 @@ fn wrapped_selection_geometry_spans_multiple_lines() {
     let bounds = layout.selection_bounds(10..72);
 
     assert!(layout.lines().len() >= 2);
-    assert!(rects.len() >= 2, "expected multi-line selection geometry, got {rects:?}");
+    assert!(
+        rects.len() >= 2,
+        "expected multi-line selection geometry, got {rects:?}"
+    );
     assert!(bounds.is_some());
 }
 

@@ -382,11 +382,13 @@ fn validate_sdr_options(options: &SdrEncodingOptions) -> Result<()> {
 
 fn validate_profile(profile: NclxProfile, hdr: bool) -> Result<()> {
     match profile.matrix_coefficients {
-        MatrixCoefficients::BT709 | MatrixCoefficients::BT2020NCL | MatrixCoefficients::Identity => {}
+        MatrixCoefficients::BT709
+        | MatrixCoefficients::BT2020NCL
+        | MatrixCoefficients::Identity => {}
         _ => {
             return Err(Error::Unsupported(
                 "only BT709, BT2020NCL, and Identity matrix coefficients are currently supported",
-            ))
+            ));
         }
     }
     if profile.pixel_range != PixelRange::Full {
@@ -926,7 +928,12 @@ mod tests {
         assert!(encoded.avif_file.windows(4).any(|bytes| bytes == b"colr"));
         assert!(encoded.avif_file.windows(4).any(|bytes| bytes == b"clli"));
         assert!(encoded.avif_file.windows(4).any(|bytes| bytes == b"mdcv"));
-        assert!(encoded.avif_file.windows(4).any(|bytes| bytes == &[0, 9, 0, 16]));
+        assert!(
+            encoded
+                .avif_file
+                .windows(4)
+                .any(|bytes| bytes == &[0, 9, 0, 16])
+        );
     }
 
     #[test]
@@ -945,8 +952,7 @@ mod tests {
     #[test]
     fn derived_hdr_content_light_uses_full_frame_average_for_maxfall() {
         let pixels = [
-            4.0_f32, 4.0, 4.0, 1.0, 4.0, 4.0, 4.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0,
-            1.0,
+            4.0_f32, 4.0, 4.0, 1.0, 4.0, 4.0, 4.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0,
         ];
         let image = RgbaF32Image::new(2, 2, &pixels).unwrap();
         let encoded = Encoder::new()

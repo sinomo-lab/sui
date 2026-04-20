@@ -24,9 +24,9 @@ use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
     RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
     TextCacheDiagnostics, WidgetTimingPhase, WindowPerformanceSnapshot,
-    clear_window_performance_snapshots,
-    publish_window_performance_snapshot, set_window_scene_statistics_detail_mode,
-    window_performance_text_caches, window_scene_statistics_detail_mode,
+    clear_window_performance_snapshots, publish_window_performance_snapshot,
+    set_window_scene_statistics_detail_mode, window_performance_text_caches,
+    window_scene_statistics_detail_mode,
 };
 use sui_widget_book::{
     BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS,
@@ -1413,25 +1413,23 @@ fn publish_frame_performance(
         )
         .with_presentation_latency(presentation_latency)
         .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
-        .with_retained_packet_hotspot(
-            renderer_stats.retained_packet_hotspot.clone().map(|hotspot| {
-                sui_runtime::RetainedPacketHotspotDiagnostics {
-                    container_layer_id: hotspot.container_layer_id,
-                    owner_widget_id: hotspot.owner_widget_id,
-                    segment_index: hotspot.segment_index,
-                    total_time_us: hotspot.total_time_us,
-                    scene_build_time_us: hotspot.scene_build_time_us,
-                    command_count: hotspot.command_count,
-                    text_command_count: hotspot.text_command_count,
-                    path_command_count: hotspot.path_command_count,
-                    rect_command_count: hotspot.rect_command_count,
-                    text_command_time_us: hotspot.text_command_time_us,
-                    path_command_time_us: hotspot.path_command_time_us,
-                    rect_command_time_us: hotspot.rect_command_time_us,
-                    text_sample: hotspot.text_sample,
-                }
-            }),
-        )
+        .with_retained_packet_hotspot(renderer_stats.retained_packet_hotspot.clone().map(
+            |hotspot| sui_runtime::RetainedPacketHotspotDiagnostics {
+                container_layer_id: hotspot.container_layer_id,
+                owner_widget_id: hotspot.owner_widget_id,
+                segment_index: hotspot.segment_index,
+                total_time_us: hotspot.total_time_us,
+                scene_build_time_us: hotspot.scene_build_time_us,
+                command_count: hotspot.command_count,
+                text_command_count: hotspot.text_command_count,
+                path_command_count: hotspot.path_command_count,
+                rect_command_count: hotspot.rect_command_count,
+                text_command_time_us: hotspot.text_command_time_us,
+                path_command_time_us: hotspot.path_command_time_us,
+                rect_command_time_us: hotspot.rect_command_time_us,
+                text_sample: hotspot.text_sample,
+            },
+        ))
         .with_widget_timings(output.diagnostics.widget_timings.clone()),
     );
 }
@@ -1962,7 +1960,10 @@ fn run_widget_book_dialog_repaint_benchmark(
     let mut repaint_diff_checks = 0usize;
 
     for cycle in 0..(WARMUP_CYCLES + MEASURED_CYCLES) {
-        for transition in [DialogRepaintTransition::Open, DialogRepaintTransition::Close] {
+        for transition in [
+            DialogRepaintTransition::Open,
+            DialogRepaintTransition::Close,
+        ] {
             let before_frame = (cycle >= WARMUP_CYCLES && repaint_diff_checks < 2)
                 .then(|| harness.capture(window_id))
                 .transpose()?;
@@ -2072,7 +2073,8 @@ fn run_widget_book_dialog_repaint_benchmark(
     let avg_text_vertex_bytes = average_of(|sample| sample.text_vertex_bytes as f64);
     let avg_dirty_regions = average_of(|sample| sample.dirty_region_count as f64);
     let avg_dirty_coverage = average_of(|sample| sample.dirty_coverage as f64);
-    let avg_tile_generation_ms = average_of(|sample| sample.tile_generation_time_us as f64 / 1000.0);
+    let avg_tile_generation_ms =
+        average_of(|sample| sample.tile_generation_time_us as f64 / 1000.0);
     let avg_composition_ms = average_of(|sample| sample.composition_time_us as f64 / 1000.0);
     let avg_retained_scene_traversal_ms =
         average_of(|sample| sample.retained_scene_traversal_time_us as f64 / 1000.0);
@@ -2080,7 +2082,8 @@ fn run_widget_book_dialog_repaint_benchmark(
         average_of(|sample| sample.retained_packet_build_time_us as f64 / 1000.0);
     let avg_retained_packet_build_count =
         average_of(|sample| sample.retained_packet_build_count as f64);
-    let avg_packet_rebuild_new = average_of(|sample| sample.retained_packet_rebuild_new_count as f64);
+    let avg_packet_rebuild_new =
+        average_of(|sample| sample.retained_packet_rebuild_new_count as f64);
     let avg_packet_rebuild_coordinate_space =
         average_of(|sample| sample.retained_packet_rebuild_coordinate_space_count as f64);
     let avg_packet_rebuild_signature =
@@ -2090,8 +2093,10 @@ fn run_widget_book_dialog_repaint_benchmark(
     let avg_packet_rebuild_state =
         average_of(|sample| sample.retained_packet_rebuild_state_count as f64);
     let avg_text_atlas_miss_count = average_of(|sample| sample.text_atlas_miss_count as f64);
-    let avg_text_atlas_miss_ms = average_of(|sample| sample.text_atlas_miss_time_us as f64 / 1000.0);
-    let avg_glyph_cache_entries_delta = average_of(|sample| sample.glyph_cache_entries_delta as f64);
+    let avg_text_atlas_miss_ms =
+        average_of(|sample| sample.text_atlas_miss_time_us as f64 / 1000.0);
+    let avg_glyph_cache_entries_delta =
+        average_of(|sample| sample.glyph_cache_entries_delta as f64);
     let avg_glyph_cache_hits = average_of(|sample| sample.glyph_cache_hits as f64);
     let avg_glyph_cache_misses = average_of(|sample| sample.glyph_cache_misses as f64);
     let avg_runtime_layout_entries_delta =
@@ -2112,7 +2117,8 @@ fn run_widget_book_dialog_repaint_benchmark(
     let avg_path_cache_entries_delta = average_of(|sample| sample.path_cache_entries_delta as f64);
     let avg_path_cache_hits = average_of(|sample| sample.path_cache_hits as f64);
     let avg_path_cache_misses = average_of(|sample| sample.path_cache_misses as f64);
-    let avg_surface_acquire_ms = average_of(|sample| sample.surface_acquire_time_us as f64 / 1000.0);
+    let avg_surface_acquire_ms =
+        average_of(|sample| sample.surface_acquire_time_us as f64 / 1000.0);
     let avg_resource_collection_ms =
         average_of(|sample| sample.resource_collection_time_us as f64 / 1000.0);
     let avg_bind_group_prepare_ms =
@@ -2121,17 +2127,24 @@ fn run_widget_book_dialog_repaint_benchmark(
     let avg_gpu_upload_ms = average_of(|sample| sample.gpu_upload_time_us as f64 / 1000.0);
     let avg_pass_encode_ms = average_of(|sample| sample.pass_encode_time_us as f64 / 1000.0);
     let avg_queue_submit_ms = average_of(|sample| sample.queue_submit_time_us as f64 / 1000.0);
-    let avg_surface_present_ms = average_of(|sample| sample.surface_present_time_us as f64 / 1000.0);
+    let avg_surface_present_ms =
+        average_of(|sample| sample.surface_present_time_us as f64 / 1000.0);
 
     println!("\n=== Widget Book Dialog Repaint Benchmark ===");
     println!("scenario:         project settings preview open/close");
     println!("frames measured:  {valid_count}");
     println!("cycles measured:  {MEASURED_CYCLES}");
     println!("wall-clock time:  {benchmark_elapsed_ms:.1} ms");
-    println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+    println!(
+        "avg frame time:   {avg_ms:.3} ms ({:.0} fps)",
+        1000.0 / avg_ms
+    );
     println!("min frame time:   {min_ms:.3} ms");
     println!("max frame time:   {max_ms:.3} ms");
-    println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+    println!(
+        "p95 frame time:   {p95_ms:.3} ms ({:.0} fps)",
+        1000.0 / p95_ms
+    );
     println!("avg gpu passes:   {avg_passes:.2}");
     println!("avg gpu draws:    {avg_draws:.2}");
     println!("avg visible tiles:{avg_visible_tiles:.2}");
@@ -2162,9 +2175,7 @@ fn run_widget_book_dialog_repaint_benchmark(
     println!(
         "avg path cache Δ: {avg_path_cache_entries_delta:.2} entries / {avg_path_cache_hits:.2} hits / {avg_path_cache_misses:.2} misses"
     );
-    println!(
-        "avg atlas misses: {avg_text_atlas_miss_count:.2} / {avg_text_atlas_miss_ms:.3} ms"
-    );
+    println!("avg atlas misses: {avg_text_atlas_miss_count:.2} / {avg_text_atlas_miss_ms:.3} ms");
     println!(
         "avg surface:      acq {avg_surface_acquire_ms:.3} ms  pres {avg_surface_present_ms:.3} ms"
     );
@@ -2176,7 +2187,10 @@ fn run_widget_book_dialog_repaint_benchmark(
     );
 
     println!("\n--- By transition ---");
-    for transition in [DialogRepaintTransition::Open, DialogRepaintTransition::Close] {
+    for transition in [
+        DialogRepaintTransition::Open,
+        DialogRepaintTransition::Close,
+    ] {
         let transition_samples = measured_samples
             .iter()
             .filter(|sample| sample.transition == transition)
@@ -3175,8 +3189,10 @@ fn run_retained_text_scroll_benchmark() -> Result<()> {
     const WARMUP_FRAMES: usize = 24;
     const MEASURED_FRAMES: usize = 160;
 
-    let harness =
-        DesktopHarness::launch_with_vsync(|| build_retained_text_benchmark_application().build(), false)?;
+    let harness = DesktopHarness::launch_with_vsync(
+        || build_retained_text_benchmark_application().build(),
+        false,
+    )?;
     let window_id = harness.main_window_id();
 
     set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
@@ -3335,9 +3351,15 @@ fn run_retained_text_scroll_benchmark() -> Result<()> {
     println!("frames measured:  {valid_count}");
     println!("scroll step:      {:.0} px/frame", SCROLL_STEP_PX.abs());
     println!("wall-clock time:  {benchmark_elapsed_ms:.1} ms");
-    println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+    println!(
+        "avg frame time:   {avg_ms:.3} ms ({:.0} fps)",
+        1000.0 / avg_ms
+    );
     println!("max frame time:   {max_ms:.3} ms");
-    println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+    println!(
+        "p95 frame time:   {p95_ms:.3} ms ({:.0} fps)",
+        1000.0 / p95_ms
+    );
     println!("avg layers:       {avg_visible_layers:.2}");
     println!("avg packets:      {avg_direct_packets:.2}");
     println!("avg visible tiles:{avg_visible_tiles:.2}");
@@ -3452,7 +3474,10 @@ fn run_text_editing_benchmark() -> Result<()> {
     }
 
     let selection_start = Point::new(editor.bounds.x() + 92.0, editor.bounds.y() + 64.0);
-    let selection_end = Point::new(editor.bounds.x() + editor.bounds.width() - 84.0, editor.bounds.y() + 64.0);
+    let selection_end = Point::new(
+        editor.bounds.x() + editor.bounds.width() - 84.0,
+        editor.bounds.y() + 64.0,
+    );
     move_cursor(&harness, window_id, selection_start)?;
     harness.dispatch(
         window_id,
@@ -3563,9 +3588,15 @@ fn run_text_editing_benchmark() -> Result<()> {
     println!("\n=== Text Editing Benchmark ===");
     println!("frames measured:  {valid_count}");
     println!("wall-clock time:  {benchmark_elapsed_ms:.1} ms");
-    println!("avg frame time:   {avg_ms:.3} ms ({:.0} fps)", 1000.0 / avg_ms);
+    println!(
+        "avg frame time:   {avg_ms:.3} ms ({:.0} fps)",
+        1000.0 / avg_ms
+    );
     println!("max frame time:   {max_ms:.3} ms");
-    println!("p95 frame time:   {p95_ms:.3} ms ({:.0} fps)", 1000.0 / p95_ms);
+    println!(
+        "p95 frame time:   {p95_ms:.3} ms ({:.0} fps)",
+        1000.0 / p95_ms
+    );
     println!("avg upload bytes: {:.0}", avg_uploaded_vertex_bytes);
     println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
     println!("avg glyphs:       {avg_text_glyph_instances:.2}");

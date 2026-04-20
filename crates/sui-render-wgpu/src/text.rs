@@ -85,7 +85,10 @@ impl From<TextHinting> for TextHintingCacheKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum StemDarkeningCacheKey {
     None,
-    Enabled { max_ppem_bits: u32, amount_bits: u32 },
+    Enabled {
+        max_ppem_bits: u32,
+        amount_bits: u32,
+    },
 }
 
 impl From<StemDarkening> for StemDarkeningCacheKey {

@@ -1,14 +1,12 @@
 use std::ops::Range;
 
 use sui_core::{
-    Color, Event, ImeEvent, KeyState, KeyboardEvent, Path, Point, PointerButton,
-    PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole,
-    SemanticsValue, Size, Vector, WindowEvent,
+    Color, Event, ImeEvent, KeyState, KeyboardEvent, Path, Point, PointerButton, PointerEventKind,
+    Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector,
+    WindowEvent,
 };
 use sui_layout::{Constraints, Padding as Insets};
-use sui_runtime::{
-    EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, Widget,
-};
+use sui_runtime::{EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{
     PersistentTextLayout, TextCursor, TextDirection, TextSelection, TextStyle, TextWrap,
@@ -162,11 +160,7 @@ impl TextSurface {
     fn selection_range(&self) -> Range<usize> {
         let start = self.selection.anchor.utf8_offset.min(self.value.len());
         let end = self.selection.focus.utf8_offset.min(self.value.len());
-        if start <= end {
-            start..end
-        } else {
-            end..start
-        }
+        if start <= end { start..end } else { end..start }
     }
 
     fn display_text(&self) -> String {
@@ -175,10 +169,8 @@ impl TextSurface {
         };
 
         let mut text = self.value.clone();
-        let range = composition
-            .replacement_range
-            .start
-            .min(text.len())..composition.replacement_range.end.min(text.len());
+        let range = composition.replacement_range.start.min(text.len())
+            ..composition.replacement_range.end.min(text.len());
         text.replace_range(range, &composition.text);
         text
     }
@@ -297,11 +289,7 @@ impl TextSurface {
         let range = self.selection_range();
         let current_focus = clamp_offset_to_boundary(&self.value, self.selection.focus.utf8_offset);
         let next = if !extend && range.start != range.end {
-            if backward {
-                range.start
-            } else {
-                range.end
-            }
+            if backward { range.start } else { range.end }
         } else if backward {
             previous_boundary(&self.value, current_focus)
         } else {
@@ -360,7 +348,8 @@ impl TextSurface {
         let caret = layout.caret(TextCursor::new(focus));
         let preferred_x = self.preferred_x.unwrap_or(caret.rect.x());
         let line_index = caret.line_index as isize + delta_lines;
-        let target_line = line_index.clamp(0, layout.lines().len().saturating_sub(1) as isize) as usize;
+        let target_line =
+            line_index.clamp(0, layout.lines().len().saturating_sub(1) as isize) as usize;
         let line = &layout.lines()[target_line];
         let target = layout.hit_test_point(Point::new(
             preferred_x,
@@ -374,11 +363,7 @@ impl TextSurface {
         }
         self.preferred_x = Some(preferred_x);
 
-        if viewport_height > 0.0 {
-            true
-        } else {
-            false
-        }
+        if viewport_height > 0.0 { true } else { false }
     }
 
     fn select_all(&mut self) {
@@ -411,7 +396,8 @@ impl TextSurface {
                 line.rect.y() + (line.rect.height() * 0.5),
             ));
             return Some(TextCursor::new(
-                self.line_offsets[line_index] + local.utf8_offset.min(self.line_lengths[line_index]),
+                self.line_offsets[line_index]
+                    + local.utf8_offset.min(self.line_lengths[line_index]),
             ));
         }
 
@@ -542,7 +528,12 @@ impl TextSurface {
     fn line_height(&self) -> f32 {
         self.line_layouts
             .iter()
-            .map(|layout| layout.measurement().height.max(self.resolved_text_style().line_height))
+            .map(|layout| {
+                layout
+                    .measurement()
+                    .height
+                    .max(self.resolved_text_style().line_height)
+            })
             .fold(self.resolved_text_style().line_height, f32::max)
     }
 
@@ -577,9 +568,7 @@ impl TextSurface {
             );
         }
 
-        self.layout
-            .as_ref()
-            .map(|layout| layout.caret(cursor).rect)
+        self.layout.as_ref().map(|layout| layout.caret(cursor).rect)
     }
 
     fn selection_rects_for_display(&self, selection: &TextSelection) -> Vec<Rect> {
@@ -596,7 +585,8 @@ impl TextSurface {
                 }
 
                 let local_rects = layout.selection_rects(
-                    selection_start.saturating_sub(line_start)..selection_end.saturating_sub(line_start),
+                    selection_start.saturating_sub(line_start)
+                        ..selection_end.saturating_sub(line_start),
                 );
                 rects.extend(local_rects.into_iter().map(|rect| {
                     rect.translate(Vector::new(0.0, line_index as f32 * self.line_height()))
@@ -763,13 +753,15 @@ impl Widget for TextSurface {
                     "ArrowUp" => {
                         let had_composition = self.clear_composition();
                         let viewport_height = self.content_viewport_size(ctx.bounds()).height;
-                        overlay_changed = self.move_vertical(-1, key.modifiers.shift, viewport_height);
+                        overlay_changed =
+                            self.move_vertical(-1, key.modifiers.shift, viewport_height);
                         text_changed |= had_composition;
                     }
                     "ArrowDown" => {
                         let had_composition = self.clear_composition();
                         let viewport_height = self.content_viewport_size(ctx.bounds()).height;
-                        overlay_changed = self.move_vertical(1, key.modifiers.shift, viewport_height);
+                        overlay_changed =
+                            self.move_vertical(1, key.modifiers.shift, viewport_height);
                         text_changed |= had_composition;
                     }
                     "Home" => {
@@ -792,10 +784,15 @@ impl Widget for TextSurface {
                                 .map(|line| line.rect.height())
                                 .unwrap_or(self.resolved_text_style().line_height)
                                 .max(1.0);
-                            let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
+                            let delta = (self.content_viewport_size(ctx.bounds()).height
+                                / line_height)
                                 .floor()
                                 .max(1.0) as isize;
-                            overlay_changed = self.move_vertical(-delta, key.modifiers.shift, self.content_viewport_size(ctx.bounds()).height);
+                            overlay_changed = self.move_vertical(
+                                -delta,
+                                key.modifiers.shift,
+                                self.content_viewport_size(ctx.bounds()).height,
+                            );
                         }
                         text_changed |= had_composition;
                     }
@@ -809,10 +806,15 @@ impl Widget for TextSurface {
                                 .map(|line| line.rect.height())
                                 .unwrap_or(self.resolved_text_style().line_height)
                                 .max(1.0);
-                            let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
+                            let delta = (self.content_viewport_size(ctx.bounds()).height
+                                / line_height)
                                 .floor()
                                 .max(1.0) as isize;
-                            overlay_changed = self.move_vertical(delta, key.modifiers.shift, self.content_viewport_size(ctx.bounds()).height);
+                            overlay_changed = self.move_vertical(
+                                delta,
+                                key.modifiers.shift,
+                                self.content_viewport_size(ctx.bounds()).height,
+                            );
                         }
                         text_changed |= had_composition;
                     }
@@ -874,7 +876,10 @@ impl Widget for TextSurface {
 
         let display_text = self.display_text();
         let (line_texts, line_offsets, line_lengths) = split_lines_with_offsets(&display_text);
-        let line_box_size = Size::new(self.layout_box_size(available_width).width, self.resolved_text_style().line_height.max(1.0));
+        let line_box_size = Size::new(
+            self.layout_box_size(available_width).width,
+            self.resolved_text_style().line_height.max(1.0),
+        );
         let mut next_line_layouts: Vec<PersistentTextLayout> = Vec::with_capacity(line_texts.len());
         let mut line_layout_failed = false;
         for (index, line) in line_texts.iter().enumerate() {
@@ -942,7 +947,9 @@ impl Widget for TextSurface {
             desired.height.max(min_size.height),
         ));
 
-        let _ = self.clamp_scroll_to_bounds(self.content_viewport_size(Rect::from_origin_size(Point::ZERO, size)));
+        let _ = self.clamp_scroll_to_bounds(
+            self.content_viewport_size(Rect::from_origin_size(Point::ZERO, size)),
+        );
         size
     }
 
@@ -1017,7 +1024,10 @@ impl Widget for TextSurface {
             for line_index in line_range {
                 if let Some(layout) = self.line_layouts.get(line_index) {
                     ctx.draw_persistent_text_layout(
-                        Point::new(origin.x, origin.y + (line_index as f32 * self.line_height())),
+                        Point::new(
+                            origin.x,
+                            origin.y + (line_index as f32 * self.line_height()),
+                        ),
                         layout,
                     );
                 }
@@ -1039,7 +1049,10 @@ impl Widget for TextSurface {
                 current_caret.height().max(1.0),
             );
             ctx.set_ime_composition_rect(caret);
-            ctx.fill(Path::rounded_rect(caret, caret_width * 0.5), palette.accent_text);
+            ctx.fill(
+                Path::rounded_rect(caret, caret_width * 0.5),
+                palette.accent_text,
+            );
         }
 
         ctx.pop_clip();
@@ -1283,7 +1296,8 @@ mod tests {
         let mut surface = TextSurface::new("Editor").value(long_text);
         let bounds = Rect::new(0.0, 0.0, 180.0, 96.0);
         let content = surface.content_rect(bounds);
-        let (line_texts, line_offsets, line_lengths) = split_lines_with_offsets(surface.current_value());
+        let (line_texts, line_offsets, line_lengths) =
+            split_lines_with_offsets(surface.current_value());
         let mut line_layouts = Vec::new();
         for line in &line_texts {
             line_layouts.push(
@@ -1321,9 +1335,14 @@ mod tests {
             TextSurface::new("Editor").on_change(move |value| on_change.borrow_mut().push(value)),
         );
 
-        let _ = runtime.render(window_id).expect("initial render should succeed");
+        let _ = runtime
+            .render(window_id)
+            .expect("initial render should succeed");
         runtime
-            .handle_event(window_id, primary_pointer(PointerEventKind::Down, Point::new(24.0, 24.0), true))
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(24.0, 24.0), true),
+            )
             .expect("focus click should succeed");
         runtime
             .handle_event(
@@ -1334,7 +1353,9 @@ mod tests {
             )
             .expect("ime commit should succeed");
 
-        let after_insert = runtime.render(window_id).expect("render after insert should succeed");
+        let after_insert = runtime
+            .render(window_id)
+            .expect("render after insert should succeed");
         let inserted_line = shaped_text_commands(&after_insert)
             .into_iter()
             .next()
@@ -1343,10 +1364,15 @@ mod tests {
         let inserted_version = inserted_line.layout_version;
 
         runtime
-            .handle_event(window_id, Event::Keyboard(KeyboardEvent::new("ArrowLeft", KeyState::Pressed)))
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("ArrowLeft", KeyState::Pressed)),
+            )
             .expect("arrow key should succeed");
 
-        let after_move = runtime.render(window_id).expect("render after cursor move should succeed");
+        let after_move = runtime
+            .render(window_id)
+            .expect("render after cursor move should succeed");
         let moved_line = shaped_text_commands(&after_move)
             .into_iter()
             .next()
@@ -1370,11 +1396,7 @@ mod tests {
 fn selection_sorted_range(selection: &TextSelection, text_len: usize) -> Range<usize> {
     let start = selection.anchor.utf8_offset.min(text_len);
     let end = selection.focus.utf8_offset.min(text_len);
-    if start <= end {
-        start..end
-    } else {
-        end..start
-    }
+    if start <= end { start..end } else { end..start }
 }
 
 fn split_lines_with_offsets(text: &str) -> (Vec<String>, Vec<usize>, Vec<usize>) {

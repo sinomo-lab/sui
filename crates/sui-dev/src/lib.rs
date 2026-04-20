@@ -1,24 +1,24 @@
 mod app;
 
-pub use app::{build_dev_application, build_dev_application_with_widget_book_bounds};
 #[cfg(not(target_arch = "wasm32"))]
 use app::{DesktopAutomationMode, build_dev_application_with_automation};
+pub use app::{build_dev_application, build_dev_application_with_widget_book_bounds};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::env;
 
 use sui::Application;
 use sui::{
-    DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform,
-    SceneStatisticsDetailMode, SemanticsRole, WindowColorManagementMode,
-    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowRenderOptions,
-    WindowToneMappingMode, set_window_render_options, set_window_scene_statistics_detail_mode,
+    DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, SceneStatisticsDetailMode,
+    SemanticsRole, WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
+    WindowRenderOptions, WindowToneMappingMode, set_window_render_options,
+    set_window_scene_statistics_detail_mode,
 };
 use sui_widget_book::{
-    build_button_grid_benchmark_application, build_color_validation_application,
-    build_retained_text_benchmark_application, build_text_editing_benchmark_application,
-    build_text_rendering_comparison_application, build_widget_book_application,
-    default_widget_book_state, GALLERY_SCROLL_NAME,
+    GALLERY_SCROLL_NAME, build_button_grid_benchmark_application,
+    build_color_validation_application, build_retained_text_benchmark_application,
+    build_text_editing_benchmark_application, build_text_rendering_comparison_application,
+    build_widget_book_application, default_widget_book_state,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -51,8 +51,13 @@ enum DesktopLaunchAutomation {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_desktop_automation(raw_value: Option<&str>) -> sui::Result<Option<DesktopLaunchAutomation>> {
-    match raw_value.map(|value| value.trim()).filter(|value| !value.is_empty()) {
+fn parse_desktop_automation(
+    raw_value: Option<&str>,
+) -> sui::Result<Option<DesktopLaunchAutomation>> {
+    match raw_value
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         None => Ok(None),
         Some("button-grid-resize") => Ok(Some(DesktopLaunchAutomation::ButtonGridResize)),
         Some("widget-book-scroll") => Ok(Some(DesktopLaunchAutomation::WidgetBookScroll)),
@@ -65,13 +70,17 @@ fn parse_desktop_automation(raw_value: Option<&str>) -> sui::Result<Option<Deskt
 #[cfg(not(target_arch = "wasm32"))]
 fn app_automation_mode(mode: Option<DesktopLaunchAutomation>) -> Option<DesktopAutomationMode> {
     match mode {
-        Some(DesktopLaunchAutomation::ButtonGridResize) => Some(DesktopAutomationMode::ButtonGridResize),
+        Some(DesktopLaunchAutomation::ButtonGridResize) => {
+            Some(DesktopAutomationMode::ButtonGridResize)
+        }
         Some(DesktopLaunchAutomation::WidgetBookScroll) | None => None,
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn platform_automation_config(mode: Option<DesktopLaunchAutomation>) -> Option<DesktopAutomationConfig> {
+fn platform_automation_config(
+    mode: Option<DesktopLaunchAutomation>,
+) -> Option<DesktopAutomationConfig> {
     match mode {
         Some(DesktopLaunchAutomation::WidgetBookScroll) => Some(DesktopAutomationConfig {
             label: "widget-book-scroll".to_string(),
@@ -119,7 +128,8 @@ where
             "--no-vsync" => mode.vsync_enabled = false,
             "--vsync" => mode.vsync_enabled = true,
             value if value.starts_with("--automation=") => {
-                mode.automation = parse_desktop_automation(value.split_once('=').map(|(_, rhs)| rhs))?;
+                mode.automation =
+                    parse_desktop_automation(value.split_once('=').map(|(_, rhs)| rhs))?;
             }
             "" => {}
             other => {
@@ -293,7 +303,10 @@ fn parse_web_launch_mode(query: &str) -> WebLaunchMode {
                 };
             }
             "frames" => {
-                mode.frames = value.parse::<usize>().unwrap_or(mode.frames).clamp(1, 10_000);
+                mode.frames = value
+                    .parse::<usize>()
+                    .unwrap_or(mode.frames)
+                    .clamp(1, 10_000);
             }
             "warmup" | "warmup-frames" => {
                 mode.warmup_frames = value
@@ -594,7 +607,9 @@ fn current_web_browser_probe() -> WebBrowserProbe {
         language: navigator.language().unwrap_or_default(),
         device_pixel_ratio: window.device_pixel_ratio(),
         canvas_count,
-        document_title: document.map(|document| document.title()).unwrap_or_default(),
+        document_title: document
+            .map(|document| document.title())
+            .unwrap_or_default(),
     }
 }
 
@@ -757,9 +772,18 @@ mod tests {
         );
         assert_eq!(mode.benchmark, Some(WebBenchmarkKind::ColorValidation));
         assert_eq!(mode.canvas_format, WebCanvasFormatPreference::Rgba16Float);
-        assert_eq!(mode.canvas_color_space, WebCanvasColorSpacePreference::DisplayP3);
-        assert_eq!(mode.canvas_tone_mapping, WebCanvasToneMappingPreference::Extended);
-        assert_eq!(mode.color_management_mode, WindowColorManagementMode::PreferHdr);
+        assert_eq!(
+            mode.canvas_color_space,
+            WebCanvasColorSpacePreference::DisplayP3
+        );
+        assert_eq!(
+            mode.canvas_tone_mapping,
+            WebCanvasToneMappingPreference::Extended
+        );
+        assert_eq!(
+            mode.color_management_mode,
+            WindowColorManagementMode::PreferHdr
+        );
         assert_eq!(mode.output_primaries, WindowOutputColorPrimaries::DisplayP3);
         assert_eq!(mode.dynamic_range, WindowDynamicRangeMode::HighDynamicRange);
         assert_eq!(mode.tone_mapping, WindowToneMappingMode::Reinhard);
@@ -772,9 +796,18 @@ mod tests {
         );
         let options = web_window_render_options(&mode);
 
-        assert_eq!(options.color_management_mode, WindowColorManagementMode::PreferWideGamut);
-        assert_eq!(options.output_color_primaries, WindowOutputColorPrimaries::DisplayP3);
-        assert_eq!(options.dynamic_range_mode, WindowDynamicRangeMode::HighDynamicRange);
+        assert_eq!(
+            options.color_management_mode,
+            WindowColorManagementMode::PreferWideGamut
+        );
+        assert_eq!(
+            options.output_color_primaries,
+            WindowOutputColorPrimaries::DisplayP3
+        );
+        assert_eq!(
+            options.dynamic_range_mode,
+            WindowDynamicRangeMode::HighDynamicRange
+        );
         assert_eq!(options.tone_mapping_mode, WindowToneMappingMode::Clamp);
     }
 
@@ -883,12 +916,21 @@ mod tests {
     fn desktop_launch_mode_accepts_automation_sources() {
         let cli_mode =
             parse_desktop_launch_mode(["--automation=button-grid-resize"], false, None).unwrap();
-        let env_mode =
-            parse_desktop_launch_mode(Vec::<&str>::new(), false, Some(DesktopLaunchAutomation::ButtonGridResize))
-                .unwrap();
+        let env_mode = parse_desktop_launch_mode(
+            Vec::<&str>::new(),
+            false,
+            Some(DesktopLaunchAutomation::ButtonGridResize),
+        )
+        .unwrap();
 
-        assert_eq!(cli_mode.automation, Some(DesktopLaunchAutomation::ButtonGridResize));
-        assert_eq!(env_mode.automation, Some(DesktopLaunchAutomation::ButtonGridResize));
+        assert_eq!(
+            cli_mode.automation,
+            Some(DesktopLaunchAutomation::ButtonGridResize)
+        );
+        assert_eq!(
+            env_mode.automation,
+            Some(DesktopLaunchAutomation::ButtonGridResize)
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -896,7 +938,10 @@ mod tests {
     fn desktop_launch_mode_accepts_widget_book_scroll_automation() {
         let mode =
             parse_desktop_launch_mode(["--automation=widget-book-scroll"], false, None).unwrap();
-        assert_eq!(mode.automation, Some(DesktopLaunchAutomation::WidgetBookScroll));
+        assert_eq!(
+            mode.automation,
+            Some(DesktopLaunchAutomation::WidgetBookScroll)
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

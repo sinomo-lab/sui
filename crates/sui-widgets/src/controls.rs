@@ -457,21 +457,21 @@ impl Label {
 impl Widget for Label {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let natural_measurement = measure_text(ctx, &self.text, &self.style);
-        let (measured_width, measurement) =
-            if constraints.max.width.is_finite() && natural_measurement.width > constraints.max.width
-            {
-                let wrapped_measurement = ctx
-                    .shape_text(
-                        self.text.clone(),
-                        Size::new(constraints.max.width.max(1.0), f32::INFINITY),
-                        self.style.clone(),
-                    )
-                    .map(|layout| layout.measurement())
-                    .unwrap_or(natural_measurement);
-                (constraints.max.width.max(0.0), wrapped_measurement)
-            } else {
-                (natural_measurement.width, natural_measurement)
-            };
+        let (measured_width, measurement) = if constraints.max.width.is_finite()
+            && natural_measurement.width > constraints.max.width
+        {
+            let wrapped_measurement = ctx
+                .shape_text(
+                    self.text.clone(),
+                    Size::new(constraints.max.width.max(1.0), f32::INFINITY),
+                    self.style.clone(),
+                )
+                .map(|layout| layout.measurement())
+                .unwrap_or(natural_measurement);
+            (constraints.max.width.max(0.0), wrapped_measurement)
+        } else {
+            (natural_measurement.width, natural_measurement)
+        };
         self.measurement = Some(measurement);
         constraints.clamp(Size::new(
             measured_width,
@@ -726,10 +726,7 @@ impl Widget for Button {
             let layout_bounds = layout.measurement().bounds;
             ctx.push_clip_rect(label_rect);
             ctx.draw_persistent_text_layout(
-                Point::new(
-                    label_rect.x() - layout_bounds.x(),
-                    label_rect.y(),
-                ),
+                Point::new(label_rect.x() - layout_bounds.x(), label_rect.y()),
                 layout,
             );
             ctx.pop_clip();
@@ -3199,11 +3196,7 @@ impl Widget for Select {
             },
             ctx.is_focused().then_some(palette.focus_ring),
         );
-        ctx.draw_text(
-            text_rect,
-            label,
-            text_style,
-        );
+        ctx.draw_text(text_rect, label, text_style);
         draw_icon_glyph(
             ctx,
             if self.expanded {
@@ -4353,11 +4346,9 @@ mod tests {
 
     #[test]
     fn label_measures_wrapped_height_when_width_is_constrained() {
-        let output = render(
-            SizedBox::new().width(96.0).with_child(Label::new(
-                "This label should wrap onto multiple lines when its layout width is constrained.",
-            )),
-        );
+        let output = render(SizedBox::new().width(96.0).with_child(Label::new(
+            "This label should wrap onto multiple lines when its layout width is constrained.",
+        )));
 
         assert!(output.frame.viewport.height > DefaultTheme::default().typography.body_line_height);
     }
@@ -5258,11 +5249,11 @@ mod tests {
 
     #[test]
     fn select_header_text_visual_center_matches_control_center() {
-        let output = render(
-            Select::new("Mode")
-                .placeholder("Choose mode")
-                .options(["Automatic", "Linear", "Gamma"]),
-        );
+        let output = render(Select::new("Mode").placeholder("Choose mode").options([
+            "Automatic",
+            "Linear",
+            "Gamma",
+        ]));
         let text = text_run_for(&output, "Choose mode");
         let layout = TextSystem::new()
             .shape_text_run(&text, &FontRegistry::new())
@@ -5280,11 +5271,12 @@ mod tests {
 
     #[test]
     fn expanded_select_option_text_visual_center_matches_row_center() -> Result<()> {
-        let (mut runtime, window_id) = build_runtime(
-            Select::new("Mode")
-                .placeholder("Choose mode")
-                .options(["Automatic", "Linear", "Gamma"]),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(Select::new("Mode").placeholder("Choose mode").options([
+                "Automatic",
+                "Linear",
+                "Gamma",
+            ]));
 
         let _ = runtime.render(window_id)?;
         runtime.handle_event(

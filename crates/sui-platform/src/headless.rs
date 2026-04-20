@@ -1,15 +1,17 @@
 use std::{collections::VecDeque, time::Instant};
 
 use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
-use sui_render_wgpu::{DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions, RgbaImage, WgpuRenderer};
+use sui_render_wgpu::{
+    DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions, RgbaImage, WgpuRenderer,
+};
 use sui_runtime::{
     PresentationLatencyDiagnostics, Runtime, window_render_options,
     window_scene_statistics_detail_mode,
 };
 
 use crate::{
-    AccessibilityBridge, AccessibilitySnapshot, map_window_stem_darkening,
-    map_window_text_hinting, map_window_text_render_policy,
+    AccessibilityBridge, AccessibilitySnapshot, map_window_stem_darkening, map_window_text_hinting,
+    map_window_text_render_policy,
 };
 
 #[derive(Debug, Clone)]
@@ -417,10 +419,10 @@ mod tests {
     use sui_layout::Constraints;
     use sui_runtime::{
         Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, Runtime,
-        SceneStatisticsDetailMode, SemanticsCtx, Widget, WindowBuilder,
-        WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-        WindowRenderOptions, WindowToneMappingMode, set_window_render_options,
-        set_window_scene_statistics_detail_mode, window_performance_snapshot,
+        SceneStatisticsDetailMode, SemanticsCtx, Widget, WindowBuilder, WindowColorManagementMode,
+        WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowRenderOptions,
+        WindowToneMappingMode, set_window_render_options, set_window_scene_statistics_detail_mode,
+        window_performance_snapshot,
     };
 
     #[derive(Default)]

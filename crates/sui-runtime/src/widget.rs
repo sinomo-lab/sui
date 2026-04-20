@@ -1,12 +1,12 @@
+use std::time::Instant;
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+        Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
-use std::time::Instant;
 
 use crate::diagnostics::{WidgetTimingPhase, record_widget_timing};
 
@@ -21,9 +21,8 @@ use sui_scene::{
     SceneLayerDescriptor, SceneLayerId, StrokeStyle,
 };
 use sui_text::{
-    FontRegistry, PersistentTextLayout, ShapedText, TextLayout, TextLayoutHandle,
-    ShapedTextWindow, TextDocument, TextLayoutRequest, TextMeasurement, TextRun, TextStyle,
-    TextSystem,
+    FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextDocument, TextLayout,
+    TextLayoutHandle, TextLayoutRequest, TextMeasurement, TextRun, TextStyle, TextSystem,
 };
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
@@ -410,7 +409,7 @@ impl WidgetPod {
                 started.elapsed(),
             );
         })
-            .is_some()
+        .is_some()
     }
 
     pub(crate) fn layer_descriptor_for(
@@ -1287,7 +1286,10 @@ impl PaintCtx {
         ) {
             Ok(layout) => self
                 .scene
-                .push(SceneCommand::DrawShapedText(ShapedText::new(rect.origin, &layout))),
+                .push(SceneCommand::DrawShapedText(ShapedText::new(
+                    rect.origin,
+                    &layout,
+                ))),
             Err(_) => self.scene.push(SceneCommand::DrawText(run)),
         }
     }
@@ -1299,7 +1301,9 @@ impl PaintCtx {
 
     pub fn draw_persistent_text_layout(&mut self, origin: Point, layout: &PersistentTextLayout) {
         self.scene
-            .push(SceneCommand::DrawShapedText(ShapedText::new(origin, layout)));
+            .push(SceneCommand::DrawShapedText(ShapedText::new(
+                origin, layout,
+            )));
     }
 
     pub fn draw_persistent_text_layout_window(
@@ -1308,9 +1312,10 @@ impl PaintCtx {
         layout: &PersistentTextLayout,
         line_range: std::ops::Range<usize>,
     ) {
-        self.scene.push(SceneCommand::DrawShapedTextWindow(
-            ShapedTextWindow::new(origin, layout, line_range),
-        ));
+        self.scene
+            .push(SceneCommand::DrawShapedTextWindow(ShapedTextWindow::new(
+                origin, layout, line_range,
+            )));
     }
 
     pub fn label(&mut self, rect: Rect, text: impl Into<String>, color: Color) {

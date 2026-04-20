@@ -9,10 +9,10 @@ use sui::{
     window_output_diagnostics,
 };
 use sui_widget_book::{
-    LivePerformanceRoot, build_button_grid_benchmark, build_retained_text_benchmark,
-    build_color_validation_surface, build_text_editing_benchmark, build_text_rendering_comparison_surface,
-    build_text_validation_surface, build_widget_book_gallery, default_widget_book_state,
-    register_widget_book_images,
+    LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
+    build_retained_text_benchmark, build_text_editing_benchmark,
+    build_text_rendering_comparison_surface, build_text_validation_surface,
+    build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
 };
 
 const WINDOW_TITLE: &str = "SUI Dev";
@@ -1452,8 +1452,8 @@ mod tests {
     use sui::{
         Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
         SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, StackOrderPolicy, Vector,
-        WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-        WindowRenderOptions, WindowToneMappingMode, WindowEvent, WindowPerformanceSnapshot,
+        WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowOutputColorPrimaries,
+        WindowPerformanceSnapshot, WindowRenderOptions, WindowToneMappingMode,
         set_window_scene_statistics_detail_mode, window_performance_snapshot,
         window_scene_statistics_detail_mode,
     };
@@ -1937,7 +1937,9 @@ active_output_strategy={:?}
 notes={}
 ",
                 diagnostics.display_capabilities.supports_hdr,
-                diagnostics.display_capabilities.native_hdr_presentation_supported,
+                diagnostics
+                    .display_capabilities
+                    .native_hdr_presentation_supported,
                 diagnostics.display_capabilities.preferred_dynamic_range,
                 diagnostics.requested_color_management_mode,
                 diagnostics.requested_output_primaries,
@@ -3799,6 +3801,3 @@ final_max_luminance={final_max_luminance}
         Ok([rgba[0], rgba[1], rgba[2], rgba[3]])
     }
 }
-
-
-
