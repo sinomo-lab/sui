@@ -1463,7 +1463,7 @@ mod tests {
     };
     use sui_testing::{
         Screenshot, TestApp, TestWindow, WindowSnapshot, hdr_clip_mask, hdr_headroom_heatmap,
-        hdr_luminance_heatmap, write_hdr_exr,
+        hdr_luminance_heatmap, write_hdr_avif, write_hdr_exr,
     };
 
     const FRONTING_TEST_TITLE: &str = "Fronting test";
@@ -1916,6 +1916,7 @@ mod tests {
             .fold(f32::NEG_INFINITY, f32::max);
         let artifact_dir = unique_debug_artifact_dir("color-validation");
         write_hdr_exr(&image, artifact_dir.join("hdr-intermediate.exr"))?;
+        write_hdr_avif(&image, artifact_dir.join("hdr-intermediate.avif"), 1.0)?;
         hdr_luminance_heatmap(&image)?.write_png(artifact_dir.join("luminance-map.png"))?;
         hdr_headroom_heatmap(&image, 1.0)?.write_png(artifact_dir.join("headroom-map.png"))?;
         hdr_clip_mask(&image, 1.0)?.write_png(artifact_dir.join("clip-mask.png"))?;
@@ -1962,6 +1963,7 @@ notes={}
         let (final_max_channel, final_max_luminance, final_artifact_kind) = match final_artifact {
             DebugCaptureArtifact::HdrLinearRgbaF32(final_image) => {
                 write_hdr_exr(&final_image, artifact_dir.join("final-composed.exr"))?;
+                write_hdr_avif(&final_image, artifact_dir.join("final-composed.avif"), 1.0)?;
                 hdr_luminance_heatmap(&final_image)?
                     .write_png(artifact_dir.join("final-luminance-map.png"))?;
                 let max_channel = final_image
@@ -2000,6 +2002,7 @@ final_max_luminance={final_max_luminance}
         .expect("write capture metrics artifact");
 
         assert!(artifact_dir.join("hdr-intermediate.exr").exists());
+        assert!(artifact_dir.join("hdr-intermediate.avif").exists());
         assert!(artifact_dir.join("luminance-map.png").exists());
         assert!(artifact_dir.join("headroom-map.png").exists());
         assert!(artifact_dir.join("clip-mask.png").exists());
@@ -2008,6 +2011,7 @@ final_max_luminance={final_max_luminance}
         assert!(
             artifact_dir.join("final-composed.exr").exists()
                 || artifact_dir.join("final-composed.png").exists()
+                || artifact_dir.join("final-composed.avif").exists()
         );
         assert!(
             max_channel > 1.0,

@@ -1,6 +1,6 @@
 use sui_core::{
-    Color, Event, ImageHandle, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind,
-    Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
+    Color, ColorSpace, Event, ImageHandle, KeyState, Path, PathBuilder, Point, PointerButton,
+    PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
@@ -329,24 +329,42 @@ impl Widget for ColorSwatch {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActiveChannel {
+    ColorWheel,
     SaturationValue,
     Hue,
+    Saturation,
+    Value,
     Alpha,
+    EncodingSelector,
+    RgbRed,
+    RgbGreen,
+    RgbBlue,
 }
 
 pub struct ColorPicker {
     theme: Box<DefaultTheme>,
     name: String,
+    editing_space: ColorSpace,
     hue: f32,
     saturation: f32,
     value: f32,
     alpha: f32,
+    previous_color: Color,
     show_alpha: bool,
     active: Option<ActiveChannel>,
     on_change: Option<Box<dyn FnMut(Color)>>,
 }
 
 impl ColorPicker {
+    const MAX_HDR_VALUE: f32 = 12.0;
+    const PANEL_GAP: f32 = 14.0;
+    const TOP_BAR_HEIGHT: f32 = 52.0;
+    const WHEEL_SIZE: f32 = 166.0;
+    const MAP_SIZE: f32 = 166.0;
+    const ROW_HEIGHT: f32 = 20.0;
+    const ROW_GAP: f32 = 8.0;
+    const RIGHT_PANEL_WIDTH: f32 = 188.0;
+
     pub fn new(name: impl Into<String>) -> Self {
         Self::from_color(name, Color::rgba(0.11, 0.43, 0.92, 1.0))
     }
@@ -356,10 +374,12 @@ impl ColorPicker {
         Self {
             theme: Box::new(DefaultTheme::default()),
             name: name.into(),
+            editing_space: color.space,
             hue,
             saturation,
             value,
             alpha: color.alpha,
+            previous_color: color,
             show_alpha: true,
             active: None,
             on_change: None,
@@ -385,67 +405,229 @@ impl ColorPicker {
     }
 
     pub fn color(&self) -> Color {
-        hsv_to_rgb(self.hue, self.saturation, self.value, self.alpha)
+        hsv_to_color(
+            self.editing_space,
+            self.hue,
+            self.saturation,
+            self.value,
+            self.alpha,
+        )
+    }
+
+    fn hdr_capable(&self) -> bool {
+        self.editing_space.is_linear() || matches!(self.editing_space, ColorSpace::DisplayP3)
+    }
+
+    fn max_channel_value(&self) -> f32 {
+        if self.hdr_capable() {
+            Self::MAX_HDR_VALUE
+        } else {
+            1.0
+        }
     }
 
     fn content_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, Insets::all(12.0))
+        inset_rect(bounds, Insets::all(14.0))
     }
 
-    fn preview_rect(&self, bounds: Rect) -> Rect {
+    fn header_rect(&self, bounds: Rect) -> Rect {
         let content = self.content_rect(bounds);
-        Rect::new(content.x(), content.y(), content.width(), 42.0)
+        Rect::new(
+            content.x(),
+            content.y(),
+            content.width(),
+            Self::TOP_BAR_HEIGHT,
+        )
+    }
+
+    fn left_column_rect(&self, bounds: Rect) -> Rect {
+        let content = self.content_rect(bounds);
+        let y = self.header_rect(bounds).max_y() + Self::PANEL_GAP;
+        let width = (content.width() - Self::PANEL_GAP - Self::RIGHT_PANEL_WIDTH).max(220.0);
+        Rect::new(content.x(), y, width, content.max_y() - y)
+    }
+
+    fn right_column_rect(&self, bounds: Rect) -> Rect {
+        let content = self.content_rect(bounds);
+        let left = self.left_column_rect(bounds);
+        Rect::new(
+            left.max_x() + Self::PANEL_GAP,
+            left.y(),
+            content.max_x() - (left.max_x() + Self::PANEL_GAP),
+            content.max_y() - left.y(),
+        )
+    }
+
+    fn color_wheel_rect(&self, bounds: Rect) -> Rect {
+        let left = self.left_column_rect(bounds);
+        Rect::new(left.x(), left.y(), Self::WHEEL_SIZE, Self::WHEEL_SIZE)
     }
 
     fn saturation_value_rect(&self, bounds: Rect) -> Rect {
-        let content = self.content_rect(bounds);
-        let y = self.preview_rect(bounds).max_y() + 10.0;
-        let height = if self.show_alpha { 132.0 } else { 154.0 };
-        Rect::new(content.x(), y, content.width(), height)
+        let right = self.right_column_rect(bounds);
+        Rect::new(
+            right.x(),
+            right.y(),
+            right.width().min(Self::MAP_SIZE),
+            Self::MAP_SIZE,
+        )
     }
 
-    fn hue_rect(&self, bounds: Rect) -> Rect {
-        let sv = self.saturation_value_rect(bounds);
-        Rect::new(sv.x(), sv.max_y() + 10.0, sv.width(), 14.0)
+    fn left_slider_rect(&self, bounds: Rect, index: usize) -> Rect {
+        let wheel = self.color_wheel_rect(bounds);
+        let y = wheel.max_y() + 14.0 + index as f32 * (Self::ROW_HEIGHT + Self::ROW_GAP);
+        Rect::new(wheel.x(), y, wheel.width(), Self::ROW_HEIGHT)
     }
 
-    fn alpha_rect(&self, bounds: Rect) -> Rect {
-        let hue = self.hue_rect(bounds);
-        Rect::new(hue.x(), hue.max_y() + 10.0, hue.width(), 14.0)
+    fn encoding_rect(&self, bounds: Rect) -> Rect {
+        let map = self.saturation_value_rect(bounds);
+        Rect::new(map.x(), map.max_y() + 12.0, map.width(), 28.0)
+    }
+
+    fn rgb_row_rect(&self, bounds: Rect, index: usize) -> Rect {
+        let encoding = self.encoding_rect(bounds);
+        let y = encoding.max_y() + 10.0 + index as f32 * (Self::ROW_HEIGHT + 6.0);
+        Rect::new(encoding.x(), y, encoding.width(), Self::ROW_HEIGHT)
+    }
+
+    fn hex_rect(&self, bounds: Rect) -> Rect {
+        let last_row = self.rgb_row_rect(bounds, 2);
+        Rect::new(
+            last_row.x(),
+            last_row.max_y() + 10.0,
+            last_row.width(),
+            28.0,
+        )
     }
 
     fn update_from_position(&mut self, bounds: Rect, channel: ActiveChannel, position: Point) {
         match channel {
+            ActiveChannel::ColorWheel => {
+                let rect = self.color_wheel_rect(bounds);
+                let center = Point::new(
+                    rect.x() + rect.width() * 0.5,
+                    rect.y() + rect.height() * 0.5,
+                );
+                let dx = position.x - center.x;
+                let dy = position.y - center.y;
+                let angle = dy.atan2(dx);
+                self.hue = ((angle / std::f32::consts::TAU) + 1.0).rem_euclid(1.0);
+                self.emit_change();
+            }
             ActiveChannel::SaturationValue => {
                 let rect = self.saturation_value_rect(bounds);
-                let saturation = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
-                let value = (1.0 - ((position.y - rect.y()) / rect.height())).clamp(0.0, 1.0);
-                self.saturation = saturation;
-                self.value = value;
+                self.saturation = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+                let value_t = (1.0 - ((position.y - rect.y()) / rect.height())).clamp(0.0, 1.0);
+                self.value = self.max_channel_value() * value_t;
+                self.emit_change();
             }
             ActiveChannel::Hue => {
-                let rect = self.hue_rect(bounds);
+                let rect = self.left_slider_rect(bounds, 0);
                 self.hue = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+                self.emit_change();
+            }
+            ActiveChannel::Saturation => {
+                let rect = self.left_slider_rect(bounds, 1);
+                self.saturation = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+                self.emit_change();
+            }
+            ActiveChannel::Value => {
+                let rect = self.left_slider_rect(bounds, 2);
+                let t = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+                self.value = if self.hdr_capable() {
+                    hdr_slider_to_value(t)
+                } else {
+                    t
+                };
+                self.emit_change();
             }
             ActiveChannel::Alpha => {
-                let rect = self.alpha_rect(bounds);
+                let rect = self.left_slider_rect(bounds, 3);
                 self.alpha = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+                self.emit_change();
             }
+            ActiveChannel::EncodingSelector => self.cycle_editing_space(),
+            ActiveChannel::RgbRed => self.update_rgb_channel_from_position(bounds, 0, position),
+            ActiveChannel::RgbGreen => self.update_rgb_channel_from_position(bounds, 1, position),
+            ActiveChannel::RgbBlue => self.update_rgb_channel_from_position(bounds, 2, position),
         }
+    }
 
+    fn emit_change(&mut self) {
         let color = self.color();
         if let Some(on_change) = &mut self.on_change {
             on_change(color);
         }
     }
 
+    fn apply_color(&mut self, color: Color) {
+        self.editing_space = color.space;
+        let (hue, saturation, value) = rgb_to_hsv(color);
+        self.hue = hue;
+        self.saturation = saturation;
+        self.value = value;
+        self.alpha = color.alpha;
+    }
+
+    fn cycle_editing_space(&mut self) {
+        let next_space = match self.editing_space {
+            ColorSpace::LinearSrgb => ColorSpace::DisplayP3,
+            ColorSpace::DisplayP3 => ColorSpace::LinearDisplayP3,
+            ColorSpace::LinearDisplayP3 => ColorSpace::Srgb,
+            ColorSpace::Srgb => ColorSpace::LinearSrgb,
+        };
+        let current = self.color();
+        self.apply_color(Color::new(
+            next_space,
+            current.red,
+            current.green,
+            current.blue,
+            current.alpha,
+        ));
+        self.emit_change();
+    }
+
+    fn update_rgb_channel_from_position(
+        &mut self,
+        bounds: Rect,
+        channel_index: usize,
+        position: Point,
+    ) {
+        let rect = self.rgb_row_rect(bounds, channel_index);
+        let t = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+        let mut channels = [self.color().red, self.color().green, self.color().blue];
+        channels[channel_index] = self.max_channel_value() * t;
+        self.apply_color(Color::new(
+            self.editing_space,
+            channels[0],
+            channels[1],
+            channels[2],
+            self.alpha,
+        ));
+        self.emit_change();
+    }
+
     fn hit_channel(&self, bounds: Rect, position: Point) -> Option<ActiveChannel> {
-        if self.saturation_value_rect(bounds).contains(position) {
+        if point_in_wheel_ring(self.color_wheel_rect(bounds), position) {
+            Some(ActiveChannel::ColorWheel)
+        } else if self.saturation_value_rect(bounds).contains(position) {
             Some(ActiveChannel::SaturationValue)
-        } else if self.hue_rect(bounds).contains(position) {
+        } else if self.left_slider_rect(bounds, 0).contains(position) {
             Some(ActiveChannel::Hue)
-        } else if self.show_alpha && self.alpha_rect(bounds).contains(position) {
+        } else if self.left_slider_rect(bounds, 1).contains(position) {
+            Some(ActiveChannel::Saturation)
+        } else if self.left_slider_rect(bounds, 2).contains(position) {
+            Some(ActiveChannel::Value)
+        } else if self.show_alpha && self.left_slider_rect(bounds, 3).contains(position) {
             Some(ActiveChannel::Alpha)
+        } else if self.encoding_rect(bounds).contains(position) {
+            Some(ActiveChannel::EncodingSelector)
+        } else if self.rgb_row_rect(bounds, 0).contains(position) {
+            Some(ActiveChannel::RgbRed)
+        } else if self.rgb_row_rect(bounds, 1).contains(position) {
+            Some(ActiveChannel::RgbGreen)
+        } else if self.rgb_row_rect(bounds, 2).contains(position) {
+            Some(ActiveChannel::RgbBlue)
         } else {
             None
         }
@@ -498,18 +680,24 @@ impl Widget for ColorPicker {
                 }
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
-                let step = if key.modifiers.shift { 0.1 } else { 0.02 };
+                let saturation_step = if key.modifiers.shift { 0.1 } else { 0.02 };
+                let value_step = if key.modifiers.shift { 0.5 } else { 0.1 };
                 match key.key.as_str() {
-                    "ArrowLeft" => self.saturation = (self.saturation - step).clamp(0.0, 1.0),
-                    "ArrowRight" => self.saturation = (self.saturation + step).clamp(0.0, 1.0),
-                    "ArrowUp" => self.value = (self.value + step).clamp(0.0, 1.0),
-                    "ArrowDown" => self.value = (self.value - step).clamp(0.0, 1.0),
+                    "ArrowLeft" => {
+                        self.saturation = (self.saturation - saturation_step).clamp(0.0, 1.0)
+                    }
+                    "ArrowRight" => {
+                        self.saturation = (self.saturation + saturation_step).clamp(0.0, 1.0)
+                    }
+                    "ArrowUp" => {
+                        self.value = (self.value + value_step).clamp(0.0, self.max_channel_value())
+                    }
+                    "ArrowDown" => {
+                        self.value = (self.value - value_step).clamp(0.0, self.max_channel_value())
+                    }
                     _ => return,
                 }
-                let color = self.color();
-                if let Some(on_change) = &mut self.on_change {
-                    on_change(color);
-                }
+                self.emit_change();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -519,63 +707,146 @@ impl Widget for ColorPicker {
     }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let desired = Size::new(260.0, if self.show_alpha { 256.0 } else { 232.0 });
-        constraints.clamp(Size::new(
-            if constraints.max.width.is_finite() {
-                constraints.max.width.max(180.0)
-            } else {
-                desired.width
-            },
-            desired.height,
-        ))
+        let desired = Size::new(520.0, if self.show_alpha { 420.0 } else { 392.0 });
+        constraints.clamp(desired)
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let palette = self.theme.palette;
         let current = self.color();
-        let preview = self.preview_rect(ctx.bounds());
-        let sv = self.saturation_value_rect(ctx.bounds());
-        let hue = self.hue_rect(ctx.bounds());
+        let header = self.header_rect(ctx.bounds());
+        let wheel = self.color_wheel_rect(ctx.bounds());
+        let map = self.saturation_value_rect(ctx.bounds());
+        let encoding = self.encoding_rect(ctx.bounds());
 
         draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
-        draw_checkerboard(
+        paint_picker_header(
             ctx,
-            Rect::new(preview.x(), preview.y(), 42.0, preview.height()),
-            6.0,
-        );
-        ctx.fill(
-            rounded_rect_path(
-                Rect::new(preview.x(), preview.y(), 42.0, preview.height()),
-                8.0,
-            ),
+            header,
+            self.theme.as_ref(),
+            &self.name,
+            self.previous_color,
             current,
         );
-        ctx.stroke(
-            rounded_rect_path(
-                Rect::new(preview.x(), preview.y(), 42.0, preview.height()),
-                8.0,
-            ),
-            palette.border,
-            StrokeStyle::new(1.0),
+
+        paint_color_wheel(ctx, wheel);
+        paint_wheel_marker(ctx, wheel, self.hue);
+
+        paint_saturation_value_plane(
+            ctx,
+            map,
+            self.editing_space,
+            self.hue,
+            self.max_channel_value(),
         );
-        ctx.draw_text(
-            Rect::new(
-                preview.x() + 54.0,
-                preview.y() + 4.0,
-                preview.width() - 54.0,
-                16.0,
-            ),
-            self.name.clone(),
-            self.theme.body_text_style(),
+        let marker = Point::new(
+            map.x() + self.saturation * map.width(),
+            map.y()
+                + (1.0 - (self.value / self.max_channel_value()).clamp(0.0, 1.0)) * map.height(),
         );
+        paint_marker(ctx, marker, contrast_color(current));
+
+        let rows = [
+            ("H", format!("{:.2}", self.hue * 360.0)),
+            ("S", format!("{:.2}", self.saturation * 100.0)),
+            ("V", format!("{:.3}", self.value)),
+            ("A", format!("{:.1}", self.alpha * 100.0)),
+        ];
+        for (index, (label, value_text)) in rows.into_iter().enumerate() {
+            if index == 3 && !self.show_alpha {
+                continue;
+            }
+            let rect = self.left_slider_rect(ctx.bounds(), index);
+            match index {
+                0 => paint_hue_bar(ctx, rect),
+                1 => paint_scalar_bar(ctx, rect, 24, |step| {
+                    hsv_to_color(self.editing_space, self.hue, step, self.value.max(1.0), 1.0)
+                }),
+                2 => paint_value_bar(
+                    ctx,
+                    rect,
+                    self.editing_space,
+                    self.hue,
+                    self.saturation,
+                    self.hdr_capable(),
+                ),
+                _ => {
+                    draw_checkerboard(ctx, rect, 4.0);
+                    paint_alpha_bar(ctx, rect, current);
+                }
+            }
+            paint_labeled_row_text(ctx, rect, label, &value_text, palette.placeholder);
+            let marker_x = match index {
+                0 => rect.x() + self.hue * rect.width(),
+                1 => rect.x() + self.saturation * rect.width(),
+                2 => {
+                    rect.x()
+                        + if self.hdr_capable() {
+                            hdr_value_to_slider(self.value) * rect.width()
+                        } else {
+                            self.value.clamp(0.0, 1.0) * rect.width()
+                        }
+                }
+                _ => rect.x() + self.alpha * rect.width(),
+            };
+            paint_marker(
+                ctx,
+                Point::new(marker_x, rect.y() + rect.height() * 0.5),
+                palette.border_focus,
+            );
+        }
+
+        paint_dropdown(
+            ctx,
+            encoding,
+            self.theme.as_ref(),
+            editing_space_label(self.editing_space),
+        );
+
+        let rgb = current.to_array();
+        let channel_labels = ["R", "G", "B"];
+        for (index, label) in channel_labels.into_iter().enumerate() {
+            let rect = self.rgb_row_rect(ctx.bounds(), index);
+            paint_rgb_channel_bar(ctx, rect, current, index, self.max_channel_value());
+            paint_labeled_row_text(
+                ctx,
+                rect,
+                label,
+                &format!("{:.3}", rgb[index]),
+                palette.placeholder,
+            );
+            let marker_x =
+                rect.x() + (rgb[index] / self.max_channel_value()).clamp(0.0, 1.0) * rect.width();
+            paint_marker(
+                ctx,
+                Point::new(marker_x, rect.y() + rect.height() * 0.5),
+                palette.border_focus,
+            );
+        }
+
+        if self.hdr_capable() && is_hdr_color(current) {
+            paint_disabled_field(
+                ctx,
+                self.hex_rect(ctx.bounds()),
+                self.theme.as_ref(),
+                "HDR hex unavailable",
+            );
+        } else {
+            paint_hex_field(
+                ctx,
+                self.hex_rect(ctx.bounds()),
+                self.theme.as_ref(),
+                &format_color(current),
+            );
+        }
+
         ctx.draw_text(
-            Rect::new(
-                preview.x() + 54.0,
-                preview.y() + 22.0,
-                preview.width() - 54.0,
-                16.0,
-            ),
-            format_color(current),
+            Rect::new(encoding.x(), encoding.y() - 20.0, encoding.width(), 16.0),
+            if is_hdr_color(current) {
+                format!("{} • HDR", self.name)
+            } else {
+                format!("{} • SDR", self.name)
+            },
             TextStyle {
                 font_size: 12.0,
                 line_height: 16.0,
@@ -583,40 +854,29 @@ impl Widget for ColorPicker {
                 ..TextStyle::default()
             },
         );
-
-        paint_saturation_value_plane(ctx, sv, self.hue);
-        paint_hue_bar(ctx, hue);
-        if self.show_alpha {
-            let alpha = self.alpha_rect(ctx.bounds());
-            draw_checkerboard(ctx, alpha, 4.0);
-            paint_alpha_bar(ctx, alpha, current);
-            let marker_x = alpha.x() + (self.alpha * alpha.width());
-            paint_marker(
-                ctx,
-                Point::new(marker_x, alpha.y() + alpha.height() * 0.5),
-                palette.border_focus,
-            );
-        }
-
-        let marker = Point::new(
-            sv.x() + (self.saturation * sv.width()),
-            sv.y() + ((1.0 - self.value) * sv.height()),
-        );
-        paint_marker(ctx, marker, contrast_color(current));
-
-        let hue_marker = Point::new(
-            hue.x() + (self.hue * hue.width()),
-            hue.y() + hue.height() * 0.5,
-        );
-        paint_marker(ctx, hue_marker, palette.border_focus);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let current = self.color();
         let mut node =
             SemanticsNode::new(ctx.widget_id(), SemanticsRole::ColorPicker, ctx.bounds());
         node.name = Some(self.name.clone());
+        node.description = Some(format!(
+            "{} editing space; {} range available",
+            editing_space_label(self.editing_space),
+            if self.hdr_capable() { "HDR" } else { "SDR" }
+        ));
         node.state.focused = ctx.is_focused();
-        node.value = Some(SemanticsValue::Text(format_color(self.color())));
+        node.value = Some(SemanticsValue::Text(
+            if self.hdr_capable() && is_hdr_color(current) {
+                format!(
+                    "R {:.3} G {:.3} B {:.3} A {:.3}",
+                    current.red, current.green, current.blue, current.alpha
+                )
+            } else {
+                format_color(current)
+            },
+        ));
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
     }
@@ -629,6 +889,396 @@ impl Widget for ColorPicker {
         ctx.request_paint();
         ctx.request_semantics();
     }
+}
+
+fn paint_picker_header(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    theme: &DefaultTheme,
+    name: &str,
+    previous: Color,
+    current: Color,
+) {
+    let palette = theme.palette;
+    let current_rect = Rect::new(rect.x(), rect.y(), 96.0, rect.height());
+    let previous_rect = Rect::new(current_rect.max_x() + 10.0, rect.y(), 96.0, rect.height());
+    draw_checkerboard(ctx, current_rect, 6.0);
+    draw_checkerboard(ctx, previous_rect, 6.0);
+    ctx.fill(rounded_rect_path(current_rect, 8.0), current);
+    ctx.fill(rounded_rect_path(previous_rect, 8.0), previous);
+    ctx.stroke(
+        rounded_rect_path(current_rect, 8.0),
+        palette.border_focus,
+        StrokeStyle::new(1.0),
+    );
+    ctx.stroke(
+        rounded_rect_path(previous_rect, 8.0),
+        palette.border,
+        StrokeStyle::new(1.0),
+    );
+    let text_x = previous_rect.max_x() + 14.0;
+    ctx.draw_text(
+        Rect::new(text_x, rect.y() + 2.0, rect.max_x() - text_x, 18.0),
+        name.to_string(),
+        theme.body_text_style(),
+    );
+    ctx.draw_text(
+        Rect::new(text_x, rect.y() + 22.0, rect.max_x() - text_x, 16.0),
+        if is_hdr_color(current) {
+            "HDR working color".to_string()
+        } else {
+            "SDR working color".to_string()
+        },
+        TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: palette.placeholder,
+            ..TextStyle::default()
+        },
+    );
+    ctx.draw_text(
+        Rect::new(rect.max_x() - 68.0, rect.y() + 4.0, 64.0, 16.0),
+        "⌖  ↺".to_string(),
+        TextStyle {
+            font_size: 14.0,
+            line_height: 16.0,
+            color: palette.placeholder,
+            ..TextStyle::default()
+        },
+    );
+}
+
+fn paint_color_wheel(ctx: &mut PaintCtx, rect: Rect) {
+    let steps = 40;
+    let center = Point::new(
+        rect.x() + rect.width() * 0.5,
+        rect.y() + rect.height() * 0.5,
+    );
+    let outer = rect.width().min(rect.height()) * 0.5;
+    let inner = outer * 0.55;
+    let cell = rect.width() / steps as f32;
+    ctx.push_clip_rect(rect);
+    for y in 0..steps {
+        for x in 0..steps {
+            let sample = Point::new(
+                rect.x() + (x as f32 + 0.5) * cell,
+                rect.y() + (y as f32 + 0.5) * cell,
+            );
+            let dx = sample.x - center.x;
+            let dy = sample.y - center.y;
+            let distance = (dx * dx + dy * dy).sqrt();
+            if distance < inner || distance > outer {
+                continue;
+            }
+            let hue = ((dy.atan2(dx) / std::f32::consts::TAU) + 1.0).rem_euclid(1.0);
+            ctx.fill_rect(
+                Rect::new(
+                    rect.x() + x as f32 * cell,
+                    rect.y() + y as f32 * cell,
+                    cell + 1.0,
+                    cell + 1.0,
+                ),
+                hsv_to_color(ColorSpace::Srgb, hue, 1.0, 1.0, 1.0),
+            );
+        }
+    }
+    ctx.pop_clip();
+    ctx.stroke(
+        Path::circle(center, outer - 1.0),
+        Color::rgba(0.0, 0.0, 0.0, 0.18),
+        StrokeStyle::new(1.0),
+    );
+    ctx.stroke(
+        Path::circle(center, inner),
+        Color::rgba(0.0, 0.0, 0.0, 0.18),
+        StrokeStyle::new(1.0),
+    );
+}
+
+fn paint_wheel_marker(ctx: &mut PaintCtx, rect: Rect, hue: f32) {
+    let center = Point::new(
+        rect.x() + rect.width() * 0.5,
+        rect.y() + rect.height() * 0.5,
+    );
+    let outer = rect.width().min(rect.height()) * 0.5;
+    let inner = outer * 0.55;
+    let radius = (outer + inner) * 0.5;
+    let angle = hue * std::f32::consts::TAU;
+    let point = Point::new(
+        center.x + angle.cos() * radius,
+        center.y + angle.sin() * radius,
+    );
+    paint_marker(ctx, point, Color::BLACK.with_alpha(0.8));
+}
+
+fn paint_saturation_value_plane(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    space: ColorSpace,
+    hue: f32,
+    max_value: f32,
+) {
+    let steps = 18;
+    for y in 0..steps {
+        for x in 0..steps {
+            let saturation = x as f32 / (steps - 1) as f32;
+            let value = max_value * (1.0 - (y as f32 / (steps - 1) as f32));
+            let cell = Rect::new(
+                rect.x() + rect.width() * (x as f32 / steps as f32),
+                rect.y() + rect.height() * (y as f32 / steps as f32),
+                rect.width() / steps as f32,
+                rect.height() / steps as f32,
+            );
+            ctx.fill_rect(cell, hsv_to_color(space, hue, saturation, value, 1.0));
+        }
+    }
+    ctx.stroke_rect(
+        rect,
+        Color::rgba(0.0, 0.0, 0.0, 0.16),
+        StrokeStyle::new(1.0),
+    );
+    let sdr_marker = Rect::new(
+        rect.x(),
+        rect.y() + rect.height() * (1.0 - (1.0 / max_value).clamp(0.0, 1.0)),
+        rect.width(),
+        1.0,
+    );
+    ctx.fill_rect(sdr_marker, Color::WHITE.with_alpha(0.28));
+}
+
+fn paint_hue_bar(ctx: &mut PaintCtx, rect: Rect) {
+    paint_scalar_bar(ctx, rect, 28, |step| {
+        hsv_to_color(ColorSpace::Srgb, step, 1.0, 1.0, 1.0)
+    });
+}
+
+fn paint_scalar_bar<F>(ctx: &mut PaintCtx, rect: Rect, steps: usize, mut color_for_t: F)
+where
+    F: FnMut(f32) -> Color,
+{
+    for step in 0..steps {
+        let start = step as f32 / steps as f32;
+        let cell = Rect::new(
+            rect.x() + rect.width() * start,
+            rect.y(),
+            rect.width() / steps as f32,
+            rect.height(),
+        );
+        ctx.fill_rect(cell, color_for_t(start));
+    }
+    ctx.stroke_rect(
+        rect,
+        Color::rgba(0.0, 0.0, 0.0, 0.14),
+        StrokeStyle::new(1.0),
+    );
+}
+
+fn paint_value_bar(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    space: ColorSpace,
+    hue: f32,
+    saturation: f32,
+    hdr_capable: bool,
+) {
+    let steps = 28;
+    paint_scalar_bar(ctx, rect, steps, |step| {
+        let value = if hdr_capable {
+            hdr_slider_to_value(step)
+        } else {
+            step
+        };
+        hsv_to_color(space, hue, saturation, value, 1.0)
+    });
+    if hdr_capable {
+        let divider_x = rect.x() + rect.width() * 0.5;
+        ctx.fill_rect(
+            Rect::new(divider_x, rect.y(), 1.0, rect.height()),
+            Color::WHITE.with_alpha(0.26),
+        );
+    }
+}
+
+fn paint_alpha_bar(ctx: &mut PaintCtx, rect: Rect, color: Color) {
+    let steps = 20;
+    for step in 0..steps {
+        let alpha = step as f32 / (steps - 1) as f32;
+        let cell = Rect::new(
+            rect.x() + rect.width() * (step as f32 / steps as f32),
+            rect.y(),
+            rect.width() / steps as f32,
+            rect.height(),
+        );
+        ctx.fill_rect(cell, color.with_alpha(alpha));
+    }
+    ctx.stroke_rect(
+        rect,
+        Color::rgba(0.0, 0.0, 0.0, 0.14),
+        StrokeStyle::new(1.0),
+    );
+}
+
+fn paint_rgb_channel_bar(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    current: Color,
+    channel_index: usize,
+    max_value: f32,
+) {
+    paint_scalar_bar(ctx, rect, 24, |step| {
+        let mut channels = [current.red, current.green, current.blue];
+        channels[channel_index] = max_value * step;
+        Color::new(current.space, channels[0], channels[1], channels[2], 1.0)
+    });
+}
+
+fn paint_labeled_row_text(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    label: &str,
+    value_text: &str,
+    value_color: Color,
+) {
+    ctx.draw_text(
+        Rect::new(rect.x() + 6.0, rect.y() + 2.0, 22.0, rect.height()),
+        label.to_string(),
+        TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: Color::rgba(0.93, 0.95, 0.99, 1.0),
+            ..TextStyle::default()
+        },
+    );
+    ctx.draw_text(
+        Rect::new(rect.max_x() - 72.0, rect.y() + 2.0, 68.0, rect.height()),
+        value_text.to_string(),
+        TextStyle {
+            font_size: 11.0,
+            line_height: 16.0,
+            color: value_color,
+            ..TextStyle::default()
+        },
+    );
+}
+
+fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &str) {
+    ctx.fill(
+        rounded_rect_path(rect, 8.0),
+        Color::rgba(0.10, 0.13, 0.18, 1.0),
+    );
+    ctx.stroke(
+        rounded_rect_path(rect, 8.0),
+        theme.palette.border_focus,
+        StrokeStyle::new(1.0),
+    );
+    ctx.draw_text(
+        Rect::new(rect.x() + 10.0, rect.y() + 6.0, rect.width() - 26.0, 16.0),
+        label.to_string(),
+        TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: Color::rgba(0.88, 0.93, 0.98, 1.0),
+            ..TextStyle::default()
+        },
+    );
+    ctx.draw_text(
+        Rect::new(rect.max_x() - 16.0, rect.y() + 6.0, 12.0, 16.0),
+        "▾".to_string(),
+        TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: theme.palette.placeholder,
+            ..TextStyle::default()
+        },
+    );
+}
+
+fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: &str) {
+    ctx.fill(
+        rounded_rect_path(rect, 8.0),
+        Color::rgba(0.12, 0.15, 0.20, 1.0),
+    );
+    ctx.stroke(
+        rounded_rect_path(rect, 8.0),
+        theme.palette.border,
+        StrokeStyle::new(1.0),
+    );
+    ctx.draw_text(
+        Rect::new(rect.x() + 10.0, rect.y() + 6.0, rect.width() - 16.0, 16.0),
+        value.to_string(),
+        TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: Color::rgba(0.86, 0.92, 0.97, 1.0),
+            ..TextStyle::default()
+        },
+    );
+}
+
+fn paint_disabled_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: &str) {
+    ctx.fill(
+        rounded_rect_path(rect, 8.0),
+        Color::rgba(0.09, 0.11, 0.14, 1.0),
+    );
+    ctx.stroke(
+        rounded_rect_path(rect, 8.0),
+        theme.palette.border,
+        StrokeStyle::new(1.0),
+    );
+    ctx.draw_text(
+        Rect::new(rect.x() + 10.0, rect.y() + 6.0, rect.width() - 16.0, 16.0),
+        value.to_string(),
+        TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: theme.palette.placeholder,
+            ..TextStyle::default()
+        },
+    );
+}
+
+fn point_in_wheel_ring(rect: Rect, position: Point) -> bool {
+    let center = Point::new(
+        rect.x() + rect.width() * 0.5,
+        rect.y() + rect.height() * 0.5,
+    );
+    let dx = position.x - center.x;
+    let dy = position.y - center.y;
+    let distance = (dx * dx + dy * dy).sqrt();
+    let outer = rect.width().min(rect.height()) * 0.5;
+    let inner = outer * 0.55;
+    distance >= inner && distance <= outer
+}
+
+fn editing_space_label(space: ColorSpace) -> &'static str {
+    match space {
+        ColorSpace::Srgb => "sRGB",
+        ColorSpace::LinearSrgb => "BT709 Linear",
+        ColorSpace::DisplayP3 => "Display P3",
+        ColorSpace::LinearDisplayP3 => "Display P3 Linear",
+    }
+}
+
+fn hdr_value_to_slider(value: f32) -> f32 {
+    let value = value.clamp(0.0, ColorPicker::MAX_HDR_VALUE);
+    if value <= 1.0 {
+        value * 0.5
+    } else {
+        0.5 + (value.ln() / ColorPicker::MAX_HDR_VALUE.ln()) * 0.5
+    }
+}
+
+fn hdr_slider_to_value(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t <= 0.5 {
+        t / 0.5
+    } else {
+        ColorPicker::MAX_HDR_VALUE.powf((t - 0.5) / 0.5)
+    }
+}
+
+fn is_hdr_color(color: Color) -> bool {
+    color.red > 1.0 || color.green > 1.0 || color.blue > 1.0
 }
 
 fn fit_rect(bounds: Rect, source: Size, fit: ImageFit) -> Rect {
@@ -656,66 +1306,6 @@ fn fit_rect(bounds: Rect, source: Size, fit: ImageFit) -> Rect {
         size.width,
         size.height,
     )
-}
-
-fn paint_saturation_value_plane(ctx: &mut PaintCtx, rect: Rect, hue: f32) {
-    let steps = 12;
-    for y in 0..steps {
-        for x in 0..steps {
-            let saturation = x as f32 / (steps - 1) as f32;
-            let value = 1.0 - (y as f32 / (steps - 1) as f32);
-            let cell = Rect::new(
-                rect.x() + rect.width() * (x as f32 / steps as f32),
-                rect.y() + rect.height() * (y as f32 / steps as f32),
-                rect.width() / steps as f32,
-                rect.height() / steps as f32,
-            );
-            ctx.fill_rect(cell, hsv_to_rgb(hue, saturation, value, 1.0));
-        }
-    }
-    ctx.stroke_rect(
-        rect,
-        Color::rgba(0.0, 0.0, 0.0, 0.14),
-        StrokeStyle::new(1.0),
-    );
-}
-
-fn paint_hue_bar(ctx: &mut PaintCtx, rect: Rect) {
-    let steps = 24;
-    for step in 0..steps {
-        let start = step as f32 / steps as f32;
-        let cell = Rect::new(
-            rect.x() + rect.width() * start,
-            rect.y(),
-            rect.width() / steps as f32,
-            rect.height(),
-        );
-        ctx.fill_rect(cell, hsv_to_rgb(start, 1.0, 1.0, 1.0));
-    }
-    ctx.stroke_rect(
-        rect,
-        Color::rgba(0.0, 0.0, 0.0, 0.14),
-        StrokeStyle::new(1.0),
-    );
-}
-
-fn paint_alpha_bar(ctx: &mut PaintCtx, rect: Rect, color: Color) {
-    let steps = 20;
-    for step in 0..steps {
-        let alpha = step as f32 / (steps - 1) as f32;
-        let cell = Rect::new(
-            rect.x() + rect.width() * (step as f32 / steps as f32),
-            rect.y(),
-            rect.width() / steps as f32,
-            rect.height(),
-        );
-        ctx.fill_rect(cell, color.with_alpha(alpha));
-    }
-    ctx.stroke_rect(
-        rect,
-        Color::rgba(0.0, 0.0, 0.0, 0.14),
-        StrokeStyle::new(1.0),
-    );
 }
 
 fn paint_marker(ctx: &mut PaintCtx, center: Point, color: Color) {
@@ -786,7 +1376,7 @@ fn perceived_luminance(color: Color) -> f32 {
     (0.299 * color.red) + (0.587 * color.green) + (0.114 * color.blue)
 }
 
-fn hsv_to_rgb(hue: f32, saturation: f32, value: f32, alpha: f32) -> Color {
+fn hsv_to_color(space: ColorSpace, hue: f32, saturation: f32, value: f32, alpha: f32) -> Color {
     let hue = hue.rem_euclid(1.0) * 6.0;
     let sector = hue.floor();
     let fraction = hue - sector;
@@ -801,7 +1391,12 @@ fn hsv_to_rgb(hue: f32, saturation: f32, value: f32, alpha: f32) -> Color {
         4 => (t, p, value),
         _ => (value, p, q),
     };
-    Color::rgba(red, green, blue, alpha)
+    Color::new(space, red, green, blue, alpha)
+}
+
+#[cfg(test)]
+fn hsv_to_rgb(hue: f32, saturation: f32, value: f32, alpha: f32) -> Color {
+    hsv_to_color(ColorSpace::Srgb, hue, saturation, value, alpha)
 }
 
 fn rgb_to_hsv(color: Color) -> (f32, f32, f32) {
@@ -846,7 +1441,7 @@ mod tests {
 
     use super::{ColorPicker, ColorSwatch, Image, format_color, hsv_to_rgb, rgb_to_hsv};
     use sui_core::{
-        Color, Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent,
+        Color, ColorSpace, Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Result, SemanticsRole, SemanticsValue, Size, Vector,
     };
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
@@ -971,15 +1566,15 @@ mod tests {
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(36.0, 86.0), true),
+            primary_pointer(PointerEventKind::Down, Point::new(360.0, 126.0), true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Move, Point::new(208.0, 102.0), true),
+            primary_pointer(PointerEventKind::Move, Point::new(476.0, 152.0), true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Up, Point::new(208.0, 102.0), false),
+            primary_pointer(PointerEventKind::Up, Point::new(476.0, 152.0), false),
         )?;
 
         let changed_color = *changes
@@ -995,6 +1590,118 @@ mod tests {
         assert_eq!(
             picker.value,
             Some(SemanticsValue::Text(format_color(changed_color)))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_from_color_preserves_hdr_linear_color_space() {
+        let picker = ColorPicker::from_color(
+            "HDR accent",
+            Color::new(ColorSpace::LinearSrgb, 2.0, 0.5, 0.25, 1.0),
+        );
+
+        assert_eq!(picker.color().space, ColorSpace::LinearSrgb);
+        assert!((picker.color().red - 2.0).abs() < f32::EPSILON);
+        assert!((picker.color().green - 0.5).abs() < f32::EPSILON);
+        assert!((picker.color().blue - 0.25).abs() < f32::EPSILON);
+        assert!((picker.color().alpha - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn color_picker_semantics_describe_hdr_editing_mode() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(ColorPicker::from_color(
+            "HDR accent",
+            Color::new(ColorSpace::LinearSrgb, 2.0, 0.5, 0.25, 1.0),
+        ));
+
+        let output = runtime.render(window_id)?;
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ColorPicker)
+            .expect("color picker semantics present");
+
+        assert_eq!(
+            picker.description.as_deref(),
+            Some("BT709 Linear editing space; HDR range available")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_rgb_row_drag_updates_color_channels() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            ColorPicker::from_color(
+                "Accent picker",
+                Color::new(ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0),
+            )
+            .on_change(move |color| on_change.borrow_mut().push(color)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(426.0, 306.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(526.0, 306.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(526.0, 306.0), false),
+        )?;
+
+        let changed_color = *changes.borrow().last().expect("rgb row emitted change");
+        assert!(
+            changed_color.red > 8.0,
+            "expected HDR red channel after RGB drag, got {}",
+            changed_color.red
+        );
+        assert_eq!(changed_color.space, ColorSpace::LinearSrgb);
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_encoding_selector_cycles_editing_space() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            ColorPicker::from_color(
+                "Accent picker",
+                Color::new(ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0),
+            )
+            .on_change(move |color| on_change.borrow_mut().push(color)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(424.0, 272.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(424.0, 272.0), false),
+        )?;
+
+        let changed_color = *changes
+            .borrow()
+            .last()
+            .expect("encoding selector emitted change");
+        assert_eq!(changed_color.space, ColorSpace::DisplayP3);
+
+        let output = runtime.render(window_id)?;
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ColorPicker)
+            .expect("color picker semantics present after encoding change");
+        assert_eq!(
+            picker.description.as_deref(),
+            Some("Display P3 editing space; HDR range available")
         );
         Ok(())
     }

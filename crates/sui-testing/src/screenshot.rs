@@ -50,6 +50,43 @@ pub fn write_hdr_exr(image: &HdrRgbaImage, path: impl AsRef<Path>) -> Result<()>
     .map_err(exr_error)
 }
 
+pub fn write_hdr_avif(
+    image: &HdrRgbaImage,
+    path: impl AsRef<Path>,
+    sdr_white_level: f32,
+) -> Result<()> {
+    let reference_white = if sdr_white_level.is_finite() && sdr_white_level > 0.0 {
+        sdr_white_level
+    } else {
+        1.0
+    };
+    let mut pixels = Vec::with_capacity((image.width() * image.height()) as usize);
+    for rgba in image.pixels().chunks_exact(4) {
+        pixels.push(ravif::RGBA8::new(
+            linear_hdr_channel_to_avif_u8(rgba[0], reference_white),
+            linear_hdr_channel_to_avif_u8(rgba[1], reference_white),
+            linear_hdr_channel_to_avif_u8(rgba[2], reference_white),
+            linear_hdr_alpha_to_u8(rgba[3]),
+        ));
+    }
+    let encoded = ravif::Encoder::new()
+        .with_quality(80.0)
+        .with_alpha_quality(80.0)
+        .with_speed(4)
+        .with_bit_depth(ravif::BitDepth::Ten)
+        .encode_rgba(ravif::Img::new(
+            pixels.as_slice(),
+            image.width() as usize,
+            image.height() as usize,
+        ))
+        .map_err(avif_error)?;
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    fs::write(path, encoded.avif_file).map_err(io_error)
+}
+
 pub fn hdr_luminance_heatmap(image: &HdrRgbaImage) -> Result<Screenshot> {
     let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
     for rgba in image.pixels().chunks_exact(4) {
@@ -144,6 +181,30 @@ impl Screenshot {
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().map_err(png_error)?;
         writer.write_image_data(&self.pixels).map_err(png_error)
+    }
+
+    pub fn write_avif(&self, path: impl AsRef<Path>) -> Result<()> {
+        let pixels = self
+            .pixels
+            .chunks_exact(4)
+            .map(|rgba| ravif::RGBA8::new(rgba[0], rgba[1], rgba[2], rgba[3]))
+            .collect::<Vec<_>>();
+        let encoded = ravif::Encoder::new()
+            .with_quality(80.0)
+            .with_alpha_quality(80.0)
+            .with_speed(4)
+            .with_bit_depth(ravif::BitDepth::Ten)
+            .encode_rgba(ravif::Img::new(
+                pixels.as_slice(),
+                self.width as usize,
+                self.height as usize,
+            ))
+            .map_err(avif_error)?;
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(io_error)?;
+        }
+        fs::write(path, encoded.avif_file).map_err(io_error)
     }
 
     pub fn crop(&self, bounds: Rect) -> Result<Self> {
@@ -438,6 +499,13 @@ where
     Error::new(format!("PNG error: {error}"))
 }
 
+fn avif_error<E>(error: E) -> Error
+where
+    E: std::fmt::Display,
+{
+    Error::new(format!("AVIF error: {error}"))
+}
+
 fn exr_error<E>(error: E) -> Error
 where
     E: std::fmt::Display,
@@ -445,10 +513,33 @@ where
     Error::new(format!("EXR error: {error}"))
 }
 
+fn linear_hdr_channel_to_avif_u8(channel: f32, reference_white: f32) -> u8 {
+    let normalized = (channel.max(0.0) / reference_white.max(f32::EPSILON)).max(0.0);
+    let tone_mapped = normalized / (1.0 + normalized);
+    linear_to_srgb_u8(tone_mapped)
+}
+
+fn linear_hdr_alpha_to_u8(alpha: f32) -> u8 {
+    (alpha.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn linear_to_srgb_u8(linear: f32) -> u8 {
+    let encoded = if linear <= 0.003_130_8 {
+        linear * 12.92
+    } else {
+        (1.055 * linear.powf(1.0 / 2.4)) - 0.055
+    };
+    (encoded.clamp(0.0, 1.0) * 255.0).round() as u8
+}
 
 #[cfg(test)]
 mod tests {
-    use super::{HdrRgbaImage, Screenshot, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap};
+    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+
+    use super::{
+        HdrRgbaImage, Screenshot, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap,
+        write_hdr_avif,
+    };
 
     #[test]
     fn hdr_luminance_heatmap_returns_rgba8_image() {
@@ -478,5 +569,37 @@ mod tests {
     #[test]
     fn screenshot_new_rejects_wrong_length() {
         assert!(Screenshot::new(2, 2, vec![0; 4]).is_err());
+    }
+
+    #[test]
+    fn screenshot_write_avif_creates_nonempty_file() {
+        let screenshot = Screenshot::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]).unwrap();
+        let path = unique_test_path("screenshot-avif");
+
+        screenshot.write_avif(&path).unwrap();
+
+        let bytes = fs::read(&path).unwrap();
+        assert!(!bytes.is_empty());
+        assert_eq!(&bytes[4..8], b"ftyp");
+    }
+
+    #[test]
+    fn write_hdr_avif_creates_nonempty_file() {
+        let image = HdrRgbaImage::new(2, 1, vec![4.0, 2.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0]).unwrap();
+        let path = unique_test_path("hdr-avif");
+
+        write_hdr_avif(&image, &path, 1.0).unwrap();
+
+        let bytes = fs::read(&path).unwrap();
+        assert!(!bytes.is_empty());
+        assert_eq!(&bytes[4..8], b"ftyp");
+    }
+
+    fn unique_test_path(stem: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{stem}-{nanos}.avif"))
     }
 }

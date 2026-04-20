@@ -1298,40 +1298,58 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         ),
                     ),
             ))
-            .with_child(panel(
-                "Color and imagery",
-                "SUI targets visual tooling, so swatches, a usable picker, and image previews need to exist as first-class widgets.",
-                Stack::vertical()
-                    .spacing(16.0)
-                    .alignment(Alignment::Stretch)
+            .with_child(build_color_and_imagery_story())
+}
+
+fn build_color_and_imagery_story() -> impl Widget {
+    panel(
+        "Color and imagery",
+        "SUI targets visual tooling, so swatches, a usable picker, and image previews need to exist as first-class widgets.",
+        Stack::vertical()
+            .spacing(16.0)
+            .alignment(Alignment::Stretch)
+            .with_child(
+                Stack::horizontal()
+                    .spacing(12.0)
+                    .alignment(Alignment::Center)
                     .with_child(
-                        Stack::horizontal()
-                            .spacing(12.0)
-                            .alignment(Alignment::Center)
-                            .with_child(ColorSwatch::new(COLOR_SWATCH_NAME, Color::rgba(0.12, 0.55, 0.88, 1.0)).size(Size::new(64.0, 36.0)))
-                            .with_child(ColorSwatch::new("Shadow swatch", Color::rgba(0.08, 0.10, 0.14, 0.84)).size(Size::new(64.0, 36.0)))
-                            .with_child(
-                                Label::new("Use swatches for palettes, material chips, and compact property rows.")
-                                    .font_size(14.0)
-                                    .line_height(18.0)
-                                    .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
-                            ),
+                        ColorSwatch::new(COLOR_SWATCH_NAME, Color::rgba(0.12, 0.55, 0.88, 1.0))
+                            .size(Size::new(64.0, 36.0)),
                     )
                     .with_child(
-                        Stack::horizontal()
-                            .spacing(16.0)
-                            .alignment(Alignment::Start)
-                            .with_child(
-                                SizedBox::new().width(220.0).height(220.0).with_child(
-                                    Image::new(WIDGET_BOOK_IMAGE_HANDLE)
-                                        .label(DEMO_IMAGE_LABEL)
-                                        .fit(ImageFit::Contain)
-                                        .background(Color::rgba(0.965, 0.975, 0.99, 1.0))
-                                        .corner_radius(12.0),
-                                ),
-                            ),
+                        ColorSwatch::new("Shadow swatch", Color::rgba(0.08, 0.10, 0.14, 0.84))
+                            .size(Size::new(64.0, 36.0)),
+                    )
+                    .with_child(
+                        Label::new(
+                            "Use swatches for palettes, material chips, and compact property rows.",
+                        )
+                        .font_size(14.0)
+                        .line_height(18.0)
+                        .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
                     ),
-            ))
+            )
+            .with_child(
+                Stack::horizontal()
+                    .spacing(16.0)
+                    .alignment(Alignment::Start)
+                    .with_child(SizedBox::new().width(360.0).height(420.0).with_child(
+                        ColorPicker::from_color(
+                            COLOR_PICKER_NAME,
+                            Color::new(sui::ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0),
+                        ),
+                    ))
+                    .with_child(
+                        SizedBox::new().width(220.0).height(220.0).with_child(
+                            Image::new(WIDGET_BOOK_IMAGE_HANDLE)
+                                .label(DEMO_IMAGE_LABEL)
+                                .fit(ImageFit::Contain)
+                                .background(Color::rgba(0.965, 0.975, 0.99, 1.0))
+                                .corner_radius(12.0),
+                        ),
+                    ),
+            ),
+    )
 }
 
 pub fn build_button_grid_benchmark() -> impl Widget {
@@ -3068,14 +3086,14 @@ mod tests {
         StoryCase, configured_widget_book_state, scroll_to_story_target,
     };
     use super::{
-        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, LivePerformanceDisplay,
-        LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
-        POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
+        COLOR_PICKER_NAME, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
+        LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
+        POPOVER_NAME, POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
         TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
         TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
         THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
-        build_text_rendering_comparison_application, build_text_validation_surface,
-        build_widget_book_application, default_widget_book_state,
+        build_color_and_imagery_story, build_text_rendering_comparison_application,
+        build_text_validation_surface, build_widget_book_application, default_widget_book_state,
     };
     use sui::{
         Application, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState, KeyboardEvent, Point,
@@ -3488,6 +3506,31 @@ mod tests {
 
         assert_ne!(before, after);
 
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_gallery_exposes_color_picker_story() -> Result<()> {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Color story")
+                    .root(build_color_and_imagery_story()),
+            )
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorPicker
+                    && node.name.as_deref() == Some(COLOR_PICKER_NAME)
+            })
+            .expect("widget book gallery should expose the color picker story");
+
+        assert!(picker.bounds.width() >= 320.0);
+        assert!(picker.bounds.height() >= 280.0);
         Ok(())
     }
 

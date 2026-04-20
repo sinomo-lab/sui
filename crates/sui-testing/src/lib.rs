@@ -15,7 +15,7 @@ pub use expect::Expectation;
 pub use locator::Locator;
 pub use screenshot::{
     ArtifactBundle, Screenshot, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap,
-    write_hdr_exr,
+    write_hdr_avif, write_hdr_exr,
 };
 pub use selector::Selector;
 pub use snapshot::{SceneSummary, WindowSnapshot};
@@ -25,7 +25,7 @@ pub mod prelude {
     pub use crate::{
         ArtifactBundle, Expectation, IntoTestRuntime, Locator, SceneSummary, Screenshot, Selector,
         TestApp, TestWindow, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap,
-        write_hdr_exr,
+        write_hdr_avif, write_hdr_exr,
     };
 }
 
