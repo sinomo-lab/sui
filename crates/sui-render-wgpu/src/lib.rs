@@ -3832,6 +3832,10 @@ mod tests {
         ((ndc_x + 1.0) * 0.5) * viewport.width
     }
 
+    fn logical_y_from_ndc(ndc_y: f32, viewport: Size) -> f32 {
+        ((1.0 - ndc_y) * 0.5) * viewport.height
+    }
+
     fn is_physically_pixel_aligned(value: f32, scale_factor: f32) -> bool {
         let physical = value * scale_factor;
         (physical - physical.round()).abs() < 0.0001
@@ -4476,6 +4480,81 @@ mod tests {
             is_physically_pixel_aligned(second_l_left, frame.scale_factor),
             "second l did not snap to the physical pixel grid: x={second_l_left}"
         );
+    }
+
+    #[test]
+    fn atlas_text_is_position_invariant_at_matching_fractional_dpi_phase() {
+        let handle = FontHandle::new(311);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let viewport = Size::new(260.0, 140.0);
+        let outer_origin = Point::new(39.0, 2.3333333);
+        let inner_origin = Point::new(58.333332, 97.666664);
+        let delta = inner_origin - outer_origin;
+        let frame = SceneFrame {
+            window_id: WindowId::new(99),
+            viewport,
+            surface_size: Size::new(390.0, 210.0),
+            scale_factor: 1.5,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                for origin in [outer_origin, inner_origin] {
+                    scene.push(SceneCommand::DrawText(TextRun {
+                        rect: Rect::new(origin.x, origin.y, 180.0, 22.0),
+                        text: "Light preview live updates".to_string(),
+                        style: TextStyle {
+                            font: Some(handle),
+                            font_size: 14.0,
+                            line_height: 20.0,
+                            color: Color::rgba(0.12, 0.16, 0.22, 1.0),
+                            ..TextStyle::default()
+                        },
+                    }));
+                }
+                scene
+            },
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let vertices = build_vertices(&frame, &mut text_engine).unwrap();
+
+        assert_eq!(
+            vertices.len() % 2,
+            0,
+            "expected identical text runs to produce an even vertex count"
+        );
+
+        let split = vertices.len() / 2;
+        let (outer_vertices, inner_vertices) = vertices.split_at(split);
+        assert_eq!(outer_vertices.len(), inner_vertices.len());
+
+        for (index, (outer, inner)) in outer_vertices.iter().zip(inner_vertices.iter()).enumerate() {
+            let outer_x = logical_x_from_ndc(outer.position[0], viewport);
+            let outer_y = logical_y_from_ndc(outer.position[1], viewport);
+            let inner_x = logical_x_from_ndc(inner.position[0], viewport);
+            let inner_y = logical_y_from_ndc(inner.position[1], viewport);
+            let normalized_inner_x = inner_x - delta.x;
+            let normalized_inner_y = inner_y - delta.y;
+
+            assert!(
+                (outer_x - normalized_inner_x).abs() < 0.0001,
+                "vertex {index} changed x after translation normalization: outer={outer_x}, inner={inner_x}, delta_x={} ",
+                delta.x,
+            );
+            assert!(
+                (outer_y - normalized_inner_y).abs() < 0.0001,
+                "vertex {index} changed y after translation normalization: outer={outer_y}, inner={inner_y}, delta_y={} ",
+                delta.y,
+            );
+            assert_eq!(outer.tex_coords, inner.tex_coords, "vertex {index} UVs differ");
+            assert_eq!(outer.color, inner.color, "vertex {index} colors differ");
+        }
     }
 
     #[test]
@@ -9016,6 +9095,182 @@ mod tests {
         let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
 
         let cached = build_frame(LayerCachePolicy::Cached);
+        renderer.render(&cached).unwrap();
+        let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
+
+        assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn cached_tiles_match_direct_for_theme_preview_style_cards_at_fractional_scale() {
+        let handle = FontHandle::new(153);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let widget_id = WidgetId::new(154);
+        let build_frame = |window_id, cache_policy| {
+            let descriptor = SceneLayerDescriptor::new(
+                SceneLayerId::from_widget(widget_id),
+                widget_id,
+                Rect::new(0.0, 0.0, 640.0, 220.0),
+            )
+            .with_content_bounds(Rect::new(0.0, 0.0, 640.0, 220.0))
+            .with_paint_bounds(Rect::new(0.0, 0.0, 640.0, 220.0))
+            .with_cache_policy(cache_policy)
+            .with_composition_mode(LayerCompositionMode::Scroll);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 640.0, 220.0),
+                brush: Color::rgba(0.94, 0.95, 0.98, 1.0).into(),
+            });
+
+            let card_specs = [
+                (
+                    56.0,
+                    Color::rgba(0.99, 0.99, 1.0, 1.0),
+                    Color::rgba(0.19, 0.46, 0.91, 1.0),
+                    Color::rgba(0.15, 0.73, 0.70, 1.0),
+                    Color::rgba(0.10, 0.13, 0.19, 1.0),
+                    Color::rgba(0.39, 0.45, 0.54, 1.0),
+                    Color::rgba(0.82, 0.85, 0.91, 1.0),
+                    "Light theme",
+                ),
+                (
+                    344.0,
+                    Color::rgba(0.14, 0.16, 0.21, 1.0),
+                    Color::rgba(0.45, 0.60, 0.98, 1.0),
+                    Color::rgba(0.96, 0.54, 0.31, 1.0),
+                    Color::rgba(0.94, 0.95, 0.98, 1.0),
+                    Color::rgba(0.68, 0.72, 0.80, 1.0),
+                    Color::rgba(0.28, 0.31, 0.38, 1.0),
+                    "Dark theme",
+                ),
+            ];
+
+            for (
+                card_x,
+                surface,
+                accent,
+                secondary,
+                text_color,
+                subtle_text,
+                border,
+                title,
+            ) in card_specs
+            {
+                let card_rect = Rect::new(card_x, 24.0, 240.0, 172.0);
+                layer_scene.push(SceneCommand::FillPath {
+                    path: Path::rounded_rect(card_rect, 18.0),
+                    brush: surface.into(),
+                });
+                layer_scene.push(SceneCommand::StrokePath {
+                    path: Path::rounded_rect(card_rect, 18.0),
+                    brush: border.into(),
+                    stroke: StrokeStyle::new(1.0),
+                });
+                layer_scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(card_x + 20.0, 44.0, 172.0, 24.0),
+                    text: title.to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 18.0,
+                        line_height: 22.0,
+                        color: text_color,
+                    },
+                }));
+                layer_scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(card_x + 20.0, 76.0, 188.0, 20.0),
+                    text: format!(
+                        "{} base surface with {} accent for primary actions.",
+                        title.split_whitespace().next().unwrap().to_lowercase(),
+                        title.split_whitespace().next().unwrap().to_lowercase(),
+                    ),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 13.0,
+                        line_height: 18.0,
+                        color: subtle_text,
+                    },
+                }));
+                layer_scene.push(SceneCommand::FillPath {
+                    path: Path::rounded_rect(Rect::new(card_x + 20.0, 108.0, 220.0, 36.0), 10.0),
+                    brush: surface.into(),
+                });
+                layer_scene.push(SceneCommand::StrokePath {
+                    path: Path::rounded_rect(Rect::new(card_x + 20.0, 108.0, 220.0, 36.0), 10.0),
+                    brush: border.into(),
+                    stroke: StrokeStyle::new(1.0),
+                });
+                layer_scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(card_x + 36.0, 118.0, 172.0, 16.0),
+                    text: "Find layer, panel, or asset".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 13.0,
+                        line_height: 18.0,
+                        color: subtle_text,
+                    },
+                }));
+                layer_scene.push(SceneCommand::FillPath {
+                    path: Path::rounded_rect(Rect::new(card_x + 20.0, 156.0, 86.0, 28.0), 14.0),
+                    brush: accent.into(),
+                });
+                layer_scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(card_x + 38.0, 163.0, 48.0, 16.0),
+                    text: "Inspect".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 13.0,
+                        line_height: 18.0,
+                        color: Color::rgba(1.0, 1.0, 1.0, 1.0),
+                    },
+                }));
+                layer_scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(card_x + 128.0, 160.0, 28.0, 16.0),
+                    brush: secondary.into(),
+                });
+                layer_scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(card_x + 164.0, 158.33333, 68.0, 20.0),
+                    text: "Live updates".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 14.0,
+                        line_height: 20.0,
+                        color: text_color,
+                    },
+                }));
+            }
+
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor.clone(),
+                layer_scene,
+            )));
+
+            SceneFrame {
+                window_id,
+                viewport: Size::new(640.0, 220.0),
+                surface_size: Size::new(960.0, 330.0),
+                scale_factor: 1.5,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![
+                    SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                        .with_damage(Rect::new(0.0, 0.0, 640.0, 220.0)),
+                ],
+                scene,
+                font_registry: Arc::new(fonts.clone()),
+                image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        let direct = build_frame(WindowId::new(153), LayerCachePolicy::Direct);
+        renderer.render(&direct).unwrap();
+        let direct_pixels = renderer.capture_last_frame_rgba(direct.window_id).unwrap();
+
+        let cached = build_frame(WindowId::new(154), LayerCachePolicy::Cached);
         renderer.render(&cached).unwrap();
         let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
 

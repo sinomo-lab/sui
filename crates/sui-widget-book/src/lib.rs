@@ -66,6 +66,8 @@ pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark edi
 pub const TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME: &str = "Text editing benchmark syntax preview";
 pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
 pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare light and dark themes";
+pub const LIGHT_THEME_PREVIEW_CARD_NAME: &str = "Light theme preview card";
+pub const DARK_THEME_PREVIEW_CARD_NAME: &str = "Dark theme preview card";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
 pub const DARK_PREVIEW_ACTION_LABEL: &str = "Dark preview action";
 pub const LIGHT_PREVIEW_INPUT_LABEL: &str = "Light preview query";
@@ -495,17 +497,23 @@ impl ThemePreviewShowcase {
                         toggle_state.borrow_mut().theme_preview_comparison = checked;
                     }),
             ),
-            light_card: SingleChild::new(theme_preview_card(
-                DefaultTheme::light(),
-                "Light",
-                LIGHT_PREVIEW_ACTION_LABEL,
-                LIGHT_PREVIEW_INPUT_LABEL,
+            light_card: SingleChild::new(NamedSection::new(
+                LIGHT_THEME_PREVIEW_CARD_NAME,
+                theme_preview_card(
+                    DefaultTheme::light(),
+                    "Light",
+                    LIGHT_PREVIEW_ACTION_LABEL,
+                    LIGHT_PREVIEW_INPUT_LABEL,
+                ),
             )),
-            dark_card: SingleChild::new(theme_preview_card(
-                DefaultTheme::dark(),
-                "Dark",
-                DARK_PREVIEW_ACTION_LABEL,
-                DARK_PREVIEW_INPUT_LABEL,
+            dark_card: SingleChild::new(NamedSection::new(
+                DARK_THEME_PREVIEW_CARD_NAME,
+                theme_preview_card(
+                    DefaultTheme::dark(),
+                    "Dark",
+                    DARK_PREVIEW_ACTION_LABEL,
+                    DARK_PREVIEW_INPUT_LABEL,
+                ),
             )),
         }
     }
@@ -3080,13 +3088,14 @@ fn option_index(options: &[&str], value: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, fs, path::Path, rc::Rc};
 
     use super::visual_artifacts::{
-        StoryCase, configured_widget_book_state, scroll_to_story_target,
+        StoryCase, artifact_root, configured_widget_book_state, scroll_to_story_target,
     };
     use super::{
         COLOR_PICKER_NAME, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
+        LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
         LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
         POPOVER_NAME, POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
         TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
@@ -3094,14 +3103,16 @@ mod tests {
         THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
         build_color_and_imagery_story, build_text_rendering_comparison_application,
         build_text_validation_surface, build_widget_book_application, default_widget_book_state,
+        theme_preview_card,
     };
     use sui::{
-        Application, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState, KeyboardEvent, Point,
-        PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, Result, SceneStatistics,
-        SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size, TextCacheDeltaDiagnostics,
-        TextCacheDiagnostics, Vector, Widget, WidgetPod, WidgetPodVisitor, WindowBuilder,
-        WindowEvent, WindowId, WindowPerformanceSnapshot, window_scene_statistics_detail_mode,
+        Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
+        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
+        PointerEventKind, PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, Result,
+        SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size,
+        SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
+        WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
+        window_scene_statistics_detail_mode,
     };
     use sui_runtime::publish_window_performance_snapshot;
     use sui_testing::prelude::*;
@@ -3144,6 +3155,123 @@ mod tests {
                 )
                 .build()
         })
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn build_light_theme_preview_reference_app(card_width: f32) -> Result<TestApp> {
+        TestApp::from_runtime(
+            Application::new()
+                .window(
+                    WindowBuilder::new().title("Theme preview reference").root(
+                        sui::containers::Padding::all(
+                            24.0,
+                            SizedBox::new()
+                                .width(card_width)
+                                .height(272.0)
+                                .with_child(super::NamedSection::new(
+                                    LIGHT_THEME_PREVIEW_CARD_NAME,
+                                    theme_preview_card(
+                                        DefaultTheme::light(),
+                                        "Light",
+                                        LIGHT_PREVIEW_ACTION_LABEL,
+                                        LIGHT_PREVIEW_INPUT_LABEL,
+                                    ),
+                                )),
+                        ),
+                    ),
+                )
+                .build()?,
+        )
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn build_headless_default_widget_book_app() -> Result<TestApp> {
+        TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn viewport_size(window: &TestWindow) -> Result<Size> {
+        let snapshot = window.snapshot()?;
+        if let Some(scene) = snapshot.scene_summary {
+            return Ok(scene.viewport);
+        }
+
+        snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.role == SemanticsRole::Window)
+            .map(|node| node.bounds.size)
+            .ok_or_else(|| sui::Error::new("window viewport is missing from snapshot"))
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn set_window_scale_factor(window: &TestWindow, scale_factor: f64, raw_dpi: f32) -> Result<()> {
+        let viewport = viewport_size(window)?;
+        window.root().dispatch_event(Event::Window(WindowEvent::ScaleFactorChanged {
+            scale_factor,
+            raw_dpi: Some(raw_dpi),
+            suggested_size: Some(viewport),
+        }))?;
+        window
+            .root()
+            .dispatch_event(Event::Window(WindowEvent::Resized(viewport)))?;
+        window.run_until_idle()
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn write_screenshot(path: impl AsRef<Path>, screenshot: &sui_testing::Screenshot) -> Result<()> {
+        screenshot.write_png(path)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn screenshot_diff_count(
+        left: &sui_testing::Screenshot,
+        right: &sui_testing::Screenshot,
+    ) -> usize {
+        assert_eq!(left.width(), right.width(), "screenshot widths differ");
+        assert_eq!(left.height(), right.height(), "screenshot heights differ");
+
+        left.pixels()
+            .chunks_exact(4)
+            .zip(right.pixels().chunks_exact(4))
+            .filter(|(left_px, right_px)| left_px != right_px)
+            .count()
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn screenshot_diff_image(
+        left: &sui_testing::Screenshot,
+        right: &sui_testing::Screenshot,
+    ) -> Result<sui_testing::Screenshot> {
+        assert_eq!(left.width(), right.width(), "screenshot widths differ");
+        assert_eq!(left.height(), right.height(), "screenshot heights differ");
+
+        let pixels = left
+            .pixels()
+            .chunks_exact(4)
+            .zip(right.pixels().chunks_exact(4))
+            .flat_map(|(left_px, right_px)| {
+                if left_px == right_px {
+                    [left_px[0], left_px[1], left_px[2], 96]
+                } else {
+                    [255, 0, 0, 255]
+                }
+            })
+            .collect::<Vec<_>>();
+
+        sui_testing::Screenshot::new(left.width(), left.height(), pixels)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn normalize_screenshot_pair(
+        left: &sui_testing::Screenshot,
+        right: &sui_testing::Screenshot,
+    ) -> Result<(sui_testing::Screenshot, sui_testing::Screenshot)> {
+        let width = left.width().min(right.width()) as f32;
+        let height = left.height().min(right.height()) as f32;
+        let crop = sui::Rect::new(0.0, 0.0, width, height);
+        Ok((left.crop(crop)?, right.crop(crop)?))
     }
 
     #[test]
@@ -3548,6 +3676,128 @@ mod tests {
                     .exists()
             );
         }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "known failing until theme preview blur is fixed; writes 150% DPI comparison artifacts"]
+    fn widget_book_theme_preview_switch_matches_reference_at_fractional_dpi() -> Result<()> {
+        let artifact_dir = artifact_root().join("theme-preview-150-dpi");
+        if artifact_dir.exists() {
+            fs::remove_dir_all(&artifact_dir).map_err(|error| {
+                sui::Error::new(format!(
+                    "failed to clear {}: {error}",
+                    artifact_dir.display()
+                ))
+            })?;
+        }
+        fs::create_dir_all(&artifact_dir).map_err(|error| {
+            sui::Error::new(format!(
+                "failed to create {}: {error}",
+                artifact_dir.display()
+            ))
+        })?;
+
+        let live_app = build_headless_default_widget_book_app()?;
+        let live_window = live_app.main_window()?;
+        set_window_scale_factor(&live_window, 1.5, 144.0)?;
+        scroll_to_story_target(&live_window, StoryCase::ThemePreview, 12)?;
+
+        let live_artifacts = live_window.capture_artifacts()?;
+        live_artifacts.write_to_dir(artifact_dir.join("live-window"))?;
+
+        let live_light_card_locator = live_window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name(LIGHT_THEME_PREVIEW_CARD_NAME);
+        let live_light_card = live_light_card_locator.capture_screenshot()?;
+        let live_switch = live_window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name("Light preview live updates")
+            .capture_screenshot()?;
+        write_screenshot(artifact_dir.join("live-light-card.png"), &live_light_card)?;
+        write_screenshot(artifact_dir.join("live-light-switch.png"), &live_switch)?;
+
+        let live_snapshot = live_window.snapshot()?;
+        let live_card_bounds = live_snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(LIGHT_THEME_PREVIEW_CARD_NAME)
+            })
+            .map(|node| node.bounds)
+            .ok_or_else(|| sui::Error::new("light theme preview card is missing"))?;
+
+        let reference_app = build_light_theme_preview_reference_app(live_card_bounds.width())?;
+        let reference_window = reference_app.main_window()?;
+        set_window_scale_factor(&reference_window, 1.5, 144.0)?;
+
+        let reference_artifacts = reference_window.capture_artifacts()?;
+        reference_artifacts.write_to_dir(artifact_dir.join("reference-window"))?;
+
+        let reference_light_card = reference_window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name(LIGHT_THEME_PREVIEW_CARD_NAME)
+            .capture_screenshot()?;
+        let reference_switch = reference_window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name("Light preview live updates")
+            .capture_screenshot()?;
+        write_screenshot(
+            artifact_dir.join("reference-light-card.png"),
+            &reference_light_card,
+        )?;
+        write_screenshot(
+            artifact_dir.join("reference-light-switch.png"),
+            &reference_switch,
+        )?;
+
+        let (normalized_live_switch, normalized_reference_switch) =
+            normalize_screenshot_pair(&live_switch, &reference_switch)?;
+        write_screenshot(
+            artifact_dir.join("live-light-switch-normalized.png"),
+            &normalized_live_switch,
+        )?;
+        write_screenshot(
+            artifact_dir.join("reference-light-switch-normalized.png"),
+            &normalized_reference_switch,
+        )?;
+
+        let diff = screenshot_diff_image(&normalized_live_switch, &normalized_reference_switch)?;
+        write_screenshot(artifact_dir.join("switch-diff.png"), &diff)?;
+
+        let diff_count = screenshot_diff_count(&normalized_live_switch, &normalized_reference_switch);
+        fs::write(
+            artifact_dir.join("comparison.txt"),
+            format!(
+                "live card: {}\nreference card: isolated {}\nlive switch: {}x{}\nreference switch: {}x{}\nnormalized switch: {}x{}\ndiff pixels: {}\n",
+                LIGHT_THEME_PREVIEW_CARD_NAME,
+                LIGHT_THEME_PREVIEW_CARD_NAME,
+                live_switch.width(),
+                live_switch.height(),
+                reference_switch.width(),
+                reference_switch.height(),
+                normalized_live_switch.width(),
+                normalized_live_switch.height(),
+                diff_count,
+            ),
+        )
+        .map_err(|error| {
+            sui::Error::new(format!(
+                "failed to write comparison metadata in {}: {error}",
+                artifact_dir.display()
+            ))
+        })?;
+
+        assert_eq!(
+            diff_count,
+            0,
+            "theme preview switch differed from isolated reference at 150% DPI; see {}",
+            artifact_dir.display()
+        );
 
         Ok(())
     }
