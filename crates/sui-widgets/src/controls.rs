@@ -1,4 +1,8 @@
-use crate::{ControlMetrics, DefaultTheme};
+use crate::{
+    ControlMetrics, DefaultTheme, HdrThemeMode, ResolvedEffectStyle, ResolvedHdrStyle,
+    WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole, resolve_luminance_role,
+    resolve_widget_hdr_style,
+};
 use sui_core::{
     Color, Event, ImeEvent, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind,
     Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState,
@@ -504,6 +508,16 @@ pub struct Button {
     on_press: Option<Box<dyn FnMut()>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ButtonVisuals {
+    background: Color,
+    border: Color,
+    focus_ring: Option<Color>,
+    label_color: Color,
+    label_peak_lift: f32,
+    chrome_style: Option<ResolvedHdrStyle>,
+}
+
 impl Button {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
@@ -592,6 +606,74 @@ impl Button {
                 .unwrap_or(self.theme.metrics.button_min_width),
             self.min_height.unwrap_or(self.theme.metrics.min_height),
         )
+    }
+
+    fn resolved_visuals(&self, focused: bool) -> ButtonVisuals {
+        let palette = self.theme.palette;
+        let background = if self.pressed {
+            palette.accent_pressed
+        } else if self.hovered {
+            palette.accent_hover
+        } else {
+            palette.accent
+        };
+        let border = if focused {
+            palette.accent_border_focus
+        } else if self.hovered {
+            palette.accent_border_hover
+        } else {
+            palette.accent_border
+        };
+        let label_peak_lift =
+            resolve_luminance_role(&self.theme.hdr, WidgetLuminanceRole::Standard);
+        let label_color = apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift);
+
+        if matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) {
+            return ButtonVisuals {
+                background,
+                border,
+                focus_ring: focused.then_some(palette.focus_ring),
+                label_color,
+                label_peak_lift,
+                chrome_style: None,
+            };
+        }
+
+        let chrome_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
+            &self.theme.hdr,
+            WidgetColorRole::Accent,
+            WidgetLuminanceRole::SemanticAccent,
+            WidgetMaterialRole::Flat,
+            None,
+        ));
+        let focus_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
+            &self.theme.hdr,
+            WidgetColorRole::Accent,
+            WidgetLuminanceRole::Focused,
+            WidgetMaterialRole::Flat,
+            None,
+        ));
+
+        ButtonVisuals {
+            background: if self.pressed {
+                palette.accent_pressed
+            } else if self.hovered {
+                palette.accent_hover
+            } else {
+                chrome_style.color
+            },
+            border: if focused {
+                focus_style.color
+            } else if self.hovered {
+                palette.accent_border_hover
+            } else {
+                palette.accent_border
+            },
+            focus_ring: focused.then_some(focus_style.color.with_alpha(palette.focus_ring.alpha)),
+            label_color,
+            label_peak_lift,
+            chrome_style: Some(chrome_style),
+        }
     }
 }
 
@@ -687,33 +769,19 @@ impl Widget for Button {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
         let metrics = self.theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
-        let background = if self.pressed {
-            palette.accent_pressed
-        } else if self.hovered {
-            palette.accent_hover
-        } else {
-            palette.accent
-        };
-        let border = if ctx.is_focused() {
-            palette.accent_border_focus
-        } else if self.hovered {
-            palette.accent_border_hover
-        } else {
-            palette.accent_border
-        };
+        let visuals = self.resolved_visuals(ctx.is_focused());
 
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            background,
-            border,
-            ctx.is_focused().then_some(palette.focus_ring),
+            visuals.background,
+            visuals.border,
+            visuals.focus_ring,
         );
         let label_rect = centered_text_rect(
             ctx,
@@ -731,7 +799,14 @@ impl Widget for Button {
             );
             ctx.pop_clip();
         } else {
-            ctx.draw_text(label_rect, self.label.clone(), text_style);
+            ctx.draw_text(
+                label_rect,
+                self.label.clone(),
+                TextStyle {
+                    color: visuals.label_color,
+                    ..text_style
+                },
+            );
         }
     }
 
@@ -1070,6 +1145,18 @@ pub struct Switch {
     on_toggle: Option<Box<dyn FnMut(bool)>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SwitchVisuals {
+    frame_background: Color,
+    frame_border: Color,
+    track_color: Color,
+    track_border: Color,
+    thumb_color: Color,
+    label_color: Color,
+    label_peak_lift: f32,
+    indicator_style: Option<ResolvedHdrStyle>,
+}
+
 impl Switch {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
@@ -1153,6 +1240,91 @@ impl Switch {
             self.hovered = hovered;
             ctx.request_paint();
             ctx.request_semantics();
+        }
+    }
+
+    fn resolved_visuals(&self, focused: bool) -> SwitchVisuals {
+        let palette = self.theme.palette;
+        let frame_background = if self.pressed {
+            palette.surface_pressed
+        } else if self.hovered {
+            palette.surface_hover
+        } else if focused {
+            palette.surface_focus
+        } else {
+            palette.surface
+        };
+        let frame_border = if focused {
+            palette.border_focus
+        } else if self.hovered {
+            palette.border_hover
+        } else {
+            palette.border
+        };
+        let baseline_track_color = if self.on {
+            if self.pressed {
+                palette.accent_pressed
+            } else if self.hovered {
+                palette.accent_hover
+            } else {
+                palette.accent
+            }
+        } else if self.hovered {
+            palette.surface_pressed
+        } else {
+            palette.surface_focus
+        };
+        let baseline_track_border = if self.on {
+            palette.accent_border
+        } else if self.hovered {
+            palette.border_hover
+        } else {
+            palette.border
+        };
+        let label_peak_lift =
+            resolve_luminance_role(&self.theme.hdr, WidgetLuminanceRole::Standard);
+        let label_color = apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift);
+
+        if matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) || !self.on {
+            return SwitchVisuals {
+                frame_background,
+                frame_border,
+                track_color: baseline_track_color,
+                track_border: baseline_track_border,
+                thumb_color: palette.accent_text,
+                label_color,
+                label_peak_lift,
+                indicator_style: None,
+            };
+        }
+
+        let indicator_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
+            &self.theme.hdr,
+            WidgetColorRole::Accent,
+            WidgetLuminanceRole::EmissiveIndicator,
+            WidgetMaterialRole::Flat,
+            None,
+        ));
+
+        SwitchVisuals {
+            frame_background,
+            frame_border,
+            track_color: if self.pressed {
+                palette.accent_pressed
+            } else if self.hovered {
+                palette.accent_hover
+            } else {
+                indicator_style.color
+            },
+            track_border: if focused {
+                indicator_style.color
+            } else {
+                palette.accent_border
+            },
+            thumb_color: palette.accent_text,
+            label_color,
+            label_peak_lift,
+            indicator_style: Some(indicator_style),
         }
     }
 }
@@ -1240,51 +1412,24 @@ impl Widget for Switch {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
         let metrics = self.theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let gap = self.resolved_gap();
         let track = switch_track_rect(ctx.bounds(), padding, metrics);
         let label_rect = switch_label_rect(ctx.bounds(), padding, metrics, gap);
+        let visuals = self.resolved_visuals(ctx.is_focused());
 
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            if self.pressed {
-                palette.surface_pressed
-            } else if self.hovered {
-                palette.surface_hover
-            } else if ctx.is_focused() {
-                palette.surface_focus
-            } else {
-                palette.surface
-            },
-            if ctx.is_focused() {
-                palette.border_focus
-            } else if self.hovered {
-                palette.border_hover
-            } else {
-                palette.border
-            },
-            ctx.is_focused().then_some(palette.focus_ring),
+            visuals.frame_background,
+            visuals.frame_border,
+            ctx.is_focused().then_some(self.theme.palette.focus_ring),
         );
 
-        let track_color = if self.on {
-            if self.pressed {
-                palette.accent_pressed
-            } else if self.hovered {
-                palette.accent_hover
-            } else {
-                palette.accent
-            }
-        } else if self.hovered {
-            palette.surface_pressed
-        } else {
-            palette.surface_focus
-        };
         let thumb_size = (track.height() - 4.0).max(0.0);
         let thumb_x = if self.on {
             track.max_x() - thumb_size - 2.0
@@ -1298,18 +1443,12 @@ impl Widget for Switch {
             track,
             track.height() * 0.5,
             physical_pixels(ctx, metrics.border_width),
-            track_color,
-            if self.on {
-                palette.accent_border
-            } else if self.hovered {
-                palette.border_hover
-            } else {
-                palette.border
-            },
+            visuals.track_color,
+            visuals.track_border,
         );
         ctx.fill(
             Path::circle(rect_center(thumb), thumb.width() * 0.5),
-            palette.accent_text,
+            visuals.thumb_color,
         );
         ctx.draw_text(
             vertically_centered_text_rect(
@@ -1319,7 +1458,10 @@ impl Widget for Switch {
                 text_style.line_height,
             ),
             self.label.clone(),
-            text_style,
+            TextStyle {
+                color: visuals.label_color,
+                ..text_style
+            },
         );
     }
 
@@ -3962,6 +4104,32 @@ fn line_path(start: Point, end: Point) -> Path {
     builder.build()
 }
 
+pub(crate) fn apply_hdr_policy_cap(color: Color, peak_lift: f32) -> Color {
+    let cap = if peak_lift.is_finite() {
+        peak_lift.max(0.0)
+    } else {
+        return color;
+    };
+
+    Color {
+        red: color.red.clamp(0.0, cap),
+        green: color.green.clamp(0.0, cap),
+        blue: color.blue.clamp(0.0, cap),
+        ..color
+    }
+}
+
+pub(crate) fn cap_resolved_hdr_style(style: ResolvedHdrStyle) -> ResolvedHdrStyle {
+    ResolvedHdrStyle {
+        color: apply_hdr_policy_cap(style.color, style.peak_lift),
+        effect: style.effect.map(|effect| ResolvedEffectStyle {
+            color: apply_hdr_policy_cap(effect.color, style.peak_lift),
+            ..effect
+        }),
+        ..style
+    }
+}
+
 fn draw_control_frame(
     ctx: &mut PaintCtx,
     bounds: Rect,
@@ -4145,6 +4313,7 @@ mod tests {
         Slider, Switch, TextArea, TextInput,
     };
     use crate::containers::SizedBox;
+    use crate::{HdrThemeMode, SemanticColorToken, WidgetLuminanceRole, resolve_luminance_role};
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsRole,
@@ -4155,7 +4324,7 @@ mod tests {
         Application, RenderOutput, Runtime, Widget, WindowBuilder, WindowRenderOptions,
         clear_window_render_options, set_window_render_options,
     };
-    use sui_scene::{LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+    use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
     use sui_text::{FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -4251,6 +4420,25 @@ mod tests {
                 _ => None,
             })
             .expect("shaped text draw command present")
+    }
+
+    fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::FillPath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
     }
 
     fn text_run_for(output: &RenderOutput, text: &str) -> sui_text::TextRun {
@@ -4518,6 +4706,66 @@ mod tests {
     }
 
     #[test]
+    fn button_preserves_sdr_palette_when_hdr_mode_disabled() {
+        let mut theme = DefaultTheme::default();
+        theme.hdr.mode = HdrThemeMode::Disabled;
+        theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.palette.accent)
+            .with_hdr(Color::linear_display_p3(1.35, 0.28, 0.22, 1.0));
+
+        let visuals = Button::new("Go").theme(theme).resolved_visuals(true);
+        let fills = solid_fill_colors(&render(Button::new("Go").theme(theme)));
+
+        assert_eq!(visuals.background, theme.palette.accent);
+        assert_eq!(visuals.border, theme.palette.accent_border_focus);
+        assert_eq!(visuals.focus_ring, Some(theme.palette.focus_ring));
+        assert_eq!(visuals.label_color, theme.palette.accent_text);
+        assert_eq!(visuals.label_peak_lift, theme.hdr.luminance.reference_white);
+        assert!(visuals.chrome_style.is_none());
+        assert_eq!(fills.first().copied(), Some(theme.palette.accent));
+        assert_ne!(
+            fills.first().copied(),
+            theme.hdr.color_roles.accent.hdr,
+            "disabled mode should paint the SDR accent, not the HDR token"
+        );
+    }
+
+    #[test]
+    fn button_can_resolve_constrained_hdr_accent_style() {
+        let mut theme = DefaultTheme::default();
+        theme.hdr.mode = HdrThemeMode::ConstrainedHdr;
+        theme.hdr.luminance.semantic_accent = 1.18;
+        theme.hdr.policy.max_large_area_lift = 1.22;
+        theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.palette.accent)
+            .with_hdr(Color::linear_display_p3(1.28, 0.42, 0.30, 1.0));
+
+        let visuals = Button::new("Go").theme(theme).resolved_visuals(true);
+        let chrome_style = visuals.chrome_style.expect("hdr accent style present");
+
+        assert_eq!(visuals.background, chrome_style.color);
+        assert!(visuals.border.red <= theme.hdr.policy.max_large_area_lift);
+        assert_ne!(visuals.background, theme.palette.accent);
+        assert_eq!(chrome_style.peak_lift, 1.18);
+        assert!((chrome_style.color.red - chrome_style.peak_lift).abs() < f32::EPSILON);
+        assert!(visuals.focus_ring.is_some());
+    }
+
+    #[test]
+    fn button_hdr_style_keeps_label_at_reference_white() {
+        let mut theme = DefaultTheme::default();
+        theme.hdr.mode = HdrThemeMode::ConstrainedHdr;
+        theme.hdr.luminance.semantic_accent = 1.2;
+        theme.hdr.policy.max_large_area_lift = 1.25;
+        theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.palette.accent)
+            .with_hdr(Color::linear_display_p3(1.20, 0.36, 0.30, 1.0));
+
+        let visuals = Button::new("Go").theme(theme).resolved_visuals(false);
+
+        assert_eq!(visuals.label_color, theme.palette.accent_text);
+        assert_eq!(visuals.label_peak_lift, theme.hdr.luminance.reference_white);
+        assert!(visuals.label_peak_lift <= theme.hdr.policy.max_large_area_lift);
+    }
+
+    #[test]
     fn button_centers_label_within_available_content_width() {
         let theme = DefaultTheme::default();
         let optical = render(Button::new("Go").min_width(140.0));
@@ -4603,6 +4851,92 @@ mod tests {
         let control_center = output.frame.viewport.height * 0.5;
 
         assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn switch_on_state_can_use_emissive_indicator_role() {
+        let mut theme = DefaultTheme::default();
+        theme.hdr.mode = HdrThemeMode::ConstrainedHdr;
+        theme.hdr.luminance.emissive_indicator = 1.3;
+        theme.hdr.policy.max_constrained_lift = 1.35;
+        theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.palette.accent)
+            .with_hdr(Color::linear_display_p3(1.30, 0.48, 0.32, 1.0));
+
+        let visuals = Switch::new("Wifi")
+            .on(true)
+            .theme(theme)
+            .resolved_visuals(false);
+        let indicator_style = visuals
+            .indicator_style
+            .expect("emissive indicator style present");
+
+        assert_eq!(visuals.track_color, indicator_style.color);
+        assert_eq!(
+            indicator_style.peak_lift,
+            resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::EmissiveIndicator)
+        );
+        assert_eq!(visuals.label_peak_lift, theme.hdr.luminance.reference_white);
+    }
+
+    #[test]
+    fn switch_label_readability_preserved_when_hdr_mode_disabled() {
+        let mut theme = DefaultTheme::default();
+        theme.hdr.mode = HdrThemeMode::Disabled;
+        theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.palette.accent)
+            .with_hdr(Color::linear_display_p3(1.34, 0.40, 0.30, 1.0));
+
+        let visuals = Switch::new("Wifi")
+            .on(true)
+            .theme(theme)
+            .resolved_visuals(true);
+
+        assert_eq!(visuals.label_color, theme.palette.text);
+        assert_eq!(visuals.label_peak_lift, theme.hdr.luminance.reference_white);
+        assert!(visuals.indicator_style.is_none());
+    }
+
+    #[test]
+    fn switch_constrained_hdr_does_not_overshoot_full_hdr_limits() {
+        let mut constrained = DefaultTheme::default();
+        constrained.hdr.mode = HdrThemeMode::ConstrainedHdr;
+        constrained.hdr.luminance.emissive_indicator = 2.5;
+        constrained.hdr.policy.max_constrained_lift = 1.3;
+        constrained.hdr.policy.max_emissive_lift = 2.1;
+        constrained.hdr.color_roles.accent =
+            SemanticColorToken::from_sdr(constrained.palette.accent)
+                .with_hdr(Color::linear_display_p3(2.5, 0.48, 0.32, 1.0));
+
+        let mut full = constrained;
+        full.hdr.mode = HdrThemeMode::FullHdr;
+
+        let constrained_visuals = Switch::new("Wifi")
+            .on(true)
+            .theme(constrained)
+            .resolved_visuals(false);
+        let full_visuals = Switch::new("Wifi")
+            .on(true)
+            .theme(full)
+            .resolved_visuals(false);
+        let constrained_track =
+            solid_fill_colors(&render(Switch::new("Wifi").on(true).theme(constrained)));
+        let full_track = solid_fill_colors(&render(Switch::new("Wifi").on(true).theme(full)));
+
+        let constrained_peak = constrained_visuals
+            .indicator_style
+            .expect("constrained indicator style")
+            .peak_lift;
+        let full_peak = full_visuals
+            .indicator_style
+            .expect("full indicator style")
+            .peak_lift;
+
+        assert_eq!(constrained_peak, 1.3);
+        assert_eq!(full_peak, 2.1);
+        assert!(constrained_peak < full_peak);
+        assert_eq!(constrained_visuals.track_color, constrained_track[1]);
+        assert_eq!(full_visuals.track_color, full_track[1]);
+        assert!((constrained_track[1].red - constrained_peak).abs() < f32::EPSILON);
+        assert!((full_track[1].red - full_peak).abs() < f32::EPSILON);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
     SemanticsAction, SemanticsNode, SemanticsRole, SemanticsState, SemanticsValue, Size,
+    TimerToken, WakeEvent,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
@@ -11,7 +12,12 @@ use sui_runtime::{
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{TextMeasurement, TextStyle};
 
-use crate::{Button, ControlMetrics, DefaultTheme};
+use crate::{
+    Button, ControlMetrics, DefaultTheme, HdrThemeMode, ResolvedEffectStyle, ResolvedHdrStyle,
+    WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
+    controls::{apply_hdr_policy_cap, cap_resolved_hdr_style},
+    resolve_widget_hdr_style,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TooltipPlacement {
@@ -1318,6 +1324,17 @@ pub struct Popover {
     gap: f32,
     padding: Insets,
     frame_rect: Rect,
+    arrival_active: bool,
+    arrival_timer: Option<TimerToken>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PopoverVisuals {
+    background: Color,
+    border: Color,
+    focus_ring: Option<Color>,
+    surface_style: Option<ResolvedHdrStyle>,
+    arrival_effect: Option<ResolvedEffectStyle>,
 }
 
 impl Popover {
@@ -1335,6 +1352,8 @@ impl Popover {
             gap: 8.0,
             padding: Insets::all(14.0),
             frame_rect: Rect::ZERO,
+            arrival_active: false,
+            arrival_timer: None,
         }
     }
 
@@ -1346,6 +1365,29 @@ impl Popover {
     pub fn open(mut self, open: bool) -> Self {
         self.open = open;
         self
+    }
+
+    fn arrival_duration(&self) -> f64 {
+        (0.18 / self.theme.hdr.effects.pulse.speed.max(0.25) as f64).clamp(0.10, 0.28)
+    }
+
+    fn start_arrival(&mut self, ctx: &mut EventCtx) {
+        if let Some(token) = self.arrival_timer.take() {
+            ctx.cancel_timer(token);
+        }
+
+        self.arrival_active = !matches!(self.theme.hdr.mode, HdrThemeMode::Disabled)
+            && self.theme.hdr.effects.pulse.intensity > 0.0;
+        if self.arrival_active {
+            self.arrival_timer = Some(ctx.schedule_timer_after(self.arrival_duration()));
+        }
+    }
+
+    fn stop_arrival(&mut self, ctx: &mut EventCtx) {
+        self.arrival_active = false;
+        if let Some(token) = self.arrival_timer.take() {
+            ctx.cancel_timer(token);
+        }
     }
 
     fn trigger_rect(&self) -> Rect {
@@ -1360,6 +1402,43 @@ impl Popover {
         self.trigger_rect().contains(position)
             || (self.open && self.content_rect().contains(position))
     }
+
+    fn resolved_visuals(&self) -> PopoverVisuals {
+        let palette = self.theme.palette;
+
+        if !self.open || matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) {
+            return PopoverVisuals {
+                background: palette.surface,
+                border: palette.border,
+                focus_ring: Some(palette.focus_ring),
+                surface_style: None,
+                arrival_effect: None,
+            };
+        }
+
+        let surface_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
+            &self.theme.hdr,
+            WidgetColorRole::SurfaceElevated,
+            WidgetLuminanceRole::Standard,
+            WidgetMaterialRole::Raised,
+            self.arrival_active.then_some(WidgetEffectRole::Pulse),
+        ));
+        let border_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
+            &self.theme.hdr,
+            WidgetColorRole::SurfaceOutline,
+            WidgetLuminanceRole::Standard,
+            WidgetMaterialRole::Flat,
+            None,
+        ));
+
+        PopoverVisuals {
+            background: surface_style.color,
+            border: border_style.color,
+            focus_ring: Some(border_style.color.with_alpha(palette.focus_ring.alpha)),
+            surface_style: Some(surface_style),
+            arrival_effect: surface_style.effect,
+        }
+    }
 }
 
 impl Widget for Popover {
@@ -1371,6 +1450,11 @@ impl Widget for Popover {
                     && self.trigger_rect().contains(pointer.position) =>
             {
                 self.open = !self.open;
+                if self.open {
+                    self.start_arrival(ctx);
+                } else {
+                    self.stop_arrival(ctx);
+                }
                 ctx.request_focus();
                 ctx.request_measure();
                 ctx.request_paint();
@@ -1384,6 +1468,7 @@ impl Widget for Popover {
                     && !self.is_inside_open_regions(pointer.position) =>
             {
                 self.open = false;
+                self.stop_arrival(ctx);
                 ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -1395,9 +1480,18 @@ impl Widget for Popover {
                     && self.open =>
             {
                 self.open = false;
+                self.stop_arrival(ctx);
                 ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::Timer { token, .. }) if self.arrival_timer == Some(*token) => {
+                self.arrival_timer = None;
+                if self.arrival_active {
+                    self.arrival_active = false;
+                    ctx.request_paint();
+                }
                 ctx.set_handled();
             }
             _ => {}
@@ -1474,15 +1568,26 @@ impl Widget for Popover {
             .content_rect()
             .translate(ctx.bounds().origin.to_vector());
         let metrics = self.theme.metrics;
+        let visuals = self.resolved_visuals();
         draw_control_frame(
             ctx,
             rect,
             metrics.corner_radius + 2.0,
             metrics,
-            self.theme.palette.surface,
-            self.theme.palette.border,
-            Some(self.theme.palette.focus_ring),
+            visuals.background,
+            visuals.border,
+            visuals.focus_ring,
         );
+        if let Some(arrival_effect) = visuals.arrival_effect {
+            draw_popover_arrival_overlay(
+                ctx,
+                rect,
+                metrics,
+                visuals.background,
+                visuals.border,
+                arrival_effect,
+            );
+        }
         self.content.paint(ctx);
     }
 
@@ -2629,6 +2734,53 @@ fn draw_control_shape(
     ctx.stroke(shape, border, StrokeStyle::new(border_width));
 }
 
+fn mix_color(left: Color, right: Color, amount: f32) -> Color {
+    let amount = amount.clamp(0.0, 1.0);
+    Color {
+        red: left.red + ((right.red - left.red) * amount),
+        green: left.green + ((right.green - left.green) * amount),
+        blue: left.blue + ((right.blue - left.blue) * amount),
+        alpha: left.alpha + ((right.alpha - left.alpha) * amount),
+        ..left
+    }
+}
+
+fn draw_popover_arrival_overlay(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    metrics: ControlMetrics,
+    background: Color,
+    border: Color,
+    arrival_effect: ResolvedEffectStyle,
+) {
+    let overlay_inset = physical_pixels(ctx, 1.0);
+    let overlay_rect = rect.inflate(-overlay_inset, -overlay_inset);
+    let overlay_radius = (metrics.corner_radius + 2.0 - overlay_inset).max(0.0);
+    let overlay_fill = mix_color(background, arrival_effect.color, 0.35)
+        .with_alpha((0.10 + (arrival_effect.intensity * 0.12)).clamp(0.0, 0.22));
+    let stroke_color = apply_hdr_policy_cap(
+        mix_color(border, arrival_effect.color, 0.55),
+        arrival_effect
+            .color
+            .red
+            .max(arrival_effect.color.green.max(arrival_effect.color.blue)),
+    )
+    .with_alpha((0.16 + (arrival_effect.intensity * 0.12)).clamp(0.0, 0.30));
+
+    ctx.fill(
+        rounded_rect_path(overlay_rect, overlay_radius),
+        overlay_fill,
+    );
+    ctx.stroke(
+        rounded_rect_path(
+            overlay_rect.inflate(-overlay_inset * 0.5, -overlay_inset * 0.5),
+            (overlay_radius - (overlay_inset * 0.5)).max(0.0),
+        ),
+        stroke_color,
+        StrokeStyle::new(physical_pixels(ctx, 1.0)),
+    );
+}
+
 fn tooltip_tail(trigger: Rect, bubble: Rect, placement: TooltipPlacement) -> Path {
     let center_x = rect_center(trigger)
         .x
@@ -2745,6 +2897,7 @@ mod tests {
     use super::Tabs;
     use super::{ContextMenu, Dialog, Menu, MenuItem, Popover, ProgressBar, Spinner, TabBar};
     use crate::FloatingStack;
+    use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken};
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, SemanticsNode, SemanticsRole, SemanticsValue, Size, WidgetId,
@@ -2754,7 +2907,7 @@ mod tests {
         Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
         WindowBuilder,
     };
-    use sui_scene::{LayerCompositionMode, SceneLayerDescriptor};
+    use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
     use sui_text::{FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -2845,6 +2998,37 @@ mod tests {
             }
         });
         descriptor
+    }
+
+    fn primary_pointer(kind: PointerEventKind, position: Point, pressed: bool) -> Event {
+        let mut event = PointerEvent::new(kind, position);
+        event.pointer_id = 1;
+        event.button = Some(PointerButton::Primary);
+        event.buttons = if pressed {
+            PointerButtons::new(1)
+        } else {
+            PointerButtons::NONE
+        };
+        Event::Pointer(event)
+    }
+
+    fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::FillPath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
     }
 
     #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -3158,6 +3342,113 @@ mod tests {
             layer_descriptor_for(&output, popover.id).expect("popover layer descriptor present");
 
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
+    }
+
+    #[test]
+    fn popover_arrival_effect_obeys_hdr_theme_mode() {
+        let mut disabled_theme = DefaultTheme::default();
+        disabled_theme.hdr.mode = HdrThemeMode::Disabled;
+        disabled_theme.hdr.policy.max_large_area_lift = 1.12;
+        disabled_theme.hdr.color_roles.surface_elevated =
+            SemanticColorToken::from_sdr(disabled_theme.palette.surface)
+                .with_hdr(Color::linear_display_p3(1.30, 1.08, 1.05, 1.0));
+
+        let mut disabled = Popover::new(
+            "Options",
+            crate::Button::new("Open"),
+            crate::Label::new("Popover body"),
+        )
+        .theme(disabled_theme);
+        disabled.open = true;
+        disabled.arrival_active = true;
+        let disabled_visuals = disabled.resolved_visuals();
+
+        assert_eq!(disabled_visuals.background, disabled_theme.palette.surface);
+        assert!(disabled_visuals.surface_style.is_none());
+        assert!(disabled_visuals.arrival_effect.is_none());
+
+        let (mut disabled_runtime, disabled_window) = build_runtime(
+            Popover::new(
+                "Options",
+                crate::Button::new("Open"),
+                crate::Label::new("Popover body"),
+            )
+            .theme(disabled_theme),
+        );
+        let _ = disabled_runtime.render(disabled_window).unwrap();
+        disabled_runtime
+            .handle_event(
+                disabled_window,
+                primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+            )
+            .unwrap();
+        let disabled_output = disabled_runtime.render(disabled_window).unwrap();
+        assert!(
+            !solid_fill_colors(&disabled_output)
+                .iter()
+                .any(|color| color.alpha < 1.0)
+        );
+
+        let mut hdr_theme = disabled_theme;
+        hdr_theme.hdr.mode = HdrThemeMode::ConstrainedHdr;
+        hdr_theme.hdr.color_roles.surface_elevated =
+            SemanticColorToken::from_sdr(hdr_theme.palette.surface)
+                .with_hdr(Color::linear_display_p3(1.30, 1.08, 1.05, 1.0));
+
+        let mut hdr = Popover::new(
+            "Options",
+            crate::Button::new("Open"),
+            crate::Label::new("Popover body"),
+        )
+        .theme(hdr_theme);
+        hdr.open = true;
+        hdr.arrival_active = true;
+        let hdr_visuals = hdr.resolved_visuals();
+        let surface_style = hdr_visuals
+            .surface_style
+            .expect("hdr surface style present");
+        let arrival_effect = hdr_visuals
+            .arrival_effect
+            .expect("pulse arrival effect present");
+
+        assert_eq!(hdr_visuals.background, surface_style.color);
+        assert!(surface_style.color.red <= hdr_theme.hdr.policy.max_large_area_lift);
+        assert_ne!(hdr_visuals.background, hdr_theme.palette.surface);
+        assert!(arrival_effect.intensity > 0.0);
+        assert!(arrival_effect.speed > 0.0);
+
+        let (mut runtime, window_id) = build_runtime(
+            Popover::new(
+                "Options",
+                crate::Button::new("Open"),
+                crate::Label::new("Popover body"),
+            )
+            .theme(hdr_theme),
+        );
+        let _ = runtime.render(window_id).unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+            )
+            .unwrap();
+        let arrival_output = runtime.render(window_id).unwrap();
+        assert!(
+            solid_fill_colors(&arrival_output)
+                .iter()
+                .any(|color| color.alpha < 1.0)
+        );
+
+        runtime.tick(1.0);
+        for (ready_window, event) in runtime.drain_ready_events() {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+        let settled_output = runtime.render(window_id).unwrap();
+        assert!(
+            !solid_fill_colors(&settled_output)
+                .iter()
+                .any(|color| color.alpha < 1.0)
+        );
     }
 
     #[test]
