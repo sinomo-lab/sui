@@ -601,10 +601,11 @@ impl Widget for ThemePreviewShowcase {
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let comparison_enabled = self.comparison_enabled();
         let toggle_size = self.toggle.child().measured_size();
+        let snapped_origin = Point::new(bounds.x().round(), bounds.y().round());
         self.toggle
-            .arrange(ctx, Rect::from_origin_size(bounds.origin, toggle_size));
+            .arrange(ctx, Rect::from_origin_size(snapped_origin, toggle_size));
 
-        let top = bounds.y() + toggle_size.height + 16.0;
+        let top = (bounds.y() + toggle_size.height + 16.0).round();
         let gap = 16.0;
         if comparison_enabled {
             if bounds.width() < 760.0 {
@@ -612,12 +613,12 @@ impl Widget for ThemePreviewShowcase {
                 let dark_size = self.dark_card.child().measured_size();
                 self.light_card.arrange(
                     ctx,
-                    Rect::new(bounds.x(), top, light_size.width, light_size.height),
+                    Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
                 );
                 self.dark_card.arrange(
                     ctx,
                     Rect::new(
-                        bounds.x(),
+                        bounds.x().round(),
                         top + light_size.height + gap,
                         dark_size.width,
                         dark_size.height,
@@ -628,12 +629,12 @@ impl Widget for ThemePreviewShowcase {
                 let dark_size = self.dark_card.child().measured_size();
                 self.light_card.arrange(
                     ctx,
-                    Rect::new(bounds.x(), top, light_size.width, light_size.height),
+                    Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
                 );
                 self.dark_card.arrange(
                     ctx,
                     Rect::new(
-                        bounds.x() + light_size.width + gap,
+                        (bounds.x() + light_size.width + gap).round(),
                         top,
                         dark_size.width,
                         dark_size.height,
@@ -644,7 +645,7 @@ impl Widget for ThemePreviewShowcase {
             let light_size = self.light_card.child().measured_size();
             self.light_card.arrange(
                 ctx,
-                Rect::new(bounds.x(), top, light_size.width, light_size.height),
+                Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
             );
         }
     }
@@ -3682,7 +3683,6 @@ mod tests {
 
     #[cfg(feature = "artifacts")]
     #[test]
-    #[ignore = "known failing until theme preview blur is fixed; writes 150% DPI comparison artifacts"]
     fn widget_book_theme_preview_switch_matches_reference_at_fractional_dpi() -> Result<()> {
         let artifact_dir = artifact_root().join("theme-preview-150-dpi");
         if artifact_dir.exists() {
