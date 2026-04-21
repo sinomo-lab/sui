@@ -2442,15 +2442,17 @@ impl WidgetGraph {
             .unwrap_or(&StackOrderPolicy::Stable);
 
         let surface_options = pod.current_stack_surface_options();
+        let emits_layer = pod.current_layer_options().emits_layer();
         let is_direct_child_of_host = parent == Some(resolved_host);
-        let is_stack_surface = surface_options.is_some() || is_direct_child_of_host;
+        let is_stack_surface =
+            emits_layer && (surface_options.is_some() || is_direct_child_of_host);
         let resolved_surface = if is_stack_surface {
             id
         } else {
             inherited_surface
         };
         let transient_owner_surface = surface_options
-            .filter(|options| options.transient && inherited_surface != id)
+            .filter(|options| emits_layer && options.transient && inherited_surface != id)
             .map(|_| inherited_surface);
         if is_stack_surface {
             let surfaces = self.host_surface_order.entry(resolved_host).or_default();
@@ -3678,9 +3680,10 @@ mod tests {
         assert!(graph.nodes[0].is_stack_host);
         assert_eq!(graph_child(&graph).parent, Some(graph.root));
         assert_eq!(graph_child(&graph).stack_host, graph.root);
-        assert!(graph_child(&graph).is_stack_surface);
+        assert!(!graph_child(&graph).is_stack_surface);
         assert_eq!(graph.stack_hosts.len(), 1);
         assert_eq!(graph.stack_hosts[0].host, graph.root);
+        assert!(graph.stack_hosts[0].surfaces.is_empty());
         assert!(graph_child(&graph).accepts_focus);
         assert_eq!(
             graph_child(&graph).geometry.layout_bounds,
@@ -3697,6 +3700,20 @@ mod tests {
         assert_eq!(output.frame.viewport, Size::new(320.0, 180.0));
         assert_eq!(output.frame.surface_size, Size::new(320.0, 180.0));
         assert_eq!(output.frame.scale_factor, 1.0);
+    }
+
+    #[test]
+    fn explicit_paint_boundary_direct_child_remains_a_stack_surface() {
+        let (mut runtime, window_id, _, _) = build_cached_move_runtime();
+
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let child = graph_child(&graph);
+
+        assert!(child.is_stack_surface);
+        assert_eq!(graph.stack_hosts.len(), 1);
+        assert_eq!(graph.stack_hosts[0].host, graph.root);
+        assert_eq!(graph.stack_hosts[0].surfaces, vec![child.id]);
     }
 
     #[test]

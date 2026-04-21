@@ -6,8 +6,8 @@ use sui_core::{
 use sui_layout::{Axis, Constraints};
 use sui_runtime::{
     ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    SingleChild,
-    StackHostOptions, StackOrderPolicy, Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    SingleChild, StackHostOptions, StackOrderPolicy, Widget, WidgetPod, WidgetPodMutVisitor,
+    WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 
@@ -1268,6 +1268,54 @@ struct FloatingWindowEntry {
     child: WidgetPod,
 }
 
+struct FloatingStackSurface {
+    host: SingleChild,
+}
+
+impl FloatingStackSurface {
+    fn new<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            host: SingleChild::new(child),
+        }
+    }
+}
+
+impl Widget for FloatingStackSurface {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.host.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.host.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.host.paint(ctx);
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.host.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.host.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.host.visit_children_mut(visitor);
+    }
+}
+
 pub struct FloatingStack {
     theme: Box<DefaultTheme>,
     name: Option<String>,
@@ -1307,7 +1355,7 @@ impl FloatingStack {
     {
         self.windows.push(FloatingWindowEntry {
             bounds,
-            child: WidgetPod::new(child),
+            child: WidgetPod::new(FloatingStackSurface::new(child)),
         });
     }
 
@@ -1636,7 +1684,7 @@ mod tests {
     use crate::containers::SizedBox;
     use sui_core::{
         Color, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        Result, SemanticsRole, SemanticsValue, Size, Vector, WindowEvent,
+        Result, SemanticsRole, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
     use sui_layout::Axis;
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
@@ -1644,7 +1692,7 @@ mod tests {
         Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, StackOrderPolicy, Widget,
         WindowBuilder,
     };
-    use sui_scene::SceneLayerUpdateKind;
+    use sui_scene::{SceneCommand, SceneLayerUpdateKind};
 
     struct ColorFill {
         color: Color,
@@ -1718,6 +1766,17 @@ mod tests {
             pixels[index + 2],
             pixels[index + 3],
         ]
+    }
+
+    fn scene_layer_widget_ids(scene: &sui_scene::Scene) -> Vec<WidgetId> {
+        scene
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                SceneCommand::Layer(layer) => Some(layer.widget_id()),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -1805,7 +1864,7 @@ mod tests {
                 ),
         );
 
-        let _before = runtime.render(window_id)?;
+        let before = runtime.render(window_id)?;
         let before_graph = runtime.widget_graph(window_id)?;
         let host = before_graph
             .stack_hosts
@@ -1813,13 +1872,19 @@ mod tests {
             .find(|host| host.order_policy == StackOrderPolicy::FocusFronted)
             .expect("focus-fronted host should be present");
         assert_eq!(host.surfaces.len(), 2);
+        let layer_widget_ids = scene_layer_widget_ids(&before.frame.scene);
+        assert!(
+            host.surfaces
+                .iter()
+                .all(|surface| layer_widget_ids.contains(surface))
+        );
         let first_surface = host.surfaces[0];
 
         runtime.handle_event(
             window_id,
             primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
         )?;
-        let _reordered = runtime.render(window_id)?;
+        let reordered = runtime.render(window_id)?;
 
         let after = runtime.widget_graph(window_id)?;
         let host = after
@@ -1829,6 +1894,13 @@ mod tests {
             .expect("focus-fronted host should still be present");
         assert_eq!(host.surfaces.len(), 2);
         assert_eq!(host.surfaces[1], first_surface);
+        assert!(
+            reordered
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| update.kind == SceneLayerUpdateKind::Ordering)
+        );
         Ok(())
     }
 
