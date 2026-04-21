@@ -6,7 +6,7 @@ use std::{
 };
 
 use sui_core::{DirtyRegion, Size, WidgetId, WindowId};
-use sui_scene::{SceneCommand, SceneFrame, SceneLayerUpdateKind};
+use sui_scene::{LayerCompositionMode, SceneCommand, SceneFrame, SceneLayerUpdateKind};
 use sui_text::RuntimeTextTimingDiagnostics;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +86,7 @@ pub struct RenderDiagnostics {
     pub text_caches: TextCacheDiagnostics,
     pub runtime_text_timing: RuntimeTextTimingDiagnostics,
     pub widget_timings: Vec<WidgetTimingSample>,
+    pub widget_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -765,6 +766,11 @@ pub struct WindowPerformanceSummary {
     pub presentation_latency: PresentationLatencyDiagnostics,
     pub renderer_submission: RendererSubmissionDiagnostics,
     pub text_caches: TextCacheDiagnostics,
+    pub total_widget_count: usize,
+    pub repaint_boundary_count: usize,
+    pub scene_layer_count: usize,
+    pub stack_surface_count: usize,
+    pub overlay_layer_count: usize,
     pub dirty_region_count: usize,
     pub dirty_coverage: f32,
     pub command_count: usize,
@@ -774,13 +780,17 @@ pub struct WindowPerformanceSummary {
 pub struct SceneStatistics {
     pub detail_mode: SceneStatisticsDetailMode,
     pub viewport: Size,
+    pub total_widget_count: usize,
     pub dirty_region_count: usize,
     pub dirty_regions: Vec<DirtyRegion>,
     pub dirty_area: f32,
     pub dirty_coverage: f32,
     pub command_count: usize,
     pub command_breakdown: Vec<(String, usize)>,
-    pub layer_count: usize,
+    pub repaint_boundary_count: usize,
+    pub scene_layer_count: usize,
+    pub stack_surface_count: usize,
+    pub overlay_layer_count: usize,
     pub layer_update_count: usize,
     pub layer_update_breakdown: Vec<(String, usize)>,
     pub text_command_count: usize,
@@ -790,21 +800,34 @@ pub struct SceneStatistics {
 }
 
 impl SceneStatistics {
-    pub fn from_frame(frame: &SceneFrame) -> Self {
-        Self::from_frame_with_mode(frame, SceneStatisticsDetailMode::Lightweight)
+    pub fn from_frame(frame: &SceneFrame, total_widget_count: usize) -> Self {
+        Self::from_frame_with_mode(
+            frame,
+            total_widget_count,
+            SceneStatisticsDetailMode::Lightweight,
+        )
     }
 
-    pub fn minimal(frame: &SceneFrame, detail_mode: SceneStatisticsDetailMode) -> Self {
+    pub fn minimal(
+        frame: &SceneFrame,
+        total_widget_count: usize,
+        detail_mode: SceneStatisticsDetailMode,
+    ) -> Self {
+        let layer_totals = scene_layer_totals(frame);
         Self {
             detail_mode,
             viewport: frame.viewport,
+            total_widget_count,
             dirty_region_count: 0,
             dirty_regions: Vec::new(),
             dirty_area: 0.0,
             dirty_coverage: 0.0,
             command_count: 0,
             command_breakdown: Vec::new(),
-            layer_count: 0,
+            repaint_boundary_count: layer_totals.repaint_boundary_count,
+            scene_layer_count: layer_totals.scene_layer_count,
+            stack_surface_count: layer_totals.stack_surface_count,
+            overlay_layer_count: layer_totals.overlay_layer_count,
             layer_update_count: 0,
             layer_update_breakdown: Vec::new(),
             text_command_count: 0,
@@ -816,6 +839,7 @@ impl SceneStatistics {
 
     pub fn from_frame_with_mode(
         frame: &SceneFrame,
+        total_widget_count: usize,
         detail_mode: SceneStatisticsDetailMode,
     ) -> Self {
         let detailed = detail_mode.is_detailed();
@@ -825,7 +849,6 @@ impl SceneStatistics {
         let mut clip_command_count = 0usize;
         let mut transform_command_count = 0usize;
         let mut command_count = 0usize;
-        let mut layer_count = 0usize;
 
         frame.scene.visit_commands(&mut |command| {
             command_count += 1;
@@ -853,14 +876,12 @@ impl SceneStatistics {
                 SceneCommand::PushTransform { .. } | SceneCommand::PopTransform => {
                     transform_command_count += 1;
                 }
-                SceneCommand::Layer(_) => {
-                    layer_count += 1;
-                }
                 SceneCommand::Clear(_)
                 | SceneCommand::FillRect { .. }
                 | SceneCommand::StrokeRect { .. }
                 | SceneCommand::FillPath { .. }
-                | SceneCommand::StrokePath { .. } => {}
+                | SceneCommand::StrokePath { .. }
+                | SceneCommand::Layer(_) => {}
             }
         });
 
@@ -885,10 +906,12 @@ impl SceneStatistics {
             0.0
         };
         let dirty_region_count = frame.dirty_regions.len();
+        let layer_totals = scene_layer_totals(frame);
 
         Self {
             detail_mode,
             viewport: frame.viewport,
+            total_widget_count,
             dirty_region_count,
             dirty_regions: if detailed {
                 frame.dirty_regions.clone()
@@ -901,7 +924,10 @@ impl SceneStatistics {
             command_breakdown: command_breakdown
                 .map(|breakdown| breakdown.into_iter().collect())
                 .unwrap_or_default(),
-            layer_count,
+            repaint_boundary_count: layer_totals.repaint_boundary_count,
+            scene_layer_count: layer_totals.scene_layer_count,
+            stack_surface_count: layer_totals.stack_surface_count,
+            overlay_layer_count: layer_totals.overlay_layer_count,
             layer_update_count: frame.layer_updates.len(),
             layer_update_breakdown: layer_update_breakdown
                 .map(|breakdown| breakdown.into_iter().collect())
@@ -912,6 +938,29 @@ impl SceneStatistics {
             transform_command_count,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SceneLayerTotals {
+    repaint_boundary_count: usize,
+    scene_layer_count: usize,
+    stack_surface_count: usize,
+    overlay_layer_count: usize,
+}
+
+fn scene_layer_totals(frame: &SceneFrame) -> SceneLayerTotals {
+    let mut totals = SceneLayerTotals::default();
+    frame.scene.visit_layers(&mut |layer| {
+        totals.scene_layer_count += 1;
+        if layer.descriptor.is_stack_surface {
+            totals.stack_surface_count += 1;
+        }
+        if layer.descriptor.composition_mode == LayerCompositionMode::Overlay {
+            totals.overlay_layer_count += 1;
+        }
+    });
+    totals.repaint_boundary_count = totals.scene_layer_count;
+    totals
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1025,6 +1074,11 @@ impl WindowPerformanceSnapshot {
             presentation_latency: self.presentation_latency,
             renderer_submission: self.renderer_submission,
             text_caches: self.text_caches,
+            total_widget_count: self.scene.total_widget_count,
+            repaint_boundary_count: self.scene.repaint_boundary_count,
+            scene_layer_count: self.scene.scene_layer_count,
+            stack_surface_count: self.scene.stack_surface_count,
+            overlay_layer_count: self.scene.overlay_layer_count,
             dirty_region_count: self.scene.dirty_region_count,
             dirty_coverage: self.scene.dirty_coverage,
             command_count: self.scene.command_count,
@@ -1201,8 +1255,10 @@ mod tests {
         set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
     };
-    use sui_core::{Color, DirtyRegion, InvalidationKind, Rect, Size, WindowId};
-    use sui_scene::{SceneCommand, SceneFrame};
+    use sui_core::{Color, DirtyRegion, InvalidationKind, Rect, Size, WidgetId, WindowId};
+    use sui_scene::{
+        LayerCompositionMode, Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor,
+    };
 
     #[test]
     fn text_cache_deltas_are_derived_from_prior_counters() {
@@ -1236,6 +1292,43 @@ mod tests {
     }
 
     #[test]
+    fn scene_statistics_diagnostics_minimal_preserves_split_count_totals() {
+        let mut frame = SceneFrame::new(WindowId::new(8), Size::new(320.0, 180.0));
+        frame
+            .scene
+            .push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                SceneLayerDescriptor::new(
+                    WidgetId::new(10).into(),
+                    WidgetId::new(10),
+                    Rect::new(0.0, 0.0, 120.0, 80.0),
+                )
+                .with_is_stack_surface(true),
+                Scene::new(),
+            )));
+        frame
+            .scene
+            .push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                SceneLayerDescriptor::new(
+                    WidgetId::new(11).into(),
+                    WidgetId::new(11),
+                    Rect::new(12.0, 10.0, 80.0, 48.0),
+                )
+                .with_composition_mode(LayerCompositionMode::Overlay),
+                Scene::new(),
+            )));
+
+        let stats = SceneStatistics::minimal(&frame, 5, SceneStatisticsDetailMode::Lightweight);
+
+        assert_eq!(stats.total_widget_count, 5);
+        assert_eq!(stats.repaint_boundary_count, 2);
+        assert_eq!(stats.scene_layer_count, 2);
+        assert_eq!(stats.stack_surface_count, 1);
+        assert_eq!(stats.overlay_layer_count, 1);
+        assert!(stats.command_breakdown.is_empty());
+        assert!(stats.layer_update_breakdown.is_empty());
+    }
+
+    #[test]
     fn window_performance_snapshot_preserves_renderer_submission_stats() {
         let snapshot = WindowPerformanceSnapshot::new(
             WindowId::new(5),
@@ -1250,13 +1343,17 @@ mod tests {
             SceneStatistics {
                 detail_mode: SceneStatisticsDetailMode::Lightweight,
                 viewport: Size::new(640.0, 360.0),
+                total_widget_count: 9,
                 dirty_region_count: 0,
                 dirty_regions: Vec::new(),
                 dirty_area: 0.0,
                 dirty_coverage: 0.0,
                 command_count: 0,
                 command_breakdown: Vec::new(),
-                layer_count: 0,
+                repaint_boundary_count: 4,
+                scene_layer_count: 4,
+                stack_surface_count: 1,
+                overlay_layer_count: 1,
                 layer_update_count: 0,
                 layer_update_breakdown: Vec::new(),
                 text_command_count: 0,
@@ -1331,6 +1428,13 @@ mod tests {
         assert_eq!(snapshot.renderer_submission.queue_submit_time_us, 70);
         assert_eq!(snapshot.renderer_submission.surface_present_time_us, 560);
         assert_eq!(snapshot.total_time_ms, 2.5);
+
+        let summary = snapshot.summary();
+        assert_eq!(summary.total_widget_count, 9);
+        assert_eq!(summary.repaint_boundary_count, 4);
+        assert_eq!(summary.scene_layer_count, 4);
+        assert_eq!(summary.stack_surface_count, 1);
+        assert_eq!(summary.overlay_layer_count, 1);
     }
 
     #[test]
@@ -1347,18 +1451,19 @@ mod tests {
             color: Color::WHITE,
         });
 
-        let lightweight = SceneStatistics::from_frame(&frame);
+        let lightweight = SceneStatistics::from_frame(&frame, 2);
         assert_eq!(
             lightweight.detail_mode,
             SceneStatisticsDetailMode::Lightweight
         );
         assert_eq!(lightweight.dirty_region_count, 1);
         assert_eq!(lightweight.command_count, 2);
+        assert_eq!(lightweight.total_widget_count, 2);
         assert!(lightweight.dirty_regions.is_empty());
         assert!(lightweight.command_breakdown.is_empty());
 
         let detailed =
-            SceneStatistics::from_frame_with_mode(&frame, SceneStatisticsDetailMode::Detailed);
+            SceneStatistics::from_frame_with_mode(&frame, 2, SceneStatisticsDetailMode::Detailed);
         assert_eq!(detailed.detail_mode, SceneStatisticsDetailMode::Detailed);
         assert_eq!(detailed.dirty_region_count, 1);
         assert_eq!(detailed.dirty_regions.len(), 1);
@@ -1372,6 +1477,48 @@ mod tests {
                 .command_breakdown
                 .contains(&("Label".to_string(), 1))
         );
+    }
+
+    #[test]
+    fn scene_statistics_diagnostics_split_widget_boundary_and_scene_layer_counts() {
+        let mut frame = SceneFrame::new(WindowId::new(18), Size::new(320.0, 180.0));
+        frame.scene.push(SceneCommand::Layer(SceneLayer::new(
+            WidgetId::new(20),
+            Rect::new(0.0, 0.0, 120.0, 80.0),
+            Scene::new(),
+        )));
+        frame
+            .scene
+            .push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                SceneLayerDescriptor::new(
+                    WidgetId::new(21).into(),
+                    WidgetId::new(21),
+                    Rect::new(12.0, 10.0, 80.0, 48.0),
+                )
+                .with_is_stack_surface(true),
+                Scene::new(),
+            )));
+        frame
+            .scene
+            .push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                SceneLayerDescriptor::new(
+                    WidgetId::new(22).into(),
+                    WidgetId::new(22),
+                    Rect::new(24.0, 20.0, 64.0, 40.0),
+                )
+                .with_composition_mode(LayerCompositionMode::Overlay),
+                Scene::new(),
+            )));
+
+        let stats =
+            SceneStatistics::from_frame_with_mode(&frame, 7, SceneStatisticsDetailMode::Detailed);
+
+        assert_eq!(stats.total_widget_count, 7);
+        assert_eq!(stats.repaint_boundary_count, 3);
+        assert_eq!(stats.scene_layer_count, 3);
+        assert_eq!(stats.stack_surface_count, 1);
+        assert_eq!(stats.overlay_layer_count, 1);
+        assert!(stats.command_breakdown.contains(&("Layer".to_string(), 3)));
     }
 
     #[test]

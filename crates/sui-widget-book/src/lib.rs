@@ -12,9 +12,9 @@ use sui::{
     InvalidationTarget, Rect, SceneStatisticsDetailMode, SemanticColorToken, SemanticsNode,
     SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextSurface, TextWrap, TimerToken,
     Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowEvent, WindowId, WindowPerformanceSnapshot,
-    resolve_semantic_color, resolve_widget_hdr_style, set_window_scene_statistics_detail_mode,
-    window_performance_snapshot, window_scene_statistics_detail_mode,
+    WidgetPodVisitor, WindowEvent, WindowId, WindowPerformanceSnapshot, resolve_semantic_color,
+    resolve_widget_hdr_style, set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    window_scene_statistics_detail_mode,
 };
 use sui_runtime::LayerOptions;
 use sui_scene::LayerCompositionMode;
@@ -850,12 +850,18 @@ fn hdr_theme_lab_card(
     );
     let indicator_color = Color::new(
         indicator_style.color.space,
-        indicator_style.color.red.clamp(0.0, indicator_style.peak_lift),
+        indicator_style
+            .color
+            .red
+            .clamp(0.0, indicator_style.peak_lift),
         indicator_style
             .color
             .green
             .clamp(0.0, indicator_style.peak_lift),
-        indicator_style.color.blue.clamp(0.0, indicator_style.peak_lift),
+        indicator_style
+            .color
+            .blue
+            .clamp(0.0, indicator_style.peak_lift),
         indicator_style.color.alpha,
     );
     let button_label = format!("{prefix} sample action");
@@ -3016,16 +3022,22 @@ impl LivePerformancePanel {
                     .map(|sample| format_duration_ms(sample.duration_ms))
                     .unwrap_or_else(|| "0.0 ms".to_string());
                 let scene_metric = format!(
-                    "scene {} dirty  |  {} layers  |  {} updates",
-                    snapshot.scene.dirty_region_count,
-                    snapshot.scene.layer_count,
+                    "widgets {}  |  boundaries {}  |  scene {}",
+                    snapshot.scene.total_widget_count,
+                    snapshot.scene.repaint_boundary_count,
+                    snapshot.scene.scene_layer_count,
+                );
+                let boundary_metric = format!(
+                    "stack {}  |  overlay {}  |  updates {}",
+                    snapshot.scene.stack_surface_count,
+                    snapshot.scene.overlay_layer_count,
                     snapshot.scene.layer_update_count,
                 );
                 let trailing_metric = format!(
-                    "cmds txt {}  |  img {}  |  clip {}",
+                    "dirty {}  |  txt {}  |  img {}",
+                    snapshot.scene.dirty_region_count,
                     snapshot.scene.text_command_count,
                     snapshot.scene.image_command_count,
-                    snapshot.scene.clip_command_count,
                 );
 
                 vec![
@@ -3088,6 +3100,7 @@ impl LivePerformancePanel {
                         ),
                     )),
                     LivePerformanceLineSpec::metric(scene_metric),
+                    LivePerformanceLineSpec::metric(boundary_metric),
                     LivePerformanceLineSpec::metric(trailing_metric),
                 ]
             }
@@ -3541,8 +3554,8 @@ mod tests {
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
         KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
         PresentationLatencyDiagnostics, RenderOutput, RendererSubmissionDiagnostics, Result,
-        SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size,
-        SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
+        SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size, SizedBox,
+        TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
         WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
         window_scene_statistics_detail_mode,
     };
@@ -3580,19 +3593,22 @@ mod tests {
 
     fn solid_fill_max_channel(output: &RenderOutput) -> f32 {
         let mut max_channel = 0.0_f32;
-        output.frame.scene.visit_commands(&mut |command| match command {
-            SceneCommand::FillRect {
-                brush: Brush::Solid(color),
-                ..
-            }
-            | SceneCommand::FillPath {
-                brush: Brush::Solid(color),
-                ..
-            } => {
-                max_channel = max_channel.max(color.red.max(color.green.max(color.blue)));
-            }
-            _ => {}
-        });
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::FillPath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => {
+                    max_channel = max_channel.max(color.red.max(color.green.max(color.blue)));
+                }
+                _ => {}
+            });
         max_channel
     }
 
@@ -3612,25 +3628,22 @@ mod tests {
     fn build_light_theme_preview_reference_app(card_width: f32) -> Result<TestApp> {
         TestApp::from_runtime(
             Application::new()
-                .window(
-                    WindowBuilder::new().title("Theme preview reference").root(
-                        sui::containers::Padding::all(
-                            24.0,
-                            SizedBox::new()
-                                .width(card_width)
-                                .height(272.0)
-                                .with_child(super::NamedSection::new(
-                                    LIGHT_THEME_PREVIEW_CARD_NAME,
-                                    theme_preview_card(
-                                        DefaultTheme::light(),
-                                        "Light",
-                                        LIGHT_PREVIEW_ACTION_LABEL,
-                                        LIGHT_PREVIEW_INPUT_LABEL,
-                                    ),
-                                )),
+                .window(WindowBuilder::new().title("Theme preview reference").root(
+                    sui::containers::Padding::all(
+                        24.0,
+                        SizedBox::new().width(card_width).height(272.0).with_child(
+                            super::NamedSection::new(
+                                LIGHT_THEME_PREVIEW_CARD_NAME,
+                                theme_preview_card(
+                                    DefaultTheme::light(),
+                                    "Light",
+                                    LIGHT_PREVIEW_ACTION_LABEL,
+                                    LIGHT_PREVIEW_INPUT_LABEL,
+                                ),
+                            ),
                         ),
                     ),
-                )
+                ))
                 .build()?,
         )
     }
@@ -3659,11 +3672,13 @@ mod tests {
     #[cfg(feature = "artifacts")]
     fn set_window_scale_factor(window: &TestWindow, scale_factor: f64, raw_dpi: f32) -> Result<()> {
         let viewport = viewport_size(window)?;
-        window.root().dispatch_event(Event::Window(WindowEvent::ScaleFactorChanged {
-            scale_factor,
-            raw_dpi: Some(raw_dpi),
-            suggested_size: Some(viewport),
-        }))?;
+        window
+            .root()
+            .dispatch_event(Event::Window(WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                raw_dpi: Some(raw_dpi),
+                suggested_size: Some(viewport),
+            }))?;
         window
             .root()
             .dispatch_event(Event::Window(WindowEvent::Resized(viewport)))?;
@@ -3671,7 +3686,10 @@ mod tests {
     }
 
     #[cfg(feature = "artifacts")]
-    fn write_screenshot(path: impl AsRef<Path>, screenshot: &sui_testing::Screenshot) -> Result<()> {
+    fn write_screenshot(
+        path: impl AsRef<Path>,
+        screenshot: &sui_testing::Screenshot,
+    ) -> Result<()> {
         screenshot.write_png(path)
     }
 
@@ -3929,14 +3947,14 @@ mod tests {
     #[test]
     fn hdr_theme_lab_full_hdr_emits_stronger_headroom_than_constrained() {
         let mut constrained_runtime = Application::new()
-            .window(
-                WindowBuilder::new().title("Constrained HDR lab").root(super::hdr_theme_lab_card(
+            .window(WindowBuilder::new().title("Constrained HDR lab").root(
+                super::hdr_theme_lab_card(
                     "Constrained HDR isolated",
                     super::HdrThemeMode::ConstrainedHdr,
                     "Constrained HDR isolated",
                     "Constrained HDR isolated preview",
-                )),
-            )
+                ),
+            ))
             .build()
             .expect("constrained HDR lab runtime should build");
         let constrained_window = constrained_runtime.window_ids()[0];
@@ -3946,12 +3964,14 @@ mod tests {
 
         let mut full_runtime = Application::new()
             .window(
-                WindowBuilder::new().title("Full HDR lab").root(super::hdr_theme_lab_card(
-                    "Full HDR isolated",
-                    super::HdrThemeMode::FullHdr,
-                    "Full HDR isolated",
-                    "Full HDR isolated preview",
-                )),
+                WindowBuilder::new()
+                    .title("Full HDR lab")
+                    .root(super::hdr_theme_lab_card(
+                        "Full HDR isolated",
+                        super::HdrThemeMode::FullHdr,
+                        "Full HDR isolated",
+                        "Full HDR isolated preview",
+                    )),
             )
             .build()
             .expect("full HDR lab runtime should build");
@@ -4387,7 +4407,8 @@ mod tests {
 
         let diff = screenshot_diff_image(&normalized_live_switch, &normalized_reference_switch)?;
         write_screenshot(artifact_dir.join("switch-diff.png"), &diff)?;
-        let diff_count = screenshot_diff_count(&normalized_live_switch, &normalized_reference_switch);
+        let diff_count =
+            screenshot_diff_count(&normalized_live_switch, &normalized_reference_switch);
         fs::write(
             artifact_dir.join("comparison.txt"),
             format!(
@@ -4651,9 +4672,11 @@ mod tests {
 
         let lines = panel.content_specs(WindowId::new(11));
         assert!(lines.iter().any(|line| line.text.contains("lat render")));
-        assert!(lines.iter().any(|line| line.text.contains("redraw wait")));
-        assert!(lines.iter().any(|line| line.text.contains("layers")));
-        assert!(lines.iter().any(|line| line.text.contains("cmds txt")));
+        assert!(lines.iter().any(|line| line.text.contains("widgets")));
+        assert!(lines.iter().any(|line| line.text.contains("boundaries")));
+        assert!(lines.iter().any(|line| line.text.contains("stack")));
+        assert!(lines.iter().any(|line| line.text.contains("overlay")));
+        assert!(lines.iter().any(|line| line.text.contains("dirty")));
     }
 
     #[test]
@@ -4841,13 +4864,17 @@ mod tests {
             SceneStatistics {
                 detail_mode: Default::default(),
                 viewport: Size::new(1280.0, 720.0),
+                total_widget_count: 4,
                 dirty_region_count: 0,
                 dirty_regions: Vec::new(),
                 dirty_area: 0.0,
                 dirty_coverage: 0.0,
                 command_count: 0,
                 command_breakdown: Vec::new(),
-                layer_count: 0,
+                repaint_boundary_count: 0,
+                scene_layer_count: 0,
+                stack_surface_count: 0,
+                overlay_layer_count: 0,
                 layer_update_count: 0,
                 layer_update_breakdown: Vec::new(),
                 text_command_count: 0,
@@ -4878,13 +4905,17 @@ mod tests {
             SceneStatistics {
                 detail_mode: SceneStatisticsDetailMode::Detailed,
                 viewport: Size::new(1280.0, 720.0),
+                total_widget_count: 9,
                 dirty_region_count: 2,
                 dirty_regions: Vec::new(),
                 dirty_area: 128.0,
                 dirty_coverage: 3.0,
                 command_count: 14,
                 command_breakdown: vec![("FillRect".to_string(), 8), ("Layer".to_string(), 6)],
-                layer_count: 6,
+                repaint_boundary_count: 6,
+                scene_layer_count: 6,
+                stack_surface_count: 2,
+                overlay_layer_count: 1,
                 layer_update_count: 4,
                 layer_update_breakdown: vec![("Repaint".to_string(), 4)],
                 text_command_count: 3,

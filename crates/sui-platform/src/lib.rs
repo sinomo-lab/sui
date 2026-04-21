@@ -133,7 +133,11 @@ pub(crate) fn publish_frame_performance(
                 RendererSubmissionDiagnostics::default(),
                 TextCacheDiagnostics::default(),
                 Default::default(),
-                SceneStatistics::minimal(&output.frame, detail_mode),
+                SceneStatistics::minimal(
+                    &output.frame,
+                    output.diagnostics.widget_count,
+                    detail_mode,
+                ),
             )
             .with_presentation_latency(presentation_latency)
             .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
@@ -253,7 +257,11 @@ pub(crate) fn publish_frame_performance(
             ),
             text_caches,
             text_cache_deltas,
-            SceneStatistics::from_frame_with_mode(&output.frame, detail_mode),
+            SceneStatistics::from_frame_with_mode(
+                &output.frame,
+                output.diagnostics.widget_count,
+                detail_mode,
+            ),
         )
         .with_presentation_latency(presentation_latency)
         .with_runtime_text_timing(output.diagnostics.runtime_text_timing)

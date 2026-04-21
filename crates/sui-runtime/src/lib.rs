@@ -1585,6 +1585,7 @@ impl WindowState {
                 CacheMetrics::new(layout_cache.entries, layout_cache.hits, layout_cache.misses);
         }
 
+        diagnostics.widget_count = self.graph.nodes.len();
         diagnostics.runtime_text_timing = sui_text::take_text_timing_collection();
 
         diagnostics.widget_timings = diagnostics::take_widget_timing_collection();
@@ -4074,6 +4075,16 @@ mod tests {
         let (runtime, window_id, _, _) = build_runtime();
 
         assert!(runtime.needs_render(window_id).unwrap());
+    }
+
+    #[test]
+    fn runtime_render_populates_widget_count_diagnostics() {
+        let (mut runtime, window_id, _, _) = build_runtime();
+
+        let output = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+
+        assert_eq!(output.diagnostics.widget_count, graph.nodes.len());
     }
 
     #[test]

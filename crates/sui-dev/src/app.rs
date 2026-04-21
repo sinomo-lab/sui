@@ -2554,6 +2554,31 @@ final_max_luminance={final_max_luminance}
             .map(|sample| sample.renderer_submission.visible_layer_count as f64)
             .sum::<f64>()
             / valid_count as f64;
+        let avg_widget_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.total_widget_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_repaint_boundary_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.repaint_boundary_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_scene_layer_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.scene_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_stack_surface_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.stack_surface_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_overlay_layer_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.overlay_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
         let avg_direct_packets = measured_samples
             .iter()
             .map(|sample| sample.renderer_submission.direct_packet_count as f64)
@@ -2700,6 +2725,10 @@ final_max_luminance={final_max_luminance}
             "avg text bytes:   {:.0} ({avg_glyph_instances:.2} glyphs)",
             avg_text_vertex_bytes
         );
+        println!("avg widgets:      {avg_widget_count:.2}");
+        println!(
+            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
+        );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
         println!("avg state update:  {avg_state_update_ms:.3} ms");
@@ -2814,6 +2843,31 @@ final_max_luminance={final_max_luminance}
             .map(|sample| sample.renderer_submission.visible_layer_count as f64)
             .sum::<f64>()
             / valid_count as f64;
+        let avg_widget_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.total_widget_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_repaint_boundary_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.repaint_boundary_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_scene_layer_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.scene_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_stack_surface_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.stack_surface_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_overlay_layer_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.overlay_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
         let avg_direct_packets = measured_samples
             .iter()
             .map(|sample| sample.renderer_submission.direct_packet_count as f64)
@@ -2921,6 +2975,10 @@ final_max_luminance={final_max_luminance}
             "avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)",
             avg_text_vertex_bytes
         );
+        println!("avg widgets:      {avg_widget_count:.2}");
+        println!(
+            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
+        );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
         println!("avg state update:  {avg_state_update_ms:.3} ms");
@@ -2994,6 +3052,31 @@ final_max_luminance={final_max_luminance}
         let avg_visible_layers = measured_samples
             .iter()
             .map(|sample| sample.renderer_submission.visible_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_widget_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.total_widget_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_repaint_boundary_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.repaint_boundary_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_scene_layer_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.scene_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_stack_surface_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.stack_surface_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_overlay_layer_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.overlay_layer_count as f64)
             .sum::<f64>()
             / valid_count as f64;
         let avg_direct_packets = measured_samples
@@ -3102,6 +3185,10 @@ final_max_luminance={final_max_luminance}
         println!(
             "avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)",
             avg_text_vertex_bytes
+        );
+        println!("avg widgets:      {avg_widget_count:.2}");
+        println!(
+            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
         );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
@@ -3246,6 +3333,31 @@ final_max_luminance={final_max_luminance}
             .map(|sample| sample.renderer_submission.visible_layer_count as f64)
             .sum::<f64>()
             / valid_count as f64;
+        let avg_widget_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.total_widget_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_repaint_boundary_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.repaint_boundary_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_scene_layer_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.scene_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_stack_surface_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.stack_surface_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_overlay_layer_count = measured_samples
+            .iter()
+            .map(|sample| sample.scene.overlay_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
         let avg_direct_packets = measured_samples
             .iter()
             .map(|sample| sample.renderer_submission.direct_packet_count as f64)
@@ -3352,6 +3464,10 @@ final_max_luminance={final_max_luminance}
         println!(
             "avg text bytes:    {:.0} ({avg_glyph_instances:.2} glyphs)",
             avg_text_vertex_bytes
+        );
+        println!("avg widgets:      {avg_widget_count:.2}");
+        println!(
+            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
         );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
@@ -3698,6 +3814,31 @@ final_max_luminance={final_max_luminance}
             .map(|sample| sample.renderer_submission.visible_layer_count as f64)
             .sum::<f64>()
             / valid_count as f64;
+        let avg_widget_count = frame_samples
+            .iter()
+            .map(|sample| sample.scene.total_widget_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_repaint_boundary_count = frame_samples
+            .iter()
+            .map(|sample| sample.scene.repaint_boundary_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_scene_layer_count = frame_samples
+            .iter()
+            .map(|sample| sample.scene.scene_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_stack_surface_count = frame_samples
+            .iter()
+            .map(|sample| sample.scene.stack_surface_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
+        let avg_overlay_layer_count = frame_samples
+            .iter()
+            .map(|sample| sample.scene.overlay_layer_count as f64)
+            .sum::<f64>()
+            / valid_count as f64;
         let avg_packet_rebuild_scene = frame_samples
             .iter()
             .map(|sample| {
@@ -3739,6 +3880,10 @@ final_max_luminance={final_max_luminance}
         println!(
             "p95 frame time:    {p95_ms:.3} ms ({:.0} fps)",
             1000.0 / p95_ms
+        );
+        println!("avg widgets:      {avg_widget_count:.2}");
+        println!(
+            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
         );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg state update:  {avg_state_update_ms:.3} ms");
