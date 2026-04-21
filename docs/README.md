@@ -24,8 +24,8 @@ The current workspace is organized around a retained widget runtime.
 
 - `sui` is the public Rust facade.
 - `sui-core` owns shared types such as events, geometry, color, semantics, and invalidation kinds.
-- `sui-layout` owns layout primitives and constraints.
-- `sui-runtime` owns windows, the retained widget graph, event routing, invalidation scheduling, layout, scene generation, and semantics generation.
+- `sui-layout` owns layout primitives, constraints, and reusable measure/arrange utilities.
+- `sui-runtime` owns windows, the retained widget graph, event routing, invalidation scheduling, the default widget-tree layout pipeline, scene generation, and semantics generation.
 - `sui-scene` defines the renderer-neutral scene representation.
 - `sui-text` owns font registration, shaping, measurement, and text layout.
 - `sui-render-wgpu` owns the retained compositor and the `wgpu` backend.
@@ -35,6 +35,8 @@ The current workspace is organized around a retained widget runtime.
 - `sui-debug` owns reusable debug widgets and inspectors.
 - `sui-widget-book` owns the gallery, story content, and screenshot-oriented tests.
 - `sui-dev` is the main development host application.
+
+One important implementation detail to keep in mind: the current runtime still wraps widget paint output into nested `SceneLayer` nodes much more aggressively than the intended long-term architecture. That behavior is now considered architectural drift rather than a design goal.
 
 ## Common Commands
 

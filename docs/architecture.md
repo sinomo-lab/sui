@@ -49,6 +49,13 @@ Widgets are not responsible for global orchestration. They implement behavior th
 
 SUI does not use a diff-based UI model. Widgets mutate state in response to events and request invalidation explicitly.
 
+The intended model is:
+- widgets own their local dirty state and know why they need work
+- the runtime orchestrates measure, arrange, paint, semantics, and resource phases from the root of the affected window
+- scene layers are optional paint/composition boundaries, not the default semantic unit of every widget
+
+The current implementation has drifted from that model by treating many widget paint outputs as their own `SceneLayer` nodes. That over-layerization is now treated as an implementation detail under transition rather than a contract to preserve.
+
 The current invalidation kinds are:
 
 - `Measure`
@@ -100,14 +107,16 @@ Widgets can mark events handled, request focus, schedule timers, request async w
 
 ### Layout
 
-The current layout contract is already split into measure and arrange.
+The default widget-tree layout contract is already split into measure and arrange.
 
 - `measure(&mut MeasureCtx, Constraints) -> Size`
 - `arrange(&mut ArrangeCtx, Rect)`
 
 This split means geometry-only changes do not need to look like full paint rebuilds.
 
-`sui-layout` provides the shared constraint and geometry primitives, while `sui-runtime` owns the widget-facing layout contexts and caching.
+Built-in widgets use this measure/arrange pipeline heavily, but it is meant to stay a reusable widget-side utility rather than a renderer concept or a mandatory framework-wide contract. Custom widgets should be able to drive layout work themselves, mix SUI layout helpers with arbitrary spatial systems, or bypass the default pipeline when building interfaces attached to non-standard environments such as 3D objects.
+
+`sui-layout` provides the shared constraint and geometry primitives, while `sui-runtime` owns the standard widget-tree layout contexts, scheduling, and caching. That runtime pipeline should stay separable enough that advanced widgets can initiate measurement or arrangement work without depending on a standard paint, window, or renderer context.
 
 ### Paint
 
@@ -120,9 +129,11 @@ The current scene layer includes:
 - text draws and shaped text draws
 - image draws
 - transforms, clips, and nested layers
-- layer descriptors with cache and composition hints
+- layer descriptors with composition, ordering, bounds, and ownership metadata
 
 `SceneFrame` is the renderer-facing snapshot. It also carries font and image registry snapshots so the renderer can resolve resources without pulling mutable runtime state.
+
+A critical current-state detail: the runtime still wraps each widget paint result in a `SceneLayer` by default, even for simple wrapper widgets. That behavior made the retained compositor the de facto repaint granularity, but it is not the intended long-term architecture. The active transition direction is to flatten ordinary widget paint into parent scenes and reserve `SceneLayer` for explicit repaint or composition boundaries such as scroll surfaces, overlays, and stack surfaces.
 
 ### Semantics
 

@@ -82,7 +82,9 @@ This crate must stay free of platform, runtime, and renderer implementation deta
 
 Layout primitives and reusable utilities.
 
-This crate owns constraints, padding, alignment, and size helpers. It does not own the widget graph or the frame scheduler.
+This crate owns constraints, padding, alignment, size helpers, and shared measure/arrange utilities. It does not own the widget graph, the frame scheduler, or any renderer-specific context.
+
+The default widget set will use these APIs heavily, but they must remain usable from custom widgets and hybrid systems that want layout assistance without adopting the full runtime-managed widget-tree pipeline.
 
 If a type can be shared by containers and widgets without needing runtime state, it usually belongs here.
 
@@ -126,12 +128,14 @@ This crate owns:
 - focus and pointer capture
 - timers and async wakeups
 - invalidation scheduling
-- measure and arrange execution
+- the default widget-tree measure and arrange execution
 - scene generation
 - semantics generation
 - runtime-side diagnostics and snapshots
 
 This crate is the main integration point for most framework changes.
+
+It owns one standard way to schedule layout for retained widgets, but it should not become the only place measurement or composition can be initiated. Advanced widgets should still be able to call shared layout utilities without requiring a standard window/render path.
 
 ### `sui-render-wgpu`
 
@@ -143,7 +147,7 @@ This crate owns:
 - surface registration per window
 - offscreen rendering for headless runs
 - retained compositor state per window
-- tile and packet reuse logic
+- retained packet reuse logic and layer/composition bookkeeping
 - text, image, and analytic path caches
 - frame capture and renderer statistics
 

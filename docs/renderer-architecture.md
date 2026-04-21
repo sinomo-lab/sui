@@ -24,26 +24,26 @@ The current scene model provides more than a flat draw list.
 - font registry snapshots
 - image registry snapshots
 
-Layer descriptors carry:
+Layer descriptors currently carry:
 
 - a stable `SceneLayerId`
 - owner widget identity
 - layer bounds
 - content bounds
 - paint bounds
-- cache policy hints
 - composition mode hints
+- stack-surface ordering and transient ownership metadata where relevant
 
-That means the renderer does not have to infer basic layer ownership or bounds from raw draw commands.
+That means the renderer does not have to infer basic layer ownership or bounds from raw draw commands. It also means the runtime's choice of where to emit `SceneLayer` nodes has a direct effect on retained-compositor cost.
 
 ## Retained Compositor Model
 
-`sui-render-wgpu` now uses a retained compositor per window.
+`crates/sui-render-wgpu` uses a retained compositor per window.
 
 The important implementation consequences are:
 
 - layer state survives across frames
-- cached tiles and retained packets are reused when possible
+- retained packets for direct draws are reused when possible
 - property-like changes are handled separately from content rebuilds
 - the old frame-global scene-to-draw-op compiler is no longer the live path
 
@@ -51,20 +51,32 @@ In practice, each window keeps retained state for:
 
 - layer structure
 - transform, clip, and effect nodes
-- cached tiles and their memory usage
 - retained packet data for direct draws
 - per-window GPU resources and submission stats
 
+One important caveat is that the current runtime feeds the renderer far more layers than intended: many ordinary widget paint operations become their own `SceneLayer` nodes. That makes retained compositor cost track widget-tree shape much more closely than the intended architecture.
+
+## Current Architectural Drift
+
+The current live path is not "one explicit surface per meaningful repaint boundary." Instead, `WidgetPod::paint` currently wraps each widget's paint output into a `SceneLayer` by default in `sui-runtime`. That means the retained compositor often sees:
+
+- many tiny layers with only a few scene commands each
+- high layer counts driven by wrappers such as `Padding`, `Stack`, `SizedBox`, and `Background`
+- overlay and stack-surface layers mixed into an already fragmented layer tree
+
+This matters because retained traversal, structural comparison, and packet upkeep are paid per layer or packet, not just per draw command.
+
+The current architectural direction is to reduce default layerization and reserve `SceneLayer` for explicit repaint or composition boundaries.
+
 ## Render Modes
 
-The current retained compositor uses two active layer strategies:
+The current practical retained path is:
 
-- `Direct` for small or volatile content
-- `CachedTiles` for content that benefits from retained reuse
+- retained layer structure
+- retained direct packets
+- overlay, scroll, and stack-surface composition handling
 
-The cache policy is expressed in the scene layer descriptor, but the renderer still owns the concrete `wgpu` implementation.
-
-The current split is that widgets and runtime code express intent, while the renderer owns packet, tile, and buffer policy.
+Older tile-cache terminology still appears in parts of the repo and older docs, but cached tiles are no longer the preferred architectural direction for the main renderer path. Current work should assume that lowering structural layer cost is more important than reviving broad tile-cache policy knobs.
 
 ## Frame Pipeline
 
@@ -72,12 +84,14 @@ For a single window, the renderer-facing path is:
 
 1. `Runtime::render()` produces a `SceneFrame`.
 2. The renderer compares the new frame against retained compositor state.
-3. Typed `SceneLayerUpdate` values invalidate cached content conservatively.
+3. Typed `SceneLayerUpdate` values invalidate retained content conservatively.
 4. Dirty or newly visible content is rebuilt.
 5. Reusable retained fragments are composed into the final pass sequence.
 6. The renderer submits GPU work and records frame statistics.
 
 The steady-state goal is reuse. On a good frame, the renderer should mostly reposition or recompose retained content rather than regenerate everything.
+
+Today, an important source of overhead is that the runtime often emits far more `SceneLayer` nodes than the renderer actually needs for correctness. That increases layer traversal, packet comparison, and structure-management cost before the GPU submission path even matters.
 
 ## Text And Image Flow
 
@@ -96,7 +110,7 @@ There are two important caches today:
 
 The renderer also owns a grayscale text coverage policy for glyph alpha generation. By default it resolves automatically from text luminance, so dark text and light text can coexist in the same window while using different coverage curves. The resolved policy is applied when rasterizing atlas glyphs and when emitting analytic text fallback coverage, which makes text-edge tuning a renderer concern rather than a widget or layout concern.
 
-This split keeps text measurement and shaping out of widgets while still letting the renderer optimize repeated output.
+This split keeps text measurement and shaping out of renderer internals while still letting widgets and the runtime share those utilities and letting the renderer optimize repeated output.
 
 ### Images
 
@@ -149,11 +163,11 @@ The repo already uses live diagnostics in the widget book. Detailed metrics are 
 The current renderer is already on the retained compositor path, but there are still active performance constraints worth knowing before tuning code.
 
 - text-heavy frames can still dominate vertex upload volume
-- tile regeneration cost matters during heavy scroll churn
+- layer-heavy frames can bottleneck on retained traversal, packet upkeep, and composition structure management even when raw scene-command counts look modest
 - surface acquisition can be a visible tail-latency component on desktop
 - bind-group and upload behavior around analytic paths and text atlas updates still matters on miss-heavy frames
 
-The widget book benchmark surfaces and overlay are the preferred way to validate renderer changes against those costs.
+The widget book benchmark surfaces and overlay are the preferred way to validate renderer changes against those costs. For architecture work, also track widget count, scene-layer count, stack-surface count, and packet rebuild reasons, because those often explain performance better than raw draw counts.
 
 ## Where To Work On Common Problems
 

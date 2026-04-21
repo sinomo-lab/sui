@@ -35,7 +35,7 @@ SUI is primarily designed for Rust and wgpu, with support for desktop, mobile, a
 - Build on top of wgpu so rendering remains portable across native and web targets.
 - Support desktop, mobile, and WASM without splitting the framework into unrelated codepaths.
 - Support first-class language bindings for Python and JavaScript without making Rust the only viable application entry point.
-- Offer a practical default layout system that is simple for common cases and overridable for advanced widgets.
+- Offer a practical default layout system that is simple for common cases, but keep it as an optional utility layer rather than a mandatory framework-wide rendering concept.
 - Provide first-class support for vector graphics, pixel graphics, text, and large canvas workflows.
 - Provide strong accessibility support for built-in widgets and a clear accessibility interface for custom widgets.
 - Provide debugging and automated UI testing support suitable for interaction-heavy applications.
@@ -72,7 +72,7 @@ Desktop, mobile, and web should share the same conceptual model. Platform differ
 
 ### 5. Extensible subsystems
 
-Subsystems such as brushes, render surfaces, text shaping, embedded content, and layout behavior should be replaceable or augmentable where practical.
+Subsystems such as brushes, render surfaces, text shaping, embedded content, layout behavior, and measurement/composition utilities should be replaceable or augmentable where practical.
 
 ### 6. Incremental complexity
 
@@ -198,13 +198,15 @@ This matters especially for infinite canvases, timelines, large tables, and edit
 
 ## Layout System
 
-The layout system should default to a one-pass model:
+The built-in layout pipeline should default to a one-pass model:
 
 - parent provides constraints
 - child computes size
 - parent places child
 
 This model should be efficient, easy to reason about, and sufficient for most controls.
+
+It should also stay clearly separated from the renderer and from SUI's core identity. Built-in widgets will use it heavily, but SUI should treat it as a practical utility rather than assuming every serious UI can or should fit into one measurement system.
 
 Some widgets will need more than this. SUI should allow widgets to opt into custom layout logic for cases such as:
 
@@ -213,8 +215,11 @@ Some widgets will need more than this. SUI should allow widgets to opt into cust
 - virtualized collections
 - multi-pass container layout
 - canvas-like free positioning
+- UI attached to arbitrary spatial systems such as 3D objects or non-rectilinear surfaces
 
 The framework should also provide layout utilities inspired by utility-first systems such as Tailwind CSS, but adapted to Rust APIs and runtime composition rather than string-based class authoring.
+
+Those utilities should be callable independently of the standard widget-tree rendering path so a custom widget or host system can initiate measurement/composition work directly, mix it with arbitrary layout logic, or ignore it entirely when another system is a better fit.
 
 ## Rendering Model
 
