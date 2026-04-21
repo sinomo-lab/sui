@@ -787,6 +787,11 @@ pub struct SceneStatistics {
     pub dirty_coverage: f32,
     pub command_count: usize,
     pub command_breakdown: Vec<(String, usize)>,
+    /// Current repaint granularity as observed by the runtime today.
+    ///
+    /// During the layer-boundary transition this still tracks emitted scene
+    /// layers, because the runtime has not yet decoupled explicit repaint
+    /// boundaries from per-widget `SceneLayer` emission.
     pub repaint_boundary_count: usize,
     pub scene_layer_count: usize,
     pub stack_surface_count: usize,
@@ -959,6 +964,10 @@ fn scene_layer_totals(frame: &SceneFrame) -> SceneLayerTotals {
             totals.overlay_layer_count += 1;
         }
     });
+    // Current runtime behavior still uses emitted scene layers as repaint
+    // granularity. Keep the two metrics separate in the API so later slices can
+    // decouple them without another diagnostics rename, but document the
+    // equality clearly for this transitional phase.
     totals.repaint_boundary_count = totals.scene_layer_count;
     totals
 }

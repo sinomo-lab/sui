@@ -3022,7 +3022,7 @@ impl LivePerformancePanel {
                     .map(|sample| format_duration_ms(sample.duration_ms))
                     .unwrap_or_else(|| "0.0 ms".to_string());
                 let scene_metric = format!(
-                    "widgets {}  |  boundaries {}  |  scene {}",
+                    "widgets {}  |  repaint(now) {}  |  scene {}",
                     snapshot.scene.total_widget_count,
                     snapshot.scene.repaint_boundary_count,
                     snapshot.scene.scene_layer_count,
@@ -4673,7 +4673,7 @@ mod tests {
         let lines = panel.content_specs(WindowId::new(11));
         assert!(lines.iter().any(|line| line.text.contains("lat render")));
         assert!(lines.iter().any(|line| line.text.contains("widgets")));
-        assert!(lines.iter().any(|line| line.text.contains("boundaries")));
+        assert!(lines.iter().any(|line| line.text.contains("repaint(now)")));
         assert!(lines.iter().any(|line| line.text.contains("stack")));
         assert!(lines.iter().any(|line| line.text.contains("overlay")));
         assert!(lines.iter().any(|line| line.text.contains("dirty")));

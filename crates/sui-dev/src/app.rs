@@ -2727,7 +2727,7 @@ final_max_luminance={final_max_luminance}
         );
         println!("avg widgets:      {avg_widget_count:.2}");
         println!(
-            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
+            "avg repaint(now): {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
         );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
@@ -2977,7 +2977,7 @@ final_max_luminance={final_max_luminance}
         );
         println!("avg widgets:      {avg_widget_count:.2}");
         println!(
-            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
+            "avg repaint(now): {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
         );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
@@ -3188,7 +3188,7 @@ final_max_luminance={final_max_luminance}
         );
         println!("avg widgets:      {avg_widget_count:.2}");
         println!(
-            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
+            "avg repaint(now): {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
         );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
@@ -3467,7 +3467,7 @@ final_max_luminance={final_max_luminance}
         );
         println!("avg widgets:      {avg_widget_count:.2}");
         println!(
-            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
+            "avg repaint(now): {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
         );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg direct packets:{avg_direct_packets:.2}");
@@ -3883,7 +3883,7 @@ final_max_luminance={final_max_luminance}
         );
         println!("avg widgets:      {avg_widget_count:.2}");
         println!(
-            "avg boundaries:   {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
+            "avg repaint(now): {avg_repaint_boundary_count:.2} ({avg_scene_layer_count:.2} scene | {avg_stack_surface_count:.2} stack | {avg_overlay_layer_count:.2} overlay)"
         );
         println!("avg visible layers:{avg_visible_layers:.2}");
         println!("avg state update:  {avg_state_update_ms:.3} ms");
