@@ -322,6 +322,10 @@ impl Scene {
         self.commands.push(command);
     }
 
+    pub fn append(&mut self, mut scene: Scene) {
+        self.commands.append(&mut scene.commands);
+    }
+
     pub fn commands(&self) -> &[SceneCommand] {
         &self.commands
     }

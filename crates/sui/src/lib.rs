@@ -33,7 +33,7 @@ pub use sui_core::{
     ToggleState, Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 pub use sui_layout::Padding as Insets;
-pub use sui_layout::{Alignment, Axis, Constraints, Padding};
+pub use sui_layout::{Alignment, Axis, Constraints, LayoutContext, Padding};
 #[cfg(any(feature = "desktop", feature = "web"))]
 pub use sui_platform::{
     AccessibilitySnapshot, DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform,

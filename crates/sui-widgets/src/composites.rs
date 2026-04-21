@@ -5,7 +5,8 @@ use sui_core::{
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
+    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
+    SingleChild,
     StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
     window_render_options,
 };
@@ -1278,6 +1279,7 @@ impl Widget for Tooltip {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
             composition_mode: if self.hovered {
                 LayerCompositionMode::Overlay
             } else {
@@ -1593,6 +1595,7 @@ impl Widget for Popover {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
             composition_mode: if self.open {
                 LayerCompositionMode::Overlay
             } else {
@@ -1985,6 +1988,7 @@ impl Widget for ContextMenu {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
             composition_mode: if self.open {
                 LayerCompositionMode::Overlay
             } else {
@@ -2367,6 +2371,7 @@ impl Widget for Dialog {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
             composition_mode: if self.shown {
                 if self.modal {
                     LayerCompositionMode::Effect
@@ -2647,7 +2652,8 @@ impl Widget for Spinner {
 pub type BusyIndicator = Spinner;
 
 fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
-    ctx.measure_text(text.to_string(), style.clone())
+    ctx.layout()
+        .measure_text(text.to_string(), style.clone())
         .unwrap_or(TextMeasurement {
             width: 0.0,
             height: style.line_height,

@@ -1971,7 +1971,8 @@ fn estimate_text_width(text: &str, style: &TextStyle) -> f32 {
 }
 
 fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
-    ctx.measure_text(text.to_string(), style.clone())
+    ctx.layout()
+        .measure_text(text.to_string(), style.clone())
         .unwrap_or(TextMeasurement {
             width: estimate_text_width(text, style),
             height: style.line_height,

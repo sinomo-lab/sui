@@ -16,7 +16,7 @@ use sui::{
     resolve_widget_hdr_style, set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_scene_statistics_detail_mode,
 };
-use sui_runtime::LayerOptions;
+use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::LayerCompositionMode;
 
 #[cfg(feature = "artifacts")]
@@ -3223,6 +3223,7 @@ impl Widget for LivePerformancePanel {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
             composition_mode: LayerCompositionMode::Overlay,
         }
     }

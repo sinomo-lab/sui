@@ -9,7 +9,8 @@ use sui_core::{
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_runtime::{
-    EventCtx, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, StackSurfaceOptions, Widget,
+    EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
+    StackSurfaceOptions, Widget,
     window_render_options,
 };
 use sui_scene::{LayerCompositionMode, StrokeStyle};
@@ -465,6 +466,7 @@ impl Widget for Label {
             && natural_measurement.width > constraints.max.width
         {
             let wrapped_measurement = ctx
+                .layout()
                 .shape_text(
                     self.text.clone(),
                     Size::new(constraints.max.width.max(1.0), f32::INFINITY),
@@ -746,6 +748,7 @@ impl Widget for Button {
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
         let label_layout = ctx
+            .layout()
             .shape_text_persistent(
                 self.label_layout.as_ref().map(|layout| layout.handle()),
                 self.label.clone(),
@@ -2887,6 +2890,7 @@ impl Widget for TextArea {
         };
 
         let display_layout = ctx
+            .layout()
             .shape_text_persistent(
                 self.display_layout.as_ref().map(|layout| layout.handle()),
                 display_text,
@@ -2895,6 +2899,7 @@ impl Widget for TextArea {
             )
             .ok();
         let input_layout = ctx
+            .layout()
             .shape_text_persistent(
                 self.input_layout.as_ref().map(|layout| layout.handle()),
                 input_text,
@@ -3392,6 +3397,7 @@ impl Widget for Select {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
             composition_mode: if self.expanded {
                 LayerCompositionMode::Overlay
             } else {
@@ -3784,7 +3790,8 @@ impl Widget for TextInput {
 }
 
 fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
-    ctx.measure_text(text.to_string(), style.clone())
+    ctx.layout()
+        .measure_text(text.to_string(), style.clone())
         .unwrap_or(TextMeasurement {
             width: 0.0,
             height: style.line_height,

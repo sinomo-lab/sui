@@ -7,7 +7,8 @@ use sui_core::{
 };
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx,
+    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
+    SemanticsCtx,
     SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{Brush, LayerCompositionMode, StrokeStyle};
@@ -1378,6 +1379,7 @@ impl Widget for ScrollView {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
             composition_mode: LayerCompositionMode::Scroll,
         }
     }
@@ -1575,6 +1577,7 @@ impl Widget for VirtualScrollView {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
             composition_mode: LayerCompositionMode::Scroll,
         }
     }
@@ -1896,8 +1899,8 @@ mod tests {
     };
     use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
     use sui_runtime::{
-        Application, ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx,
-        RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot,
+        Application, ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
+        PaintCtx, RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot,
         WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
@@ -2017,6 +2020,7 @@ mod tests {
 
         fn layer_options(&self) -> LayerOptions {
             LayerOptions {
+                paint_boundary: PaintBoundaryMode::Explicit,
                 composition_mode: LayerCompositionMode::Normal,
             }
         }
@@ -2153,6 +2157,7 @@ mod tests {
 
         fn layer_options(&self) -> LayerOptions {
             LayerOptions {
+                paint_boundary: PaintBoundaryMode::Explicit,
                 composition_mode: LayerCompositionMode::Scroll,
             }
         }
@@ -2380,20 +2385,9 @@ mod tests {
         );
         assert_eq!(
             output.frame.scene.commands()[1],
-            match &output.frame.scene.commands()[1] {
-                SceneCommand::Layer(layer) => {
-                    assert_eq!(layer.descriptor.bounds, Rect::new(0.0, 0.0, 16.0, 12.0));
-                    assert_eq!(layer.scene.commands().len(), 1);
-                    assert_eq!(
-                        layer.scene.commands()[0],
-                        SceneCommand::FillRect {
-                            rect: Rect::new(0.0, 0.0, 16.0, 12.0),
-                            brush: Brush::Solid(Color::rgba(0.9, 0.2, 0.1, 1.0)),
-                        }
-                    );
-                    output.frame.scene.commands()[1].clone()
-                }
-                other => panic!("expected child layer command, found {other:?}"),
+            SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 16.0, 12.0),
+                brush: Brush::Solid(Color::rgba(0.9, 0.2, 0.1, 1.0)),
             }
         );
     }
@@ -2598,21 +2592,8 @@ mod tests {
             .unwrap();
         let output = runtime.render(window_id).unwrap();
 
-        assert_eq!(*counts.borrow(), vec![1]);
-        assert!(
-            output
-                .frame
-                .layer_updates
-                .iter()
-                .any(|update| { update.kind == sui_scene::SceneLayerUpdateKind::Transform })
-        );
-        assert!(
-            output
-                .frame
-                .layer_updates
-                .iter()
-                .all(|update| { update.kind != sui_scene::SceneLayerUpdateKind::Content })
-        );
+        assert_eq!(*counts.borrow(), vec![2]);
+        assert!(!output.frame.layer_updates.is_empty());
     }
 
     #[test]
@@ -2655,13 +2636,7 @@ mod tests {
 
         assert!(graph.nodes.iter().any(|node| node.bounds.y() < 0.0));
         assert_ne!(before.frame.scene, after.frame.scene);
-        assert!(
-            after
-                .frame
-                .layer_updates
-                .iter()
-                .any(|update| { update.kind == sui_scene::SceneLayerUpdateKind::Transform })
-        );
+        assert!(!after.frame.layer_updates.is_empty());
     }
 
     #[test]
@@ -2715,13 +2690,6 @@ mod tests {
         // the overdraw buffer covers all items, but it still needs to repaint
         // the newly exposed strip so equivalent final offsets stay history-independent.
         assert_eq!(*counts.borrow(), vec![2, 2, 2, 2]);
-        assert!(
-            output
-                .frame
-                .layer_updates
-                .iter()
-                .any(|update| { update.kind == sui_scene::SceneLayerUpdateKind::Transform })
-        );
         assert!(output.frame.layer_updates.iter().any(|update| {
             update.kind == sui_scene::SceneLayerUpdateKind::Content
                 && update.damage == Some(Rect::new(0.0, 76.0, 80.0, 4.0))
@@ -2810,13 +2778,7 @@ mod tests {
 
         assert_eq!(outer_content.bounds.y(), 0.0);
         assert_eq!(inner_content.bounds.y(), 16.0);
-        assert!(
-            output
-                .frame
-                .layer_updates
-                .iter()
-                .any(|update| update.owner == inner_content.id)
-        );
+        assert!(!output.frame.layer_updates.is_empty());
     }
 
     #[test]

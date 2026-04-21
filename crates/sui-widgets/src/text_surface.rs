@@ -6,7 +6,10 @@ use sui_core::{
     WindowEvent,
 };
 use sui_layout::{Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{
+    EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
+    Widget,
+};
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{
     PersistentTextLayout, TextCursor, TextDirection, TextSelection, TextStyle, TextWrap,
@@ -883,7 +886,7 @@ impl Widget for TextSurface {
         let mut next_line_layouts: Vec<PersistentTextLayout> = Vec::with_capacity(line_texts.len());
         let mut line_layout_failed = false;
         for (index, line) in line_texts.iter().enumerate() {
-            match ctx.shape_text_persistent(
+            match ctx.layout().shape_text_persistent(
                 self.line_layouts.get(index).map(|layout| layout.handle()),
                 line.clone(),
                 line_box_size,
@@ -908,6 +911,7 @@ impl Widget for TextSurface {
         }
 
         let layout = ctx
+            .layout()
             .shape_text_persistent(
                 self.layout.as_ref().map(|layout| layout.handle()),
                 display_text,
@@ -1060,6 +1064,7 @@ impl Widget for TextSurface {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
             composition_mode: LayerCompositionMode::Scroll,
         }
     }

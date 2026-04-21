@@ -7,3 +7,5 @@ rust-version.workspace = true
 
 [dependencies]
 sui-core = { workspace = true }
+sui-scene = { workspace = true }
+sui-text = { workspace = true }

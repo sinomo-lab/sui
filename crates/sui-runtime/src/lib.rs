@@ -35,10 +35,11 @@ pub use diagnostics::{
     window_scene_statistics_detail_mode,
 };
 pub use sui_core::DpiInfo;
+pub use sui_layout::LayoutContext;
 pub use widget::{
-    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintCtx, SemanticsCtx,
-    SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget, WidgetChildren,
-    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
+    SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
+    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
 
@@ -558,6 +559,7 @@ pub struct WidgetNodeSnapshot {
     pub geometry: WidgetGeometrySnapshot,
     // Backward-compatible alias of geometry.layout_bounds.
     pub bounds: Rect,
+    pub paint_boundary: PaintBoundaryMode,
     pub stack_host: WidgetId,
     pub stack_surface: WidgetId,
     pub stack_surface_order: usize,
@@ -614,6 +616,7 @@ struct WindowState {
     viewport_hint: Option<Size>,
     viewport: Option<Size>,
     last_frame: Option<SceneFrame>,
+    last_paint_bounds_by_widget: HashMap<WidgetId, Rect>,
     last_semantics: Vec<SemanticsNode>,
     pending_invalidations: Vec<InvalidationRequest>,
     pointer_capture: HashMap<u64, WidgetId>,
@@ -645,6 +648,7 @@ impl WindowState {
             viewport_hint: None,
             viewport: None,
             last_frame: None,
+            last_paint_bounds_by_widget: HashMap::new(),
             last_semantics: Vec::new(),
             pending_invalidations: Vec::new(),
             pointer_capture: HashMap::new(),
@@ -1420,12 +1424,15 @@ impl WindowState {
             }
         }
 
-        if self.schedule.paint || self.last_frame.is_none() {
+        if self.schedule.paint || self.last_frame.is_none() || !repaint_graph_widgets.is_empty() {
             repaint_layers = self.collect_dirty_layers(&invalidations);
             dirty_layers = repaint_layers.clone();
             for widget_id in repaint_graph_widgets.iter().copied() {
                 if self.graph.contains(widget_id) && !dirty_layers.contains(&widget_id) {
                     dirty_layers.push(widget_id);
+                }
+                if self.graph.contains(widget_id) && !repaint_layers.contains(&widget_id) {
+                    repaint_layers.push(widget_id);
                 }
             }
             dirty_layers.sort_by_key(|widget_id| {
@@ -1473,7 +1480,7 @@ impl WindowState {
                 None
             };
 
-            let (scene, paint_invalidations, ime_composition_rect) =
+            let (scene, paint_bounds_by_widget, paint_invalidations, ime_composition_rect) =
                 if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
                     self.paint_full_scene(
                         dpi_info,
@@ -1486,6 +1493,7 @@ impl WindowState {
                             .as_ref()
                             .map(|frame| frame.scene.clone())
                             .unwrap_or_default(),
+                        self.last_paint_bounds_by_widget.clone(),
                         Vec::new(),
                         baseline_ime_composition_rect,
                     )
@@ -1503,7 +1511,9 @@ impl WindowState {
                 let _ = scene.translate_layer(translation.widget_id, translation.delta);
             }
             self.sync_scene_stack_metadata(&mut scene);
-            self.graph.update_paint_bounds_from_scene(&scene);
+            self.last_paint_bounds_by_widget = paint_bounds_by_widget;
+            self.graph
+                .update_paint_bounds_from_snapshot(&self.last_paint_bounds_by_widget);
             invalidations.extend(paint_invalidations);
             self.ime_composition_rect = ime_composition_rect;
             let previous_scene = self.last_frame.as_ref().map(|frame| &frame.scene);
@@ -1606,7 +1616,12 @@ impl WindowState {
         dpi_info: DpiInfo,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
-    ) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
+    ) -> (
+        Scene,
+        HashMap<WidgetId, Rect>,
+        Vec<InvalidationRequest>,
+        Option<Rect>,
+    ) {
         let mut paint_ctx = PaintCtx::new(
             self.id,
             self.root.id(),
@@ -1629,13 +1644,19 @@ impl WindowState {
         baseline_ime_composition_rect: Option<Rect>,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
-    ) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
+    ) -> (
+        Scene,
+        HashMap<WidgetId, Rect>,
+        Vec<InvalidationRequest>,
+        Option<Rect>,
+    ) {
         let mut scene = self
             .last_frame
             .as_ref()
             .map(|frame| frame.scene.clone())
             .unwrap_or_default();
         let mut invalidations = Vec::new();
+        let mut paint_bounds_by_widget = self.last_paint_bounds_by_widget.clone();
         let mut ime_composition_rect = baseline_ime_composition_rect;
 
         for &widget_id in dirty_layers {
@@ -1663,7 +1684,7 @@ impl WindowState {
                 return self.paint_full_scene(dpi_info, text_system, font_registry);
             }
 
-            let (layer_scene, layer_invalidations, layer_ime_composition_rect) =
+            let (layer_scene, layer_paint_bounds, layer_invalidations, layer_ime_composition_rect) =
                 paint_ctx.into_parts();
             let Some(descriptor) = self.root.layer_descriptor_for(widget_id, &layer_scene) else {
                 return self.paint_full_scene(dpi_info, text_system, font_registry);
@@ -1677,13 +1698,14 @@ impl WindowState {
                 return self.paint_full_scene(dpi_info, text_system, font_registry);
             }
 
+            paint_bounds_by_widget.extend(layer_paint_bounds);
             invalidations.extend(layer_invalidations);
             if layer_ime_composition_rect.is_some() {
                 ime_composition_rect = layer_ime_composition_rect;
             }
         }
 
-        (scene, invalidations, ime_composition_rect)
+        (scene, paint_bounds_by_widget, invalidations, ime_composition_rect)
     }
 
     fn collect_dirty_layers(&self, invalidations: &[InvalidationRequest]) -> Vec<WidgetId> {
@@ -1703,7 +1725,7 @@ impl WindowState {
             })
             .map(|request| match request.target {
                 InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => {
-                    widget_id
+                    self.graph.nearest_paint_boundary_ancestor_or_root(widget_id)
                 }
                 InvalidationTarget::Widget(_) => self.root.id(),
                 InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
@@ -1711,13 +1733,7 @@ impl WindowState {
             .collect();
 
         if self.last_frame.is_none() || candidates.contains(&self.root.id()) {
-            return self
-                .graph
-                .snapshot()
-                .nodes
-                .into_iter()
-                .map(|node| node.id)
-                .collect();
+            return vec![self.root.id()];
         }
 
         let mut candidates: Vec<_> = candidates
@@ -1780,24 +1796,43 @@ impl WindowState {
                         || previous_node.parent != current_node.parent
                         || previous_node.children != current_node.children
                     {
-                        repaint_candidates.insert(current_node.id);
+                        repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
+                            &current_snapshot,
+                            current_node.id,
+                        ));
                         continue;
                     }
 
                     let delta = current_node.geometry.layout_bounds.origin
                         - previous_node.geometry.layout_bounds.origin;
                     if delta != Vector::ZERO {
-                        transform_candidates.push(LayerTranslation {
-                            widget_id: current_node.id,
-                            delta,
-                        });
+                        let resolved_boundary = resolve_snapshot_paint_boundary_or_root(
+                            &current_snapshot,
+                            current_node.id,
+                        );
+                        if resolved_boundary == current_node.id
+                            && current_node.paint_boundary == PaintBoundaryMode::Explicit
+                        {
+                            transform_candidates.push(LayerTranslation {
+                                widget_id: current_node.id,
+                                delta,
+                            });
+                        } else {
+                            repaint_candidates.insert(resolved_boundary);
+                        }
                     }
                 }
                 (None, Some(current_node)) => {
-                    repaint_candidates.insert(current_node.parent.unwrap_or(current_snapshot.root));
+                    repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
+                        &current_snapshot,
+                        current_node.id,
+                    ));
                 }
                 (Some(previous_node), None) => {
-                    repaint_candidates.insert(previous_node.parent.unwrap_or(previous.root));
+                    repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
+                        previous,
+                        previous_node.id,
+                    ));
                 }
                 (None, None) => {}
             }
@@ -1880,10 +1915,14 @@ impl WindowState {
             let InvalidationTarget::Widget(widget_id) = request.target else {
                 continue;
             };
-            let Some(previous) = previous_layers.get(&widget_id) else {
+            let resolved_boundary = self.graph.nearest_paint_boundary_ancestor_or_root(widget_id);
+            if resolved_boundary == self.root.id() {
+                continue;
+            }
+            let Some(previous) = previous_layers.get(&resolved_boundary) else {
                 continue;
             };
-            let Some(current) = self.graph.node(widget_id) else {
+            let Some(current) = self.graph.node(resolved_boundary) else {
                 continue;
             };
 
@@ -1894,9 +1933,12 @@ impl WindowState {
 
             if translations
                 .iter()
-                .all(|translation: &LayerTranslation| translation.widget_id != widget_id)
+                .all(|translation: &LayerTranslation| translation.widget_id != resolved_boundary)
             {
-                translations.push(LayerTranslation { widget_id, delta });
+                translations.push(LayerTranslation {
+                    widget_id: resolved_boundary,
+                    delta,
+                });
             }
         }
 
@@ -1949,7 +1991,7 @@ impl WindowState {
 
                 match request.target {
                     InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => {
-                        Some(widget_id)
+                        Some(self.graph.nearest_paint_boundary_ancestor_or_root(widget_id))
                     }
                     _ => None,
                 }
@@ -1961,9 +2003,9 @@ impl WindowState {
                 continue;
             };
             let widget_id = match request.target {
-                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => {
-                    widget_id
-                }
+                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => self
+                    .graph
+                    .nearest_paint_boundary_ancestor_or_root(widget_id),
                 InvalidationTarget::Widget(_) => self.root.id(),
                 InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
             };
@@ -1985,6 +2027,7 @@ impl WindowState {
 
         for (widget_id, descriptor) in &current_layers {
             let Some(previous) = previous_layers.get(widget_id) else {
+                merge_layer_update_kind(&mut updates, *widget_id, SceneLayerUpdateKind::Content);
                 continue;
             };
             if descriptor.stack_host != previous.stack_host
@@ -2073,20 +2116,10 @@ impl WindowState {
     }
 
     fn refresh_graph(&mut self) {
-        let paint_bounds_by_widget = self
-            .last_frame
-            .as_ref()
-            .map(|frame| {
-                collect_scene_layers(&frame.scene)
-                    .into_iter()
-                    .map(|(widget_id, descriptor)| (widget_id, descriptor.paint_bounds))
-                    .collect::<HashMap<WidgetId, Rect>>()
-            })
-            .unwrap_or_default();
         self.graph = WidgetGraph::rebuild(
             &self.root,
             self.focus.focused_widget,
-            &paint_bounds_by_widget,
+            &self.last_paint_bounds_by_widget,
         );
         self.prune_runtime_state();
         self.schedule.hit_test = false;
@@ -2254,12 +2287,7 @@ impl WidgetGraph {
         }
     }
 
-    fn update_paint_bounds_from_scene(&mut self, scene: &Scene) {
-        let paint_bounds_by_widget = collect_scene_layers(scene)
-            .into_iter()
-            .map(|(widget_id, descriptor)| (widget_id, descriptor.paint_bounds))
-            .collect::<HashMap<WidgetId, Rect>>();
-
+    fn update_paint_bounds_from_snapshot(&mut self, paint_bounds_by_widget: &HashMap<WidgetId, Rect>) {
         for node in self.nodes.values_mut() {
             node.geometry.paint_bounds = paint_bounds_by_widget
                 .get(&node.id)
@@ -2329,6 +2357,18 @@ impl WidgetGraph {
 
         path.reverse();
         Some(path)
+    }
+
+    fn nearest_paint_boundary_ancestor_or_root(&self, widget_id: WidgetId) -> WidgetId {
+        self.path_to(widget_id)
+            .and_then(|path| {
+                path.into_iter().rev().find(|candidate| {
+                    self.node(*candidate).is_some_and(|node| {
+                        node.paint_boundary == PaintBoundaryMode::Explicit
+                    })
+                })
+            })
+            .unwrap_or(self.root)
     }
 
     fn next_focusable(&self, current: Option<WidgetId>, backwards: bool) -> Option<WidgetId> {
@@ -2458,6 +2498,7 @@ impl WidgetGraph {
                 measured_size: pod.measured_size(),
                 geometry: WidgetGeometrySnapshot::new(layout_bounds, input_bounds, paint_bounds),
                 bounds: layout_bounds,
+                paint_boundary: pod.current_paint_boundary_mode(),
                 stack_host: resolved_host,
                 stack_surface: resolved_surface,
                 stack_surface_order,
@@ -2625,6 +2666,28 @@ fn collect_scene_layers(scene: &Scene) -> HashMap<WidgetId, SceneLayerDescriptor
     layers
 }
 
+fn resolve_snapshot_paint_boundary_or_root(
+    snapshot: &WidgetGraphSnapshot,
+    widget_id: WidgetId,
+) -> WidgetId {
+    let nodes = snapshot
+        .nodes
+        .iter()
+        .map(|node| (node.id, node))
+        .collect::<HashMap<_, _>>();
+    let mut current = Some(widget_id);
+    while let Some(candidate) = current {
+        let Some(node) = nodes.get(&candidate) else {
+            break;
+        };
+        if node.paint_boundary == PaintBoundaryMode::Explicit {
+            return candidate;
+        }
+        current = node.parent;
+    }
+    snapshot.root
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HitTestCompositionPhase {
     Normal,
@@ -2733,14 +2796,15 @@ mod tests {
 
     use super::{
         Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
-        PaintCtx, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild, Widget,
-        WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor,
-        WidgetPodVisitor, WindowBuilder, set_window_scene_statistics_detail_mode,
+        PaintBoundaryMode, PaintCtx, Runtime, SceneStatisticsDetailMode, SemanticsCtx,
+        SingleChild, Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot,
+        WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
+        set_window_scene_statistics_detail_mode,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
         KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent, WindowEvent,
+        SemanticsNode, SemanticsRole, Size, TimerToken, Vector, WakeEvent, WindowEvent,
     };
     use sui_layout::Constraints;
     use sui_scene::{RegisteredImage, SceneCommand, SceneLayerUpdateKind};
@@ -2862,6 +2926,7 @@ mod tests {
 
         fn layer_options(&self) -> LayerOptions {
             LayerOptions {
+                paint_boundary: PaintBoundaryMode::Explicit,
                 composition_mode: sui_scene::LayerCompositionMode::Scroll,
             }
         }
@@ -2879,6 +2944,25 @@ mod tests {
         fn paint(&self, ctx: &mut PaintCtx) {
             self.counters.borrow_mut().paint += 1;
             ctx.fill_bounds(Color::rgba(0.78, 0.43, 0.14, 1.0));
+        }
+    }
+
+    struct OverpaintLeaf {
+        size: Size,
+        color: Color,
+        bleed: Vector,
+    }
+
+    impl Widget for OverpaintLeaf {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(self.size)
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_rect(
+                ctx.bounds().inflate(self.bleed.x.abs(), self.bleed.y.abs()),
+                self.color,
+            );
         }
     }
 
@@ -3258,6 +3342,7 @@ mod tests {
         fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(160.0, 32.0));
             let layout = ctx
+                .layout()
                 .shape_text_persistent(None, "compose", size, TextStyle::new(Color::WHITE))
                 .unwrap();
             *self.layout.borrow_mut() = Some(layout);
@@ -3454,6 +3539,23 @@ mod tests {
         (runtime, window_id, root_counters, leaf_counters)
     }
 
+    fn build_overpaint_runtime() -> (Runtime, sui_core::WindowId) {
+        let runtime = Application::new()
+            .window(WindowBuilder::new().title("Overpaint").root(TestRoot {
+                counters: Rc::new(RefCell::new(Counters::default())),
+                child: SingleChild::new(OverpaintLeaf {
+                    size: Size::new(120.0, 40.0),
+                    color: Color::rgba(0.92, 0.42, 0.18, 1.0),
+                    bleed: Vector::new(6.0, 4.0),
+                }),
+            }))
+            .build()
+            .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id)
+    }
+
     fn build_focus_traversal_runtime() -> (
         Runtime,
         sui_core::WindowId,
@@ -3477,6 +3579,13 @@ mod tests {
 
     fn graph_child(graph: &WidgetGraphSnapshot) -> &WidgetNodeSnapshot {
         &graph.nodes[1]
+    }
+
+    fn scene_has_layer_for(scene: &sui_scene::Scene, widget_id: sui_core::WidgetId) -> bool {
+        scene.commands().iter().any(|command| match command {
+            SceneCommand::Layer(layer) => layer.widget_id() == widget_id,
+            _ => false,
+        })
     }
 
     fn build_pointer_capture_runtime() -> (
@@ -3671,7 +3780,39 @@ mod tests {
     }
 
     #[test]
-    fn paint_invalidation_repaints_only_dirty_widget_layer() {
+    fn ordinary_widgets_flatten_scene_output_into_root() {
+        let (mut runtime, window_id, _, _) = build_runtime();
+
+        let output = runtime.render(window_id).unwrap();
+        let leaf_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+
+        assert!(!scene_has_layer_for(&output.frame.scene, leaf_id));
+    }
+
+    #[test]
+    fn explicit_paint_boundary_widgets_emit_layers() {
+        let (mut runtime, window_id, _, _) = build_cached_move_runtime();
+
+        let output = runtime.render(window_id).unwrap();
+        let layer_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+
+        assert!(scene_has_layer_for(&output.frame.scene, layer_id));
+    }
+
+    #[test]
+    fn flat_widgets_preserve_paint_bounds_larger_than_layout_bounds() {
+        let (mut runtime, window_id) = build_overpaint_runtime();
+
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let child = graph_child(&graph);
+
+        assert_eq!(child.bounds, Rect::new(32.0, 24.0, 120.0, 40.0));
+        assert_eq!(child.geometry.paint_bounds, child.bounds.inflate(6.0, 4.0));
+    }
+
+    #[test]
+    fn paint_invalidation_repaints_nearest_boundary_root_for_flat_child() {
         let (mut runtime, window_id, root_counters, leaf_counters) = build_runtime();
 
         let _ = runtime.render(window_id).unwrap();
@@ -3688,10 +3829,10 @@ mod tests {
 
         let output = runtime.render(window_id).unwrap();
 
-        assert_eq!(root_counters.borrow().paint, root_paint_before);
+        assert_eq!(root_counters.borrow().paint, root_paint_before + 1);
         assert_eq!(leaf_counters.borrow().paint, leaf_paint_before + 1);
-        assert_eq!(output.frame.layer_updates.len(), 1);
-        assert_eq!(output.frame.layer_updates[0].owner, leaf_id);
+        assert!(!scene_has_layer_for(&output.frame.scene, leaf_id));
+        assert!(output.frame.layer_updates.is_empty());
     }
 
     #[test]
@@ -3744,23 +3885,27 @@ mod tests {
     }
 
     #[test]
-    fn direct_layer_translation_updates_scene_without_repaint() {
+    fn direct_flat_child_translation_repaints_nearest_boundary_root() {
         let (mut runtime, window_id, root_counters, leaf_counters) = build_direct_move_runtime();
 
         let first = runtime.render(window_id).unwrap();
         let layer_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
         let root_paint_before = root_counters.borrow().paint;
         let leaf_paint_before = leaf_counters.borrow().paint;
-        let initial_bounds = first
+        let initial_rect = first
             .frame
             .scene
             .commands()
             .iter()
             .find_map(|command| match command {
-                SceneCommand::Layer(layer) if layer.widget_id() == layer_id => Some(layer.bounds()),
+                SceneCommand::FillRect { rect, .. }
+                    if *rect != Rect::new(0.0, 0.0, 320.0, 180.0) =>
+                {
+                    Some(*rect)
+                }
                 _ => None,
             })
-            .expect("direct layer present before translation");
+            .expect("flat child fill present before translation");
 
         runtime
             .handle_event(window_id, Event::Custom(CustomEvent::new("shift-direct")))
@@ -3768,28 +3913,28 @@ mod tests {
 
         let second = runtime.render(window_id).unwrap();
 
-        assert_eq!(root_counters.borrow().paint, root_paint_before);
-        assert_eq!(leaf_counters.borrow().paint, leaf_paint_before);
-        assert_eq!(second.frame.layer_updates.len(), 1);
-        assert_eq!(second.frame.layer_updates[0].owner, layer_id);
-        assert_eq!(
-            second.frame.layer_updates[0].kind,
-            SceneLayerUpdateKind::Transform
-        );
+        assert_eq!(root_counters.borrow().paint, root_paint_before + 1);
+        assert_eq!(leaf_counters.borrow().paint, leaf_paint_before + 1);
+        assert!(!scene_has_layer_for(&second.frame.scene, layer_id));
+        assert!(second.frame.layer_updates.is_empty());
 
-        let translated_bounds = second
+        let translated_rect = second
             .frame
             .scene
             .commands()
             .iter()
             .find_map(|command| match command {
-                SceneCommand::Layer(layer) if layer.widget_id() == layer_id => Some(layer.bounds()),
+                SceneCommand::FillRect { rect, .. }
+                    if *rect != Rect::new(0.0, 0.0, 320.0, 180.0) =>
+                {
+                    Some(*rect)
+                }
                 _ => None,
             })
-            .expect("direct layer present after translation");
+            .expect("flat child fill present after translation");
 
-        assert_eq!(translated_bounds.x(), initial_bounds.x() + 36.0);
-        assert_eq!(translated_bounds.y(), initial_bounds.y());
+        assert_eq!(translated_rect.x(), initial_rect.x() + 36.0);
+        assert_eq!(translated_rect.y(), initial_rect.y());
     }
 
     #[test]
@@ -4096,10 +4241,7 @@ mod tests {
 
         assert!(output.ime_composition_rect.is_some());
         assert!(output.diagnostics.text_caches.runtime_layout.misses > 0);
-        assert!(matches!(
-            output.frame.scene.commands()[0],
-            sui_scene::SceneCommand::Layer(_)
-        ));
+        assert!(!output.frame.scene.commands().is_empty());
         let mut saw_shaped_text = false;
         output.frame.scene.visit_commands(&mut |command| {
             if matches!(command, sui_scene::SceneCommand::DrawShapedText(_)) {

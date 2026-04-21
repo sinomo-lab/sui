@@ -109,7 +109,7 @@ impl Image {
     fn effective_source_size(&self, ctx: &MeasureCtx) -> Size {
         self.source_rect
             .map(|rect| rect.size)
-            .or_else(|| ctx.image_size(self.image))
+            .or_else(|| ctx.layout().image_size(self.image))
             .unwrap_or(Size::new(96.0, 96.0))
     }
 

@@ -2489,6 +2489,8 @@ name = "sui-layout"
 version = "0.1.0"
 dependencies = [
  "sui-core",
+ "sui-scene",
+ "sui-text",
 ]
 
 [[package]]

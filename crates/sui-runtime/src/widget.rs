@@ -1,6 +1,6 @@
 use std::time::Instant;
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     sync::{
         Arc,
@@ -15,14 +15,14 @@ use sui_core::{
     InvalidationTarget, Path, Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector,
     WidgetId, WindowId,
 };
-use sui_layout::Constraints;
+use sui_layout::{Constraints, LayoutContext};
 use sui_scene::{
     Brush, ImageRegistry, ImageSource, LayerCompositionMode, Scene, SceneCommand, SceneLayer,
     SceneLayerDescriptor, SceneLayerId, StrokeStyle,
 };
 use sui_text::{
-    FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextDocument, TextLayout,
-    TextLayoutHandle, TextLayoutRequest, TextMeasurement, TextRun, TextStyle, TextSystem,
+    FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
+    TextMeasurement, TextRun, TextStyle, TextSystem,
 };
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
@@ -85,8 +85,21 @@ pub trait Widget {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaintBoundaryMode {
+    Flat,
+    Explicit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayerOptions {
+    pub paint_boundary: PaintBoundaryMode,
     pub composition_mode: LayerCompositionMode,
+}
+
+impl LayerOptions {
+    pub const fn emits_layer(self) -> bool {
+        matches!(self.paint_boundary, PaintBoundaryMode::Explicit)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +139,7 @@ impl Default for StackSurfaceOptions {
 impl Default for LayerOptions {
     fn default() -> Self {
         Self {
+            paint_boundary: PaintBoundaryMode::Flat,
             composition_mode: LayerCompositionMode::Normal,
         }
     }
@@ -326,14 +340,11 @@ impl WidgetPod {
 
     pub fn measure(&mut self, parent_ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let origin = self.layout_state.arranged_bounds.origin;
-        let mut child_ctx = MeasureCtx::new(
+        let mut child_ctx = MeasureCtx::with_layout(
             parent_ctx.window_id(),
             self.id,
             self.layout_state.arranged_bounds,
-            parent_ctx.dpi(),
-            Arc::clone(&parent_ctx.text_system),
-            Arc::clone(&parent_ctx.font_registry),
-            Arc::clone(&parent_ctx.image_registry),
+            parent_ctx.layout().clone(),
         );
         let started = Instant::now();
         let size = self.widget.measure(&mut child_ctx, constraints);
@@ -388,8 +399,17 @@ impl WidgetPod {
             started.elapsed(),
         );
 
-        let (scene, invalidations, ime_composition_rect) = child_ctx.into_parts();
-        parent_ctx.push_layer(self.build_layer_descriptor(&scene), scene);
+        let (scene, widget_paint_bounds, invalidations, ime_composition_rect) = child_ctx.into_parts();
+        let paint_bounds = scene
+            .paint_bounds()
+            .unwrap_or(self.layout_state.arranged_bounds);
+        parent_ctx.record_widget_paint_bounds(self.id, paint_bounds);
+        if self.current_layer_options().emits_layer() {
+            parent_ctx.push_layer(self.build_layer_descriptor(&scene), scene);
+        } else {
+            parent_ctx.append_scene(scene);
+        }
+        parent_ctx.extend_widget_paint_bounds(widget_paint_bounds);
         parent_ctx.extend_invalidations(invalidations);
         parent_ctx.extend_ime_composition_rect(ime_composition_rect);
     }
@@ -408,6 +428,11 @@ impl WidgetPod {
                 WidgetTimingPhase::Paint,
                 started.elapsed(),
             );
+            let paint_bounds = parent_ctx
+                .scene()
+                .paint_bounds()
+                .unwrap_or(pod.layout_state.arranged_bounds);
+            parent_ctx.record_widget_paint_bounds(pod.id, paint_bounds);
         })
         .is_some()
     }
@@ -623,6 +648,10 @@ impl WidgetPod {
 
     pub(crate) fn current_layer_options(&self) -> LayerOptions {
         self.widget.layer_options()
+    }
+
+    pub(crate) fn current_paint_boundary_mode(&self) -> PaintBoundaryMode {
+        self.current_layer_options().paint_boundary
     }
 
     pub(crate) fn current_stack_host_options(&self) -> Option<StackHostOptions> {
@@ -940,14 +969,26 @@ pub struct MeasureCtx {
     window_id: WindowId,
     widget_id: WidgetId,
     bounds: Rect,
-    dpi_info: DpiInfo,
-    text_system: Arc<TextSystem>,
-    font_registry: Arc<FontRegistry>,
-    image_registry: Arc<ImageRegistry>,
+    layout: LayoutContext,
     invalidations: Vec<InvalidationRequest>,
 }
 
 impl MeasureCtx {
+    pub fn with_layout(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        bounds: Rect,
+        layout: LayoutContext,
+    ) -> Self {
+        Self {
+            window_id,
+            widget_id,
+            bounds,
+            layout,
+            invalidations: Vec::new(),
+        }
+    }
+
     pub(crate) fn new(
         window_id: WindowId,
         widget_id: WidgetId,
@@ -957,16 +998,12 @@ impl MeasureCtx {
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) -> Self {
-        Self {
+        Self::with_layout(
             window_id,
             widget_id,
             bounds,
-            dpi_info,
-            text_system,
-            font_registry,
-            image_registry,
-            invalidations: Vec::new(),
-        }
+            LayoutContext::new(dpi_info, text_system, font_registry, image_registry),
+        )
     }
 
     pub const fn window_id(&self) -> WindowId {
@@ -981,8 +1018,12 @@ impl MeasureCtx {
         self.bounds
     }
 
+    pub const fn layout(&self) -> &LayoutContext {
+        &self.layout
+    }
+
     pub const fn dpi(&self) -> DpiInfo {
-        self.dpi_info
+        self.layout.dpi()
     }
 
     pub fn request(&mut self, request: InvalidationRequest) {
@@ -1007,66 +1048,6 @@ impl MeasureCtx {
 
     pub fn request_semantics(&mut self) {
         self.request_widget(InvalidationKind::Semantics);
-    }
-
-    pub fn measure_text(
-        &self,
-        text: impl Into<String>,
-        style: TextStyle,
-    ) -> sui_core::Result<TextMeasurement> {
-        self.text_system
-            .measure_text(text, style, self.font_registry.as_ref())
-    }
-
-    pub fn measure_document(&self, document: TextDocument) -> sui_core::Result<TextMeasurement> {
-        self.text_system
-            .measure_document(document, self.font_registry.as_ref())
-    }
-
-    pub fn shape_text(
-        &self,
-        text: impl Into<String>,
-        box_size: Size,
-        style: TextStyle,
-    ) -> sui_core::Result<TextLayout> {
-        self.text_system
-            .shape_text(text, box_size, style, self.font_registry.as_ref())
-    }
-
-    pub fn shape_text_persistent(
-        &self,
-        handle: Option<TextLayoutHandle>,
-        text: impl Into<String>,
-        box_size: Size,
-        style: TextStyle,
-    ) -> sui_core::Result<PersistentTextLayout> {
-        self.text_system.shape_text_persistent(
-            handle,
-            text,
-            box_size,
-            style,
-            self.font_registry.as_ref(),
-        )
-    }
-
-    pub fn layout_document(&self, request: TextLayoutRequest) -> sui_core::Result<TextLayout> {
-        self.text_system
-            .layout_document(request, self.font_registry.as_ref())
-    }
-
-    pub fn layout_document_persistent(
-        &self,
-        handle: Option<TextLayoutHandle>,
-        request: TextLayoutRequest,
-    ) -> sui_core::Result<PersistentTextLayout> {
-        self.text_system
-            .layout_document_persistent(handle, request, self.font_registry.as_ref())
-    }
-
-    pub fn image_size(&self, image: sui_core::ImageHandle) -> Option<Size> {
-        self.image_registry
-            .get(image)
-            .map(|image| Size::new(image.width() as f32, image.height() as f32))
     }
 
     pub fn invalidations(&self) -> &[InvalidationRequest] {
@@ -1169,6 +1150,7 @@ pub struct PaintCtx {
     text_system: Arc<TextSystem>,
     font_registry: Arc<FontRegistry>,
     scene: Scene,
+    widget_paint_bounds: HashMap<WidgetId, Rect>,
     invalidations: Vec<InvalidationRequest>,
     ime_composition_rect: Option<Rect>,
 }
@@ -1192,6 +1174,7 @@ impl PaintCtx {
             text_system,
             font_registry,
             scene: Scene::new(),
+            widget_paint_bounds: HashMap::new(),
             invalidations: Vec::new(),
             ime_composition_rect: None,
         }
@@ -1411,6 +1394,21 @@ impl PaintCtx {
             )));
     }
 
+    pub(crate) fn append_scene(&mut self, scene: Scene) {
+        self.scene.append(scene);
+    }
+
+    pub(crate) fn record_widget_paint_bounds(&mut self, widget_id: WidgetId, paint_bounds: Rect) {
+        self.widget_paint_bounds.insert(widget_id, paint_bounds);
+    }
+
+    pub(crate) fn extend_widget_paint_bounds(
+        &mut self,
+        widget_paint_bounds: HashMap<WidgetId, Rect>,
+    ) {
+        self.widget_paint_bounds.extend(widget_paint_bounds);
+    }
+
     pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {
         self.invalidations.extend(invalidations);
     }
@@ -1421,8 +1419,20 @@ impl PaintCtx {
         }
     }
 
-    pub(crate) fn into_parts(self) -> (Scene, Vec<InvalidationRequest>, Option<Rect>) {
-        (self.scene, self.invalidations, self.ime_composition_rect)
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Scene,
+        HashMap<WidgetId, Rect>,
+        Vec<InvalidationRequest>,
+        Option<Rect>,
+    ) {
+        (
+            self.scene,
+            self.widget_paint_bounds,
+            self.invalidations,
+            self.ime_composition_rect,
+        )
     }
 
     fn request_widget(&mut self, kind: InvalidationKind) {
@@ -1522,15 +1532,15 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
-        WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+        ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
+        Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
     };
     use sui_core::{
-        Color, DpiInfo, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole, Vector,
-        WidgetId, WindowId,
+        Color, DpiInfo, ImageHandle, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole,
+        Size, Vector, WidgetId, WindowId,
     };
-    use sui_layout::Constraints;
-    use sui_scene::{ImageRegistry, SceneCommand, StrokeStyle};
+    use sui_layout::{Constraints, LayoutContext};
+    use sui_scene::{ImageRegistry, RegisteredImage, SceneCommand, StrokeStyle};
     use sui_text::{FontRegistry, TextStyle, TextSystem};
 
     fn measure_ctx(window_id: WindowId, widget_id: WidgetId) -> MeasureCtx {
@@ -1543,6 +1553,40 @@ mod tests {
             std::sync::Arc::new(FontRegistry::new()),
             std::sync::Arc::new(ImageRegistry::new()),
         )
+    }
+
+    #[test]
+    fn measure_ctx_wraps_reusable_layout_context() {
+        let mut images = ImageRegistry::new();
+        images.insert(
+            ImageHandle::new(9),
+            RegisteredImage::from_rgba8(3, 2, vec![255; 3 * 2 * 4]).unwrap(),
+        );
+        let layout = LayoutContext::new(
+            DpiInfo::new(
+                1.5,
+                Some(144.0),
+                Size::new(200.0, 100.0),
+                Size::new(300.0, 150.0),
+            ),
+            Arc::new(TextSystem::new()),
+            Arc::new(FontRegistry::new()),
+            Arc::new(images),
+        );
+
+        let measure = MeasureCtx::with_layout(
+            WindowId::new(1),
+            WidgetId::new(2),
+            Rect::new(4.0, 6.0, 32.0, 18.0),
+            layout.clone(),
+        );
+
+        assert_eq!(measure.dpi(), layout.dpi());
+        assert_eq!(measure.bounds(), Rect::new(4.0, 6.0, 32.0, 18.0));
+        assert_eq!(
+            measure.layout().image_size(ImageHandle::new(9)),
+            Some(Size::new(3.0, 2.0))
+        );
     }
 
     #[test]
@@ -1659,6 +1703,10 @@ mod tests {
         assert_eq!(size, sui_core::Size::new(64.0, 32.0));
         assert_eq!(pod.bounds(), Rect::new(4.0, 6.0, 64.0, 32.0));
         assert_eq!(paint.scene().commands().len(), 1);
+        assert!(matches!(
+            paint.scene().commands()[0],
+            SceneCommand::FillRect { .. }
+        ));
         assert_eq!(semantics.nodes().len(), 1);
     }
 
@@ -1813,6 +1861,7 @@ mod tests {
     #[test]
     fn text_layout_shapes_in_measure_and_paints_as_shaped_scene_output() {
         let layout = measure_ctx(WindowId::new(13), WidgetId::new(14))
+            .layout()
             .shape_text(
                 "hello",
                 sui_core::Size::new(80.0, 20.0),
