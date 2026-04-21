@@ -26,5 +26,6 @@ sui-testing = { workspace = true, optional = true }
 
 [dev-dependencies]
 png = "0.17"
+sui-platform = { workspace = true }
 sui-render-wgpu = { workspace = true }
 winit = { workspace = true }

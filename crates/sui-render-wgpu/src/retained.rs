@@ -45,11 +45,7 @@ pub(crate) struct RetainedCompositorFrameStats {
     pub(crate) scene_traversal_time_ms: f64,
     pub(crate) packet_build_count: usize,
     pub(crate) packet_build_time_ms: f64,
-    pub(crate) packet_rebuild_new_count: usize,
-    pub(crate) packet_rebuild_coordinate_space_count: usize,
-    pub(crate) packet_rebuild_signature_count: usize,
-    pub(crate) packet_rebuild_scene_count: usize,
-    pub(crate) packet_rebuild_state_count: usize,
+    pub(crate) packet_rebuilds: RetainedPacketRebuildStats,
     pub(crate) packet_normalize_time_ms: f64,
     pub(crate) packet_signature_time_ms: f64,
     pub(crate) packet_raster_state_init_time_ms: f64,
@@ -87,15 +83,7 @@ pub(crate) struct RetainedPacketBuildHotspot {
 
 impl RetainedCompositorFrameStats {
     fn record_packet_rebuild(&mut self, reason: PacketRebuildReason) {
-        match reason {
-            PacketRebuildReason::NewPacket => self.packet_rebuild_new_count += 1,
-            PacketRebuildReason::CoordinateSpace => {
-                self.packet_rebuild_coordinate_space_count += 1;
-            }
-            PacketRebuildReason::Signature => self.packet_rebuild_signature_count += 1,
-            PacketRebuildReason::Scene => self.packet_rebuild_scene_count += 1,
-            PacketRebuildReason::State => self.packet_rebuild_state_count += 1,
-        }
+        self.packet_rebuilds.record_reason(reason);
     }
 
     fn record_packet_build_diagnostics(
@@ -288,15 +276,6 @@ pub(crate) struct RetainedDirectPacket {
 enum PacketCoordinateSpace {
     World,
     LayerLocal,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PacketRebuildReason {
-    NewPacket,
-    CoordinateSpace,
-    Signature,
-    Scene,
-    State,
 }
 
 #[derive(Debug, Clone, Default)]

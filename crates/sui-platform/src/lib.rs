@@ -10,12 +10,13 @@ use std::time::Instant;
 use sui_core::WindowId;
 use sui_render_wgpu::{
     ColorManagementMode, RequestedColorManagementMode, RequestedDynamicRangeMode,
-    RequestedOutputColorPrimaries, RequestedToneMappingMode, StemDarkening, TextCoveragePolicy,
-    TextHinting, WgpuRenderer,
+    RequestedOutputColorPrimaries, RequestedToneMappingMode, RendererFrameStats, StemDarkening,
+    TextCoveragePolicy, TextHinting, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
-    RendererSubmissionDiagnostics, SceneStatistics, TextCacheDiagnostics,
+    RendererSubmissionDiagnostics, RetainedPacketHotspotDiagnostics,
+    RetainedPacketRebuildDiagnostics, SceneStatistics, TextCacheDiagnostics,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowPerformanceSnapshot, WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy,
     WindowToneMappingMode, clear_window_performance_snapshot, clear_window_performance_snapshots,
@@ -109,7 +110,97 @@ pub(crate) fn clear_window_performance(window_id: WindowId) {
     clear_window_output_diagnostics(window_id);
 }
 
-pub(crate) fn publish_frame_performance(
+fn retained_packet_rebuild_diagnostics(
+    rebuilds: sui_render_wgpu::RetainedPacketRebuildStats,
+) -> RetainedPacketRebuildDiagnostics {
+    RetainedPacketRebuildDiagnostics::new(
+        rebuilds.new_count,
+        rebuilds.coordinate_space_count,
+        rebuilds.signature_count,
+        rebuilds.scene_count,
+        rebuilds.state_count,
+    )
+}
+
+fn renderer_submission_diagnostics_from_frame_stats(
+    renderer_stats: &RendererFrameStats,
+) -> RendererSubmissionDiagnostics {
+    RendererSubmissionDiagnostics::new(
+        renderer_stats.pass_count,
+        renderer_stats.draw_count,
+        renderer_stats.uploaded_vertex_bytes,
+        renderer_stats.text_glyph_instance_count,
+        renderer_stats.text_vertex_bytes,
+        renderer_stats.visible_layer_count,
+        renderer_stats.direct_packet_count,
+        renderer_stats.retained_state_update_time_us,
+        renderer_stats.composition_time_us,
+        renderer_stats.retained_scene_traversal_time_us,
+        renderer_stats.retained_packet_build_time_us,
+        renderer_stats.retained_packet_build_count,
+        retained_packet_rebuild_diagnostics(renderer_stats.retained_packet_rebuilds),
+        renderer_stats.text_atlas_miss_count,
+        renderer_stats.text_atlas_miss_time_us,
+        renderer_stats.surface_acquire_time_us,
+        renderer_stats.resource_collection_time_us,
+        renderer_stats.bind_group_prepare_time_us,
+        renderer_stats.image_bind_group_time_us,
+        renderer_stats.analytic_path_bind_group_time_us,
+        renderer_stats.analytic_path_bind_group_miss_count,
+        renderer_stats.analytic_path_bind_group_upload_bytes,
+        renderer_stats.text_atlas_bind_group_time_us,
+        renderer_stats.text_atlas_upload_copy_time_us,
+        renderer_stats.text_atlas_upload_write_time_us,
+        renderer_stats.text_atlas_upload_bytes,
+        renderer_stats.batch_prepare_time_us,
+        renderer_stats.gpu_upload_time_us,
+        renderer_stats.pass_encode_time_us,
+        renderer_stats.queue_submit_time_us,
+        renderer_stats.surface_present_time_us,
+    )
+    .with_retained_packet_breakdown(
+        renderer_stats.retained_packet_normalize_time_us,
+        renderer_stats.retained_packet_signature_time_us,
+        renderer_stats.retained_packet_raster_state_init_time_us,
+        renderer_stats.retained_packet_scene_build_time_us,
+        renderer_stats.retained_packet_command_count,
+        renderer_stats.retained_packet_text_command_count,
+        renderer_stats.retained_packet_path_command_count,
+        renderer_stats.retained_packet_clip_path_command_count,
+        renderer_stats.retained_packet_image_command_count,
+        renderer_stats.retained_packet_rect_command_count,
+        renderer_stats.retained_packet_text_command_time_us,
+        renderer_stats.retained_packet_path_command_time_us,
+        renderer_stats.retained_packet_clip_path_command_time_us,
+        renderer_stats.retained_packet_image_command_time_us,
+        renderer_stats.retained_packet_rect_command_time_us,
+    )
+}
+
+fn retained_packet_hotspot_diagnostics_from_frame_stats(
+    renderer_stats: &RendererFrameStats,
+) -> Option<RetainedPacketHotspotDiagnostics> {
+    renderer_stats
+        .retained_packet_hotspot
+        .clone()
+        .map(|hotspot| RetainedPacketHotspotDiagnostics {
+            container_layer_id: hotspot.container_layer_id,
+            owner_widget_id: hotspot.owner_widget_id,
+            segment_index: hotspot.segment_index,
+            total_time_us: hotspot.total_time_us,
+            scene_build_time_us: hotspot.scene_build_time_us,
+            command_count: hotspot.command_count,
+            text_command_count: hotspot.text_command_count,
+            path_command_count: hotspot.path_command_count,
+            rect_command_count: hotspot.rect_command_count,
+            text_command_time_us: hotspot.text_command_time_us,
+            path_command_time_us: hotspot.path_command_time_us,
+            rect_command_time_us: hotspot.rect_command_time_us,
+            text_sample: hotspot.text_sample,
+        })
+}
+
+pub fn publish_frame_performance(
     window_id: WindowId,
     frame_index: u64,
     event_time_ms: f64,
@@ -201,64 +292,7 @@ pub(crate) fn publish_frame_performance(
             frame_index,
             total_time_ms,
             phase_timings,
-            RendererSubmissionDiagnostics::new(
-                renderer_stats.pass_count,
-                renderer_stats.draw_count,
-                renderer_stats.uploaded_vertex_bytes,
-                renderer_stats.text_glyph_instance_count,
-                renderer_stats.text_vertex_bytes,
-                renderer_stats.visible_layer_count,
-                renderer_stats.direct_packet_count,
-                renderer_stats.retained_state_update_time_us,
-                renderer_stats.composition_time_us,
-                renderer_stats.retained_scene_traversal_time_us,
-                renderer_stats.retained_packet_build_time_us,
-                renderer_stats.retained_packet_build_count,
-                sui_runtime::RetainedPacketRebuildDiagnostics::new(
-                    renderer_stats.retained_packet_rebuilds.new_count,
-                    renderer_stats
-                        .retained_packet_rebuilds
-                        .coordinate_space_count,
-                    renderer_stats.retained_packet_rebuilds.signature_count,
-                    renderer_stats.retained_packet_rebuilds.scene_count,
-                    renderer_stats.retained_packet_rebuilds.state_count,
-                ),
-                renderer_stats.text_atlas_miss_count,
-                renderer_stats.text_atlas_miss_time_us,
-                renderer_stats.surface_acquire_time_us,
-                renderer_stats.resource_collection_time_us,
-                renderer_stats.bind_group_prepare_time_us,
-                renderer_stats.image_bind_group_time_us,
-                renderer_stats.analytic_path_bind_group_time_us,
-                renderer_stats.analytic_path_bind_group_miss_count,
-                renderer_stats.analytic_path_bind_group_upload_bytes,
-                renderer_stats.text_atlas_bind_group_time_us,
-                renderer_stats.text_atlas_upload_copy_time_us,
-                renderer_stats.text_atlas_upload_write_time_us,
-                renderer_stats.text_atlas_upload_bytes,
-                renderer_stats.batch_prepare_time_us,
-                renderer_stats.gpu_upload_time_us,
-                renderer_stats.pass_encode_time_us,
-                renderer_stats.queue_submit_time_us,
-                renderer_stats.surface_present_time_us,
-            )
-            .with_retained_packet_breakdown(
-                renderer_stats.retained_packet_normalize_time_us,
-                renderer_stats.retained_packet_signature_time_us,
-                renderer_stats.retained_packet_raster_state_init_time_us,
-                renderer_stats.retained_packet_scene_build_time_us,
-                renderer_stats.retained_packet_command_count,
-                renderer_stats.retained_packet_text_command_count,
-                renderer_stats.retained_packet_path_command_count,
-                renderer_stats.retained_packet_clip_path_command_count,
-                renderer_stats.retained_packet_image_command_count,
-                renderer_stats.retained_packet_rect_command_count,
-                renderer_stats.retained_packet_text_command_time_us,
-                renderer_stats.retained_packet_path_command_time_us,
-                renderer_stats.retained_packet_clip_path_command_time_us,
-                renderer_stats.retained_packet_image_command_time_us,
-                renderer_stats.retained_packet_rect_command_time_us,
-            ),
+            renderer_submission_diagnostics_from_frame_stats(&renderer_stats),
             text_caches,
             text_cache_deltas,
             SceneStatistics::from_frame_with_mode(
@@ -269,23 +303,150 @@ pub(crate) fn publish_frame_performance(
         )
         .with_presentation_latency(presentation_latency)
         .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
-        .with_retained_packet_hotspot(renderer_stats.retained_packet_hotspot.clone().map(
-            |hotspot| sui_runtime::RetainedPacketHotspotDiagnostics {
-                container_layer_id: hotspot.container_layer_id,
-                owner_widget_id: hotspot.owner_widget_id,
-                segment_index: hotspot.segment_index,
-                total_time_us: hotspot.total_time_us,
-                scene_build_time_us: hotspot.scene_build_time_us,
-                command_count: hotspot.command_count,
-                text_command_count: hotspot.text_command_count,
-                path_command_count: hotspot.path_command_count,
-                rect_command_count: hotspot.rect_command_count,
-                text_command_time_us: hotspot.text_command_time_us,
-                path_command_time_us: hotspot.path_command_time_us,
-                rect_command_time_us: hotspot.rect_command_time_us,
-                text_sample: hotspot.text_sample,
-            },
+        .with_retained_packet_hotspot(retained_packet_hotspot_diagnostics_from_frame_stats(
+            &renderer_stats,
         ))
         .with_widget_timings(output.diagnostics.widget_timings.clone()),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        retained_packet_hotspot_diagnostics_from_frame_stats,
+        retained_packet_rebuild_diagnostics, renderer_submission_diagnostics_from_frame_stats,
+    };
+    use sui_render_wgpu::{
+        RendererFrameStats, RendererPacketHotspot, RetainedPacketRebuildStats,
+    };
+
+    #[test]
+    fn retained_packet_rebuild_diagnostics_bridge_preserves_named_buckets() {
+        let rebuilds = RetainedPacketRebuildStats::new(2, 3, 5, 7, 11);
+
+        let diagnostics = retained_packet_rebuild_diagnostics(rebuilds);
+
+        assert_eq!(diagnostics.new_count, 2);
+        assert_eq!(diagnostics.coordinate_space_count, 3);
+        assert_eq!(diagnostics.signature_count, 5);
+        assert_eq!(diagnostics.scene_count, 7);
+        assert_eq!(diagnostics.state_count, 11);
+    }
+
+    #[test]
+    fn renderer_submission_diagnostics_from_frame_stats_preserves_retained_details() {
+        let renderer_stats = RendererFrameStats {
+            pass_count: 3,
+            draw_count: 9,
+            uploaded_vertex_bytes: 4096,
+            text_glyph_instance_count: 42,
+            text_vertex_bytes: 2048,
+            visible_layer_count: 4,
+            direct_packet_count: 6,
+            retained_state_update_time_us: 31,
+            composition_time_us: 32,
+            retained_scene_traversal_time_us: 33,
+            retained_packet_build_time_us: 34,
+            retained_packet_build_count: 2,
+            retained_packet_rebuilds: RetainedPacketRebuildStats::new(1, 0, 1, 1, 0),
+            retained_packet_normalize_time_us: 41,
+            retained_packet_signature_time_us: 42,
+            retained_packet_raster_state_init_time_us: 43,
+            retained_packet_scene_build_time_us: 44,
+            retained_packet_command_count: 45,
+            retained_packet_text_command_count: 46,
+            retained_packet_path_command_count: 47,
+            retained_packet_clip_path_command_count: 48,
+            retained_packet_image_command_count: 49,
+            retained_packet_rect_command_count: 50,
+            retained_packet_text_command_time_us: 51,
+            retained_packet_path_command_time_us: 52,
+            retained_packet_clip_path_command_time_us: 53,
+            retained_packet_image_command_time_us: 54,
+            retained_packet_rect_command_time_us: 55,
+            text_atlas_miss_count: 7,
+            text_atlas_miss_time_us: 56,
+            surface_acquire_time_us: 57,
+            resource_collection_time_us: 58,
+            bind_group_prepare_time_us: 59,
+            image_bind_group_time_us: 60,
+            analytic_path_bind_group_time_us: 61,
+            analytic_path_bind_group_miss_count: 8,
+            analytic_path_bind_group_upload_bytes: 62,
+            text_atlas_bind_group_time_us: 63,
+            text_atlas_upload_copy_time_us: 64,
+            text_atlas_upload_write_time_us: 65,
+            text_atlas_upload_bytes: 66,
+            batch_prepare_time_us: 67,
+            gpu_upload_time_us: 68,
+            pass_encode_time_us: 69,
+            queue_submit_time_us: 70,
+            surface_present_time_us: 71,
+            retained_packet_hotspot: Some(RendererPacketHotspot {
+                container_layer_id: Some(101),
+                owner_widget_id: Some(202),
+                segment_index: 3,
+                total_time_us: 72,
+                scene_build_time_us: 73,
+                command_count: 74,
+                text_command_count: 75,
+                path_command_count: 76,
+                rect_command_count: 77,
+                text_command_time_us: 78,
+                path_command_time_us: 79,
+                rect_command_time_us: 80,
+                text_sample: Some("packet text".to_string()),
+            }),
+        };
+
+        let diagnostics = renderer_submission_diagnostics_from_frame_stats(&renderer_stats);
+
+        assert_eq!(diagnostics.pass_count, 3);
+        assert_eq!(diagnostics.retained_packet_build_count, 2);
+        assert_eq!(diagnostics.retained_packet_rebuilds.new_count, 1);
+        assert_eq!(diagnostics.retained_packet_rebuilds.signature_count, 1);
+        assert_eq!(diagnostics.retained_packet_rebuilds.scene_count, 1);
+        assert_eq!(diagnostics.retained_packet_normalize_time_us, 41);
+        assert_eq!(diagnostics.retained_packet_command_count, 45);
+        assert_eq!(diagnostics.text_atlas_miss_count, 7);
+    }
+
+    #[test]
+    fn retained_packet_hotspot_diagnostics_bridge_preserves_hotspot_fields() {
+        let renderer_stats = RendererFrameStats {
+            retained_packet_hotspot: Some(RendererPacketHotspot {
+                container_layer_id: Some(11),
+                owner_widget_id: Some(22),
+                segment_index: 3,
+                total_time_us: 44,
+                scene_build_time_us: 55,
+                command_count: 66,
+                text_command_count: 77,
+                path_command_count: 88,
+                rect_command_count: 99,
+                text_command_time_us: 111,
+                path_command_time_us: 222,
+                rect_command_time_us: 333,
+                text_sample: Some("sample".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        let hotspot = retained_packet_hotspot_diagnostics_from_frame_stats(&renderer_stats)
+            .expect("expected hotspot diagnostics");
+
+        assert_eq!(hotspot.container_layer_id, Some(11));
+        assert_eq!(hotspot.owner_widget_id, Some(22));
+        assert_eq!(hotspot.segment_index, 3);
+        assert_eq!(hotspot.total_time_us, 44);
+        assert_eq!(hotspot.scene_build_time_us, 55);
+        assert_eq!(hotspot.command_count, 66);
+        assert_eq!(hotspot.text_command_count, 77);
+        assert_eq!(hotspot.path_command_count, 88);
+        assert_eq!(hotspot.rect_command_count, 99);
+        assert_eq!(hotspot.text_command_time_us, 111);
+        assert_eq!(hotspot.path_command_time_us, 222);
+        assert_eq!(hotspot.rect_command_time_us, 333);
+        assert_eq!(hotspot.text_sample.as_deref(), Some("sample"));
+    }
 }

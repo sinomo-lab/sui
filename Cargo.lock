@@ -2590,6 +2590,7 @@ dependencies = [
  "png",
  "sui",
  "sui-debug",
+ "sui-platform",
  "sui-render-wgpu",
  "sui-runtime",
  "sui-scene",

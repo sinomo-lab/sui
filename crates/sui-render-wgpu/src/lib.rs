@@ -457,6 +457,15 @@ pub struct RetainedPacketRebuildStats {
     pub state_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PacketRebuildReason {
+    NewPacket,
+    CoordinateSpace,
+    Signature,
+    Scene,
+    State,
+}
+
 impl RetainedPacketRebuildStats {
     pub const fn new(
         new_count: usize,
@@ -471,6 +480,16 @@ impl RetainedPacketRebuildStats {
             signature_count,
             scene_count,
             state_count,
+        }
+    }
+
+    fn record_reason(&mut self, reason: PacketRebuildReason) {
+        match reason {
+            PacketRebuildReason::NewPacket => self.new_count += 1,
+            PacketRebuildReason::CoordinateSpace => self.coordinate_space_count += 1,
+            PacketRebuildReason::Signature => self.signature_count += 1,
+            PacketRebuildReason::Scene => self.scene_count += 1,
+            PacketRebuildReason::State => self.state_count += 1,
         }
     }
 
@@ -632,13 +651,7 @@ impl RendererFrameStats {
             (stats.scene_traversal_time_ms * 1000.0).round() as u64;
         self.retained_packet_build_time_us = (stats.packet_build_time_ms * 1000.0).round() as u64;
         self.retained_packet_build_count = stats.packet_build_count;
-        self.retained_packet_rebuilds = RetainedPacketRebuildStats::new(
-            stats.packet_rebuild_new_count,
-            stats.packet_rebuild_coordinate_space_count,
-            stats.packet_rebuild_signature_count,
-            stats.packet_rebuild_scene_count,
-            stats.packet_rebuild_state_count,
-        );
+        self.retained_packet_rebuilds = stats.packet_rebuilds;
         self.retained_packet_normalize_time_us =
             (stats.packet_normalize_time_ms * 1000.0).round() as u64;
         self.retained_packet_signature_time_us =
@@ -3564,14 +3577,15 @@ mod tests {
         CachedGlyphAtlas, CachedGlyphMesh, ClipState, ColorManagementMode, CompositionContainerId,
         DEFAULT_FEATHER_WIDTH, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
         DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries, DisplayTransferFunction,
-        DrawOp, DrawOpArena, DrawOpKind, DynamicRangeMode, OutputStrategy, PreparedClipPath,
-        PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
-        PreparedVertices, RendererFrameStats, RequestedColorManagementMode,
+        DrawOp, DrawOpArena, DrawOpKind, DynamicRangeMode, OutputStrategy, PacketRebuildReason,
+        PreparedClipPath, PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches,
+        PreparedPassBatch, PreparedVertices, RendererFrameStats, RequestedColorManagementMode,
         RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
-        RetainedCompositorState, RetainedPacketId, ScissorRect, StemDarkening, SwashImageContent,
-        SwashSource, SwashStrikeWith, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas,
-        TextAtlasColorMode, TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode,
-        VERTEX_SIZE, Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
+        RetainedCompositorFrameStats, RetainedCompositorState, RetainedPacketId,
+        RetainedPacketRebuildStats, ScissorRect, StemDarkening, SwashImageContent, SwashSource,
+        SwashStrikeWith, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, TextAtlasColorMode,
+        TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode, VERTEX_SIZE, Vertex,
+        WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
         decode_rgba16f_pixels, prepare_frame_batches,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
@@ -3612,6 +3626,35 @@ mod tests {
         fn with_cache_policy(self, _cache_policy: LayerCachePolicy) -> Self {
             self
         }
+    }
+
+    #[test]
+    fn retained_packet_rebuild_stats_record_each_reason_and_preserve_grouping() {
+        let mut rebuilds = RetainedPacketRebuildStats::default();
+
+        rebuilds.record_reason(PacketRebuildReason::NewPacket);
+        rebuilds.record_reason(PacketRebuildReason::CoordinateSpace);
+        rebuilds.record_reason(PacketRebuildReason::Signature);
+        rebuilds.record_reason(PacketRebuildReason::Scene);
+        rebuilds.record_reason(PacketRebuildReason::State);
+
+        assert_eq!(rebuilds, RetainedPacketRebuildStats::new(1, 1, 1, 1, 1));
+        assert_eq!(rebuilds.total_count(), 5);
+    }
+
+    #[test]
+    fn renderer_frame_stats_with_compositor_stats_preserves_grouped_packet_rebuilds() {
+        let stats = RendererFrameStats::from_prepared_counts(1, 2, 3).with_compositor_stats(
+            RetainedCompositorFrameStats {
+                packet_rebuilds: RetainedPacketRebuildStats::new(2, 3, 5, 7, 11),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            stats.retained_packet_rebuilds,
+            RetainedPacketRebuildStats::new(2, 3, 5, 7, 11)
+        );
     }
 
     #[test]
