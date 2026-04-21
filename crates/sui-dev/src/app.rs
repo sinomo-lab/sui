@@ -2601,7 +2601,12 @@ final_max_luminance={final_max_luminance}
             / valid_count as f64;
         let avg_packet_rebuild_new = measured_samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuild_new_count as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuilds
+                    .new_count as f64
+            })
             .sum::<f64>()
             / valid_count as f64;
         let avg_packet_rebuild_coordinate_space = measured_samples
@@ -2609,7 +2614,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_coordinate_space_count as f64
+                    .retained_packet_rebuilds
+                    .coordinate_space_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -2618,7 +2624,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_signature_count as f64
+                    .retained_packet_rebuilds
+                    .signature_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -2627,7 +2634,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_scene_count as f64
+                    .retained_packet_rebuilds
+                    .scene_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -2636,7 +2644,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_state_count as f64
+                    .retained_packet_rebuilds
+                    .state_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -2893,7 +2902,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_scene_count as f64
+                    .retained_packet_rebuilds
+                    .scene_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -2902,7 +2912,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_state_count as f64
+                    .retained_packet_rebuilds
+                    .state_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -2911,7 +2922,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_coordinate_space_count as f64
+                    .retained_packet_rebuilds
+                    .coordinate_space_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3104,7 +3116,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_scene_count as f64
+                    .retained_packet_rebuilds
+                    .scene_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3113,7 +3126,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_state_count as f64
+                    .retained_packet_rebuilds
+                    .state_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3122,7 +3136,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_coordinate_space_count as f64
+                    .retained_packet_rebuilds
+                    .coordinate_space_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3242,13 +3257,16 @@ final_max_luminance={final_max_luminance}
                 / 1000.0,
             final_snapshot
                 .renderer_submission
-                .retained_packet_rebuild_scene_count,
+                .retained_packet_rebuilds
+                .scene_count,
             final_snapshot
                 .renderer_submission
-                .retained_packet_rebuild_state_count,
+                .retained_packet_rebuilds
+                .state_count,
             final_snapshot
                 .renderer_submission
-                .retained_packet_rebuild_coordinate_space_count,
+                .retained_packet_rebuilds
+                .coordinate_space_count,
         );
         println!("==============================================\n");
 
@@ -3383,7 +3401,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_scene_count as f64
+                    .retained_packet_rebuilds
+                    .scene_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3392,7 +3411,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_state_count as f64
+                    .retained_packet_rebuilds
+                    .state_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3401,7 +3421,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_coordinate_space_count as f64
+                    .retained_packet_rebuilds
+                    .coordinate_space_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3640,7 +3661,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_scene_count as f64
+                    .retained_packet_rebuilds
+                    .scene_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3649,7 +3671,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_state_count as f64
+                    .retained_packet_rebuilds
+                    .state_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3658,7 +3681,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_coordinate_space_count as f64
+                    .retained_packet_rebuilds
+                    .coordinate_space_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3844,7 +3868,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_scene_count as f64
+                    .retained_packet_rebuilds
+                    .scene_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3853,7 +3878,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_state_count as f64
+                    .retained_packet_rebuilds
+                    .state_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;
@@ -3862,7 +3888,8 @@ final_max_luminance={final_max_luminance}
             .map(|sample| {
                 sample
                     .renderer_submission
-                    .retained_packet_rebuild_coordinate_space_count as f64
+                    .retained_packet_rebuilds
+                    .coordinate_space_count as f64
             })
             .sum::<f64>()
             / valid_count as f64;

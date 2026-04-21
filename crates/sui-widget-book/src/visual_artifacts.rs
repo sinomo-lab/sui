@@ -183,7 +183,9 @@ impl StoryCase {
             Self::TabBar => "Standalone tab bar crop for editor-style navigation.",
             Self::Tabs => "Tabs crop showing selected panel content.",
             Self::Menu => "Command menu crop for overflow and app menus.",
-            Self::ContextMenuOpen => "Open context menu crop anchored to a layer tile.",
+            Self::ContextMenuOpen => {
+                "Open context menu crop anchored to an explicit scene-layer surface."
+            }
             Self::TooltipVisible => "Tooltip crop while the trigger is hovered.",
             Self::PopoverOpen => "Open popover crop for inline inspector content.",
             Self::Dialog => "Dialog crop for confirmations and settings.",

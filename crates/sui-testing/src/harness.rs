@@ -1754,11 +1754,15 @@ fn publish_frame_performance(
                 renderer_stats.retained_scene_traversal_time_us,
                 renderer_stats.retained_packet_build_time_us,
                 renderer_stats.retained_packet_build_count,
-                renderer_stats.retained_packet_rebuild_new_count,
-                renderer_stats.retained_packet_rebuild_coordinate_space_count,
-                renderer_stats.retained_packet_rebuild_signature_count,
-                renderer_stats.retained_packet_rebuild_scene_count,
-                renderer_stats.retained_packet_rebuild_state_count,
+                sui_runtime::RetainedPacketRebuildDiagnostics::new(
+                    renderer_stats.retained_packet_rebuilds.new_count,
+                    renderer_stats
+                        .retained_packet_rebuilds
+                        .coordinate_space_count,
+                    renderer_stats.retained_packet_rebuilds.signature_count,
+                    renderer_stats.retained_packet_rebuilds.scene_count,
+                    renderer_stats.retained_packet_rebuilds.state_count,
+                ),
                 renderer_stats.text_atlas_miss_count,
                 renderer_stats.text_atlas_miss_time_us,
                 renderer_stats.surface_acquire_time_us,

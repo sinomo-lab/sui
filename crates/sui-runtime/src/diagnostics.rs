@@ -179,6 +179,41 @@ pub(crate) fn take_widget_timing_collection() -> Vec<WidgetTimingSample> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RetainedPacketRebuildDiagnostics {
+    pub new_count: usize,
+    pub coordinate_space_count: usize,
+    pub signature_count: usize,
+    pub scene_count: usize,
+    pub state_count: usize,
+}
+
+impl RetainedPacketRebuildDiagnostics {
+    pub const fn new(
+        new_count: usize,
+        coordinate_space_count: usize,
+        signature_count: usize,
+        scene_count: usize,
+        state_count: usize,
+    ) -> Self {
+        Self {
+            new_count,
+            coordinate_space_count,
+            signature_count,
+            scene_count,
+            state_count,
+        }
+    }
+
+    pub const fn total_count(&self) -> usize {
+        self.new_count
+            + self.coordinate_space_count
+            + self.signature_count
+            + self.scene_count
+            + self.state_count
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RendererSubmissionDiagnostics {
     pub pass_count: usize,
     pub draw_count: usize,
@@ -192,11 +227,7 @@ pub struct RendererSubmissionDiagnostics {
     pub retained_scene_traversal_time_us: u64,
     pub retained_packet_build_time_us: u64,
     pub retained_packet_build_count: usize,
-    pub retained_packet_rebuild_new_count: usize,
-    pub retained_packet_rebuild_coordinate_space_count: usize,
-    pub retained_packet_rebuild_signature_count: usize,
-    pub retained_packet_rebuild_scene_count: usize,
-    pub retained_packet_rebuild_state_count: usize,
+    pub retained_packet_rebuilds: RetainedPacketRebuildDiagnostics,
     pub retained_packet_normalize_time_us: u64,
     pub retained_packet_signature_time_us: u64,
     pub retained_packet_raster_state_init_time_us: u64,
@@ -263,11 +294,7 @@ impl RendererSubmissionDiagnostics {
         retained_scene_traversal_time_us: u64,
         retained_packet_build_time_us: u64,
         retained_packet_build_count: usize,
-        retained_packet_rebuild_new_count: usize,
-        retained_packet_rebuild_coordinate_space_count: usize,
-        retained_packet_rebuild_signature_count: usize,
-        retained_packet_rebuild_scene_count: usize,
-        retained_packet_rebuild_state_count: usize,
+        retained_packet_rebuilds: RetainedPacketRebuildDiagnostics,
         text_atlas_miss_count: usize,
         text_atlas_miss_time_us: u64,
         surface_acquire_time_us: u64,
@@ -300,11 +327,7 @@ impl RendererSubmissionDiagnostics {
             retained_scene_traversal_time_us,
             retained_packet_build_time_us,
             retained_packet_build_count,
-            retained_packet_rebuild_new_count,
-            retained_packet_rebuild_coordinate_space_count,
-            retained_packet_rebuild_signature_count,
-            retained_packet_rebuild_scene_count,
-            retained_packet_rebuild_state_count,
+            retained_packet_rebuilds,
             retained_packet_normalize_time_us: 0,
             retained_packet_signature_time_us: 0,
             retained_packet_raster_state_init_time_us: 0,
@@ -1256,11 +1279,12 @@ fn layer_update_kind(kind: SceneLayerUpdateKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics, SceneStatistics,
-        SceneStatisticsDetailMode, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
-        WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-        WindowPerformanceSnapshot, WindowRenderOptions, WindowTextRenderPolicy,
-        WindowToneMappingMode, clear_window_performance_snapshot, set_window_render_options,
+        CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics,
+        RetainedPacketRebuildDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
+        TextCacheDeltaDiagnostics, TextCacheDiagnostics, WindowColorManagementMode,
+        WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
+        WindowRenderOptions, WindowTextRenderPolicy, WindowToneMappingMode,
+        clear_window_performance_snapshot, set_window_render_options,
         set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
     };
@@ -1344,8 +1368,37 @@ mod tests {
             17,
             vec![FramePhaseSample::new(FramePhase::Renderer, 2.5)],
             RendererSubmissionDiagnostics::new(
-                3, 9, 4096, 128, 3584, 4, 7, 230, 90, 310, 120, 2, 1, 0, 1, 1, 0, 5, 80, 440, 210,
-                130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
+                3,
+                9,
+                4096,
+                128,
+                3584,
+                4,
+                7,
+                230,
+                90,
+                310,
+                120,
+                2,
+                RetainedPacketRebuildDiagnostics::new(1, 0, 1, 1, 0),
+                5,
+                80,
+                440,
+                210,
+                130,
+                15,
+                95,
+                4,
+                32768,
+                115,
+                85,
+                22,
+                16384,
+                920,
+                640,
+                180,
+                70,
+                560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -1391,6 +1444,34 @@ mod tests {
             120
         );
         assert_eq!(snapshot.renderer_submission.retained_packet_build_count, 2);
+        assert_eq!(
+            snapshot
+                .renderer_submission
+                .retained_packet_rebuilds
+                .total_count(),
+            3
+        );
+        assert_eq!(
+            snapshot
+                .renderer_submission
+                .retained_packet_rebuilds
+                .new_count,
+            1
+        );
+        assert_eq!(
+            snapshot
+                .renderer_submission
+                .retained_packet_rebuilds
+                .signature_count,
+            1
+        );
+        assert_eq!(
+            snapshot
+                .renderer_submission
+                .retained_packet_rebuilds
+                .scene_count,
+            1
+        );
         assert_eq!(snapshot.renderer_submission.text_atlas_miss_count, 5);
         assert_eq!(snapshot.renderer_submission.text_atlas_miss_time_us, 80);
         assert_eq!(snapshot.renderer_submission.surface_acquire_time_us, 440);
@@ -1444,6 +1525,13 @@ mod tests {
         assert_eq!(summary.scene_layer_count, 4);
         assert_eq!(summary.stack_surface_count, 1);
         assert_eq!(summary.overlay_layer_count, 1);
+    }
+
+    #[test]
+    fn retained_packet_rebuild_diagnostics_total_count_sums_reasons() {
+        let rebuilds = RetainedPacketRebuildDiagnostics::new(2, 3, 5, 7, 11);
+
+        assert_eq!(rebuilds.total_count(), 28);
     }
 
     #[test]

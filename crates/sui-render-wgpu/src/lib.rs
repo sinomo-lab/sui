@@ -448,6 +448,41 @@ const TEXT_ATLAS_HEIGHT: usize = 2048;
 const TEXT_ATLAS_PADDING: usize = 1;
 const TEXT_ATLAS_TEXTURE_RING_LEN: usize = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RetainedPacketRebuildStats {
+    pub new_count: usize,
+    pub coordinate_space_count: usize,
+    pub signature_count: usize,
+    pub scene_count: usize,
+    pub state_count: usize,
+}
+
+impl RetainedPacketRebuildStats {
+    pub const fn new(
+        new_count: usize,
+        coordinate_space_count: usize,
+        signature_count: usize,
+        scene_count: usize,
+        state_count: usize,
+    ) -> Self {
+        Self {
+            new_count,
+            coordinate_space_count,
+            signature_count,
+            scene_count,
+            state_count,
+        }
+    }
+
+    pub const fn total_count(&self) -> usize {
+        self.new_count
+            + self.coordinate_space_count
+            + self.signature_count
+            + self.scene_count
+            + self.state_count
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RendererFrameStats {
     pub pass_count: usize,
@@ -462,11 +497,7 @@ pub struct RendererFrameStats {
     pub retained_scene_traversal_time_us: u64,
     pub retained_packet_build_time_us: u64,
     pub retained_packet_build_count: usize,
-    pub retained_packet_rebuild_new_count: usize,
-    pub retained_packet_rebuild_coordinate_space_count: usize,
-    pub retained_packet_rebuild_signature_count: usize,
-    pub retained_packet_rebuild_scene_count: usize,
-    pub retained_packet_rebuild_state_count: usize,
+    pub retained_packet_rebuilds: RetainedPacketRebuildStats,
     pub retained_packet_normalize_time_us: u64,
     pub retained_packet_signature_time_us: u64,
     pub retained_packet_raster_state_init_time_us: u64,
@@ -554,11 +585,7 @@ impl RendererFrameStats {
             retained_scene_traversal_time_us: 0,
             retained_packet_build_time_us: 0,
             retained_packet_build_count: 0,
-            retained_packet_rebuild_new_count: 0,
-            retained_packet_rebuild_coordinate_space_count: 0,
-            retained_packet_rebuild_signature_count: 0,
-            retained_packet_rebuild_scene_count: 0,
-            retained_packet_rebuild_state_count: 0,
+            retained_packet_rebuilds: RetainedPacketRebuildStats::default(),
             retained_packet_normalize_time_us: 0,
             retained_packet_signature_time_us: 0,
             retained_packet_raster_state_init_time_us: 0,
@@ -605,12 +632,13 @@ impl RendererFrameStats {
             (stats.scene_traversal_time_ms * 1000.0).round() as u64;
         self.retained_packet_build_time_us = (stats.packet_build_time_ms * 1000.0).round() as u64;
         self.retained_packet_build_count = stats.packet_build_count;
-        self.retained_packet_rebuild_new_count = stats.packet_rebuild_new_count;
-        self.retained_packet_rebuild_coordinate_space_count =
-            stats.packet_rebuild_coordinate_space_count;
-        self.retained_packet_rebuild_signature_count = stats.packet_rebuild_signature_count;
-        self.retained_packet_rebuild_scene_count = stats.packet_rebuild_scene_count;
-        self.retained_packet_rebuild_state_count = stats.packet_rebuild_state_count;
+        self.retained_packet_rebuilds = RetainedPacketRebuildStats::new(
+            stats.packet_rebuild_new_count,
+            stats.packet_rebuild_coordinate_space_count,
+            stats.packet_rebuild_signature_count,
+            stats.packet_rebuild_scene_count,
+            stats.packet_rebuild_state_count,
+        );
         self.retained_packet_normalize_time_us =
             (stats.packet_normalize_time_ms * 1000.0).round() as u64;
         self.retained_packet_signature_time_us =
@@ -5268,7 +5296,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_compositor_reuses_cached_path_meshes_across_cached_tiles() {
+    fn retained_compositor_reuses_cached_path_meshes_across_retained_packets() {
         let layer_id = WidgetId::new(70);
         let descriptor = SceneLayerDescriptor::new(
             SceneLayerId::from_widget(layer_id),
@@ -5323,7 +5351,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_compositor_uses_analytic_stroke_paths_across_cached_tiles() {
+    fn retained_compositor_uses_analytic_stroke_paths_across_retained_packets() {
         let layer_id = WidgetId::new(71);
         let descriptor = SceneLayerDescriptor::new(
             SceneLayerId::from_widget(layer_id),
@@ -5766,7 +5794,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_compositor_regenerates_cached_tiles_across_ancestor_clip_updates() {
+    fn retained_compositor_rebuilds_retained_packets_across_ancestor_clip_updates() {
         let shell_id = WidgetId::new(55);
         let scroll_id = WidgetId::new(56);
         let content_id = WidgetId::new(57);
@@ -6249,7 +6277,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_compositor_routes_descendant_damage_into_cached_parent_tiles() {
+    fn retained_compositor_routes_descendant_damage_into_cached_parent_packets() {
         let parent_id = WidgetId::new(81);
         let child_id = WidgetId::new(82);
 
@@ -6339,7 +6367,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_compositor_routes_descendant_transform_into_cached_parent_tiles() {
+    fn retained_compositor_routes_descendant_transform_into_cached_parent_packets() {
         let parent_id = WidgetId::new(181);
         let child_id = WidgetId::new(182);
 
@@ -6432,7 +6460,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_compositor_updates_nested_cached_scroll_layer_after_child_transform() {
+    fn retained_compositor_updates_nested_retained_scroll_layer_after_child_transform() {
         let shell_id = WidgetId::new(191);
         let scroll_id = WidgetId::new(192);
         let content_id = WidgetId::new(193);
@@ -6606,7 +6634,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_compositor_routes_nested_cached_descendant_damage_into_tile_owner() {
+    fn retained_compositor_routes_nested_cached_descendant_damage_into_packet_owner() {
         let outer_id = WidgetId::new(83);
         let inner_id = WidgetId::new(84);
         let leaf_id = WidgetId::new(85);
@@ -6718,7 +6746,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_tiles_match_direct_text_across_tile_boundaries() {
+    fn retained_packets_match_direct_text_across_packet_boundaries() {
         let handle = FontHandle::new(27);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());
@@ -6784,7 +6812,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_ancestors_match_direct_for_child_layer_text_across_tile_boundaries() {
+    fn retained_ancestors_match_direct_for_child_layer_text_across_packet_boundaries() {
         let handle = FontHandle::new(28);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());
@@ -6874,7 +6902,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_tiles_match_direct_for_theme_preview_style_cards() {
+    fn retained_packets_match_direct_for_theme_preview_style_cards() {
         let handle = FontHandle::new(151);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());
@@ -6945,7 +6973,7 @@ mod tests {
                 }));
                 layer_scene.push(SceneCommand::DrawText(TextRun {
                     rect: Rect::new(card_x + 20.0, 76.0, 188.0, 20.0),
-                    text: "Cached tiles must match direct".to_string(),
+                    text: "Retained packets must match direct".to_string(),
                     style: TextStyle {
                         font: Some(handle),
                         font_size: 13.0,
@@ -7006,7 +7034,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_scroll_layer_matches_direct_at_fractional_tile_boundaries() {
+    fn retained_scroll_layer_matches_direct_at_fractional_packet_boundaries() {
         let widget_id = WidgetId::new(95);
         let build_frame = |window_id, cache_policy| {
             let descriptor = SceneLayerDescriptor::new(
@@ -7073,7 +7101,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_scroll_layer_matches_direct_for_clipped_rows_across_tile_boundary() {
+    fn retained_scroll_layer_matches_direct_for_clipped_rows_across_packet_boundary() {
         let widget_id = WidgetId::new(96);
         let clip_rect = Rect::new(42.0, 628.0, 360.0, 220.0);
         let build_frame = |window_id, cache_policy| {
@@ -9221,7 +9249,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_tiles_match_direct_for_theme_preview_style_cards_at_fractional_scale() {
+    fn retained_packets_match_direct_for_theme_preview_style_cards_at_fractional_scale() {
         let handle = FontHandle::new(153);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());

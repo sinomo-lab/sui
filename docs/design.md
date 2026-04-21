@@ -231,7 +231,7 @@ The renderer should support:
 
 - batched 2D drawing
 - offscreen surfaces and render-to-texture
-- cached layers or tiles
+- cached layers or widget-scoped retained surfaces
 - clip, transform, and opacity composition
 - multi-threaded preparation of render work where platform and backend constraints allow it
 - integration points for custom GPU passes
@@ -299,7 +299,7 @@ Basic text and font support belong in the core framework. Rich text editing, adv
 Infinite or very large canvas workflows are a core design target. The framework should support:
 
 - large scrollable and zoomable workspaces
-- chunk- or tile-based rendering
+- chunk-based or other spatially partitioned rendering
 - cached regions
 - mipmap or level-of-detail strategies where useful
 - selective redraw of changed regions
@@ -545,7 +545,7 @@ Performance is a design requirement, not a later optimization pass. The framewor
 - aggressive batching where it does not break correctness
 - efficient handling of very large surfaces
 - explicit caching of expensive intermediate results
-- predictable memory behavior for tiles, textures, glyph caches, and media surfaces
+- predictable memory behavior for retained surfaces, textures, glyph caches, and media surfaces
 - multi-threaded render preparation and scheduling where safe and beneficial
 
 This is especially important because the target applications often combine dense UIs with complex visual content.
@@ -581,7 +581,7 @@ The framework should likely be developed in phases.
 ### Phase 3: Editor-oriented capabilities
 
 - infinite canvas
-- tile and cache infrastructure
+- retained surface and cache infrastructure
 - pixel editing surfaces
 - advanced widgets such as tables and inspectors
 - embedding of external render content

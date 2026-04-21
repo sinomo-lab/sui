@@ -76,7 +76,7 @@ The current practical retained path is:
 - retained direct packets
 - overlay, scroll, and stack-surface composition handling
 
-Older tile-cache terminology still appears in parts of the repo and older docs, but cached tiles are no longer the preferred architectural direction for the main renderer path. Current work should assume that lowering structural layer cost is more important than reviving broad tile-cache policy knobs.
+Older retained-cache terminology still appears in parts of the repo and older docs, but broad retained tiling is no longer the preferred architectural direction for the main renderer path. Current work should assume that lowering structural layer cost is more important than reviving generic cache-policy knobs.
 
 ## Frame Pipeline
 
@@ -125,10 +125,10 @@ The renderer publishes metrics including:
 - render pass count
 - draw count
 - uploaded vertex bytes
-- visible layer and tile counts
-- reused and regenerated tile counts
+- visible layer count
 - direct packet count
-- tile memory usage
+- retained packet rebuild totals and reasons
+- retained packet build and composition cost
 - text-atlas and analytic-path timings
 - GPU upload, encode, submit, and present timings
 

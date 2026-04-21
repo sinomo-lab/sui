@@ -920,7 +920,7 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             "Direct packets",
             renderer_submission.direct_packet_count.to_string(),
         )
-        .detail("Retained packet fragments submitted directly without tile indirection")
+        .detail("Retained packet fragments submitted directly from explicit scene-layer boundaries")
         .tone(DebugTone::Neutral),
         DebugMetric::new(
             "State update",

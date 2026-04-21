@@ -22,8 +22,8 @@ use sui::{
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
-    RendererSubmissionDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
-    TextCacheDiagnostics, WidgetTimingPhase, WindowPerformanceSnapshot,
+    RendererSubmissionDiagnostics, RetainedPacketRebuildDiagnostics, SceneStatistics,
+    SceneStatisticsDetailMode, TextCacheDiagnostics, WidgetTimingPhase, WindowPerformanceSnapshot,
     clear_window_performance_snapshots, publish_window_performance_snapshot,
     set_window_scene_statistics_detail_mode, window_performance_text_caches,
     window_scene_statistics_detail_mode,
@@ -1370,11 +1370,15 @@ fn publish_frame_performance(
                 renderer_stats.retained_scene_traversal_time_us,
                 renderer_stats.retained_packet_build_time_us,
                 renderer_stats.retained_packet_build_count,
-                renderer_stats.retained_packet_rebuild_new_count,
-                renderer_stats.retained_packet_rebuild_coordinate_space_count,
-                renderer_stats.retained_packet_rebuild_signature_count,
-                renderer_stats.retained_packet_rebuild_scene_count,
-                renderer_stats.retained_packet_rebuild_state_count,
+                RetainedPacketRebuildDiagnostics::new(
+                    renderer_stats.retained_packet_rebuilds.new_count,
+                    renderer_stats
+                        .retained_packet_rebuilds
+                        .coordinate_space_count,
+                    renderer_stats.retained_packet_rebuilds.signature_count,
+                    renderer_stats.retained_packet_rebuilds.scene_count,
+                    renderer_stats.retained_packet_rebuilds.state_count,
+                ),
                 renderer_stats.text_atlas_miss_count,
                 renderer_stats.text_atlas_miss_time_us,
                 renderer_stats.surface_acquire_time_us,
@@ -1548,24 +1552,16 @@ struct ScrollBenchmarkFrameSample {
     draw_count: usize,
     pass_count: usize,
     visible_layer_count: usize,
-    visible_tile_count: usize,
-    reused_tile_count: usize,
-    regenerated_tile_count: usize,
     direct_packet_count: usize,
     uploaded_vertex_bytes: u64,
     text_vertex_bytes: u64,
     text_glyph_instance_count: usize,
-    tile_memory_bytes: u64,
-    tile_generation_time_us: u64,
+    retained_state_update_time_us: u64,
     composition_time_us: u64,
     retained_scene_traversal_time_us: u64,
     retained_packet_build_time_us: u64,
     retained_packet_build_count: usize,
-    retained_packet_rebuild_new_count: usize,
-    retained_packet_rebuild_coordinate_space_count: usize,
-    retained_packet_rebuild_signature_count: usize,
-    retained_packet_rebuild_scene_count: usize,
-    retained_packet_rebuild_state_count: usize,
+    retained_packet_rebuilds: RetainedPacketRebuildDiagnostics,
     retained_packet_normalize_time_us: u64,
     retained_packet_signature_time_us: u64,
     retained_packet_raster_state_init_time_us: u64,
@@ -1640,15 +1636,13 @@ impl ScrollBenchmarkFrameSample {
             draw_count: snapshot.renderer_submission.draw_count,
             pass_count: snapshot.renderer_submission.pass_count,
             visible_layer_count: snapshot.renderer_submission.visible_layer_count,
-            visible_tile_count: snapshot.renderer_submission.visible_layer_count,
-            reused_tile_count: 0,
-            regenerated_tile_count: snapshot.renderer_submission.direct_packet_count,
             direct_packet_count: snapshot.renderer_submission.direct_packet_count,
             uploaded_vertex_bytes: snapshot.renderer_submission.uploaded_vertex_bytes,
             text_vertex_bytes: snapshot.renderer_submission.text_vertex_bytes,
             text_glyph_instance_count: snapshot.renderer_submission.text_glyph_instance_count,
-            tile_memory_bytes: 0,
-            tile_generation_time_us: snapshot.renderer_submission.retained_state_update_time_us,
+            retained_state_update_time_us: snapshot
+                .renderer_submission
+                .retained_state_update_time_us,
             composition_time_us: snapshot.renderer_submission.composition_time_us,
             retained_scene_traversal_time_us: snapshot
                 .renderer_submission
@@ -1657,21 +1651,7 @@ impl ScrollBenchmarkFrameSample {
                 .renderer_submission
                 .retained_packet_build_time_us,
             retained_packet_build_count: snapshot.renderer_submission.retained_packet_build_count,
-            retained_packet_rebuild_new_count: snapshot
-                .renderer_submission
-                .retained_packet_rebuild_new_count,
-            retained_packet_rebuild_coordinate_space_count: snapshot
-                .renderer_submission
-                .retained_packet_rebuild_coordinate_space_count,
-            retained_packet_rebuild_signature_count: snapshot
-                .renderer_submission
-                .retained_packet_rebuild_signature_count,
-            retained_packet_rebuild_scene_count: snapshot
-                .renderer_submission
-                .retained_packet_rebuild_scene_count,
-            retained_packet_rebuild_state_count: snapshot
-                .renderer_submission
-                .retained_packet_rebuild_state_count,
+            retained_packet_rebuilds: snapshot.renderer_submission.retained_packet_rebuilds,
             retained_packet_normalize_time_us: snapshot
                 .renderer_submission
                 .retained_packet_normalize_time_us,
@@ -2074,15 +2054,15 @@ fn run_widget_book_dialog_repaint_benchmark(
 
     let avg_draws = average_of(|sample| sample.draw_count as f64);
     let avg_passes = average_of(|sample| sample.pass_count as f64);
-    let avg_visible_tiles = average_of(|sample| sample.visible_tile_count as f64);
-    let avg_reused_tiles = average_of(|sample| sample.reused_tile_count as f64);
-    let avg_regenerated_tiles = average_of(|sample| sample.regenerated_tile_count as f64);
+    let avg_visible_layers = average_of(|sample| sample.visible_layer_count as f64);
+    let avg_packet_rebuilds =
+        average_of(|sample| sample.retained_packet_rebuilds.total_count() as f64);
     let avg_uploaded_vertex_bytes = average_of(|sample| sample.uploaded_vertex_bytes as f64);
     let avg_text_vertex_bytes = average_of(|sample| sample.text_vertex_bytes as f64);
     let avg_dirty_regions = average_of(|sample| sample.dirty_region_count as f64);
     let avg_dirty_coverage = average_of(|sample| sample.dirty_coverage as f64);
-    let avg_tile_generation_ms =
-        average_of(|sample| sample.tile_generation_time_us as f64 / 1000.0);
+    let avg_state_update_ms =
+        average_of(|sample| sample.retained_state_update_time_us as f64 / 1000.0);
     let avg_composition_ms = average_of(|sample| sample.composition_time_us as f64 / 1000.0);
     let avg_retained_scene_traversal_ms =
         average_of(|sample| sample.retained_scene_traversal_time_us as f64 / 1000.0);
@@ -2091,15 +2071,15 @@ fn run_widget_book_dialog_repaint_benchmark(
     let avg_retained_packet_build_count =
         average_of(|sample| sample.retained_packet_build_count as f64);
     let avg_packet_rebuild_new =
-        average_of(|sample| sample.retained_packet_rebuild_new_count as f64);
+        average_of(|sample| sample.retained_packet_rebuilds.new_count as f64);
     let avg_packet_rebuild_coordinate_space =
-        average_of(|sample| sample.retained_packet_rebuild_coordinate_space_count as f64);
+        average_of(|sample| sample.retained_packet_rebuilds.coordinate_space_count as f64);
     let avg_packet_rebuild_signature =
-        average_of(|sample| sample.retained_packet_rebuild_signature_count as f64);
+        average_of(|sample| sample.retained_packet_rebuilds.signature_count as f64);
     let avg_packet_rebuild_scene =
-        average_of(|sample| sample.retained_packet_rebuild_scene_count as f64);
+        average_of(|sample| sample.retained_packet_rebuilds.scene_count as f64);
     let avg_packet_rebuild_state =
-        average_of(|sample| sample.retained_packet_rebuild_state_count as f64);
+        average_of(|sample| sample.retained_packet_rebuilds.state_count as f64);
     let avg_text_atlas_miss_count = average_of(|sample| sample.text_atlas_miss_count as f64);
     let avg_text_atlas_miss_ms =
         average_of(|sample| sample.text_atlas_miss_time_us as f64 / 1000.0);
@@ -2155,14 +2135,13 @@ fn run_widget_book_dialog_repaint_benchmark(
     );
     println!("avg gpu passes:   {avg_passes:.2}");
     println!("avg gpu draws:    {avg_draws:.2}");
-    println!("avg visible tiles:{avg_visible_tiles:.2}");
-    println!("avg reused tiles: {avg_reused_tiles:.2}");
-    println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
+    println!("avg visible layers:{avg_visible_layers:.2}");
+    println!("avg packet rebuilds:{avg_packet_rebuilds:.2}");
     println!("avg vertex bytes: {:.0}", avg_uploaded_vertex_bytes);
     println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
     println!("avg dirty regions:{avg_dirty_regions:.2}");
     println!("avg dirty cover:  {avg_dirty_coverage:.1}%");
-    println!("avg tile-gen:     {avg_tile_generation_ms:.3} ms");
+    println!("avg state update: {avg_state_update_ms:.3} ms");
     println!("avg compose:      {avg_composition_ms:.3} ms");
     println!("avg traverse:     {avg_retained_scene_traversal_ms:.3} ms");
     println!(
@@ -2217,9 +2196,9 @@ fn run_widget_book_dialog_repaint_benchmark(
             .collect::<Vec<_>>();
         transition_times.sort_by(|a, b| a.total_cmp(b));
         let transition_p95 = transition_times[transition_p95_index];
-        let transition_avg_regen = transition_samples
+        let transition_avg_rebuilds = transition_samples
             .iter()
-            .map(|sample| sample.sample.regenerated_tile_count as f64)
+            .map(|sample| sample.sample.retained_packet_rebuilds.total_count() as f64)
             .sum::<f64>()
             / transition_count as f64;
         let transition_avg_packet_build = transition_samples
@@ -2227,9 +2206,9 @@ fn run_widget_book_dialog_repaint_benchmark(
             .map(|sample| sample.sample.retained_packet_build_time_us as f64 / 1000.0)
             .sum::<f64>()
             / transition_count as f64;
-        let transition_avg_tile_gen = transition_samples
+        let transition_avg_state_update = transition_samples
             .iter()
-            .map(|sample| sample.sample.tile_generation_time_us as f64 / 1000.0)
+            .map(|sample| sample.sample.retained_state_update_time_us as f64 / 1000.0)
             .sum::<f64>()
             / transition_count as f64;
         let transition_avg_glyph_misses = transition_samples
@@ -2238,12 +2217,12 @@ fn run_widget_book_dialog_repaint_benchmark(
             .sum::<f64>()
             / transition_count as f64;
         println!(
-            "  {:<5} avg {:>7.3} ms  p95 {:>7.3} ms  regen {:>5.2}  tile-gen {:>7.3} ms  packet {:>7.3} ms  glyph misses {:>5.2}",
+            "  {:<5} avg {:>7.3} ms  p95 {:>7.3} ms  rebuild {:>5.2}  state {:>7.3} ms  packet {:>7.3} ms  glyph misses {:>5.2}",
             transition.label(),
             transition_avg,
             transition_p95,
-            transition_avg_regen,
-            transition_avg_tile_gen,
+            transition_avg_rebuilds,
+            transition_avg_state_update,
             transition_avg_packet_build,
             transition_avg_glyph_misses,
         );
@@ -2319,19 +2298,18 @@ fn run_widget_book_dialog_repaint_benchmark(
     slowest_samples.sort_by(|a, b| b.sample.total_time_ms.total_cmp(&a.sample.total_time_ms));
     for sample in slowest_samples.iter().take(6) {
         println!(
-            "  frame {:>4}  {:<5} total {:>7.3} ms  regen {:>2}  reused {:>2}  upload {:>8}  text {:>8}  dirty {:>5.1}%",
+            "  frame {:>4}  {:<5} total {:>7.3} ms  rebuild {:>2}  upload {:>8}  text {:>8}  dirty {:>5.1}%",
             sample.sample.frame_index,
             sample.transition.label(),
             sample.sample.total_time_ms,
-            sample.sample.regenerated_tile_count,
-            sample.sample.reused_tile_count,
+            sample.sample.retained_packet_rebuilds.total_count(),
             sample.sample.uploaded_vertex_bytes,
             sample.sample.text_vertex_bytes,
             sample.sample.dirty_coverage,
         );
         println!(
-            "             tile {:>7.3} ms  compose {:>7.3} ms  traverse {:>7.3} ms  packet {:>3} / {:>7.3} ms",
-            sample.sample.tile_generation_time_us as f64 / 1000.0,
+            "             state {:>7.3} ms  compose {:>7.3} ms  traverse {:>7.3} ms  packet {:>3} / {:>7.3} ms",
+            sample.sample.retained_state_update_time_us as f64 / 1000.0,
             sample.sample.composition_time_us as f64 / 1000.0,
             sample.sample.retained_scene_traversal_time_us as f64 / 1000.0,
             sample.sample.retained_packet_build_count,
@@ -2339,11 +2317,14 @@ fn run_widget_book_dialog_repaint_benchmark(
         );
         println!(
             "             packet why new {:>2} coord {:>2} sig {:>2} scene {:>2} state {:>2}",
-            sample.sample.retained_packet_rebuild_new_count,
-            sample.sample.retained_packet_rebuild_coordinate_space_count,
-            sample.sample.retained_packet_rebuild_signature_count,
-            sample.sample.retained_packet_rebuild_scene_count,
-            sample.sample.retained_packet_rebuild_state_count,
+            sample.sample.retained_packet_rebuilds.new_count,
+            sample
+                .sample
+                .retained_packet_rebuilds
+                .coordinate_space_count,
+            sample.sample.retained_packet_rebuilds.signature_count,
+            sample.sample.retained_packet_rebuilds.scene_count,
+            sample.sample.retained_packet_rebuilds.state_count,
         );
         println!(
             "             text Δ {:+} / {:>3} hits / {:>3} misses  glyph Δ {:+} / {:>3} hits / {:>3} misses",
@@ -2664,19 +2645,14 @@ fn run_widget_book_scroll_benchmark(
         .map(|sample| sample.pass_count as f64)
         .sum::<f64>()
         / valid_count as f64;
-    let avg_visible_tiles = frame_samples
+    let avg_visible_layers = frame_samples
         .iter()
-        .map(|sample| sample.visible_tile_count as f64)
+        .map(|sample| sample.visible_layer_count as f64)
         .sum::<f64>()
         / valid_count as f64;
-    let avg_reused_tiles = frame_samples
+    let avg_packet_rebuilds = frame_samples
         .iter()
-        .map(|sample| sample.reused_tile_count as f64)
-        .sum::<f64>()
-        / valid_count as f64;
-    let avg_regenerated_tiles = frame_samples
-        .iter()
-        .map(|sample| sample.regenerated_tile_count as f64)
+        .map(|sample| sample.retained_packet_rebuilds.total_count() as f64)
         .sum::<f64>()
         / valid_count as f64;
     let avg_uploaded_vertex_bytes = frame_samples
@@ -2687,11 +2663,6 @@ fn run_widget_book_scroll_benchmark(
     let avg_text_vertex_bytes = frame_samples
         .iter()
         .map(|sample| sample.text_vertex_bytes as f64)
-        .sum::<f64>()
-        / valid_count as f64;
-    let avg_tile_memory_bytes = frame_samples
-        .iter()
-        .map(|sample| sample.tile_memory_bytes as f64)
         .sum::<f64>()
         / valid_count as f64;
     let avg_retained_scene_traversal_ms = frame_samples
@@ -2915,12 +2886,10 @@ fn run_widget_book_scroll_benchmark(
     );
     println!("avg gpu passes:   {avg_passes:.2}");
     println!("avg gpu draws:    {avg_draws:.2}");
-    println!("avg visible tiles:{avg_visible_tiles:.2}");
-    println!("avg reused tiles: {avg_reused_tiles:.2}");
-    println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
+    println!("avg visible layers:{avg_visible_layers:.2}");
+    println!("avg packet rebuilds:{avg_packet_rebuilds:.2}");
     println!("avg vertex bytes: {:.0}", avg_uploaded_vertex_bytes);
     println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
-    println!("avg tile memory:  {:.0}", avg_tile_memory_bytes);
     println!("avg traverse:     {avg_retained_scene_traversal_ms:.3} ms");
     println!(
         "avg packet build: {avg_retained_packet_build_ms:.3} ms ({avg_retained_packet_build_count:.2} packets)"
@@ -2974,14 +2943,13 @@ fn run_widget_book_scroll_benchmark(
     slowest_samples.sort_by(|a, b| b.total_time_ms.total_cmp(&a.total_time_ms));
     for sample in slowest_samples.iter().take(5) {
         println!(
-            "  frame {:>4}  total {:>7.3} ms  regen {:>2}  reused {:>2}  upload {:>8}  text {:>8}  tile-gen {:>7.3} ms  compose {:>7.3} ms",
+            "  frame {:>4}  total {:>7.3} ms  rebuild {:>2}  upload {:>8}  text {:>8}  state {:>7.3} ms  compose {:>7.3} ms",
             sample.frame_index,
             sample.total_time_ms,
-            sample.regenerated_tile_count,
-            sample.reused_tile_count,
+            sample.retained_packet_rebuilds.total_count(),
             sample.uploaded_vertex_bytes,
             sample.text_vertex_bytes,
-            sample.tile_generation_time_us as f64 / 1000.0,
+            sample.retained_state_update_time_us as f64 / 1000.0,
             sample.composition_time_us as f64 / 1000.0,
         );
         println!(
@@ -3278,19 +3246,9 @@ fn run_retained_text_scroll_benchmark() -> Result<()> {
         .map(|sample| sample.visible_layer_count as f64)
         .sum::<f64>()
         / valid_count as f64;
-    let avg_visible_tiles = frame_samples
+    let avg_packet_rebuilds = frame_samples
         .iter()
-        .map(|sample| sample.visible_tile_count as f64)
-        .sum::<f64>()
-        / valid_count as f64;
-    let avg_reused_tiles = frame_samples
-        .iter()
-        .map(|sample| sample.reused_tile_count as f64)
-        .sum::<f64>()
-        / valid_count as f64;
-    let avg_regenerated_tiles = frame_samples
-        .iter()
-        .map(|sample| sample.regenerated_tile_count as f64)
+        .map(|sample| sample.retained_packet_rebuilds.total_count() as f64)
         .sum::<f64>()
         / valid_count as f64;
     let avg_direct_packets = frame_samples
@@ -3313,9 +3271,9 @@ fn run_retained_text_scroll_benchmark() -> Result<()> {
         .map(|sample| sample.text_glyph_instance_count as f64)
         .sum::<f64>()
         / valid_count as f64;
-    let avg_tile_generation_ms = frame_samples
+    let avg_state_update_ms = frame_samples
         .iter()
-        .map(|sample| sample.tile_generation_time_us as f64 / 1000.0)
+        .map(|sample| sample.retained_state_update_time_us as f64 / 1000.0)
         .sum::<f64>()
         / valid_count as f64;
     let avg_retained_packet_build_ms = frame_samples
@@ -3370,9 +3328,7 @@ fn run_retained_text_scroll_benchmark() -> Result<()> {
     );
     println!("avg layers:       {avg_visible_layers:.2}");
     println!("avg packets:      {avg_direct_packets:.2}");
-    println!("avg visible tiles:{avg_visible_tiles:.2}");
-    println!("avg reused tiles: {avg_reused_tiles:.2}");
-    println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
+    println!("avg packet rebuilds:{avg_packet_rebuilds:.2}");
     println!("avg upload bytes: {:.0}", avg_uploaded_vertex_bytes);
     println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
     println!("avg glyphs:       {avg_text_glyph_instances:.2}");
@@ -3381,7 +3337,7 @@ fn run_retained_text_scroll_benchmark() -> Result<()> {
     println!("max text bytes:   {max_text_vertex_bytes}");
     println!("avg atlas misses: {avg_text_atlas_miss_count:.2}");
     println!("avg atlas upload: {:.0}", avg_text_atlas_upload_bytes);
-    println!("avg tile gen:     {avg_tile_generation_ms:.3} ms");
+    println!("avg state update: {avg_state_update_ms:.3} ms");
     println!("avg packet build: {avg_retained_packet_build_ms:.3} ms");
     println!("avg surface acq:  {avg_surface_acquire_ms:.3} ms");
     println!("======================================\n");
@@ -3566,14 +3522,14 @@ fn run_text_editing_benchmark() -> Result<()> {
         .map(|sample| sample.text_glyph_instance_count as f64)
         .sum::<f64>()
         / valid_count as f64;
-    let avg_visible_tiles = frame_samples
+    let avg_visible_layers = frame_samples
         .iter()
-        .map(|sample| sample.visible_tile_count as f64)
+        .map(|sample| sample.visible_layer_count as f64)
         .sum::<f64>()
         / valid_count as f64;
-    let avg_regenerated_tiles = frame_samples
+    let avg_packet_rebuilds = frame_samples
         .iter()
-        .map(|sample| sample.regenerated_tile_count as f64)
+        .map(|sample| sample.retained_packet_rebuilds.total_count() as f64)
         .sum::<f64>()
         / valid_count as f64;
     let avg_text_atlas_miss_count = frame_samples
@@ -3608,8 +3564,8 @@ fn run_text_editing_benchmark() -> Result<()> {
     println!("avg upload bytes: {:.0}", avg_uploaded_vertex_bytes);
     println!("avg text bytes:   {:.0}", avg_text_vertex_bytes);
     println!("avg glyphs:       {avg_text_glyph_instances:.2}");
-    println!("avg visible tiles:{avg_visible_tiles:.2}");
-    println!("avg regen tiles:  {avg_regenerated_tiles:.2}");
+    println!("avg visible layers:{avg_visible_layers:.2}");
+    println!("avg packet rebuilds:{avg_packet_rebuilds:.2}");
     println!("avg atlas misses: {avg_text_atlas_miss_count:.2}");
     println!("max upload bytes: {max_uploaded_vertex_bytes}");
     println!("==============================\n");

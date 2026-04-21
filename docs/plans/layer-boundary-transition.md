@@ -452,7 +452,7 @@ Mitigation:
 2. Should scroll surfaces remain `SceneLayer` boundaries, or can some scroll behavior move to flat scene + transform bookkeeping?
 3. Do we want a temporary compatibility mode so selected widgets can keep current behavior until audited?
 4. Should packet rebuild statistics be exposed more directly in `sui-dev` during the migration?
-5. Once default layerization is reduced, do any retained tile concepts still deserve to survive in docs or code shims?
+5. Once default layerization is reduced, do any widget-scoped retained subdivision concepts still deserve to survive outside specialized widgets such as infinite canvas?
 
 ---
 

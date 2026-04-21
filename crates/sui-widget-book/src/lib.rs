@@ -1514,7 +1514,7 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                     Color::rgba(0.96, 0.975, 0.995, 1.0),
                                     Padding::all(
                                         14.0,
-                                        Label::new("Right-click this layer tile")
+                                        Label::new("Right-click this explicit surface")
                                             .font_size(14.0)
                                             .line_height(18.0)
                                             .color(Color::rgba(0.16, 0.21, 0.29, 1.0)),
@@ -1848,7 +1848,7 @@ pub fn build_retained_text_benchmark() -> impl Widget {
             .with_child(
                 SizedBox::new().width(900.0).with_child(
                     Label::new(
-                        "The outer scroll view stays cached, the visible content stays dominated by wrapped labels, and the benchmark scrolls through enough sections to keep retained tiles regenerating with mostly atlas text payloads.",
+                        "The outer scroll view stays retained, the visible content stays dominated by wrapped labels, and the benchmark scrolls through enough sections to keep retained packet rebuilds focused on atlas text payloads.",
                     )
                     .font_size(14.0)
                     .line_height(20.0)
@@ -2467,7 +2467,7 @@ fn retained_text_benchmark_section(section_index: usize) -> (String, String) {
         ),
         (
             "Glyph density",
-            "Wide paragraphs keep each visible tile loaded with enough glyph instances to show byte deltas clearly.",
+            "Wide paragraphs keep each visible retained surface loaded with enough glyph instances to show byte deltas clearly.",
         ),
         (
             "Cache locality",
@@ -2490,7 +2490,7 @@ fn retained_text_benchmark_paragraph(section_index: usize, paragraph_index: usiz
     const OPENERS: [&str; 6] = [
         "Atlas uploads should now track per-glyph instance payloads instead of six transient vertices per shaped glyph.",
         "This retained scroll surface keeps the scene composition simple so upload accounting is easier to read.",
-        "Visible paragraphs change a little on each wheel tick, which keeps regenerated tile strips centered on text.",
+        "Visible paragraphs change a little on each wheel tick, which keeps retained packet rebuilds centered on text.",
         "Repeated headings and body copy help stabilize glyph atlas misses after the initial scroll warmup.",
         "The benchmark is intentionally prose-heavy because text submission is the renderer path under inspection.",
         "Scroll delta size is fixed so frame samples stay comparable across runs and git revisions.",
@@ -2554,7 +2554,7 @@ fn text_editing_benchmark_document() -> String {
             "// syntax colors keep changing across the preview pane",
             "// fallback sample includes Ж, 中, and नमस्ते in comments",
             "// selection overlays should repaint locally",
-            "// retained tiles should not rebuild unrelated code blocks",
+            "// retained packets should not rebuild unrelated code blocks",
         ][(index * 5) % 6];
         lines.push(format!(
             "{indent}{keyword} row_{index:03} = {symbol}(cursor + {delta}, viewport_height - {trim}); {comment}",
@@ -4857,8 +4857,37 @@ mod tests {
             7,
             vec![FramePhaseSample::new(FramePhase::Renderer, 1.5)],
             RendererSubmissionDiagnostics::new(
-                2, 6, 2048, 24, 1536, 3, 6, 420, 160, 210, 120, 3, 1, 0, 1, 1, 0, 4, 90, 440, 210,
-                130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
+                2,
+                6,
+                2048,
+                24,
+                1536,
+                3,
+                6,
+                420,
+                160,
+                210,
+                120,
+                3,
+                sui_runtime::RetainedPacketRebuildDiagnostics::new(1, 0, 1, 1, 0),
+                4,
+                90,
+                440,
+                210,
+                130,
+                15,
+                95,
+                4,
+                32768,
+                115,
+                85,
+                22,
+                16384,
+                920,
+                640,
+                180,
+                70,
+                560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
@@ -4898,8 +4927,37 @@ mod tests {
                 FramePhaseSample::new(FramePhase::Renderer, 1.9),
             ],
             RendererSubmissionDiagnostics::new(
-                2, 6, 2048, 24, 1536, 3, 6, 420, 160, 210, 120, 3, 1, 0, 1, 1, 0, 4, 90, 440, 210,
-                130, 15, 95, 4, 32768, 115, 85, 22, 16384, 920, 640, 180, 70, 560,
+                2,
+                6,
+                2048,
+                24,
+                1536,
+                3,
+                6,
+                420,
+                160,
+                210,
+                120,
+                3,
+                sui_runtime::RetainedPacketRebuildDiagnostics::new(1, 0, 1, 1, 0),
+                4,
+                90,
+                440,
+                210,
+                130,
+                15,
+                95,
+                4,
+                32768,
+                115,
+                85,
+                22,
+                16384,
+                920,
+                640,
+                180,
+                70,
+                560,
             ),
             TextCacheDiagnostics::default(),
             TextCacheDeltaDiagnostics::default(),
