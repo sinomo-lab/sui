@@ -643,6 +643,8 @@ pub enum WindowColorManagementMode {
     PreferHdr,
 }
 
+pub const DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS: f32 = 203.0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowRenderOptions {
     pub feathering_enabled: bool,
@@ -656,6 +658,7 @@ pub struct WindowRenderOptions {
     pub dynamic_range_mode: WindowDynamicRangeMode,
     pub tone_mapping_mode: WindowToneMappingMode,
     pub color_management_mode: WindowColorManagementMode,
+    pub sdr_content_brightness_nits: f32,
 }
 
 impl WindowRenderOptions {
@@ -672,6 +675,7 @@ impl WindowRenderOptions {
             dynamic_range_mode: WindowDynamicRangeMode::Automatic,
             tone_mapping_mode: WindowToneMappingMode::Automatic,
             color_management_mode: WindowColorManagementMode::Automatic,
+            sdr_content_brightness_nits: DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS,
         }
     }
 
@@ -723,6 +727,11 @@ impl WindowRenderOptions {
         self
     }
 
+    pub const fn with_sdr_content_brightness_nits(mut self, brightness_nits: f32) -> Self {
+        self.sdr_content_brightness_nits = brightness_nits;
+        self
+    }
+
     pub fn clamped(self) -> Self {
         Self {
             feathering_enabled: self.feathering_enabled,
@@ -736,6 +745,13 @@ impl WindowRenderOptions {
             dynamic_range_mode: self.dynamic_range_mode,
             tone_mapping_mode: self.tone_mapping_mode,
             color_management_mode: self.color_management_mode,
+            sdr_content_brightness_nits: if self.sdr_content_brightness_nits.is_finite()
+                && self.sdr_content_brightness_nits > 0.0
+            {
+                self.sdr_content_brightness_nits
+            } else {
+                DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS
+            },
         }
     }
 }
@@ -1390,7 +1406,8 @@ mod tests {
                 .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
                 .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
                 .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
-                .with_color_management_mode(WindowColorManagementMode::PreferHdr),
+                .with_color_management_mode(WindowColorManagementMode::PreferHdr)
+                .with_sdr_content_brightness_nits(-25.0),
         );
 
         assert_eq!(
@@ -1402,6 +1419,7 @@ mod tests {
                     .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
                     .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
                     .with_color_management_mode(WindowColorManagementMode::PreferHdr)
+                    .with_sdr_content_brightness_nits(203.0)
             )
         );
 

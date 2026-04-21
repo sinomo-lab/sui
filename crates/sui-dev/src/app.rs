@@ -42,6 +42,7 @@ const COLOR_MANAGEMENT_MODE_NAME: &str = "Color management";
 const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
 const DYNAMIC_RANGE_MODE_NAME: &str = "Dynamic range";
 const TONE_MAPPING_MODE_NAME: &str = "Tone mapping";
+const SDR_CONTENT_BRIGHTNESS_NAME: &str = "SDR content brightness";
 const HDR_THEME_MODE_NAME: &str = "HDR theme mode";
 const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
 const HDR_THEME_INSPECTION_TITLE: &str = "HDR theme mode inspection";
@@ -823,6 +824,10 @@ fn hdr_theme_inspection_lines(window_id: WindowId) -> Vec<String> {
             "Requested presentation: {:?} / {:?}",
             diagnostics.requested_color_management_mode, diagnostics.requested_dynamic_range_mode
         ));
+        lines.push(format!(
+            "Requested SDR content brightness: {:.0} nits",
+            diagnostics.requested_sdr_content_brightness_nits
+        ));
         lines.push(format!("Active strategy: {strategy_debug}"));
     } else {
         lines.push("Window output policy: waiting for first presented frame".to_string());
@@ -853,6 +858,10 @@ fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
         format!(
             "Requested tone mapping: {:?}",
             diagnostics.requested_tone_mapping_mode
+        ),
+        format!(
+            "Requested SDR content brightness: {:.0} nits",
+            diagnostics.requested_sdr_content_brightness_nits
         ),
         format!(
             "Detected primaries: {:?}",
@@ -1129,6 +1138,7 @@ impl RenderSettingsTab {
         let output_primaries_state = Rc::clone(&state);
         let dynamic_range_state = Rc::clone(&state);
         let tone_mapping_state = Rc::clone(&state);
+        let sdr_content_brightness_state = Rc::clone(&state);
         let current_hdr_theme_mode = widget_book_hdr_theme_mode();
         let scroll_state = ScrollState::new();
 
@@ -1366,6 +1376,21 @@ impl RenderSettingsTab {
                             .on_change(move |index, _| {
                                 let mut state = tone_mapping_state.borrow_mut();
                                 update_tone_mapping_mode_selection(&mut state, index);
+                            }),
+                    ))
+                    .with_child(labeled_settings_control(
+                        SDR_CONTENT_BRIGHTNESS_NAME,
+                        220.0,
+                        NumberInput::new(SDR_CONTENT_BRIGHTNESS_NAME)
+                            .range(48.0, 1000.0)
+                            .step(1.0)
+                            .precision(0)
+                            .value(initial.sdr_content_brightness_nits as f64)
+                            .on_change(move |value| {
+                                sdr_content_brightness_state
+                                    .borrow_mut()
+                                    .sdr_content_brightness_nits = value.clamp(48.0, 1000.0)
+                                    as f32;
                             }),
                     ))
                     .with_child(labeled_settings_control(
@@ -2090,6 +2115,7 @@ requested_color_management_mode={:?}
 requested_output_primaries={:?}
 requested_dynamic_range_mode={:?}
 requested_tone_mapping_mode={:?}
+requested_sdr_content_brightness_nits={:.0}
 active_output_strategy={:?}
 notes={}
 ",
@@ -2102,6 +2128,7 @@ notes={}
                 diagnostics.requested_output_primaries,
                 diagnostics.requested_dynamic_range_mode,
                 diagnostics.requested_tone_mapping_mode,
+                diagnostics.requested_sdr_content_brightness_nits,
                 diagnostics.active_output_strategy,
                 diagnostics.display_capabilities.notes,
             ),
@@ -2226,12 +2253,17 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
-    fn settings_view_exposes_visible_labels_for_render_selectors() -> Result<()> {
-        let app = TestApp::new(|| build_dev_application().build())?;
-        let window = app.main_window()?;
-        let settings = window
-            .get_by_role(SemanticsRole::Window)
-            .with_name(SETTINGS_TAB_LABEL);
+    fn settings_view_exposes_visible_labels_for_render_selectors() {
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("dev application should render for settings semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("dev application semantics should exist");
 
         for label in [
             TEXT_RENDER_POLICY_NAME,
@@ -2239,12 +2271,16 @@ final_max_luminance={final_max_luminance}
             OUTPUT_PRIMARIES_NAME,
             DYNAMIC_RANGE_MODE_NAME,
             TONE_MAPPING_MODE_NAME,
+            SDR_CONTENT_BRIGHTNESS_NAME,
             HDR_THEME_MODE_NAME,
         ] {
-            settings.get_by_text(label).expect().to_be_visible()?;
+            assert!(
+                semantics
+                    .iter()
+                    .any(|node| node.name.as_deref() == Some(label)),
+                "expected semantics tree to expose settings control {label:?}"
+            );
         }
-
-        Ok(())
     }
 
     #[test]

@@ -151,12 +151,28 @@ pub enum RequestedToneMappingMode {
     Reinhard,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub const DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS: f32 = 203.0;
+const SCRGB_REFERENCE_WHITE_NITS: f32 = 80.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColorManagementMode {
     pub mode: RequestedColorManagementMode,
     pub output_primaries: RequestedOutputColorPrimaries,
     pub dynamic_range: RequestedDynamicRangeMode,
     pub tone_mapping: RequestedToneMappingMode,
+    pub sdr_content_brightness_nits: f32,
+}
+
+impl Default for ColorManagementMode {
+    fn default() -> Self {
+        Self {
+            mode: RequestedColorManagementMode::Automatic,
+            output_primaries: RequestedOutputColorPrimaries::Automatic,
+            dynamic_range: RequestedDynamicRangeMode::Automatic,
+            tone_mapping: RequestedToneMappingMode::Automatic,
+            sdr_content_brightness_nits: DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -732,14 +748,18 @@ pub enum DebugCaptureArtifact {
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 struct OutputTransformUniform {
     tone_mapping_mode: u32,
-    _padding: [u32; 3],
+    _padding0: [u32; 3],
+    sdr_content_scale: f32,
+    _padding1: [u32; 3],
 }
 
 impl OutputTransformUniform {
-    const fn new(tone_mapping_mode: u32) -> Self {
+    const fn new(tone_mapping_mode: u32, sdr_content_scale: f32) -> Self {
         Self {
             tone_mapping_mode,
-            _padding: [0; 3],
+            _padding0: [0; 3],
+            sdr_content_scale,
+            _padding1: [0; 3],
         }
     }
 }
@@ -1720,7 +1740,7 @@ impl WgpuRenderer {
             return Ok(RendererFrameStats::default());
         };
 
-        let (format, strategy, tone_mapping) = {
+        let (format, strategy, tone_mapping, sdr_content_brightness_nits) = {
             let surface = self.surfaces.get(&frame.window_id).ok_or_else(|| {
                 Error::new(format!(
                     "missing surface for window {}",
@@ -1731,6 +1751,7 @@ impl WgpuRenderer {
                 surface.config.format,
                 surface.output_strategy,
                 surface.color_management.tone_mapping,
+                surface.color_management.sdr_content_brightness_nits,
             )
         };
         let view = frame_texture
@@ -1752,6 +1773,7 @@ impl WgpuRenderer {
                 format,
                 strategy,
                 tone_mapping,
+                sdr_content_brightness_nits,
                 &mut frame_stats,
             )?;
             frame_stats
@@ -1836,6 +1858,8 @@ impl WgpuRenderer {
         };
         let strategy = surface_state.output_strategy;
         let requested_tone_mapping = surface_state.color_management.tone_mapping;
+        let sdr_content_brightness_nits =
+            surface_state.color_management.sdr_content_brightness_nits;
         let final_format = strategy.surface_format();
         let final_view = self.ensure_offscreen_target(frame.window_id, size, final_format)?;
         let prepared = self.prepare_scene_submission(frame)?;
@@ -1855,6 +1879,7 @@ impl WgpuRenderer {
                 final_format,
                 strategy,
                 requested_tone_mapping,
+                sdr_content_brightness_nits,
                 &mut frame_stats,
             )?;
             Ok(frame_stats)
@@ -1891,6 +1916,7 @@ impl WgpuRenderer {
                 primaries: DisplayColorPrimaries::Srgb,
             },
             RequestedToneMappingMode::Clamp,
+            ColorManagementMode::default().sdr_content_brightness_nits,
             &mut frame_stats,
         )?;
         Ok(frame_stats)
@@ -2001,22 +2027,27 @@ impl WgpuRenderer {
         destination_format: wgpu::TextureFormat,
         strategy: OutputStrategy,
         requested_tone_mapping: RequestedToneMappingMode,
+        sdr_content_brightness_nits: f32,
         frame_stats: &mut RendererFrameStats,
     ) -> Result<()> {
-        let resolved_tone_mapping = match requested_tone_mapping {
-            RequestedToneMappingMode::Automatic => match strategy {
-                OutputStrategy::HdrNativeSurface { .. } => 0,
-                OutputStrategy::HdrIntermediateThenToneMap { .. } => 2,
-                _ => 1,
+        let resolved_tone_mapping = match strategy {
+            OutputStrategy::HdrNativeSurface { .. } => 0,
+            _ => match requested_tone_mapping {
+                RequestedToneMappingMode::Automatic => match strategy {
+                    OutputStrategy::HdrIntermediateThenToneMap { .. } => 2,
+                    _ => 1,
+                },
+                RequestedToneMappingMode::Clamp => 1,
+                RequestedToneMappingMode::Reinhard => 2,
             },
-            RequestedToneMappingMode::Clamp => 1,
-            RequestedToneMappingMode::Reinhard => 2,
         };
         let shared = self
             .shared
             .as_mut()
             .expect("renderer shared state initialized");
-        let uniform = OutputTransformUniform::new(resolved_tone_mapping);
+        let sdr_content_scale =
+            scene::output_sdr_content_scale(strategy, sdr_content_brightness_nits);
+        let uniform = OutputTransformUniform::new(resolved_tone_mapping, sdr_content_scale);
         let uniform_buffer = shared
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -3450,6 +3481,10 @@ struct OutputUniform {
     _padding0: u32,
     _padding1: u32,
     _padding2: u32,
+    sdr_content_scale: f32,
+    _padding3: u32,
+    _padding4: u32,
+    _padding5: u32,
 }
 
 @group(0) @binding(0)
@@ -3471,16 +3506,16 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 }
 
 fn tone_map(color: vec3<f32>) -> vec3<f32> {
+    let scaled = max(color, vec3<f32>(0.0)) * output_uniform.sdr_content_scale;
     switch output_uniform.tone_mapping_mode {
         case 0u: {
-            return max(color, vec3<f32>(0.0));
+            return scaled;
         }
         case 2u: {
-            let positive = max(color, vec3<f32>(0.0));
-            return positive / (vec3<f32>(1.0) + positive);
+            return scaled / (vec3<f32>(1.0) + scaled);
         }
         default: {
-            return clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+            return clamp(scaled, vec3<f32>(0.0), vec3<f32>(1.0));
         }
     }
 }
@@ -3512,9 +3547,10 @@ mod tests {
         decode_rgba16f_pixels, prepare_frame_batches,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
-            apply_stem_darkening_to_coverage, convert_subpixel_texel_for_mode, glyph_raster_offset,
-            linearized_color_unorm, output_transform_requires_intermediate, prepare_cached_passes,
-            select_output_strategy, swash_image_to_rgba, tone_map_linear_color,
+            apply_output_transform_for_testing, apply_stem_darkening_to_coverage,
+            convert_subpixel_texel_for_mode, glyph_raster_offset, linearized_color_unorm,
+            output_transform_requires_intermediate, prepare_cached_passes, select_output_strategy,
+            swash_image_to_rgba, tone_map_linear_color,
         },
         shader_color, strip_padded_readback_rows, to_ndc,
     };
@@ -4029,6 +4065,7 @@ mod tests {
                 output_primaries: RequestedOutputColorPrimaries::DisplayP3,
                 dynamic_range: RequestedDynamicRangeMode::Automatic,
                 tone_mapping: RequestedToneMappingMode::Automatic,
+                ..ColorManagementMode::default()
             },
         );
 
@@ -4058,6 +4095,7 @@ mod tests {
                 output_primaries: RequestedOutputColorPrimaries::DisplayP3,
                 dynamic_range: RequestedDynamicRangeMode::HighDynamicRange,
                 tone_mapping: RequestedToneMappingMode::Automatic,
+                ..ColorManagementMode::default()
             },
         );
 
@@ -4091,6 +4129,7 @@ mod tests {
                 output_primaries: RequestedOutputColorPrimaries::DisplayP3,
                 dynamic_range: RequestedDynamicRangeMode::HighDynamicRange,
                 tone_mapping: RequestedToneMappingMode::Automatic,
+                ..ColorManagementMode::default()
             },
         );
 
@@ -4143,6 +4182,70 @@ mod tests {
             tone_map_linear_color([2.5, 1.25, 0.5, 1.0], RequestedToneMappingMode::Clamp);
 
         assert_eq!(transformed, [1.0, 1.0, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn hdr_output_transform_scales_reference_white_to_requested_sdr_content_brightness() {
+        let transformed = apply_output_transform_for_testing(
+            [1.0, 1.0, 1.0, 1.0],
+            OutputStrategy::HdrNativeSurface {
+                format: wgpu::TextureFormat::Rgba16Float,
+                primaries: DisplayColorPrimaries::Srgb,
+                transfer: DisplayTransferFunction::LinearExtended,
+            },
+            RequestedToneMappingMode::Automatic,
+            203.0,
+        );
+
+        let expected = 203.0 / 80.0;
+        assert!((transformed[0] - expected).abs() < 0.0001);
+        assert!((transformed[1] - expected).abs() < 0.0001);
+        assert!((transformed[2] - expected).abs() < 0.0001);
+        assert_eq!(transformed[3], 1.0);
+    }
+
+    #[test]
+    fn native_hdr_output_preserves_requested_reference_white_even_with_manual_tone_mapping_modes() {
+        let strategy = OutputStrategy::HdrNativeSurface {
+            format: wgpu::TextureFormat::Rgba16Float,
+            primaries: DisplayColorPrimaries::Srgb,
+            transfer: DisplayTransferFunction::LinearExtended,
+        };
+        let expected = 203.0 / 80.0;
+
+        for mode in [
+            RequestedToneMappingMode::Automatic,
+            RequestedToneMappingMode::Clamp,
+            RequestedToneMappingMode::Reinhard,
+        ] {
+            let transformed =
+                apply_output_transform_for_testing([1.0, 1.0, 1.0, 1.0], strategy, mode, 203.0);
+            assert!((transformed[0] - expected).abs() < 0.0001, "mode={mode:?}");
+            assert!((transformed[1] - expected).abs() < 0.0001, "mode={mode:?}");
+            assert!((transformed[2] - expected).abs() < 0.0001, "mode={mode:?}");
+            assert_eq!(transformed[3], 1.0, "mode={mode:?}");
+        }
+    }
+
+    #[test]
+    fn hdr_tone_mapped_output_applies_requested_sdr_content_brightness_before_reinhard() {
+        let transformed = apply_output_transform_for_testing(
+            [1.0, 1.0, 1.0, 1.0],
+            OutputStrategy::HdrIntermediateThenToneMap {
+                intermediate_format: wgpu::TextureFormat::Rgba16Float,
+                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::DisplayP3,
+            },
+            RequestedToneMappingMode::Automatic,
+            203.0,
+        );
+
+        let scaled_reference_white = 203.0 / 80.0;
+        let expected = scaled_reference_white / (1.0 + scaled_reference_white);
+        assert!((transformed[0] - expected).abs() < 0.0001);
+        assert!((transformed[1] - expected).abs() < 0.0001);
+        assert!((transformed[2] - expected).abs() < 0.0001);
+        assert_eq!(transformed[3], 1.0);
     }
 
     #[test]

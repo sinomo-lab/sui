@@ -72,6 +72,7 @@ pub(crate) fn map_window_color_management(
     primaries: WindowOutputColorPrimaries,
     dynamic_range: WindowDynamicRangeMode,
     tone_mapping: WindowToneMappingMode,
+    sdr_content_brightness_nits: f32,
 ) -> ColorManagementMode {
     ColorManagementMode {
         mode: match mode {
@@ -99,6 +100,7 @@ pub(crate) fn map_window_color_management(
             WindowToneMappingMode::Clamp => RequestedToneMappingMode::Clamp,
             WindowToneMappingMode::Reinhard => RequestedToneMappingMode::Reinhard,
         },
+        sdr_content_brightness_nits,
     }
 }
 

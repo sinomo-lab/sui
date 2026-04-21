@@ -54,6 +54,7 @@ fn map_window_color_management_for_harness(
     primaries: WindowOutputColorPrimaries,
     dynamic_range: WindowDynamicRangeMode,
     tone_mapping: WindowToneMappingMode,
+    sdr_content_brightness_nits: f32,
 ) -> ColorManagementMode {
     ColorManagementMode {
         mode: match mode {
@@ -81,6 +82,7 @@ fn map_window_color_management_for_harness(
             WindowToneMappingMode::Clamp => RequestedToneMappingMode::Clamp,
             WindowToneMappingMode::Reinhard => RequestedToneMappingMode::Reinhard,
         },
+        sdr_content_brightness_nits,
     }
 }
 
@@ -949,6 +951,7 @@ impl LiveHarnessApp {
                                 options.output_color_primaries,
                                 options.dynamic_range_mode,
                                 options.tone_mapping_mode,
+                                options.sdr_content_brightness_nits,
                             )
                         })
                         .unwrap_or_default(),
@@ -973,6 +976,8 @@ impl LiveHarnessApp {
                             requested_output_primaries: options.output_color_primaries,
                             requested_dynamic_range_mode: options.dynamic_range_mode,
                             requested_tone_mapping_mode: options.tone_mapping_mode,
+                            requested_sdr_content_brightness_nits: options
+                                .sdr_content_brightness_nits,
                             active_output_strategy,
                         },
                     );

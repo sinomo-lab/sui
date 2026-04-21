@@ -548,6 +548,7 @@ impl DesktopApp {
                                 options.output_color_primaries,
                                 options.dynamic_range_mode,
                                 options.tone_mapping_mode,
+                                options.sdr_content_brightness_nits,
                             )
                         })
                         .unwrap_or_default(),
@@ -567,6 +568,8 @@ impl DesktopApp {
                             requested_output_primaries: options.output_color_primaries,
                             requested_dynamic_range_mode: options.dynamic_range_mode,
                             requested_tone_mapping_mode: options.tone_mapping_mode,
+                            requested_sdr_content_brightness_nits: options
+                                .sdr_content_brightness_nits,
                             active_output_strategy,
                         },
                     );

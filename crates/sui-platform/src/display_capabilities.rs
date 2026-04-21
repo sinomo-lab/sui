@@ -28,6 +28,7 @@ pub struct WindowOutputDiagnostics {
     pub requested_output_primaries: WindowOutputColorPrimaries,
     pub requested_dynamic_range_mode: WindowDynamicRangeMode,
     pub requested_tone_mapping_mode: WindowToneMappingMode,
+    pub requested_sdr_content_brightness_nits: f32,
     pub active_output_strategy: OutputStrategy,
 }
 
