@@ -347,6 +347,18 @@ Add a regression test that renders a known subtree and asserts scene-layer count
 - widget-book HDR demos scroll more smoothly
 - no regressions in overlay correctness or ordering
 
+**Current status note:**
+- the live desktop benchmark tests in `crates/sui-widget-book/tests/desktop_e2e.rs` still require a real display server, so current numbers in this environment were captured with headless diagnostic benchmarks in `crates/sui-widget-book/src/lib.rs`
+- current headless widget-book scroll snapshot:
+  - full widget-book scroll surface: avg `3.036 ms`, p95 `4.186 ms`, avg visible layers `20.62`, avg direct packets `11.83`, avg packet rebuilds `9.00`, avg repaint boundaries / scene layers `6.88` / `6.88`
+  - overlay-free gallery-only surface: avg `1.871 ms`, p95 `2.944 ms`, avg visible layers `14.62`, avg direct packets `9.83`, avg packet rebuilds `8.00`, avg repaint boundaries / scene layers `4.88` / `4.88`
+
+Recommended commands for reproducing the current snapshot here:
+```bash
+cargo test -p sui-widget-book --lib widget_book_headless_scroll_current_status_benchmark -- --ignored --nocapture
+cargo test -p sui-widget-book --lib widget_book_headless_gallery_only_scroll_current_status_benchmark -- --ignored --nocapture
+```
+
 ---
 
 ## Files Likely To Change

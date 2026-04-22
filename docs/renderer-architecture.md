@@ -54,19 +54,19 @@ In practice, each window keeps retained state for:
 - retained packet data for direct draws
 - per-window GPU resources and submission stats
 
-One important caveat is that the current runtime feeds the renderer far more layers than intended: many ordinary widget paint operations become their own `SceneLayer` nodes. That makes retained compositor cost track widget-tree shape much more closely than the intended architecture.
+One important caveat is that retained-compositor cost still depends directly on where the runtime chooses to emit `SceneLayer` boundaries. That makes the runtime's boundary policy a first-order renderer concern even though the renderer itself does not walk widget internals.
 
-## Current Architectural Drift
+## Current Architectural State
 
-The current live path is not "one explicit surface per meaningful repaint boundary." Instead, `WidgetPod::paint` currently wraps each widget's paint output into a `SceneLayer` by default in `sui-runtime`. That means the retained compositor often sees:
+The live path is now much closer to the intended model: ordinary widgets paint flat into their parent scene by default, and `SceneLayer` emission is reserved for explicit repaint or composition boundaries in `sui-runtime`.
 
-- many tiny layers with only a few scene commands each
-- high layer counts driven by wrappers such as `Padding`, `Stack`, `SizedBox`, and `Background`
-- overlay and stack-surface layers mixed into an already fragmented layer tree
+That means the retained compositor now usually sees:
 
-This matters because retained traversal, structural comparison, and packet upkeep are paid per layer or packet, not just per draw command.
+- explicit scroll, overlay, stack-surface, and other opt-in composition boundaries
+- root or parent-level direct packets for ordinary widget paint
+- far fewer wrapper-driven layers from widgets such as `Padding`, `Stack`, `SizedBox`, and `Background`
 
-The current architectural direction is to reduce default layerization and reserve `SceneLayer` for explicit repaint or composition boundaries.
+This still matters because retained traversal, structural comparison, and packet upkeep are paid per layer or packet, not just per draw command. The current architectural direction is therefore to keep default paint flat, keep `SceneLayer` explicit, and optimize the smaller set of meaningful retained surfaces instead of reintroducing broad wrapper-driven layerization.
 
 ## Render Modes
 
@@ -91,7 +91,7 @@ For a single window, the renderer-facing path is:
 
 The steady-state goal is reuse. On a good frame, the renderer should mostly reposition or recompose retained content rather than regenerate everything.
 
-Today, an important source of overhead is that the runtime often emits far more `SceneLayer` nodes than the renderer actually needs for correctness. That increases layer traversal, packet comparison, and structure-management cost before the GPU submission path even matters.
+Today, the main remaining source of overhead is no longer default wrapper-driven layerization. Instead, cost is concentrated in the smaller set of real retained boundaries plus the direct packets and rebuild work they drive. That makes layer counts, packet rebuild reasons, and direct-packet churn the most useful indicators when evaluating current renderer changes.
 
 ## Text And Image Flow
 
@@ -133,6 +133,29 @@ The renderer publishes metrics including:
 - GPU upload, encode, submit, and present timings
 
 Those metrics are surfaced by `sui-platform`, shown by the widget-book overlay, and available to tests and debugging tools.
+
+## Current Benchmark Snapshot
+
+In this environment, the live desktop benchmark tests need a real display server, so the current-status snapshot below was captured with the headless widget-book diagnostic benchmarks in `crates/sui-widget-book/src/lib.rs`.
+
+Current headless scroll snapshot:
+
+- full widget-book scroll surface
+  - avg frame time: `3.036 ms` (`329.3 fps`)
+  - p95 frame time: `4.186 ms`
+  - avg visible layers: `20.62`
+  - avg direct packets: `11.83`
+  - avg packet rebuilds: `9.00`
+  - avg repaint boundaries / scene layers: `6.88` / `6.88`
+- overlay-free gallery-only scroll surface
+  - avg frame time: `1.871 ms` (`534.4 fps`)
+  - p95 frame time: `2.944 ms`
+  - avg visible layers: `14.62`
+  - avg direct packets: `9.83`
+  - avg packet rebuilds: `8.00`
+  - avg repaint boundaries / scene layers: `4.88` / `4.88`
+
+These numbers are not a replacement for real desktop benchmarking on a machine with an active display server, but they provide a stable current-status snapshot of retained traversal, rebuild, and layer-cardinality cost after the explicit-boundary transition work.
 
 ## Current Constraints
 

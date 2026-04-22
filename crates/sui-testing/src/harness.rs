@@ -1485,6 +1485,14 @@ fn harness_service() -> &'static HarnessService {
 
                 event_loop_builder.with_any_thread(true);
             }
+            #[cfg(target_os = "linux")]
+            {
+                use winit::platform::wayland::EventLoopBuilderExtWayland;
+                use winit::platform::x11::EventLoopBuilderExtX11;
+
+                EventLoopBuilderExtWayland::with_any_thread(&mut event_loop_builder, true);
+                EventLoopBuilderExtX11::with_any_thread(&mut event_loop_builder, true);
+            }
 
             let event_loop = match event_loop_builder.build() {
                 Ok(event_loop) => event_loop,

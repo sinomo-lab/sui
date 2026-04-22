@@ -3546,10 +3546,10 @@ mod tests {
         POPOVER_NAME, POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
         TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
         TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
-        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
+        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE,
         build_color_and_imagery_story, build_text_rendering_comparison_application,
-        build_text_validation_surface, build_widget_book_application, default_widget_book_state,
-        theme_preview_card,
+        build_text_validation_surface, build_widget_book_application, build_widget_book_gallery,
+        default_widget_book_state, register_widget_book_images, theme_preview_card,
     };
     use sui::{
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -3558,7 +3558,7 @@ mod tests {
         SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size, SizedBox,
         TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
         WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
-        window_scene_statistics_detail_mode,
+        set_window_scene_statistics_detail_mode, window_scene_statistics_detail_mode,
     };
     use sui_runtime::publish_window_performance_snapshot;
     use sui_scene::{Brush, SceneCommand};
@@ -3570,6 +3570,18 @@ mod tests {
 
     fn build_configured_widget_book_app() -> Result<TestApp> {
         TestApp::new(|| build_widget_book_application(configured_widget_book_state()).build())
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn build_gallery_only_widget_book_app() -> Result<TestApp> {
+        let mut application = Application::new();
+        register_widget_book_images(&mut application);
+        let application = application.window(
+            WindowBuilder::new()
+                .title(WINDOW_TITLE)
+                .root(build_widget_book_gallery(default_widget_book_state())),
+        );
+        TestApp::from_runtime(application.build()?)
     }
 
     fn build_text_validation_app() -> Result<TestApp> {
@@ -3668,6 +3680,113 @@ mod tests {
             .find(|node| node.role == SemanticsRole::Window)
             .map(|node| node.bounds.size)
             .ok_or_else(|| sui::Error::new("window viewport is missing from snapshot"))
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn percentile(sorted: &[f64], quantile: f64) -> f64 {
+        if sorted.is_empty() {
+            return 0.0;
+        }
+        let rank = ((sorted.len() - 1) as f64 * quantile).round() as usize;
+        sorted[rank]
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn print_widget_book_headless_scroll_benchmark_summary(
+        label: &str,
+        samples: &[WindowPerformanceSnapshot],
+    ) {
+        let frame_count = samples.len().max(1) as f64;
+        let mut totals = samples
+            .iter()
+            .map(|sample| sample.total_time_ms)
+            .collect::<Vec<_>>();
+        totals.sort_by(|a, b| a.total_cmp(b));
+        let avg_total_ms = totals.iter().sum::<f64>() / frame_count;
+        let avg_visible_layers = samples
+            .iter()
+            .map(|sample| sample.renderer_submission.visible_layer_count as f64)
+            .sum::<f64>()
+            / frame_count;
+        let avg_direct_packets = samples
+            .iter()
+            .map(|sample| sample.renderer_submission.direct_packet_count as f64)
+            .sum::<f64>()
+            / frame_count;
+        let avg_packet_rebuilds = samples
+            .iter()
+            .map(|sample| sample.renderer_submission.retained_packet_rebuilds.total_count() as f64)
+            .sum::<f64>()
+            / frame_count;
+        let avg_scene_layers = samples
+            .iter()
+            .map(|sample| sample.scene.scene_layer_count as f64)
+            .sum::<f64>()
+            / frame_count;
+        let avg_repaint_boundaries = samples
+            .iter()
+            .map(|sample| sample.scene.repaint_boundary_count as f64)
+            .sum::<f64>()
+            / frame_count;
+        let avg_dirty_coverage = samples
+            .iter()
+            .map(|sample| sample.scene.dirty_coverage as f64)
+            .sum::<f64>()
+            / frame_count;
+        let max_total_ms = totals.last().copied().unwrap_or(0.0);
+
+        println!("\n=== {label} ===");
+        println!("frames:                 {}", samples.len());
+        println!(
+            "avg frame time:         {avg_total_ms:.3} ms ({:.1} fps)",
+            1000.0 / avg_total_ms.max(0.001)
+        );
+        println!("p95 frame time:         {:.3} ms", percentile(&totals, 0.95));
+        println!("max frame time:         {max_total_ms:.3} ms");
+        println!("avg visible layers:     {avg_visible_layers:.2}");
+        println!("avg direct packets:     {avg_direct_packets:.2}");
+        println!("avg packet rebuilds:    {avg_packet_rebuilds:.2}");
+        println!("avg repaint boundaries: {avg_repaint_boundaries:.2}");
+        println!("avg scene layers:       {avg_scene_layers:.2}");
+        println!("avg dirty coverage:     {avg_dirty_coverage:.2}%");
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn set_detailed_scene_statistics_mode(window: &TestWindow) -> Result<()> {
+        set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+        window.run_until_idle()
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn collect_headless_scroll_benchmark_samples(
+        window: &TestWindow,
+        scroll_name: &str,
+        samples: usize,
+    ) -> Result<Vec<WindowPerformanceSnapshot>> {
+        let scroll = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(scroll_name);
+        let mut collected = Vec::with_capacity(samples);
+        let mut previous_frame_index = 0;
+        let mut attempts = 0;
+        let max_attempts = samples * 8;
+        while collected.len() < samples && attempts < max_attempts {
+            scroll.scroll_pixels(Vector::new(0.0, -180.0))?;
+            let snapshot = window.performance_snapshot()?;
+            if snapshot.frame_index > previous_frame_index {
+                previous_frame_index = snapshot.frame_index;
+                collected.push(snapshot);
+            }
+            attempts += 1;
+        }
+        assert_eq!(
+            collected.len(),
+            samples,
+            "headless scroll benchmark collected {} frames after {} attempts",
+            collected.len(),
+            attempts,
+        );
+        Ok(collected)
     }
 
     #[cfg(feature = "artifacts")]
@@ -4822,6 +4941,38 @@ mod tests {
 
         assert_ne!(before, after);
 
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "diagnostic benchmark for current headless widget-book scroll status"]
+    fn widget_book_headless_scroll_current_status_benchmark() -> Result<()> {
+        let app = build_headless_default_widget_book_app()?;
+        let window = app.main_window()?;
+        set_detailed_scene_statistics_mode(&window)?;
+        let samples = collect_headless_scroll_benchmark_samples(&window, GALLERY_SCROLL_NAME, 24)?;
+
+        print_widget_book_headless_scroll_benchmark_summary(
+            "Widget Book Headless Scroll Benchmark",
+            &samples,
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "diagnostic benchmark for current headless overlay-free widget-book gallery status"]
+    fn widget_book_headless_gallery_only_scroll_current_status_benchmark() -> Result<()> {
+        let app = build_gallery_only_widget_book_app()?;
+        let window = app.main_window()?;
+        set_detailed_scene_statistics_mode(&window)?;
+        let samples = collect_headless_scroll_benchmark_samples(&window, GALLERY_SCROLL_NAME, 24)?;
+
+        print_widget_book_headless_scroll_benchmark_summary(
+            "Widget Book Headless Gallery-Only Scroll Benchmark",
+            &samples,
+        );
         Ok(())
     }
 
