@@ -148,6 +148,11 @@ pub enum WakeEvent {
         token: AsyncWakeToken,
         time: f64,
     },
+    AnimationFrame {
+        time: f64,
+        delta: f64,
+        frame_index: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,4 +249,27 @@ pub enum Event {
     Wake(WakeEvent),
     Window(WindowEvent),
     Custom(CustomEvent),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WakeEvent;
+
+    #[test]
+    fn wake_event_animation_frame_carries_time_and_delta() {
+        let event = WakeEvent::AnimationFrame {
+            time: 42.5,
+            delta: 1.0 / 120.0,
+            frame_index: 7,
+        };
+
+        assert!(matches!(
+            event,
+            WakeEvent::AnimationFrame {
+                time,
+                delta,
+                frame_index
+            } if time == 42.5 && delta == 1.0 / 120.0 && frame_index == 7
+        ));
+    }
 }

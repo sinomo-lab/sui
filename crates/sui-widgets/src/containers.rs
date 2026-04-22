@@ -8,8 +8,8 @@ use sui_core::{
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
-    SemanticsCtx,
-    SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor,
+    WidgetPodVisitor,
 };
 use sui_scene::{Brush, LayerCompositionMode, StrokeStyle};
 

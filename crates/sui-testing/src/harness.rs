@@ -1661,3 +1661,101 @@ fn map_event_loop_error(error: EventLoopError) -> Error {
 fn map_os_error(error: OsError) -> Error {
     Error::new(format!("failed to create live test window: {error}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
+    use super::Harness;
+    use sui_core::{Color, CustomEvent, Event, Result, Size, WakeEvent};
+    use sui_layout::Constraints;
+    use sui_runtime::{Application, EventCtx, MeasureCtx, PaintCtx, Widget, WindowBuilder};
+
+    #[derive(Default)]
+    struct AnimationState {
+        frames: usize,
+        pending_frames: usize,
+        last_delta: Option<f64>,
+    }
+
+    struct AnimationRoot {
+        state: Rc<RefCell<AnimationState>>,
+    }
+
+    impl Widget for AnimationRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Custom(custom) if custom.kind == "arm-animation" => {
+                    let mut state = self.state.borrow_mut();
+                    state.pending_frames = 3;
+                    state.last_delta = None;
+                    ctx.request_animation_frame();
+                }
+                Event::Wake(WakeEvent::AnimationFrame { delta, .. }) => {
+                    let mut state = self.state.borrow_mut();
+                    if state.pending_frames > 0 {
+                        state.pending_frames -= 1;
+                        state.frames += 1;
+                        state.last_delta = Some(*delta);
+                        ctx.request_paint();
+                        if state.pending_frames > 0 {
+                            ctx.request_animation_frame();
+                        }
+                        ctx.set_handled();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(240.0, 120.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+        }
+    }
+
+    #[test]
+    fn advance_time_drives_animation_frame_delivery() -> Result<()> {
+        let state = Rc::new(RefCell::new(AnimationState::default()));
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Animation Harness")
+                    .root(AnimationRoot {
+                        state: Rc::clone(&state),
+                    }),
+            )
+            .build()?;
+        let mut harness = Harness::new_headless(runtime)?;
+        let window_id = harness.window_id_by_title("Animation Harness").unwrap();
+
+        harness.dispatch_event(window_id, Event::Custom(CustomEvent::new("arm-animation")))?;
+        {
+            let state = state.borrow();
+            assert_eq!(state.frames, 1);
+            assert_eq!(state.pending_frames, 2);
+            assert_eq!(state.last_delta, Some(0.0));
+        }
+
+        harness.advance_time(1.0 / 120.0)?;
+        {
+            let state = state.borrow();
+            assert_eq!(state.frames, 2);
+            assert_eq!(state.pending_frames, 1);
+            assert_eq!(state.last_delta, Some(1.0 / 120.0));
+        }
+
+        harness.advance_time(1.0 / 120.0)?;
+        {
+            let state = state.borrow();
+            assert_eq!(state.frames, 3);
+            assert_eq!(state.pending_frames, 0);
+            assert_eq!(state.last_delta, Some(1.0 / 120.0));
+        }
+
+        Ok(())
+    }
+}

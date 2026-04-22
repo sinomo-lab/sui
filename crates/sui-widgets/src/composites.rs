@@ -6,9 +6,8 @@ use sui_core::{
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
     ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    SingleChild,
-    StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
-    window_render_options,
+    SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor,
+    WidgetPodVisitor, window_render_options,
 };
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{TextMeasurement, TextStyle};

@@ -4,7 +4,7 @@ mod diagnostics;
 mod widget;
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::Arc,
     time::Instant,
 };
@@ -605,6 +605,8 @@ struct GraphChangeSet {
     transform_widgets: Vec<LayerTranslation>,
 }
 
+const ANIMATION_FRAME_INTERVAL_SECONDS: f64 = 1.0 / 120.0;
+
 struct WindowState {
     id: WindowId,
     title: String,
@@ -626,6 +628,10 @@ struct WindowState {
     delivering_timers: HashMap<TimerToken, WidgetId>,
     async_wake_targets: HashMap<AsyncWakeToken, WidgetId>,
     pending_async_wakeups: VecDeque<AsyncWakeToken>,
+    requested_animation_frames: BTreeSet<WidgetId>,
+    delivering_animation_frames: VecDeque<WidgetId>,
+    last_animation_frame_time: Option<f64>,
+    next_animation_frame_index: u64,
     ime_composition_rect: Option<Rect>,
     last_tick_time: f64,
 }
@@ -658,6 +664,10 @@ impl WindowState {
             delivering_timers: HashMap::new(),
             async_wake_targets: HashMap::new(),
             pending_async_wakeups: VecDeque::new(),
+            requested_animation_frames: BTreeSet::new(),
+            delivering_animation_frames: VecDeque::new(),
+            last_animation_frame_time: None,
+            next_animation_frame_index: 0,
             ime_composition_rect: None,
             last_tick_time: 0.0,
         }
@@ -920,15 +930,35 @@ impl WindowState {
         self.root.layer_composition_mode_for(widget_id)
     }
 
-    fn next_wakeup_time(&self) -> Option<f64> {
-        if !self.pending_async_wakeups.is_empty() {
-            return Some(self.last_tick_time);
-        }
+    fn animation_frame_deadline(&self) -> Option<f64> {
+        (!self.requested_animation_frames.is_empty()).then_some(
+            self.last_animation_frame_time
+                .map_or(self.last_tick_time, |last| {
+                    last + ANIMATION_FRAME_INTERVAL_SECONDS
+                }),
+        )
+    }
 
-        self.scheduled_timers
+    fn next_wakeup_time(&self) -> Option<f64> {
+        let mut next = self
+            .scheduled_timers
             .iter()
             .map(|timer| timer.deadline)
-            .min_by(|left, right| left.total_cmp(right))
+            .min_by(|left, right| left.total_cmp(right));
+
+        if !self.pending_async_wakeups.is_empty() {
+            next = Some(next.map_or(self.last_tick_time, |deadline| {
+                deadline.min(self.last_tick_time)
+            }));
+        }
+
+        if let Some(animation_deadline) = self.animation_frame_deadline() {
+            next = Some(next.map_or(animation_deadline, |deadline| {
+                deadline.min(animation_deadline)
+            }));
+        }
+
+        next
     }
 
     fn drain_ready_events(&mut self) -> Vec<Event> {
@@ -954,6 +984,34 @@ impl WindowState {
             if self.async_wake_targets.contains_key(&token) {
                 ready.push(Event::Wake(WakeEvent::Async { token, time: now }));
             }
+        }
+
+        if self
+            .animation_frame_deadline()
+            .is_some_and(|deadline| deadline <= now)
+        {
+            let delta = self
+                .last_animation_frame_time
+                .map(|last| (now - last).max(0.0))
+                .unwrap_or(0.0);
+            let frame_index = self.next_animation_frame_index;
+            self.next_animation_frame_index = self.next_animation_frame_index.saturating_add(1);
+
+            let requested = std::mem::take(&mut self.requested_animation_frames);
+            self.delivering_animation_frames
+                .extend(requested.iter().copied());
+            ready.extend(requested.iter().map(|_| {
+                Event::Wake(WakeEvent::AnimationFrame {
+                    time: now,
+                    delta,
+                    frame_index,
+                })
+            }));
+            self.last_animation_frame_time = Some(now);
+        } else if self.delivering_animation_frames.is_empty()
+            && self.requested_animation_frames.is_empty()
+        {
+            self.last_animation_frame_time = None;
         }
 
         ready
@@ -1052,6 +1110,7 @@ impl WindowState {
         match wake_event {
             WakeEvent::Timer { token, .. } => self.delivering_timers.get(&token).copied(),
             WakeEvent::Async { token, .. } => self.async_wake_targets.get(&token).copied(),
+            WakeEvent::AnimationFrame { .. } => self.delivering_animation_frames.front().copied(),
         }
     }
 
@@ -1080,6 +1139,9 @@ impl WindowState {
                 WakeRequest::UnregisterAsync { token } => {
                     self.async_wake_targets.remove(&token);
                     self.pending_async_wakeups.retain(|queued| *queued != token);
+                }
+                WakeRequest::RequestAnimationFrame { target } => {
+                    self.requested_animation_frames.insert(target);
                 }
             }
         }
@@ -1110,6 +1172,14 @@ impl WindowState {
             }
             Event::Wake(WakeEvent::Timer { token, .. }) => {
                 self.delivering_timers.remove(token);
+            }
+            Event::Wake(WakeEvent::AnimationFrame { .. }) => {
+                self.delivering_animation_frames.pop_front();
+                if self.delivering_animation_frames.is_empty()
+                    && self.requested_animation_frames.is_empty()
+                {
+                    self.last_animation_frame_time = None;
+                }
             }
             _ => {}
         }
@@ -1706,7 +1776,12 @@ impl WindowState {
             }
         }
 
-        (scene, paint_bounds_by_widget, invalidations, ime_composition_rect)
+        (
+            scene,
+            paint_bounds_by_widget,
+            invalidations,
+            ime_composition_rect,
+        )
     }
 
     fn collect_dirty_layers(&self, invalidations: &[InvalidationRequest]) -> Vec<WidgetId> {
@@ -1725,9 +1800,9 @@ impl WindowState {
                 )
             })
             .map(|request| match request.target {
-                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => {
-                    self.graph.nearest_paint_boundary_ancestor_or_root(widget_id)
-                }
+                InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => self
+                    .graph
+                    .nearest_paint_boundary_ancestor_or_root(widget_id),
                 InvalidationTarget::Widget(_) => self.root.id(),
                 InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => self.root.id(),
             })
@@ -1916,7 +1991,9 @@ impl WindowState {
             let InvalidationTarget::Widget(widget_id) = request.target else {
                 continue;
             };
-            let resolved_boundary = self.graph.nearest_paint_boundary_ancestor_or_root(widget_id);
+            let resolved_boundary = self
+                .graph
+                .nearest_paint_boundary_ancestor_or_root(widget_id);
             if resolved_boundary == self.root.id() {
                 continue;
             }
@@ -1992,7 +2069,10 @@ impl WindowState {
 
                 match request.target {
                     InvalidationTarget::Widget(widget_id) if self.graph.contains(widget_id) => {
-                        Some(self.graph.nearest_paint_boundary_ancestor_or_root(widget_id))
+                        Some(
+                            self.graph
+                                .nearest_paint_boundary_ancestor_or_root(widget_id),
+                        )
                     }
                     _ => None,
                 }
@@ -2149,6 +2229,14 @@ impl WindowState {
             .retain(|_, widget_id| self.graph.contains(*widget_id));
         self.pending_async_wakeups
             .retain(|token| self.async_wake_targets.contains_key(token));
+        self.requested_animation_frames
+            .retain(|widget_id| self.graph.contains(*widget_id));
+        self.delivering_animation_frames
+            .retain(|widget_id| self.graph.contains(*widget_id));
+        if self.requested_animation_frames.is_empty() && self.delivering_animation_frames.is_empty()
+        {
+            self.last_animation_frame_time = None;
+        }
 
         if self
             .focus
@@ -2288,7 +2376,10 @@ impl WidgetGraph {
         }
     }
 
-    fn update_paint_bounds_from_snapshot(&mut self, paint_bounds_by_widget: &HashMap<WidgetId, Rect>) {
+    fn update_paint_bounds_from_snapshot(
+        &mut self,
+        paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
+    ) {
         for node in self.nodes.values_mut() {
             node.geometry.paint_bounds = paint_bounds_by_widget
                 .get(&node.id)
@@ -2364,9 +2455,8 @@ impl WidgetGraph {
         self.path_to(widget_id)
             .and_then(|path| {
                 path.into_iter().rev().find(|candidate| {
-                    self.node(*candidate).is_some_and(|node| {
-                        node.paint_boundary == PaintBoundaryMode::Explicit
-                    })
+                    self.node(*candidate)
+                        .is_some_and(|node| node.paint_boundary == PaintBoundaryMode::Explicit)
                 })
             })
             .unwrap_or(self.root)
@@ -2799,10 +2889,9 @@ mod tests {
 
     use super::{
         Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
-        PaintBoundaryMode, PaintCtx, Runtime, SceneStatisticsDetailMode, SemanticsCtx,
-        SingleChild, Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot,
-        WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
-        set_window_scene_statistics_detail_mode,
+        PaintBoundaryMode, PaintCtx, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
+        Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor,
+        WidgetPodVisitor, WindowBuilder, set_window_scene_statistics_detail_mode,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
@@ -3337,6 +3426,97 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct AnimationWakeState {
+        request_twice: bool,
+        animation_wakes: usize,
+        last_animation_time: Option<f64>,
+        last_animation_delta: Option<f64>,
+        last_animation_frame_index: Option<u64>,
+    }
+
+    struct AnimationWakeLeaf {
+        state: Rc<RefCell<AnimationWakeState>>,
+    }
+
+    impl Widget for AnimationWakeLeaf {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Pointer(pointer) if pointer.kind == PointerEventKind::Down => {
+                    let request_twice = self.state.borrow().request_twice;
+                    ctx.request_animation_frame();
+                    if request_twice {
+                        ctx.request_animation_frame();
+                    }
+                    ctx.set_handled();
+                }
+                Event::Wake(WakeEvent::AnimationFrame {
+                    time,
+                    delta,
+                    frame_index,
+                }) => {
+                    let mut state = self.state.borrow_mut();
+                    state.animation_wakes += 1;
+                    state.last_animation_time = Some(*time);
+                    state.last_animation_delta = Some(*delta);
+                    state.last_animation_frame_index = Some(*frame_index);
+                    ctx.request_paint();
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+    }
+
+    struct RemovableAnimationRoot {
+        child: Option<SingleChild>,
+    }
+
+    impl Widget for RemovableAnimationRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Custom(custom) = event
+                && custom.kind == "drop-animation-child"
+            {
+                self.child = None;
+                ctx.request_measure();
+                ctx.set_handled();
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            if let Some(child) = &mut self.child {
+                child.measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            }
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            if let Some(child) = &mut self.child {
+                child.arrange(
+                    ctx,
+                    Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+                );
+            }
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            if let Some(child) = &self.child {
+                child.visit_children(visitor);
+            }
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            if let Some(child) = &mut self.child {
+                child.visit_children_mut(visitor);
+            }
+        }
+    }
+
     struct TextImeLeaf {
         layout: RefCell<Option<PersistentTextLayout>>,
     }
@@ -3650,6 +3830,44 @@ mod tests {
 
         let window_id = runtime.window_ids()[0];
         (runtime, window_id, state)
+    }
+
+    fn build_animation_wake_runtime(
+        request_twice: bool,
+    ) -> (Runtime, sui_core::WindowId, Rc<RefCell<AnimationWakeState>>) {
+        let state = Rc::new(RefCell::new(AnimationWakeState {
+            request_twice,
+            ..AnimationWakeState::default()
+        }));
+
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Animation Wake")
+                    .root(ChildRoot::new(AnimationWakeLeaf {
+                        state: Rc::clone(&state),
+                    })),
+            )
+            .build()
+            .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id, state)
+    }
+
+    fn build_removable_animation_runtime() -> (Runtime, sui_core::WindowId) {
+        let state = Rc::new(RefCell::new(AnimationWakeState::default()));
+        let runtime = Application::new()
+            .window(WindowBuilder::new().title("Removable Animation").root(
+                RemovableAnimationRoot {
+                    child: Some(SingleChild::new(AnimationWakeLeaf { state })),
+                },
+            ))
+            .build()
+            .unwrap();
+
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id)
     }
 
     fn build_text_runtime() -> (Runtime, sui_core::WindowId) {
@@ -4231,6 +4449,101 @@ mod tests {
 
         assert_eq!(state.borrow().timer_wakes, 1);
         assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
+    }
+
+    #[test]
+    fn animation_frame_wakeups_reenter_runtime_with_registered_target() {
+        let (mut runtime, window_id, state) = build_animation_wake_runtime(false);
+
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 12;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), Some(0.0));
+
+        let ready = runtime.drain_ready_events();
+        assert_eq!(ready.len(), 1);
+        assert!(matches!(
+            ready[0],
+            (
+                ready_window,
+                Event::Wake(WakeEvent::AnimationFrame {
+                    time,
+                    delta,
+                    frame_index,
+                })
+            ) if ready_window == window_id && time == 0.0 && delta == 0.0 && frame_index == 0
+        ));
+
+        for (ready_window, event) in ready {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+
+        let state = state.borrow();
+        assert_eq!(state.animation_wakes, 1);
+        assert_eq!(state.last_animation_time, Some(0.0));
+        assert_eq!(state.last_animation_delta, Some(0.0));
+        assert_eq!(state.last_animation_frame_index, Some(0));
+        assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
+    }
+
+    #[test]
+    fn repeated_animation_frame_requests_are_idempotent_for_the_same_widget() {
+        let (mut runtime, window_id, state) = build_animation_wake_runtime(true);
+
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 13;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        let ready = runtime.drain_ready_events();
+        assert_eq!(ready.len(), 1);
+
+        for (ready_window, event) in ready {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+
+        assert_eq!(state.borrow().animation_wakes, 1);
+        assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
+    }
+
+    #[test]
+    fn animated_widget_registration_is_cleaned_up_when_widget_disappears() {
+        let (mut runtime, window_id) = build_removable_animation_runtime();
+
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 14;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), Some(0.0));
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Custom(CustomEvent::new("drop-animation-child")),
+            )
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+
+        assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
+        assert!(runtime.drain_ready_events().is_empty());
     }
 
     #[test]

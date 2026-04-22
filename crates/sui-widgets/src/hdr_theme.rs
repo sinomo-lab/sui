@@ -497,11 +497,11 @@ mod tests {
     use std::fmt::Debug;
 
     use super::{
+        HdrColorRoles, HdrEffectTokens, HdrLuminanceTokens, HdrMaterialTokens, HdrPolicyTokens,
+        HdrThemeMode, HdrThemeTokens, MaterialToken, ResolvedHdrStyle, SemanticColorToken,
+        WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
         resolve_luminance_role, resolve_material_role, resolve_semantic_color,
-        resolve_widget_hdr_style, HdrColorRoles, HdrEffectTokens, HdrLuminanceTokens,
-        HdrMaterialTokens, HdrPolicyTokens, HdrThemeMode, HdrThemeTokens, MaterialToken,
-        ResolvedHdrStyle, SemanticColorToken, WidgetColorRole, WidgetEffectRole,
-        WidgetLuminanceRole, WidgetMaterialRole,
+        resolve_widget_hdr_style,
     };
     use crate::theme::DefaultTheme;
     use sui_core::Color;

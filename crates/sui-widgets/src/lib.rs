@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod animation;
 pub mod composites;
 pub mod containers;
 pub mod controls;
@@ -10,6 +11,7 @@ pub mod panes;
 pub mod text_surface;
 pub mod theme;
 
+pub use animation::{Blink, Easing, Interpolate, Pulse, SpringF32, Transition};
 pub use composites::{
     BusyIndicator, ContextMenu, Dialog, Menu, MenuItem, Modal, Popover, ProgressBar, Spinner,
     TabBar, Tabs, Tooltip, TooltipPlacement,

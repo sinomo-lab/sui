@@ -48,7 +48,14 @@ impl HeadlessPlatform {
     }
 
     pub fn run(&mut self, runtime: &mut Runtime) -> Result<Vec<PlatformWindow>> {
-        while self.pump(runtime)? {}
+        loop {
+            if self.pump(runtime)? {
+                continue;
+            }
+            if !self.advance_to_next_wakeup(runtime)? {
+                break;
+            }
+        }
 
         Ok(self
             .windows
@@ -90,6 +97,28 @@ impl HeadlessPlatform {
 
     pub fn current_time(&self) -> f64 {
         self.frame_clock
+    }
+
+    fn advance_to_next_wakeup(&mut self, runtime: &Runtime) -> Result<bool> {
+        let mut next: Option<f64> = None;
+        for window_id in runtime.window_ids() {
+            let candidate = runtime.next_wakeup_time(window_id)?;
+            next = match (next, candidate) {
+                (Some(current), Some(candidate)) => Some(current.min(candidate)),
+                (None, Some(candidate)) => Some(candidate),
+                (current, None) => current,
+            };
+        }
+
+        let Some(next) = next else {
+            return Ok(false);
+        };
+        if next <= self.frame_clock {
+            return Ok(false);
+        }
+
+        self.frame_clock = next;
+        Ok(true)
     }
 
     pub fn pending_event_count(&self) -> usize {
@@ -275,7 +304,6 @@ impl HeadlessPlatform {
             self.windows[window_index].redraw_requested = false;
 
             if runtime.needs_render(window_id)? {
-                self.frame_clock += 1.0;
                 runtime.tick(self.frame_clock);
 
                 let render_started_at_ms = self.current_time() * 1000.0;
@@ -431,6 +459,9 @@ mod tests {
         paints: usize,
         timer_wakes: usize,
         async_wakes: usize,
+        animation_wakes: usize,
+        pending_animation_frames: usize,
+        last_animation_delta: Option<f64>,
         timer_token: Option<TimerToken>,
         async_token: Option<AsyncWakeToken>,
     }
@@ -451,6 +482,12 @@ mod tests {
                     counters.timer_token = Some(ctx.schedule_timer_after(3.0));
                     counters.async_token = Some(ctx.register_async_wakeup());
                 }
+                Event::Custom(custom) if custom.kind == "arm-animation" => {
+                    let mut counters = self.counters.borrow_mut();
+                    counters.pending_animation_frames = 3;
+                    counters.last_animation_delta = None;
+                    ctx.request_animation_frame();
+                }
                 Event::Wake(WakeEvent::Timer { token, .. }) => {
                     let mut counters = self.counters.borrow_mut();
                     if counters.timer_token == Some(*token) {
@@ -464,6 +501,19 @@ mod tests {
                     if counters.async_token == Some(*token) {
                         counters.async_wakes += 1;
                         ctx.request_paint();
+                        ctx.set_handled();
+                    }
+                }
+                Event::Wake(WakeEvent::AnimationFrame { delta, .. }) => {
+                    let mut counters = self.counters.borrow_mut();
+                    if counters.pending_animation_frames > 0 {
+                        counters.pending_animation_frames -= 1;
+                        counters.animation_wakes += 1;
+                        counters.last_animation_delta = Some(*delta);
+                        ctx.request_paint();
+                        if counters.pending_animation_frames > 0 {
+                            ctx.request_animation_frame();
+                        }
                         ctx.set_handled();
                     }
                 }
@@ -571,22 +621,53 @@ mod tests {
             window_id,
             Event::Custom(CustomEvent::new("arm-wakeups")),
         )?;
-        let _ = platform.run(&mut runtime)?;
+        assert!(platform.pump(&mut runtime)?);
 
         let async_token = counters.borrow().async_token.unwrap();
         assert_eq!(counters.borrow().paints, 1);
+        assert_eq!(counters.borrow().timer_wakes, 0);
 
         assert!(platform.wake_async(&mut runtime, window_id, async_token)?);
-        let _ = platform.run(&mut runtime)?;
+        assert!(platform.pump(&mut runtime)?);
 
         assert_eq!(counters.borrow().async_wakes, 1);
+        assert_eq!(counters.borrow().paints, 1);
+        assert!(platform.pump(&mut runtime)?);
         assert_eq!(counters.borrow().paints, 2);
 
         platform.advance_time(3.0);
-        let _ = platform.run(&mut runtime)?;
+        assert!(platform.pump(&mut runtime)?);
 
         assert_eq!(counters.borrow().timer_wakes, 1);
+        assert_eq!(counters.borrow().paints, 2);
+        assert!(platform.pump(&mut runtime)?);
         assert_eq!(counters.borrow().paints, 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn animation_frame_request_keeps_headless_pumping_until_completion() -> Result<()> {
+        let counters = Rc::new(RefCell::new(Counters::default()));
+        let (mut runtime, window_id) = build_runtime(Rc::clone(&counters));
+        let mut platform = HeadlessPlatform::new();
+
+        let _ = platform.run(&mut runtime)?;
+        assert_eq!(counters.borrow().paints, 1);
+
+        platform.dispatch_event(
+            &runtime,
+            window_id,
+            Event::Custom(CustomEvent::new("arm-animation")),
+        )?;
+        let _ = platform.run(&mut runtime)?;
+
+        let counters = counters.borrow();
+        assert_eq!(counters.animation_wakes, 3);
+        assert_eq!(counters.pending_animation_frames, 0);
+        assert_eq!(counters.paints, 4);
+        assert_eq!(counters.last_animation_delta, Some(1.0 / 120.0));
+        assert!((platform.current_time() - (2.0 / 120.0)).abs() < 1e-9);
 
         Ok(())
     }

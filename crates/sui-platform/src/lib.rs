@@ -9,9 +9,9 @@ use std::time::Instant;
 
 use sui_core::WindowId;
 use sui_render_wgpu::{
-    ColorManagementMode, RequestedColorManagementMode, RequestedDynamicRangeMode,
-    RequestedOutputColorPrimaries, RequestedToneMappingMode, RendererFrameStats, StemDarkening,
-    TextCoveragePolicy, TextHinting, WgpuRenderer,
+    ColorManagementMode, RendererFrameStats, RequestedColorManagementMode,
+    RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
+    StemDarkening, TextCoveragePolicy, TextHinting, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
@@ -313,12 +313,10 @@ pub fn publish_frame_performance(
 #[cfg(test)]
 mod tests {
     use super::{
-        retained_packet_hotspot_diagnostics_from_frame_stats,
-        retained_packet_rebuild_diagnostics, renderer_submission_diagnostics_from_frame_stats,
+        renderer_submission_diagnostics_from_frame_stats,
+        retained_packet_hotspot_diagnostics_from_frame_stats, retained_packet_rebuild_diagnostics,
     };
-    use sui_render_wgpu::{
-        RendererFrameStats, RendererPacketHotspot, RetainedPacketRebuildStats,
-    };
+    use sui_render_wgpu::{RendererFrameStats, RendererPacketHotspot, RetainedPacketRebuildStats};
 
     #[test]
     fn retained_packet_rebuild_diagnostics_bridge_preserves_named_buckets() {

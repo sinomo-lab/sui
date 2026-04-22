@@ -20,6 +20,7 @@ use sui::{
     Table, TableColumn, TableRow, TextArea, Vector, VirtualScrollView, WgpuRenderer, WindowBuilder,
     WindowEvent, WindowId, window_performance_snapshot,
 };
+use sui_platform::publish_frame_performance;
 use sui_runtime::{
     PresentationLatencyDiagnostics, RenderOutput, RendererSubmissionDiagnostics,
     RetainedPacketRebuildDiagnostics, SceneStatisticsDetailMode, WidgetTimingPhase,
@@ -35,7 +36,6 @@ use sui_widget_book::{
     build_widget_book_application, build_widget_book_gallery, default_widget_book_state,
     register_widget_book_images,
 };
-use sui_platform::publish_frame_performance;
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},

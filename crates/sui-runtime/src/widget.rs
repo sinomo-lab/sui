@@ -399,7 +399,8 @@ impl WidgetPod {
             started.elapsed(),
         );
 
-        let (scene, widget_paint_bounds, invalidations, ime_composition_rect) = child_ctx.into_parts();
+        let (scene, widget_paint_bounds, invalidations, ime_composition_rect) =
+            child_ctx.into_parts();
         let paint_bounds = scene
             .paint_bounds()
             .unwrap_or(self.layout_state.arranged_bounds);
@@ -745,6 +746,9 @@ pub(crate) enum WakeRequest {
     UnregisterAsync {
         token: AsyncWakeToken,
     },
+    RequestAnimationFrame {
+        target: WidgetId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -877,6 +881,12 @@ impl EventCtx {
             .push(WakeRequest::UnregisterAsync { token });
     }
 
+    pub fn request_animation_frame(&mut self) {
+        self.wake_requests.push(WakeRequest::RequestAnimationFrame {
+            target: self.widget_id,
+        });
+    }
+
     pub fn request_pointer_capture(&mut self, pointer_id: u64) {
         self.pointer_capture_requests
             .push(PointerCaptureRequest::Capture {
@@ -918,6 +928,18 @@ impl EventCtx {
             )
             .with_region(rect),
         );
+    }
+
+    pub fn request_transform(&mut self) {
+        self.request_widget(InvalidationKind::Transform);
+    }
+
+    pub fn request_effect(&mut self) {
+        self.request_widget(InvalidationKind::Effect);
+    }
+
+    pub fn request_visibility(&mut self) {
+        self.request_widget(InvalidationKind::Visibility);
     }
 
     pub fn request_hit_test(&mut self) {
@@ -1533,7 +1555,7 @@ mod tests {
 
     use super::{
         ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
-        Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+        WakeRequest, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
     };
     use sui_core::{
         Color, DpiInfo, ImageHandle, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole,
@@ -1654,16 +1676,50 @@ mod tests {
 
         ctx.request_measure();
         ctx.request_paint_rect(Rect::new(8.0, 12.0, 24.0, 36.0));
+        ctx.request_transform();
+        ctx.request_effect();
+        ctx.request_visibility();
+        ctx.request_animation_frame();
         ctx.request_focus();
         ctx.set_handled();
 
         assert!(ctx.is_handled());
         assert_eq!(ctx.bounds(), Rect::new(8.0, 12.0, 24.0, 36.0));
-        assert_eq!(ctx.invalidations().len(), 2);
+        assert_eq!(ctx.invalidations().len(), 5);
         assert_eq!(ctx.invalidations()[0].kind, InvalidationKind::Measure);
         assert_eq!(
             ctx.invalidations()[1].region,
             Some(Rect::new(8.0, 12.0, 24.0, 36.0))
+        );
+        assert_eq!(ctx.invalidations()[2].kind, InvalidationKind::Transform);
+        assert_eq!(ctx.invalidations()[3].kind, InvalidationKind::Effect);
+        assert_eq!(ctx.invalidations()[4].kind, InvalidationKind::Visibility);
+        assert_eq!(
+            ctx.take_wake_requests(),
+            vec![WakeRequest::RequestAnimationFrame {
+                target: WidgetId::new(2)
+            }]
+        );
+    }
+
+    #[test]
+    fn request_animation_frame_enqueues_widget_for_next_frame() {
+        let mut ctx = EventCtx::new(
+            WindowId::new(4),
+            WidgetId::new(9),
+            Rect::new(0.0, 0.0, 20.0, 10.0),
+            16.0,
+            EventPhase::Target,
+            None,
+        );
+
+        ctx.request_animation_frame();
+
+        assert_eq!(
+            ctx.take_wake_requests(),
+            vec![WakeRequest::RequestAnimationFrame {
+                target: WidgetId::new(9)
+            }]
         );
     }
 

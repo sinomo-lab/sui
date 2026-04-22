@@ -3715,7 +3715,12 @@ mod tests {
             / frame_count;
         let avg_packet_rebuilds = samples
             .iter()
-            .map(|sample| sample.renderer_submission.retained_packet_rebuilds.total_count() as f64)
+            .map(|sample| {
+                sample
+                    .renderer_submission
+                    .retained_packet_rebuilds
+                    .total_count() as f64
+            })
             .sum::<f64>()
             / frame_count;
         let avg_scene_layers = samples
@@ -3741,7 +3746,10 @@ mod tests {
             "avg frame time:         {avg_total_ms:.3} ms ({:.1} fps)",
             1000.0 / avg_total_ms.max(0.001)
         );
-        println!("p95 frame time:         {:.3} ms", percentile(&totals, 0.95));
+        println!(
+            "p95 frame time:         {:.3} ms",
+            percentile(&totals, 0.95)
+        );
         println!("max frame time:         {max_total_ms:.3} ms");
         println!("avg visible layers:     {avg_visible_layers:.2}");
         println!("avg direct packets:     {avg_direct_packets:.2}");
