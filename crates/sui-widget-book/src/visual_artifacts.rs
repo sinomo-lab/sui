@@ -7,19 +7,29 @@ use std::{
 
 use sui::{
     Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-    Result, ScrollDelta, SemanticsRole, Vector,
+    Result, ScrollDelta, SemanticsRole, Vector, WindowColorManagementMode,
+    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowRenderOptions,
+    WindowToneMappingMode, window_output_diagnostics,
 };
-use sui_testing::{Locator, TestApp, TestWindow};
+use sui_render_wgpu::{
+    DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
+    DebugSdrVisualization,
+};
+use sui_testing::{
+    Locator, Screenshot, TestApp, TestWindow, hdr_clip_mask, hdr_headroom_heatmap,
+    hdr_luminance_heatmap, write_hdr_avif, write_hdr_exr,
+};
 
 use crate::{
-    BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL,
-    DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, ICON_BUTTON_LABEL, ICON_LABEL,
-    LIST_VIEW_NAME, MENU_NAME, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
-    POPOVER_TRIGGER_LABEL, PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL,
-    RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL,
-    SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME,
-    TABS_NAME, TEXT_AREA_LABEL, THEME_PREVIEW_NAME, TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT,
-    TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME, WINDOW_TITLE, WidgetBookState,
+    BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME,
+    COLOR_VALIDATION_VIEW_TITLE, DEMO_IMAGE_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL,
+    GALLERY_SCROLL_NAME, ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, MENU_NAME,
+    NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL,
+    PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME,
+    SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL,
+    TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME, TABS_NAME, TEXT_AREA_LABEL,
+    THEME_PREVIEW_NAME, TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
+    TREE_VIEW_NAME, WINDOW_TITLE, WidgetBookState, build_color_validation_application,
     build_widget_book_application, default_widget_book_state,
 };
 
@@ -210,51 +220,49 @@ impl StoryCase {
     }
 
     pub(crate) fn build_app(self) -> Result<TestApp> {
-        TestApp::new(move || {
-            let state = match self {
-                Self::Overview
-                | Self::Button
-                | Self::ButtonHover
-                | Self::ButtonPressed
-                | Self::Checkbox
-                | Self::Icon
-                | Self::IconButton
-                | Self::Separator
-                | Self::Switch
-                | Self::RadioButton
-                | Self::RadioGroup
-                | Self::Slider
-                | Self::NumberInput
-                | Self::SelectExpanded
-                | Self::TabBar
-                | Self::Tabs
-                | Self::Menu
-                | Self::ContextMenuOpen
-                | Self::TooltipVisible
-                | Self::PopoverOpen
-                | Self::Dialog
-                | Self::ProgressBar
-                | Self::Spinner
-                | Self::ScrollViewScrolled
-                | Self::ListView
-                | Self::TreeView
-                | Self::Table
-                | Self::SplitView
-                | Self::Breadcrumb
-                | Self::ColorSwatch
-                | Self::ColorPicker
-                | Self::ThemePreview
-                | Self::ImageWidget => default_widget_book_state(),
-                Self::OverviewConfigured
-                | Self::CheckboxUnchecked
-                | Self::FilledInput
-                | Self::TextArea
-                | Self::Summary => configured_widget_book_state(),
-                Self::EmptyInputFocused => blank_widget_book_state(),
-            };
+        let state = match self {
+            Self::Overview
+            | Self::Button
+            | Self::ButtonHover
+            | Self::ButtonPressed
+            | Self::Checkbox
+            | Self::Icon
+            | Self::IconButton
+            | Self::Separator
+            | Self::Switch
+            | Self::RadioButton
+            | Self::RadioGroup
+            | Self::Slider
+            | Self::NumberInput
+            | Self::SelectExpanded
+            | Self::TabBar
+            | Self::Tabs
+            | Self::Menu
+            | Self::ContextMenuOpen
+            | Self::TooltipVisible
+            | Self::PopoverOpen
+            | Self::Dialog
+            | Self::ProgressBar
+            | Self::Spinner
+            | Self::ScrollViewScrolled
+            | Self::ListView
+            | Self::TreeView
+            | Self::Table
+            | Self::SplitView
+            | Self::Breadcrumb
+            | Self::ColorSwatch
+            | Self::ColorPicker
+            | Self::ThemePreview
+            | Self::ImageWidget => default_widget_book_state(),
+            Self::OverviewConfigured
+            | Self::CheckboxUnchecked
+            | Self::FilledInput
+            | Self::TextArea
+            | Self::Summary => configured_widget_book_state(),
+            Self::EmptyInputFocused => blank_widget_book_state(),
+        };
 
-            build_widget_book_application(state).build()
-        })
+        TestApp::from_runtime(build_widget_book_application(state).build()?)
     }
 
     pub(crate) fn prepare(self, window: &TestWindow) -> Result<()> {
@@ -525,7 +533,11 @@ impl StoryCase {
 
 pub fn write_visual_artifacts() -> Result<PathBuf> {
     let output_root = artifact_root();
-    reset_dir(&output_root)?;
+    write_visual_artifacts_to(&output_root)
+}
+
+pub(crate) fn write_visual_artifacts_to(output_root: &Path) -> Result<PathBuf> {
+    reset_dir(output_root)?;
 
     for story in StoryCase::ALL {
         let story_dir = output_root.join(story.id());
@@ -543,7 +555,128 @@ pub fn write_visual_artifacts() -> Result<PathBuf> {
         write_text(story_dir.join("story.txt"), story.description())?;
     }
 
-    Ok(output_root)
+    write_hdr_widget_book_artifacts(output_root)?;
+
+    Ok(output_root.to_path_buf())
+}
+
+fn hdr_widget_book_render_options() -> WindowRenderOptions {
+    WindowRenderOptions::new(true, 1.0)
+        .with_color_management_mode(WindowColorManagementMode::PreferHdr)
+        .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
+        .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
+        .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
+}
+
+fn write_hdr_widget_book_artifacts(output_root: &Path) -> Result<()> {
+    let hdr_dir = output_root.join("hdr-widget-book");
+    create_dir(&hdr_dir)?;
+
+    let options = hdr_widget_book_render_options();
+    let runtime = build_color_validation_application().build()?;
+    for window_id in runtime.window_ids() {
+        sui::set_window_render_options(window_id, options);
+    }
+    let app = TestApp::from_runtime(runtime)?;
+    let window = app.main_window()?;
+
+    let artifacts = window.capture_artifacts()?;
+    artifacts.write_to_dir(&hdr_dir)?;
+    rename_window_artifacts(&hdr_dir)?;
+    write_text(
+        hdr_dir.join("story.txt"),
+        "HDR-configured widget-book validation surface with HDR debug captures.",
+    )?;
+
+    let artifact = window.capture_debug_frame(DebugCaptureRequest {
+        stage: DebugCaptureStage::HdrIntermediate,
+        encoding: DebugCaptureEncoding::Exr,
+        sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+    })?;
+    let DebugCaptureArtifact::HdrLinearRgbaF32(image) = artifact else {
+        return Err(Error::new(
+            "widget-book HDR artifact capture did not produce an HDR intermediate frame",
+        ));
+    };
+
+    write_hdr_exr(&image, hdr_dir.join("hdr-intermediate.exr"))?;
+    write_hdr_avif(&image, hdr_dir.join("hdr-intermediate.avif"), 1.0)?;
+    hdr_luminance_heatmap(&image)?.write_png(hdr_dir.join("luminance-map.png"))?;
+    hdr_headroom_heatmap(&image, 1.0)?.write_png(hdr_dir.join("headroom-map.png"))?;
+    hdr_clip_mask(&image, 1.0)?.write_png(hdr_dir.join("clip-mask.png"))?;
+
+    let max_channel = image
+        .pixels()
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let max_luminance = image
+        .pixels()
+        .chunks_exact(4)
+        .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
+        .fold(f32::NEG_INFINITY, f32::max);
+
+    let diagnostics_text = if let Some(diagnostics) = window_output_diagnostics(window.id()) {
+        format!(
+            "view={COLOR_VALIDATION_VIEW_TITLE}\nrequested_color_management_mode={:?}\nrequested_output_primaries={:?}\nrequested_dynamic_range_mode={:?}\nrequested_tone_mapping_mode={:?}\nrequested_sdr_content_brightness_nits={:.0}\nsupports_hdr={}\nnative_hdr_presentation_supported={}\npreferred_dynamic_range={:?}\nactive_output_strategy={:?}\nnotes={}\n",
+            diagnostics.requested_color_management_mode,
+            diagnostics.requested_output_primaries,
+            diagnostics.requested_dynamic_range_mode,
+            diagnostics.requested_tone_mapping_mode,
+            diagnostics.requested_sdr_content_brightness_nits,
+            diagnostics.display_capabilities.supports_hdr,
+            diagnostics.display_capabilities.native_hdr_presentation_supported,
+            diagnostics.display_capabilities.preferred_dynamic_range,
+            diagnostics.active_output_strategy,
+            diagnostics.display_capabilities.notes,
+        )
+    } else {
+        format!(
+            "view={COLOR_VALIDATION_VIEW_TITLE}\noutput_diagnostics=unavailable\n"
+        )
+    };
+    write_text(hdr_dir.join("output-diagnostics.txt"), &diagnostics_text)?;
+
+    let final_artifact = window.capture_debug_frame(DebugCaptureRequest {
+        stage: DebugCaptureStage::FinalComposed,
+        encoding: DebugCaptureEncoding::Exr,
+        sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+    })?;
+    let (final_artifact_kind, final_max_channel, final_max_luminance) = match final_artifact {
+        DebugCaptureArtifact::HdrLinearRgbaF32(final_image) => {
+            write_hdr_exr(&final_image, hdr_dir.join("final-composed.exr"))?;
+            write_hdr_avif(&final_image, hdr_dir.join("final-composed.avif"), 1.0)?;
+            let max_channel = final_image
+                .pixels()
+                .iter()
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max);
+            let max_luminance = final_image
+                .pixels()
+                .chunks_exact(4)
+                .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
+                .fold(f32::NEG_INFINITY, f32::max);
+            ("hdr", max_channel, max_luminance)
+        }
+        DebugCaptureArtifact::SdrRgba8(final_image) => {
+            Screenshot::new(
+                final_image.width(),
+                final_image.height(),
+                final_image.into_pixels(),
+            )?
+            .write_png(hdr_dir.join("final-composed.png"))?;
+            ("sdr", 1.0, 1.0)
+        }
+    };
+
+    write_text(
+        hdr_dir.join("capture-metrics.txt"),
+        &format!(
+            "intermediate_max_channel={max_channel}\nintermediate_max_luminance={max_luminance}\nfinal_artifact_kind={final_artifact_kind}\nfinal_max_channel={final_max_channel}\nfinal_max_luminance={final_max_luminance}\n"
+        ),
+    )?;
+
+    Ok(())
 }
 
 pub(crate) fn configured_widget_book_state() -> Rc<RefCell<WidgetBookState>> {

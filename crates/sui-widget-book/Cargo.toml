@@ -10,7 +10,7 @@ publish = false
 default = ["native", "artifacts"]
 native = ["sui/desktop", "sui/wgpu"]
 web = ["sui/web", "sui/wgpu"]
-artifacts = ["dep:sui-testing"]
+artifacts = ["dep:sui-testing", "dep:sui-render-wgpu"]
 
 [[bin]]
 name = "sui-widget-book"
@@ -22,6 +22,7 @@ sui = { path = "../sui", default-features = false }
 sui-debug = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
+sui-render-wgpu = { workspace = true, optional = true }
 sui-testing = { workspace = true, optional = true }
 
 [dev-dependencies]

@@ -1581,11 +1581,10 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         ),
                     )
                     .with_child(
-                        Label::new(SPINNER_NAME)
-                            .font_size(13.0)
-                            .line_height(18.0)
-                            .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
-                    ),
+                        SizedBox::new().width(320.0).with_child(
+                            Spinner::new(SPINNER_NAME).label(SPINNER_NAME),
+                        ),
+                    )
             ))
             .with_child(panel(
                 "Live state",
@@ -3534,7 +3533,13 @@ fn option_index(options: &[&str], value: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, fs, path::Path, rc::Rc};
+    use std::{
+        cell::RefCell,
+        fs,
+        path::{Path, PathBuf},
+        rc::Rc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::visual_artifacts::{
         StoryCase, artifact_root, configured_widget_book_state, scroll_to_story_target,
@@ -3602,6 +3607,20 @@ mod tests {
 
     fn build_color_validation_runtime() -> Result<sui::Runtime> {
         super::build_color_validation_application().build()
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn unique_visual_artifact_test_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time is after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "sui-widget-book-artifacts-{}-{}-{}",
+            std::process::id(),
+            nonce,
+            name
+        ))
     }
 
     fn solid_fill_max_channel(output: &RenderOutput) -> f32 {
@@ -4427,6 +4446,31 @@ mod tests {
 
         assert!(picker.bounds.width() >= 320.0);
         assert!(picker.bounds.height() >= 280.0);
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    fn widget_book_visual_artifacts_include_hdr_widget_book_capture() -> Result<()> {
+        let artifact_root = unique_visual_artifact_test_dir("hdr-widget-book");
+        let output_root = super::visual_artifacts::write_visual_artifacts_to(&artifact_root)?;
+        let hdr_dir = output_root.join("hdr-widget-book");
+
+        assert!(hdr_dir.join("window.png").exists());
+        assert!(hdr_dir.join("hdr-intermediate.exr").exists());
+        assert!(hdr_dir.join("hdr-intermediate.avif").exists());
+        assert!(hdr_dir.join("luminance-map.png").exists());
+        assert!(hdr_dir.join("headroom-map.png").exists());
+        assert!(hdr_dir.join("clip-mask.png").exists());
+        assert!(hdr_dir.join("output-diagnostics.txt").exists());
+        assert!(hdr_dir.join("capture-metrics.txt").exists());
+        assert!(
+            hdr_dir.join("final-composed.exr").exists()
+                || hdr_dir.join("final-composed.avif").exists()
+                || hdr_dir.join("final-composed.png").exists()
+        );
+
+        fs::remove_dir_all(&artifact_root).ok();
         Ok(())
     }
 
