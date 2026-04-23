@@ -3013,20 +3013,35 @@ impl DrawOpArena {
         }
     }
 
+    pub(crate) fn apply_opacity(&mut self, opacity: f32) {
+        if opacity == 1.0 {
+            return;
+        }
+
+        for vertex in &mut self.scene_vertices {
+            vertex.color[3] *= opacity;
+        }
+        for instance in &mut self.text_instances {
+            instance.color[3] *= opacity;
+        }
+    }
+
     pub(crate) fn append_composed_fragment(
         &mut self,
         fragment: &DrawOpArena,
         translation: Vector,
+        opacity: f32,
         external_clips: &[ResolvedClipPrimitive],
         viewport: Size,
     ) -> Result<()> {
-        if translation == Vector::ZERO && external_clips.is_empty() {
+        if translation == Vector::ZERO && external_clips.is_empty() && opacity == 1.0 {
             self.append_fragment(fragment);
             return Ok(());
         }
 
         let mut transformed = fragment.clone();
         transformed.translate_in_place(translation, viewport);
+        transformed.apply_opacity(opacity);
 
         let scene_delta = self.scene_vertices.len() as u32;
         let clip_delta = self.clip_vertices.len() as u32;

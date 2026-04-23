@@ -17,8 +17,8 @@ use sui_core::{
 };
 use sui_layout::{Constraints, LayoutContext};
 use sui_scene::{
-    Brush, ImageRegistry, ImageSource, LayerCompositionMode, Scene, SceneCommand, SceneLayer,
-    SceneLayerDescriptor, SceneLayerId, StrokeStyle,
+    Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, Scene, SceneCommand,
+    SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle,
 };
 use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
@@ -61,6 +61,10 @@ pub trait Widget {
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions::default()
+    }
+
+    fn layer_properties(&self) -> LayerProperties {
+        LayerProperties::default()
     }
 
     fn stack_host_options(&self) -> Option<StackHostOptions> {
@@ -644,11 +648,16 @@ impl WidgetPod {
                 .paint_bounds()
                 .unwrap_or(self.layout_state.arranged_bounds),
         )
+        .with_properties(self.current_layer_properties())
         .with_composition_mode(options.composition_mode)
     }
 
     pub(crate) fn current_layer_options(&self) -> LayerOptions {
         self.widget.layer_options()
+    }
+
+    pub(crate) fn current_layer_properties(&self) -> LayerProperties {
+        self.widget.layer_properties()
     }
 
     pub(crate) fn current_paint_boundary_mode(&self) -> PaintBoundaryMode {
