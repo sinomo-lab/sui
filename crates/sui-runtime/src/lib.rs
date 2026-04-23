@@ -638,6 +638,7 @@ struct WindowState {
     delivering_animation_frames: VecDeque<WidgetId>,
     last_animation_frame_time: Option<f64>,
     next_animation_frame_index: u64,
+    pending_animation_wake_count: usize,
     ime_composition_rect: Option<Rect>,
     last_tick_time: f64,
 }
@@ -674,6 +675,7 @@ impl WindowState {
             delivering_animation_frames: VecDeque::new(),
             last_animation_frame_time: None,
             next_animation_frame_index: 0,
+            pending_animation_wake_count: 0,
             ime_composition_rect: None,
             last_tick_time: 0.0,
         }
@@ -693,6 +695,9 @@ impl WindowState {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
             diagnostics::begin_widget_timing_collection();
             sui_text::begin_text_timing_collection();
+        }
+        if matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. })) {
+            self.pending_animation_wake_count = self.pending_animation_wake_count.saturating_add(1);
         }
 
         self.preprocess_window_event(&event);
@@ -965,6 +970,28 @@ impl WindowState {
         }
 
         next
+    }
+
+    fn active_animated_widget_count(&self) -> usize {
+        self.requested_animation_frames
+            .iter()
+            .copied()
+            .chain(self.delivering_animation_frames.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .len()
+    }
+
+    fn animation_frame_is_transform_only(&self, repainted: bool, layer_updates: &[SceneLayerUpdate]) -> bool {
+        !repainted
+            && !layer_updates.is_empty()
+            && layer_updates.iter().all(|update| {
+                matches!(
+                    update.kind,
+                    SceneLayerUpdateKind::Transform
+                        | SceneLayerUpdateKind::Effect
+                        | SceneLayerUpdateKind::Visibility
+                )
+            })
     }
 
     fn drain_ready_events(&mut self) -> Vec<Event> {
@@ -1682,8 +1709,17 @@ impl WindowState {
 
         diagnostics.widget_count = self.graph.nodes.len();
         diagnostics.runtime_text_timing = sui_text::take_text_timing_collection();
-
         diagnostics.widget_timings = diagnostics::take_widget_timing_collection();
+        diagnostics.active_animated_widget_count = self.active_animated_widget_count();
+        diagnostics.animation_frame_wake_count = self.pending_animation_wake_count;
+        diagnostics.animation_repaint_frame_count = usize::from(
+            self.pending_animation_wake_count > 0 && repainted,
+        );
+        diagnostics.animation_transform_effect_only_frame_count = usize::from(
+            self.pending_animation_wake_count > 0
+                && self.animation_frame_is_transform_only(repainted, &frame.layer_updates),
+        );
+        self.pending_animation_wake_count = 0;
 
         self.schedule.clear();
 

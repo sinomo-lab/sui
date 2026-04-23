@@ -3115,11 +3115,22 @@ impl LivePerformancePanel {
                     snapshot.scene.overlay_layer_count,
                     snapshot.scene.layer_update_count,
                 );
-                let trailing_metric = format!(
-                    "dirty {}  |  txt {}  |  img {}",
-                    snapshot.scene.dirty_region_count,
-                    snapshot.scene.text_command_count,
-                    snapshot.scene.image_command_count,
+                let animation_metric = format!(
+                    "anim active {}  |  wakes {}  |  repaint {}  |  retained {}",
+                    snapshot.scene.active_animated_widget_count,
+                    snapshot.scene.animation_frame_wake_count,
+                    snapshot.scene.animation_repaint_frame_count,
+                    snapshot.scene.animation_transform_effect_only_frame_count,
+                );
+                let retained_metric = format!(
+                    "retained rebuilds {}  |  state {}  |  compose {}",
+                    snapshot.renderer_submission.retained_packet_rebuilds.total_count(),
+                    format_duration_ms(
+                        snapshot.renderer_submission.retained_state_update_time_us as f64 / 1000.0
+                    ),
+                    format_duration_ms(
+                        snapshot.renderer_submission.composition_time_us as f64 / 1000.0
+                    ),
                 );
 
                 vec![
@@ -3171,19 +3182,10 @@ impl LivePerformancePanel {
                         snapshot.renderer_submission.direct_packet_count,
                         snapshot.renderer_submission.visible_layer_count,
                     )),
-                    LivePerformanceLineSpec::metric(format!(
-                        "state {}  |  compose {}",
-                        format_duration_ms(
-                            snapshot.renderer_submission.retained_state_update_time_us as f64
-                                / 1000.0
-                        ),
-                        format_duration_ms(
-                            snapshot.renderer_submission.composition_time_us as f64 / 1000.0
-                        ),
-                    )),
+                    LivePerformanceLineSpec::metric(retained_metric),
                     LivePerformanceLineSpec::metric(scene_metric),
                     LivePerformanceLineSpec::metric(boundary_metric),
-                    LivePerformanceLineSpec::metric(trailing_metric),
+                    LivePerformanceLineSpec::metric(animation_metric),
                 ]
             }
             None => vec![
@@ -4979,7 +4981,26 @@ mod tests {
         assert!(lines.iter().any(|line| line.text.contains("repaint(now)")));
         assert!(lines.iter().any(|line| line.text.contains("stack")));
         assert!(lines.iter().any(|line| line.text.contains("overlay")));
-        assert!(lines.iter().any(|line| line.text.contains("dirty")));
+        assert!(lines.iter().any(|line| line.text.contains("anim active")));
+        assert!(lines.iter().any(|line| line.text.contains("retained rebuilds")));
+    }
+
+    #[test]
+    fn widget_book_animation_demo_reports_animation_counters() {
+        let display = Rc::new(RefCell::new(LivePerformanceDisplay {
+            snapshot: Some(sample_detailed_window_performance_snapshot_record(
+                WindowId::new(21),
+            )),
+            idle: false,
+        }));
+        let panel = LivePerformancePanel::with_display(display);
+
+        let lines = panel.content_specs(WindowId::new(21));
+        assert!(lines.iter().any(|line| line.text.contains("anim active 3")));
+        assert!(lines.iter().any(|line| line.text.contains("wakes 2")));
+        assert!(lines.iter().any(|line| line.text.contains("repaint 1")));
+        assert!(lines.iter().any(|line| line.text.contains("retained 1")));
+        assert!(lines.iter().any(|line| line.text.contains("retained rebuilds 3")));
     }
 
     #[test]
@@ -5229,6 +5250,10 @@ mod tests {
                 detail_mode: Default::default(),
                 viewport: Size::new(1280.0, 720.0),
                 total_widget_count: 4,
+                active_animated_widget_count: 0,
+                animation_frame_wake_count: 0,
+                animation_repaint_frame_count: 0,
+                animation_transform_effect_only_frame_count: 0,
                 dirty_region_count: 0,
                 dirty_regions: Vec::new(),
                 dirty_area: 0.0,
@@ -5299,6 +5324,10 @@ mod tests {
                 detail_mode: SceneStatisticsDetailMode::Detailed,
                 viewport: Size::new(1280.0, 720.0),
                 total_widget_count: 9,
+                active_animated_widget_count: 3,
+                animation_frame_wake_count: 2,
+                animation_repaint_frame_count: 1,
+                animation_transform_effect_only_frame_count: 1,
                 dirty_region_count: 2,
                 dirty_regions: Vec::new(),
                 dirty_area: 128.0,
