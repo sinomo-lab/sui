@@ -88,6 +88,14 @@ pub const BREADCRUMB_NAME: &str = "Project path";
 pub const COLOR_SWATCH_NAME: &str = "Primary swatch";
 pub const COLOR_PICKER_NAME: &str = "Accent picker";
 pub const DEMO_IMAGE_LABEL: &str = "Preview image";
+pub const ANIMATION_DEMO_NAME: &str = "Animation demo";
+pub const ANIMATION_DEMO_BUTTON_LABEL: &str = "Animation demo action";
+pub const ANIMATION_DEMO_SWITCH_LABEL: &str = "Animation demo switch";
+pub const ANIMATION_DEMO_TEXT_INPUT_LABEL: &str = "Animation demo query";
+pub const ANIMATION_DEMO_TOOLTIP_TRIGGER_LABEL: &str = "Animation demo shortcuts";
+pub const ANIMATION_DEMO_TOOLTIP_TEXT: &str = "Tooltip entry motion uses retained translation and opacity";
+pub const ANIMATION_DEMO_POPOVER_NAME: &str = "Animation demo inspector";
+pub const ANIMATION_DEMO_POPOVER_TRIGGER_LABEL: &str = "Open animation demo inspector";
 
 const WIDGET_BOOK_IMAGE_HANDLE: ImageHandle = ImageHandle::new(1);
 
@@ -1131,6 +1139,80 @@ impl Widget for HdrThemeLabShowcase {
     }
 }
 
+fn build_animation_demo_panel() -> impl Widget {
+    NamedSection::new(
+        ANIMATION_DEMO_NAME,
+        panel(
+            "Animation demo",
+            "Exercise built-in hover, focus, and retained overlay motion in one compact surface.",
+            Stack::vertical()
+                .spacing(14.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    Button::new(ANIMATION_DEMO_BUTTON_LABEL)
+                        .min_width(220.0)
+                        .theme(DefaultTheme::default()),
+                )
+                .with_child(
+                    Switch::new(ANIMATION_DEMO_SWITCH_LABEL)
+                        .on(true)
+                        .theme(DefaultTheme::default()),
+                )
+                .with_child(
+                    SizedBox::new().width(320.0).with_child(
+                        TextInput::new(ANIMATION_DEMO_TEXT_INPUT_LABEL)
+                            .value("Retained overlay motion")
+                            .placeholder("Focus to inspect caret blink")
+                            .theme(DefaultTheme::default()),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(240.0).with_child(
+                        Tooltip::new(
+                            ANIMATION_DEMO_TOOLTIP_TEXT,
+                            Button::new(ANIMATION_DEMO_TOOLTIP_TRIGGER_LABEL).min_width(200.0),
+                        ),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(360.0).with_child(
+                        Popover::new(
+                            ANIMATION_DEMO_POPOVER_NAME,
+                            Button::new(ANIMATION_DEMO_POPOVER_TRIGGER_LABEL).min_width(220.0),
+                            Stack::vertical()
+                                .spacing(8.0)
+                                .alignment(Alignment::Stretch)
+                                .with_child(
+                                    Label::new(
+                                        "Open this popover to validate retained translation + opacity on explicit overlay layers.",
+                                    )
+                                    .font_size(13.0)
+                                    .line_height(18.0)
+                                    .color(Color::rgba(0.35, 0.43, 0.52, 1.0)),
+                                )
+                                .with_child(
+                                    Label::new(
+                                        "Keep the pointer over the trigger or switch focus to the text input to inspect animation continuation.",
+                                    )
+                                    .font_size(12.0)
+                                    .line_height(17.0)
+                                    .color(Color::rgba(0.46, 0.54, 0.63, 1.0)),
+                                ),
+                        ),
+                    ),
+                )
+                .with_child(
+                    Label::new(
+                        "Suggested check: hover the shortcuts button, focus the text input, and open the inspector popover while watching the performance overlay in the corner.",
+                    )
+                    .font_size(13.0)
+                    .line_height(18.0)
+                    .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
+                ),
+        ),
+    )
+}
+
 pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
@@ -1484,6 +1566,7 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         ),
                     ),
             ))
+            .with_child(build_animation_demo_panel())
             .with_child(panel(
                 "Menus and overlays",
                 "App menus, context menus, popovers, tooltips, and dialogs are the small but high-value surfaces that make desktop workflows feel complete.",
@@ -4051,6 +4134,54 @@ mod tests {
                     && node.name.as_deref() == Some(switch_name.as_str())
             }));
         }
+    }
+
+    #[test]
+    fn widget_book_exposes_animation_demo_panel() {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Animation demo semantics")
+                    .root(super::build_animation_demo_panel()),
+            )
+            .build()
+            .expect("animation demo runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("animation demo should render for semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("animation demo semantics should exist");
+
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_NAME)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_BUTTON_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Switch
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_SWITCH_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::TextInput
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_TEXT_INPUT_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_TOOLTIP_TRIGGER_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_POPOVER_TRIGGER_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Popover
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_POPOVER_NAME)
+        }));
     }
 
     #[test]
