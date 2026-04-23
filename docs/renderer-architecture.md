@@ -31,6 +31,7 @@ Layer descriptors currently carry:
 - layer bounds
 - content bounds
 - paint bounds
+- presentation-only `LayerProperties` such as opacity and translation
 - composition mode hints
 - stack-surface ordering and transient ownership metadata where relevant
 
@@ -56,17 +57,19 @@ In practice, each window keeps retained state for:
 
 One important caveat is that retained-compositor cost still depends directly on where the runtime chooses to emit `SceneLayer` boundaries. That makes the runtime's boundary policy a first-order renderer concern even though the renderer itself does not walk widget internals.
 
+The animation fast path builds on that same contract. `sui-render-wgpu` can cheaply update retained presentation state only when the runtime has emitted an explicit paint boundary and the scene update is limited to presentation-only properties such as opacity or translation. If content, ordering, or resources change, the renderer still has to rebuild retained packets.
+
 ## Current Architectural State
 
-The live path is now much closer to the intended model: ordinary widgets paint flat into their parent scene by default, and `SceneLayer` emission is reserved for explicit repaint or composition boundaries in `sui-runtime`.
+The current implementation is closer to the intended model, but the layer-boundary migration is not fully complete. Ordinary widgets are still supposed to treat scene layers as an opt-in repaint or composition boundary, while overlays, stack surfaces, and other explicit paint-boundary widgets are the main consumers of retained composition features.
 
 That means the retained compositor now usually sees:
 
 - explicit scroll, overlay, stack-surface, and other opt-in composition boundaries
-- root or parent-level direct packets for ordinary widget paint
-- far fewer wrapper-driven layers from widgets such as `Padding`, `Stack`, `SizedBox`, and `Background`
+- retained presentation-only updates on those explicit layers when opacity or translation changes without content rebuilds
+- a transitional mix of explicit boundaries and older per-widget layer accounting in some diagnostics paths
 
-This still matters because retained traversal, structural comparison, and packet upkeep are paid per layer or packet, not just per draw command. The current architectural direction is therefore to keep default paint flat, keep `SceneLayer` explicit, and optimize the smaller set of meaningful retained surfaces instead of reintroducing broad wrapper-driven layerization.
+This still matters because retained traversal, structural comparison, and packet upkeep are paid per layer or packet, not just per draw command. The architectural direction is to keep default paint as flat as practical, keep `SceneLayer` explicit, and optimize the smaller set of meaningful retained surfaces instead of reintroducing broad wrapper-driven layerization.
 
 ## Render Modes
 
@@ -85,9 +88,10 @@ For a single window, the renderer-facing path is:
 1. `Runtime::render()` produces a `SceneFrame`.
 2. The renderer compares the new frame against retained compositor state.
 3. Typed `SceneLayerUpdate` values invalidate retained content conservatively.
-4. Dirty or newly visible content is rebuilt.
-5. Reusable retained fragments are composed into the final pass sequence.
-6. The renderer submits GPU work and records frame statistics.
+4. Property-only updates can stay on the retained fast path when they touch presentation data such as opacity or translation on an explicit paint boundary.
+5. Dirty, structurally changed, or newly visible content is rebuilt.
+6. Reusable retained fragments are composed into the final pass sequence.
+7. The renderer submits GPU work and records frame statistics.
 
 The steady-state goal is reuse. On a good frame, the renderer should mostly reposition or recompose retained content rather than regenerate everything.
 
@@ -133,6 +137,8 @@ The renderer publishes metrics including:
 - GPU upload, encode, submit, and present timings
 
 Those metrics are surfaced by `sui-platform`, shown by the widget-book overlay, and available to tests and debugging tools.
+
+The current live diagnostics also pair renderer metrics with runtime animation counters, so the widget book can distinguish animation frames that repainted content from frames that only updated retained transform or opacity state.
 
 ## Current Benchmark Snapshot
 

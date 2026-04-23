@@ -110,6 +110,7 @@ This crate owns:
 - draw commands
 - brushes and stroke styles
 - scene layers and layer descriptors
+- presentation-only layer properties such as opacity and translation
 - layer update records
 - image registry data used by scene frames
 
@@ -126,7 +127,7 @@ This crate owns:
 - `WidgetPod`, `SingleChild`, and `WidgetChildren`
 - event routing
 - focus and pointer capture
-- timers and async wakeups
+- timers, animation-frame wakes, and async wakeups
 - invalidation scheduling
 - the default widget-tree measure and arrange execution
 - scene generation
@@ -135,7 +136,7 @@ This crate owns:
 
 This crate is the main integration point for most framework changes.
 
-It owns one standard way to schedule layout for retained widgets, but it should not become the only place measurement or composition can be initiated. Advanced widgets should still be able to call shared layout utilities without requiring a standard window/render path.
+It owns scheduling, invalidation routing, and retained-property plumbing for widget-driven animation, but it should not become the place that decides easing curves, transition policy, or other built-in animation behavior for every widget. It owns one standard way to schedule layout for retained widgets, but it should not become the only place measurement or composition can be initiated. Advanced widgets should still be able to call shared layout utilities without requiring a standard window/render path.
 
 ### `sui-render-wgpu`
 
@@ -148,6 +149,7 @@ This crate owns:
 - offscreen rendering for headless runs
 - retained compositor state per window
 - retained packet reuse logic and layer/composition bookkeeping
+- application of presentation-only retained layer updates
 - text, image, and analytic path caches
 - frame capture and renderer statistics
 
@@ -172,6 +174,8 @@ It is the layer between the host environment and the runtime. It should not beco
 The built-in widget library.
 
 This crate owns common controls and containers, plus the theme types that style them. It is the reference implementation for how widgets are expected to use runtime contexts, semantics, and scene painting.
+
+It also owns optional shared animation helpers and the animation policy for built-in widgets. Widget-local transition state belongs here, not in `sui-runtime` or `sui-render-wgpu`.
 
 ### `sui-debug`
 
@@ -200,6 +204,7 @@ This crate owns:
 
 - the built-in widget gallery
 - benchmark and stress surfaces used during renderer work
+- animation demos and live animation diagnostics surfaces
 - performance overlay composition
 - visual artifact generation and desktop-oriented tests
 
@@ -224,11 +229,12 @@ The most important dependency rules are:
 
 1. `sui-core` stays platform-neutral and renderer-neutral.
 2. `sui-runtime` may depend on `sui-core`, `sui-layout`, `sui-scene`, and `sui-text`, but not on `wgpu` or `winit`.
-3. `sui-scene` is the only paint model widgets emit.
+3. `sui-scene` is the only paint model widgets emit, including presentation-only layer properties for explicit retained boundaries.
 4. `sui-render-wgpu` consumes scene output and resource snapshots, not widget internals.
 5. `sui-platform` talks to the runtime through public runtime APIs, not private runtime state.
 6. built-in widgets stay outside `sui-runtime`.
-7. development tools should reuse real runtime outputs where possible.
+7. animation policy lives in widgets or widget libraries; runtime only provides scheduling and invalidation plumbing.
+8. development tools should reuse real runtime outputs where possible.
 
 ## Practical Ownership Guide
 
@@ -246,6 +252,7 @@ When you need to change behavior, use this map.
 ## Common Mistakes To Avoid
 
 - Do not add widget-specific policy to `sui-runtime` when it belongs in `sui-widgets`.
+- Do not turn `sui-runtime` into a framework-owned animation engine just because it already owns wake scheduling.
 - Do not make widgets depend on `wgpu` types when the scene system already provides the boundary.
 - Do not make tests depend on widget internals when semantics already exposes the intended surface.
 - Do not put shared core data in `sui-dev` or `sui-widget-book` just because it is convenient for one experiment.

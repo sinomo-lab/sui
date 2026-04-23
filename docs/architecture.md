@@ -72,6 +72,19 @@ The current invalidation kinds are:
 
 That split matters because the runtime and renderer treat geometry, paint, semantics, and resource work differently.
 
+### Animation boundary model
+
+Animation follows the same ownership split as the rest of SUI:
+
+- widgets own transition policy, local animation state, and the choice to request follow-up work
+- `sui-widgets` provides optional shared helpers such as `Transition` and `Blink`, but custom widgets are not required to use them
+- the runtime owns current time, animation-frame wake delivery, timer wake delivery, invalidation routing, and diagnostics publication
+- `sui-scene` carries presentation-only `LayerProperties` on `SceneLayerDescriptor`, currently limited to opacity and translation
+- retained animation is an opt-in path for explicit paint boundaries; ordinary widgets can still animate by repainting scene content
+- `sui-render-wgpu` remains the only crate that owns `wgpu` and is responsible for applying retained property updates
+
+This boundary is intentionally narrow. The runtime provides scheduling and plumbing, not a framework-owned animation engine, and widgets do not receive raw renderer handles just to animate.
+
 ### Phase-driven frame work
 
 The runtime operates as a sequence of explicit phases rather than a hidden redraw loop. The current order is:
@@ -98,10 +111,10 @@ Routing decisions depend on the event type:
 
 - pointer events use hit testing and pointer capture
 - keyboard and IME events use focus state
-- timers and async wakeups are scheduled by the runtime and re-enter as `WakeEvent`
+- timers, animation-frame wakes, and async wakeups are scheduled by the runtime and re-enter as `WakeEvent`
 - redraw and resize events enter through `WindowEvent`
 
-Widgets can mark events handled, request focus, schedule timers, request async wakeups, and request invalidation. They do not reach into platform objects or renderer state directly.
+Widgets can mark events handled, request focus, schedule timers, request animation frames, request async wakeups, and request invalidation. They do not reach into platform objects or renderer state directly.
 
 ## Layout, Paint, and Semantics
 
@@ -133,7 +146,7 @@ The current scene layer includes:
 
 `SceneFrame` is the renderer-facing snapshot. It also carries font and image registry snapshots so the renderer can resolve resources without pulling mutable runtime state.
 
-A critical current-state detail: the runtime still wraps each widget paint result in a `SceneLayer` by default, even for simple wrapper widgets. That behavior made the retained compositor the de facto repaint granularity, but it is not the intended long-term architecture. The active transition direction is to flatten ordinary widget paint into parent scenes and reserve `SceneLayer` for explicit repaint or composition boundaries such as scroll surfaces, overlays, and stack surfaces.
+A critical current-state detail: the runtime is still in the middle of the layer-boundary transition. Explicit paint boundaries are the intended retained-animation boundary, but some diagnostics and invalidation accounting still track emitted `SceneLayer` counts because repaint-boundary accounting has not been fully decoupled from per-widget layer emission yet. Treat the explicit-boundary model as the architectural direction and the remaining layer-count coupling as transitional implementation debt.
 
 ### Semantics
 
@@ -192,6 +205,7 @@ The current stack includes:
 
 - `WindowPerformanceSnapshot` and related phase timing types in `sui-runtime`
 - per-frame renderer submission stats published by `sui-platform`
+- animation counters for active animated widgets, animation-frame wakes, repaint-driven animation frames, and retained-only animation frames
 - the widget book performance overlay in `sui-widget-book`
 - reusable inspector widgets in `sui-debug`
 - semantics-first locators and artifact capture in `sui-testing`
