@@ -1594,11 +1594,14 @@ pub fn build_dev_application_with_widget_book_bounds_and_automation(
     let app = app.window(
         WindowBuilder::new()
             .title(WINDOW_TITLE)
-            .root(LivePerformanceRoot::new(
-                WINDOW_TITLE,
-                WINDOW_DESCRIPTION,
-                root,
-            )),
+            .root(
+                LivePerformanceRoot::new(
+                    WINDOW_TITLE,
+                    WINDOW_DESCRIPTION,
+                    root,
+                )
+                .show_performance_overlay(),
+            ),
     );
 
     app
@@ -1711,7 +1714,8 @@ mod tests {
                 FRONTING_TEST_TITLE,
                 "Floating workspace fronting regression.",
                 root,
-            ),
+            )
+            .show_performance_overlay(),
         ))
     }
 
@@ -2071,7 +2075,26 @@ mod tests {
     }
 
     #[test]
+    fn dev_workspace_exposes_live_performance_overlay() {
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("dev application should render for overlay semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("dev application semantics should exist");
+
+        assert!(semantics.iter().any(|node| {
+            node.name.as_deref() == Some("Live performance overlay")
+        }));
+    }
+
+    #[test]
     fn hdr_validation_surface_debug_capture_exports_intermediate_artifacts() -> Result<()> {
+
         let options = WindowRenderOptions::new(true, 1.0)
             .with_color_management_mode(WindowColorManagementMode::PreferHdr)
             .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)

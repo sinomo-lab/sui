@@ -150,6 +150,7 @@ pub struct LivePerformanceRoot {
     last_seen_state: Option<WidgetBookState>,
     window_title: String,
     window_description: String,
+    overlay_enabled: bool,
 }
 
 impl LivePerformanceRoot {
@@ -179,7 +180,13 @@ impl LivePerformanceRoot {
             last_seen_state: None,
             window_title: window_title.into(),
             window_description: window_description.into(),
+            overlay_enabled: false,
         }
+    }
+
+    pub fn show_performance_overlay(mut self) -> Self {
+        self.overlay_enabled = true;
+        self
     }
 
     pub fn watch_widget_book_state(mut self, state: Rc<RefCell<WidgetBookState>>) -> Self {
@@ -294,16 +301,18 @@ impl Widget for LivePerformanceRoot {
                 }
             }
 
-            if let Some(snapshot) = window_performance_snapshot(ctx.window_id()) {
-                if self.set_performance_display(Some(snapshot), false) {
-                    let overlay_id = self.performance_overlay.child().id();
-                    ctx.request(
-                        InvalidationRequest::new(
-                            InvalidationTarget::Widget(overlay_id),
-                            InvalidationKind::Paint,
-                        )
-                        .with_region(self.performance_overlay.child().bounds()),
-                    );
+            if self.overlay_enabled {
+                if let Some(snapshot) = window_performance_snapshot(ctx.window_id()) {
+                    if self.set_performance_display(Some(snapshot), false) {
+                        let overlay_id = self.performance_overlay.child().id();
+                        ctx.request(
+                            InvalidationRequest::new(
+                                InvalidationTarget::Widget(overlay_id),
+                                InvalidationKind::Paint,
+                            )
+                            .with_region(self.performance_overlay.child().bounds()),
+                        );
+                    }
                 }
             }
         }
@@ -312,8 +321,10 @@ impl Widget for LivePerformanceRoot {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let viewport = constraints.clamp(Size::new(1280.0, 720.0));
         self.content.measure(ctx, Constraints::tight(viewport));
-        self.performance_overlay
-            .measure(ctx, Constraints::new(Size::ZERO, viewport));
+        if self.overlay_enabled {
+            self.performance_overlay
+                .measure(ctx, Constraints::new(Size::ZERO, viewport));
+        }
         viewport
     }
 
@@ -321,20 +332,24 @@ impl Widget for LivePerformanceRoot {
         self.content
             .arrange(ctx, Rect::from_origin_size(bounds.origin, bounds.size));
 
-        let overlay_size = self.performance_overlay.child().measured_size();
-        let overlay_x = (bounds.max_x() - overlay_size.width - Self::OVERLAY_MARGIN.right)
-            .max(bounds.x() + Self::OVERLAY_MARGIN.left);
-        let overlay_y = bounds.y() + Self::OVERLAY_MARGIN.top;
-        self.performance_overlay.arrange(
-            ctx,
-            Rect::from_origin_size(Point::new(overlay_x, overlay_y), overlay_size),
-        );
+        if self.overlay_enabled {
+            let overlay_size = self.performance_overlay.child().measured_size();
+            let overlay_x = (bounds.max_x() - overlay_size.width - Self::OVERLAY_MARGIN.right)
+                .max(bounds.x() + Self::OVERLAY_MARGIN.left);
+            let overlay_y = bounds.y() + Self::OVERLAY_MARGIN.top;
+            self.performance_overlay.arrange(
+                ctx,
+                Rect::from_origin_size(Point::new(overlay_x, overlay_y), overlay_size),
+            );
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         ctx.clear(Color::rgba(0.95, 0.968, 0.985, 1.0));
         self.content.paint(ctx);
-        self.performance_overlay.paint(ctx);
+        if self.overlay_enabled {
+            self.performance_overlay.paint(ctx);
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -343,17 +358,23 @@ impl Widget for LivePerformanceRoot {
         root.description = Some(self.window_description.clone());
         ctx.push(root);
         self.content.semantics(ctx);
-        self.performance_overlay.semantics(ctx);
+        if self.overlay_enabled {
+            self.performance_overlay.semantics(ctx);
+        }
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.content.visit_children(visitor);
-        self.performance_overlay.visit_children(visitor);
+        if self.overlay_enabled {
+            self.performance_overlay.visit_children(visitor);
+        }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.content.visit_children_mut(visitor);
-        self.performance_overlay.visit_children_mut(visitor);
+        if self.overlay_enabled {
+            self.performance_overlay.visit_children_mut(visitor);
+        }
     }
 }
 
@@ -3694,6 +3715,15 @@ mod tests {
         super::build_color_validation_application().build()
     }
 
+    fn assert_semantics_omit_live_performance_overlay(semantics: &[sui::SemanticsNode]) {
+        assert!(
+            semantics
+                .iter()
+                .all(|node| node.name.as_deref() != Some("Live performance overlay")),
+            "expected semantics tree to omit the floating live performance overlay outside sui-dev"
+        );
+    }
+
     #[cfg(feature = "artifacts")]
     fn unique_visual_artifact_test_dir(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -4056,6 +4086,37 @@ mod tests {
                 node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some(swatch_name)
             }));
         }
+    }
+
+    #[test]
+    fn color_validation_surface_omits_live_performance_overlay() {
+        let mut runtime =
+            build_color_validation_runtime().expect("color validation runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("color validation surface should render");
+
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("color validation semantics should exist");
+        assert_semantics_omit_live_performance_overlay(&semantics);
+    }
+
+    #[test]
+    fn widget_book_application_omits_live_performance_overlay() {
+        let mut runtime = build_widget_book_application(default_widget_book_state())
+            .build()
+            .expect("widget book runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("widget book should render");
+
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("widget book semantics should exist");
+        assert_semantics_omit_live_performance_overlay(&semantics);
     }
 
     #[test]
