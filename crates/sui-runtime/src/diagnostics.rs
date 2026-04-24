@@ -87,6 +87,10 @@ pub struct RenderDiagnostics {
     pub runtime_text_timing: RuntimeTextTimingDiagnostics,
     pub widget_timings: Vec<WidgetTimingSample>,
     pub widget_count: usize,
+    pub active_animated_widget_count: usize,
+    pub animation_frame_wake_count: usize,
+    pub animation_repaint_frame_count: usize,
+    pub animation_transform_effect_only_frame_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -790,6 +794,10 @@ pub struct WindowPerformanceSummary {
     pub renderer_submission: RendererSubmissionDiagnostics,
     pub text_caches: TextCacheDiagnostics,
     pub total_widget_count: usize,
+    pub active_animated_widget_count: usize,
+    pub animation_frame_wake_count: usize,
+    pub animation_repaint_frame_count: usize,
+    pub animation_transform_effect_only_frame_count: usize,
     pub repaint_boundary_count: usize,
     pub scene_layer_count: usize,
     pub stack_surface_count: usize,
@@ -804,6 +812,10 @@ pub struct SceneStatistics {
     pub detail_mode: SceneStatisticsDetailMode,
     pub viewport: Size,
     pub total_widget_count: usize,
+    pub active_animated_widget_count: usize,
+    pub animation_frame_wake_count: usize,
+    pub animation_repaint_frame_count: usize,
+    pub animation_transform_effect_only_frame_count: usize,
     pub dirty_region_count: usize,
     pub dirty_regions: Vec<DirtyRegion>,
     pub dirty_area: f32,
@@ -828,6 +840,21 @@ pub struct SceneStatistics {
 }
 
 impl SceneStatistics {
+    pub fn with_animation_counters(
+        mut self,
+        active_animated_widget_count: usize,
+        animation_frame_wake_count: usize,
+        animation_repaint_frame_count: usize,
+        animation_transform_effect_only_frame_count: usize,
+    ) -> Self {
+        self.active_animated_widget_count = active_animated_widget_count;
+        self.animation_frame_wake_count = animation_frame_wake_count;
+        self.animation_repaint_frame_count = animation_repaint_frame_count;
+        self.animation_transform_effect_only_frame_count =
+            animation_transform_effect_only_frame_count;
+        self
+    }
+
     pub fn from_frame(frame: &SceneFrame, total_widget_count: usize) -> Self {
         Self::from_frame_with_mode(
             frame,
@@ -846,6 +873,10 @@ impl SceneStatistics {
             detail_mode,
             viewport: frame.viewport,
             total_widget_count,
+            active_animated_widget_count: 0,
+            animation_frame_wake_count: 0,
+            animation_repaint_frame_count: 0,
+            animation_transform_effect_only_frame_count: 0,
             dirty_region_count: 0,
             dirty_regions: Vec::new(),
             dirty_area: 0.0,
@@ -940,6 +971,10 @@ impl SceneStatistics {
             detail_mode,
             viewport: frame.viewport,
             total_widget_count,
+            active_animated_widget_count: 0,
+            animation_frame_wake_count: 0,
+            animation_repaint_frame_count: 0,
+            animation_transform_effect_only_frame_count: 0,
             dirty_region_count,
             dirty_regions: if detailed {
                 frame.dirty_regions.clone()
@@ -1107,6 +1142,12 @@ impl WindowPerformanceSnapshot {
             renderer_submission: self.renderer_submission,
             text_caches: self.text_caches,
             total_widget_count: self.scene.total_widget_count,
+            active_animated_widget_count: self.scene.active_animated_widget_count,
+            animation_frame_wake_count: self.scene.animation_frame_wake_count,
+            animation_repaint_frame_count: self.scene.animation_repaint_frame_count,
+            animation_transform_effect_only_frame_count: self
+                .scene
+                .animation_transform_effect_only_frame_count,
             repaint_boundary_count: self.scene.repaint_boundary_count,
             scene_layer_count: self.scene.scene_layer_count,
             stack_surface_count: self.scene.stack_surface_count,
@@ -1406,6 +1447,10 @@ mod tests {
                 detail_mode: SceneStatisticsDetailMode::Lightweight,
                 viewport: Size::new(640.0, 360.0),
                 total_widget_count: 9,
+                active_animated_widget_count: 2,
+                animation_frame_wake_count: 1,
+                animation_repaint_frame_count: 1,
+                animation_transform_effect_only_frame_count: 0,
                 dirty_region_count: 0,
                 dirty_regions: Vec::new(),
                 dirty_area: 0.0,
@@ -1521,10 +1566,59 @@ mod tests {
 
         let summary = snapshot.summary();
         assert_eq!(summary.total_widget_count, 9);
+        assert_eq!(summary.active_animated_widget_count, 2);
+        assert_eq!(summary.animation_frame_wake_count, 1);
+        assert_eq!(summary.animation_repaint_frame_count, 1);
+        assert_eq!(summary.animation_transform_effect_only_frame_count, 0);
         assert_eq!(summary.repaint_boundary_count, 4);
         assert_eq!(summary.scene_layer_count, 4);
         assert_eq!(summary.stack_surface_count, 1);
         assert_eq!(summary.overlay_layer_count, 1);
+    }
+
+    #[test]
+    fn animation_frame_counters_distinguish_repaint_from_transform_only_frames() {
+        let base_scene = SceneStatistics::minimal(
+            &SceneFrame::new(WindowId::new(12), Size::new(320.0, 180.0)),
+            3,
+            SceneStatisticsDetailMode::Detailed,
+        );
+
+        let repaint_summary = WindowPerformanceSnapshot::new(
+            WindowId::new(12),
+            3,
+            vec![FramePhaseSample::new(FramePhase::Paint, 0.8)],
+            RendererSubmissionDiagnostics::default(),
+            TextCacheDiagnostics::default(),
+            TextCacheDeltaDiagnostics::default(),
+            base_scene.clone().with_animation_counters(2, 1, 1, 0),
+        )
+        .summary();
+        let transform_only_summary = WindowPerformanceSnapshot::new(
+            WindowId::new(12),
+            4,
+            vec![FramePhaseSample::new(FramePhase::Renderer, 0.4)],
+            RendererSubmissionDiagnostics::default(),
+            TextCacheDiagnostics::default(),
+            TextCacheDeltaDiagnostics::default(),
+            base_scene.with_animation_counters(1, 1, 0, 1),
+        )
+        .summary();
+
+        assert_eq!(repaint_summary.active_animated_widget_count, 2);
+        assert_eq!(repaint_summary.animation_frame_wake_count, 1);
+        assert_eq!(repaint_summary.animation_repaint_frame_count, 1);
+        assert_eq!(
+            repaint_summary.animation_transform_effect_only_frame_count,
+            0
+        );
+        assert_eq!(transform_only_summary.active_animated_widget_count, 1);
+        assert_eq!(transform_only_summary.animation_frame_wake_count, 1);
+        assert_eq!(transform_only_summary.animation_repaint_frame_count, 0);
+        assert_eq!(
+            transform_only_summary.animation_transform_effect_only_frame_count,
+            1
+        );
     }
 
     #[test]

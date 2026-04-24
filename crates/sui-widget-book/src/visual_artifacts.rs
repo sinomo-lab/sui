@@ -21,8 +21,9 @@ use sui_testing::{
 };
 
 use crate::{
-    BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, CONTEXT_MENU_NAME,
-    COLOR_VALIDATION_VIEW_TITLE, DEMO_IMAGE_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL,
+    ANIMATION_DEMO_NAME, ANIMATION_DEMO_POPOVER_TRIGGER_LABEL, ANIMATION_DEMO_TEXT_INPUT_LABEL,
+    BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, COLOR_VALIDATION_VIEW_TITLE,
+    CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL,
     GALLERY_SCROLL_NAME, ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, MENU_NAME,
     NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL,
     PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME,
@@ -73,11 +74,12 @@ pub(crate) enum StoryCase {
     ColorSwatch,
     ColorPicker,
     ThemePreview,
+    AnimationDemo,
     ImageWidget,
 }
 
 impl StoryCase {
-    pub(crate) const ALL: [Self; 39] = [
+    pub(crate) const ALL: [Self; 40] = [
         Self::Overview,
         Self::OverviewConfigured,
         Self::Button,
@@ -116,6 +118,7 @@ impl StoryCase {
         Self::ColorSwatch,
         Self::ColorPicker,
         Self::ThemePreview,
+        Self::AnimationDemo,
         Self::ImageWidget,
     ];
 
@@ -159,6 +162,7 @@ impl StoryCase {
             Self::ColorSwatch => "color-swatch",
             Self::ColorPicker => "color-picker",
             Self::ThemePreview => "theme-preview",
+            Self::AnimationDemo => "animation-demo",
             Self::ImageWidget => "image-widget",
         }
     }
@@ -215,6 +219,9 @@ impl StoryCase {
             Self::ThemePreview => {
                 "Theme preview panel with the light and dark comparison cards visible."
             }
+            Self::AnimationDemo => {
+                "Compact animation demo panel showing button, switch, focused text input, and retained popup surfaces."
+            }
             Self::ImageWidget => "Image widget crop for previews, thumbnails, and asset panels.",
         }
     }
@@ -253,6 +260,7 @@ impl StoryCase {
             | Self::ColorSwatch
             | Self::ColorPicker
             | Self::ThemePreview
+            | Self::AnimationDemo
             | Self::ImageWidget => default_widget_book_state(),
             Self::OverviewConfigured
             | Self::CheckboxUnchecked
@@ -302,6 +310,16 @@ impl StoryCase {
             | Self::ThemePreview
             | Self::ImageWidget
             | Self::TextArea => Ok(()),
+            Self::AnimationDemo => {
+                window
+                    .get_by_role(SemanticsRole::TextInput)
+                    .with_name(ANIMATION_DEMO_TEXT_INPUT_LABEL)
+                    .focus()?;
+                window
+                    .get_by_role(SemanticsRole::Button)
+                    .with_name(ANIMATION_DEMO_POPOVER_TRIGGER_LABEL)
+                    .click()
+            }
             Self::ButtonHover => self.target(window).hover(),
             Self::ButtonPressed => {
                 press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL)
@@ -433,6 +451,9 @@ impl StoryCase {
             Self::ThemePreview => window
                 .get_by_role(SemanticsRole::GenericContainer)
                 .with_name(THEME_PREVIEW_NAME),
+            Self::AnimationDemo => window
+                .get_by_role(SemanticsRole::GenericContainer)
+                .with_name(ANIMATION_DEMO_NAME),
             Self::ImageWidget => window
                 .get_by_role(SemanticsRole::Image)
                 .with_name(DEMO_IMAGE_LABEL),
@@ -482,6 +503,7 @@ impl StoryCase {
             Self::ColorSwatch => (SemanticsRole::ColorSwatch, Some(COLOR_SWATCH_NAME)),
             Self::ColorPicker => (SemanticsRole::ColorPicker, Some(COLOR_PICKER_NAME)),
             Self::ThemePreview => (SemanticsRole::GenericContainer, Some(THEME_PREVIEW_NAME)),
+            Self::AnimationDemo => (SemanticsRole::GenericContainer, Some(ANIMATION_DEMO_NAME)),
             Self::ImageWidget => (SemanticsRole::Image, Some(DEMO_IMAGE_LABEL)),
         }
     }
@@ -525,6 +547,7 @@ impl StoryCase {
             Self::ColorSwatch => Some((SemanticsRole::ColorSwatch, Some(COLOR_SWATCH_NAME))),
             Self::ColorPicker => Some((SemanticsRole::ColorPicker, Some(COLOR_PICKER_NAME))),
             Self::ThemePreview => Some((SemanticsRole::GenericContainer, Some(THEME_PREVIEW_NAME))),
+            Self::AnimationDemo => Some((SemanticsRole::GenericContainer, Some(ANIMATION_DEMO_NAME))),
             Self::ImageWidget => Some((SemanticsRole::Image, Some(DEMO_IMAGE_LABEL))),
             _ => None,
         }

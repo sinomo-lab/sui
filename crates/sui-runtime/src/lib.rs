@@ -599,6 +599,12 @@ struct LayerTranslation {
     delta: Vector,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct LayerDescriptorRefresh {
+    widget_id: WidgetId,
+    descriptor: SceneLayerDescriptor,
+}
+
 #[derive(Debug, Default)]
 struct GraphChangeSet {
     repaint_widgets: Vec<WidgetId>,
@@ -632,6 +638,7 @@ struct WindowState {
     delivering_animation_frames: VecDeque<WidgetId>,
     last_animation_frame_time: Option<f64>,
     next_animation_frame_index: u64,
+    pending_animation_wake_count: usize,
     ime_composition_rect: Option<Rect>,
     last_tick_time: f64,
 }
@@ -668,6 +675,7 @@ impl WindowState {
             delivering_animation_frames: VecDeque::new(),
             last_animation_frame_time: None,
             next_animation_frame_index: 0,
+            pending_animation_wake_count: 0,
             ime_composition_rect: None,
             last_tick_time: 0.0,
         }
@@ -687,6 +695,9 @@ impl WindowState {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
             diagnostics::begin_widget_timing_collection();
             sui_text::begin_text_timing_collection();
+        }
+        if matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. })) {
+            self.pending_animation_wake_count = self.pending_animation_wake_count.saturating_add(1);
         }
 
         self.preprocess_window_event(&event);
@@ -959,6 +970,28 @@ impl WindowState {
         }
 
         next
+    }
+
+    fn active_animated_widget_count(&self) -> usize {
+        self.requested_animation_frames
+            .iter()
+            .copied()
+            .chain(self.delivering_animation_frames.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .len()
+    }
+
+    fn animation_frame_is_transform_only(&self, repainted: bool, layer_updates: &[SceneLayerUpdate]) -> bool {
+        !repainted
+            && !layer_updates.is_empty()
+            && layer_updates.iter().all(|update| {
+                matches!(
+                    update.kind,
+                    SceneLayerUpdateKind::Transform
+                        | SceneLayerUpdateKind::Effect
+                        | SceneLayerUpdateKind::Visibility
+                )
+            })
     }
 
     fn drain_ready_events(&mut self) -> Vec<Event> {
@@ -1469,14 +1502,12 @@ impl WindowState {
 
         let viewport = self.viewport.unwrap_or(Size::ZERO);
         let dpi_info = self.dpi_info_for_viewport(viewport);
-        let mut composition_only_transforms = self.select_composition_only_transforms(
-            self.last_frame.as_ref().map(|frame| &frame.scene),
-            &graph_changes.transform_widgets,
-        );
-        for translation in self.select_explicit_transform_translations(
-            self.last_frame.as_ref().map(|frame| &frame.scene),
-            &invalidations,
-        ) {
+        let previous_scene = self.last_frame.as_ref().map(|frame| &frame.scene);
+        let mut composition_only_transforms = self
+            .select_composition_only_transforms(previous_scene, &graph_changes.transform_widgets);
+        for translation in
+            self.select_explicit_transform_translations(previous_scene, &invalidations)
+        {
             if composition_only_transforms
                 .iter()
                 .all(|existing| existing.widget_id != translation.widget_id)
@@ -1484,6 +1515,11 @@ impl WindowState {
                 composition_only_transforms.push(translation);
             }
         }
+        let previous_scene_for_refresh = self.last_frame.as_ref().map(|frame| frame.scene.clone());
+        let layer_descriptor_refreshes = self.collect_explicit_layer_descriptor_refreshes(
+            previous_scene_for_refresh.as_ref(),
+            &invalidations,
+        );
         let composition_only_transform_ids = composition_only_transforms
             .iter()
             .map(|translation| translation.widget_id)
@@ -1530,6 +1566,7 @@ impl WindowState {
         if self.last_frame.is_none()
             || !repaint_layers.is_empty()
             || !composition_only_transforms.is_empty()
+            || !layer_descriptor_refreshes.is_empty()
             || has_ordering_updates
         {
             let started = Instant::now();
@@ -1580,6 +1617,10 @@ impl WindowState {
             let mut scene = scene;
             for translation in &composition_only_transforms {
                 let _ = scene.translate_layer(translation.widget_id, translation.delta);
+            }
+            for refresh in &layer_descriptor_refreshes {
+                let _ =
+                    scene.replace_layer_descriptor(refresh.widget_id, refresh.descriptor.clone());
             }
             self.sync_scene_stack_metadata(&mut scene);
             self.last_paint_bounds_by_widget = paint_bounds_by_widget;
@@ -1668,8 +1709,17 @@ impl WindowState {
 
         diagnostics.widget_count = self.graph.nodes.len();
         diagnostics.runtime_text_timing = sui_text::take_text_timing_collection();
-
         diagnostics.widget_timings = diagnostics::take_widget_timing_collection();
+        diagnostics.active_animated_widget_count = self.active_animated_widget_count();
+        diagnostics.animation_frame_wake_count = self.pending_animation_wake_count;
+        diagnostics.animation_repaint_frame_count = usize::from(
+            self.pending_animation_wake_count > 0 && repainted,
+        );
+        diagnostics.animation_transform_effect_only_frame_count = usize::from(
+            self.pending_animation_wake_count > 0
+                && self.animation_frame_is_transform_only(repainted, &frame.layer_updates),
+        );
+        self.pending_animation_wake_count = 0;
 
         self.schedule.clear();
 
@@ -1792,7 +1842,6 @@ impl WindowState {
                     request.kind,
                     InvalidationKind::Measure
                         | InvalidationKind::Clip
-                        | InvalidationKind::Effect
                         | InvalidationKind::Visibility
                         | InvalidationKind::Paint
                         | InvalidationKind::Text
@@ -2023,6 +2072,45 @@ impl WindowState {
         translations
     }
 
+    fn collect_explicit_layer_descriptor_refreshes(
+        &mut self,
+        previous_scene: Option<&Scene>,
+        invalidations: &[InvalidationRequest],
+    ) -> Vec<LayerDescriptorRefresh> {
+        let Some(previous_scene) = previous_scene else {
+            return Vec::new();
+        };
+        if !invalidations.iter().any(|request| {
+            matches!(
+                request.kind,
+                InvalidationKind::Transform | InvalidationKind::Effect
+            )
+        }) {
+            return Vec::new();
+        }
+
+        let previous_layers = collect_scene_layers(previous_scene);
+        let mut refreshes = Vec::new();
+
+        for (widget_id, previous_descriptor) in previous_layers {
+            let Some(layer_scene) = previous_scene.layer_scene(widget_id).cloned() else {
+                continue;
+            };
+            let Some(descriptor) = self.root.layer_descriptor_for(widget_id, &layer_scene) else {
+                continue;
+            };
+            if descriptor.properties == previous_descriptor.properties {
+                continue;
+            }
+            refreshes.push(LayerDescriptorRefresh {
+                widget_id,
+                descriptor,
+            });
+        }
+
+        refreshes
+    }
+
     fn widget_depth(&self, widget_id: WidgetId) -> usize {
         self.graph
             .path_to(widget_id)
@@ -2118,6 +2206,12 @@ impl WindowState {
             {
                 merge_layer_update_kind(&mut updates, *widget_id, SceneLayerUpdateKind::Ordering);
             }
+            if descriptor.properties.translation != previous.properties.translation {
+                merge_layer_update_kind(&mut updates, *widget_id, SceneLayerUpdateKind::Transform);
+            }
+            if descriptor.properties.opacity != previous.properties.opacity {
+                merge_layer_update_kind(&mut updates, *widget_id, SceneLayerUpdateKind::Effect);
+            }
         }
 
         for widget_id in graph_dirty_widgets.iter().copied() {
@@ -2135,8 +2229,12 @@ impl WindowState {
             };
             let fallback_damage = previous_layers
                 .get(&widget_id)
-                .map(|previous| previous.paint_bounds.union(descriptor.paint_bounds))
-                .unwrap_or(descriptor.paint_bounds);
+                .map(|previous| {
+                    previous
+                        .presented_paint_bounds()
+                        .union(descriptor.presented_paint_bounds())
+                })
+                .unwrap_or(descriptor.presented_paint_bounds());
             let damage = damage_regions
                 .get(&widget_id)
                 .copied()
@@ -2899,7 +2997,7 @@ mod tests {
         SemanticsNode, SemanticsRole, Size, TimerToken, Vector, WakeEvent, WindowEvent,
     };
     use sui_layout::Constraints;
-    use sui_scene::{RegisteredImage, SceneCommand, SceneLayerUpdateKind};
+    use sui_scene::{LayerProperties, RegisteredImage, SceneCommand, SceneLayerUpdateKind};
     use sui_text::{PersistentTextLayout, RegisteredFont, TextStyle};
 
     #[derive(Default)]
@@ -3002,8 +3100,24 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct CachedLayerPresentation {
+        translation: Vector,
+        opacity: f32,
+    }
+
+    impl Default for CachedLayerPresentation {
+        fn default() -> Self {
+            Self {
+                translation: Vector::ZERO,
+                opacity: 1.0,
+            }
+        }
+    }
+
     struct CachedMoveLeaf {
         counters: Rc<RefCell<Counters>>,
+        presentation: Rc<RefCell<CachedLayerPresentation>>,
     }
 
     impl Widget for CachedMoveLeaf {
@@ -3021,6 +3135,13 @@ mod tests {
                 paint_boundary: PaintBoundaryMode::Explicit,
                 composition_mode: sui_scene::LayerCompositionMode::Scroll,
             }
+        }
+
+        fn layer_properties(&self) -> LayerProperties {
+            let presentation = *self.presentation.borrow();
+            LayerProperties::default()
+                .with_translation(presentation.translation)
+                .with_opacity(presentation.opacity)
         }
     }
 
@@ -3111,6 +3232,7 @@ mod tests {
     struct CachedMoveRoot {
         counters: Rc<RefCell<Counters>>,
         child: SingleChild,
+        presentation: Rc<RefCell<CachedLayerPresentation>>,
         offset_x: f32,
     }
 
@@ -3121,6 +3243,18 @@ mod tests {
             {
                 self.offset_x += 48.0;
                 ctx.request_arrange();
+            }
+            if let Event::Custom(custom) = event
+                && custom.kind == "nudge-cached-layer-property"
+            {
+                self.presentation.borrow_mut().translation += Vector::new(18.0, 0.0);
+                ctx.request_transform();
+            }
+            if let Event::Custom(custom) = event
+                && custom.kind == "fade-cached-layer"
+            {
+                self.presentation.borrow_mut().opacity = 0.5;
+                ctx.request_effect();
             }
         }
 
@@ -3674,6 +3808,7 @@ mod tests {
     ) {
         let root_counters = Rc::new(RefCell::new(Counters::default()));
         let leaf_counters = Rc::new(RefCell::new(Counters::default()));
+        let presentation = Rc::new(RefCell::new(CachedLayerPresentation::default()));
 
         let runtime = Application::new()
             .window(
@@ -3683,7 +3818,9 @@ mod tests {
                         counters: Rc::clone(&root_counters),
                         child: SingleChild::new(CachedMoveLeaf {
                             counters: Rc::clone(&leaf_counters),
+                            presentation: Rc::clone(&presentation),
                         }),
+                        presentation,
                         offset_x: 0.0,
                     }),
             )
@@ -4118,6 +4255,103 @@ mod tests {
 
         assert_eq!(translated_bounds.x(), initial_bounds.x() + 48.0);
         assert_eq!(translated_bounds.y(), initial_bounds.y());
+    }
+
+    #[test]
+    fn explicit_boundary_layer_property_translation_marks_transform_without_content_rebuild() {
+        let (mut runtime, window_id, root_counters, leaf_counters) = build_cached_move_runtime();
+
+        let first = runtime.render(window_id).unwrap();
+        let layer_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+        let root_paint_before = root_counters.borrow().paint;
+        let leaf_paint_before = leaf_counters.borrow().paint;
+        let initial_layer = first
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == layer_id => Some(layer.clone()),
+                _ => None,
+            })
+            .expect("cached layer present before property translation");
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Custom(CustomEvent::new("nudge-cached-layer-property")),
+            )
+            .unwrap();
+
+        let second = runtime.render(window_id).unwrap();
+        let updated_layer = second
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == layer_id => Some(layer.clone()),
+                _ => None,
+            })
+            .expect("cached layer present after property translation");
+
+        assert_eq!(root_counters.borrow().paint, root_paint_before);
+        assert_eq!(leaf_counters.borrow().paint, leaf_paint_before);
+        assert_eq!(second.frame.layer_updates.len(), 1);
+        assert_eq!(second.frame.layer_updates[0].owner, layer_id);
+        assert_eq!(
+            second.frame.layer_updates[0].kind,
+            SceneLayerUpdateKind::Transform
+        );
+        assert_eq!(updated_layer.bounds(), initial_layer.bounds());
+        assert_eq!(
+            updated_layer.descriptor.properties.translation,
+            Vector::new(18.0, 0.0)
+        );
+        assert_eq!(updated_layer.descriptor.properties.opacity, 1.0);
+    }
+
+    #[test]
+    fn explicit_boundary_layer_opacity_marks_effect_without_content_rebuild() {
+        let (mut runtime, window_id, root_counters, leaf_counters) = build_cached_move_runtime();
+
+        let _ = runtime.render(window_id).unwrap();
+        let layer_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+        let root_paint_before = root_counters.borrow().paint;
+        let leaf_paint_before = leaf_counters.borrow().paint;
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Custom(CustomEvent::new("fade-cached-layer")),
+            )
+            .unwrap();
+
+        let second = runtime.render(window_id).unwrap();
+        let updated_layer = second
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == layer_id => Some(layer.clone()),
+                _ => None,
+            })
+            .expect("cached layer present after opacity update");
+
+        assert_eq!(root_counters.borrow().paint, root_paint_before);
+        assert_eq!(leaf_counters.borrow().paint, leaf_paint_before);
+        assert_eq!(second.frame.layer_updates.len(), 1);
+        assert_eq!(second.frame.layer_updates[0].owner, layer_id);
+        assert_eq!(
+            second.frame.layer_updates[0].kind,
+            SceneLayerUpdateKind::Effect
+        );
+        assert_eq!(
+            updated_layer.descriptor.properties.translation,
+            Vector::ZERO
+        );
+        assert_eq!(updated_layer.descriptor.properties.opacity, 0.5);
     }
 
     #[test]

@@ -168,6 +168,8 @@ Widgets should also be able to expose richer semantic roles, names, descriptions
 
 Widgets may be lightweight where possible, but the framework should not force every interaction into a stateless redraw loop if persistent state is the more practical model.
 
+Animation policy should follow the same rule. Widgets own their local animation state, choose when transitions start or stop, and decide whether a change should repaint content or update presentation-only layer properties. The runtime should provide current time, animation-frame wakes, timer wakes, and invalidation routing, but it should not become a framework-owned easing or transition engine.
+
 ### Event system
 
 The event system is central to the framework. It should support:
@@ -236,7 +238,7 @@ The renderer should support:
 - multi-threaded preparation of render work where platform and backend constraints allow it
 - integration points for custom GPU passes
 
-SUI should provide both high-level drawing primitives and low-level rendering escape hatches. Widgets may use framework-provided primitives such as shapes, text, and pixel or texture utilities, but advanced widgets should also be able to access raw wgpu functionality when they need tighter control.
+SUI should provide both high-level drawing primitives and renderer-owned extension points. Widgets may use framework-provided primitives such as shapes, text, and pixel or texture utilities, but ordinary widgets should still paint through the scene abstraction rather than taking direct ownership of raw `wgpu` objects.
 
 ### Scene and paint abstraction
 
@@ -248,6 +250,8 @@ Widgets should emit paint instructions into a scene or paint graph abstraction r
 - tooling such as debug overlays, selection visualization, and repaint diagnostics
 
 Low-level rendering hooks should still be available for advanced integrations, but the normal widget path should go through a stable paint abstraction.
+
+For retained animation, that abstraction should stay presentation-oriented. Explicit paint-boundary widgets may expose portable layer properties such as opacity and translation, while the runtime and renderer decide how to diff and apply those updates efficiently. That keeps animation-friendly retained paths available without turning the widget API into a raw graphics abstraction layer.
 
 Widgets own the lifecycle of their children. For general canvas and infinite-canvas workflows, SUI should treat the scene graph as a normal SUI widget tree rather than introducing a separate retained scene model that duplicates widget ownership.
 

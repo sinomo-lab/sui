@@ -1,22 +1,24 @@
+use std::{cell::RefCell, rc::Rc};
+
 use sui_core::{
-    Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
-    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsState, SemanticsValue, Size,
-    TimerToken, WakeEvent,
+    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path,
+    PathBuilder, Point, PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode,
+    SemanticsRole, SemanticsState, SemanticsValue, Size, TimerToken, Vector, WakeEvent, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor,
-    WidgetPodVisitor, window_render_options,
+    window_render_options, ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode,
+    PaintCtx, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren,
+    WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::{LayerCompositionMode, StrokeStyle};
+use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{TextMeasurement, TextStyle};
 
 use crate::{
-    Button, ControlMetrics, DefaultTheme, HdrThemeMode, ResolvedEffectStyle, ResolvedHdrStyle,
-    WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
     controls::{apply_hdr_policy_cap, cap_resolved_hdr_style},
-    resolve_widget_hdr_style,
+    resolve_widget_hdr_style, Button, ControlMetrics, DefaultTheme, Easing, HdrThemeMode,
+    ResolvedEffectStyle, ResolvedHdrStyle, Transition, WidgetColorRole, WidgetEffectRole,
+    WidgetLuminanceRole, WidgetMaterialRole,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1148,116 +1150,189 @@ impl Widget for Menu {
     }
 }
 
-pub struct Tooltip {
-    theme: Box<DefaultTheme>,
+const PRESENTATION_EPSILON: f32 = 1e-4;
+const TOOLTIP_ANIMATION_SECONDS: f64 = 0.18;
+const TOOLTIP_REVEAL_OFFSET_PX: f32 = 8.0;
+const POPOVER_ANIMATION_SECONDS: f64 = 0.18;
+const POPOVER_REVEAL_OFFSET_PX: f32 = 10.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AnimatedScalar {
+    value: f32,
+    target: f32,
+    transition: Option<Transition<f32>>,
+}
+
+impl AnimatedScalar {
+    const fn new(value: f32) -> Self {
+        Self {
+            value,
+            target: value,
+            transition: None,
+        }
+    }
+
+    fn current(&self, time: f64) -> f32 {
+        self.transition
+            .map(|transition| transition.sample(time))
+            .unwrap_or(self.value)
+    }
+
+    fn set_target(&mut self, target: f32, time: f64, duration: f64) -> bool {
+        let target = target.clamp(0.0, 1.0);
+        let current = self.current(time);
+        if (current - target).abs() < PRESENTATION_EPSILON {
+            self.value = target;
+            self.target = target;
+            self.transition = None;
+            return false;
+        }
+
+        self.value = current;
+        self.target = target;
+        self.transition = Some(Transition::new(
+            current,
+            target,
+            time,
+            duration,
+            Easing::EaseInOut,
+        ));
+        true
+    }
+
+    fn advance(&mut self, time: f64) -> bool {
+        let Some(transition) = self.transition else {
+            return false;
+        };
+
+        self.value = transition.sample(time);
+        if transition.is_complete(time) {
+            self.value = self.target;
+            self.transition = None;
+            return false;
+        }
+
+        true
+    }
+
+    fn is_presented(&self) -> bool {
+        self.value > PRESENTATION_EPSILON
+            || self.target > PRESENTATION_EPSILON
+            || self.transition.is_some()
+    }
+}
+
+fn request_child_invalidation(ctx: &mut EventCtx, widget_id: WidgetId, kind: InvalidationKind) {
+    ctx.request(InvalidationRequest::new(
+        InvalidationTarget::Widget(widget_id),
+        kind,
+    ));
+}
+
+fn tooltip_fallback_measurement(theme: &DefaultTheme) -> TextMeasurement {
+    TextMeasurement {
+        width: 120.0,
+        height: theme.typography.body_line_height,
+        bounds: Rect::new(0.0, 0.0, 120.0, theme.typography.body_line_height),
+        ascent: theme.typography.body_font_size,
+        descent: 0.0,
+        cap_height: Some(theme.typography.body_font_size),
+    }
+}
+
+fn tooltip_bubble_rect(
+    trigger_bounds: Rect,
+    measurement: Option<TextMeasurement>,
+    theme: &DefaultTheme,
+    placement: TooltipPlacement,
+) -> Rect {
+    let measurement = measurement.unwrap_or_else(|| tooltip_fallback_measurement(theme));
+    let width = (measurement.width + 24.0).max(96.0);
+    let height = measurement.height.max(theme.typography.body_line_height) + 18.0;
+    let x = trigger_bounds.x() + ((trigger_bounds.width() - width) * 0.5);
+    let y = match placement {
+        TooltipPlacement::Above => trigger_bounds.y() - height - 10.0,
+        TooltipPlacement::Below => trigger_bounds.max_y() + 10.0,
+    };
+    Rect::new(x, y, width, height)
+}
+
+#[derive(Debug, Clone)]
+struct TooltipPresentationState {
+    theme: DefaultTheme,
     text: String,
     placement: TooltipPlacement,
-    child: SingleChild,
-    hovered: bool,
     measurement: Option<TextMeasurement>,
+    hovered: bool,
+    trigger_bounds: Rect,
+    bubble_bounds: Rect,
+    reveal: AnimatedScalar,
 }
 
-impl Tooltip {
-    pub fn new<W>(text: impl Into<String>, child: W) -> Self
-    where
-        W: Widget + 'static,
-    {
+impl TooltipPresentationState {
+    fn new(text: String) -> Self {
         Self {
-            theme: Box::new(DefaultTheme::default()),
-            text: text.into(),
+            theme: DefaultTheme::default(),
+            text,
             placement: TooltipPlacement::Above,
-            child: SingleChild::new(child),
-            hovered: false,
             measurement: None,
+            hovered: false,
+            trigger_bounds: Rect::ZERO,
+            bubble_bounds: Rect::ZERO,
+            reveal: AnimatedScalar::new(0.0),
         }
     }
 
-    pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = Box::new(theme);
-        self
+    fn is_presented(&self) -> bool {
+        self.reveal.is_presented()
     }
 
-    pub fn placement(mut self, placement: TooltipPlacement) -> Self {
-        self.placement = placement;
-        self
-    }
-
-    fn bubble_rect(&self, bounds: Rect) -> Rect {
-        let measurement = self.measurement.unwrap_or(TextMeasurement {
-            width: 120.0,
-            height: self.theme.typography.body_line_height,
-            bounds: Rect::new(0.0, 0.0, 120.0, self.theme.typography.body_line_height),
-            ascent: self.theme.typography.body_font_size,
-            descent: 0.0,
-            cap_height: Some(self.theme.typography.body_font_size),
-        });
-        let width = (measurement.width + 24.0).max(96.0);
-        let height = measurement
-            .height
-            .max(self.theme.typography.body_line_height)
-            + 18.0;
-        let x = bounds.x() + ((bounds.width() - width) * 0.5);
-        let y = match self.placement {
-            TooltipPlacement::Above => bounds.y() - height - 10.0,
-            TooltipPlacement::Below => bounds.max_y() + 10.0,
+    fn layer_properties(&self) -> LayerProperties {
+        let direction = match self.placement {
+            TooltipPlacement::Above => -1.0,
+            TooltipPlacement::Below => 1.0,
         };
-        Rect::new(x, y, width, height)
+        LayerProperties {
+            opacity: self.reveal.value,
+            translation: Vector::new(
+                0.0,
+                TOOLTIP_REVEAL_OFFSET_PX * (1.0 - self.reveal.value) * direction,
+            ),
+        }
     }
 }
 
-impl Widget for Tooltip {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        match event {
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = ctx.bounds().contains(pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
-            }
-            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Enter) => {
-                if !self.hovered {
-                    self.hovered = true;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
-            }
-            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
-                if self.hovered {
-                    self.hovered = false;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
-            }
-            _ => {}
+struct TooltipOverlay {
+    state: Rc<RefCell<TooltipPresentationState>>,
+}
+
+impl TooltipOverlay {
+    fn new(state: Rc<RefCell<TooltipPresentationState>>) -> Self {
+        Self { state }
+    }
+}
+
+impl Widget for TooltipOverlay {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
+        let state = self.state.borrow();
+        if !state.is_presented() {
+            return Size::ZERO;
         }
+        state.bubble_bounds.size
     }
 
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.measurement = Some(measure_text(
-            ctx,
-            &self.text,
-            &self.theme.placeholder_text_style(),
-        ));
-        self.child.measure(ctx, constraints)
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        self.child.arrange(
-            ctx,
-            Rect::from_origin_size(bounds.origin, self.child.child().measured_size()),
-        );
+    fn arrange(&mut self, _ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.state.borrow_mut().bubble_bounds = bounds;
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        self.child.paint(ctx);
-        if !self.hovered {
+        let state = self.state.borrow();
+        if !state.is_presented() {
             return;
         }
 
-        let bubble = self.bubble_rect(ctx.bounds());
-        let metrics = self.theme.metrics;
+        let bubble = ctx.bounds();
+        let metrics = state.theme.metrics;
         draw_control_frame(
             ctx,
             bubble,
@@ -1267,19 +1342,20 @@ impl Widget for Tooltip {
             Color::rgba(0.05, 0.08, 0.12, 1.0),
             None,
         );
-        let tail = tooltip_tail(ctx.bounds(), bubble, self.placement);
+        let tail = tooltip_tail(state.trigger_bounds, bubble, state.placement);
         ctx.fill(tail, Color::rgba(0.10, 0.14, 0.20, 0.96));
         ctx.draw_text(
             inset_rect(bubble, Insets::all(9.0)),
-            self.text.clone(),
-            self.theme.text_style(Color::rgba(1.0, 1.0, 1.0, 1.0)),
+            state.text.clone(),
+            state.theme.text_style(Color::rgba(1.0, 1.0, 1.0, 1.0)),
         );
     }
 
     fn layer_options(&self) -> LayerOptions {
+        let presented = self.state.borrow().is_presented();
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: if self.hovered {
+            composition_mode: if presented {
                 LayerCompositionMode::Overlay
             } else {
                 LayerCompositionMode::Normal
@@ -1287,46 +1363,171 @@ impl Widget for Tooltip {
         }
     }
 
+    fn layer_properties(&self) -> LayerProperties {
+        self.state.borrow().layer_properties()
+    }
+
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.hovered.then_some(StackSurfaceOptions {
+        self.state.borrow().is_presented().then_some(StackSurfaceOptions {
             transient: true,
             ..StackSurfaceOptions::default()
         })
     }
+}
+
+pub struct Tooltip {
+    child: SingleChild,
+    overlay: SingleChild,
+    state: Rc<RefCell<TooltipPresentationState>>,
+}
+
+impl Tooltip {
+    pub fn new<W>(text: impl Into<String>, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        let state = Rc::new(RefCell::new(TooltipPresentationState::new(text.into())));
+        Self {
+            child: SingleChild::new(child),
+            overlay: SingleChild::new(TooltipOverlay::new(Rc::clone(&state))),
+            state,
+        }
+    }
+
+    pub fn theme(self, theme: DefaultTheme) -> Self {
+        self.state.borrow_mut().theme = theme;
+        self
+    }
+
+    pub fn placement(self, placement: TooltipPlacement) -> Self {
+        self.state.borrow_mut().placement = placement;
+        self
+    }
+
+    fn set_hovered(&mut self, ctx: &mut EventCtx, hovered: bool) {
+        let overlay_id = self.overlay.child().id();
+        let mut state = self.state.borrow_mut();
+        if state.hovered == hovered {
+            return;
+        }
+        let was_presented = state.is_presented();
+        state.hovered = hovered;
+        let should_animate = state
+            .reveal
+            .set_target(hovered as u8 as f32, ctx.current_time(), TOOLTIP_ANIMATION_SECONDS);
+        let is_presented = state.is_presented();
+        drop(state);
+
+        if was_presented != is_presented {
+            ctx.request_measure();
+            request_child_invalidation(ctx, overlay_id, InvalidationKind::Visibility);
+        }
+        if should_animate {
+            ctx.request_animation_frame();
+        }
+        ctx.request_semantics();
+    }
+}
+
+impl Widget for Tooltip {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                self.set_hovered(ctx, ctx.bounds().contains(pointer.position));
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Enter => {
+                self.set_hovered(ctx, ctx.bounds().contains(pointer.position));
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                self.set_hovered(ctx, ctx.bounds().contains(pointer.position));
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                let overlay_id = self.overlay.child().id();
+                let mut state = self.state.borrow_mut();
+                let was_presented = state.is_presented();
+                let previous = state.reveal.value;
+                let animating = state.reveal.advance(*time);
+                let changed = (state.reveal.value - previous).abs() > PRESENTATION_EPSILON;
+                let is_presented = state.is_presented();
+                drop(state);
+
+                if changed {
+                    request_child_invalidation(ctx, overlay_id, InvalidationKind::Transform);
+                    request_child_invalidation(ctx, overlay_id, InvalidationKind::Effect);
+                }
+                if was_presented != is_presented {
+                    ctx.request_measure();
+                    request_child_invalidation(ctx, overlay_id, InvalidationKind::Visibility);
+                }
+                if animating {
+                    ctx.request_animation_frame();
+                }
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let mut state = self.state.borrow_mut();
+        state.measurement = Some(measure_text(
+            ctx,
+            &state.text,
+            &state.theme.placeholder_text_style(),
+        ));
+        drop(state);
+        self.child.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let trigger_bounds = Rect::from_origin_size(bounds.origin, self.child.child().measured_size());
+        self.child.arrange(ctx, trigger_bounds);
+
+        let mut state = self.state.borrow_mut();
+        state.trigger_bounds = trigger_bounds;
+        state.bubble_bounds = tooltip_bubble_rect(
+            trigger_bounds,
+            state.measurement,
+            &state.theme,
+            state.placement,
+        );
+        let overlay_bounds = if state.is_presented() {
+            state.bubble_bounds
+        } else {
+            Rect::from_origin_size(trigger_bounds.origin, Size::ZERO)
+        };
+        drop(state);
+        self.overlay.arrange(ctx, overlay_bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+        self.overlay.paint(ctx);
+    }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.child.semantics(ctx);
-        if self.hovered {
-            let mut node = SemanticsNode::new(
-                ctx.widget_id(),
-                SemanticsRole::Tooltip,
-                self.bubble_rect(ctx.bounds()),
-            );
-            node.name = Some(self.text.clone());
+        let state = self.state.borrow();
+        if state.hovered {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Tooltip, state.bubble_bounds);
+            node.name = Some(state.text.clone());
             ctx.push(node);
         }
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.child.visit_children(visitor);
+        if self.state.borrow().is_presented() {
+            self.overlay.visit_children(visitor);
+        }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.child.visit_children_mut(visitor);
+        if self.state.borrow().is_presented() {
+            self.overlay.visit_children_mut(visitor);
+        }
     }
-}
-
-pub struct Popover {
-    theme: Box<DefaultTheme>,
-    name: String,
-    trigger: SingleChild,
-    content: SingleChild,
-    open: bool,
-    gap: f32,
-    padding: Insets,
-    frame_rect: Rect,
-    arrival_active: bool,
-    arrival_timer: Option<TimerToken>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1338,76 +1539,45 @@ struct PopoverVisuals {
     arrival_effect: Option<ResolvedEffectStyle>,
 }
 
-impl Popover {
-    pub fn new<T, C>(name: impl Into<String>, trigger: T, content: C) -> Self
-    where
-        T: Widget + 'static,
-        C: Widget + 'static,
-    {
+#[derive(Debug, Clone)]
+struct PopoverSurfaceState {
+    theme: DefaultTheme,
+    padding: Insets,
+    frame_rect: Rect,
+    arrival_active: bool,
+    reveal: AnimatedScalar,
+}
+
+impl PopoverSurfaceState {
+    fn new() -> Self {
         Self {
-            theme: Box::new(DefaultTheme::default()),
-            name: name.into(),
-            trigger: SingleChild::new(trigger),
-            content: SingleChild::new(content),
-            open: false,
-            gap: 8.0,
+            theme: DefaultTheme::default(),
             padding: Insets::all(14.0),
             frame_rect: Rect::ZERO,
             arrival_active: false,
-            arrival_timer: None,
+            reveal: AnimatedScalar::new(0.0),
         }
     }
 
-    pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = Box::new(theme);
-        self
-    }
-
-    pub fn open(mut self, open: bool) -> Self {
-        self.open = open;
-        self
+    fn is_presented(&self) -> bool {
+        self.reveal.is_presented()
     }
 
     fn arrival_duration(&self) -> f64 {
         (0.18 / self.theme.hdr.effects.pulse.speed.max(0.25) as f64).clamp(0.10, 0.28)
     }
 
-    fn start_arrival(&mut self, ctx: &mut EventCtx) {
-        if let Some(token) = self.arrival_timer.take() {
-            ctx.cancel_timer(token);
+    fn layer_properties(&self) -> LayerProperties {
+        LayerProperties {
+            opacity: self.reveal.value,
+            translation: Vector::new(0.0, -POPOVER_REVEAL_OFFSET_PX * (1.0 - self.reveal.value)),
         }
-
-        self.arrival_active = !matches!(self.theme.hdr.mode, HdrThemeMode::Disabled)
-            && self.theme.hdr.effects.pulse.intensity > 0.0;
-        if self.arrival_active {
-            self.arrival_timer = Some(ctx.schedule_timer_after(self.arrival_duration()));
-        }
-    }
-
-    fn stop_arrival(&mut self, ctx: &mut EventCtx) {
-        self.arrival_active = false;
-        if let Some(token) = self.arrival_timer.take() {
-            ctx.cancel_timer(token);
-        }
-    }
-
-    fn trigger_rect(&self) -> Rect {
-        self.trigger.child().bounds()
-    }
-
-    fn content_rect(&self) -> Rect {
-        self.frame_rect
-    }
-
-    fn is_inside_open_regions(&self, position: Point) -> bool {
-        self.trigger_rect().contains(position)
-            || (self.open && self.content_rect().contains(position))
     }
 
     fn resolved_visuals(&self) -> PopoverVisuals {
         let palette = self.theme.palette;
 
-        if !self.open || matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) {
+        if !self.is_presented() || matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) {
             return PopoverVisuals {
                 background: palette.surface,
                 border: palette.border,
@@ -1442,134 +1612,85 @@ impl Popover {
     }
 }
 
-impl Widget for Popover {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        match event {
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Primary)
-                    && self.trigger_rect().contains(pointer.position) =>
-            {
-                self.open = !self.open;
-                if self.open {
-                    self.start_arrival(ctx);
-                } else {
-                    self.stop_arrival(ctx);
-                }
-                ctx.request_focus();
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Primary)
-                    && self.open
-                    && !self.is_inside_open_regions(pointer.position) =>
-            {
-                self.open = false;
-                self.stop_arrival(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-            }
-            Event::Keyboard(key)
-                if ctx.is_focused()
-                    && key.state == KeyState::Pressed
-                    && key.key == "Escape"
-                    && self.open =>
-            {
-                self.open = false;
-                self.stop_arrival(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Wake(WakeEvent::Timer { token, .. }) if self.arrival_timer == Some(*token) => {
-                self.arrival_timer = None;
-                if self.arrival_active {
-                    self.arrival_active = false;
-                    ctx.request_paint();
-                }
-                ctx.set_handled();
-            }
-            _ => {}
+struct PopoverSurface {
+    content: SingleChild,
+    state: Rc<RefCell<PopoverSurfaceState>>,
+}
+
+impl PopoverSurface {
+    fn new<C>(state: Rc<RefCell<PopoverSurfaceState>>, content: C) -> Self
+    where
+        C: Widget + 'static,
+    {
+        Self {
+            content: SingleChild::new(content),
+            state,
         }
     }
+}
 
+impl Widget for PopoverSurface {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let trigger_size = self.trigger.measure(ctx, constraints.loosen());
-        let mut size = trigger_size;
-        if self.open {
-            let content_constraints = Constraints::new(
-                Size::ZERO,
-                Size::new(
-                    if constraints.max.width.is_finite() {
-                        (constraints.max.width - self.padding.left - self.padding.right).max(0.0)
-                    } else {
-                        f32::INFINITY
-                    },
-                    if constraints.max.height.is_finite() {
-                        (constraints.max.height
-                            - trigger_size.height
-                            - self.gap
-                            - self.padding.top
-                            - self.padding.bottom)
-                            .max(0.0)
-                    } else {
-                        f32::INFINITY
-                    },
-                ),
-            );
-            let content_size = self.content.measure(ctx, content_constraints);
-            self.frame_rect = Rect::new(
-                0.0,
-                trigger_size.height + self.gap,
-                (content_size.width + self.padding.left + self.padding.right)
-                    .max(trigger_size.width),
-                content_size.height + self.padding.top + self.padding.bottom,
-            );
-            size = Size::new(
-                self.frame_rect.width().max(trigger_size.width),
-                trigger_size.height + self.gap + self.frame_rect.height(),
-            );
-        } else {
-            self.frame_rect = Rect::ZERO;
+        let state = self.state.borrow();
+        if !state.is_presented() {
+            return Size::ZERO;
         }
-        constraints.clamp(size)
+        let padding = state.padding;
+        drop(state);
+
+        let content_constraints = Constraints::new(
+            Size::ZERO,
+            Size::new(
+                if constraints.max.width.is_finite() {
+                    (constraints.max.width - padding.left - padding.right).max(0.0)
+                } else {
+                    f32::INFINITY
+                },
+                if constraints.max.height.is_finite() {
+                    (constraints.max.height - padding.top - padding.bottom).max(0.0)
+                } else {
+                    f32::INFINITY
+                },
+            ),
+        );
+        let content_size = self.content.measure(ctx, content_constraints);
+        Size::new(
+            content_size.width + padding.left + padding.right,
+            content_size.height + padding.top + padding.bottom,
+        )
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let trigger_size = self.trigger.child().measured_size();
-        self.trigger
-            .arrange(ctx, Rect::from_origin_size(bounds.origin, trigger_size));
-        if self.open {
-            let content_size = self.content.child().measured_size();
-            self.content.arrange(
-                ctx,
-                Rect::new(
-                    bounds.x() + self.padding.left,
-                    bounds.y() + trigger_size.height + self.gap + self.padding.top,
-                    content_size.width,
-                    content_size.height,
-                ),
-            );
+        let state = self.state.borrow();
+        if !state.is_presented() {
+            drop(state);
+            self.content
+                .arrange(ctx, Rect::from_origin_size(bounds.origin, Size::ZERO));
+            return;
         }
+        let padding = state.padding;
+        drop(state);
+        let content_size = self.content.child().measured_size();
+        self.content.arrange(
+            ctx,
+            Rect::new(
+                bounds.x() + padding.left,
+                bounds.y() + padding.top,
+                content_size.width,
+                content_size.height,
+            ),
+        );
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        self.trigger.paint(ctx);
-        if !self.open {
+        let state = self.state.borrow();
+        if !state.is_presented() {
             return;
         }
 
-        let rect = self
-            .content_rect()
-            .translate(ctx.bounds().origin.to_vector());
-        let metrics = self.theme.metrics;
-        let visuals = self.resolved_visuals();
+        let rect = ctx.bounds();
+        let metrics = state.theme.metrics;
+        let visuals = state.resolved_visuals();
         draw_control_frame(
             ctx,
             rect,
@@ -1589,13 +1710,15 @@ impl Widget for Popover {
                 arrival_effect,
             );
         }
+        drop(state);
         self.content.paint(ctx);
     }
 
     fn layer_options(&self) -> LayerOptions {
+        let presented = self.state.borrow().is_presented();
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: if self.open {
+            composition_mode: if presented {
                 LayerCompositionMode::Overlay
             } else {
                 LayerCompositionMode::Normal
@@ -1603,11 +1726,262 @@ impl Widget for Popover {
         }
     }
 
+    fn layer_properties(&self) -> LayerProperties {
+        self.state.borrow().layer_properties()
+    }
+
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.open.then_some(StackSurfaceOptions {
+        self.state.borrow().is_presented().then_some(StackSurfaceOptions {
             transient: true,
             ..StackSurfaceOptions::default()
         })
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.content.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.content.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.content.visit_children_mut(visitor);
+    }
+}
+
+pub struct Popover {
+    name: String,
+    trigger: SingleChild,
+    surface: SingleChild,
+    open: bool,
+    gap: f32,
+    arrival_timer: Option<TimerToken>,
+    state: Rc<RefCell<PopoverSurfaceState>>,
+}
+
+impl Popover {
+    pub fn new<T, C>(name: impl Into<String>, trigger: T, content: C) -> Self
+    where
+        T: Widget + 'static,
+        C: Widget + 'static,
+    {
+        let state = Rc::new(RefCell::new(PopoverSurfaceState::new()));
+        Self {
+            name: name.into(),
+            trigger: SingleChild::new(trigger),
+            surface: SingleChild::new(PopoverSurface::new(Rc::clone(&state), content)),
+            open: false,
+            gap: 8.0,
+            arrival_timer: None,
+            state,
+        }
+    }
+
+    pub fn theme(self, theme: DefaultTheme) -> Self {
+        self.state.borrow_mut().theme = theme;
+        self
+    }
+
+    pub fn open(mut self, open: bool) -> Self {
+        self.open = open;
+        {
+            let mut state = self.state.borrow_mut();
+            state.reveal = AnimatedScalar::new(if open { 1.0 } else { 0.0 });
+        }
+        self
+    }
+
+    fn start_arrival(&mut self, ctx: &mut EventCtx) {
+        if let Some(token) = self.arrival_timer.take() {
+            ctx.cancel_timer(token);
+        }
+
+        let mut state = self.state.borrow_mut();
+        state.arrival_active = !matches!(state.theme.hdr.mode, HdrThemeMode::Disabled)
+            && state.theme.hdr.effects.pulse.intensity > 0.0;
+        if state.arrival_active {
+            self.arrival_timer = Some(ctx.schedule_timer_after(state.arrival_duration()));
+        }
+    }
+
+    fn stop_arrival(&mut self, ctx: &mut EventCtx) {
+        self.state.borrow_mut().arrival_active = false;
+        if let Some(token) = self.arrival_timer.take() {
+            ctx.cancel_timer(token);
+        }
+    }
+
+    fn trigger_rect(&self) -> Rect {
+        self.trigger.child().bounds()
+    }
+
+    fn content_rect(&self) -> Rect {
+        self.state.borrow().frame_rect
+    }
+
+    fn is_inside_open_regions(&self, position: Point) -> bool {
+        self.trigger_rect().contains(position)
+            || (self.open && self.content_rect().contains(position))
+    }
+
+    fn set_open(&mut self, ctx: &mut EventCtx, open: bool) {
+        if self.open == open {
+            return;
+        }
+
+        if open {
+            self.start_arrival(ctx);
+        } else {
+            self.stop_arrival(ctx);
+        }
+
+        self.open = open;
+        let surface_id = self.surface.child().id();
+        let mut state = self.state.borrow_mut();
+        let was_presented = state.is_presented();
+        let should_animate = state
+            .reveal
+            .set_target(open as u8 as f32, ctx.current_time(), POPOVER_ANIMATION_SECONDS);
+        let is_presented = state.is_presented();
+        drop(state);
+
+        if open || was_presented != is_presented {
+            ctx.request_measure();
+            request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
+        }
+        if should_animate {
+            ctx.request_animation_frame();
+        }
+        ctx.request_semantics();
+    }
+}
+
+impl Widget for Popover {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self.trigger_rect().contains(pointer.position) =>
+            {
+                let next = !self.open;
+                self.set_open(ctx, next);
+                ctx.request_focus();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self.open
+                    && !self.is_inside_open_regions(pointer.position) =>
+            {
+                self.set_open(ctx, false);
+            }
+            Event::Keyboard(key)
+                if ctx.is_focused()
+                    && key.state == KeyState::Pressed
+                    && key.key == "Escape"
+                    && self.open =>
+            {
+                self.set_open(ctx, false);
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                let surface_id = self.surface.child().id();
+                let mut state = self.state.borrow_mut();
+                let was_presented = state.is_presented();
+                let previous = state.reveal.value;
+                let animating = state.reveal.advance(*time);
+                let changed = (state.reveal.value - previous).abs() > PRESENTATION_EPSILON;
+                let is_presented = state.is_presented();
+                drop(state);
+
+                if changed {
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Transform);
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Effect);
+                }
+                if was_presented != is_presented {
+                    ctx.request_measure();
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
+                }
+                if animating {
+                    ctx.request_animation_frame();
+                }
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::Timer { token, .. }) if self.arrival_timer == Some(*token) => {
+                self.arrival_timer = None;
+                let surface_id = self.surface.child().id();
+                let mut state = self.state.borrow_mut();
+                if state.arrival_active {
+                    state.arrival_active = false;
+                    drop(state);
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
+                } else {
+                    drop(state);
+                }
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let trigger_size = self.trigger.measure(ctx, constraints.loosen());
+        let surface_max = Size::new(
+            if constraints.max.width.is_finite() {
+                constraints.max.width
+            } else {
+                f32::INFINITY
+            },
+            if constraints.max.height.is_finite() {
+                (constraints.max.height - trigger_size.height - self.gap).max(0.0)
+            } else {
+                f32::INFINITY
+            },
+        );
+        let surface_size = self
+            .surface
+            .measure(ctx, Constraints::new(Size::ZERO, surface_max));
+        let presented = self.state.borrow().is_presented();
+        let size = if presented {
+            Size::new(
+                surface_size.width.max(trigger_size.width),
+                trigger_size.height + self.gap + surface_size.height,
+            )
+        } else {
+            trigger_size
+        };
+        constraints.clamp(size)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let trigger_size = self.trigger.child().measured_size();
+        let trigger_bounds = Rect::from_origin_size(bounds.origin, trigger_size);
+        self.trigger.arrange(ctx, trigger_bounds);
+
+        let presented = self.state.borrow().is_presented();
+        let surface_bounds = if presented {
+            let surface_size = self.surface.child().measured_size();
+            Rect::new(
+                bounds.x(),
+                bounds.y() + trigger_size.height + self.gap,
+                surface_size.width.max(trigger_size.width),
+                surface_size.height,
+            )
+        } else {
+            Rect::from_origin_size(trigger_bounds.origin, Size::ZERO)
+        };
+        self.state.borrow_mut().frame_rect = surface_bounds;
+        self.surface.arrange(ctx, surface_bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.trigger.paint(ctx);
+        if self.state.borrow().is_presented() {
+            self.surface.paint(ctx);
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1623,7 +1997,7 @@ impl Widget for Popover {
         ctx.push(node);
         self.trigger.semantics(ctx);
         if self.open {
-            self.content.semantics(ctx);
+            self.surface.semantics(ctx);
         }
     }
 
@@ -1633,24 +2007,22 @@ impl Widget for Popover {
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if !focused && self.open {
-            self.open = false;
-            ctx.request_measure();
+            self.set_open(ctx, false);
         }
-        ctx.request_paint();
         ctx.request_semantics();
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.trigger.visit_children(visitor);
         if self.open {
-            self.content.visit_children(visitor);
+            self.surface.visit_children(visitor);
         }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.trigger.visit_children_mut(visitor);
         if self.open {
-            self.content.visit_children_mut(visitor);
+            self.surface.visit_children_mut(visitor);
         }
     }
 }
@@ -3017,6 +3389,37 @@ mod tests {
         Event::Pointer(event)
     }
 
+    fn handle_ready_events(runtime: &mut Runtime) -> Result<usize, String> {
+        let ready = runtime.drain_ready_events();
+        let count = ready.len();
+        for (ready_window, event) in ready {
+            runtime
+                .handle_event(ready_window, event)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(count)
+    }
+
+    fn overlay_layer_descriptor(output: &RenderOutput) -> Option<SceneLayerDescriptor> {
+        let mut descriptor = None;
+        output.frame.scene.visit_layers(&mut |layer| {
+            if layer.descriptor.composition_mode == LayerCompositionMode::Overlay {
+                descriptor = Some(layer.descriptor.clone());
+            }
+        });
+        descriptor
+    }
+
+    fn overlay_layer_owner(output: &RenderOutput) -> Option<WidgetId> {
+        let mut owner = None;
+        output.frame.scene.visit_layers(&mut |layer| {
+            if layer.descriptor.composition_mode == LayerCompositionMode::Overlay {
+                owner = Some(layer.widget_id());
+            }
+        });
+        owner
+    }
+
     fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
         let mut colors = Vec::new();
         output
@@ -3331,22 +3734,166 @@ mod tests {
         let output = render(crate::Padding::all(
             16.0,
             Popover::new(
-                "Options",
-                crate::Button::new("Open"),
-                crate::Label::new("Popover body"),
+                "Inline inspector",
+                crate::Button::new("Open inspector"),
+                crate::Label::new("popover body"),
             )
             .open(true),
         ));
 
-        let popover = output
+        let descriptor = overlay_layer_descriptor(&output).expect("popover layer descriptor present");
+
+        assert!(descriptor.is_stack_surface);
+        assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
+    }
+
+    #[test]
+    fn tooltip_reveal_animation_updates_layer_properties_until_complete() -> Result<(), String> {
+        const TOOLTIP_ANIMATION_SECONDS: f64 = 0.18;
+
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            16.0,
+            crate::Tooltip::new(
+                "Quick access to common commands",
+                crate::Button::new("Hover for shortcuts").min_width(180.0),
+            ),
+        ));
+
+        let initial = runtime.render(window_id).map_err(|error| error.to_string())?;
+        assert!(overlay_layer_descriptor(&initial).is_none());
+
+        let trigger = initial
             .semantics
             .iter()
-            .find(|node| node.role == SemanticsRole::Popover)
-            .expect("popover semantics present");
-        let descriptor =
-            layer_descriptor_for(&output, popover.id).expect("popover layer descriptor present");
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hover for shortcuts")
+            })
+            .expect("tooltip trigger semantics present")
+            .bounds;
+        let hover_point = Point::new(trigger.x() + 12.0, trigger.y() + (trigger.height() * 0.5));
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Move, hover_point, false),
+            )
+            .map_err(|error| error.to_string())?;
 
-        assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
+        let start = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let start_descriptor =
+            overlay_layer_descriptor(&start).expect("tooltip overlay layer should appear");
+        assert_eq!(
+            start_descriptor.properties.translation.y.signum(),
+            -1.0,
+            "tooltip reveal should start offset upward"
+        );
+        assert_eq!(start_descriptor.properties.opacity, 0.0);
+
+        runtime.tick(TOOLTIP_ANIMATION_SECONDS * 0.5);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let mid = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let mid_descriptor =
+            overlay_layer_descriptor(&mid).expect("tooltip overlay layer should stay active");
+        assert!(mid_descriptor.properties.opacity > 0.0);
+        assert!(mid_descriptor.properties.opacity < 1.0);
+        assert!(mid_descriptor.properties.translation.y < 0.0);
+        assert!(
+            mid_descriptor.properties.translation.y.abs()
+                < start_descriptor.properties.translation.y.abs()
+        );
+        assert!(runtime.next_wakeup_time(window_id).map_err(|error| error.to_string())?.is_some());
+
+        runtime.tick(TOOLTIP_ANIMATION_SECONDS);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let settled_descriptor =
+            overlay_layer_descriptor(&settled).expect("tooltip overlay layer should still exist");
+        assert_eq!(settled_descriptor.properties.opacity, 1.0);
+        assert_eq!(settled_descriptor.properties.translation.y, 0.0);
+        assert_eq!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?,
+            None
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(), String> {
+        const POPOVER_ANIMATION_SECONDS: f64 = 0.18;
+
+        let content = Rc::new(RefCell::new(PanelCounters::default()));
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            16.0,
+            Popover::new(
+                "Inline inspector",
+                crate::Button::new("Open inspector").min_width(180.0),
+                SpyPanel::new("popover-content", Rc::clone(&content)),
+            ),
+        ));
+
+        let closed = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Open inspector")
+            })
+            .expect("popover trigger semantics present")
+            .bounds;
+        assert_eq!(content.borrow().paint, 0);
+
+        let press_point = Point::new(trigger.x() + 12.0, trigger.y() + (trigger.height() * 0.5));
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, press_point, true),
+            )
+            .map_err(|error| error.to_string())?;
+
+        let opened = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let open_descriptor =
+            overlay_layer_descriptor(&opened).expect("popover overlay layer should appear");
+        assert_eq!(content.borrow().paint, 1);
+        assert_eq!(open_descriptor.properties.opacity, 0.0);
+        assert!(open_descriptor.properties.translation.y < 0.0);
+
+        runtime.tick(POPOVER_ANIMATION_SECONDS * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let mid_descriptor =
+            overlay_layer_descriptor(&mid).expect("popover overlay layer should stay active");
+        assert!(mid_descriptor.properties.opacity > 0.0);
+        assert!(mid_descriptor.properties.opacity < 1.0);
+        assert!(mid_descriptor.properties.translation.y < 0.0);
+        assert_eq!(
+            content.borrow().paint, 1,
+            "popover content should stay retained while only layer properties change"
+        );
+        assert!(runtime.next_wakeup_time(window_id).map_err(|error| error.to_string())?.is_some());
+
+        runtime.tick(POPOVER_ANIMATION_SECONDS);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let settled_descriptor =
+            overlay_layer_descriptor(&settled).expect("popover overlay layer should remain open");
+        assert_eq!(settled_descriptor.properties.opacity, 1.0);
+        assert_eq!(settled_descriptor.properties.translation.y, 0.0);
+        assert_eq!(
+            content.borrow().paint, 1,
+            "popover content should not repaint on retained-only animation frames"
+        );
+        assert_eq!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?,
+            None
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -3365,8 +3912,12 @@ mod tests {
         )
         .theme(disabled_theme);
         disabled.open = true;
-        disabled.arrival_active = true;
-        let disabled_visuals = disabled.resolved_visuals();
+        {
+            let mut state = disabled.state.borrow_mut();
+            state.reveal = super::AnimatedScalar::new(1.0);
+            state.arrival_active = true;
+        }
+        let disabled_visuals = disabled.state.borrow().resolved_visuals();
 
         assert_eq!(disabled_visuals.background, disabled_theme.palette.surface);
         assert!(disabled_visuals.surface_style.is_none());
@@ -3407,8 +3958,12 @@ mod tests {
         )
         .theme(hdr_theme);
         hdr.open = true;
-        hdr.arrival_active = true;
-        let hdr_visuals = hdr.resolved_visuals();
+        {
+            let mut state = hdr.state.borrow_mut();
+            state.reveal = super::AnimatedScalar::new(1.0);
+            state.arrival_active = true;
+        }
+        let hdr_visuals = hdr.state.borrow().resolved_visuals();
         let surface_style = hdr_visuals
             .surface_style
             .expect("hdr surface style present");
@@ -3475,17 +4030,12 @@ mod tests {
 
         let output = runtime.render(window_id).unwrap();
         let graph = runtime.widget_graph(window_id).unwrap();
-        let popover = output
-            .semantics
-            .iter()
-            .find(|node| node.role == SemanticsRole::Popover)
-            .expect("popover semantics present");
-        let descriptor =
-            layer_descriptor_for(&output, popover.id).expect("popover layer descriptor present");
+        let owner = overlay_layer_owner(&output).expect("popover layer owner present");
+        let descriptor = overlay_layer_descriptor(&output).expect("popover layer descriptor present");
         let node = graph
             .nodes
             .iter()
-            .find(|node| node.id == popover.id)
+            .find(|node| node.id == owner)
             .expect("popover graph node present");
         let host = graph
             .stack_hosts
@@ -3494,9 +4044,9 @@ mod tests {
             .expect("root stack host present");
 
         assert_eq!(node.stack_host, graph.root);
-        assert_eq!(node.stack_surface, popover.id);
+        assert_eq!(node.stack_surface, owner);
         assert_eq!(node.transient_owner_surface, Some(host.surfaces[0]));
-        assert_eq!(host.surfaces.last().copied(), Some(popover.id));
+        assert_eq!(host.surfaces.last().copied(), Some(owner));
         assert_eq!(descriptor.stack_host, graph.root);
         assert_eq!(descriptor.transient_owner_surface, Some(host.surfaces[0]));
         assert!(descriptor.is_stack_surface);

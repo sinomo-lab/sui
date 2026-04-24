@@ -138,6 +138,8 @@ cargo run -p sui-dev
 
 `cargo test -p sui-widget-book -- --nocapture` writes visual artifacts under `target/ui-artifacts/sui-widget-book`.
 
+Note: AVIF export in the artifact pipeline currently uses a high-quality rav1e still-image encode and is much slower than the accompanying EXR or PNG writes. When iterating on renderer/debug artifacts, expect AVIF generation to dominate wall-clock time.
+
 ## Testing Guidelines
 
 ### Prefer semantics over internals

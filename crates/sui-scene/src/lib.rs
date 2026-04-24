@@ -63,6 +63,40 @@ impl ImageSource {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayerProperties {
+    pub opacity: f32,
+    pub translation: Vector,
+}
+
+impl LayerProperties {
+    pub const fn new(opacity: f32, translation: Vector) -> Self {
+        Self {
+            opacity,
+            translation,
+        }
+    }
+
+    pub const fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
+    }
+
+    pub const fn with_translation(mut self, translation: Vector) -> Self {
+        self.translation = translation;
+        self
+    }
+}
+
+impl Default for LayerProperties {
+    fn default() -> Self {
+        Self {
+            opacity: 1.0,
+            translation: Vector::ZERO,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneLayerDescriptor {
     pub id: SceneLayerId,
@@ -70,6 +104,7 @@ pub struct SceneLayerDescriptor {
     pub bounds: Rect,
     pub content_bounds: Rect,
     pub paint_bounds: Rect,
+    pub properties: LayerProperties,
     pub stack_host: WidgetId,
     pub stack_order: usize,
     pub transient_owner_surface: Option<WidgetId>,
@@ -85,6 +120,7 @@ impl SceneLayerDescriptor {
             bounds,
             content_bounds: bounds,
             paint_bounds: bounds,
+            properties: LayerProperties::default(),
             stack_host: owner,
             stack_order: 0,
             transient_owner_surface: None,
@@ -100,6 +136,21 @@ impl SceneLayerDescriptor {
 
     pub const fn with_paint_bounds(mut self, paint_bounds: Rect) -> Self {
         self.paint_bounds = paint_bounds;
+        self
+    }
+
+    pub const fn with_properties(mut self, properties: LayerProperties) -> Self {
+        self.properties = properties;
+        self
+    }
+
+    pub const fn with_opacity(mut self, opacity: f32) -> Self {
+        self.properties.opacity = opacity;
+        self
+    }
+
+    pub const fn with_translation(mut self, translation: Vector) -> Self {
+        self.properties.translation = translation;
         self
     }
 
@@ -136,6 +187,18 @@ impl SceneLayerDescriptor {
         self.content_bounds = self.content_bounds.translate(delta);
         self.paint_bounds = self.paint_bounds.translate(delta);
         self
+    }
+
+    pub fn presented_bounds(&self) -> Rect {
+        self.bounds.translate(self.properties.translation)
+    }
+
+    pub fn presented_content_bounds(&self) -> Rect {
+        self.content_bounds.translate(self.properties.translation)
+    }
+
+    pub fn presented_paint_bounds(&self) -> Rect {
+        self.paint_bounds.translate(self.properties.translation)
     }
 }
 
@@ -231,6 +294,7 @@ pub struct SceneLayerUpdate {
     pub bounds: Rect,
     pub content_bounds: Rect,
     pub paint_bounds: Rect,
+    pub properties: LayerProperties,
     pub stack_host: WidgetId,
     pub stack_order: usize,
     pub transient_owner_surface: Option<WidgetId>,
@@ -247,6 +311,7 @@ impl SceneLayerUpdate {
             bounds: descriptor.bounds,
             content_bounds: descriptor.content_bounds,
             paint_bounds: descriptor.paint_bounds,
+            properties: descriptor.properties,
             stack_host: descriptor.stack_host,
             stack_order: descriptor.stack_order,
             transient_owner_surface: descriptor.transient_owner_surface,
@@ -407,6 +472,50 @@ impl Scene {
         }
 
         false
+    }
+
+    pub fn replace_layer_descriptor(
+        &mut self,
+        widget_id: WidgetId,
+        descriptor: SceneLayerDescriptor,
+    ) -> bool {
+        for command in &mut self.commands {
+            match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
+                    layer.descriptor = descriptor;
+                    return true;
+                }
+                SceneCommand::Layer(layer) => {
+                    if layer
+                        .scene
+                        .replace_layer_descriptor(widget_id, descriptor.clone())
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
+    pub fn layer_scene(&self, widget_id: WidgetId) -> Option<&Scene> {
+        for command in &self.commands {
+            match command {
+                SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
+                    return Some(&layer.scene);
+                }
+                SceneCommand::Layer(layer) => {
+                    if let Some(scene) = layer.scene.layer_scene(widget_id) {
+                        return Some(scene);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
     }
 
     pub fn reorder_stack_surfaces(&mut self) {
@@ -753,13 +862,13 @@ impl SceneFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, ImageRegistry, ImageSource, LayerCompositionMode, RegisteredImage, Scene,
-        SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
-        SceneLayerUpdateKind, StrokeStyle,
+        Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, RegisteredImage,
+        Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId,
+        SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
     };
     use std::sync::Arc;
     use sui_core::{
-        Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, WidgetId, WindowId,
+        Color, FontHandle, ImageHandle, Path, Point, Rect, Transform, Vector, WidgetId, WindowId,
     };
     use sui_text::{
         FontRegistry, RegisteredFont, ShapedText, ShapedTextWindow, TextRun, TextStyle, TextSystem,
@@ -878,6 +987,46 @@ mod tests {
         assert_eq!(update.owner, WidgetId::new(4));
         assert_eq!(update.kind, SceneLayerUpdateKind::Transform);
         assert_eq!(update.damage, Some(Rect::new(1.0, 2.0, 42.0, 24.0)));
+    }
+
+    #[test]
+    fn scene_layer_descriptor_defaults_to_identity_layer_properties() {
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::new(19),
+            WidgetId::new(7),
+            Rect::new(10.0, 12.0, 48.0, 24.0),
+        );
+
+        assert_eq!(descriptor.properties, LayerProperties::default());
+        assert_eq!(descriptor.properties.opacity, 1.0);
+        assert_eq!(descriptor.properties.translation, Vector::ZERO);
+        assert_eq!(descriptor.presented_bounds(), descriptor.bounds);
+        assert_eq!(descriptor.presented_paint_bounds(), descriptor.paint_bounds);
+    }
+
+    #[test]
+    fn scene_layer_update_preserves_dynamic_layer_properties() {
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::new(27),
+            WidgetId::new(11),
+            Rect::new(4.0, 6.0, 32.0, 18.0),
+        )
+        .with_content_bounds(Rect::new(4.0, 6.0, 32.0, 18.0))
+        .with_paint_bounds(Rect::new(2.0, 4.0, 36.0, 22.0))
+        .with_properties(
+            LayerProperties::default()
+                .with_opacity(0.35)
+                .with_translation(Vector::new(14.0, -3.0)),
+        );
+        let update =
+            SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Effect, descriptor.clone());
+
+        assert_eq!(update.properties.opacity, 0.35);
+        assert_eq!(update.properties.translation, Vector::new(14.0, -3.0));
+        assert_eq!(
+            descriptor.presented_paint_bounds(),
+            Rect::new(16.0, 1.0, 36.0, 22.0)
+        );
     }
 
     #[test]

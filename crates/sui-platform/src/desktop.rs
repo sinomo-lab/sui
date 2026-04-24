@@ -166,7 +166,7 @@ impl DesktopPlatform {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let mut app = DesktopApp::new(runtime, self.renderer);
+            let mut app = DesktopApp::new(runtime, self.renderer, self.automation);
             wasm_bindgen_futures::spawn_local(async move {
                 if let Err(error) = app.renderer.initialize_async(None).await {
                     web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&error.to_string()));

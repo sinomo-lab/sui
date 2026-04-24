@@ -88,6 +88,14 @@ pub const BREADCRUMB_NAME: &str = "Project path";
 pub const COLOR_SWATCH_NAME: &str = "Primary swatch";
 pub const COLOR_PICKER_NAME: &str = "Accent picker";
 pub const DEMO_IMAGE_LABEL: &str = "Preview image";
+pub const ANIMATION_DEMO_NAME: &str = "Animation demo";
+pub const ANIMATION_DEMO_BUTTON_LABEL: &str = "Animation demo action";
+pub const ANIMATION_DEMO_SWITCH_LABEL: &str = "Animation demo switch";
+pub const ANIMATION_DEMO_TEXT_INPUT_LABEL: &str = "Animation demo query";
+pub const ANIMATION_DEMO_TOOLTIP_TRIGGER_LABEL: &str = "Animation demo shortcuts";
+pub const ANIMATION_DEMO_TOOLTIP_TEXT: &str = "Tooltip entry motion uses retained translation and opacity";
+pub const ANIMATION_DEMO_POPOVER_NAME: &str = "Animation demo inspector";
+pub const ANIMATION_DEMO_POPOVER_TRIGGER_LABEL: &str = "Open animation demo inspector";
 
 const WIDGET_BOOK_IMAGE_HANDLE: ImageHandle = ImageHandle::new(1);
 
@@ -142,6 +150,7 @@ pub struct LivePerformanceRoot {
     last_seen_state: Option<WidgetBookState>,
     window_title: String,
     window_description: String,
+    overlay_enabled: bool,
 }
 
 impl LivePerformanceRoot {
@@ -171,7 +180,13 @@ impl LivePerformanceRoot {
             last_seen_state: None,
             window_title: window_title.into(),
             window_description: window_description.into(),
+            overlay_enabled: false,
         }
+    }
+
+    pub fn show_performance_overlay(mut self) -> Self {
+        self.overlay_enabled = true;
+        self
     }
 
     pub fn watch_widget_book_state(mut self, state: Rc<RefCell<WidgetBookState>>) -> Self {
@@ -286,16 +301,18 @@ impl Widget for LivePerformanceRoot {
                 }
             }
 
-            if let Some(snapshot) = window_performance_snapshot(ctx.window_id()) {
-                if self.set_performance_display(Some(snapshot), false) {
-                    let overlay_id = self.performance_overlay.child().id();
-                    ctx.request(
-                        InvalidationRequest::new(
-                            InvalidationTarget::Widget(overlay_id),
-                            InvalidationKind::Paint,
-                        )
-                        .with_region(self.performance_overlay.child().bounds()),
-                    );
+            if self.overlay_enabled {
+                if let Some(snapshot) = window_performance_snapshot(ctx.window_id()) {
+                    if self.set_performance_display(Some(snapshot), false) {
+                        let overlay_id = self.performance_overlay.child().id();
+                        ctx.request(
+                            InvalidationRequest::new(
+                                InvalidationTarget::Widget(overlay_id),
+                                InvalidationKind::Paint,
+                            )
+                            .with_region(self.performance_overlay.child().bounds()),
+                        );
+                    }
                 }
             }
         }
@@ -304,8 +321,10 @@ impl Widget for LivePerformanceRoot {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let viewport = constraints.clamp(Size::new(1280.0, 720.0));
         self.content.measure(ctx, Constraints::tight(viewport));
-        self.performance_overlay
-            .measure(ctx, Constraints::new(Size::ZERO, viewport));
+        if self.overlay_enabled {
+            self.performance_overlay
+                .measure(ctx, Constraints::new(Size::ZERO, viewport));
+        }
         viewport
     }
 
@@ -313,20 +332,24 @@ impl Widget for LivePerformanceRoot {
         self.content
             .arrange(ctx, Rect::from_origin_size(bounds.origin, bounds.size));
 
-        let overlay_size = self.performance_overlay.child().measured_size();
-        let overlay_x = (bounds.max_x() - overlay_size.width - Self::OVERLAY_MARGIN.right)
-            .max(bounds.x() + Self::OVERLAY_MARGIN.left);
-        let overlay_y = bounds.y() + Self::OVERLAY_MARGIN.top;
-        self.performance_overlay.arrange(
-            ctx,
-            Rect::from_origin_size(Point::new(overlay_x, overlay_y), overlay_size),
-        );
+        if self.overlay_enabled {
+            let overlay_size = self.performance_overlay.child().measured_size();
+            let overlay_x = (bounds.max_x() - overlay_size.width - Self::OVERLAY_MARGIN.right)
+                .max(bounds.x() + Self::OVERLAY_MARGIN.left);
+            let overlay_y = bounds.y() + Self::OVERLAY_MARGIN.top;
+            self.performance_overlay.arrange(
+                ctx,
+                Rect::from_origin_size(Point::new(overlay_x, overlay_y), overlay_size),
+            );
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         ctx.clear(Color::rgba(0.95, 0.968, 0.985, 1.0));
         self.content.paint(ctx);
-        self.performance_overlay.paint(ctx);
+        if self.overlay_enabled {
+            self.performance_overlay.paint(ctx);
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -335,17 +358,23 @@ impl Widget for LivePerformanceRoot {
         root.description = Some(self.window_description.clone());
         ctx.push(root);
         self.content.semantics(ctx);
-        self.performance_overlay.semantics(ctx);
+        if self.overlay_enabled {
+            self.performance_overlay.semantics(ctx);
+        }
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.content.visit_children(visitor);
-        self.performance_overlay.visit_children(visitor);
+        if self.overlay_enabled {
+            self.performance_overlay.visit_children(visitor);
+        }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.content.visit_children_mut(visitor);
-        self.performance_overlay.visit_children_mut(visitor);
+        if self.overlay_enabled {
+            self.performance_overlay.visit_children_mut(visitor);
+        }
     }
 }
 
@@ -1131,6 +1160,80 @@ impl Widget for HdrThemeLabShowcase {
     }
 }
 
+fn build_animation_demo_panel() -> impl Widget {
+    NamedSection::new(
+        ANIMATION_DEMO_NAME,
+        panel(
+            "Animation demo",
+            "Exercise built-in hover, focus, and retained overlay motion in one compact surface.",
+            Stack::vertical()
+                .spacing(14.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    Button::new(ANIMATION_DEMO_BUTTON_LABEL)
+                        .min_width(220.0)
+                        .theme(DefaultTheme::default()),
+                )
+                .with_child(
+                    Switch::new(ANIMATION_DEMO_SWITCH_LABEL)
+                        .on(true)
+                        .theme(DefaultTheme::default()),
+                )
+                .with_child(
+                    SizedBox::new().width(320.0).with_child(
+                        TextInput::new(ANIMATION_DEMO_TEXT_INPUT_LABEL)
+                            .value("Retained overlay motion")
+                            .placeholder("Focus to inspect caret blink")
+                            .theme(DefaultTheme::default()),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(240.0).with_child(
+                        Tooltip::new(
+                            ANIMATION_DEMO_TOOLTIP_TEXT,
+                            Button::new(ANIMATION_DEMO_TOOLTIP_TRIGGER_LABEL).min_width(200.0),
+                        ),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(360.0).with_child(
+                        Popover::new(
+                            ANIMATION_DEMO_POPOVER_NAME,
+                            Button::new(ANIMATION_DEMO_POPOVER_TRIGGER_LABEL).min_width(220.0),
+                            Stack::vertical()
+                                .spacing(8.0)
+                                .alignment(Alignment::Stretch)
+                                .with_child(
+                                    Label::new(
+                                        "Open this popover to validate retained translation + opacity on explicit overlay layers.",
+                                    )
+                                    .font_size(13.0)
+                                    .line_height(18.0)
+                                    .color(Color::rgba(0.35, 0.43, 0.52, 1.0)),
+                                )
+                                .with_child(
+                                    Label::new(
+                                        "Keep the pointer over the trigger or switch focus to the text input to inspect animation continuation.",
+                                    )
+                                    .font_size(12.0)
+                                    .line_height(17.0)
+                                    .color(Color::rgba(0.46, 0.54, 0.63, 1.0)),
+                                ),
+                        ),
+                    ),
+                )
+                .with_child(
+                    Label::new(
+                        "Suggested check: hover the shortcuts button, focus the text input, and open the inspector popover while watching the performance overlay in the corner.",
+                    )
+                    .font_size(13.0)
+                    .line_height(18.0)
+                    .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
+                ),
+        ),
+    )
+}
+
 pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
@@ -1484,6 +1587,7 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         ),
                     ),
             ))
+            .with_child(build_animation_demo_panel())
             .with_child(panel(
                 "Menus and overlays",
                 "App menus, context menus, popovers, tooltips, and dialogs are the small but high-value surfaces that make desktop workflows feel complete.",
@@ -3032,11 +3136,22 @@ impl LivePerformancePanel {
                     snapshot.scene.overlay_layer_count,
                     snapshot.scene.layer_update_count,
                 );
-                let trailing_metric = format!(
-                    "dirty {}  |  txt {}  |  img {}",
-                    snapshot.scene.dirty_region_count,
-                    snapshot.scene.text_command_count,
-                    snapshot.scene.image_command_count,
+                let animation_metric = format!(
+                    "anim active {}  |  wakes {}  |  repaint {}  |  retained {}",
+                    snapshot.scene.active_animated_widget_count,
+                    snapshot.scene.animation_frame_wake_count,
+                    snapshot.scene.animation_repaint_frame_count,
+                    snapshot.scene.animation_transform_effect_only_frame_count,
+                );
+                let retained_metric = format!(
+                    "retained rebuilds {}  |  state {}  |  compose {}",
+                    snapshot.renderer_submission.retained_packet_rebuilds.total_count(),
+                    format_duration_ms(
+                        snapshot.renderer_submission.retained_state_update_time_us as f64 / 1000.0
+                    ),
+                    format_duration_ms(
+                        snapshot.renderer_submission.composition_time_us as f64 / 1000.0
+                    ),
                 );
 
                 vec![
@@ -3088,19 +3203,10 @@ impl LivePerformancePanel {
                         snapshot.renderer_submission.direct_packet_count,
                         snapshot.renderer_submission.visible_layer_count,
                     )),
-                    LivePerformanceLineSpec::metric(format!(
-                        "state {}  |  compose {}",
-                        format_duration_ms(
-                            snapshot.renderer_submission.retained_state_update_time_us as f64
-                                / 1000.0
-                        ),
-                        format_duration_ms(
-                            snapshot.renderer_submission.composition_time_us as f64 / 1000.0
-                        ),
-                    )),
+                    LivePerformanceLineSpec::metric(retained_metric),
                     LivePerformanceLineSpec::metric(scene_metric),
                     LivePerformanceLineSpec::metric(boundary_metric),
-                    LivePerformanceLineSpec::metric(trailing_metric),
+                    LivePerformanceLineSpec::metric(animation_metric),
                 ]
             }
             None => vec![
@@ -3538,6 +3644,7 @@ mod tests {
         fs,
         path::{Path, PathBuf},
         rc::Rc,
+        sync::{Mutex, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -3545,16 +3652,22 @@ mod tests {
         StoryCase, artifact_root, configured_widget_book_state, scroll_to_story_target,
     };
     use super::{
-        COLOR_PICKER_NAME, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
+        BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, COLOR_PICKER_NAME,
+        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
         LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
         LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
-        POPOVER_NAME, POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
-        TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
-        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
-        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE,
-        build_color_and_imagery_story, build_text_rendering_comparison_application,
-        build_text_validation_surface, build_widget_book_application, build_widget_book_gallery,
-        default_widget_book_state, register_widget_book_images, theme_preview_card,
+        POPOVER_NAME, POPOVER_TRIGGER_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
+        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
+        TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
+        TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
+        TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME,
+        TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL,
+        TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE,
+        build_button_grid_benchmark_application, build_color_and_imagery_story,
+        build_retained_text_benchmark_application, build_text_editing_benchmark_application,
+        build_text_rendering_comparison_application, build_text_validation_surface,
+        build_widget_book_application, build_widget_book_gallery, default_widget_book_state,
+        register_widget_book_images, theme_preview_card,
     };
     use sui::{
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -3589,6 +3702,12 @@ mod tests {
         TestApp::from_runtime(application.build()?)
     }
 
+    #[cfg(feature = "artifacts")]
+    fn headless_benchmark_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
     fn build_text_validation_app() -> Result<TestApp> {
         TestApp::new(|| {
             Application::new()
@@ -3607,6 +3726,15 @@ mod tests {
 
     fn build_color_validation_runtime() -> Result<sui::Runtime> {
         super::build_color_validation_application().build()
+    }
+
+    fn assert_semantics_omit_live_performance_overlay(semantics: &[sui::SemanticsNode]) {
+        assert!(
+            semantics
+                .iter()
+                .all(|node| node.name.as_deref() != Some("Live performance overlay")),
+            "expected semantics tree to omit the floating live performance overlay outside sui-dev"
+        );
     }
 
     #[cfg(feature = "artifacts")]
@@ -3817,6 +3945,137 @@ mod tests {
     }
 
     #[cfg(feature = "artifacts")]
+    fn next_headless_benchmark_frame(
+        window: &TestWindow,
+        previous_frame_index: &mut u64,
+        benchmark_name: &str,
+        stage: &str,
+        step: usize,
+    ) -> Result<WindowPerformanceSnapshot> {
+        let snapshot = window.performance_snapshot()?;
+        if snapshot.frame_index <= *previous_frame_index {
+            return Err(sui::Error::new(format!(
+                "{benchmark_name} did not render a new frame during {stage} step {}",
+                step + 1,
+            )));
+        }
+
+        *previous_frame_index = snapshot.frame_index;
+        Ok(snapshot)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn collect_headless_text_editing_benchmark_samples(
+        window: &TestWindow,
+    ) -> Result<Vec<WindowPerformanceSnapshot>> {
+        const EDIT_COMMITS: [&str; 10] = [
+            " // typed atlas reuse",
+            "\nlet pending_frame = cache_hits + 1;",
+            "\n// bidi check: abc אבג 123 مرحبا",
+            "\nlet emoji = \"🙂✅🎨\";",
+            "\nlet ime_probe = \"候補\";",
+            "\nlet syntax_band = highlight_rows.len();",
+            "\n// fallback sample: Ж 中 नमस्ते",
+            "\nrecord_selection_delta(cursor, viewport);",
+            "\nlet scroll_budget_ms = 16.67;",
+            "\ncommit_overlay_sample(frame_index);",
+        ];
+        const EDITOR_SCROLL_FRAMES: usize = 18;
+        const SYNTAX_SCROLL_FRAMES: usize = 28;
+        const SCROLL_STEP_PX: f32 = -34.0;
+
+        let editor = window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(TEXT_EDITING_BENCHMARK_EDITOR_NAME);
+        let syntax_scroll = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME);
+        editor.focus()?;
+
+        let mut collected =
+            Vec::with_capacity(EDIT_COMMITS.len() + EDITOR_SCROLL_FRAMES + SYNTAX_SCROLL_FRAMES);
+        let mut previous_frame_index = window.performance_snapshot()?.frame_index;
+
+        for (step, text) in EDIT_COMMITS.iter().enumerate() {
+            let text = (*text).to_string();
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate { text: text.clone() }))?;
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionCommit { text }))?;
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionEnd))?;
+            collected.push(next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless text editing benchmark",
+                "typing",
+                step,
+            )?);
+        }
+
+        for step in 0..EDITOR_SCROLL_FRAMES {
+            editor.scroll_pixels(Vector::new(0.0, SCROLL_STEP_PX))?;
+            collected.push(next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless text editing benchmark",
+                "editor scroll",
+                step,
+            )?);
+        }
+
+        for step in 0..SYNTAX_SCROLL_FRAMES {
+            syntax_scroll.scroll_pixels(Vector::new(0.0, SCROLL_STEP_PX))?;
+            collected.push(next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless text editing benchmark",
+                "syntax scroll",
+                step,
+            )?);
+        }
+
+        Ok(collected)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn collect_headless_button_grid_resize_benchmark_samples(
+        window: &TestWindow,
+    ) -> Result<Vec<WindowPerformanceSnapshot>> {
+        const WARMUP_FRAMES: usize = 12;
+        const MEASURED_FRAMES: usize = 120;
+
+        let resize_sequence = [
+            Size::new(1040.0, 520.0),
+            Size::new(1180.0, 620.0),
+            Size::new(1360.0, 760.0),
+            Size::new(1440.0, 900.0),
+            Size::new(1240.0, 680.0),
+            Size::new(1100.0, 560.0),
+        ];
+
+        let mut collected = Vec::with_capacity(MEASURED_FRAMES);
+        let mut previous_frame_index = window.performance_snapshot()?.frame_index;
+
+        for step in 0..(WARMUP_FRAMES + MEASURED_FRAMES) {
+            let target_size = resize_sequence[step % resize_sequence.len()];
+            window
+                .root()
+                .dispatch_event(Event::Window(WindowEvent::Resized(target_size)))?;
+            let snapshot = next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless button grid resize benchmark",
+                "resize",
+                step,
+            )?;
+            if step >= WARMUP_FRAMES {
+                collected.push(snapshot);
+            }
+        }
+
+        Ok(collected)
+    }
+
+    #[cfg(feature = "artifacts")]
     fn set_window_scale_factor(window: &TestWindow, scale_factor: f64, raw_dpi: f32) -> Result<()> {
         let viewport = viewport_size(window)?;
         window
@@ -3974,6 +4233,37 @@ mod tests {
     }
 
     #[test]
+    fn color_validation_surface_omits_live_performance_overlay() {
+        let mut runtime =
+            build_color_validation_runtime().expect("color validation runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("color validation surface should render");
+
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("color validation semantics should exist");
+        assert_semantics_omit_live_performance_overlay(&semantics);
+    }
+
+    #[test]
+    fn widget_book_application_omits_live_performance_overlay() {
+        let mut runtime = build_widget_book_application(default_widget_book_state())
+            .build()
+            .expect("widget book runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("widget book should render");
+
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("widget book semantics should exist");
+        assert_semantics_omit_live_performance_overlay(&semantics);
+    }
+
+    #[test]
     fn hdr_theme_lab_exposes_mode_comparison_sections() {
         let mut runtime = build_widget_book_application(default_widget_book_state())
             .build()
@@ -4051,6 +4341,54 @@ mod tests {
                     && node.name.as_deref() == Some(switch_name.as_str())
             }));
         }
+    }
+
+    #[test]
+    fn widget_book_exposes_animation_demo_panel() {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Animation demo semantics")
+                    .root(super::build_animation_demo_panel()),
+            )
+            .build()
+            .expect("animation demo runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("animation demo should render for semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("animation demo semantics should exist");
+
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_NAME)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_BUTTON_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Switch
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_SWITCH_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::TextInput
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_TEXT_INPUT_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_TOOLTIP_TRIGGER_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_POPOVER_TRIGGER_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Popover
+                && node.name.as_deref() == Some(super::ANIMATION_DEMO_POPOVER_NAME)
+        }));
     }
 
     #[test]
@@ -4848,7 +5186,26 @@ mod tests {
         assert!(lines.iter().any(|line| line.text.contains("repaint(now)")));
         assert!(lines.iter().any(|line| line.text.contains("stack")));
         assert!(lines.iter().any(|line| line.text.contains("overlay")));
-        assert!(lines.iter().any(|line| line.text.contains("dirty")));
+        assert!(lines.iter().any(|line| line.text.contains("anim active")));
+        assert!(lines.iter().any(|line| line.text.contains("retained rebuilds")));
+    }
+
+    #[test]
+    fn widget_book_animation_demo_reports_animation_counters() {
+        let display = Rc::new(RefCell::new(LivePerformanceDisplay {
+            snapshot: Some(sample_detailed_window_performance_snapshot_record(
+                WindowId::new(21),
+            )),
+            idle: false,
+        }));
+        let panel = LivePerformancePanel::with_display(display);
+
+        let lines = panel.content_specs(WindowId::new(21));
+        assert!(lines.iter().any(|line| line.text.contains("anim active 3")));
+        assert!(lines.iter().any(|line| line.text.contains("wakes 2")));
+        assert!(lines.iter().any(|line| line.text.contains("repaint 1")));
+        assert!(lines.iter().any(|line| line.text.contains("retained 1")));
+        assert!(lines.iter().any(|line| line.text.contains("retained rebuilds 3")));
     }
 
     #[test]
@@ -5000,6 +5357,9 @@ mod tests {
     #[test]
     #[ignore = "diagnostic benchmark for current headless widget-book scroll status"]
     fn widget_book_headless_scroll_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let app = build_headless_default_widget_book_app()?;
         let window = app.main_window()?;
         set_detailed_scene_statistics_mode(&window)?;
@@ -5016,6 +5376,9 @@ mod tests {
     #[test]
     #[ignore = "diagnostic benchmark for current headless overlay-free widget-book gallery status"]
     fn widget_book_headless_gallery_only_scroll_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let app = build_gallery_only_widget_book_app()?;
         let window = app.main_window()?;
         set_detailed_scene_statistics_mode(&window)?;
@@ -5023,6 +5386,82 @@ mod tests {
 
         print_widget_book_headless_scroll_benchmark_summary(
             "Widget Book Headless Gallery-Only Scroll Benchmark",
+            &samples,
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "diagnostic benchmark for current headless retained text scroll status"]
+    fn retained_text_headless_scroll_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let app = TestApp::from_runtime(build_retained_text_benchmark_application().build()?)?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        assert_eq!(snapshot.title, RETAINED_TEXT_BENCHMARK_TITLE);
+        set_detailed_scene_statistics_mode(&window)?;
+        let samples = collect_headless_scroll_benchmark_samples(
+            &window,
+            RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
+            24,
+        )?;
+
+        print_widget_book_headless_scroll_benchmark_summary(
+            "Retained Text Headless Scroll Benchmark",
+            &samples,
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "diagnostic benchmark for current headless text editing status"]
+    fn text_editing_headless_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let app = TestApp::from_runtime(build_text_editing_benchmark_application().build()?)?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        assert_eq!(snapshot.title, TEXT_EDITING_BENCHMARK_TITLE);
+        set_detailed_scene_statistics_mode(&window)?;
+        let samples = collect_headless_text_editing_benchmark_samples(&window)?;
+
+        print_widget_book_headless_scroll_benchmark_summary(
+            "Text Editing Headless Benchmark",
+            &samples,
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "diagnostic benchmark for current headless button grid resize status"]
+    fn button_grid_headless_resize_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let app = TestApp::from_runtime(build_button_grid_benchmark_application().build()?)?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        assert_eq!(snapshot.title, BUTTON_GRID_BENCHMARK_TITLE);
+        set_detailed_scene_statistics_mode(&window)?;
+        let samples = collect_headless_button_grid_resize_benchmark_samples(&window)?;
+
+        let final_snapshot = window.snapshot()?;
+        let button_count = final_snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .filter(|node| node.role == SemanticsRole::Button)
+            .count();
+        assert_eq!(button_count, BUTTON_GRID_ROWS * BUTTON_GRID_COLUMNS);
+
+        print_widget_book_headless_scroll_benchmark_summary(
+            "64-Button Headless Resize Benchmark",
             &samples,
         );
         Ok(())
@@ -5098,6 +5537,10 @@ mod tests {
                 detail_mode: Default::default(),
                 viewport: Size::new(1280.0, 720.0),
                 total_widget_count: 4,
+                active_animated_widget_count: 0,
+                animation_frame_wake_count: 0,
+                animation_repaint_frame_count: 0,
+                animation_transform_effect_only_frame_count: 0,
                 dirty_region_count: 0,
                 dirty_regions: Vec::new(),
                 dirty_area: 0.0,
@@ -5168,6 +5611,10 @@ mod tests {
                 detail_mode: SceneStatisticsDetailMode::Detailed,
                 viewport: Size::new(1280.0, 720.0),
                 total_widget_count: 9,
+                active_animated_widget_count: 3,
+                animation_frame_wake_count: 2,
+                animation_repaint_frame_count: 1,
+                animation_transform_effect_only_frame_count: 1,
                 dirty_region_count: 2,
                 dirty_regions: Vec::new(),
                 dirty_area: 128.0,

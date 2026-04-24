@@ -36,7 +36,7 @@ The current workspace is organized around a retained widget runtime.
 - `sui-widget-book` owns the gallery, story content, and screenshot-oriented tests.
 - `sui-dev` is the main development host application.
 
-One important implementation detail to keep in mind: the current runtime still wraps widget paint output into nested `SceneLayer` nodes much more aggressively than the intended long-term architecture. That behavior is now considered architectural drift rather than a design goal.
+One important implementation detail to keep in mind: the runtime is still in the layer-boundary transition. Explicit paint boundaries are the intended retained-compositor and retained-animation boundary, but some diagnostics still report emitted `SceneLayer` counts while that decoupling work finishes.
 
 ## Common Commands
 
@@ -61,9 +61,9 @@ Most work in the repo follows the same path:
 
 1. `sui-platform` turns host events into `sui_core::Event` values.
 2. `sui-runtime` routes the event through the retained widget tree.
-3. Widgets request explicit invalidation.
+3. Widgets request explicit invalidation, timers, or animation frames.
 4. The runtime runs measure, arrange, paint, semantics, and resource work as needed.
 5. The runtime produces a `SceneFrame` plus diagnostics.
 6. `sui-render-wgpu` updates retained compositor state and presents the result.
 
-The key rule is that widgets do not talk directly to `wgpu` or host window APIs. They operate through runtime contexts and emit scene content.
+The key rule is that widgets do not talk directly to `wgpu` or host window APIs. They operate through runtime contexts and emit scene content. For efficient retained animation, explicit paint-boundary widgets may also expose presentation-only layer properties such as opacity and translation; the runtime and renderer handle the rest.

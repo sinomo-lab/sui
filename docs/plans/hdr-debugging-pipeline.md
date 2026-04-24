@@ -118,6 +118,7 @@ Expected: FAIL
 - EXR dependency
 - exporter helpers that can write linear RGBA float data to EXR
 - PNG export for SDR debug buffers
+- keep AVIF export optional in the workflow; current high-quality rav1e still-image encoding is much slower than EXR/PNG output and should not be treated as the fast iteration path
 
 **Step 4:** Extend screenshot/testing artifacts with filenames like:
 - `frame-hdr-intermediate.exr`

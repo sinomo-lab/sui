@@ -215,6 +215,17 @@ pub fn publish_frame_performance(
     let total_time_ms = event_time_ms + redraw_time_ms + runtime_time_ms + renderer_time_ms;
 
     if !detail_mode.is_detailed() {
+        let scene = SceneStatistics::minimal(
+            &output.frame,
+            output.diagnostics.widget_count,
+            detail_mode,
+        )
+        .with_animation_counters(
+            output.diagnostics.active_animated_widget_count,
+            output.diagnostics.animation_frame_wake_count,
+            output.diagnostics.animation_repaint_frame_count,
+            output.diagnostics.animation_transform_effect_only_frame_count,
+        );
         publish_window_performance_snapshot(
             WindowPerformanceSnapshot::with_total_time_ms(
                 window_id,
@@ -224,11 +235,7 @@ pub fn publish_frame_performance(
                 RendererSubmissionDiagnostics::default(),
                 TextCacheDiagnostics::default(),
                 Default::default(),
-                SceneStatistics::minimal(
-                    &output.frame,
-                    output.diagnostics.widget_count,
-                    detail_mode,
-                ),
+                scene,
             )
             .with_presentation_latency(presentation_latency)
             .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
@@ -286,6 +293,18 @@ pub fn publish_frame_performance(
         + renderer_time_ms
         + diagnostics_started.elapsed().as_secs_f64() * 1000.0;
 
+    let scene = SceneStatistics::from_frame_with_mode(
+        &output.frame,
+        output.diagnostics.widget_count,
+        detail_mode,
+    )
+    .with_animation_counters(
+        output.diagnostics.active_animated_widget_count,
+        output.diagnostics.animation_frame_wake_count,
+        output.diagnostics.animation_repaint_frame_count,
+        output.diagnostics.animation_transform_effect_only_frame_count,
+    );
+
     publish_window_performance_snapshot(
         WindowPerformanceSnapshot::with_total_time_ms(
             window_id,
@@ -295,11 +314,7 @@ pub fn publish_frame_performance(
             renderer_submission_diagnostics_from_frame_stats(&renderer_stats),
             text_caches,
             text_cache_deltas,
-            SceneStatistics::from_frame_with_mode(
-                &output.frame,
-                output.diagnostics.widget_count,
-                detail_mode,
-            ),
+            scene,
         )
         .with_presentation_latency(presentation_latency)
         .with_runtime_text_timing(output.diagnostics.runtime_text_timing)

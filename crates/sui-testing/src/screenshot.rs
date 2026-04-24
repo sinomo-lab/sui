@@ -67,7 +67,7 @@ pub fn write_hdr_avif(
         1.0
     };
     let encoded = AvifEncoder::new()
-        .with_quality(80.0)
+        .with_quality(100.0)
         .with_alpha_quality(80.0)
         .with_speed(4)
         .encode_hdr_rgba_f32(&hdr_image, &options)
@@ -182,7 +182,7 @@ impl Screenshot {
     pub fn write_avif(&self, path: impl AsRef<Path>) -> Result<()> {
         let image = RgbaU8Image::new(self.width, self.height, &self.pixels).map_err(avif_error)?;
         let encoded = AvifEncoder::new()
-            .with_quality(80.0)
+            .with_quality(100.0)
             .with_alpha_quality(80.0)
             .with_speed(4)
             .encode_sdr_rgba8(&image, &SdrEncodingOptions::default())
