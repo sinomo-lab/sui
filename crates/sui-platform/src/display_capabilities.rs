@@ -4,7 +4,9 @@ use std::{
 };
 
 use sui_core::WindowId;
-use sui_render_wgpu::{DisplayCapabilities, DisplayColorPrimaries, OutputStrategy};
+use sui_render_wgpu::{
+    DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS, DisplayCapabilities, DisplayColorPrimaries, OutputStrategy,
+};
 use sui_runtime::{
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowToneMappingMode,
@@ -14,6 +16,7 @@ use winit::window::Window;
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct WebCapabilityHints {
+    force_sdr: bool,
     wide_gamut: bool,
     hdr: bool,
     display_p3: bool,
@@ -83,6 +86,8 @@ fn parse_web_capability_hints(query: &str) -> WebCapabilityHints {
                 if matches!(value, "rgba16float" | "float16" | "hdr") {
                     hints.float16_canvas = true;
                     hints.hdr = true;
+                } else if matches!(value, "rgba8unorm-srgb" | "srgb") {
+                    hints.force_sdr = true;
                 }
             }
             "canvas-color-space" => {
@@ -95,9 +100,14 @@ fn parse_web_capability_hints(query: &str) -> WebCapabilityHints {
                 if matches!(value, "extended" | "hdr") {
                     hints.extended_tone_mapping = true;
                     hints.hdr = true;
+                } else if matches!(value, "standard") {
+                    hints.force_sdr = true;
                 }
             }
             "color-management" => match value {
+                "force-sdr" => {
+                    hints.force_sdr = true;
+                }
                 "prefer-wide-gamut" => {
                     hints.wide_gamut = true;
                 }
@@ -116,11 +126,22 @@ fn parse_web_capability_hints(query: &str) -> WebCapabilityHints {
             "dynamic-range" => {
                 if matches!(value, "hdr" | "high") {
                     hints.hdr = true;
+                } else if matches!(value, "sdr" | "standard") {
+                    hints.force_sdr = true;
                 }
             }
             _ => {}
         }
     }
+
+    if hints.force_sdr {
+        hints.wide_gamut = false;
+        hints.hdr = false;
+        hints.display_p3 = false;
+        hints.float16_canvas = false;
+        hints.extended_tone_mapping = false;
+    }
+
     hints
 }
 
@@ -130,6 +151,45 @@ fn web_media_query_matches(query: &str) -> bool {
         .and_then(|window| window.match_media(query).ok().flatten())
         .map(|media_query| media_query.matches())
         .unwrap_or(false)
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+fn display_capabilities_from_web_signals(
+    monitor_name: &str,
+    hints: WebCapabilityHints,
+    media_wide_gamut: bool,
+    media_hdr: bool,
+) -> DisplayCapabilities {
+    let media_wide_gamut = !hints.force_sdr && media_wide_gamut;
+    let media_hdr = !hints.force_sdr && media_hdr;
+
+    DisplayCapabilities {
+        supports_wide_gamut: media_wide_gamut,
+        supports_hdr: media_hdr,
+        preferred_primaries: if media_wide_gamut {
+            DisplayColorPrimaries::DisplayP3
+        } else {
+            DisplayColorPrimaries::Srgb
+        },
+        preferred_dynamic_range: if media_hdr {
+            sui_render_wgpu::DynamicRangeMode::HighDynamicRange
+        } else {
+            sui_render_wgpu::DynamicRangeMode::StandardDynamicRange
+        },
+        sdr_white_nits: media_hdr.then_some(DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS),
+        native_hdr_presentation_supported: media_hdr,
+        notes: format!(
+            "Web output on {monitor_name}: query hints -> force_sdr={} float16_canvas={} display_p3={} extended_tone_mapping={} hdr={}; media queries -> wide_gamut={} hdr={}.",
+            hints.force_sdr,
+            hints.float16_canvas,
+            hints.display_p3,
+            hints.extended_tone_mapping,
+            hints.hdr,
+            media_wide_gamut,
+            media_hdr,
+        ),
+        ..DisplayCapabilities::default()
+    }
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -375,36 +435,12 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
         let media_wide_gamut = web_media_query_matches("(color-gamut: p3)")
             || web_media_query_matches("(color-gamut: rec2020)");
         let media_hdr = web_media_query_matches("(dynamic-range: high)");
-        let display_p3 = hints.display_p3 || media_wide_gamut;
-        let wide_gamut = hints.wide_gamut || media_wide_gamut;
-        let hdr = hints.hdr || media_hdr;
-        let extended_tone_mapping = hints.extended_tone_mapping || media_hdr;
-        let float16_canvas = hints.float16_canvas || media_hdr;
-        return DisplayCapabilities {
-            supports_wide_gamut: wide_gamut,
-            supports_hdr: hdr,
-            preferred_primaries: if display_p3 {
-                DisplayColorPrimaries::DisplayP3
-            } else {
-                DisplayColorPrimaries::Srgb
-            },
-            preferred_dynamic_range: if hdr {
-                sui_render_wgpu::DynamicRangeMode::HighDynamicRange
-            } else {
-                sui_render_wgpu::DynamicRangeMode::StandardDynamicRange
-            },
-            native_hdr_presentation_supported: float16_canvas && extended_tone_mapping,
-            notes: format!(
-                "Web output on {monitor_name}: query hints -> float16_canvas={} display_p3={} extended_tone_mapping={} hdr={}; media queries -> wide_gamut={} hdr={}.",
-                hints.float16_canvas,
-                hints.display_p3,
-                hints.extended_tone_mapping,
-                hints.hdr,
-                media_wide_gamut,
-                media_hdr,
-            ),
-            ..DisplayCapabilities::default()
-        };
+        return display_capabilities_from_web_signals(
+            &monitor_name,
+            hints,
+            media_wide_gamut,
+            media_hdr,
+        );
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_arch = "wasm32")))]
@@ -425,9 +461,10 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
 mod tests {
     use super::{
         DisplayColorPrimaries, WindowsAdvancedColorInfo, WindowsColorSpace,
+        display_capabilities_from_web_signals,
         display_capabilities_from_windows_advanced_color_info, parse_web_capability_hints,
     };
-    use sui_render_wgpu::DynamicRangeMode;
+    use sui_render_wgpu::{DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS, DynamicRangeMode};
 
     #[test]
     fn parse_web_capability_hints_detects_phase4_query_preferences() {
@@ -448,6 +485,68 @@ mod tests {
 
         assert!(hints.wide_gamut);
         assert!(hints.hdr);
+    }
+
+    #[test]
+    fn parse_web_capability_hints_force_sdr_suppresses_hdr_hints() {
+        let hints = parse_web_capability_hints(
+            "?color-management=force-sdr&canvas-format=rgba16float&canvas-color-space=display-p3&canvas-tone-mapping=extended&dynamic-range=hdr",
+        );
+
+        assert!(hints.force_sdr);
+        assert!(!hints.float16_canvas);
+        assert!(!hints.display_p3);
+        assert!(!hints.extended_tone_mapping);
+        assert!(!hints.wide_gamut);
+        assert!(!hints.hdr);
+    }
+
+    #[test]
+    fn web_capabilities_do_not_treat_hdr_query_as_hdr_support() {
+        let hints = parse_web_capability_hints(
+            "?color-management=prefer-hdr&canvas-format=rgba16float&canvas-tone-mapping=extended&dynamic-range=hdr",
+        );
+        let capabilities = display_capabilities_from_web_signals("browser", hints, true, false);
+
+        assert!(capabilities.supports_wide_gamut);
+        assert!(!capabilities.supports_hdr);
+        assert!(!capabilities.native_hdr_presentation_supported);
+        assert_eq!(
+            capabilities.preferred_dynamic_range,
+            DynamicRangeMode::StandardDynamicRange
+        );
+    }
+
+    #[test]
+    fn web_capabilities_use_hdr_media_query_for_hdr_support() {
+        let hints = parse_web_capability_hints("?color-management=automatic");
+        let capabilities = display_capabilities_from_web_signals("browser", hints, true, true);
+
+        assert!(capabilities.supports_wide_gamut);
+        assert!(capabilities.supports_hdr);
+        assert!(capabilities.native_hdr_presentation_supported);
+        assert_eq!(
+            capabilities.sdr_white_nits,
+            Some(DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS)
+        );
+        assert_eq!(
+            capabilities.preferred_dynamic_range,
+            DynamicRangeMode::HighDynamicRange
+        );
+    }
+
+    #[test]
+    fn web_capabilities_force_sdr_suppresses_media_hdr() {
+        let hints = parse_web_capability_hints("?color-management=force-sdr");
+        let capabilities = display_capabilities_from_web_signals("browser", hints, true, true);
+
+        assert!(!capabilities.supports_wide_gamut);
+        assert!(!capabilities.supports_hdr);
+        assert!(!capabilities.native_hdr_presentation_supported);
+        assert_eq!(
+            capabilities.preferred_dynamic_range,
+            DynamicRangeMode::StandardDynamicRange
+        );
     }
 
     #[test]

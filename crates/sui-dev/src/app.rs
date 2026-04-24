@@ -1070,15 +1070,17 @@ struct RenderSettingsTab {
 }
 
 impl RenderSettingsTab {
-    fn new() -> Self {
+    fn default_options() -> WindowRenderOptions {
         let renderer = WgpuRenderer::new();
-        let initial =
-            WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
-                .with_glyph_pixel_alignment_enabled(renderer.glyph_pixel_alignment_enabled())
-                .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
-                .with_stem_darkening(window_stem_darkening_from_renderer(
-                    renderer.stem_darkening(),
-                ));
+        WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
+            .with_glyph_pixel_alignment_enabled(renderer.glyph_pixel_alignment_enabled())
+            .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
+            .with_stem_darkening(window_stem_darkening_from_renderer(
+                renderer.stem_darkening(),
+            ))
+    }
+
+    fn with_initial_options(initial: WindowRenderOptions) -> Self {
         let state = Rc::new(RefCell::new(initial));
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
@@ -1414,12 +1416,22 @@ impl Widget for RenderSettingsTab {
     }
 }
 
-fn build_render_settings_tab() -> impl Widget {
-    RenderSettingsTab::new()
+fn build_render_settings_tab_with_options(options: WindowRenderOptions) -> impl Widget {
+    RenderSettingsTab::with_initial_options(options)
 }
 
 pub fn build_dev_workspace_with_widget_book_bounds(
     widget_book_bounds: Rect,
+) -> (FloatingWorkspaceState, FloatingWorkspace) {
+    build_dev_workspace_with_widget_book_bounds_and_render_options(
+        widget_book_bounds,
+        RenderSettingsTab::default_options(),
+    )
+}
+
+pub(crate) fn build_dev_workspace_with_widget_book_bounds_and_render_options(
+    widget_book_bounds: Rect,
+    render_options: WindowRenderOptions,
 ) -> (FloatingWorkspaceState, FloatingWorkspace) {
     set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
     let widget_book_state = default_widget_book_state();
@@ -1483,7 +1495,7 @@ pub fn build_dev_workspace_with_widget_book_bounds(
     views.push_view(
         FloatingViewConfig::new(SETTINGS_TAB_LABEL, Rect::new(420.0, 440.0, 420.0, 320.0))
             .min_size(Size::new(300.0, 240.0)),
-        build_render_settings_tab(),
+        build_render_settings_tab_with_options(render_options),
     );
 
     (workspace, views)
@@ -1493,7 +1505,33 @@ pub fn build_dev_application_with_widget_book_bounds_and_automation(
     widget_book_bounds: Rect,
     automation: Option<DesktopAutomationMode>,
 ) -> Application {
-    let (workspace, views) = build_dev_workspace_with_widget_book_bounds(widget_book_bounds);
+    build_dev_application_with_widget_book_bounds_render_options_and_automation(
+        widget_book_bounds,
+        RenderSettingsTab::default_options(),
+        automation,
+    )
+}
+
+pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
+    widget_book_bounds: Rect,
+    render_options: WindowRenderOptions,
+) -> Application {
+    build_dev_application_with_widget_book_bounds_render_options_and_automation(
+        widget_book_bounds,
+        render_options,
+        None,
+    )
+}
+
+fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
+    widget_book_bounds: Rect,
+    render_options: WindowRenderOptions,
+    automation: Option<DesktopAutomationMode>,
+) -> Application {
+    let (workspace, views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
+        widget_book_bounds,
+        render_options,
+    );
     let button_grid_view_id = workspace
         .snapshots()
         .into_iter()

@@ -7,7 +7,7 @@ pub use app::{build_dev_application, build_dev_application_with_widget_book_boun
 #[cfg(not(target_arch = "wasm32"))]
 use std::env;
 
-use sui::Application;
+use sui::{Application, Rect};
 use sui::{
     DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, SceneStatisticsDetailMode,
     SemanticsRole, WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
@@ -537,6 +537,7 @@ fn web_window_render_options(mode: &WebLaunchMode) -> WindowRenderOptions {
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn build_application_for_web_mode(mode: &WebLaunchMode) -> Application {
+    let render_options = web_window_render_options(mode);
     let application = match mode.benchmark {
         Some(WebBenchmarkKind::ButtonGrid) => build_button_grid_benchmark_application(),
         Some(WebBenchmarkKind::RetainedText) => build_retained_text_benchmark_application(),
@@ -546,9 +547,14 @@ fn build_application_for_web_mode(mode: &WebLaunchMode) -> Application {
         Some(WebBenchmarkKind::WidgetBook) => {
             build_widget_book_application(default_widget_book_state())
         }
-        Some(WebBenchmarkKind::DevWorkspace) | None => build_dev_application(),
+        Some(WebBenchmarkKind::DevWorkspace) | None => {
+            app::build_dev_application_with_widget_book_bounds_and_render_options(
+                Rect::new(24.0, 24.0, 680.0, 760.0),
+                render_options,
+            )
+        }
     };
-    application.with_window_render_options(web_window_render_options(mode))
+    application.with_window_render_options(render_options)
 }
 
 pub fn run_desktop() -> sui::Result<()> {

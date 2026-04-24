@@ -2497,10 +2497,24 @@ fn append_stroked_path(
         }
     }
 
-    let mesh =
-        path_cache.cached_stroke_mesh(path, state.current_transform, line_width, feather_width)?;
-    append_cached_path_mesh(vertices, mesh, color, viewport);
-    Ok(None)
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mesh = path_cache.cached_stroke_mesh(path, state.current_transform, line_width, 0.0)?;
+        append_cached_path_mesh(vertices, mesh, color, viewport);
+        return Ok(None);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mesh = path_cache.cached_stroke_mesh(
+            path,
+            state.current_transform,
+            line_width,
+            feather_width,
+        )?;
+        append_cached_path_mesh(vertices, mesh, color, viewport);
+        Ok(None)
+    }
 }
 
 fn build_analytic_fill_path_data(
@@ -3411,18 +3425,23 @@ pub(crate) fn output_transform_requires_intermediate(strategy: OutputStrategy) -
     }
 }
 
-pub(crate) fn output_sdr_content_scale(strategy: OutputStrategy, brightness_nits: f32) -> f32 {
+pub(crate) fn output_sdr_content_scale(
+    strategy: OutputStrategy,
+    brightness_nits: f32,
+    display_sdr_white_nits: Option<f32>,
+) -> f32 {
     let sanitized = if brightness_nits.is_finite() && brightness_nits > 0.0 {
         brightness_nits
     } else {
         DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS
     };
+    let display_sdr_white_nits = display_sdr_white_nits
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(SCRGB_REFERENCE_WHITE_NITS);
 
     match strategy {
-        OutputStrategy::HdrNativeSurface { .. }
-        | OutputStrategy::HdrIntermediateThenToneMap { .. } => {
-            sanitized / SCRGB_REFERENCE_WHITE_NITS
-        }
+        OutputStrategy::HdrNativeSurface { .. } => sanitized / display_sdr_white_nits,
+        OutputStrategy::HdrIntermediateThenToneMap { .. } => sanitized / SCRGB_REFERENCE_WHITE_NITS,
         OutputStrategy::SdrSurface { .. } | OutputStrategy::WideGamutSurface { .. } => 1.0,
     }
 }
@@ -3433,8 +3452,13 @@ pub(crate) fn apply_output_transform_for_testing(
     strategy: OutputStrategy,
     mode: RequestedToneMappingMode,
     sdr_content_brightness_nits: f32,
+    display_sdr_white_nits: Option<f32>,
 ) -> [f32; 4] {
-    let scale = output_sdr_content_scale(strategy, sdr_content_brightness_nits);
+    let scale = output_sdr_content_scale(
+        strategy,
+        sdr_content_brightness_nits,
+        display_sdr_white_nits,
+    );
     let scaled = [
         color[0] * scale,
         color[1] * scale,
@@ -3515,6 +3539,9 @@ pub(crate) fn select_output_strategy(
     let sdr_format =
         preferred_surface_format(formats).unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
     let primaries = requested_output_primaries(capabilities.clone(), requested);
+    let native_hdr_format = preferred_hdr_surface_format(formats);
+    let native_hdr_available =
+        capabilities.native_hdr_presentation_supported || native_hdr_format.is_some();
 
     if matches!(requested.mode, RequestedColorManagementMode::ForceSdr) {
         return OutputStrategy::SdrSurface { format: sdr_format };
@@ -3526,7 +3553,8 @@ pub(crate) fn select_output_strategy(
         RequestedDynamicRangeMode::Automatic => match requested.mode {
             RequestedColorManagementMode::PreferHdr => true,
             RequestedColorManagementMode::Automatic => {
-                capabilities.supports_hdr
+                native_hdr_available
+                    || capabilities.supports_hdr
                     || matches!(
                         capabilities.preferred_dynamic_range,
                         DynamicRangeMode::HighDynamicRange
@@ -3548,15 +3576,13 @@ pub(crate) fn select_output_strategy(
     };
 
     if wants_hdr {
-        if capabilities.supports_hdr {
-            if capabilities.native_hdr_presentation_supported {
-                if let Some(format) = preferred_hdr_surface_format(formats) {
-                    return OutputStrategy::HdrNativeSurface {
-                        format,
-                        primaries: DisplayColorPrimaries::Srgb,
-                        transfer: DisplayTransferFunction::LinearExtended,
-                    };
-                }
+        if capabilities.supports_hdr || native_hdr_available {
+            if let Some(format) = native_hdr_format {
+                return OutputStrategy::HdrNativeSurface {
+                    format,
+                    primaries: DisplayColorPrimaries::Srgb,
+                    transfer: DisplayTransferFunction::LinearExtended,
+                };
             }
 
             return OutputStrategy::HdrIntermediateThenToneMap {
