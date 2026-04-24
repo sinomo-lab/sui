@@ -356,7 +356,6 @@ impl StemDarkening {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextCoveragePolicy {
-    AutomaticByTextLuminance,
     Linear,
     Gamma(f32),
     TwoCoverageMinusCoverageSq,
@@ -364,14 +363,13 @@ pub enum TextCoveragePolicy {
 
 impl Default for TextCoveragePolicy {
     fn default() -> Self {
-        Self::AutomaticByTextLuminance
+        Self::Linear
     }
 }
 
 impl TextCoveragePolicy {
     pub fn normalized(self) -> Self {
         match self {
-            Self::AutomaticByTextLuminance => Self::AutomaticByTextLuminance,
             Self::Linear => Self::Linear,
             Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
             Self::Gamma(_) => Self::Linear,
@@ -379,26 +377,13 @@ impl TextCoveragePolicy {
         }
     }
 
-    pub fn resolved_for_text_color(self, color: Color) -> Self {
-        match self.normalized() {
-            Self::AutomaticByTextLuminance => {
-                let rgba = shader_color(color);
-                let luminance =
-                    ((rgba[0] * 0.2126) + (rgba[1] * 0.7152) + (rgba[2] * 0.0722)).clamp(0.0, 1.0);
-                if luminance >= 0.5 {
-                    Self::TwoCoverageMinusCoverageSq
-                } else {
-                    Self::Linear
-                }
-            }
-            policy => policy,
-        }
+    pub fn resolved_for_text_color(self, _color: Color) -> Self {
+        self.normalized()
     }
 
     pub fn apply(self, coverage: f32) -> f32 {
         let coverage = coverage.clamp(0.0, 1.0);
         match self.normalized() {
-            Self::AutomaticByTextLuminance => coverage,
             Self::Linear => coverage,
             Self::Gamma(gamma) => coverage.powf(gamma),
             Self::TwoCoverageMinusCoverageSq => (2.0 * coverage) - (coverage * coverage),
@@ -4744,14 +4729,15 @@ mod tests {
     }
 
     #[test]
-    fn automatic_text_coverage_policy_resolves_by_text_luminance() {
+    fn text_coverage_policy_defaults_to_linear_for_all_text_luminance() {
+        assert_eq!(TextCoveragePolicy::default(), TextCoveragePolicy::Linear);
         assert_eq!(
-            TextCoveragePolicy::AutomaticByTextLuminance.resolved_for_text_color(Color::BLACK),
+            TextCoveragePolicy::default().resolved_for_text_color(Color::BLACK),
             TextCoveragePolicy::Linear
         );
         assert_eq!(
-            TextCoveragePolicy::AutomaticByTextLuminance.resolved_for_text_color(Color::WHITE),
-            TextCoveragePolicy::TwoCoverageMinusCoverageSq
+            TextCoveragePolicy::default().resolved_for_text_color(Color::WHITE),
+            TextCoveragePolicy::Linear
         );
     }
 
@@ -5013,7 +4999,7 @@ mod tests {
     }
 
     #[test]
-    fn automatic_text_coverage_policy_keeps_separate_glyph_cache_entries_for_light_and_dark_text() {
+    fn default_text_coverage_policy_shares_glyph_cache_entries_for_light_and_dark_text() {
         let handle = FontHandle::new(34);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());
@@ -5057,10 +5043,9 @@ mod tests {
         };
 
         let mut text_engine = TextEngine::new().unwrap();
-        text_engine.set_text_coverage_policy(TextCoveragePolicy::AutomaticByTextLuminance);
         let _ = build_vertices(&frame, &mut text_engine).unwrap();
 
-        assert_eq!(text_engine.glyph_cache_stats(), (2, 0, 2));
+        assert_eq!(text_engine.glyph_cache_stats(), (1, 1, 1));
     }
 
     #[test]

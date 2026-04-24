@@ -113,7 +113,6 @@ pub(crate) enum TextCoverageCacheKey {
 impl From<TextCoveragePolicy> for TextCoverageCacheKey {
     fn from(value: TextCoveragePolicy) -> Self {
         match value.normalized() {
-            TextCoveragePolicy::AutomaticByTextLuminance => Self::Linear,
             TextCoveragePolicy::Linear => Self::Linear,
             TextCoveragePolicy::Gamma(gamma) => Self::Gamma {
                 gamma_bits: gamma.to_bits(),

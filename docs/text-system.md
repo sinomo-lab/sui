@@ -271,7 +271,7 @@ The sections above describe the long-term direction. The current implementation 
 
 The active window carries a `WindowRenderOptions` bundle with the text-related controls that the dev workspace and validation surfaces expose:
 
-- `text_render_policy`, which defaults to `AutomaticByTextLuminance`
+- `text_coverage_policy`, which defaults to `Linear`
 - `text_hinting`, which defaults to `None`
 - `stem_darkening`, which defaults to `None`
 - `glyph_pixel_alignment_enabled`, which defaults to `true`
@@ -283,16 +283,11 @@ These controls are window-scoped runtime presentation settings. They are not cur
 SUI now distinguishes between two separate concerns:
 
 1. **Text render mode** — grayscale atlas rendering versus LCD/subpixel atlas rendering
-2. **Text coverage policy** — how grayscale coverage is mapped into final alpha for dark and light text
+2. **Text coverage policy** — how grayscale coverage is mapped into final alpha
 
 `TextRenderMode` currently defaults to `Grayscale`. LCD/subpixel rendering is available through `TextRenderMode::LcdSubpixel`, but it is intentionally conservative.
 
-`TextCoveragePolicy::AutomaticByTextLuminance` is the default grayscale coverage policy. It resolves by text color luminance:
-
-- dark text resolves to `Linear`
-- light text resolves to `TwoCoverageMinusCoverageSq`
-
-That gives dark-on-light and light-on-dark UI text different grayscale coverage behavior without forcing callers to pick different policies manually.
+`TextCoveragePolicy::Linear` is the default grayscale coverage policy for all text colors. Dark-on-light and light-on-dark UI text therefore share the same coverage curve unless a caller explicitly selects a different policy.
 
 ### When LCD/subpixel text is allowed
 
