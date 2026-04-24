@@ -4150,6 +4150,110 @@ mod tests {
     }
 
     #[test]
+    fn select_output_strategy_automatic_uses_wide_gamut_when_supported() {
+        let strategy = select_output_strategy(
+            &[wgpu::TextureFormat::Bgra8UnormSrgb],
+            DisplayCapabilities {
+                supports_wide_gamut: true,
+                preferred_primaries: DisplayColorPrimaries::DisplayP3,
+                ..DisplayCapabilities::default()
+            },
+            ColorManagementMode::default(),
+        );
+
+        assert_eq!(
+            strategy,
+            OutputStrategy::WideGamutSurface {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::DisplayP3,
+            }
+        );
+    }
+
+    #[test]
+    fn select_output_strategy_automatic_uses_native_hdr_when_supported() {
+        let strategy = select_output_strategy(
+            &[
+                wgpu::TextureFormat::Rgba16Float,
+                wgpu::TextureFormat::Bgra8UnormSrgb,
+            ],
+            DisplayCapabilities {
+                supports_wide_gamut: true,
+                supports_hdr: true,
+                preferred_primaries: DisplayColorPrimaries::DisplayP3,
+                preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
+                native_hdr_presentation_supported: true,
+                ..DisplayCapabilities::default()
+            },
+            ColorManagementMode::default(),
+        );
+
+        assert_eq!(
+            strategy,
+            OutputStrategy::HdrNativeSurface {
+                format: wgpu::TextureFormat::Rgba16Float,
+                primaries: DisplayColorPrimaries::Srgb,
+                transfer: DisplayTransferFunction::LinearExtended,
+            }
+        );
+    }
+
+    #[test]
+    fn select_output_strategy_automatic_hdr_falls_back_to_hdr_intermediate() {
+        let strategy = select_output_strategy(
+            &[wgpu::TextureFormat::Bgra8UnormSrgb],
+            DisplayCapabilities {
+                supports_wide_gamut: true,
+                supports_hdr: true,
+                preferred_primaries: DisplayColorPrimaries::DisplayP3,
+                preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
+                native_hdr_presentation_supported: false,
+                ..DisplayCapabilities::default()
+            },
+            ColorManagementMode::default(),
+        );
+
+        assert_eq!(
+            strategy,
+            OutputStrategy::HdrIntermediateThenToneMap {
+                intermediate_format: wgpu::TextureFormat::Rgba16Float,
+                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::DisplayP3,
+            }
+        );
+    }
+
+    #[test]
+    fn select_output_strategy_explicit_sdr_disables_automatic_hdr() {
+        let strategy = select_output_strategy(
+            &[
+                wgpu::TextureFormat::Rgba16Float,
+                wgpu::TextureFormat::Bgra8UnormSrgb,
+            ],
+            DisplayCapabilities {
+                supports_wide_gamut: true,
+                supports_hdr: true,
+                preferred_primaries: DisplayColorPrimaries::DisplayP3,
+                preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
+                native_hdr_presentation_supported: true,
+                ..DisplayCapabilities::default()
+            },
+            ColorManagementMode {
+                dynamic_range: RequestedDynamicRangeMode::StandardDynamicRange,
+                ..ColorManagementMode::default()
+            },
+        );
+
+        assert_eq!(
+            strategy,
+            OutputStrategy::WideGamutSurface {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::DisplayP3,
+            }
+        );
+    }
+
+    #[test]
     fn select_output_strategy_uses_hdr_intermediate_when_hdr_is_requested_without_native_support() {
         let strategy = select_output_strategy(
             &[wgpu::TextureFormat::Bgra8UnormSrgb],

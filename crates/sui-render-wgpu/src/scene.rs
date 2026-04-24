@@ -3511,22 +3511,37 @@ pub(crate) fn select_output_strategy(
     let sdr_format =
         preferred_surface_format(formats).unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
     let primaries = requested_output_primaries(capabilities.clone(), requested);
-    let wants_hdr = matches!(requested.mode, RequestedColorManagementMode::PreferHdr)
-        || matches!(
-            requested.dynamic_range,
-            RequestedDynamicRangeMode::HighDynamicRange
-        );
-    let wants_wide_gamut = matches!(
-        requested.mode,
-        RequestedColorManagementMode::PreferWideGamut | RequestedColorManagementMode::PreferHdr
-    ) || matches!(
-        requested.output_primaries,
-        RequestedOutputColorPrimaries::DisplayP3
-    );
 
     if matches!(requested.mode, RequestedColorManagementMode::ForceSdr) {
         return OutputStrategy::SdrSurface { format: sdr_format };
     }
+
+    let wants_hdr = match requested.dynamic_range {
+        RequestedDynamicRangeMode::HighDynamicRange => true,
+        RequestedDynamicRangeMode::StandardDynamicRange => false,
+        RequestedDynamicRangeMode::Automatic => match requested.mode {
+            RequestedColorManagementMode::PreferHdr => true,
+            RequestedColorManagementMode::Automatic => {
+                capabilities.supports_hdr
+                    || matches!(
+                        capabilities.preferred_dynamic_range,
+                        DynamicRangeMode::HighDynamicRange
+                    )
+            }
+            RequestedColorManagementMode::ForceSdr
+            | RequestedColorManagementMode::PreferWideGamut => false,
+        },
+    };
+    let wants_wide_gamut = match requested.output_primaries {
+        RequestedOutputColorPrimaries::DisplayP3 => true,
+        RequestedOutputColorPrimaries::Srgb => false,
+        RequestedOutputColorPrimaries::Automatic => match requested.mode {
+            RequestedColorManagementMode::PreferWideGamut
+            | RequestedColorManagementMode::PreferHdr => true,
+            RequestedColorManagementMode::Automatic => capabilities.supports_wide_gamut,
+            RequestedColorManagementMode::ForceSdr => false,
+        },
+    };
 
     if wants_hdr {
         if capabilities.supports_hdr {
