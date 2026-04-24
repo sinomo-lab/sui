@@ -3644,6 +3644,7 @@ mod tests {
         fs,
         path::{Path, PathBuf},
         rc::Rc,
+        sync::{Mutex, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -3651,16 +3652,22 @@ mod tests {
         StoryCase, artifact_root, configured_widget_book_state, scroll_to_story_target,
     };
     use super::{
-        COLOR_PICKER_NAME, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
+        BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, COLOR_PICKER_NAME,
+        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
         LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
         LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
-        POPOVER_NAME, POPOVER_TRIGGER_LABEL, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
-        TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
-        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
-        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE,
-        build_color_and_imagery_story, build_text_rendering_comparison_application,
-        build_text_validation_surface, build_widget_book_application, build_widget_book_gallery,
-        default_widget_book_state, register_widget_book_images, theme_preview_card,
+        POPOVER_NAME, POPOVER_TRIGGER_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
+        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
+        TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
+        TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
+        TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME,
+        TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL,
+        TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE,
+        build_button_grid_benchmark_application, build_color_and_imagery_story,
+        build_retained_text_benchmark_application, build_text_editing_benchmark_application,
+        build_text_rendering_comparison_application, build_text_validation_surface,
+        build_widget_book_application, build_widget_book_gallery, default_widget_book_state,
+        register_widget_book_images, theme_preview_card,
     };
     use sui::{
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -3693,6 +3700,12 @@ mod tests {
                 .root(build_widget_book_gallery(default_widget_book_state())),
         );
         TestApp::from_runtime(application.build()?)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn headless_benchmark_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     fn build_text_validation_app() -> Result<TestApp> {
@@ -3928,6 +3941,137 @@ mod tests {
             collected.len(),
             attempts,
         );
+        Ok(collected)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn next_headless_benchmark_frame(
+        window: &TestWindow,
+        previous_frame_index: &mut u64,
+        benchmark_name: &str,
+        stage: &str,
+        step: usize,
+    ) -> Result<WindowPerformanceSnapshot> {
+        let snapshot = window.performance_snapshot()?;
+        if snapshot.frame_index <= *previous_frame_index {
+            return Err(sui::Error::new(format!(
+                "{benchmark_name} did not render a new frame during {stage} step {}",
+                step + 1,
+            )));
+        }
+
+        *previous_frame_index = snapshot.frame_index;
+        Ok(snapshot)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn collect_headless_text_editing_benchmark_samples(
+        window: &TestWindow,
+    ) -> Result<Vec<WindowPerformanceSnapshot>> {
+        const EDIT_COMMITS: [&str; 10] = [
+            " // typed atlas reuse",
+            "\nlet pending_frame = cache_hits + 1;",
+            "\n// bidi check: abc אבג 123 مرحبا",
+            "\nlet emoji = \"🙂✅🎨\";",
+            "\nlet ime_probe = \"候補\";",
+            "\nlet syntax_band = highlight_rows.len();",
+            "\n// fallback sample: Ж 中 नमस्ते",
+            "\nrecord_selection_delta(cursor, viewport);",
+            "\nlet scroll_budget_ms = 16.67;",
+            "\ncommit_overlay_sample(frame_index);",
+        ];
+        const EDITOR_SCROLL_FRAMES: usize = 18;
+        const SYNTAX_SCROLL_FRAMES: usize = 28;
+        const SCROLL_STEP_PX: f32 = -34.0;
+
+        let editor = window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(TEXT_EDITING_BENCHMARK_EDITOR_NAME);
+        let syntax_scroll = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME);
+        editor.focus()?;
+
+        let mut collected =
+            Vec::with_capacity(EDIT_COMMITS.len() + EDITOR_SCROLL_FRAMES + SYNTAX_SCROLL_FRAMES);
+        let mut previous_frame_index = window.performance_snapshot()?.frame_index;
+
+        for (step, text) in EDIT_COMMITS.iter().enumerate() {
+            let text = (*text).to_string();
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate { text: text.clone() }))?;
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionCommit { text }))?;
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionEnd))?;
+            collected.push(next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless text editing benchmark",
+                "typing",
+                step,
+            )?);
+        }
+
+        for step in 0..EDITOR_SCROLL_FRAMES {
+            editor.scroll_pixels(Vector::new(0.0, SCROLL_STEP_PX))?;
+            collected.push(next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless text editing benchmark",
+                "editor scroll",
+                step,
+            )?);
+        }
+
+        for step in 0..SYNTAX_SCROLL_FRAMES {
+            syntax_scroll.scroll_pixels(Vector::new(0.0, SCROLL_STEP_PX))?;
+            collected.push(next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless text editing benchmark",
+                "syntax scroll",
+                step,
+            )?);
+        }
+
+        Ok(collected)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn collect_headless_button_grid_resize_benchmark_samples(
+        window: &TestWindow,
+    ) -> Result<Vec<WindowPerformanceSnapshot>> {
+        const WARMUP_FRAMES: usize = 12;
+        const MEASURED_FRAMES: usize = 120;
+
+        let resize_sequence = [
+            Size::new(1040.0, 520.0),
+            Size::new(1180.0, 620.0),
+            Size::new(1360.0, 760.0),
+            Size::new(1440.0, 900.0),
+            Size::new(1240.0, 680.0),
+            Size::new(1100.0, 560.0),
+        ];
+
+        let mut collected = Vec::with_capacity(MEASURED_FRAMES);
+        let mut previous_frame_index = window.performance_snapshot()?.frame_index;
+
+        for step in 0..(WARMUP_FRAMES + MEASURED_FRAMES) {
+            let target_size = resize_sequence[step % resize_sequence.len()];
+            window
+                .root()
+                .dispatch_event(Event::Window(WindowEvent::Resized(target_size)))?;
+            let snapshot = next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless button grid resize benchmark",
+                "resize",
+                step,
+            )?;
+            if step >= WARMUP_FRAMES {
+                collected.push(snapshot);
+            }
+        }
+
         Ok(collected)
     }
 
@@ -5213,6 +5357,9 @@ mod tests {
     #[test]
     #[ignore = "diagnostic benchmark for current headless widget-book scroll status"]
     fn widget_book_headless_scroll_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let app = build_headless_default_widget_book_app()?;
         let window = app.main_window()?;
         set_detailed_scene_statistics_mode(&window)?;
@@ -5229,6 +5376,9 @@ mod tests {
     #[test]
     #[ignore = "diagnostic benchmark for current headless overlay-free widget-book gallery status"]
     fn widget_book_headless_gallery_only_scroll_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let app = build_gallery_only_widget_book_app()?;
         let window = app.main_window()?;
         set_detailed_scene_statistics_mode(&window)?;
@@ -5236,6 +5386,82 @@ mod tests {
 
         print_widget_book_headless_scroll_benchmark_summary(
             "Widget Book Headless Gallery-Only Scroll Benchmark",
+            &samples,
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "diagnostic benchmark for current headless retained text scroll status"]
+    fn retained_text_headless_scroll_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let app = TestApp::from_runtime(build_retained_text_benchmark_application().build()?)?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        assert_eq!(snapshot.title, RETAINED_TEXT_BENCHMARK_TITLE);
+        set_detailed_scene_statistics_mode(&window)?;
+        let samples = collect_headless_scroll_benchmark_samples(
+            &window,
+            RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
+            24,
+        )?;
+
+        print_widget_book_headless_scroll_benchmark_summary(
+            "Retained Text Headless Scroll Benchmark",
+            &samples,
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "diagnostic benchmark for current headless text editing status"]
+    fn text_editing_headless_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let app = TestApp::from_runtime(build_text_editing_benchmark_application().build()?)?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        assert_eq!(snapshot.title, TEXT_EDITING_BENCHMARK_TITLE);
+        set_detailed_scene_statistics_mode(&window)?;
+        let samples = collect_headless_text_editing_benchmark_samples(&window)?;
+
+        print_widget_book_headless_scroll_benchmark_summary(
+            "Text Editing Headless Benchmark",
+            &samples,
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "diagnostic benchmark for current headless button grid resize status"]
+    fn button_grid_headless_resize_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let app = TestApp::from_runtime(build_button_grid_benchmark_application().build()?)?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        assert_eq!(snapshot.title, BUTTON_GRID_BENCHMARK_TITLE);
+        set_detailed_scene_statistics_mode(&window)?;
+        let samples = collect_headless_button_grid_resize_benchmark_samples(&window)?;
+
+        let final_snapshot = window.snapshot()?;
+        let button_count = final_snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .filter(|node| node.role == SemanticsRole::Button)
+            .count();
+        assert_eq!(button_count, BUTTON_GRID_ROWS * BUTTON_GRID_COLUMNS);
+
+        print_widget_book_headless_scroll_benchmark_summary(
+            "64-Button Headless Resize Benchmark",
             &samples,
         );
         Ok(())
