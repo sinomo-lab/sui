@@ -27,7 +27,7 @@ use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
 use crate::{
     AccessibilityBridge, WindowOutputDiagnostics, detect_window_display_capabilities,
     headless::PlatformWindow, map_window_color_management, map_window_stem_darkening,
-    map_window_text_hinting, map_window_text_render_policy, publish_window_output_diagnostics,
+    map_window_text_hinting, publish_window_output_diagnostics,
 };
 
 #[derive(Debug, Default)]
@@ -526,10 +526,6 @@ impl DesktopApp {
                     .set_runtime_feathering_override(render_options.map(|options| {
                         FeatheringOptions::new(options.feathering_enabled, options.feather_width)
                     }));
-                self.renderer.set_runtime_text_coverage_policy_override(
-                    render_options
-                        .map(|options| map_window_text_render_policy(options.text_render_policy)),
-                );
                 self.renderer.set_runtime_text_hinting_override(
                     render_options.map(|options| map_window_text_hinting(options.text_hinting)),
                 );

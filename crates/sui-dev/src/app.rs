@@ -2,11 +2,10 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton,
-    PointerEventKind, SemanticsNode, SemanticsRole, TextCoveragePolicy, TextHinting, WgpuRenderer,
+    PointerEventKind, SemanticsNode, SemanticsRole, TextHinting, WgpuRenderer,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode,
     WindowEvent, WindowId, WindowOutputColorPrimaries, WindowRenderOptions, WindowStemDarkening,
-    WindowTextHinting, WindowTextRenderPolicy, WindowToneMappingMode, prelude::*,
-    window_output_diagnostics,
+    WindowTextHinting, WindowToneMappingMode, prelude::*, window_output_diagnostics,
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
@@ -31,8 +30,6 @@ const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
 const FEATHER_WIDTH_NAME: &str = "Feather width";
 const OPTICAL_TEXT_CENTERING_TOGGLE_LABEL: &str = "Enable optical vertical text centering";
 const GLYPH_PIXEL_ALIGNMENT_TOGGLE_LABEL: &str = "Snap atlas glyphs to physical pixels";
-const TEXT_RENDER_POLICY_NAME: &str = "Text render policy";
-const TEXT_RENDER_GAMMA_NAME: &str = "Gamma exponent";
 const TEXT_HINTING_TOGGLE_LABEL: &str = "Enable slight small-text hinting";
 const TEXT_HINTING_MAX_PPEM_NAME: &str = "Hinting max ppem";
 const STEM_DARKENING_TOGGLE_LABEL: &str = "Enable small-text stem darkening";
@@ -47,8 +44,6 @@ const HDR_THEME_MODE_NAME: &str = "HDR theme mode";
 const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
 const HDR_THEME_INSPECTION_TITLE: &str = "HDR theme mode inspection";
 const SETTINGS_SCROLL_NAME: &str = "Settings controls";
-const TEXT_RENDER_POLICY_OPTIONS: [&str; 4] =
-    ["Automatic", "Linear", "Gamma", "TwoCoverageMinusCoverageSq"];
 const COLOR_MANAGEMENT_MODE_OPTIONS: [&str; 4] =
     ["Automatic", "Force SDR", "Prefer wide gamut", "Prefer HDR"];
 const OUTPUT_PRIMARIES_OPTIONS: [&str; 3] = ["Automatic", "sRGB", "Display P3"];
@@ -649,19 +644,6 @@ impl Widget for ViewSidebar {
     }
 }
 
-fn window_text_render_policy_from_renderer(policy: TextCoveragePolicy) -> WindowTextRenderPolicy {
-    match policy.normalized() {
-        TextCoveragePolicy::AutomaticByTextLuminance => {
-            WindowTextRenderPolicy::AutomaticByTextLuminance
-        }
-        TextCoveragePolicy::Linear => WindowTextRenderPolicy::Linear,
-        TextCoveragePolicy::Gamma(gamma) => WindowTextRenderPolicy::Gamma(gamma),
-        TextCoveragePolicy::TwoCoverageMinusCoverageSq => {
-            WindowTextRenderPolicy::TwoCoverageMinusCoverageSq
-        }
-    }
-}
-
 fn window_text_hinting_from_renderer(hinting: TextHinting) -> WindowTextHinting {
     match hinting.normalized() {
         TextHinting::None => WindowTextHinting::None,
@@ -676,28 +658,6 @@ fn window_stem_darkening_from_renderer(darkening: sui::StemDarkening) -> WindowS
             WindowStemDarkening::Enabled { max_ppem, amount }
         }
     }
-}
-
-fn text_render_policy_selected_index(policy: WindowTextRenderPolicy) -> usize {
-    match policy.normalized() {
-        WindowTextRenderPolicy::AutomaticByTextLuminance => 0,
-        WindowTextRenderPolicy::Linear => 1,
-        WindowTextRenderPolicy::Gamma(_) => 2,
-        WindowTextRenderPolicy::TwoCoverageMinusCoverageSq => 3,
-    }
-}
-
-fn update_text_render_policy_selection(state: &mut WindowRenderOptions, index: usize) {
-    state.text_render_policy = match index {
-        0 => WindowTextRenderPolicy::AutomaticByTextLuminance,
-        1 => WindowTextRenderPolicy::Linear,
-        2 => match state.text_render_policy.normalized() {
-            WindowTextRenderPolicy::Gamma(gamma) => WindowTextRenderPolicy::Gamma(gamma),
-            _ => WindowTextRenderPolicy::Gamma(1.4),
-        },
-        3 => WindowTextRenderPolicy::TwoCoverageMinusCoverageSq,
-        _ => state.text_render_policy,
-    };
 }
 
 fn color_management_mode_selected_index(mode: WindowColorManagementMode) -> usize {
@@ -1115,9 +1075,6 @@ impl RenderSettingsTab {
         let initial =
             WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
                 .with_glyph_pixel_alignment_enabled(renderer.glyph_pixel_alignment_enabled())
-                .with_text_render_policy(window_text_render_policy_from_renderer(
-                    renderer.text_coverage_policy(),
-                ))
                 .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
                 .with_stem_darkening(window_stem_darkening_from_renderer(
                     renderer.stem_darkening(),
@@ -1127,8 +1084,6 @@ impl RenderSettingsTab {
         let width_state = Rc::clone(&state);
         let text_centering_state = Rc::clone(&state);
         let glyph_alignment_state = Rc::clone(&state);
-        let text_policy_state = Rc::clone(&state);
-        let gamma_state = Rc::clone(&state);
         let hinting_toggle_state = Rc::clone(&state);
         let hinting_max_ppem_state = Rc::clone(&state);
         let stem_darkening_toggle_state = Rc::clone(&state);
@@ -1156,7 +1111,7 @@ impl RenderSettingsTab {
                     )
                     .with_child(
                         Label::new(
-                            "These controls update the active window's runtime presentation, atlas glyph alignment, and grayscale text coverage policy on the next redraw.",
+                            "These controls update the active window's runtime presentation and atlas glyph alignment on the next redraw.",
                         )
                         .font_size(14.0)
                         .line_height(20.0)
@@ -1195,34 +1150,6 @@ impl RenderSettingsTab {
                                 .value(initial.feather_width as f64)
                                 .on_change(move |value| {
                                     width_state.borrow_mut().feather_width = value.max(0.0) as f32;
-                                }),
-                        ),
-                    )
-                    .with_child(labeled_settings_control(
-                        TEXT_RENDER_POLICY_NAME,
-                        280.0,
-                        Select::new(TEXT_RENDER_POLICY_NAME)
-                            .options(TEXT_RENDER_POLICY_OPTIONS)
-                            .selected(text_render_policy_selected_index(initial.text_render_policy))
-                            .on_change(move |index, _| {
-                                let mut state = text_policy_state.borrow_mut();
-                                update_text_render_policy_selection(&mut state, index);
-                            }),
-                    ))
-                    .with_child(
-                        SizedBox::new().width(220.0).with_child(
-                            NumberInput::new(TEXT_RENDER_GAMMA_NAME)
-                                .range(0.1, 4.0)
-                                .step(0.05)
-                                .precision(2)
-                                .value(match initial.text_render_policy.normalized() {
-                                    WindowTextRenderPolicy::Gamma(gamma) => gamma as f64,
-                                    _ => 1.4,
-                                })
-                                .on_change(move |value| {
-                                    let gamma = value.clamp(0.1, 4.0) as f32;
-                                    gamma_state.borrow_mut().text_render_policy =
-                                        WindowTextRenderPolicy::Gamma(gamma);
                                 }),
                         ),
                     )
@@ -2289,7 +2216,6 @@ final_max_luminance={final_max_luminance}
             .expect("dev application semantics should exist");
 
         for label in [
-            TEXT_RENDER_POLICY_NAME,
             COLOR_MANAGEMENT_MODE_NAME,
             OUTPUT_PRIMARIES_NAME,
             DYNAMIC_RANGE_MODE_NAME,

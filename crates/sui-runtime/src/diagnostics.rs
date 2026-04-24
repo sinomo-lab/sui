@@ -560,32 +560,6 @@ impl SceneStatisticsDetailMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum WindowTextRenderPolicy {
-    AutomaticByTextLuminance,
-    Linear,
-    Gamma(f32),
-    TwoCoverageMinusCoverageSq,
-}
-
-impl Default for WindowTextRenderPolicy {
-    fn default() -> Self {
-        Self::AutomaticByTextLuminance
-    }
-}
-
-impl WindowTextRenderPolicy {
-    pub fn normalized(self) -> Self {
-        match self {
-            Self::AutomaticByTextLuminance => Self::AutomaticByTextLuminance,
-            Self::Linear => Self::Linear,
-            Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
-            Self::Gamma(_) => Self::Linear,
-            Self::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WindowTextHinting {
     None,
     Slight { max_ppem: f32 },
@@ -679,7 +653,6 @@ pub struct WindowRenderOptions {
     pub feather_width: f32,
     pub optical_vertical_text_alignment_enabled: bool,
     pub glyph_pixel_alignment_enabled: bool,
-    pub text_render_policy: WindowTextRenderPolicy,
     pub text_hinting: WindowTextHinting,
     pub stem_darkening: WindowStemDarkening,
     pub output_color_primaries: WindowOutputColorPrimaries,
@@ -696,7 +669,6 @@ impl WindowRenderOptions {
             feather_width,
             optical_vertical_text_alignment_enabled: true,
             glyph_pixel_alignment_enabled: true,
-            text_render_policy: WindowTextRenderPolicy::AutomaticByTextLuminance,
             text_hinting: WindowTextHinting::None,
             stem_darkening: WindowStemDarkening::None,
             output_color_primaries: WindowOutputColorPrimaries::Automatic,
@@ -714,11 +686,6 @@ impl WindowRenderOptions {
 
     pub const fn with_glyph_pixel_alignment_enabled(mut self, enabled: bool) -> Self {
         self.glyph_pixel_alignment_enabled = enabled;
-        self
-    }
-
-    pub const fn with_text_render_policy(mut self, policy: WindowTextRenderPolicy) -> Self {
-        self.text_render_policy = policy;
         self
     }
 
@@ -766,7 +733,6 @@ impl WindowRenderOptions {
             feather_width: self.feather_width.max(0.0),
             optical_vertical_text_alignment_enabled: self.optical_vertical_text_alignment_enabled,
             glyph_pixel_alignment_enabled: self.glyph_pixel_alignment_enabled,
-            text_render_policy: self.text_render_policy.normalized(),
             text_hinting: self.text_hinting.normalized(),
             stem_darkening: self.stem_darkening.normalized(),
             output_color_primaries: self.output_color_primaries,
@@ -1324,7 +1290,7 @@ mod tests {
         RetainedPacketRebuildDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
         TextCacheDeltaDiagnostics, TextCacheDiagnostics, WindowColorManagementMode,
         WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
-        WindowRenderOptions, WindowTextRenderPolicy, WindowToneMappingMode,
+        WindowRenderOptions, WindowToneMappingMode,
         clear_window_performance_snapshot, set_window_render_options,
         set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
@@ -1740,7 +1706,6 @@ mod tests {
         set_window_render_options(
             window_id,
             WindowRenderOptions::new(false, -2.0)
-                .with_text_render_policy(WindowTextRenderPolicy::Gamma(-1.0))
                 .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
                 .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
                 .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
@@ -1752,7 +1717,6 @@ mod tests {
             window_render_options(window_id),
             Some(
                 WindowRenderOptions::new(false, 0.0)
-                    .with_text_render_policy(WindowTextRenderPolicy::Linear)
                     .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
                     .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
                     .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
@@ -1766,7 +1730,6 @@ mod tests {
             WindowRenderOptions::new(true, 1.0)
                 .with_optical_vertical_text_alignment_enabled(false)
                 .with_glyph_pixel_alignment_enabled(false)
-                .with_text_render_policy(WindowTextRenderPolicy::TwoCoverageMinusCoverageSq)
                 .with_output_color_primaries(WindowOutputColorPrimaries::Srgb)
                 .with_dynamic_range_mode(WindowDynamicRangeMode::StandardDynamicRange)
                 .with_tone_mapping_mode(WindowToneMappingMode::Clamp)
@@ -1779,7 +1742,6 @@ mod tests {
                 WindowRenderOptions::new(true, 1.0)
                     .with_glyph_pixel_alignment_enabled(false)
                     .with_optical_vertical_text_alignment_enabled(false)
-                    .with_text_render_policy(WindowTextRenderPolicy::TwoCoverageMinusCoverageSq)
                     .with_output_color_primaries(WindowOutputColorPrimaries::Srgb)
                     .with_dynamic_range_mode(WindowDynamicRangeMode::StandardDynamicRange)
                     .with_tone_mapping_mode(WindowToneMappingMode::Clamp)

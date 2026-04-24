@@ -10,8 +10,8 @@ use sui_runtime::{
 };
 
 use crate::{
-    AccessibilityBridge, AccessibilitySnapshot, map_window_stem_darkening, map_window_text_hinting,
-    map_window_text_render_policy,
+    AccessibilityBridge, AccessibilitySnapshot, map_window_stem_darkening,
+    map_window_text_hinting,
 };
 
 #[derive(Debug, Clone)]
@@ -332,10 +332,6 @@ impl HeadlessPlatform {
                     .set_runtime_feathering_override(render_options.map(|options| {
                         FeatheringOptions::new(options.feathering_enabled, options.feather_width)
                     }));
-                self.renderer.set_runtime_text_coverage_policy_override(
-                    render_options
-                        .map(|options| map_window_text_render_policy(options.text_render_policy)),
-                );
                 self.renderer.set_runtime_text_hinting_override(
                     render_options.map(|options| map_window_text_hinting(options.text_hinting)),
                 );

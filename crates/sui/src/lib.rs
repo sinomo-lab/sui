@@ -55,7 +55,7 @@ pub use sui_runtime::{
     WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowColorManagementMode,
     WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
     WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening, WindowTextHinting,
-    WindowTextRenderPolicy, WindowToneMappingMode, clear_window_render_options,
+    WindowToneMappingMode, clear_window_render_options,
     set_window_render_options, set_window_scene_statistics_detail_mode,
     window_performance_snapshot, window_performance_summary, window_render_options,
     window_scene_statistics_detail_mode,

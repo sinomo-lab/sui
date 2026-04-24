@@ -11,15 +11,15 @@ use sui_core::WindowId;
 use sui_render_wgpu::{
     ColorManagementMode, RendererFrameStats, RequestedColorManagementMode,
     RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
-    StemDarkening, TextCoveragePolicy, TextHinting, WgpuRenderer,
+    StemDarkening, TextHinting, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
     RendererSubmissionDiagnostics, RetainedPacketHotspotDiagnostics,
     RetainedPacketRebuildDiagnostics, SceneStatistics, TextCacheDiagnostics,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-    WindowPerformanceSnapshot, WindowStemDarkening, WindowTextHinting, WindowTextRenderPolicy,
-    WindowToneMappingMode, clear_window_performance_snapshot, clear_window_performance_snapshots,
+    WindowPerformanceSnapshot, WindowStemDarkening, WindowTextHinting, WindowToneMappingMode,
+    clear_window_performance_snapshot, clear_window_performance_snapshots,
     publish_window_performance_snapshot, window_performance_text_caches,
     window_scene_statistics_detail_mode,
 };
@@ -37,19 +37,6 @@ pub use headless::{HeadlessPlatform, PlatformWindow};
 pub(crate) fn reset_window_performance_store() {
     clear_window_performance_snapshots();
     clear_window_output_diagnostics_all();
-}
-
-pub(crate) fn map_window_text_render_policy(policy: WindowTextRenderPolicy) -> TextCoveragePolicy {
-    match policy.normalized() {
-        WindowTextRenderPolicy::AutomaticByTextLuminance => {
-            TextCoveragePolicy::AutomaticByTextLuminance
-        }
-        WindowTextRenderPolicy::Linear => TextCoveragePolicy::Linear,
-        WindowTextRenderPolicy::Gamma(gamma) => TextCoveragePolicy::Gamma(gamma),
-        WindowTextRenderPolicy::TwoCoverageMinusCoverageSq => {
-            TextCoveragePolicy::TwoCoverageMinusCoverageSq
-        }
-    }
 }
 
 pub(crate) fn map_window_text_hinting(hinting: WindowTextHinting) -> TextHinting {

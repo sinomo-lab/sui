@@ -28,7 +28,7 @@ pub use diagnostics::{
     TextCacheDeltaDiagnostics, TextCacheDiagnostics, WidgetTimingPhase, WidgetTimingSample,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening,
-    WindowTextHinting, WindowTextRenderPolicy, WindowToneMappingMode,
+    WindowTextHinting, WindowToneMappingMode,
     clear_window_performance_snapshot, clear_window_performance_snapshots,
     clear_window_render_options, publish_window_performance_snapshot, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
