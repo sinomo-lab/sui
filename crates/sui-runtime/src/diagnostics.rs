@@ -1290,9 +1290,8 @@ mod tests {
         RetainedPacketRebuildDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
         TextCacheDeltaDiagnostics, TextCacheDiagnostics, WindowColorManagementMode,
         WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
-        WindowRenderOptions, WindowToneMappingMode,
-        clear_window_performance_snapshot, set_window_render_options,
-        set_window_scene_statistics_detail_mode, window_render_options,
+        WindowRenderOptions, WindowToneMappingMode, clear_window_performance_snapshot,
+        set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
     };
     use sui_core::{Color, DirtyRegion, InvalidationKind, Rect, Size, WidgetId, WindowId};

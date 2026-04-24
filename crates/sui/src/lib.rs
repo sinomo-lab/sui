@@ -55,10 +55,9 @@ pub use sui_runtime::{
     WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowColorManagementMode,
     WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
     WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening, WindowTextHinting,
-    WindowToneMappingMode, clear_window_render_options,
-    set_window_render_options, set_window_scene_statistics_detail_mode,
-    window_performance_snapshot, window_performance_summary, window_render_options,
-    window_scene_statistics_detail_mode,
+    WindowToneMappingMode, clear_window_render_options, set_window_render_options,
+    set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    window_performance_summary, window_render_options, window_scene_statistics_detail_mode,
 };
 pub use sui_scene::{
     Brush, ImageRegistry, ImageSource, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand,
@@ -331,14 +330,14 @@ impl Application {
         let feather_width = self.feather_width;
         let initial_window_render_options = self.initial_window_render_options;
         let runtime = self.build()?;
+        let platform = DesktopPlatform::new()
+            .with_feathering_enabled(feathering_enabled)
+            .with_feather_width(feather_width);
         if let Some(options) = initial_window_render_options {
             for window_id in runtime.window_ids() {
                 set_window_render_options(window_id, options);
             }
         }
-        let platform = DesktopPlatform::new()
-            .with_feathering_enabled(feathering_enabled)
-            .with_feather_width(feather_width);
         let _ = platform.run(runtime)?;
         Ok(())
     }

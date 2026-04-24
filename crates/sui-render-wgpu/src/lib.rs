@@ -11,7 +11,6 @@ use std::{
     fmt,
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
-    time::Instant,
 };
 
 use bytemuck::{Pod, Zeroable};
@@ -43,6 +42,7 @@ use swash::{
 };
 #[cfg(test)]
 use tiny_skia::PathBuilder as TinySkiaPathBuilder;
+use web_time::Instant;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -789,16 +789,18 @@ pub enum DebugCaptureArtifact {
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 struct OutputTransformUniform {
     tone_mapping_mode: u32,
-    _padding0: [u32; 3],
+    encode_srgb: u32,
+    _padding0: [u32; 2],
     sdr_content_scale: f32,
     _padding1: [u32; 3],
 }
 
 impl OutputTransformUniform {
-    const fn new(tone_mapping_mode: u32, sdr_content_scale: f32) -> Self {
+    const fn new(tone_mapping_mode: u32, encode_srgb: bool, sdr_content_scale: f32) -> Self {
         Self {
             tone_mapping_mode,
-            _padding0: [0; 3],
+            encode_srgb: encode_srgb as u32,
+            _padding0: [0; 2],
             sdr_content_scale,
             _padding1: [0; 3],
         }
@@ -2088,7 +2090,12 @@ impl WgpuRenderer {
             .expect("renderer shared state initialized");
         let sdr_content_scale =
             scene::output_sdr_content_scale(strategy, sdr_content_brightness_nits);
-        let uniform = OutputTransformUniform::new(resolved_tone_mapping, sdr_content_scale);
+        let encode_srgb = matches!(
+            destination_format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
+        );
+        let uniform =
+            OutputTransformUniform::new(resolved_tone_mapping, encode_srgb, sdr_content_scale);
         let uniform_buffer = shared
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -3519,7 +3526,7 @@ struct VsOut {
 
 struct OutputUniform {
     tone_mapping_mode: u32,
-    _padding0: u32,
+    encode_srgb: u32,
     _padding1: u32,
     _padding2: u32,
     sdr_content_scale: f32,
@@ -3561,13 +3568,32 @@ fn tone_map(color: vec3<f32>) -> vec3<f32> {
     }
 }
 
+fn linear_to_srgb_channel(channel: f32) -> f32 {
+    let value = max(channel, 0.0);
+    if value <= 0.0031308 {
+        return value * 12.92;
+    }
+    return (1.055 * pow(value, 1.0 / 2.4)) - 0.055;
+}
+
+fn encode_for_output(color: vec3<f32>) -> vec3<f32> {
+    if output_uniform.encode_srgb == 0u {
+        return color;
+    }
+    return vec3<f32>(
+        linear_to_srgb_channel(color.r),
+        linear_to_srgb_channel(color.g),
+        linear_to_srgb_channel(color.b),
+    );
+}
+
 @fragment
 fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let dims = textureDimensions(scene_texture);
     let max_coord = vec2<i32>(max(vec2<u32>(1u), dims) - vec2<u32>(1u));
     let coords = clamp(vec2<i32>(position.xy), vec2<i32>(0), max_coord);
     let color = textureLoad(scene_texture, coords, 0);
-    return vec4<f32>(tone_map(color.rgb), clamp(color.a, 0.0, 1.0));
+    return vec4<f32>(encode_for_output(tone_map(color.rgb)), clamp(color.a, 0.0, 1.0));
 }
 "#;
 

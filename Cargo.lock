@@ -2533,6 +2533,7 @@ dependencies = [
  "tiny-skia",
  "ttf-parser",
  "wasm-bindgen-futures",
+ "web-time",
  "wgpu",
  "winit",
 ]
@@ -2545,6 +2546,7 @@ dependencies = [
  "sui-layout",
  "sui-scene",
  "sui-text",
+ "web-time",
 ]
 
 [[package]]

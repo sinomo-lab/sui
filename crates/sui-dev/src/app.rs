@@ -2,10 +2,10 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton,
-    PointerEventKind, SemanticsNode, SemanticsRole, TextHinting, WgpuRenderer,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode,
-    WindowEvent, WindowId, WindowOutputColorPrimaries, WindowRenderOptions, WindowStemDarkening,
-    WindowTextHinting, WindowToneMappingMode, prelude::*, window_output_diagnostics,
+    PointerEventKind, SemanticsNode, SemanticsRole, TextHinting, WgpuRenderer, WidgetPodMutVisitor,
+    WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
+    WindowOutputColorPrimaries, WindowRenderOptions, WindowStemDarkening, WindowTextHinting,
+    WindowToneMappingMode, prelude::*, window_output_diagnostics,
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
@@ -1518,18 +1518,9 @@ pub fn build_dev_application_with_widget_book_bounds_and_automation(
 
     let mut app = Application::new();
     register_widget_book_images(&mut app);
-    let app = app.window(
-        WindowBuilder::new()
-            .title(WINDOW_TITLE)
-            .root(
-                LivePerformanceRoot::new(
-                    WINDOW_TITLE,
-                    WINDOW_DESCRIPTION,
-                    root,
-                )
-                .show_performance_overlay(),
-            ),
-    );
+    let app = app.window(WindowBuilder::new().title(WINDOW_TITLE).root(
+        LivePerformanceRoot::new(WINDOW_TITLE, WINDOW_DESCRIPTION, root).show_performance_overlay(),
+    ));
 
     app
 }
@@ -1636,14 +1627,16 @@ mod tests {
             .min_second(420.0)
             .divider_thickness(12.0);
 
-        Application::new().window(WindowBuilder::new().title(FRONTING_TEST_TITLE).root(
-            LivePerformanceRoot::new(
-                FRONTING_TEST_TITLE,
-                "Floating workspace fronting regression.",
-                root,
-            )
-            .show_performance_overlay(),
-        ))
+        Application::new().window(
+            WindowBuilder::new().title(FRONTING_TEST_TITLE).root(
+                LivePerformanceRoot::new(
+                    FRONTING_TEST_TITLE,
+                    "Floating workspace fronting regression.",
+                    root,
+                )
+                .show_performance_overlay(),
+            ),
+        )
     }
 
     #[test]
@@ -2014,14 +2007,15 @@ mod tests {
             .semantics(window_id)
             .expect("dev application semantics should exist");
 
-        assert!(semantics.iter().any(|node| {
-            node.name.as_deref() == Some("Live performance overlay")
-        }));
+        assert!(
+            semantics
+                .iter()
+                .any(|node| { node.name.as_deref() == Some("Live performance overlay") })
+        );
     }
 
     #[test]
     fn hdr_validation_surface_debug_capture_exports_intermediate_artifacts() -> Result<()> {
-
         let options = WindowRenderOptions::new(true, 1.0)
             .with_color_management_mode(WindowColorManagementMode::PreferHdr)
             .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)

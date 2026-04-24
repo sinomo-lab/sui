@@ -10,8 +10,7 @@ use sui_runtime::{
 };
 
 use crate::{
-    AccessibilityBridge, AccessibilitySnapshot, map_window_stem_darkening,
-    map_window_text_hinting,
+    AccessibilityBridge, AccessibilitySnapshot, map_window_stem_darkening, map_window_text_hinting,
 };
 
 #[derive(Debug, Clone)]

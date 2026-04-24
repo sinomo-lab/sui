@@ -22,7 +22,10 @@ use winit::{
 };
 
 #[cfg(target_arch = "wasm32")]
-use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
+use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys, WindowExtWebSys};
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
 
 use crate::{
     AccessibilityBridge, WindowOutputDiagnostics, detect_window_display_capabilities,
@@ -203,6 +206,47 @@ struct DesktopApp {
 }
 
 impl DesktopApp {
+    #[cfg(target_arch = "wasm32")]
+    fn web_canvas_for_window() -> Option<web_sys::HtmlCanvasElement> {
+        let window = web_sys::window()?;
+        let canvas = window
+            .document()
+            .and_then(|document| document.get_element_by_id("sui-main-canvas"))
+            .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())?;
+        let scale_factor = window.device_pixel_ratio().max(1.0);
+        let width = window
+            .inner_width()
+            .ok()
+            .and_then(|value| value.as_f64())
+            .unwrap_or(DesktopPlatform::DEFAULT_WINDOW_SIZE.width as f64);
+        let height = window
+            .inner_height()
+            .ok()
+            .and_then(|value| value.as_f64())
+            .unwrap_or(DesktopPlatform::DEFAULT_WINDOW_SIZE.height as f64);
+        canvas.set_width(((width * scale_factor).round().max(1.0)) as u32);
+        canvas.set_height(((height * scale_factor).round().max(1.0)) as u32);
+        Some(canvas)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn initial_web_physical_size(window: &Window) -> PhysicalSize<u32> {
+        window
+            .canvas()
+            .map(|canvas| PhysicalSize::new(canvas.width().max(1), canvas.height().max(1)))
+            .unwrap_or_else(|| window.inner_size())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn initial_window_physical_size(window: &Window) -> PhysicalSize<u32> {
+        window.inner_size()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn initial_window_physical_size(window: &Window) -> PhysicalSize<u32> {
+        Self::initial_web_physical_size(window)
+    }
+
     fn new(
         runtime: Runtime,
         renderer: WgpuRenderer,
@@ -269,14 +313,19 @@ impl DesktopApp {
                 ));
             #[cfg(target_arch = "wasm32")]
             {
-                attributes = attributes.with_append(true);
+                attributes = attributes
+                    .with_canvas(Self::web_canvas_for_window())
+                    .with_append(false);
             }
             let window = Arc::new(event_loop.create_window(attributes).map_err(map_os_error)?);
             window.set_ime_allowed(false);
 
             let host_id = window.id();
             let scale_factor = window.scale_factor();
-            let size = physical_size_to_logical_size(window.inner_size(), scale_factor);
+            let size = physical_size_to_logical_size(
+                Self::initial_window_physical_size(&window),
+                scale_factor,
+            );
             self.renderer
                 .register_window(window_id, Arc::clone(&window))?;
 
@@ -350,7 +399,7 @@ impl DesktopApp {
         self.sync_windows(event_loop)?;
 
         let window_ids: Vec<_> = self.windows.keys().copied().collect();
-        for window_id in window_ids {
+        for window_id in window_ids.iter().copied() {
             self.request_redraw_if_needed(window_id)?;
         }
 

@@ -1,4 +1,3 @@
-use std::time::Instant;
 use std::{
     collections::{HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
@@ -24,6 +23,7 @@ use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
     TextMeasurement, TextRun, TextStyle, TextSystem,
 };
+use web_time::Instant;
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TIMER_TOKEN: AtomicU64 = AtomicU64::new(1);

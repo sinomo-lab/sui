@@ -7,9 +7,9 @@ use std::{
 
 use sui::{
     Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-    Result, ScrollDelta, SemanticsRole, Vector, WindowColorManagementMode,
-    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowRenderOptions,
-    WindowToneMappingMode, window_output_diagnostics,
+    Result, ScrollDelta, SemanticsRole, Vector, WindowColorManagementMode, WindowDynamicRangeMode,
+    WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
+    window_output_diagnostics,
 };
 use sui_render_wgpu::{
     DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
@@ -23,15 +23,14 @@ use sui_testing::{
 use crate::{
     ANIMATION_DEMO_NAME, ANIMATION_DEMO_POPOVER_TRIGGER_LABEL, ANIMATION_DEMO_TEXT_INPUT_LABEL,
     BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, COLOR_VALIDATION_VIEW_TITLE,
-    CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL,
-    GALLERY_SCROLL_NAME, ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, MENU_NAME,
-    NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL,
-    PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL, RADIO_GROUP_NAME, SELECT_NAME,
-    SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL, SUMMARY_NAME, SWITCH_LABEL,
-    TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME, TABS_NAME, TEXT_AREA_LABEL,
-    THEME_PREVIEW_NAME, TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
-    TREE_VIEW_NAME, WINDOW_TITLE, WidgetBookState, build_color_validation_application,
-    build_widget_book_application, default_widget_book_state,
+    CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
+    ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, MENU_NAME, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
+    POPOVER_NAME, POPOVER_TRIGGER_LABEL, PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL,
+    RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL,
+    SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME,
+    TABS_NAME, TEXT_AREA_LABEL, THEME_PREVIEW_NAME, TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT,
+    TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME, WINDOW_TITLE, WidgetBookState,
+    build_color_validation_application, build_widget_book_application, default_widget_book_state,
 };
 
 #[derive(Clone, Copy)]
@@ -547,7 +546,9 @@ impl StoryCase {
             Self::ColorSwatch => Some((SemanticsRole::ColorSwatch, Some(COLOR_SWATCH_NAME))),
             Self::ColorPicker => Some((SemanticsRole::ColorPicker, Some(COLOR_PICKER_NAME))),
             Self::ThemePreview => Some((SemanticsRole::GenericContainer, Some(THEME_PREVIEW_NAME))),
-            Self::AnimationDemo => Some((SemanticsRole::GenericContainer, Some(ANIMATION_DEMO_NAME))),
+            Self::AnimationDemo => {
+                Some((SemanticsRole::GenericContainer, Some(ANIMATION_DEMO_NAME)))
+            }
             Self::ImageWidget => Some((SemanticsRole::Image, Some(DEMO_IMAGE_LABEL))),
             _ => None,
         }
@@ -648,15 +649,15 @@ fn write_hdr_widget_book_artifacts(output_root: &Path) -> Result<()> {
             diagnostics.requested_tone_mapping_mode,
             diagnostics.requested_sdr_content_brightness_nits,
             diagnostics.display_capabilities.supports_hdr,
-            diagnostics.display_capabilities.native_hdr_presentation_supported,
+            diagnostics
+                .display_capabilities
+                .native_hdr_presentation_supported,
             diagnostics.display_capabilities.preferred_dynamic_range,
             diagnostics.active_output_strategy,
             diagnostics.display_capabilities.notes,
         )
     } else {
-        format!(
-            "view={COLOR_VALIDATION_VIEW_TITLE}\noutput_diagnostics=unavailable\n"
-        )
+        format!("view={COLOR_VALIDATION_VIEW_TITLE}\noutput_diagnostics=unavailable\n")
     };
     write_text(hdr_dir.join("output-diagnostics.txt"), &diagnostics_text)?;
 

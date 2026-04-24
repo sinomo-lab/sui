@@ -1,0 +1,9 @@
+127.0.0.1 - - [24/Apr/2026 13:05:10] "GET /?benchmark=button-grid&color-management=force-sdr&output-primaries=srgb&dynamic-range=sdr&canvas-format=rgba8unorm-srgb&canvas-color-space=srgb&canvas-tone-mapping=standard&cachebust=clean-sdr-1777053909991 HTTP/1.1" 200 -
+127.0.0.1 - - [24/Apr/2026 13:05:10] "GET /sui-dev_bg.wasm HTTP/1.1" 200 -
+127.0.0.1 - - [24/Apr/2026 13:05:10] "GET /sui-dev.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Apr/2026 13:05:28] "GET /?benchmark=color-validation&canvas-format=rgba16float&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=automatic&cachebust=clean-hdr-1777053928766 HTTP/1.1" 200 -
+127.0.0.1 - - [24/Apr/2026 13:05:28] "GET /sui-dev.js HTTP/1.1" 304 -
+127.0.0.1 - - [24/Apr/2026 13:05:28] "GET /sui-dev_bg.wasm HTTP/1.1" 304 -
+127.0.0.1 - - [24/Apr/2026 13:05:52] "GET /?color-management=force-sdr&output-primaries=srgb&dynamic-range=sdr&canvas-format=rgba8unorm-srgb&canvas-color-space=srgb&canvas-tone-mapping=standard&cachebust=clean-dev-1777053952386 HTTP/1.1" 200 -
+127.0.0.1 - - [24/Apr/2026 13:05:52] "GET /sui-dev.js HTTP/1.1" 304 -
+127.0.0.1 - - [24/Apr/2026 13:05:52] "GET /sui-dev_bg.wasm HTTP/1.1" 304 -

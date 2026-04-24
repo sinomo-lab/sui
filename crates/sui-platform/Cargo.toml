@@ -12,7 +12,7 @@ sui-runtime = { workspace = true }
 winit = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
-web-sys = { workspace = true, features = ["console", "Window", "Location"] }
+web-sys = { workspace = true, features = ["console", "Document", "Element", "HtmlCanvasElement", "Window", "Location", "MediaQueryList"] }
 web-time = { workspace = true }
 sui-platform-windows = { path = "../sui-platform-windows" }
 

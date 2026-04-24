@@ -164,6 +164,10 @@ fn run_desktop_application(app: Application, vsync_enabled: bool) -> sui::Result
     let feather_width = app.feather_width();
     let initial_window_render_options = app.initial_window_render_options();
     let runtime = app.build()?;
+    let platform = DesktopPlatform::new()
+        .with_feathering_enabled(feathering_enabled)
+        .with_feather_width(feather_width)
+        .with_vsync_enabled(vsync_enabled);
 
     if let Some(options) = initial_window_render_options {
         for window_id in runtime.window_ids() {
@@ -171,10 +175,6 @@ fn run_desktop_application(app: Application, vsync_enabled: bool) -> sui::Result
         }
     }
 
-    let platform = DesktopPlatform::new()
-        .with_feathering_enabled(feathering_enabled)
-        .with_feather_width(feather_width)
-        .with_vsync_enabled(vsync_enabled);
     let _ = platform.run(runtime)?;
     Ok(())
 }
@@ -186,6 +186,10 @@ fn run_desktop_application_with_mode(launch_mode: DesktopLaunchMode) -> sui::Res
     let feather_width = app.feather_width();
     let initial_window_render_options = app.initial_window_render_options();
     let runtime = app.build()?;
+    let mut platform = DesktopPlatform::new()
+        .with_feathering_enabled(feathering_enabled)
+        .with_feather_width(feather_width)
+        .with_vsync_enabled(launch_mode.vsync_enabled);
 
     if let Some(options) = initial_window_render_options {
         for window_id in runtime.window_ids() {
@@ -193,10 +197,6 @@ fn run_desktop_application_with_mode(launch_mode: DesktopLaunchMode) -> sui::Res
         }
     }
 
-    let mut platform = DesktopPlatform::new()
-        .with_feathering_enabled(feathering_enabled)
-        .with_feather_width(feather_width)
-        .with_vsync_enabled(launch_mode.vsync_enabled);
     if let Some(automation) = platform_automation_config(launch_mode.automation) {
         platform = platform.with_automation(automation);
     }

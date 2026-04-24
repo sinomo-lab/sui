@@ -93,7 +93,8 @@ pub const ANIMATION_DEMO_BUTTON_LABEL: &str = "Animation demo action";
 pub const ANIMATION_DEMO_SWITCH_LABEL: &str = "Animation demo switch";
 pub const ANIMATION_DEMO_TEXT_INPUT_LABEL: &str = "Animation demo query";
 pub const ANIMATION_DEMO_TOOLTIP_TRIGGER_LABEL: &str = "Animation demo shortcuts";
-pub const ANIMATION_DEMO_TOOLTIP_TEXT: &str = "Tooltip entry motion uses retained translation and opacity";
+pub const ANIMATION_DEMO_TOOLTIP_TEXT: &str =
+    "Tooltip entry motion uses retained translation and opacity";
 pub const ANIMATION_DEMO_POPOVER_NAME: &str = "Animation demo inspector";
 pub const ANIMATION_DEMO_POPOVER_TRIGGER_LABEL: &str = "Open animation demo inspector";
 
@@ -3145,7 +3146,10 @@ impl LivePerformancePanel {
                 );
                 let retained_metric = format!(
                     "retained rebuilds {}  |  state {}  |  compose {}",
-                    snapshot.renderer_submission.retained_packet_rebuilds.total_count(),
+                    snapshot
+                        .renderer_submission
+                        .retained_packet_rebuilds
+                        .total_count(),
                     format_duration_ms(
                         snapshot.renderer_submission.retained_state_update_time_us as f64 / 1000.0
                     ),
@@ -3653,16 +3657,15 @@ mod tests {
     };
     use super::{
         BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, COLOR_PICKER_NAME,
-        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
-        LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
-        LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
-        POPOVER_NAME, POPOVER_TRIGGER_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
-        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
-        TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
-        TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
-        TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME,
-        TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL,
-        TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE,
+        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, LIGHT_PREVIEW_ACTION_LABEL,
+        LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME, LivePerformanceDisplay,
+        LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
+        POPOVER_TRIGGER_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE,
+        SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, TEXT_EDITING_BENCHMARK_EDITOR_NAME,
+        TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME, TEXT_EDITING_BENCHMARK_TITLE,
+        TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
+        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
+        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE,
         build_button_grid_benchmark_application, build_color_and_imagery_story,
         build_retained_text_benchmark_application, build_text_editing_benchmark_application,
         build_text_rendering_comparison_application, build_text_validation_surface,
@@ -3999,7 +4002,9 @@ mod tests {
         for (step, text) in EDIT_COMMITS.iter().enumerate() {
             let text = (*text).to_string();
             editor.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
-            editor.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate { text: text.clone() }))?;
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate {
+                text: text.clone(),
+            }))?;
             editor.dispatch_event(Event::Ime(ImeEvent::CompositionCommit { text }))?;
             editor.dispatch_event(Event::Ime(ImeEvent::CompositionEnd))?;
             collected.push(next_headless_benchmark_frame(
@@ -5187,7 +5192,11 @@ mod tests {
         assert!(lines.iter().any(|line| line.text.contains("stack")));
         assert!(lines.iter().any(|line| line.text.contains("overlay")));
         assert!(lines.iter().any(|line| line.text.contains("anim active")));
-        assert!(lines.iter().any(|line| line.text.contains("retained rebuilds")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.text.contains("retained rebuilds"))
+        );
     }
 
     #[test]
@@ -5205,7 +5214,11 @@ mod tests {
         assert!(lines.iter().any(|line| line.text.contains("wakes 2")));
         assert!(lines.iter().any(|line| line.text.contains("repaint 1")));
         assert!(lines.iter().any(|line| line.text.contains("retained 1")));
-        assert!(lines.iter().any(|line| line.text.contains("retained rebuilds 3")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.text.contains("retained rebuilds 3"))
+        );
     }
 
     #[test]

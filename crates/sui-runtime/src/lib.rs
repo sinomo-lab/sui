@@ -6,7 +6,6 @@ mod widget;
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::Arc,
-    time::Instant,
 };
 
 use sui_core::{
@@ -20,6 +19,7 @@ use sui_scene::{
     SceneLayer, SceneLayerDescriptor, SceneLayerUpdate, SceneLayerUpdateKind,
 };
 use sui_text::{FontRegistry, RegisteredFont, TextSystem};
+use web_time::Instant;
 
 pub use diagnostics::{
     CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
@@ -28,9 +28,9 @@ pub use diagnostics::{
     TextCacheDeltaDiagnostics, TextCacheDiagnostics, WidgetTimingPhase, WidgetTimingSample,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening,
-    WindowTextHinting, WindowToneMappingMode,
-    clear_window_performance_snapshot, clear_window_performance_snapshots,
-    clear_window_render_options, publish_window_performance_snapshot, set_window_render_options,
+    WindowTextHinting, WindowToneMappingMode, clear_window_performance_snapshot,
+    clear_window_performance_snapshots, clear_window_render_options,
+    publish_window_performance_snapshot, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_performance_summary, window_performance_text_caches, window_render_options,
     window_scene_statistics_detail_mode,
@@ -981,7 +981,11 @@ impl WindowState {
             .len()
     }
 
-    fn animation_frame_is_transform_only(&self, repainted: bool, layer_updates: &[SceneLayerUpdate]) -> bool {
+    fn animation_frame_is_transform_only(
+        &self,
+        repainted: bool,
+        layer_updates: &[SceneLayerUpdate],
+    ) -> bool {
         !repainted
             && !layer_updates.is_empty()
             && layer_updates.iter().all(|update| {
@@ -1712,9 +1716,8 @@ impl WindowState {
         diagnostics.widget_timings = diagnostics::take_widget_timing_collection();
         diagnostics.active_animated_widget_count = self.active_animated_widget_count();
         diagnostics.animation_frame_wake_count = self.pending_animation_wake_count;
-        diagnostics.animation_repaint_frame_count = usize::from(
-            self.pending_animation_wake_count > 0 && repainted,
-        );
+        diagnostics.animation_repaint_frame_count =
+            usize::from(self.pending_animation_wake_count > 0 && repainted);
         diagnostics.animation_transform_effect_only_frame_count = usize::from(
             self.pending_animation_wake_count > 0
                 && self.animation_frame_is_transform_only(repainted, &frame.layer_updates),

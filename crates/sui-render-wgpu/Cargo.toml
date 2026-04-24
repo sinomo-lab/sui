@@ -21,3 +21,4 @@ ttf-parser = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
+web-time = { workspace = true }

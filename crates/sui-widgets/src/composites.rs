@@ -7,18 +7,19 @@ use sui_core::{
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
-    window_render_options, ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode,
-    PaintCtx, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
+    SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor,
+    WidgetPodVisitor, window_render_options,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{TextMeasurement, TextStyle};
 
 use crate::{
+    Button, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, ResolvedEffectStyle,
+    ResolvedHdrStyle, Transition, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole,
+    WidgetMaterialRole,
     controls::{apply_hdr_policy_cap, cap_resolved_hdr_style},
-    resolve_widget_hdr_style, Button, ControlMetrics, DefaultTheme, Easing, HdrThemeMode,
-    ResolvedEffectStyle, ResolvedHdrStyle, Transition, WidgetColorRole, WidgetEffectRole,
-    WidgetLuminanceRole, WidgetMaterialRole,
+    resolve_widget_hdr_style,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1368,10 +1369,13 @@ impl Widget for TooltipOverlay {
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.state.borrow().is_presented().then_some(StackSurfaceOptions {
-            transient: true,
-            ..StackSurfaceOptions::default()
-        })
+        self.state
+            .borrow()
+            .is_presented()
+            .then_some(StackSurfaceOptions {
+                transient: true,
+                ..StackSurfaceOptions::default()
+            })
     }
 }
 
@@ -1412,9 +1416,11 @@ impl Tooltip {
         }
         let was_presented = state.is_presented();
         state.hovered = hovered;
-        let should_animate = state
-            .reveal
-            .set_target(hovered as u8 as f32, ctx.current_time(), TOOLTIP_ANIMATION_SECONDS);
+        let should_animate = state.reveal.set_target(
+            hovered as u8 as f32,
+            ctx.current_time(),
+            TOOLTIP_ANIMATION_SECONDS,
+        );
         let is_presented = state.is_presented();
         drop(state);
 
@@ -1480,7 +1486,8 @@ impl Widget for Tooltip {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let trigger_bounds = Rect::from_origin_size(bounds.origin, self.child.child().measured_size());
+        let trigger_bounds =
+            Rect::from_origin_size(bounds.origin, self.child.child().measured_size());
         self.child.arrange(ctx, trigger_bounds);
 
         let mut state = self.state.borrow_mut();
@@ -1509,7 +1516,8 @@ impl Widget for Tooltip {
         self.child.semantics(ctx);
         let state = self.state.borrow();
         if state.hovered {
-            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Tooltip, state.bubble_bounds);
+            let mut node =
+                SemanticsNode::new(ctx.widget_id(), SemanticsRole::Tooltip, state.bubble_bounds);
             node.name = Some(state.text.clone());
             ctx.push(node);
         }
@@ -1731,10 +1739,13 @@ impl Widget for PopoverSurface {
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.state.borrow().is_presented().then_some(StackSurfaceOptions {
-            transient: true,
-            ..StackSurfaceOptions::default()
-        })
+        self.state
+            .borrow()
+            .is_presented()
+            .then_some(StackSurfaceOptions {
+                transient: true,
+                ..StackSurfaceOptions::default()
+            })
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1840,9 +1851,11 @@ impl Popover {
         let surface_id = self.surface.child().id();
         let mut state = self.state.borrow_mut();
         let was_presented = state.is_presented();
-        let should_animate = state
-            .reveal
-            .set_target(open as u8 as f32, ctx.current_time(), POPOVER_ANIMATION_SECONDS);
+        let should_animate = state.reveal.set_target(
+            open as u8 as f32,
+            ctx.current_time(),
+            POPOVER_ANIMATION_SECONDS,
+        );
         let is_presented = state.is_presented();
         drop(state);
 
@@ -3741,7 +3754,8 @@ mod tests {
             .open(true),
         ));
 
-        let descriptor = overlay_layer_descriptor(&output).expect("popover layer descriptor present");
+        let descriptor =
+            overlay_layer_descriptor(&output).expect("popover layer descriptor present");
 
         assert!(descriptor.is_stack_surface);
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
@@ -3759,7 +3773,9 @@ mod tests {
             ),
         ));
 
-        let initial = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let initial = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         assert!(overlay_layer_descriptor(&initial).is_none());
 
         let trigger = initial
@@ -3779,7 +3795,9 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
 
-        let start = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let start = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         let start_descriptor =
             overlay_layer_descriptor(&start).expect("tooltip overlay layer should appear");
         assert_eq!(
@@ -3791,7 +3809,9 @@ mod tests {
 
         runtime.tick(TOOLTIP_ANIMATION_SECONDS * 0.5);
         assert!(handle_ready_events(&mut runtime)? >= 1);
-        let mid = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let mid = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         let mid_descriptor =
             overlay_layer_descriptor(&mid).expect("tooltip overlay layer should stay active");
         assert!(mid_descriptor.properties.opacity > 0.0);
@@ -3801,11 +3821,18 @@ mod tests {
             mid_descriptor.properties.translation.y.abs()
                 < start_descriptor.properties.translation.y.abs()
         );
-        assert!(runtime.next_wakeup_time(window_id).map_err(|error| error.to_string())?.is_some());
+        assert!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?
+                .is_some()
+        );
 
         runtime.tick(TOOLTIP_ANIMATION_SECONDS);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
-        let settled = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let settled = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         let settled_descriptor =
             overlay_layer_descriptor(&settled).expect("tooltip overlay layer should still exist");
         assert_eq!(settled_descriptor.properties.opacity, 1.0);
@@ -3834,13 +3861,14 @@ mod tests {
             ),
         ));
 
-        let closed = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let closed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         let trigger = closed
             .semantics
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::Button
-                    && node.name.as_deref() == Some("Open inspector")
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open inspector")
             })
             .expect("popover trigger semantics present")
             .bounds;
@@ -3854,7 +3882,9 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
 
-        let opened = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let opened = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         let open_descriptor =
             overlay_layer_descriptor(&opened).expect("popover overlay layer should appear");
         assert_eq!(content.borrow().paint, 1);
@@ -3863,27 +3893,38 @@ mod tests {
 
         runtime.tick(POPOVER_ANIMATION_SECONDS * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
-        let mid = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let mid = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         let mid_descriptor =
             overlay_layer_descriptor(&mid).expect("popover overlay layer should stay active");
         assert!(mid_descriptor.properties.opacity > 0.0);
         assert!(mid_descriptor.properties.opacity < 1.0);
         assert!(mid_descriptor.properties.translation.y < 0.0);
         assert_eq!(
-            content.borrow().paint, 1,
+            content.borrow().paint,
+            1,
             "popover content should stay retained while only layer properties change"
         );
-        assert!(runtime.next_wakeup_time(window_id).map_err(|error| error.to_string())?.is_some());
+        assert!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?
+                .is_some()
+        );
 
         runtime.tick(POPOVER_ANIMATION_SECONDS);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
-        let settled = runtime.render(window_id).map_err(|error| error.to_string())?;
+        let settled = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
         let settled_descriptor =
             overlay_layer_descriptor(&settled).expect("popover overlay layer should remain open");
         assert_eq!(settled_descriptor.properties.opacity, 1.0);
         assert_eq!(settled_descriptor.properties.translation.y, 0.0);
         assert_eq!(
-            content.borrow().paint, 1,
+            content.borrow().paint,
+            1,
             "popover content should not repaint on retained-only animation frames"
         );
         assert_eq!(
@@ -4031,7 +4072,8 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
         let graph = runtime.widget_graph(window_id).unwrap();
         let owner = overlay_layer_owner(&output).expect("popover layer owner present");
-        let descriptor = overlay_layer_descriptor(&output).expect("popover layer descriptor present");
+        let descriptor =
+            overlay_layer_descriptor(&output).expect("popover layer descriptor present");
         let node = graph
             .nodes
             .iter()

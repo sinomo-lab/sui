@@ -33,7 +33,9 @@ impl EffectNodeId {
     const ROOT: Self = Self(0);
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) const MAX_ANALYTIC_PATH_CONTOURS: usize = 32;
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) const MAX_ANALYTIC_PATH_POINTS: usize = 512;
 
 #[derive(Debug, Clone, PartialEq, Default)]

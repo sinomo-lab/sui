@@ -5,7 +5,7 @@ mod desktop;
 mod display_capabilities;
 mod headless;
 
-use std::time::Instant;
+use web_time::Instant;
 
 use sui_core::WindowId;
 use sui_render_wgpu::{
@@ -202,17 +202,16 @@ pub fn publish_frame_performance(
     let total_time_ms = event_time_ms + redraw_time_ms + runtime_time_ms + renderer_time_ms;
 
     if !detail_mode.is_detailed() {
-        let scene = SceneStatistics::minimal(
-            &output.frame,
-            output.diagnostics.widget_count,
-            detail_mode,
-        )
-        .with_animation_counters(
-            output.diagnostics.active_animated_widget_count,
-            output.diagnostics.animation_frame_wake_count,
-            output.diagnostics.animation_repaint_frame_count,
-            output.diagnostics.animation_transform_effect_only_frame_count,
-        );
+        let scene =
+            SceneStatistics::minimal(&output.frame, output.diagnostics.widget_count, detail_mode)
+                .with_animation_counters(
+                    output.diagnostics.active_animated_widget_count,
+                    output.diagnostics.animation_frame_wake_count,
+                    output.diagnostics.animation_repaint_frame_count,
+                    output
+                        .diagnostics
+                        .animation_transform_effect_only_frame_count,
+                );
         publish_window_performance_snapshot(
             WindowPerformanceSnapshot::with_total_time_ms(
                 window_id,
@@ -289,7 +288,9 @@ pub fn publish_frame_performance(
         output.diagnostics.active_animated_widget_count,
         output.diagnostics.animation_frame_wake_count,
         output.diagnostics.animation_repaint_frame_count,
-        output.diagnostics.animation_transform_effect_only_frame_count,
+        output
+            .diagnostics
+            .animation_transform_effect_only_frame_count,
     );
 
     publish_window_performance_snapshot(

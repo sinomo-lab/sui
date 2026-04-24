@@ -1,4 +1,4 @@
-use std::time::Instant;
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_variables))]
 
 use super::*;
 
@@ -646,7 +646,6 @@ fn encode_unclipped_pass_run(
         timestamp_writes: None,
         multiview_mask: None,
     });
-
     let mut current_kind = None;
     for batch in passes {
         encode_draws_for_pass(
@@ -2427,8 +2426,9 @@ fn append_painted_path(
         return Ok(FillPathRenderMode::SolidOnly);
     }
 
-    let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
+    #[cfg(not(target_arch = "wasm32"))]
     if feather_width > 0.0 {
+        let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let lyon_path = build_lyon_path(path, state.current_transform);
         if let Some(data) = build_analytic_fill_path_data(&lyon_path, feather_width) {
             tessellate_filled_lyon_path(vertices, &lyon_path, color, viewport)?;
@@ -2475,11 +2475,12 @@ fn append_stroked_path(
         return Ok(None);
     }
 
-    let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
     // The analytic stroke path is efficient for broad strokes, but very thin UI
     // strokes can lose most of their visible ink once feathering and clipping
     // are combined. Route thin strokes through the cached mesh path instead.
+    #[cfg(not(target_arch = "wasm32"))]
     if feather_width > 0.0 && line_width > feather_width * 2.0 {
+        let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let lyon_path = build_lyon_path(path, state.current_transform);
         if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
             append_analytic_path_quad(
@@ -3401,10 +3402,13 @@ fn preferred_hdr_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu:
 }
 
 pub(crate) fn output_transform_requires_intermediate(strategy: OutputStrategy) -> bool {
-    matches!(
-        strategy,
-        OutputStrategy::HdrNativeSurface { .. } | OutputStrategy::HdrIntermediateThenToneMap { .. }
-    )
+    match strategy {
+        OutputStrategy::HdrNativeSurface { .. }
+        | OutputStrategy::HdrIntermediateThenToneMap { .. } => true,
+        OutputStrategy::SdrSurface { format } | OutputStrategy::WideGamutSurface { format, .. } => {
+            !format.is_srgb()
+        }
+    }
 }
 
 pub(crate) fn output_sdr_content_scale(strategy: OutputStrategy, brightness_nits: f32) -> f32 {
@@ -3599,6 +3603,13 @@ fn configure_surface_for_strategy(
     } else {
         wgpu::PresentMode::AutoNoVsync
     };
+    let capabilities = surface.get_capabilities(adapter);
+    if capabilities
+        .alpha_modes
+        .contains(&wgpu::CompositeAlphaMode::Opaque)
+    {
+        config.alpha_mode = wgpu::CompositeAlphaMode::Opaque;
+    }
     surface.configure(device, &config);
     Ok(config)
 }

@@ -15,20 +15,9 @@
         font-family: system-ui, sans-serif;
       }
 
-      body {
-        display: flex;
-        flex-direction: column;
-      }
-
-      header {
-        padding: 12px 16px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      }
-
       main {
-        flex: 1;
-        display: flex;
-        min-height: 0;
+        width: 100%;
+        height: 100%;
       }
 
       canvas {
@@ -58,6 +47,129 @@
         display: none;
       }
     </style>
+    <script>
+      (() => {
+        const params = new URLSearchParams(window.location.search);
+        const queryValue = (name) => (params.get(name) || "").toLowerCase();
+        const mediaMatches = (query) =>
+          typeof matchMedia === "function" && matchMedia(query).matches;
+        const forceSdr =
+          queryValue("color-management") === "force-sdr" ||
+          queryValue("dynamic-range") === "sdr" ||
+          queryValue("dynamic-range") === "standard" ||
+          queryValue("canvas-format") === "rgba8unorm-srgb" ||
+          queryValue("canvas-tone-mapping") === "standard";
+
+        const wantsWideGamut =
+          !forceSdr &&
+          (queryValue("canvas-color-space") === "display-p3" ||
+            queryValue("output-primaries") === "display-p3" ||
+            queryValue("output-primaries") === "p3" ||
+            queryValue("color-management") === "prefer-wide-gamut" ||
+            queryValue("color-management") === "prefer-hdr" ||
+            mediaMatches("(color-gamut: p3)") ||
+            mediaMatches("(color-gamut: rec2020)"));
+
+        const wantsHdr =
+          !forceSdr &&
+          (queryValue("canvas-format") === "rgba16float" ||
+            queryValue("canvas-format") === "float16" ||
+            queryValue("canvas-format") === "hdr" ||
+            queryValue("canvas-tone-mapping") === "extended" ||
+            queryValue("canvas-tone-mapping") === "hdr" ||
+            queryValue("dynamic-range") === "hdr" ||
+            queryValue("dynamic-range") === "high" ||
+            queryValue("color-management") === "prefer-hdr" ||
+            mediaMatches("(dynamic-range: high)"));
+
+        if (!wantsWideGamut && !wantsHdr) {
+          return;
+        }
+
+        const patchConfigure = (context) => {
+          if (!context || context.__suiColorConfigurePatched) {
+            return context;
+          }
+
+          const configure = context.configure;
+          if (typeof configure !== "function") {
+            return context;
+          }
+
+          Object.defineProperty(context, "__suiColorConfigurePatched", {
+            value: true,
+          });
+
+          context.configure = function (configuration) {
+            const next = {
+              device: configuration.device,
+              format: configuration.format,
+              usage: configuration.usage,
+              alphaMode: configuration.alphaMode,
+              viewFormats: configuration.viewFormats,
+            };
+
+            if (wantsWideGamut) {
+              next.colorSpace = "display-p3";
+            }
+
+            if (wantsHdr && configuration.format === "rgba16float") {
+              next.toneMapping = { mode: "extended" };
+            }
+
+            window.__suiWebGpuCanvasConfiguration = next;
+            if (!window.__suiLoggedWebGpuCanvasConfiguration) {
+              window.__suiLoggedWebGpuCanvasConfiguration = true;
+              console.log(
+                "SUI_WEBGPU_CANVAS_CONFIGURATION " +
+                  JSON.stringify({
+                    format: next.format,
+                    colorSpace: next.colorSpace,
+                    toneMapping: next.toneMapping,
+                    alphaMode: next.alphaMode,
+                    usage: next.usage,
+                  }),
+              );
+            }
+
+            try {
+              return configure.call(this, next);
+            } catch (error) {
+              window.__suiWebGpuCanvasConfigurationError = String(error);
+              console.warn(
+                "SUI_WEBGPU_CANVAS_CONFIGURATION_ERROR " + String(error),
+              );
+              return configure.call(this, configuration);
+            }
+          };
+
+          return context;
+        };
+
+        const patchCanvas = (prototype) => {
+          if (!prototype || prototype.__suiWebGpuGetContextPatched) {
+            return;
+          }
+
+          const getContext = prototype.getContext;
+          if (typeof getContext !== "function") {
+            return;
+          }
+
+          Object.defineProperty(prototype, "__suiWebGpuGetContextPatched", {
+            value: true,
+          });
+
+          prototype.getContext = function (contextId, ...args) {
+            const context = getContext.call(this, contextId, ...args);
+            return contextId === "webgpu" ? patchConfigure(context) : context;
+          };
+        };
+
+        patchCanvas(window.HTMLCanvasElement?.prototype);
+        patchCanvas(window.OffscreenCanvas?.prototype);
+      })();
+    </script>
     <script>
       (() => {
         const params = new URLSearchParams(window.location.search);
@@ -91,6 +203,25 @@
         };
 
         const finalize = (samples, startedAt) => {
+          const canvas = document.getElementById("sui-main-canvas");
+          const canvasMetrics = canvas
+            ? {
+                width: canvas.width,
+                height: canvas.height,
+                clientWidth: canvas.clientWidth,
+                clientHeight: canvas.clientHeight,
+              }
+            : null;
+          const canvasConfiguration = window.__suiWebGpuCanvasConfiguration
+            ? {
+                format: window.__suiWebGpuCanvasConfiguration.format,
+                colorSpace: window.__suiWebGpuCanvasConfiguration.colorSpace,
+                toneMapping:
+                  window.__suiWebGpuCanvasConfiguration.toneMapping ?? null,
+                configurationError:
+                  window.__suiWebGpuCanvasConfigurationError ?? null,
+              }
+            : null;
           const totalMs = samples.reduce((sum, value) => sum + value, 0);
           const avgMs = totalMs / samples.length;
           const minMs = Math.min(...samples);
@@ -107,6 +238,8 @@
             p95FrameMs: Number(p95Ms.toFixed(3)),
             avgFps: Number((1000 / avgMs).toFixed(2)),
             p95Fps: Number((1000 / p95Ms).toFixed(2)),
+            canvasMetrics,
+            canvasConfiguration,
           };
           window.__suiBenchmarkResult = result;
           output.textContent = JSON.stringify(result, null, 2);
@@ -144,6 +277,9 @@
         );
       })();
     </script>
+  </head>
+  <body>
+    <main><canvas id="sui-main-canvas"></canvas></main>
     <link
       data-trunk
       rel="rust"
@@ -151,9 +287,5 @@
       data-cargo-no-default-features
       data-cargo-features="web"
     />
-  </head>
-  <body>
-    <header>SUI Dev (WebAssembly) — query benchmarks: button-grid, retained-text, text-editing, text-comparison, widget-book, dev</header>
-    <main></main>
   </body>
 </html>

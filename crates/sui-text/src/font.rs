@@ -275,6 +275,7 @@ impl TextSystemState {
         let locale = String::from("en-US");
         let mut font_db = fontdb::Database::new();
         font_db.load_system_fonts();
+        load_bundled_fallback_fonts(&mut font_db);
 
         let families = [fontdb::Family::SansSerif];
         let default_font = font_db
@@ -285,7 +286,7 @@ impl TextSystemState {
                 style: fontdb::Style::Normal,
             })
             .or_else(|| font_db.faces().next().map(|face| face.id))
-            .ok_or_else(|| Error::new("failed to locate a system font for text rendering"))?;
+            .ok_or_else(|| Error::new("failed to locate a font for text rendering"))?;
 
         let default_face = font_db
             .with_face_data(default_font, |font_data, face_index| {
@@ -342,3 +343,13 @@ impl TextSystemState {
         })
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+fn load_bundled_fallback_fonts(font_db: &mut fontdb::Database) {
+    font_db.load_font_source(fontdb::Source::Binary(Arc::new(
+        include_bytes!("../assets/NotoSans-Regular.ttf").to_vec(),
+    )));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_bundled_fallback_fonts(_font_db: &mut fontdb::Database) {}
