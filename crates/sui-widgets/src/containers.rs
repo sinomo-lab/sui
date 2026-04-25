@@ -568,8 +568,14 @@ struct ScrollStateSubscribers {
     scroll_bar_ids: Vec<WidgetId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollBarAxis {
+    Vertical,
+    Horizontal,
+}
+
 #[derive(Debug, Clone, Copy)]
-struct VerticalScrollBarMetrics {
+struct ScrollBarMetrics {
     track: Rect,
     thumb: Rect,
     max_scroll: f32,
@@ -578,13 +584,14 @@ struct VerticalScrollBarMetrics {
 pub struct ScrollBar {
     theme: Box<DefaultTheme>,
     state: ScrollState,
+    axis: ScrollBarAxis,
     name: Option<String>,
     width: f32,
     min_thumb_length: f32,
     hovered: bool,
     dragging: bool,
     pointer_id: Option<u64>,
-    drag_thumb_offset_y: f32,
+    drag_thumb_offset: f32,
 }
 
 impl ScrollBar {
@@ -592,13 +599,21 @@ impl ScrollBar {
         Self {
             theme: Box::new(DefaultTheme::default()),
             state,
+            axis: ScrollBarAxis::Vertical,
             name: None,
             width: 12.0,
             min_thumb_length: 28.0,
             hovered: false,
             dragging: false,
             pointer_id: None,
-            drag_thumb_offset_y: 0.0,
+            drag_thumb_offset: 0.0,
+        }
+    }
+
+    pub fn horizontal(state: ScrollState) -> Self {
+        Self {
+            axis: ScrollBarAxis::Horizontal,
+            ..Self::vertical(state)
         }
     }
 
@@ -618,46 +633,111 @@ impl ScrollBar {
     }
 
     fn track_rect(&self, bounds: Rect) -> Rect {
-        let horizontal_inset = ((bounds.width() - self.width) * 0.5).max(0.0);
-        Rect::new(
-            bounds.x() + horizontal_inset,
-            bounds.y(),
-            self.width.min(bounds.width()),
-            bounds.height(),
-        )
+        match self.axis {
+            ScrollBarAxis::Vertical => {
+                let horizontal_inset = ((bounds.width() - self.width) * 0.5).max(0.0);
+                Rect::new(
+                    bounds.x() + horizontal_inset,
+                    bounds.y(),
+                    self.width.min(bounds.width()),
+                    bounds.height(),
+                )
+            }
+            ScrollBarAxis::Horizontal => {
+                let vertical_inset = ((bounds.height() - self.width) * 0.5).max(0.0);
+                Rect::new(
+                    bounds.x(),
+                    bounds.y() + vertical_inset,
+                    bounds.width(),
+                    self.width.min(bounds.height()),
+                )
+            }
+        }
     }
 
-    fn metrics(&self, bounds: Rect) -> Option<VerticalScrollBarMetrics> {
+    fn metrics(&self, bounds: Rect) -> Option<ScrollBarMetrics> {
         let viewport = self.state.viewport_size();
         let content = self.state.content_size();
-        if viewport.height <= 0.0 || content.height <= viewport.height || bounds.height() <= 0.0 {
+        let viewport_extent = self.axis_size(viewport);
+        let content_extent = self.axis_size(content);
+        let bounds_extent = self.axis_rect_length(bounds);
+        if viewport_extent <= 0.0 || content_extent <= viewport_extent || bounds_extent <= 0.0 {
             return None;
         }
 
         let track = self.track_rect(bounds);
-        let ratio = (viewport.height / content.height).clamp(0.08, 1.0);
-        let thumb_height = (track.height() * ratio)
+        let track_extent = self.axis_rect_length(track);
+        let ratio = (viewport_extent / content_extent).clamp(0.08, 1.0);
+        let thumb_extent = (track_extent * ratio)
             .max(self.min_thumb_length)
-            .min(track.height());
-        let max_scroll = (content.height - viewport.height).max(0.0);
-        let travel = (track.height() - thumb_height).max(0.0);
+            .min(track_extent);
+        let max_scroll = (content_extent - viewport_extent).max(0.0);
+        let travel = (track_extent - thumb_extent).max(0.0);
         let offset = self
-            .state
-            .current_offset()
-            .y
+            .axis_offset(self.state.current_offset())
             .clamp(0.0, max_scroll.max(0.0));
-        let thumb_y = track.y()
+        let thumb_start = self.axis_rect_start(track)
             + if travel <= f32::EPSILON || max_scroll <= f32::EPSILON {
                 0.0
             } else {
                 travel * (offset / max_scroll)
             };
+        let thumb = match self.axis {
+            ScrollBarAxis::Vertical => {
+                Rect::new(track.x(), thumb_start, track.width(), thumb_extent)
+            }
+            ScrollBarAxis::Horizontal => {
+                Rect::new(thumb_start, track.y(), thumb_extent, track.height())
+            }
+        };
 
-        Some(VerticalScrollBarMetrics {
+        Some(ScrollBarMetrics {
             track,
-            thumb: Rect::new(track.x(), thumb_y, track.width(), thumb_height),
+            thumb,
             max_scroll,
         })
+    }
+
+    fn axis_size(&self, size: Size) -> f32 {
+        match self.axis {
+            ScrollBarAxis::Vertical => size.height,
+            ScrollBarAxis::Horizontal => size.width,
+        }
+    }
+
+    fn axis_offset(&self, offset: Vector) -> f32 {
+        match self.axis {
+            ScrollBarAxis::Vertical => offset.y,
+            ScrollBarAxis::Horizontal => offset.x,
+        }
+    }
+
+    fn axis_rect_start(&self, rect: Rect) -> f32 {
+        match self.axis {
+            ScrollBarAxis::Vertical => rect.y(),
+            ScrollBarAxis::Horizontal => rect.x(),
+        }
+    }
+
+    fn axis_rect_length(&self, rect: Rect) -> f32 {
+        match self.axis {
+            ScrollBarAxis::Vertical => rect.height(),
+            ScrollBarAxis::Horizontal => rect.width(),
+        }
+    }
+
+    fn axis_rect_max(&self, rect: Rect) -> f32 {
+        match self.axis {
+            ScrollBarAxis::Vertical => rect.max_y(),
+            ScrollBarAxis::Horizontal => rect.max_x(),
+        }
+    }
+
+    fn pointer_position(&self, position: Point) -> f32 {
+        match self.axis {
+            ScrollBarAxis::Vertical => position.y,
+            ScrollBarAxis::Horizontal => position.x,
+        }
     }
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
@@ -685,12 +765,21 @@ impl ScrollBar {
         }
     }
 
-    fn set_offset_y<C>(&mut self, ctx: &mut C, source_widget_id: WidgetId, offset_y: f32) -> bool
+    fn set_axis_offset<C>(
+        &mut self,
+        ctx: &mut C,
+        source_widget_id: WidgetId,
+        axis_offset: f32,
+    ) -> bool
     where
         C: ScrollInvalidationCtx,
     {
         let current = self.state.current_offset();
-        if !self.state.set_offset(Vector::new(current.x, offset_y)) {
+        let next = match self.axis {
+            ScrollBarAxis::Vertical => Vector::new(current.x, axis_offset),
+            ScrollBarAxis::Horizontal => Vector::new(axis_offset, current.y),
+        };
+        if !self.state.set_offset(next) {
             return false;
         }
         self.request_dependents(ctx, source_widget_id);
@@ -701,29 +790,30 @@ impl ScrollBar {
         &mut self,
         ctx: &mut C,
         source_widget_id: WidgetId,
-        metrics: VerticalScrollBarMetrics,
-        pointer_y: f32,
+        metrics: ScrollBarMetrics,
+        pointer_position: f32,
         drag_anchor: f32,
     ) -> bool
     where
         C: ScrollInvalidationCtx,
     {
-        let travel = (metrics.track.height() - metrics.thumb.height()).max(0.0);
-        let thumb_y = (pointer_y - drag_anchor).clamp(
-            metrics.track.y(),
-            metrics.track.max_y() - metrics.thumb.height(),
+        let thumb_extent = self.axis_rect_length(metrics.thumb);
+        let travel = (self.axis_rect_length(metrics.track) - thumb_extent).max(0.0);
+        let thumb_start = (pointer_position - drag_anchor).clamp(
+            self.axis_rect_start(metrics.track),
+            self.axis_rect_max(metrics.track) - thumb_extent,
         );
         let fraction = if travel <= f32::EPSILON {
             0.0
         } else {
-            (thumb_y - metrics.track.y()) / travel
+            (thumb_start - self.axis_rect_start(metrics.track)) / travel
         };
-        self.set_offset_y(ctx, source_widget_id, metrics.max_scroll * fraction)
+        self.set_axis_offset(ctx, source_widget_id, metrics.max_scroll * fraction)
     }
 
     fn page_step(&self) -> f32 {
         let viewport = self.state.viewport_size();
-        (viewport.height * 0.85).max(40.0)
+        (self.axis_size(viewport) * 0.85).max(40.0)
     }
 }
 
@@ -741,8 +831,8 @@ impl Widget for ScrollBar {
                         ctx,
                         ctx.widget_id(),
                         metrics,
-                        pointer.position.y,
-                        self.drag_thumb_offset_y,
+                        self.pointer_position(pointer.position),
+                        self.drag_thumb_offset,
                     )
                 {
                     ctx.request_paint();
@@ -770,17 +860,17 @@ impl Widget for ScrollBar {
                 self.dragging = true;
                 self.pointer_id = Some(pointer.pointer_id);
                 self.hovered = true;
-                self.drag_thumb_offset_y = if metrics.thumb.contains(pointer.position) {
-                    pointer.position.y - metrics.thumb.y()
+                self.drag_thumb_offset = if metrics.thumb.contains(pointer.position) {
+                    self.pointer_position(pointer.position) - self.axis_rect_start(metrics.thumb)
                 } else {
-                    metrics.thumb.height() * 0.5
+                    self.axis_rect_length(metrics.thumb) * 0.5
                 };
                 let _ = self.set_from_pointer_position(
                     ctx,
                     ctx.widget_id(),
                     metrics,
-                    pointer.position.y,
-                    self.drag_thumb_offset_y,
+                    self.pointer_position(pointer.position),
+                    self.drag_thumb_offset,
                 );
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
@@ -800,8 +890,8 @@ impl Widget for ScrollBar {
                         ctx,
                         ctx.widget_id(),
                         metrics,
-                        pointer.position.y,
-                        self.drag_thumb_offset_y,
+                        self.pointer_position(pointer.position),
+                        self.drag_thumb_offset,
                     );
                 }
                 self.dragging = false;
@@ -825,15 +915,17 @@ impl Widget for ScrollBar {
                 ctx.set_handled();
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
-                let max_scroll = self.state.max_offset().y;
+                let max_scroll = self.axis_offset(self.state.max_offset());
                 if max_scroll <= f32::EPSILON {
                     return;
                 }
 
-                let current = self.state.current_offset().y;
+                let current = self.axis_offset(self.state.current_offset());
                 let next = match key.key.as_str() {
-                    "ArrowUp" => Some(current - 40.0),
-                    "ArrowDown" => Some(current + 40.0),
+                    "ArrowUp" if self.axis == ScrollBarAxis::Vertical => Some(current - 40.0),
+                    "ArrowDown" if self.axis == ScrollBarAxis::Vertical => Some(current + 40.0),
+                    "ArrowLeft" if self.axis == ScrollBarAxis::Horizontal => Some(current - 40.0),
+                    "ArrowRight" if self.axis == ScrollBarAxis::Horizontal => Some(current + 40.0),
                     "PageUp" => Some(current - self.page_step()),
                     "PageDown" => Some(current + self.page_step()),
                     "Home" => Some(0.0),
@@ -842,7 +934,7 @@ impl Widget for ScrollBar {
                 };
 
                 if let Some(next) = next {
-                    if self.set_offset_y(ctx, ctx.widget_id(), next) {
+                    if self.set_axis_offset(ctx, ctx.widget_id(), next) {
                         ctx.request_paint();
                         ctx.request_semantics();
                     }
@@ -855,10 +947,27 @@ impl Widget for ScrollBar {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.state.bind_scroll_bar(ctx.widget_id());
-        constraints.clamp(Size::new(
-            self.width,
-            constraints.max.height.max(0.0).max(40.0),
-        ))
+        let desired = match self.axis {
+            ScrollBarAxis::Vertical => Size::new(
+                self.width,
+                if constraints.max.height.is_finite() {
+                    constraints.max.height.max(0.0)
+                } else {
+                    40.0
+                }
+                .max(40.0),
+            ),
+            ScrollBarAxis::Horizontal => Size::new(
+                if constraints.max.width.is_finite() {
+                    constraints.max.width.max(0.0)
+                } else {
+                    40.0
+                }
+                .max(40.0),
+                self.width,
+            ),
+        };
+        constraints.clamp(desired)
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -898,11 +1007,9 @@ impl Widget for ScrollBar {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let max_scroll = self.state.max_offset().y.max(0.0);
+        let max_scroll = self.axis_offset(self.state.max_offset()).max(0.0);
         let current = self
-            .state
-            .current_offset()
-            .y
+            .axis_offset(self.state.current_offset())
             .clamp(0.0, max_scroll.max(0.0));
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Slider, ctx.bounds());
         node.name = self.name.clone();
@@ -937,6 +1044,7 @@ pub struct ScrollView {
     axes: ScrollAxes,
     name: Option<String>,
     state: Option<ScrollState>,
+    viewport_size_hint: bool,
     offset: Vector,
     content_size: Size,
     child: SingleChild,
@@ -951,6 +1059,7 @@ impl ScrollView {
             axes: ScrollAxes::Vertical,
             name: None,
             state: None,
+            viewport_size_hint: false,
             offset: Vector::ZERO,
             content_size: Size::ZERO,
             child: SingleChild::new(child),
@@ -990,6 +1099,11 @@ impl ScrollView {
 
     pub fn state(mut self, state: ScrollState) -> Self {
         self.state = Some(state);
+        self
+    }
+
+    pub const fn viewport_size_hint(mut self, enabled: bool) -> Self {
+        self.viewport_size_hint = enabled;
         self
     }
 
@@ -1045,6 +1159,7 @@ impl ScrollView {
             self.offset = next;
             self.publish_state(ctx, viewport);
             ctx.request_arrange();
+            ctx.request_paint();
             ctx.request(InvalidationRequest::new(
                 InvalidationTarget::Widget(self.child.child().id()),
                 InvalidationKind::Transform,
@@ -1325,16 +1440,36 @@ impl Widget for ScrollView {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let viewport_hint = Size::new(
+            if constraints.max.width.is_finite() {
+                constraints.max.width
+            } else {
+                constraints.min.width
+            },
+            if constraints.max.height.is_finite() {
+                constraints.max.height
+            } else {
+                constraints.min.height
+            },
+        );
         let mut child_constraints = constraints.loosen();
         if self.axes.allows_horizontal() {
-            child_constraints.max.width = f32::INFINITY;
+            child_constraints.max.width = if self.viewport_size_hint {
+                viewport_hint.width
+            } else {
+                f32::INFINITY
+            };
         } else if constraints.max.width.is_finite() {
             child_constraints.min.width = constraints.max.width;
             child_constraints.max.width = constraints.max.width;
         }
 
         if self.axes.allows_vertical() {
-            child_constraints.max.height = f32::INFINITY;
+            child_constraints.max.height = if self.viewport_size_hint {
+                viewport_hint.height
+            } else {
+                f32::INFINITY
+            };
         } else if constraints.max.height.is_finite() {
             child_constraints.min.height = constraints.max.height;
             child_constraints.max.height = constraints.max.height;
@@ -2468,6 +2603,46 @@ mod tests {
             .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
             .expect("scroll content present");
         assert_eq!(content.bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
+    }
+
+    #[test]
+    fn scroll_view_repaints_visible_content_after_scroll_input() {
+        let counts = Rc::new(RefCell::new(vec![0usize; 2]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(80.0, 60.0))
+                .with_child(ScrollView::vertical(
+                    Stack::vertical()
+                        .with_child(PaintCounterBox::new(
+                            Size::new(80.0, 60.0),
+                            Color::rgba(0.8, 0.2, 0.2, 1.0),
+                            Rc::clone(&counts),
+                            0,
+                        ))
+                        .with_child(PaintCounterBox::new(
+                            Size::new(80.0, 60.0),
+                            Color::rgba(0.2, 0.6, 0.8, 1.0),
+                            Rc::clone(&counts),
+                            1,
+                        )),
+                )),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        assert_eq!(*counts.borrow(), vec![1, 1]);
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let output = runtime.render(window_id).unwrap();
+
+        assert_eq!(*counts.borrow(), vec![2, 2]);
+        assert!(output.frame.layer_updates.iter().any(|update| {
+            update.kind == sui_scene::SceneLayerUpdateKind::Content
+                && update.damage == Some(Rect::new(0.0, 0.0, 80.0, 60.0))
+        }));
     }
 
     #[test]

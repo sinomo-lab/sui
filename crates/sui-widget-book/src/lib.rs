@@ -3676,13 +3676,13 @@ mod tests {
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
         KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
         PresentationLatencyDiagnostics, RenderOutput, RendererSubmissionDiagnostics, Result,
-        SceneStatistics, SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size, SizedBox,
-        TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
+        SceneStatistics, SceneStatisticsDetailMode, ScrollDelta, SemanticsRole, SemanticsValue,
+        Size, SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
         WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
         set_window_scene_statistics_detail_mode, window_scene_statistics_detail_mode,
     };
     use sui_runtime::publish_window_performance_snapshot;
-    use sui_scene::{Brush, SceneCommand};
+    use sui_scene::{Brush, SceneCommand, SceneLayerUpdateKind};
     use sui_testing::prelude::*;
 
     fn build_default_widget_book_app() -> Result<TestApp> {
@@ -3721,6 +3721,18 @@ mod tests {
                 )
                 .build()
         })
+    }
+
+    fn build_text_validation_runtime() -> Result<sui::Runtime> {
+        Application::new()
+            .window(
+                WindowBuilder::new().title(TEXT_VALIDATION_VIEW_TITLE).root(
+                    SizedBox::new()
+                        .size(Size::new(460.0, 380.0))
+                        .with_child(build_text_validation_surface()),
+                ),
+            )
+            .build()
     }
 
     fn build_text_rendering_comparison_runtime() -> Result<sui::Runtime> {
@@ -4189,6 +4201,37 @@ mod tests {
                     && node.name.as_deref() == Some(mode_name)
             }));
         }
+    }
+
+    #[test]
+    fn text_validation_scroll_repaints_visible_content() -> Result<()> {
+        let mut runtime = build_text_validation_runtime()?;
+        let window_id = runtime.window_ids()[0];
+        let before = runtime.render(window_id)?;
+        let scroll_node = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(TEXT_VALIDATION_SCROLL_NAME)
+            })
+            .expect("text validation scroll semantics present");
+        let scroll_point = Point::new(
+            scroll_node.bounds.x() + 24.0,
+            scroll_node.bounds.y() + (scroll_node.bounds.height() * 0.5),
+        );
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, scroll_point);
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -220.0)));
+        runtime.handle_event(window_id, Event::Pointer(scroll))?;
+        let after = runtime.render(window_id)?;
+
+        assert_ne!(before.frame.scene, after.frame.scene);
+        assert!(after.frame.layer_updates.iter().any(|update| {
+            update.owner == scroll_node.id && update.kind == SceneLayerUpdateKind::Content
+        }));
+
+        Ok(())
     }
 
     #[test]

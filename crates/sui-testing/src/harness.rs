@@ -1324,8 +1324,10 @@ impl LiveHarnessApp {
 
     fn capture(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) -> Result<Screenshot> {
         self.flush_pending_frames(event_loop)?;
-        let image = self.renderer.capture_last_frame_rgba(window_id)?;
-        Ok(Screenshot::from_rgba_image(image))
+        let artifact = self
+            .renderer
+            .capture_last_frame_debug(window_id, DebugCaptureRequest::default())?;
+        Screenshot::from_debug_capture_artifact(artifact)
     }
 
     fn capture_debug(

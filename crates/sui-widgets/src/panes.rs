@@ -11,9 +11,13 @@ use sui_runtime::{
 };
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 
-use crate::DefaultTheme;
+use crate::{
+    DefaultTheme,
+    containers::{ScrollBar, ScrollState, ScrollView},
+};
 
 pub type ResizablePane = SplitView;
+const FLOATING_VIEW_SCROLL_BAR_THICKNESS: f32 = 12.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FloatingViewConfig {
@@ -795,6 +799,8 @@ struct FloatingViewHost {
     state: FloatingWorkspaceState,
     view_id: u64,
     content: SingleChild,
+    vertical_scroll_bar: SingleChild,
+    horizontal_scroll_bar: SingleChild,
 }
 
 impl FloatingViewHost {
@@ -802,11 +808,26 @@ impl FloatingViewHost {
     where
         W: Widget + 'static,
     {
+        let scroll_state = ScrollState::new();
+        let scroll_view = ScrollView::both(child)
+            .state(scroll_state.clone())
+            .viewport_size_hint(true)
+            .name("Floating view content");
         Self {
-            theme: Box::new(theme),
+            theme: Box::new(theme.clone()),
             state,
             view_id,
-            content: SingleChild::new(child),
+            vertical_scroll_bar: SingleChild::new(
+                ScrollBar::vertical(scroll_state.clone())
+                    .theme(theme.clone())
+                    .name("Vertical scroll bar"),
+            ),
+            horizontal_scroll_bar: SingleChild::new(
+                ScrollBar::horizontal(scroll_state.clone())
+                    .theme(theme)
+                    .name("Horizontal scroll bar"),
+            ),
+            content: SingleChild::new(scroll_view),
         }
     }
 }
@@ -820,6 +841,20 @@ impl Widget for FloatingViewHost {
         let probe = Rect::from_origin_size(Point::ZERO, outer);
         let content = floating_view_content_rect(&self.theme, probe, view.maximized);
         self.content.measure(ctx, Constraints::tight(content.size));
+        self.vertical_scroll_bar.measure(
+            ctx,
+            Constraints::tight(Size::new(
+                FLOATING_VIEW_SCROLL_BAR_THICKNESS,
+                content.height(),
+            )),
+        );
+        self.horizontal_scroll_bar.measure(
+            ctx,
+            Constraints::tight(Size::new(
+                content.width(),
+                FLOATING_VIEW_SCROLL_BAR_THICKNESS,
+            )),
+        );
         constraints.clamp(outer)
     }
 
@@ -829,11 +864,36 @@ impl Widget for FloatingViewHost {
         };
         let content = floating_view_content_rect(&self.theme, bounds, view.maximized);
         self.content.arrange(ctx, content);
+        let thickness = FLOATING_VIEW_SCROLL_BAR_THICKNESS
+            .min(content.width().max(0.0))
+            .min(content.height().max(0.0));
+        let vertical_height = (content.height() - thickness).max(0.0);
+        let horizontal_width = (content.width() - thickness).max(0.0);
+        self.vertical_scroll_bar.arrange(
+            ctx,
+            Rect::new(
+                content.max_x() - thickness,
+                content.y(),
+                thickness,
+                vertical_height,
+            ),
+        );
+        self.horizontal_scroll_bar.arrange(
+            ctx,
+            Rect::new(
+                content.x(),
+                content.max_y() - thickness,
+                horizontal_width,
+                thickness,
+            ),
+        );
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         ctx.push_clip_rect(ctx.bounds());
         self.content.paint(ctx);
+        self.vertical_scroll_bar.paint(ctx);
+        self.horizontal_scroll_bar.paint(ctx);
         ctx.pop_clip();
     }
 
@@ -850,14 +910,20 @@ impl Widget for FloatingViewHost {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.content.semantics(ctx);
+        self.vertical_scroll_bar.semantics(ctx);
+        self.horizontal_scroll_bar.semantics(ctx);
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.content.visit_children(visitor);
+        self.vertical_scroll_bar.visit_children(visitor);
+        self.horizontal_scroll_bar.visit_children(visitor);
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.content.visit_children_mut(visitor);
+        self.vertical_scroll_bar.visit_children_mut(visitor);
+        self.horizontal_scroll_bar.visit_children_mut(visitor);
     }
 }
 
@@ -1684,13 +1750,14 @@ mod tests {
     use crate::containers::SizedBox;
     use sui_core::{
         Color, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        Result, SemanticsRole, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
+        Result, ScrollDelta, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
+        WindowEvent,
     };
-    use sui_layout::Axis;
+    use sui_layout::{Axis, Constraints};
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
-        Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, StackOrderPolicy, Widget,
-        WindowBuilder,
+        Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, StackOrderPolicy,
+        Widget, WindowBuilder,
     };
     use sui_scene::{SceneCommand, SceneLayerUpdateKind};
 
@@ -1711,6 +1778,50 @@ mod tests {
 
         fn paint(&self, ctx: &mut PaintCtx) {
             ctx.fill_bounds(self.color);
+        }
+    }
+
+    struct ConstraintProbe {
+        name: String,
+        desired: Size,
+        color: Color,
+        seen: Rc<RefCell<Vec<Constraints>>>,
+    }
+
+    impl ConstraintProbe {
+        fn new(
+            name: impl Into<String>,
+            desired: Size,
+            color: Color,
+            seen: Rc<RefCell<Vec<Constraints>>>,
+        ) -> Self {
+            Self {
+                name: name.into(),
+                desired,
+                color,
+                seen,
+            }
+        }
+    }
+
+    impl Widget for ConstraintProbe {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.seen.borrow_mut().push(constraints);
+            self.desired
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(self.color);
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
+            node.name = Some(self.name.clone());
+            ctx.push(node);
         }
     }
 
@@ -2006,6 +2117,131 @@ mod tests {
                 .iter()
                 .any(|update| update.kind == SceneLayerUpdateKind::Ordering)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn floating_workspace_view_content_receives_size_hint_and_scroll_bars() -> Result<()> {
+        let state = FloatingWorkspaceState::new();
+        let seen_constraints = Rc::new(RefCell::new(Vec::new()));
+        let mut workspace = FloatingWorkspace::new(state.clone());
+        let view_id = workspace.push_view(
+            FloatingViewConfig::new("Inspector", Rect::new(24.0, 24.0, 240.0, 180.0)),
+            ConstraintProbe::new(
+                "Overflowing content",
+                Size::new(420.0, 300.0),
+                Color::rgba(0.22, 0.48, 0.72, 1.0),
+                Rc::clone(&seen_constraints),
+            ),
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(520.0)
+                .height(360.0)
+                .with_child(workspace),
+        );
+        let output = runtime.render(window_id)?;
+        let snapshot = state.snapshot(view_id).expect("view state present");
+        let content = super::floating_view_content_rect(
+            &crate::DefaultTheme::default(),
+            snapshot.bounds,
+            snapshot.maximized,
+        );
+        let hinted = seen_constraints
+            .borrow()
+            .last()
+            .copied()
+            .expect("content should be measured");
+
+        assert_eq!(hinted.max, content.size);
+
+        let vertical = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some("Vertical scroll bar")
+            })
+            .expect("vertical scroll bar semantics present");
+        let horizontal = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some("Horizontal scroll bar")
+            })
+            .expect("horizontal scroll bar semantics present");
+
+        assert!(!vertical.state.disabled);
+        assert!(!horizontal.state.disabled);
+        assert!(matches!(
+            vertical.value,
+            Some(SemanticsValue::Range { max, .. }) if max > 0.0
+        ));
+        assert!(matches!(
+            horizontal.value,
+            Some(SemanticsValue::Range { max, .. }) if max > 0.0
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn floating_workspace_view_allows_horizontal_scrolling() -> Result<()> {
+        let state = FloatingWorkspaceState::new();
+        let seen_constraints = Rc::new(RefCell::new(Vec::new()));
+        let mut workspace = FloatingWorkspace::new(state.clone());
+        workspace.push_view(
+            FloatingViewConfig::new("Inspector", Rect::new(24.0, 24.0, 240.0, 180.0)),
+            ConstraintProbe::new(
+                "Wide content",
+                Size::new(520.0, 120.0),
+                Color::rgba(0.22, 0.48, 0.72, 1.0),
+                seen_constraints,
+            ),
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(520.0)
+                .height(360.0)
+                .with_child(workspace),
+        );
+        let before = runtime.render(window_id)?;
+        let before_content_id = before
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Wide content"))
+            .map(|node| node.id)
+            .expect("content semantics present");
+        let before_graph = runtime.widget_graph(window_id)?;
+        let before_bounds = before_graph
+            .nodes
+            .iter()
+            .find(|node| node.id == before_content_id)
+            .map(|node| node.bounds)
+            .expect("content graph node present");
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(72.0, 96.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(-80.0, 0.0)));
+        runtime.handle_event(window_id, Event::Pointer(scroll))?;
+
+        let after = runtime.render(window_id)?;
+        let after_content_id = after
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Wide content"))
+            .map(|node| node.id)
+            .expect("content semantics present after scroll");
+        let after_graph = runtime.widget_graph(window_id)?;
+        let after_bounds = after_graph
+            .nodes
+            .iter()
+            .find(|node| node.id == after_content_id)
+            .map(|node| node.bounds)
+            .expect("content graph node present after scroll");
+
+        assert!(after_bounds.x() < before_bounds.x() - 40.0);
         Ok(())
     }
 

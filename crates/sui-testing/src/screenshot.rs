@@ -8,7 +8,7 @@ use sui_avif::{
     Encoder as AvifEncoder, HdrEncodingOptions, RgbaF32Image, RgbaU8Image, SdrEncodingOptions,
 };
 use sui_core::{Color, Error, Rect, Result};
-use sui_render_wgpu::{HdrRgbaImage, RgbaImage};
+use sui_render_wgpu::{DebugCaptureArtifact, HdrRgbaImage, RgbaImage};
 
 use crate::snapshot::WindowSnapshot;
 
@@ -152,6 +152,26 @@ impl Screenshot {
         }
     }
 
+    pub(crate) fn from_debug_capture_artifact(artifact: DebugCaptureArtifact) -> Result<Self> {
+        match artifact {
+            DebugCaptureArtifact::SdrRgba8(image) => Ok(Self::from_rgba_image(image)),
+            DebugCaptureArtifact::HdrLinearRgbaF32(image) => Self::from_hdr_linear_image(&image),
+        }
+    }
+
+    pub(crate) fn from_hdr_linear_image(image: &HdrRgbaImage) -> Result<Self> {
+        let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
+        for rgba in image.pixels().chunks_exact(4) {
+            pixels.extend_from_slice(&[
+                linear_to_srgb_u8(rgba[0]),
+                linear_to_srgb_u8(rgba[1]),
+                linear_to_srgb_u8(rgba[2]),
+                linear_alpha_to_u8(rgba[3]),
+            ]);
+        }
+        Self::new(image.width(), image.height(), pixels)
+    }
+
     pub fn width(&self) -> u32 {
         self.width
     }
@@ -223,6 +243,20 @@ impl Screenshot {
             pixels,
         })
     }
+}
+
+fn linear_to_srgb_u8(channel: f32) -> u8 {
+    let value = channel.clamp(0.0, 1.0);
+    let encoded = if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        (1.055 * value.powf(1.0 / 2.4)) - 0.055
+    };
+    (encoded.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn linear_alpha_to_u8(alpha: f32) -> u8 {
+    (alpha.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 impl ArtifactBundle {
@@ -541,6 +575,36 @@ mod tests {
     #[test]
     fn screenshot_new_rejects_wrong_length() {
         assert!(Screenshot::new(2, 2, vec![0; 4]).is_err());
+    }
+
+    #[test]
+    fn screenshot_from_hdr_linear_image_encodes_sdr_rgba() {
+        let image = HdrRgbaImage::new(
+            3,
+            1,
+            vec![
+                0.0,
+                0.0,
+                0.0,
+                1.0, //
+                1.0,
+                1.0,
+                1.0,
+                0.5, //
+                2.0,
+                0.25,
+                0.003_130_8,
+                -1.0,
+            ],
+        )
+        .unwrap();
+        let screenshot = Screenshot::from_hdr_linear_image(&image).unwrap();
+
+        assert_eq!(&screenshot.pixels()[0..4], &[0, 0, 0, 255]);
+        assert_eq!(&screenshot.pixels()[4..8], &[255, 255, 255, 128]);
+        assert_eq!(screenshot.pixels()[8], 255);
+        assert!(screenshot.pixels()[9] > screenshot.pixels()[10]);
+        assert_eq!(screenshot.pixels()[11], 0);
     }
 
     #[test]
