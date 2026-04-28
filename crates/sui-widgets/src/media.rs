@@ -4,7 +4,7 @@ use sui_core::{
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
-use sui_scene::{ImageSource, StrokeStyle};
+use sui_scene::{ImageSource, StrokeStyle, WidgetShader};
 use sui_text::TextStyle;
 
 use crate::DefaultTheme;
@@ -759,9 +759,13 @@ impl Widget for ColorPicker {
             let rect = self.left_slider_rect(ctx.bounds(), index);
             match index {
                 0 => paint_hue_bar(ctx, rect),
-                1 => paint_scalar_bar(ctx, rect, 24, |step| {
-                    hsv_to_color(self.editing_space, self.hue, step, self.value.max(1.0), 1.0)
-                }),
+                1 => paint_saturation_bar(
+                    ctx,
+                    rect,
+                    self.editing_space,
+                    self.hue,
+                    self.value.max(1.0),
+                ),
                 2 => paint_value_bar(
                     ctx,
                     rect,
@@ -949,40 +953,13 @@ fn paint_picker_header(
 }
 
 fn paint_color_wheel(ctx: &mut PaintCtx, rect: Rect) {
-    let steps = 40;
     let center = Point::new(
         rect.x() + rect.width() * 0.5,
         rect.y() + rect.height() * 0.5,
     );
     let outer = rect.width().min(rect.height()) * 0.5;
     let inner = outer * 0.55;
-    let cell = rect.width() / steps as f32;
-    ctx.push_clip_rect(rect);
-    for y in 0..steps {
-        for x in 0..steps {
-            let sample = Point::new(
-                rect.x() + (x as f32 + 0.5) * cell,
-                rect.y() + (y as f32 + 0.5) * cell,
-            );
-            let dx = sample.x - center.x;
-            let dy = sample.y - center.y;
-            let distance = (dx * dx + dy * dy).sqrt();
-            if distance < inner || distance > outer {
-                continue;
-            }
-            let hue = ((dy.atan2(dx) / std::f32::consts::TAU) + 1.0).rem_euclid(1.0);
-            ctx.fill_rect(
-                Rect::new(
-                    rect.x() + x as f32 * cell,
-                    rect.y() + y as f32 * cell,
-                    cell + 1.0,
-                    cell + 1.0,
-                ),
-                hsv_to_color(ColorSpace::Srgb, hue, 1.0, 1.0, 1.0),
-            );
-        }
-    }
-    ctx.pop_clip();
+    ctx.draw_shader_rect(rect, WidgetShader::ColorWheel);
     ctx.stroke(
         Path::circle(center, outer - 1.0),
         Color::rgba(0.0, 0.0, 0.0, 0.18),
@@ -1018,20 +995,14 @@ fn paint_saturation_value_plane(
     hue: f32,
     max_value: f32,
 ) {
-    let steps = 18;
-    for y in 0..steps {
-        for x in 0..steps {
-            let saturation = x as f32 / (steps - 1) as f32;
-            let value = max_value * (1.0 - (y as f32 / (steps - 1) as f32));
-            let cell = Rect::new(
-                rect.x() + rect.width() * (x as f32 / steps as f32),
-                rect.y() + rect.height() * (y as f32 / steps as f32),
-                rect.width() / steps as f32,
-                rect.height() / steps as f32,
-            );
-            ctx.fill_rect(cell, hsv_to_color(space, hue, saturation, value, 1.0));
-        }
-    }
+    ctx.draw_shader_rect(
+        rect,
+        WidgetShader::ColorPickerSaturationValuePlane {
+            color_space: space,
+            hue,
+            max_value,
+        },
+    );
     ctx.stroke_rect(
         rect,
         Color::rgba(0.0, 0.0, 0.0, 0.16),
@@ -1047,25 +1018,23 @@ fn paint_saturation_value_plane(
 }
 
 fn paint_hue_bar(ctx: &mut PaintCtx, rect: Rect) {
-    paint_scalar_bar(ctx, rect, 28, |step| {
-        hsv_to_color(ColorSpace::Srgb, step, 1.0, 1.0, 1.0)
-    });
+    ctx.draw_shader_rect(rect, WidgetShader::ColorPickerHueBar);
+    paint_bar_border(ctx, rect);
 }
 
-fn paint_scalar_bar<F>(ctx: &mut PaintCtx, rect: Rect, steps: usize, mut color_for_t: F)
-where
-    F: FnMut(f32) -> Color,
-{
-    for step in 0..steps {
-        let start = step as f32 / steps as f32;
-        let cell = Rect::new(
-            rect.x() + rect.width() * start,
-            rect.y(),
-            rect.width() / steps as f32,
-            rect.height(),
-        );
-        ctx.fill_rect(cell, color_for_t(start));
-    }
+fn paint_saturation_bar(ctx: &mut PaintCtx, rect: Rect, space: ColorSpace, hue: f32, value: f32) {
+    ctx.draw_shader_rect(
+        rect,
+        WidgetShader::ColorPickerSaturationBar {
+            color_space: space,
+            hue,
+            value,
+        },
+    );
+    paint_bar_border(ctx, rect);
+}
+
+fn paint_bar_border(ctx: &mut PaintCtx, rect: Rect) {
     ctx.stroke_rect(
         rect,
         Color::rgba(0.0, 0.0, 0.0, 0.14),
@@ -1081,15 +1050,20 @@ fn paint_value_bar(
     saturation: f32,
     hdr_capable: bool,
 ) {
-    let steps = 28;
-    paint_scalar_bar(ctx, rect, steps, |step| {
-        let value = if hdr_capable {
-            hdr_slider_to_value(step)
-        } else {
-            step
-        };
-        hsv_to_color(space, hue, saturation, value, 1.0)
-    });
+    ctx.draw_shader_rect(
+        rect,
+        WidgetShader::ColorPickerValueBar {
+            color_space: space,
+            hue,
+            saturation,
+            max_value: if hdr_capable {
+                ColorPicker::MAX_HDR_VALUE
+            } else {
+                1.0
+            },
+        },
+    );
+    paint_bar_border(ctx, rect);
     if hdr_capable {
         let divider_x = rect.x() + rect.width() * 0.5;
         ctx.fill_rect(
@@ -1100,22 +1074,8 @@ fn paint_value_bar(
 }
 
 fn paint_alpha_bar(ctx: &mut PaintCtx, rect: Rect, color: Color) {
-    let steps = 20;
-    for step in 0..steps {
-        let alpha = step as f32 / (steps - 1) as f32;
-        let cell = Rect::new(
-            rect.x() + rect.width() * (step as f32 / steps as f32),
-            rect.y(),
-            rect.width() / steps as f32,
-            rect.height(),
-        );
-        ctx.fill_rect(cell, color.with_alpha(alpha));
-    }
-    ctx.stroke_rect(
-        rect,
-        Color::rgba(0.0, 0.0, 0.0, 0.14),
-        StrokeStyle::new(1.0),
-    );
+    ctx.draw_shader_rect(rect, WidgetShader::ColorPickerAlphaBar { color });
+    paint_bar_border(ctx, rect);
 }
 
 fn paint_rgb_channel_bar(
@@ -1125,11 +1085,15 @@ fn paint_rgb_channel_bar(
     channel_index: usize,
     max_value: f32,
 ) {
-    paint_scalar_bar(ctx, rect, 24, |step| {
-        let mut channels = [current.red, current.green, current.blue];
-        channels[channel_index] = max_value * step;
-        Color::new(current.space, channels[0], channels[1], channels[2], 1.0)
-    });
+    ctx.draw_shader_rect(
+        rect,
+        WidgetShader::ColorPickerRgbChannelBar {
+            color: current,
+            channel: channel_index as u32,
+            max_value,
+        },
+    );
+    paint_bar_border(ctx, rect);
 }
 
 fn paint_labeled_row_text(

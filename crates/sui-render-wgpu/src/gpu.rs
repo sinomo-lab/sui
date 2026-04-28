@@ -85,6 +85,20 @@ impl SharedRenderer {
         self.pipeline_for(format, PipelineKind::AnalyticPathClipped)
     }
 
+    pub(crate) fn widget_shader_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::WidgetShader)
+    }
+
+    pub(crate) fn clipped_widget_shader_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::WidgetShaderClipped)
+    }
+
     pub(crate) fn output_transform_pipeline(
         &mut self,
         format: wgpu::TextureFormat,
@@ -109,6 +123,9 @@ impl SharedRenderer {
                 PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
                     "SUI analytic path shader"
                 }
+                PipelineKind::WidgetShader | PipelineKind::WidgetShaderClipped => {
+                    "SUI widget shader"
+                }
                 PipelineKind::OutputTransform => "SUI output transform shader",
             };
             let shader_source = match kind {
@@ -121,6 +138,9 @@ impl SharedRenderer {
                 }
                 PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
                     ANALYTIC_PATH_SHADER_SOURCE
+                }
+                PipelineKind::WidgetShader | PipelineKind::WidgetShaderClipped => {
+                    WIDGET_SHADER_SOURCE
                 }
                 PipelineKind::OutputTransform => OUTPUT_TRANSFORM_SHADER_SOURCE,
             };
@@ -136,11 +156,13 @@ impl SharedRenderer {
                 | PipelineKind::Textured
                 | PipelineKind::TextAtlas
                 | PipelineKind::AnalyticPath
+                | PipelineKind::WidgetShader
                 | PipelineKind::OutputTransform => None,
                 PipelineKind::Clipped
                 | PipelineKind::TexturedClipped
                 | PipelineKind::TextAtlasClipped
-                | PipelineKind::AnalyticPathClipped => Some(wgpu::DepthStencilState {
+                | PipelineKind::AnalyticPathClipped
+                | PipelineKind::WidgetShaderClipped => Some(wgpu::DepthStencilState {
                     format: STENCIL_FORMAT,
                     depth_write_enabled: Some(false),
                     depth_compare: Some(wgpu::CompareFunction::Always),
@@ -205,6 +227,8 @@ impl SharedRenderer {
                 | PipelineKind::TexturedClipped
                 | PipelineKind::AnalyticPath
                 | PipelineKind::AnalyticPathClipped
+                | PipelineKind::WidgetShader
+                | PipelineKind::WidgetShaderClipped
                 | PipelineKind::ClipMask => wgpu::BlendState::ALPHA_BLENDING,
             };
             let fragment_targets = [Some(wgpu::ColorTargetState {
@@ -243,7 +267,11 @@ impl SharedRenderer {
                         immediate_size: 0,
                     },
                 )),
-                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => None,
+                PipelineKind::Solid
+                | PipelineKind::Clipped
+                | PipelineKind::WidgetShader
+                | PipelineKind::WidgetShaderClipped
+                | PipelineKind::ClipMask => None,
             };
             let scene_vertex_layouts = [Vertex::layout()];
             let text_vertex_layouts = [TextAtlasQuadVertex::layout(), TextAtlasInstance::layout()];
@@ -266,6 +294,8 @@ impl SharedRenderer {
                         PipelineKind::TextAtlasClipped => "SUI clipped text atlas pipeline",
                         PipelineKind::AnalyticPath => "SUI analytic path pipeline",
                         PipelineKind::AnalyticPathClipped => "SUI clipped analytic path pipeline",
+                        PipelineKind::WidgetShader => "SUI widget shader pipeline",
+                        PipelineKind::WidgetShaderClipped => "SUI clipped widget shader pipeline",
                         PipelineKind::ClipMask => "SUI clip mask pipeline",
                         PipelineKind::OutputTransform => "SUI output transform pipeline",
                     }),
@@ -289,6 +319,8 @@ impl SharedRenderer {
                         | PipelineKind::TextAtlasClipped
                         | PipelineKind::AnalyticPath
                         | PipelineKind::AnalyticPathClipped
+                        | PipelineKind::WidgetShader
+                        | PipelineKind::WidgetShaderClipped
                         | PipelineKind::OutputTransform => Some(wgpu::FragmentState {
                             module: &shader,
                             entry_point: Some("fs_main"),
@@ -313,6 +345,8 @@ pub(crate) enum PipelineKind {
     TextAtlasClipped,
     AnalyticPath,
     AnalyticPathClipped,
+    WidgetShader,
+    WidgetShaderClipped,
     ClipMask,
     OutputTransform,
 }
@@ -373,11 +407,12 @@ pub(crate) struct Vertex {
     pub(crate) position: [f32; 2],
     pub(crate) color: [f32; 4],
     pub(crate) tex_coords: [f32; 2],
+    pub(crate) shader_params: [f32; 4],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4, 2 => Float32x2];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] =
+        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4, 2 => Float32x2, 3 => Float32x4];
 
     pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {

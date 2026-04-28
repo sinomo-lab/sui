@@ -17,7 +17,7 @@ use sui_core::{
 use sui_layout::{Constraints, LayoutContext};
 use sui_scene::{
     Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, Scene, SceneCommand,
-    SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle,
+    SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle, WidgetShader,
 };
 use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
@@ -1345,6 +1345,11 @@ impl PaintCtx {
 
     pub fn draw_image_source(&mut self, rect: Rect, source: ImageSource) {
         self.scene.push(SceneCommand::DrawImage { rect, source });
+    }
+
+    pub fn draw_shader_rect(&mut self, rect: Rect, shader: WidgetShader) {
+        self.scene
+            .push(SceneCommand::DrawShaderRect { rect, shader });
     }
 
     pub fn push_clip(&mut self, path: impl Into<Path>) {

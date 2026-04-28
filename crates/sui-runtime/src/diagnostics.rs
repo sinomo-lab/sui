@@ -906,6 +906,7 @@ impl SceneStatistics {
                 | SceneCommand::StrokeRect { .. }
                 | SceneCommand::FillPath { .. }
                 | SceneCommand::StrokePath { .. }
+                | SceneCommand::DrawShaderRect { .. }
                 | SceneCommand::Layer(_) => {}
             }
         });
@@ -1261,6 +1262,7 @@ fn command_kind(command: &SceneCommand) -> &'static str {
         SceneCommand::DrawShapedText(_) => "DrawShapedText",
         SceneCommand::DrawShapedTextWindow(_) => "DrawShapedTextWindow",
         SceneCommand::DrawImage { .. } => "DrawImage",
+        SceneCommand::DrawShaderRect { .. } => "DrawShaderRect",
         SceneCommand::PushClip { .. } => "PushClip",
         SceneCommand::PushClipPath { .. } => "PushClipPath",
         SceneCommand::PopClip => "PopClip",

@@ -713,6 +713,7 @@ impl RetainedCompositorState {
             | SceneCommand::DrawShapedText(_)
             | SceneCommand::DrawShapedTextWindow(_)
             | SceneCommand::DrawImage { .. }
+            | SceneCommand::DrawShaderRect { .. }
             | SceneCommand::Layer(_)
             | SceneCommand::Label { .. } => {}
         }
@@ -1399,6 +1400,7 @@ fn scene_has_draw_content(scene: &Scene) -> bool {
                 | SceneCommand::DrawText(_)
                 | SceneCommand::DrawShapedText(_)
                 | SceneCommand::DrawImage { .. }
+                | SceneCommand::DrawShaderRect { .. }
                 | SceneCommand::Label { .. }
         )
     })
@@ -1597,6 +1599,11 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
                 })
                 .unwrap_or_else(|| 0u8.hash(hasher));
         }
+        SceneCommand::DrawShaderRect { rect, shader } => {
+            16u8.hash(hasher);
+            hash_rect(hasher, *rect);
+            hash_widget_shader(shader, hasher);
+        }
         SceneCommand::PushClip { rect } => {
             8u8.hash(hasher);
             hash_rect(hasher, *rect);
@@ -1628,6 +1635,65 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
     }
 }
 
+fn hash_widget_shader(shader: &sui_scene::WidgetShader, hasher: &mut DefaultHasher) {
+    match shader {
+        sui_scene::WidgetShader::ColorWheel => {
+            0u8.hash(hasher);
+        }
+        sui_scene::WidgetShader::ColorPickerHueBar => {
+            1u8.hash(hasher);
+        }
+        sui_scene::WidgetShader::ColorPickerSaturationValuePlane {
+            color_space,
+            hue,
+            max_value,
+        } => {
+            2u8.hash(hasher);
+            hash_color_space(*color_space, hasher);
+            hue.to_bits().hash(hasher);
+            max_value.to_bits().hash(hasher);
+        }
+        sui_scene::WidgetShader::ColorPickerSaturationBar {
+            color_space,
+            hue,
+            value,
+        } => {
+            3u8.hash(hasher);
+            hash_color_space(*color_space, hasher);
+            hue.to_bits().hash(hasher);
+            value.to_bits().hash(hasher);
+        }
+        sui_scene::WidgetShader::ColorPickerValueBar {
+            color_space,
+            hue,
+            saturation,
+            max_value,
+        } => {
+            4u8.hash(hasher);
+            hash_color_space(*color_space, hasher);
+            hue.to_bits().hash(hasher);
+            saturation.to_bits().hash(hasher);
+            max_value.to_bits().hash(hasher);
+        }
+        sui_scene::WidgetShader::ColorPickerAlphaBar { color } => {
+            5u8.hash(hasher);
+            hash_color(*color, hasher);
+            hash_color_space(color.space, hasher);
+        }
+        sui_scene::WidgetShader::ColorPickerRgbChannelBar {
+            color,
+            channel,
+            max_value,
+        } => {
+            6u8.hash(hasher);
+            hash_color(*color, hasher);
+            hash_color_space(color.space, hasher);
+            channel.hash(hasher);
+            max_value.to_bits().hash(hasher);
+        }
+    }
+}
+
 fn hash_brush(brush: &Brush, hasher: &mut DefaultHasher) {
     match brush {
         Brush::Solid(color) => {
@@ -1642,6 +1708,16 @@ fn hash_color(color: Color, hasher: &mut DefaultHasher) {
     color.green.to_bits().hash(hasher);
     color.blue.to_bits().hash(hasher);
     color.alpha.to_bits().hash(hasher);
+}
+
+fn hash_color_space(space: ColorSpace, hasher: &mut DefaultHasher) {
+    (match space {
+        ColorSpace::Srgb => 0u8,
+        ColorSpace::LinearSrgb => 1u8,
+        ColorSpace::DisplayP3 => 2u8,
+        ColorSpace::LinearDisplayP3 => 3u8,
+    })
+    .hash(hasher);
 }
 
 fn hash_text_style(style: &TextStyle, hasher: &mut DefaultHasher) {

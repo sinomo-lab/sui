@@ -61,7 +61,7 @@ pub use sui_runtime::{
 };
 pub use sui_scene::{
     Brush, ImageRegistry, ImageSource, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand,
-    SceneFrame, StrokeStyle,
+    SceneFrame, StrokeStyle, WidgetShader,
 };
 pub use sui_text::{
     FontRegistry, PersistentTextLayout, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText,
@@ -387,8 +387,8 @@ pub mod prelude {
         ThemeContainers, ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack,
         ThemeFontWeights, ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale,
         ThemeTextToken, ThemeTracking, TimerToken, Tooltip, TooltipPlacement, Transform, TreeItem,
-        TreeView, VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WindowBuilder,
-        WindowRenderOptions, containers::Padding, set_window_render_options,
+        TreeView, VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WidgetShader,
+        WindowBuilder, WindowRenderOptions, containers::Padding, set_window_render_options,
     };
 }
 
