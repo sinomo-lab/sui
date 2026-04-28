@@ -54,6 +54,7 @@ pub struct ListView {
     hovered: Option<usize>,
     pressed: Option<usize>,
     row_height: f32,
+    scroll_y: f32,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
 }
 
@@ -67,6 +68,7 @@ impl ListView {
             hovered: None,
             pressed: None,
             row_height: 28.0,
+            scroll_y: 0.0,
             on_change: None,
         }
     }
@@ -133,15 +135,32 @@ impl ListView {
         self.items.len() as f32 * self.resolved_row_height()
     }
 
+    fn clamp_scroll(&self, viewport_height: f32, scroll_y: f32) -> f32 {
+        let max_scroll = (self.content_height() - viewport_height).max(0.0);
+        scroll_y.clamp(0.0, max_scroll)
+    }
+
     fn row_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
         let viewport = self.viewport_rect(bounds);
         if !viewport.contains(position) {
             return None;
         }
 
-        let y = position.y - viewport.y();
+        let y = position.y - viewport.y() + self.scroll_y;
         let index = (y / self.resolved_row_height()).floor() as usize;
         (index < self.items.len()).then_some(index)
+    }
+
+    fn ensure_visible(&mut self, viewport_height: f32, index: usize) {
+        let row_height = self.resolved_row_height();
+        let top = index as f32 * row_height;
+        let bottom = top + row_height;
+        if top < self.scroll_y {
+            self.scroll_y = top;
+        } else if bottom > self.scroll_y + viewport_height {
+            self.scroll_y = bottom - viewport_height;
+        }
+        self.scroll_y = self.clamp_scroll(viewport_height, self.scroll_y);
     }
 
     fn activate(&mut self, index: usize) {
@@ -158,7 +177,7 @@ impl ListView {
         }
     }
 
-    fn move_selection(&mut self, delta: isize) {
+    fn move_selection(&mut self, delta: isize, viewport_height: f32) {
         if self.items.is_empty() {
             return;
         }
@@ -166,6 +185,7 @@ impl ListView {
         let current = self.selected.unwrap_or(0) as isize;
         let next = (current + delta).clamp(0, self.items.len() as isize - 1) as usize;
         self.activate(next);
+        self.ensure_visible(viewport_height, next);
     }
 }
 
@@ -180,6 +200,22 @@ impl Widget for ListView {
                     self.hovered = hovered;
                     ctx.request_paint();
                     ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Scroll
+                    && viewport.contains(pointer.position) =>
+            {
+                let delta = pointer
+                    .scroll_delta
+                    .map(scroll_delta_to_offset)
+                    .unwrap_or(pointer.delta);
+                let next = self.clamp_scroll(viewport.height(), self.scroll_y - delta.y);
+                if (next - self.scroll_y).abs() > f32::EPSILON {
+                    self.scroll_y = next;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
                 }
             }
             Event::Pointer(pointer)
@@ -232,17 +268,37 @@ impl Widget for ListView {
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
-                    "ArrowUp" => self.move_selection(-1),
-                    "ArrowDown" => self.move_selection(1),
+                    "ArrowUp" => self.move_selection(-1, viewport.height()),
+                    "ArrowDown" => self.move_selection(1, viewport.height()),
                     "Home" => {
                         if !self.items.is_empty() {
                             self.activate(0);
+                            self.ensure_visible(viewport.height(), 0);
                         }
                     }
                     "End" => {
                         if !self.items.is_empty() {
                             let last = self.items.len() - 1;
                             self.activate(last);
+                            self.ensure_visible(viewport.height(), last);
+                        }
+                    }
+                    "PageUp" => {
+                        let next = self.clamp_scroll(
+                            viewport.height(),
+                            self.scroll_y - viewport.height() * 0.85,
+                        );
+                        if (next - self.scroll_y).abs() > f32::EPSILON {
+                            self.scroll_y = next;
+                        }
+                    }
+                    "PageDown" => {
+                        let next = self.clamp_scroll(
+                            viewport.height(),
+                            self.scroll_y + viewport.height() * 0.85,
+                        );
+                        if (next - self.scroll_y).abs() > f32::EPSILON {
+                            self.scroll_y = next;
                         }
                     }
                     _ => return,
@@ -272,14 +328,21 @@ impl Widget for ListView {
             })
             .fold(220.0, f32::max);
         let desired = Size::new(content_width + 16.0, self.content_height() + 16.0);
-        constraints.clamp(Size::new(
+        let size = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
             } else {
                 desired.width
             },
             desired.height,
-        ))
+        ));
+
+        self.scroll_y = self.clamp_scroll(
+            self.viewport_rect(Rect::from_origin_size(Point::ZERO, size))
+                .height(),
+            self.scroll_y,
+        );
+        size
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -292,24 +355,30 @@ impl Widget for ListView {
         draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
         ctx.push_clip_rect(viewport);
 
-        for index in 0..self.items.len() {
-            let y = viewport.y() + (index as f32 * row_height);
+        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
+        let end = (((self.scroll_y + viewport.height()) / row_height).ceil() as usize + 1)
+            .min(self.items.len());
+
+        for index in start..end {
+            let y = viewport.y() + (index as f32 * row_height) - self.scroll_y;
             let row = Rect::new(viewport.x(), y, viewport.width(), row_height);
             let selected = self.selected == Some(index);
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
 
             if selected || hovered || pressed {
-                ctx.fill(
-                    rounded_rect_path(inset_rect(row, Insets::all(1.0)), 6.0),
-                    if selected {
-                        palette.accent.with_alpha(0.14)
-                    } else if pressed {
-                        palette.surface_pressed
-                    } else {
-                        palette.surface_hover
-                    },
-                );
+                if let Some(highlight) = row_highlight_rect(row, viewport) {
+                    ctx.fill_rect(
+                        highlight,
+                        if selected {
+                            palette.accent.with_alpha(0.14)
+                        } else if pressed {
+                            palette.surface_pressed
+                        } else {
+                            palette.surface_hover
+                        },
+                    );
+                }
             }
 
             let Some(item) = self.items.get(index) else {
@@ -448,6 +517,7 @@ pub struct TreeView {
     hovered: Option<Vec<usize>>,
     pressed: Option<Vec<usize>>,
     row_height: f32,
+    scroll_y: f32,
     on_change: Option<Box<dyn FnMut(Vec<usize>, String)>>,
 }
 
@@ -467,6 +537,7 @@ impl TreeView {
             hovered: None,
             pressed: None,
             row_height: 30.0,
+            scroll_y: 0.0,
             on_change: None,
         }
     }
@@ -531,6 +602,11 @@ impl TreeView {
         self.visible_rows().len() as f32 * self.resolved_row_height()
     }
 
+    fn clamp_scroll(&self, viewport_height: f32, scroll_y: f32) -> f32 {
+        let max_scroll = (self.content_height() - viewport_height).max(0.0);
+        scroll_y.clamp(0.0, max_scroll)
+    }
+
     fn row_at_position(&self, bounds: Rect, position: Point) -> Option<TreeRow> {
         let viewport = self.viewport_rect(bounds);
         if !viewport.contains(position) {
@@ -538,7 +614,7 @@ impl TreeView {
         }
 
         let row_height = self.resolved_row_height();
-        let y = position.y - viewport.y();
+        let y = position.y - viewport.y() + self.scroll_y;
         let index = (y / row_height).floor() as usize;
         self.visible_rows().into_iter().nth(index)
     }
@@ -566,6 +642,22 @@ impl TreeView {
         item.expanded = !item.expanded;
         true
     }
+
+    fn ensure_visible(&mut self, viewport_height: f32, path: &[usize]) {
+        let rows = self.visible_rows();
+        let Some(index) = rows.iter().position(|row| row.path == path) else {
+            return;
+        };
+        let row_height = self.resolved_row_height();
+        let top = index as f32 * row_height;
+        let bottom = top + row_height;
+        if top < self.scroll_y {
+            self.scroll_y = top;
+        } else if bottom > self.scroll_y + viewport_height {
+            self.scroll_y = bottom - viewport_height;
+        }
+        self.scroll_y = self.clamp_scroll(viewport_height, self.scroll_y);
+    }
 }
 
 impl Widget for TreeView {
@@ -581,6 +673,22 @@ impl Widget for TreeView {
                     self.hovered = hovered;
                     ctx.request_paint();
                     ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Scroll
+                    && viewport.contains(pointer.position) =>
+            {
+                let delta = pointer
+                    .scroll_delta
+                    .map(scroll_delta_to_offset)
+                    .unwrap_or(pointer.delta);
+                let next = self.clamp_scroll(viewport.height(), self.scroll_y - delta.y);
+                if (next - self.scroll_y).abs() > f32::EPSILON {
+                    self.scroll_y = next;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
                 }
             }
             Event::Pointer(pointer)
@@ -616,7 +724,7 @@ impl Widget for TreeView {
                         .unwrap_or(0);
                     let row_rect = Rect::new(
                         viewport_rect.x(),
-                        viewport_rect.y() + (index as f32 * row_height),
+                        viewport_rect.y() + (index as f32 * row_height) - self.scroll_y,
                         viewport_rect.width(),
                         row_height,
                     );
@@ -666,10 +774,12 @@ impl Widget for TreeView {
                     "ArrowUp" => {
                         let next = current.saturating_sub(1);
                         self.select_path(&rows[next].path);
+                        self.ensure_visible(viewport.height(), &rows[next].path);
                     }
                     "ArrowDown" => {
                         let next = (current + 1).min(rows.len() - 1);
                         self.select_path(&rows[next].path);
+                        self.ensure_visible(viewport.height(), &rows[next].path);
                     }
                     "ArrowRight" => {
                         let row = &rows[current];
@@ -681,6 +791,7 @@ impl Widget for TreeView {
                             let mut child = row.path.clone();
                             child.push(0);
                             self.select_path(&child);
+                            self.ensure_visible(viewport.height(), &child);
                         }
                     }
                     "ArrowLeft" => {
@@ -693,14 +804,17 @@ impl Widget for TreeView {
                             let mut parent = row.path.clone();
                             parent.pop();
                             self.select_path(&parent);
+                            self.ensure_visible(viewport.height(), &parent);
                         }
                     }
                     "Home" => {
                         self.select_path(&rows[0].path);
+                        self.ensure_visible(viewport.height(), &rows[0].path);
                     }
                     "End" => {
                         let last = rows.len() - 1;
                         self.select_path(&rows[last].path);
+                        self.ensure_visible(viewport.height(), &rows[last].path);
                     }
                     _ => return,
                 }
@@ -731,14 +845,20 @@ impl Widget for TreeView {
             })
             .fold(220.0, f32::max);
         let desired = Size::new(width + 16.0, self.content_height() + 16.0);
-        constraints.clamp(Size::new(
+        let size = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
             } else {
                 desired.width
             },
             desired.height,
-        ))
+        ));
+        self.scroll_y = self.clamp_scroll(
+            self.viewport_rect(Rect::from_origin_size(Point::ZERO, size))
+                .height(),
+            self.scroll_y,
+        );
+        size
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -750,25 +870,31 @@ impl Widget for TreeView {
         draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
         ctx.push_clip_rect(viewport);
 
-        for index in 0..rows.len() {
+        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
+        let end = (((self.scroll_y + viewport.height()) / row_height).ceil() as usize + 1)
+            .min(rows.len());
+
+        for index in start..end {
             let row = &rows[index];
-            let y = viewport.y() + (index as f32 * row_height);
+            let y = viewport.y() + (index as f32 * row_height) - self.scroll_y;
             let row_rect = Rect::new(viewport.x(), y, viewport.width(), row_height);
             let selected = self.selected.as_deref() == Some(row.path.as_slice());
             let hovered = self.hovered.as_deref() == Some(row.path.as_slice());
             let pressed = self.pressed.as_deref() == Some(row.path.as_slice());
 
             if selected || hovered || pressed {
-                ctx.fill(
-                    rounded_rect_path(inset_rect(row_rect, Insets::all(1.0)), 6.0),
-                    if selected {
-                        palette.accent.with_alpha(0.14)
-                    } else if pressed {
-                        palette.surface_pressed
-                    } else {
-                        palette.surface_hover
-                    },
-                );
+                if let Some(highlight) = row_highlight_rect(row_rect, viewport) {
+                    ctx.fill_rect(
+                        highlight,
+                        if selected {
+                            palette.accent.with_alpha(0.14)
+                        } else if pressed {
+                            palette.surface_pressed
+                        } else {
+                            palette.surface_hover
+                        },
+                    );
+                }
             }
 
             if row.has_children {
@@ -1910,6 +2036,12 @@ fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
     builder.build()
 }
 
+fn row_highlight_rect(row: Rect, viewport: Rect) -> Option<Rect> {
+    row.intersection(viewport)
+        .map(|visible| inset_rect(visible, Insets::all(1.0)))
+        .filter(|rect| !rect.is_empty())
+}
+
 fn inset_rect(rect: Rect, padding: Insets) -> Rect {
     Rect::new(
         rect.x() + padding.left,
@@ -1941,7 +2073,7 @@ mod tests {
         SemanticsValue, Size, Vector,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
-    use sui_scene::SceneCommand;
+    use sui_scene::{Brush, SceneCommand};
     use sui_text::{FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -2020,6 +2152,24 @@ mod tests {
         runs
     }
 
+    fn selected_highlight_rects(output: &RenderOutput) -> Vec<Rect> {
+        let selected_brush = Brush::Solid(DefaultTheme::default().palette.accent.with_alpha(0.14));
+        let mut rects = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillPath { path, brush } if *brush == selected_brush => {
+                    rects.push(path.bounds());
+                }
+                SceneCommand::FillRect { rect, brush } if *brush == selected_brush => {
+                    rects.push(*rect);
+                }
+                _ => {}
+            });
+        rects
+    }
+
     fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
         let top = -measurement.cap_height.unwrap_or(measurement.ascent);
         let bottom = measurement.descent * 0.5;
@@ -2057,6 +2207,12 @@ mod tests {
             pointer_kind: PointerKind::Mouse,
             is_primary: true,
         })
+    }
+
+    fn wheel_scroll(position: Point, delta: Vector) -> Event {
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, position);
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(delta));
+        Event::Pointer(scroll)
     }
 
     #[test]
@@ -2222,6 +2378,64 @@ mod tests {
     }
 
     #[test]
+    fn list_view_scrolls_overflowing_rows_without_thumb() -> Result<()> {
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(320.0).height(100.0).with_child(
+                ListView::new("Assets").items([
+                    ListItem::new("Hero texture").detail("2048 x 2048 RGBA"),
+                    ListItem::new("UI icon sheet").detail("Tagged for export"),
+                    ListItem::new("Archive cache").detail("Read only"),
+                    ListItem::new("Normals atlas").detail("Streaming mip chain"),
+                ]),
+            ));
+
+        let before = runtime.render(window_id)?;
+        let before_y = text_rects_for(&before, "Hero texture")[0].y();
+
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(60.0, 60.0), Vector::new(0.0, -24.0)),
+        )?;
+        let after = runtime.render(window_id)?;
+        let after_y = text_rects_for(&after, "Hero texture")[0].y();
+
+        assert!(after_y < before_y);
+        assert!(vertical_scroll_thumb_rects(&after).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn list_view_clips_scrolled_selection_highlight_to_viewport() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(100.0).with_child(
+                ListView::new("Assets")
+                    .items([
+                        ListItem::new("Hero texture").detail("2048 x 2048 RGBA"),
+                        ListItem::new("UI icon sheet").detail("Tagged for export"),
+                        ListItem::new("Archive cache").detail("Read only"),
+                        ListItem::new("Normals atlas").detail("Streaming mip chain"),
+                    ])
+                    .selected(0),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(60.0, 60.0), Vector::new(0.0, -24.0)),
+        )?;
+        let output = runtime.render(window_id)?;
+        let highlight = selected_highlight_rects(&output)
+            .first()
+            .copied()
+            .expect("selected list row highlight should be painted");
+
+        assert!(highlight.y() >= 8.0);
+        assert!(highlight.max_y() <= 100.0 - 8.0);
+        Ok(())
+    }
+
+    #[test]
     fn tree_view_does_not_paint_internal_scroll_thumb() {
         let output = render(
             SizedBox::new().width(320.0).height(120.0).with_child(
@@ -2235,6 +2449,75 @@ mod tests {
         );
 
         assert!(vertical_scroll_thumb_rects(&output).is_empty());
+    }
+
+    #[test]
+    fn tree_view_scrolls_overflowing_rows_without_thumb() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene").item(
+                    TreeItem::new("Scene")
+                        .expanded(true)
+                        .with_child(TreeItem::new("Environment").detail("Visible"))
+                        .with_child(TreeItem::new("Sky dome").detail("Visible"))
+                        .with_child(TreeItem::new("Fog volume").detail("Animated"))
+                        .with_child(TreeItem::new("Pilot").detail("Selected")),
+                ),
+            ),
+        );
+
+        let before = runtime.render(window_id)?;
+        let before_y = text_rects_for(&before, "Scene")[0].y();
+
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(60.0, 60.0), Vector::new(0.0, -24.0)),
+        )?;
+        let after = runtime.render(window_id)?;
+        let after_y = text_rects_for(&after, "Scene")[0].y();
+
+        assert!(after_y < before_y);
+        assert!(vertical_scroll_thumb_rects(&after).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn tree_view_clips_scrolled_selection_highlight_to_viewport() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene").item(
+                    TreeItem::new("Scene")
+                        .expanded(true)
+                        .with_child(TreeItem::new("Environment").detail("Visible"))
+                        .with_child(TreeItem::new("Sky dome").detail("Visible"))
+                        .with_child(TreeItem::new("Fog volume").detail("Animated"))
+                        .with_child(TreeItem::new("Pilot").detail("Selected")),
+                ),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(60.0, 24.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(60.0, 24.0), false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(60.0, 60.0), Vector::new(0.0, -24.0)),
+        )?;
+        let output = runtime.render(window_id)?;
+        let highlight = selected_highlight_rects(&output)
+            .first()
+            .copied()
+            .expect("selected tree row highlight should be painted");
+
+        assert!(highlight.y() >= 8.0);
+        assert!(highlight.max_y() <= 120.0 - 8.0);
+        Ok(())
     }
 
     #[test]
