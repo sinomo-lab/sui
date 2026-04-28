@@ -526,6 +526,12 @@ pub struct TreeView {
     on_change: Option<Box<dyn FnMut(Vec<usize>, String)>>,
 }
 
+const TREE_DISCLOSURE_LEFT: f32 = 8.0;
+const TREE_DISCLOSURE_SIZE: f32 = 12.0;
+const TREE_DISCLOSURE_LABEL_GAP: f32 = 6.0;
+const TREE_DEPTH_INDENT: f32 = 18.0;
+const TREE_ROW_RIGHT_PADDING: f32 = 8.0;
+
 impl TreeView {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -829,19 +835,18 @@ impl Widget for TreeView {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let label_style = self.theme.body_text_style();
         let detail_style = caption_style(self.theme.as_ref());
-        let row_padding = 34.0;
         let width = self
             .visible_rows()
             .iter()
             .map(|row| {
-                let indent = row.depth as f32 * 18.0;
+                let label_start = tree_label_offset(row.depth);
                 let label = measure_text(ctx, &row.label, &label_style).width;
                 let detail = row
                     .detail
                     .as_deref()
                     .map(|detail| measure_text(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
-                indent + label.max(detail) + row_padding
+                label_start + label.max(detail) + TREE_ROW_RIGHT_PADDING
             })
             .fold(220.0, f32::max);
         let desired = Size::new(width + 16.0, self.content_height() + 16.0);
@@ -895,7 +900,6 @@ impl Widget for TreeView {
                 );
             }
 
-            let indent = row.depth as f32 * 16.0;
             if row.has_children {
                 ctx.fill(
                     disclosure_path(disclosure_rect(row_rect, row.depth), row.expanded),
@@ -907,7 +911,7 @@ impl Widget for TreeView {
                 );
             }
 
-            let label_x = row_rect.x() + 16.0 + indent;
+            let label_x = row_rect.x() + tree_label_offset(row.depth);
             let text_bounds = Rect::new(
                 label_x,
                 row_rect.y(),
@@ -1796,11 +1800,18 @@ fn tree_item_mut<'a>(items: &'a mut [TreeItem], path: &[usize]) -> Option<&'a mu
 
 fn disclosure_rect(row: Rect, depth: usize) -> Rect {
     Rect::new(
-        row.x() + 8.0 + depth as f32 * 18.0,
-        row.y() + ((row.height() - 12.0) * 0.5),
-        12.0,
-        12.0,
+        row.x() + TREE_DISCLOSURE_LEFT + depth as f32 * TREE_DEPTH_INDENT,
+        row.y() + ((row.height() - TREE_DISCLOSURE_SIZE) * 0.5),
+        TREE_DISCLOSURE_SIZE,
+        TREE_DISCLOSURE_SIZE,
     )
+}
+
+fn tree_label_offset(depth: usize) -> f32 {
+    TREE_DISCLOSURE_LEFT
+        + depth as f32 * TREE_DEPTH_INDENT
+        + TREE_DISCLOSURE_SIZE
+        + TREE_DISCLOSURE_LABEL_GAP
 }
 
 fn disclosure_path(rect: Rect, expanded: bool) -> Path {
@@ -2056,8 +2067,8 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Breadcrumb, BreadcrumbItem, DefaultTheme, ListItem, ListView, Table, TableColumn, TableRow,
-        TreeItem, TreeView,
+        Breadcrumb, BreadcrumbItem, DefaultTheme, ListItem, ListView, TREE_DISCLOSURE_LABEL_GAP,
+        Table, TableColumn, TableRow, TreeItem, TreeView,
     };
     use crate::{ScrollView, SizedBox, Stack};
     use sui_core::{
@@ -2313,6 +2324,34 @@ mod tests {
         let detail = text_rects_for(&output, "Visible")[0];
 
         assert!(label.max_y() <= detail.y());
+    }
+
+    #[test]
+    fn tree_view_disclosure_does_not_overlap_primary_label() {
+        let output = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene").item(
+                    TreeItem::new("Environment")
+                        .with_child(TreeItem::new("Sky dome").detail("Visible")),
+                ),
+            ),
+        );
+
+        let label = text_rects_for(&output, "Environment")[0];
+        let mut disclosure_bounds = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillPath { path, .. } = command {
+                let bounds = path.bounds();
+                if bounds.width() <= 12.0 && bounds.height() <= 12.0 {
+                    disclosure_bounds.push(bounds);
+                }
+            }
+        });
+
+        let disclosure = disclosure_bounds
+            .first()
+            .expect("tree disclosure should be painted");
+        assert!(disclosure.max_x() + TREE_DISCLOSURE_LABEL_GAP <= label.x());
     }
 
     #[test]
