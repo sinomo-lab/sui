@@ -1215,6 +1215,7 @@ pub struct VirtualScrollView {
     name: Option<String>,
     padding: Insets,
     spacing: f32,
+    state: Option<ScrollState>,
     offset_y: f32,
     last_arranged_offset_y: f32,
     content_height: f32,
@@ -1229,6 +1230,7 @@ impl VirtualScrollView {
             name: None,
             padding: Insets::ZERO,
             spacing: 0.0,
+            state: None,
             offset_y: 0.0,
             last_arranged_offset_y: 0.0,
             content_height: 0.0,
@@ -1253,6 +1255,11 @@ impl VirtualScrollView {
         self
     }
 
+    pub fn state(mut self, state: ScrollState) -> Self {
+        self.state = Some(state);
+        self
+    }
+
     pub fn with_child<W>(mut self, child: W) -> Self
     where
         W: Widget + 'static,
@@ -1274,6 +1281,10 @@ impl VirtualScrollView {
 
     pub fn set_offset(&mut self, offset: Vector) {
         self.offset_y = offset.y.max(0.0);
+        if let Some(state) = &self.state {
+            let _ = state.set_offset(Vector::new(0.0, self.offset_y));
+            self.offset_y = state.current_offset().y;
+        }
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
@@ -1344,6 +1355,7 @@ impl VirtualScrollView {
         let next = self.clamp_offset(viewport.height(), previous_offset_y + delta_y);
         if (next - previous_offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
+            self.publish_state(ctx, viewport.size);
             ctx.request_arrange();
             if let Some(exposed_strip) = self.exposed_viewport_strip(viewport, previous_offset_y) {
                 ctx.request_paint_rect(exposed_strip);
@@ -1358,6 +1370,47 @@ impl VirtualScrollView {
             true
         } else {
             false
+        }
+    }
+
+    fn sync_state<C>(&mut self, ctx: &mut C, viewport: Size)
+    where
+        C: ScrollInvalidationCtx + ScrollWidgetCtx,
+    {
+        let Some(state) = &self.state else {
+            self.offset_y = self.clamp_offset(viewport.height, self.offset_y);
+            return;
+        };
+
+        state.bind_scroll_view(ctx.widget_id(), ctx.widget_id());
+        let content_size = Size::new(viewport.width, self.content_height);
+        if state.sync_metrics(ScrollAxes::Vertical, viewport, content_size) {
+            for scroll_bar_id in state.subscribers().scroll_bar_ids {
+                request_scroll_bar_refresh(ctx, scroll_bar_id);
+            }
+        }
+        self.offset_y = self.clamp_offset(viewport.height, state.current_offset().y);
+        if state.set_offset(Vector::new(0.0, self.offset_y)) {
+            for scroll_bar_id in state.subscribers().scroll_bar_ids {
+                request_scroll_bar_refresh(ctx, scroll_bar_id);
+            }
+        }
+    }
+
+    fn publish_state(&self, ctx: &mut EventCtx, viewport: Size) {
+        let Some(state) = &self.state else {
+            return;
+        };
+
+        state.bind_scroll_view(ctx.widget_id(), ctx.widget_id());
+        let content_size = Size::new(viewport.width, self.content_height);
+        let _ = state.sync_metrics(ScrollAxes::Vertical, viewport, content_size);
+        if state.set_offset(Vector::new(0.0, self.offset_y)) {
+            for scroll_bar_id in state.subscribers().scroll_bar_ids {
+                if scroll_bar_id != ctx.widget_id() {
+                    request_scroll_bar_refresh(ctx, scroll_bar_id);
+                }
+            }
         }
     }
 
@@ -1650,7 +1703,7 @@ impl Widget for VirtualScrollView {
         ));
 
         let viewport = self.viewport_rect(Rect::from_origin_size(Point::ZERO, size));
-        self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
+        self.sync_state(ctx, viewport.size);
         self.update_visible_range(viewport.height());
         if previous_content_height != self.content_height
             || previous_item_offsets != self.item_offsets
@@ -1663,7 +1716,7 @@ impl Widget for VirtualScrollView {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let viewport = self.viewport_rect(bounds);
-        self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
+        self.sync_state(ctx, viewport.size);
         let previous_visible_range = self.visible_range.clone();
         let previous_arranged_offset_y = self.last_arranged_offset_y;
         self.update_visible_range(viewport.height());

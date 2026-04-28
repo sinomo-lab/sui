@@ -63,6 +63,7 @@ pub const PROGRESS_NAME: &str = "Export progress";
 pub const SPINNER_NAME: &str = "Background work";
 pub const SUMMARY_NAME: &str = "Widget book summary";
 pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
+pub const GALLERY_SCROLL_BAR_NAME: &str = "Widget book scroll bar";
 pub const RETAINED_TEXT_BENCHMARK_SCROLL_NAME: &str = "Retained text benchmark scroll";
 pub const TEXT_RENDERING_COMPARISON_SCROLL_NAME: &str = "Text rendering comparison scroll";
 pub const COLOR_VALIDATION_SCROLL_NAME: &str = "Color validation scroll";
@@ -384,6 +385,88 @@ struct ProjectSettingsPreview {
     dialog: SingleChild,
     dialog_open: bool,
     trigger_pressed: bool,
+}
+
+struct WidgetBookGalleryScrollPane {
+    spacing: f32,
+    content: SingleChild,
+    scroll_bar: SingleChild,
+}
+
+impl WidgetBookGalleryScrollPane {
+    fn new<W, S>(content: W, scroll_bar: S) -> Self
+    where
+        W: Widget + 'static,
+        S: Widget + 'static,
+    {
+        Self {
+            spacing: 10.0,
+            content: SingleChild::new(content),
+            scroll_bar: SingleChild::new(scroll_bar),
+        }
+    }
+}
+
+impl Widget for WidgetBookGalleryScrollPane {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let scroll_bar_size = self.scroll_bar.measure(
+            ctx,
+            Constraints::new(Size::ZERO, Size::new(f32::INFINITY, constraints.max.height)),
+        );
+        let content_constraints = Constraints::new(
+            Size::new(
+                (constraints.min.width - scroll_bar_size.width - self.spacing).max(0.0),
+                constraints.min.height,
+            ),
+            Size::new(
+                (constraints.max.width - scroll_bar_size.width - self.spacing).max(0.0),
+                constraints.max.height,
+            ),
+        );
+        let content_size = self.content.measure(ctx, content_constraints);
+        constraints.clamp(Size::new(
+            content_size.width + scroll_bar_size.width + self.spacing,
+            content_size.height.max(scroll_bar_size.height),
+        ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let scroll_bar_size = self.scroll_bar.child().measured_size();
+        let content_width = (bounds.width() - scroll_bar_size.width - self.spacing).max(0.0);
+        self.content.arrange(
+            ctx,
+            Rect::new(bounds.x(), bounds.y(), content_width, bounds.height()),
+        );
+        self.scroll_bar.arrange(
+            ctx,
+            Rect::new(
+                bounds.max_x() - scroll_bar_size.width,
+                bounds.y(),
+                scroll_bar_size.width,
+                bounds.height(),
+            ),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.content.paint(ctx);
+        self.scroll_bar.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.content.semantics(ctx);
+        self.scroll_bar.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.content.visit_children(visitor);
+        self.scroll_bar.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.content.visit_children_mut(visitor);
+        self.scroll_bar.visit_children_mut(visitor);
+    }
 }
 
 impl ProjectSettingsPreview {
@@ -1265,9 +1348,11 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
     let menu_state = Rc::clone(&state);
     let context_menu_state = Rc::clone(&state);
     let dialog_state = Rc::clone(&state);
+    let scroll_state = ScrollState::new();
 
-    VirtualScrollView::new()
+    let gallery = VirtualScrollView::new()
         .name(GALLERY_SCROLL_NAME)
+        .state(scroll_state.clone())
         .padding(Insets::all(24.0))
         .spacing(18.0)
         .with_child(
@@ -1848,7 +1933,12 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         ),
                     ),
             ))
-            .with_child(build_color_and_imagery_story())
+            .with_child(build_color_and_imagery_story());
+
+    WidgetBookGalleryScrollPane::new(
+        gallery,
+        ScrollBar::vertical(scroll_state).name(GALLERY_SCROLL_BAR_NAME),
+    )
 }
 
 fn build_color_and_imagery_story() -> impl Widget {
@@ -3657,20 +3747,20 @@ mod tests {
     };
     use super::{
         BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, COLOR_PICKER_NAME,
-        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME, LIGHT_PREVIEW_ACTION_LABEL,
-        LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME, LivePerformanceDisplay,
-        LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, POPOVER_NAME,
-        POPOVER_TRIGGER_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE,
-        SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, TEXT_EDITING_BENCHMARK_EDITOR_NAME,
-        TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME, TEXT_EDITING_BENCHMARK_TITLE,
-        TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
-        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
-        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE,
-        build_button_grid_benchmark_application, build_color_and_imagery_story,
-        build_retained_text_benchmark_application, build_text_editing_benchmark_application,
-        build_text_rendering_comparison_application, build_text_validation_surface,
-        build_widget_book_application, build_widget_book_gallery, default_widget_book_state,
-        register_widget_book_images, theme_preview_card,
+        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME, GALLERY_SCROLL_NAME,
+        LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
+        LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
+        POPOVER_NAME, POPOVER_TRIGGER_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
+        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
+        TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
+        TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
+        TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
+        TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
+        TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE, build_button_grid_benchmark_application,
+        build_color_and_imagery_story, build_retained_text_benchmark_application,
+        build_text_editing_benchmark_application, build_text_rendering_comparison_application,
+        build_text_validation_surface, build_widget_book_application, build_widget_book_gallery,
+        default_widget_book_state, register_widget_book_images, theme_preview_card,
     };
     use sui::{
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -4808,6 +4898,36 @@ mod tests {
         assert_ne!(before, after);
 
         Ok(())
+    }
+
+    #[test]
+    fn widget_book_gallery_exposes_visible_scroll_bar() {
+        let mut runtime = build_widget_book_application(default_widget_book_state())
+            .build()
+            .expect("widget book runtime should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime
+            .render(window_id)
+            .expect("widget book should render");
+        let gallery = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(GALLERY_SCROLL_NAME)
+            })
+            .expect("widget book gallery scroll view should be present");
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(GALLERY_SCROLL_BAR_NAME)
+            })
+            .expect("widget book gallery scroll bar should be present");
+
+        assert!(scroll_bar.bounds.x() >= gallery.bounds.max_x());
+        assert!(scroll_bar.bounds.height() >= gallery.bounds.height() - 1.0);
     }
 
     #[test]
