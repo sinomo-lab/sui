@@ -16,7 +16,7 @@ pub use composites::{
     TabBar, Tabs, Tooltip, TooltipPlacement,
 };
 pub use containers::{
-    Align, Background, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox, Stack,
+    Align, Background, Overflow, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox, Stack,
     VirtualScrollView,
 };
 pub use controls::{
@@ -377,7 +377,7 @@ pub mod prelude {
         FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState, FontHandle, Icon,
         IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImeEvent, Insets, KeyboardEvent,
         Label, ListItem, ListView, MeasureCtx, Menu, MenuItem, Modal, MultilineTextInput,
-        NumberInput, PaintCtx, Path, PathBar, PathBuilder, Point, PointerEvent, Popover,
+        NumberInput, Overflow, PaintCtx, Path, PathBar, PathBuilder, Point, PointerEvent, Popover,
         ProgressBar, RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage, ResizablePane,
         Result, ScrollAxes, ScrollBar, ScrollState, ScrollView, Select, SemanticsCtx, Separator,
         ShapedText, SingleChild, Size, SizedBox, Slider, SpinBox, Spinner, SplitView, Stack,

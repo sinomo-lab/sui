@@ -11,12 +11,13 @@ Suggested reading order:
 1. [architecture.md](./architecture.md) for the runtime and frame pipeline.
 2. [stack-hosts.md](./stack-hosts.md) for the planned stacking, popup-host, and multi-bounds model.
 3. [crate-architecture.md](./crate-architecture.md) for crate ownership and dependency boundaries.
-4. [text-system.md](./text-system.md) for the planned text-engine refactor and long-term text goals.
-5. [renderer-architecture.md](./renderer-architecture.md) for scene, compositor, and renderer details.
-6. [testing.md](./testing.md) for headless tests, desktop harness tests, and visual artifacts.
-7. [design.md](./design.md) for the long-term product and API direction.
-8. [hdr-native-interface-manifesto.md](./hdr-native-interface-manifesto.md) for the intended HDR-native visual language and design constraints.
-9. [hdr-theme-token-schema-proposal.md](./hdr-theme-token-schema-proposal.md) for the proposed HDR-aware theme and token model.
+4. [layout-and-overflow.md](./layout-and-overflow.md) for the simplified sizing and overflow model.
+5. [text-system.md](./text-system.md) for the planned text-engine refactor and long-term text goals.
+6. [renderer-architecture.md](./renderer-architecture.md) for scene, compositor, and renderer details.
+7. [testing.md](./testing.md) for headless tests, desktop harness tests, and visual artifacts.
+8. [design.md](./design.md) for the long-term product and API direction.
+9. [hdr-native-interface-manifesto.md](./hdr-native-interface-manifesto.md) for the intended HDR-native visual language and design constraints.
+10. [hdr-theme-token-schema-proposal.md](./hdr-theme-token-schema-proposal.md) for the proposed HDR-aware theme and token model.
 
 ## Workspace At A Glance
 
