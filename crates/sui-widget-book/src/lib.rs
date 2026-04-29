@@ -29,6 +29,8 @@ pub const WINDOW_TITLE: &str = "SUI Widget Book";
 pub const WINDOW_DESCRIPTION: &str =
     "Development gallery for common built-in widgets in sui-widgets";
 pub const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
+pub const BUTTON_GRID_VERTICAL_SCROLL_BAR_NAME: &str = "64 button grid vertical scroll bar";
+pub const BUTTON_GRID_HORIZONTAL_SCROLL_BAR_NAME: &str = "64 button grid horizontal scroll bar";
 pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
 pub const TEXT_RENDERING_COMPARISON_TITLE: &str = "SUI Text Rendering Comparison";
 pub const COLOR_VALIDATION_VIEW_TITLE: &str = "SUI HDR and Color Validation";
@@ -527,22 +529,33 @@ impl Widget for MinimumWidth {
     }
 }
 
-struct ColorValidationScrollPane {
+struct TwoAxisScrollPane {
     spacing: f32,
+    state: ScrollState,
+    show_vertical_scroll_bar: bool,
+    show_horizontal_scroll_bar: bool,
     content: SingleChild,
     vertical_scroll_bar: SingleChild,
     horizontal_scroll_bar: SingleChild,
 }
 
-impl ColorValidationScrollPane {
-    fn new<W, V, H>(content: W, vertical_scroll_bar: V, horizontal_scroll_bar: H) -> Self
+impl TwoAxisScrollPane {
+    fn new<W, V, H>(
+        state: ScrollState,
+        content: W,
+        vertical_scroll_bar: V,
+        horizontal_scroll_bar: H,
+    ) -> Self
     where
         W: Widget + 'static,
         V: Widget + 'static,
         H: Widget + 'static,
     {
         Self {
-            spacing: 10.0,
+            spacing: 0.0,
+            state,
+            show_vertical_scroll_bar: true,
+            show_horizontal_scroll_bar: true,
             content: SingleChild::new(content),
             vertical_scroll_bar: SingleChild::new(vertical_scroll_bar),
             horizontal_scroll_bar: SingleChild::new(horizontal_scroll_bar),
@@ -552,14 +565,63 @@ impl ColorValidationScrollPane {
     fn viewport_size(&self, bounds: Size) -> Size {
         let vertical_size = self.vertical_scroll_bar.child().measured_size();
         let horizontal_size = self.horizontal_scroll_bar.child().measured_size();
+        let vertical_extent = if self.show_vertical_scroll_bar {
+            vertical_size.width + self.spacing
+        } else {
+            0.0
+        };
+        let horizontal_extent = if self.show_horizontal_scroll_bar {
+            horizontal_size.height + self.spacing
+        } else {
+            0.0
+        };
         Size::new(
-            (bounds.width - vertical_size.width - self.spacing).max(0.0),
-            (bounds.height - horizontal_size.height - self.spacing).max(0.0),
+            (bounds.width - vertical_extent).max(0.0),
+            (bounds.height - horizontal_extent).max(0.0),
+        )
+    }
+
+    fn content_constraints(
+        constraints: Constraints,
+        vertical_size: Size,
+        horizontal_size: Size,
+        show_vertical_scroll_bar: bool,
+        show_horizontal_scroll_bar: bool,
+        spacing: f32,
+    ) -> Constraints {
+        let vertical_extent = if show_vertical_scroll_bar {
+            vertical_size.width + spacing
+        } else {
+            0.0
+        };
+        let horizontal_extent = if show_horizontal_scroll_bar {
+            horizontal_size.height + spacing
+        } else {
+            0.0
+        };
+        Constraints::new(
+            Size::new(
+                (constraints.min.width - vertical_extent).max(0.0),
+                (constraints.min.height - horizontal_extent).max(0.0),
+            ),
+            Size::new(
+                (constraints.max.width - vertical_extent).max(0.0),
+                (constraints.max.height - horizontal_extent).max(0.0),
+            ),
+        )
+    }
+
+    fn scroll_bar_visibility(&self) -> (bool, bool) {
+        let viewport = self.state.viewport_size();
+        let content = self.state.content_size();
+        (
+            content.width > viewport.width + 0.001,
+            content.height > viewport.height + 0.001,
         )
     }
 }
 
-impl Widget for ColorValidationScrollPane {
+impl Widget for TwoAxisScrollPane {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let vertical_size = self.vertical_scroll_bar.measure(
             ctx,
@@ -569,20 +631,54 @@ impl Widget for ColorValidationScrollPane {
             ctx,
             Constraints::new(Size::ZERO, Size::new(constraints.max.width, f32::INFINITY)),
         );
-        let content_constraints = Constraints::new(
-            Size::new(
-                (constraints.min.width - vertical_size.width - self.spacing).max(0.0),
-                (constraints.min.height - horizontal_size.height - self.spacing).max(0.0),
-            ),
-            Size::new(
-                (constraints.max.width - vertical_size.width - self.spacing).max(0.0),
-                (constraints.max.height - horizontal_size.height - self.spacing).max(0.0),
+        let mut show_vertical = false;
+        let mut show_horizontal = false;
+        let mut content_size = self.content.measure(
+            ctx,
+            Self::content_constraints(
+                constraints,
+                vertical_size,
+                horizontal_size,
+                show_vertical,
+                show_horizontal,
+                self.spacing,
             ),
         );
-        let content_size = self.content.measure(ctx, content_constraints);
+        for _ in 0..3 {
+            let (next_horizontal, next_vertical) = self.scroll_bar_visibility();
+            if next_vertical == show_vertical && next_horizontal == show_horizontal {
+                break;
+            }
+            show_vertical = next_vertical;
+            show_horizontal = next_horizontal;
+            content_size = self.content.measure(
+                ctx,
+                Self::content_constraints(
+                    constraints,
+                    vertical_size,
+                    horizontal_size,
+                    show_vertical,
+                    show_horizontal,
+                    self.spacing,
+                ),
+            );
+        }
+
+        self.show_vertical_scroll_bar = show_vertical;
+        self.show_horizontal_scroll_bar = show_horizontal;
+        let vertical_extent = if show_vertical {
+            vertical_size.width + self.spacing
+        } else {
+            0.0
+        };
+        let horizontal_extent = if show_horizontal {
+            horizontal_size.height + self.spacing
+        } else {
+            0.0
+        };
         constraints.clamp(Size::new(
-            content_size.width + vertical_size.width + self.spacing,
-            content_size.height + horizontal_size.height + self.spacing,
+            content_size.width + vertical_extent,
+            content_size.height + horizontal_extent,
         ))
     }
 
@@ -594,34 +690,50 @@ impl Widget for ColorValidationScrollPane {
         );
         self.vertical_scroll_bar.arrange(
             ctx,
-            Rect::new(
-                bounds.x() + viewport.width + self.spacing,
-                bounds.y(),
-                self.vertical_scroll_bar.child().measured_size().width,
-                viewport.height,
-            ),
+            if self.show_vertical_scroll_bar {
+                Rect::new(
+                    bounds.x() + viewport.width + self.spacing,
+                    bounds.y(),
+                    self.vertical_scroll_bar.child().measured_size().width,
+                    viewport.height,
+                )
+            } else {
+                Rect::new(bounds.max_x(), bounds.y(), 0.0, 0.0)
+            },
         );
         self.horizontal_scroll_bar.arrange(
             ctx,
-            Rect::new(
-                bounds.x(),
-                bounds.y() + viewport.height + self.spacing,
-                viewport.width,
-                self.horizontal_scroll_bar.child().measured_size().height,
-            ),
+            if self.show_horizontal_scroll_bar {
+                Rect::new(
+                    bounds.x(),
+                    bounds.y() + viewport.height + self.spacing,
+                    viewport.width,
+                    self.horizontal_scroll_bar.child().measured_size().height,
+                )
+            } else {
+                Rect::new(bounds.x(), bounds.max_y(), 0.0, 0.0)
+            },
         );
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         self.content.paint(ctx);
-        self.vertical_scroll_bar.paint(ctx);
-        self.horizontal_scroll_bar.paint(ctx);
+        if self.show_vertical_scroll_bar {
+            self.vertical_scroll_bar.paint(ctx);
+        }
+        if self.show_horizontal_scroll_bar {
+            self.horizontal_scroll_bar.paint(ctx);
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.content.semantics(ctx);
-        self.vertical_scroll_bar.semantics(ctx);
-        self.horizontal_scroll_bar.semantics(ctx);
+        if self.show_vertical_scroll_bar {
+            self.vertical_scroll_bar.semantics(ctx);
+        }
+        if self.show_horizontal_scroll_bar {
+            self.horizontal_scroll_bar.semantics(ctx);
+        }
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
@@ -2161,6 +2273,10 @@ fn build_color_and_imagery_story() -> impl Widget {
 }
 
 pub fn build_button_grid_benchmark() -> impl Widget {
+    const BUTTON_GRID_MIN_WIDTH: f32 =
+        (BUTTON_GRID_COLUMNS as f32 * 112.0) + ((BUTTON_GRID_COLUMNS - 1) as f32 * 12.0);
+
+    let scroll_state = ScrollState::new();
     let mut grid = Stack::vertical()
         .spacing(12.0)
         .alignment(Alignment::Stretch);
@@ -2179,7 +2295,16 @@ pub fn build_button_grid_benchmark() -> impl Widget {
         grid = grid.with_child(line);
     }
 
-    grid
+    TwoAxisScrollPane::new(
+        scroll_state.clone(),
+        ScrollView::both(MinimumWidth::new(BUTTON_GRID_MIN_WIDTH, grid))
+            .state(scroll_state.clone())
+            .overflow_x(Overflow::Auto)
+            .overflow_y(Overflow::Auto)
+            .name(BUTTON_GRID_BENCHMARK_TITLE),
+        ScrollBar::vertical(scroll_state.clone()).name(BUTTON_GRID_VERTICAL_SCROLL_BAR_NAME),
+        ScrollBar::horizontal(scroll_state).name(BUTTON_GRID_HORIZONTAL_SCROLL_BAR_NAME),
+    )
 }
 
 pub fn build_button_grid_benchmark_application() -> Application {
@@ -2457,7 +2582,8 @@ pub fn build_color_validation_surface() -> impl Widget {
             )),
     ));
 
-    ColorValidationScrollPane::new(
+    TwoAxisScrollPane::new(
+        scroll_state.clone(),
         ScrollView::both(content)
             .state(scroll_state.clone())
             .overflow_x(Overflow::Auto)
@@ -4041,6 +4167,34 @@ mod tests {
         build_text_rendering_comparison_application().build()
     }
 
+    fn build_narrow_button_grid_runtime() -> Result<sui::Runtime> {
+        Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title(BUTTON_GRID_BENCHMARK_TITLE)
+                    .root(
+                        SizedBox::new()
+                            .size(Size::new(300.0, 120.0))
+                            .with_child(super::build_button_grid_benchmark()),
+                    ),
+            )
+            .build()
+    }
+
+    fn build_tall_narrow_button_grid_runtime() -> Result<sui::Runtime> {
+        Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title(BUTTON_GRID_BENCHMARK_TITLE)
+                    .root(
+                        SizedBox::new()
+                            .size(Size::new(300.0, 520.0))
+                            .with_child(super::build_button_grid_benchmark()),
+                    ),
+            )
+            .build()
+    }
+
     fn build_color_validation_runtime() -> Result<sui::Runtime> {
         super::build_color_validation_application().build()
     }
@@ -4683,6 +4837,121 @@ mod tests {
             .semantics(window_id)
             .expect("color validation semantics should exist");
         assert_semantics_omit_live_performance_overlay(&semantics);
+    }
+
+    #[test]
+    fn button_grid_benchmark_uses_overflow_scroll_view_when_narrow() -> Result<()> {
+        let mut runtime = build_narrow_button_grid_runtime()?;
+        let window_id = runtime.window_ids()[0];
+        let before = runtime.render(window_id)?;
+        let scroll = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(BUTTON_GRID_BENCHMARK_TITLE)
+            })
+            .expect("button grid benchmark scroll view should be present");
+        let vertical_scroll_bar = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(super::BUTTON_GRID_VERTICAL_SCROLL_BAR_NAME)
+            })
+            .expect("button grid vertical scroll bar should be present");
+        let horizontal_scroll_bar = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(super::BUTTON_GRID_HORIZONTAL_SCROLL_BAR_NAME)
+            })
+            .expect("button grid horizontal scroll bar should be present");
+        let first_button_before = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Button 0:0")
+            })
+            .expect("first button should be present before scroll");
+        let last_button_before = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Button 0:7")
+            })
+            .expect("last button in first row should be present before scroll");
+        let horizontal_max = match horizontal_scroll_bar.value {
+            Some(SemanticsValue::Range { max, .. }) => max,
+            _ => 0.0,
+        };
+        let vertical_max = match vertical_scroll_bar.value {
+            Some(SemanticsValue::Range { max, .. }) => max,
+            _ => 0.0,
+        };
+
+        assert!(horizontal_max > 0.0);
+        assert!(vertical_max > 0.0);
+        assert!((horizontal_scroll_bar.bounds.y() - scroll.bounds.max_y()).abs() <= 0.001);
+        assert!((vertical_scroll_bar.bounds.x() - scroll.bounds.max_x()).abs() <= 0.001);
+        assert!(last_button_before.bounds.max_x() > scroll.bounds.max_x());
+
+        let mut wheel = PointerEvent::new(
+            PointerEventKind::Scroll,
+            Point::new(
+                scroll.bounds.x() + scroll.bounds.width() * 0.5,
+                scroll.bounds.y() + scroll.bounds.height() * 0.5,
+            ),
+        );
+        wheel.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(-96.0, -48.0)));
+        runtime.handle_event(window_id, Event::Pointer(wheel))?;
+        let after = runtime.render(window_id)?;
+        let first_button_after = after
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Button 0:0")
+            })
+            .expect("first button should be present after scroll");
+
+        assert!(first_button_after.bounds.x() < first_button_before.bounds.x());
+        assert!(first_button_after.bounds.y() < first_button_before.bounds.y());
+
+        Ok(())
+    }
+
+    #[test]
+    fn button_grid_benchmark_omits_vertical_scrollbar_when_only_horizontal_overflows() -> Result<()>
+    {
+        let mut runtime = build_tall_narrow_button_grid_runtime()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let scroll = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(BUTTON_GRID_BENCHMARK_TITLE)
+            })
+            .expect("button grid benchmark scroll view should be present");
+        let horizontal_scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(super::BUTTON_GRID_HORIZONTAL_SCROLL_BAR_NAME)
+            })
+            .expect("button grid horizontal scroll bar should be present");
+
+        assert!(!output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Slider
+                && node.name.as_deref() == Some(super::BUTTON_GRID_VERTICAL_SCROLL_BAR_NAME)
+        }));
+        assert!((horizontal_scroll_bar.bounds.y() - scroll.bounds.max_y()).abs() <= 0.001);
+        assert!((horizontal_scroll_bar.bounds.width() - scroll.bounds.width()).abs() <= 0.001);
+
+        Ok(())
     }
 
     #[test]
