@@ -125,8 +125,71 @@ mod tests {
         switch.state.checked = Some(ToggleState::Checked);
         switch.actions = vec![SemanticsAction::Activate];
 
-        let frame = render_snapshot(&snapshot(vec![root, switch]), TuiRenderOptions::default());
+        let frame = render_snapshot(
+            &snapshot(vec![root, switch]),
+            TuiRenderOptions {
+                mode: TuiLayoutMode::Structured,
+                ..TuiRenderOptions::default()
+            },
+        );
 
         assert!(frame.to_string().contains("checked"));
+    }
+
+    #[test]
+    fn spatial_render_draws_canvas_from_bounds() {
+        let mut root = node(1, None, SemanticsRole::Window, "Harness");
+        root.bounds = Rect::new(0.0, 0.0, 120.0, 80.0);
+        let mut button = node(2, Some(1), SemanticsRole::Button, "Save");
+        button.bounds = Rect::new(12.0, 12.0, 36.0, 20.0);
+        button.actions = vec![SemanticsAction::Activate];
+        let mut input = node(3, Some(1), SemanticsRole::TextInput, "Name");
+        input.bounds = Rect::new(72.0, 48.0, 36.0, 20.0);
+        input.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        input.state.focused = true;
+
+        let frame = render_snapshot(
+            &snapshot(vec![root, button, input]),
+            TuiRenderOptions {
+                width: 64,
+                height: 28,
+                mode: TuiLayoutMode::Spatial,
+                show_hidden: false,
+            },
+        );
+        let text = frame.to_string();
+
+        assert!(text.contains("Spatial canvas bounds=(0,0,120,80)"));
+        assert!(text.contains("Button:Save"));
+        assert!(text.contains("Input:Name"));
+        assert!(text.contains("Spatial legend:"));
+        assert!(text.contains("@"));
+    }
+
+    #[test]
+    fn spatial_render_uses_root_bounds_and_omits_offscreen_nodes() {
+        let mut root = node(1, None, SemanticsRole::Window, "Harness");
+        root.bounds = Rect::new(0.0, 0.0, 100.0, 80.0);
+        let mut visible = node(2, Some(1), SemanticsRole::Button, "Visible");
+        visible.bounds = Rect::new(10.0, 10.0, 24.0, 18.0);
+        visible.actions = vec![SemanticsAction::Activate];
+        let mut offscreen = node(3, Some(1), SemanticsRole::Button, "Offscreen");
+        offscreen.bounds = Rect::new(0.0, 400.0, 80.0, 30.0);
+        offscreen.actions = vec![SemanticsAction::Activate];
+
+        let frame = render_snapshot(
+            &snapshot(vec![root, visible, offscreen]),
+            TuiRenderOptions {
+                width: 64,
+                height: 28,
+                mode: TuiLayoutMode::Spatial,
+                show_hidden: false,
+            },
+        )
+        .to_string();
+
+        assert!(frame.contains("Spatial canvas bounds=(0,0,100,80)"));
+        assert!(frame.contains("Button:Visible"));
+        assert!(!frame.contains("Offscreen"));
     }
 }

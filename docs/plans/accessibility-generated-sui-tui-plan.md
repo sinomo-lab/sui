@@ -164,6 +164,16 @@ Suggested initial flags:
 
 `--tui-dump-accessibility` can be a useful non-interactive mode for CI and debugging.
 
+The live `--tui` path should use a real terminal UI backend rather than printing static text frames. The first native host can use Ratatui/Crossterm with:
+
+- an alternate-screen terminal session
+- a bordered spatial map panel
+- an actionable-node list
+- a selected-node details panel
+- a persistent key-help/status footer
+
+Plain text rendering remains useful for `--tui-dump-accessibility`, snapshot tests, and diagnostics.
+
 ---
 
 ## Terminal views
@@ -194,6 +204,16 @@ It is useful for debugging:
 - whether scroll content moves through the accessibility tree
 
 Spatial mode is not required to be the most usable mode.
+
+Initial spatial mode should be implemented in three steps:
+
+1. Project semantic bounds into a deterministic ASCII canvas.
+2. Anchor the canvas to the root/window bounds so offscreen scroll content does not collapse the viewport scale.
+3. Draw major containers and actionable controls first, with compact labels and a coordinate legend for inspection.
+
+Later spatial work can add panning/zooming, selected-node highlighting from the interactive host, and role-specific collision handling when many controls occupy the same terminal cells.
+
+For the live TUI, spatial mode should be the default. Structured rendering can remain as an internal dump/testing representation, but users should not need `--tui-layout=spatial` to get the spatial interface.
 
 ### Details and issues panel
 

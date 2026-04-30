@@ -1,6 +1,6 @@
 use std::fmt::{self, Write};
 
-use sui_core::{SemanticsNode, SemanticsRole, SemanticsValue, ToggleState};
+use sui_core::{Rect, SemanticsNode, SemanticsRole, SemanticsValue, ToggleState};
 use sui_platform::AccessibilitySnapshot;
 
 use crate::{
@@ -27,7 +27,7 @@ impl Default for TuiRenderOptions {
         Self {
             width: 100,
             height: 36,
-            mode: TuiLayoutMode::Structured,
+            mode: TuiLayoutMode::Spatial,
             show_hidden: false,
         }
     }
@@ -123,12 +123,62 @@ fn render_node(node: &TuiNode, lines: &mut Vec<String>, width: u16) {
 }
 
 fn render_spatial(nodes: &[SemanticsNode], lines: &mut Vec<String>, options: TuiRenderOptions) {
-    if nodes.is_empty() {
+    let spatial_nodes = nodes
+        .iter()
+        .filter(|node| spatial_bounds(node).is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if spatial_nodes.is_empty() {
         lines.push(fit_line("<empty accessibility tree>", options.width));
         return;
     }
 
-    let mut sorted = nodes.to_vec();
+    let Some(bounds) = spatial_world_bounds(&spatial_nodes) else {
+        lines.push(fit_line("<no spatial bounds>", options.width));
+        return;
+    };
+    let spatial_nodes = spatial_nodes
+        .into_iter()
+        .filter(|node| node.bounds.intersection(bounds).is_some())
+        .collect::<Vec<_>>();
+
+    let canvas_height = spatial_canvas_height(lines.len(), options);
+    let canvas_width = options.width.max(20) as usize;
+    lines.push(fit_line(
+        format!(
+            "Spatial canvas bounds=({:.0},{:.0},{:.0},{:.0})",
+            bounds.x(),
+            bounds.y(),
+            bounds.width(),
+            bounds.height()
+        ),
+        options.width,
+    ));
+
+    let mut canvas = SpatialCanvas::new(canvas_width, canvas_height);
+    let mut draw_order = spatial_nodes
+        .iter()
+        .filter(|node| canvas_node(node))
+        .cloned()
+        .collect::<Vec<_>>();
+    draw_order.sort_by(|left, right| {
+        node_area(right)
+            .total_cmp(&node_area(left))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    for node in &draw_order {
+        canvas.draw_node(node, bounds);
+    }
+    lines.extend(
+        canvas
+            .into_lines()
+            .into_iter()
+            .map(|line| fit_line(line, options.width)),
+    );
+
+    lines.push(fit_line("Spatial legend:", options.width));
+    let mut sorted = spatial_nodes;
     sorted.sort_by(|left, right| {
         left.bounds
             .y()
@@ -137,7 +187,7 @@ fn render_spatial(nodes: &[SemanticsNode], lines: &mut Vec<String>, options: Tui
             .then_with(|| left.id.cmp(&right.id))
     });
 
-    for node in &sorted {
+    for node in sorted.iter().filter(|node| legend_node(node)).take(10) {
         lines.push(fit_line(
             format!(
                 "{:>4},{:>4} {:>4}x{:<4} {}",
@@ -150,6 +200,225 @@ fn render_spatial(nodes: &[SemanticsNode], lines: &mut Vec<String>, options: Tui
             options.width,
         ));
     }
+}
+
+fn spatial_world_bounds(nodes: &[SemanticsNode]) -> Option<Rect> {
+    nodes
+        .iter()
+        .find(|node| {
+            node.parent.is_none()
+                && matches!(node.role, SemanticsRole::Window | SemanticsRole::Root)
+                && spatial_bounds(node).is_some()
+        })
+        .and_then(spatial_bounds)
+        .or_else(|| {
+            nodes
+                .iter()
+                .filter_map(spatial_bounds)
+                .reduce(|left, right| left.union(right))
+        })
+}
+
+struct SpatialCanvas {
+    width: usize,
+    height: usize,
+    cells: Vec<Vec<char>>,
+}
+
+impl SpatialCanvas {
+    fn new(width: usize, height: usize) -> Self {
+        Self {
+            width,
+            height,
+            cells: vec![vec![' '; width]; height],
+        }
+    }
+
+    fn draw_node(&mut self, node: &SemanticsNode, world: Rect) {
+        let Some((x0, y0, x1, y1)) =
+            map_rect_to_canvas(node.bounds, world, self.width, self.height)
+        else {
+            return;
+        };
+
+        let border = node_border(node);
+        for x in x0..=x1 {
+            self.put(x, y0, border);
+            self.put(x, y1, border);
+        }
+        for y in y0..=y1 {
+            self.put(x0, y, border);
+            self.put(x1, y, border);
+        }
+
+        if x1 > x0 + 3 && label_node(node) {
+            let label = spatial_label(node);
+            let label_y = if y1 > y0 + 1 { y0 + 1 } else { y0 };
+            let max_len = x1.saturating_sub(x0 + 1);
+            for (offset, ch) in label.chars().take(max_len).enumerate() {
+                self.put(x0 + 1 + offset, label_y, ch);
+            }
+        }
+    }
+
+    fn put(&mut self, x: usize, y: usize, value: char) {
+        if y < self.height && x < self.width {
+            self.cells[y][x] = value;
+        }
+    }
+
+    fn into_lines(self) -> Vec<String> {
+        self.cells
+            .into_iter()
+            .map(|row| row.into_iter().collect::<String>())
+            .collect()
+    }
+}
+
+fn spatial_canvas_height(existing_lines: usize, options: TuiRenderOptions) -> usize {
+    if options.height == 0 {
+        return 18;
+    }
+
+    (options.height as usize)
+        .saturating_sub(existing_lines + 14)
+        .clamp(6, 24)
+}
+
+fn map_rect_to_canvas(
+    rect: Rect,
+    world: Rect,
+    width: usize,
+    height: usize,
+) -> Option<(usize, usize, usize, usize)> {
+    if width == 0 || height == 0 || world.width() <= 0.0 || world.height() <= 0.0 {
+        return None;
+    }
+
+    let max_x = width.saturating_sub(1) as f32;
+    let max_y = height.saturating_sub(1) as f32;
+    let scale_x = max_x / world.width().max(f32::EPSILON);
+    let scale_y = max_y / world.height().max(f32::EPSILON);
+
+    let mut x0 = ((rect.x() - world.x()) * scale_x).floor().max(0.0) as usize;
+    let mut y0 = ((rect.y() - world.y()) * scale_y).floor().max(0.0) as usize;
+    let mut x1 = ((rect.max_x() - world.x()) * scale_x).ceil().max(0.0) as usize;
+    let mut y1 = ((rect.max_y() - world.y()) * scale_y).ceil().max(0.0) as usize;
+
+    x0 = x0.min(width.saturating_sub(1));
+    x1 = x1.min(width.saturating_sub(1));
+    y0 = y0.min(height.saturating_sub(1));
+    y1 = y1.min(height.saturating_sub(1));
+
+    if x1 <= x0 {
+        x1 = (x0 + 1).min(width.saturating_sub(1));
+    }
+    if y1 <= y0 {
+        y1 = (y0 + 1).min(height.saturating_sub(1));
+    }
+
+    Some((x0, y0, x1, y1))
+}
+
+fn spatial_bounds(node: &SemanticsNode) -> Option<Rect> {
+    let bounds = node.bounds;
+    if bounds.is_empty()
+        || !bounds.x().is_finite()
+        || !bounds.y().is_finite()
+        || !bounds.width().is_finite()
+        || !bounds.height().is_finite()
+    {
+        return None;
+    }
+    Some(bounds)
+}
+
+fn node_area(node: &SemanticsNode) -> f32 {
+    node.bounds.width().max(0.0) * node.bounds.height().max(0.0)
+}
+
+fn node_border(node: &SemanticsNode) -> char {
+    if node.state.focused {
+        '@'
+    } else if interactive_role(node) {
+        '*'
+    } else if matches!(node.role, SemanticsRole::Window | SemanticsRole::Root) {
+        '#'
+    } else if matches!(
+        node.role,
+        SemanticsRole::GenericContainer | SemanticsRole::ScrollView
+    ) {
+        '+'
+    } else {
+        '.'
+    }
+}
+
+fn canvas_node(node: &SemanticsNode) -> bool {
+    node.state.focused
+        || interactive_role(node)
+        || matches!(
+            node.role,
+            SemanticsRole::Window
+                | SemanticsRole::Root
+                | SemanticsRole::GenericContainer
+                | SemanticsRole::List
+                | SemanticsRole::Tree
+                | SemanticsRole::Table
+                | SemanticsRole::TabBar
+                | SemanticsRole::Tabs
+                | SemanticsRole::Menu
+                | SemanticsRole::ContextMenu
+                | SemanticsRole::Dialog
+                | SemanticsRole::Popover
+                | SemanticsRole::ScrollView
+                | SemanticsRole::Image
+                | SemanticsRole::Canvas
+        )
+}
+
+fn label_node(node: &SemanticsNode) -> bool {
+    node.state.focused
+        || interactive_role(node)
+        || matches!(
+            node.role,
+            SemanticsRole::Window
+                | SemanticsRole::Root
+                | SemanticsRole::List
+                | SemanticsRole::Dialog
+                | SemanticsRole::Popover
+                | SemanticsRole::ScrollView
+        )
+}
+
+fn spatial_label(node: &SemanticsNode) -> String {
+    let name = node.name.as_deref().unwrap_or("<unnamed>");
+    format!("{}:{name}", compact_role_label(&node.role))
+}
+
+fn compact_role_label(role: &SemanticsRole) -> &'static str {
+    match role {
+        SemanticsRole::GenericContainer => "Group",
+        SemanticsRole::TextInput => "Input",
+        SemanticsRole::ScrollView => "Scroll",
+        SemanticsRole::ColorSwatch => "Swatch",
+        SemanticsRole::RadioButton => "Radio",
+        SemanticsRole::ProgressBar => "Progress",
+        SemanticsRole::BusyIndicator => "Busy",
+        _ => role_label(role),
+    }
+}
+
+fn legend_node(node: &SemanticsNode) -> bool {
+    node.state.focused
+        || interactive_role(node)
+        || matches!(
+            node.role,
+            SemanticsRole::Window
+                | SemanticsRole::Root
+                | SemanticsRole::GenericContainer
+                | SemanticsRole::ScrollView
+        )
 }
 
 fn render_issues(issues: &[crate::AccessibilityIssue], lines: &mut Vec<String>, width: u16) {
@@ -208,6 +477,23 @@ fn format_node_summary(node: &SemanticsNode) -> String {
     }
 
     summary
+}
+
+fn interactive_role(node: &SemanticsNode) -> bool {
+    matches!(
+        node.role,
+        SemanticsRole::Button
+            | SemanticsRole::CheckBox
+            | SemanticsRole::Switch
+            | SemanticsRole::RadioButton
+            | SemanticsRole::MenuItem
+            | SemanticsRole::Slider
+            | SemanticsRole::TextInput
+            | SemanticsRole::SpinBox
+            | SemanticsRole::ComboBox
+            | SemanticsRole::ColorPicker
+            | SemanticsRole::ScrollView
+    )
 }
 
 fn format_value(value: &SemanticsValue) -> String {

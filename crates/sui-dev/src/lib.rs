@@ -7,14 +7,36 @@ pub use app::{build_dev_application, build_dev_application_with_widget_book_boun
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
     env,
-    io::{self, Write},
+    io::{self, Stdout},
+    time::Duration,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use crossterm::{
+    event::{self, Event as TerminalEvent, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+#[cfg(not(target_arch = "wasm32"))]
+use ratatui::{
+    Frame, Terminal,
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout, Rect as TerminalRect},
+    style::{Color as TerminalColor, Modifier, Style},
+    symbols::Marker,
+    text::{Line, Span},
+    widgets::{
+        Block, Borders, List, ListItem, ListState, Paragraph, Wrap,
+        canvas::{Canvas, Rectangle as CanvasRectangle},
+    },
+};
 use sui::{Application, Rect};
 #[cfg(not(target_arch = "wasm32"))]
 use sui::{
-    DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, SceneStatisticsDetailMode,
-    SemanticsAction, SemanticsNode, SemanticsRole, Vector, set_window_render_options,
+    DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, Event, ImeEvent, KeyState,
+    KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+    Rect as SuiRect, SceneStatisticsDetailMode, SemanticsAction, SemanticsNode, SemanticsRole,
+    SemanticsValue, ToggleState, Vector, set_window_render_options,
     set_window_scene_statistics_detail_mode,
 };
 use sui::{
@@ -86,7 +108,7 @@ impl Default for DesktopTuiLaunchMode {
     fn default() -> Self {
         Self {
             kind: DesktopTuiLaunchKind::Interactive,
-            layout: TuiLayoutMode::Structured,
+            layout: TuiLayoutMode::Spatial,
             show_hidden: false,
         }
     }
@@ -294,7 +316,7 @@ fn run_desktop_application_with_mode(launch_mode: DesktopLaunchMode) -> sui::Res
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_tui_application(tui: DesktopTuiLaunchMode) -> sui::Result<()> {
-    let app = sui_testing::TestApp::new(|| build_dev_application().build())?;
+    let app = sui_testing::TestApp::from_runtime(build_dev_application().build()?)?;
     let window = app.main_window()?;
     match tui.kind {
         DesktopTuiLaunchKind::DumpAccessibility => print_tui_snapshot(&window, tui),
@@ -320,6 +342,7 @@ fn print_tui_snapshot(window: &TestWindow, tui: DesktopTuiLaunchMode) -> sui::Re
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Result<()> {
+    let mut terminal = TuiTerminalSession::new()?;
     let mut selected = 0usize;
     loop {
         let snapshot = window.snapshot()?;
@@ -330,54 +353,33 @@ fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Re
             selected = selected.min(actionable.len().saturating_sub(1));
         }
 
-        let frame = render_snapshot(
-            &snapshot.accessibility,
-            TuiRenderOptions {
-                width: 120,
-                height: 40,
-                mode: tui.layout,
-                show_hidden: tui.show_hidden,
-            },
-        );
-        println!("{frame}");
-        println!();
-        println!(
-            "sui-dev --tui commands: n/p select, a activate, s <text> set text, r redraw, q quit"
-        );
-        if let Some(node) = actionable.get(selected) {
-            println!(
-                "selected {}/{}: #{} {:?} {}",
-                selected + 1,
-                actionable.len(),
-                node.id.get(),
-                node.role,
-                node.name.as_deref().unwrap_or("<unnamed>")
-            );
-        } else {
-            println!("selected: no actionable nodes");
-        }
-        print!("sui-dev:tui> ");
-        io::stdout()
-            .flush()
-            .map_err(|error| sui::Error::new(error.to_string()))?;
+        terminal.draw(
+            &snapshot.accessibility.nodes,
+            &actionable,
+            selected,
+            tui.show_hidden,
+        )?;
 
-        let mut command = String::new();
-        if io::stdin()
-            .read_line(&mut command)
-            .map_err(|error| sui::Error::new(error.to_string()))?
-            == 0
-        {
-            return Ok(());
+        if !terminal_event_ready()? {
+            continue;
         }
-        let command = command.trim();
-        match command {
-            "q" | "quit" | "exit" => return Ok(()),
-            "n" | "next" => {
+
+        let TerminalEvent::Key(key) = read_terminal_event()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
                 if !actionable.is_empty() {
                     selected = (selected + 1) % actionable.len();
                 }
             }
-            "p" | "prev" | "previous" => {
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
                 if !actionable.is_empty() {
                     selected = if selected == 0 {
                         actionable.len().saturating_sub(1)
@@ -386,26 +388,543 @@ fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Re
                     };
                 }
             }
-            "a" | "activate" => {
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('a') => {
                 if let Some(node) = actionable.get(selected) {
                     activate_tui_node(&window, node)?;
                 }
             }
-            "r" | "redraw" | "" => {}
-            value if value.starts_with("s ") || value.starts_with("set ") => {
-                let text = value
-                    .split_once(' ')
-                    .map(|(_, rhs)| rhs)
-                    .unwrap_or_default()
-                    .trim();
+            KeyCode::PageDown => {
                 if let Some(node) = actionable.get(selected) {
-                    set_tui_node_value(&window, node, text)?;
+                    scroll_tui_node(&window, node, Vector::new(0.0, -240.0))?;
                 }
             }
-            other => {
-                println!("unknown TUI command `{other}`");
+            KeyCode::PageUp => {
+                if let Some(node) = actionable.get(selected) {
+                    scroll_tui_node(&window, node, Vector::new(0.0, 240.0))?;
+                }
             }
+            KeyCode::Right | KeyCode::Char('+') => {
+                if let Some(node) = actionable.get(selected) {
+                    press_tui_node(&window, node, "ArrowRight")?;
+                }
+            }
+            KeyCode::Left | KeyCode::Char('-') => {
+                if let Some(node) = actionable.get(selected) {
+                    press_tui_node(&window, node, "ArrowLeft")?;
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(node) = actionable.get(selected) {
+                    let Some(value) = prompt_for_tui_value(terminal.terminal_mut(), node)? else {
+                        continue;
+                    };
+                    set_tui_node_value(&window, node, &value)?;
+                }
+            }
+            _ => {}
         }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct TuiTerminalSession {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl TuiTerminalSession {
+    fn new() -> sui::Result<Self> {
+        enable_raw_mode().map_err(to_sui_io_error)?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen).map_err(to_sui_io_error)?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend).map_err(to_sui_io_error)?;
+        terminal.clear().map_err(to_sui_io_error)?;
+        Ok(Self { terminal })
+    }
+
+    fn terminal_mut(&mut self) -> &mut Terminal<CrosstermBackend<Stdout>> {
+        &mut self.terminal
+    }
+
+    fn draw(
+        &mut self,
+        nodes: &[SemanticsNode],
+        actionable: &[SemanticsNode],
+        selected: usize,
+        show_hidden: bool,
+    ) -> sui::Result<()> {
+        self.terminal
+            .draw(|frame| draw_tui(frame, nodes, actionable, selected, show_hidden))
+            .map(|_| ())
+            .map_err(to_sui_io_error)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for TuiTerminalSession {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = self.terminal.show_cursor();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn draw_tui(
+    frame: &mut Frame<'_>,
+    nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
+    selected: usize,
+    show_hidden: bool,
+) {
+    let root = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(3),
+        ])
+        .split(frame.area());
+
+    let issue_count = sui_tui::validate_snapshot(&sui::AccessibilitySnapshot {
+        window_id: sui::WindowId::new(0),
+        root: nodes
+            .iter()
+            .find(|node| node.parent.is_none())
+            .map(|node| node.id),
+        focused_widget: nodes
+            .iter()
+            .find(|node| node.state.focused)
+            .map(|node| node.id),
+        nodes: nodes.to_vec(),
+    })
+    .len();
+    let title = Paragraph::new(Line::from(vec![
+        Span::styled(
+            " sui-dev ",
+            Style::default()
+                .fg(TerminalColor::Black)
+                .bg(TerminalColor::Cyan),
+        ),
+        Span::raw(" generated TUI from accessibility tree "),
+        Span::styled(
+            format!(
+                " nodes={} actionable={} issues={} ",
+                nodes.len(),
+                actionable.len(),
+                issue_count
+            ),
+            Style::default().fg(TerminalColor::Yellow),
+        ),
+        Span::raw(if show_hidden {
+            " hidden=shown"
+        } else {
+            " hidden=off"
+        }),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(title, root[0]);
+
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(62),
+            Constraint::Percentage(22),
+            Constraint::Percentage(16),
+        ])
+        .split(root[1]);
+
+    draw_spatial_canvas(frame, body[0], nodes, actionable.get(selected));
+    draw_actionable_list(frame, body[1], actionable, selected);
+    draw_details(frame, body[2], actionable.get(selected));
+
+    let help = Paragraph::new("q/esc quit  up/down or j/k select  enter/space activate  e edit  +/- adjust  pgup/pgdn scroll")
+        .style(Style::default().fg(TerminalColor::Gray))
+        .block(Block::default().borders(Borders::ALL).title("Keys"));
+    frame.render_widget(help, root[2]);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn draw_spatial_canvas(
+    frame: &mut Frame<'_>,
+    area: TerminalRect,
+    nodes: &[SemanticsNode],
+    selected: Option<&SemanticsNode>,
+) {
+    let world = tui_world_bounds(nodes).unwrap_or_else(|| SuiRect::new(0.0, 0.0, 1.0, 1.0));
+    let canvas_nodes = nodes
+        .iter()
+        .filter(|node| tui_canvas_node(node) && node.bounds.intersection(world).is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected_id = selected.map(|node| node.id);
+
+    let canvas = Canvas::default()
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Spatial Accessibility Map"),
+        )
+        .marker(Marker::Braille)
+        .x_bounds([0.0, world.width() as f64])
+        .y_bounds([0.0, world.height() as f64])
+        .paint(move |ctx| {
+            for node in &canvas_nodes {
+                let color = tui_node_color(node, selected_id == Some(node.id));
+                let rect = CanvasRectangle {
+                    x: (node.bounds.x() - world.x()) as f64,
+                    y: (world.max_y() - node.bounds.max_y()) as f64,
+                    width: node.bounds.width().max(1.0) as f64,
+                    height: node.bounds.height().max(1.0) as f64,
+                    color,
+                };
+                ctx.draw(&rect);
+                if tui_label_node(node) {
+                    ctx.print(
+                        (node.bounds.x() - world.x()) as f64,
+                        (world.max_y() - node.bounds.y()) as f64,
+                        Span::styled(tui_compact_label(node), Style::default().fg(color)),
+                    );
+                }
+            }
+        });
+
+    frame.render_widget(canvas, area);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn draw_actionable_list(
+    frame: &mut Frame<'_>,
+    area: TerminalRect,
+    actionable: &[SemanticsNode],
+    selected: usize,
+) {
+    let items = actionable
+        .iter()
+        .map(|node| {
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{:?}", node.role),
+                    Style::default().fg(TerminalColor::Cyan),
+                ),
+                Span::raw(" "),
+                Span::raw(node.name.as_deref().unwrap_or("<unnamed>").to_string()),
+            ]))
+        })
+        .collect::<Vec<_>>();
+    let mut state = ListState::default();
+    if !items.is_empty() {
+        state.select(Some(selected.min(items.len().saturating_sub(1))));
+    }
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Actionable Nodes"),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(TerminalColor::Black)
+                .bg(TerminalColor::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn draw_details(frame: &mut Frame<'_>, area: TerminalRect, selected: Option<&SemanticsNode>) {
+    let text = selected.map(format_tui_details).unwrap_or_else(|| {
+        "No actionable nodes are available in the current accessibility snapshot.".to_string()
+    });
+    let details = Paragraph::new(text)
+        .wrap(Wrap { trim: false })
+        .block(Block::default().borders(Borders::ALL).title("Details"));
+    frame.render_widget(details, area);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn terminal_event_ready() -> sui::Result<bool> {
+    event::poll(Duration::from_millis(120)).map_err(to_sui_io_error)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_terminal_event() -> sui::Result<TerminalEvent> {
+    event::read().map_err(to_sui_io_error)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn prompt_for_tui_value(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    node: &SemanticsNode,
+) -> sui::Result<Option<String>> {
+    disable_raw_mode().map_err(to_sui_io_error)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen).map_err(to_sui_io_error)?;
+    println!(
+        "Set value for #{} {:?} {}:",
+        node.id,
+        node.role,
+        node.name.as_deref().unwrap_or("<unnamed>")
+    );
+    let mut value = String::new();
+    let read = io::stdin().read_line(&mut value).map_err(to_sui_io_error)?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen).map_err(to_sui_io_error)?;
+    enable_raw_mode().map_err(to_sui_io_error)?;
+    terminal.clear().map_err(to_sui_io_error)?;
+    if read == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(value.trim_end().to_string()))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn to_sui_io_error(error: io::Error) -> sui::Error {
+    sui::Error::new(error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_world_bounds(nodes: &[SemanticsNode]) -> Option<SuiRect> {
+    nodes
+        .iter()
+        .find(|node| {
+            node.parent.is_none()
+                && matches!(node.role, SemanticsRole::Window | SemanticsRole::Root)
+                && tui_spatial_bounds(node).is_some()
+        })
+        .and_then(tui_spatial_bounds)
+        .or_else(|| {
+            nodes
+                .iter()
+                .filter_map(tui_spatial_bounds)
+                .reduce(|left, right| left.union(right))
+        })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_spatial_bounds(node: &SemanticsNode) -> Option<SuiRect> {
+    let bounds = node.bounds;
+    if bounds.is_empty()
+        || !bounds.x().is_finite()
+        || !bounds.y().is_finite()
+        || !bounds.width().is_finite()
+        || !bounds.height().is_finite()
+    {
+        None
+    } else {
+        Some(bounds)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_canvas_node(node: &SemanticsNode) -> bool {
+    node.state.focused
+        || tui_interactive_role(node)
+        || matches!(
+            node.role,
+            SemanticsRole::Window
+                | SemanticsRole::Root
+                | SemanticsRole::GenericContainer
+                | SemanticsRole::List
+                | SemanticsRole::Tree
+                | SemanticsRole::Table
+                | SemanticsRole::TabBar
+                | SemanticsRole::Tabs
+                | SemanticsRole::Menu
+                | SemanticsRole::ContextMenu
+                | SemanticsRole::Dialog
+                | SemanticsRole::Popover
+                | SemanticsRole::ScrollView
+                | SemanticsRole::Image
+                | SemanticsRole::Canvas
+        )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_label_node(node: &SemanticsNode) -> bool {
+    node.state.focused
+        || tui_interactive_role(node)
+        || matches!(
+            node.role,
+            SemanticsRole::Window
+                | SemanticsRole::Root
+                | SemanticsRole::List
+                | SemanticsRole::Dialog
+                | SemanticsRole::Popover
+                | SemanticsRole::ScrollView
+        )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_interactive_role(node: &SemanticsNode) -> bool {
+    matches!(
+        node.role,
+        SemanticsRole::Button
+            | SemanticsRole::CheckBox
+            | SemanticsRole::Switch
+            | SemanticsRole::RadioButton
+            | SemanticsRole::MenuItem
+            | SemanticsRole::Slider
+            | SemanticsRole::TextInput
+            | SemanticsRole::SpinBox
+            | SemanticsRole::ComboBox
+            | SemanticsRole::ColorPicker
+            | SemanticsRole::ScrollView
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_node_color(node: &SemanticsNode, selected: bool) -> TerminalColor {
+    if selected {
+        TerminalColor::Yellow
+    } else if node.state.focused {
+        TerminalColor::Magenta
+    } else if tui_interactive_role(node) {
+        TerminalColor::Cyan
+    } else if matches!(node.role, SemanticsRole::Window | SemanticsRole::Root) {
+        TerminalColor::Green
+    } else if matches!(
+        node.role,
+        SemanticsRole::GenericContainer | SemanticsRole::ScrollView
+    ) {
+        TerminalColor::Blue
+    } else {
+        TerminalColor::DarkGray
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_compact_label(node: &SemanticsNode) -> String {
+    let role = match node.role {
+        SemanticsRole::GenericContainer => "Group",
+        SemanticsRole::TextInput => "Input",
+        SemanticsRole::ScrollView => "Scroll",
+        SemanticsRole::ColorSwatch => "Swatch",
+        SemanticsRole::RadioButton => "Radio",
+        SemanticsRole::ProgressBar => "Progress",
+        SemanticsRole::BusyIndicator => "Busy",
+        _ => tui_role_label(&node.role),
+    };
+    format!("{role}:{}", node.name.as_deref().unwrap_or("<unnamed>"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn format_tui_details(node: &SemanticsNode) -> String {
+    format!(
+        "#{id}\nrole: {role:?}\nname: {name}\nvalue: {value}\nstate: {state}\nactions: {actions}\nbounds: ({x:.0}, {y:.0}, {w:.0}, {h:.0})\n\nEnter/space activates. e edits SetValue controls. +/- adjust slider-like controls.",
+        id = node.id.get(),
+        role = node.role,
+        name = node.name.as_deref().unwrap_or("<unnamed>"),
+        value = node
+            .value
+            .as_ref()
+            .map(format_semantics_value)
+            .unwrap_or_else(|| "none".to_string()),
+        state = format_tui_state(node),
+        actions = if node.actions.is_empty() {
+            "none".to_string()
+        } else {
+            node.actions
+                .iter()
+                .map(|action| format!("{action:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
+        x = node.bounds.x(),
+        y = node.bounds.y(),
+        w = node.bounds.width(),
+        h = node.bounds.height(),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn format_semantics_value(value: &SemanticsValue) -> String {
+    match value {
+        SemanticsValue::Text(text) => text.clone(),
+        SemanticsValue::Number(number) => format!("{number:.2}"),
+        SemanticsValue::Range { value, min, max } => format!("{value:.2} [{min:.2}..{max:.2}]"),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn format_tui_state(node: &SemanticsNode) -> String {
+    let mut states = Vec::new();
+    if node.state.disabled {
+        states.push("disabled".to_string());
+    }
+    if node.state.focused {
+        states.push("focused".to_string());
+    }
+    if node.state.hidden {
+        states.push("hidden".to_string());
+    }
+    if node.state.hovered {
+        states.push("hovered".to_string());
+    }
+    if let Some(checked) = node.state.checked {
+        states.push(
+            match checked {
+                ToggleState::Unchecked => "unchecked",
+                ToggleState::Checked => "checked",
+                ToggleState::Mixed => "mixed",
+            }
+            .to_string(),
+        );
+    }
+    if node.state.selected {
+        states.push("selected".to_string());
+    }
+    if let Some(expanded) = node.state.expanded {
+        states.push(if expanded { "expanded" } else { "collapsed" }.to_string());
+    }
+    if node.state.busy {
+        states.push("busy".to_string());
+    }
+    if states.is_empty() {
+        "normal".to_string()
+    } else {
+        states.join(", ")
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_role_label(role: &SemanticsRole) -> &'static str {
+    match role {
+        SemanticsRole::Window => "Window",
+        SemanticsRole::Root => "Root",
+        SemanticsRole::GenericContainer => "Group",
+        SemanticsRole::Separator => "Separator",
+        SemanticsRole::List => "List",
+        SemanticsRole::Tree => "Tree",
+        SemanticsRole::Table => "Table",
+        SemanticsRole::Splitter => "Splitter",
+        SemanticsRole::Breadcrumb => "Breadcrumb",
+        SemanticsRole::TabBar => "TabBar",
+        SemanticsRole::Tabs => "Tabs",
+        SemanticsRole::Button => "Button",
+        SemanticsRole::CheckBox => "CheckBox",
+        SemanticsRole::Switch => "Switch",
+        SemanticsRole::RadioButton => "Radio",
+        SemanticsRole::RadioGroup => "RadioGroup",
+        SemanticsRole::Menu => "Menu",
+        SemanticsRole::MenuItem => "MenuItem",
+        SemanticsRole::ContextMenu => "ContextMenu",
+        SemanticsRole::Tooltip => "Tooltip",
+        SemanticsRole::Dialog => "Dialog",
+        SemanticsRole::Popover => "Popover",
+        SemanticsRole::Slider => "Slider",
+        SemanticsRole::ProgressBar => "Progress",
+        SemanticsRole::BusyIndicator => "Busy",
+        SemanticsRole::Text => "Text",
+        SemanticsRole::TextInput => "Input",
+        SemanticsRole::SpinBox => "SpinBox",
+        SemanticsRole::ComboBox => "ComboBox",
+        SemanticsRole::Image => "Image",
+        SemanticsRole::ColorSwatch => "Swatch",
+        SemanticsRole::ColorPicker => "ColorPicker",
+        SemanticsRole::Canvas => "Canvas",
+        SemanticsRole::ScrollView => "Scroll",
     }
 }
 
@@ -442,7 +961,6 @@ fn actionable_nodes(nodes: &[SemanticsNode]) -> Vec<SemanticsNode> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn activate_tui_node(window: &TestWindow, node: &SemanticsNode) -> sui::Result<()> {
-    let locator = named_locator(window, node)?;
     if node
         .actions
         .iter()
@@ -456,11 +974,11 @@ fn activate_tui_node(window: &TestWindow, node: &SemanticsNode) -> sui::Result<(
                 | SemanticsRole::MenuItem
         )
     {
-        return locator.click();
+        return click_tui_node(window, node);
     }
 
     if matches!(node.role, SemanticsRole::ScrollView) {
-        return locator.scroll_pixels(Vector::new(0.0, -80.0));
+        return scroll_tui_node(window, node, Vector::new(0.0, -80.0));
     }
 
     if node
@@ -468,22 +986,21 @@ fn activate_tui_node(window: &TestWindow, node: &SemanticsNode) -> sui::Result<(
         .iter()
         .any(|action| matches!(action, SemanticsAction::Increment))
     {
-        return locator.press("ArrowRight");
+        return press_tui_node(window, node, "ArrowRight");
     }
 
-    locator.focus()
+    click_tui_node(window, node)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn set_tui_node_value(window: &TestWindow, node: &SemanticsNode, text: &str) -> sui::Result<()> {
-    let locator = named_locator(window, node)?;
     if node
         .actions
         .iter()
         .any(|action| matches!(action, SemanticsAction::SetValue))
         || matches!(node.role, SemanticsRole::TextInput)
     {
-        locator.fill(text)
+        fill_tui_node(window, node, text)
     } else {
         Err(sui::Error::new(format!(
             "node #{} {:?} does not expose SetValue",
@@ -493,14 +1010,86 @@ fn set_tui_node_value(window: &TestWindow, node: &SemanticsNode, text: &str) -> 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn named_locator(window: &TestWindow, node: &SemanticsNode) -> sui::Result<sui_testing::Locator> {
-    let Some(name) = node.name.as_deref().filter(|name| !name.trim().is_empty()) else {
-        return Err(sui::Error::new(format!(
-            "node #{} {:?} cannot be targeted because it has no accessible name",
-            node.id, node.role
-        )));
-    };
-    Ok(window.get_by_role(node.role.clone()).with_name(name))
+fn click_tui_node(window: &TestWindow, node: &SemanticsNode) -> sui::Result<()> {
+    let point = tui_action_point(node);
+    dispatch_tui_event(
+        window,
+        Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)),
+    )?;
+
+    let mut down = PointerEvent::new(PointerEventKind::Down, point);
+    down.button = Some(PointerButton::Primary);
+    down.buttons = PointerButtons::new(1);
+    dispatch_tui_event(window, Event::Pointer(down))?;
+
+    let mut up = PointerEvent::new(PointerEventKind::Up, point);
+    up.button = Some(PointerButton::Primary);
+    dispatch_tui_event(window, Event::Pointer(up))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn scroll_tui_node(window: &TestWindow, node: &SemanticsNode, delta: Vector) -> sui::Result<()> {
+    let point = tui_action_point(node);
+    dispatch_tui_event(
+        window,
+        Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)),
+    )?;
+
+    let mut scroll = PointerEvent::new(PointerEventKind::Scroll, point);
+    scroll.scroll_delta = Some(sui::ScrollDelta::Pixels(delta));
+    dispatch_tui_event(window, Event::Pointer(scroll))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn press_tui_node(window: &TestWindow, node: &SemanticsNode, key: &str) -> sui::Result<()> {
+    click_tui_node(window, node)?;
+    dispatch_tui_event(
+        window,
+        Event::Keyboard(KeyboardEvent::new(key.to_string(), KeyState::Pressed)),
+    )?;
+    dispatch_tui_event(
+        window,
+        Event::Keyboard(KeyboardEvent::new(key.to_string(), KeyState::Released)),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fill_tui_node(window: &TestWindow, node: &SemanticsNode, text: &str) -> sui::Result<()> {
+    click_tui_node(window, node)?;
+    dispatch_tui_event(window, Event::Ime(ImeEvent::CompositionStart))?;
+    dispatch_tui_event(
+        window,
+        Event::Ime(ImeEvent::CompositionUpdate {
+            text: text.to_string(),
+        }),
+    )?;
+    dispatch_tui_event(
+        window,
+        Event::Ime(ImeEvent::CompositionCommit {
+            text: text.to_string(),
+        }),
+    )?;
+    dispatch_tui_event(window, Event::Ime(ImeEvent::CompositionEnd))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_tui_event(window: &TestWindow, event: Event) -> sui::Result<()> {
+    window.root().dispatch_event(event)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_action_point(node: &SemanticsNode) -> Point {
+    if matches!(node.role, SemanticsRole::ScrollView) {
+        Point::new(
+            node.bounds.x() + node.bounds.width().min(48.0),
+            node.bounds.y() + node.bounds.height() * 0.5,
+        )
+    } else {
+        Point::new(
+            node.bounds.x() + node.bounds.width() * 0.5,
+            node.bounds.y() + node.bounds.height() * 0.5,
+        )
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -1290,12 +1879,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn desktop_launch_mode_accepts_tui_flags() {
-        let mode = parse_desktop_launch_mode(
-            ["--tui", "--tui-layout=spatial", "--tui-show-hidden"],
-            false,
-            None,
-        )
-        .unwrap();
+        let mode = parse_desktop_launch_mode(["--tui", "--tui-show-hidden"], false, None).unwrap();
 
         let tui = mode.tui.expect("tui mode parsed");
         assert_eq!(tui.kind, DesktopTuiLaunchKind::Interactive);
@@ -1310,7 +1894,7 @@ mod tests {
 
         let tui = mode.tui.expect("tui mode parsed");
         assert_eq!(tui.kind, DesktopTuiLaunchKind::DumpAccessibility);
-        assert_eq!(tui.layout, TuiLayoutMode::Structured);
+        assert_eq!(tui.layout, TuiLayoutMode::Spatial);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1323,7 +1907,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn generated_tui_includes_major_dev_workspace_views() -> sui::Result<()> {
-        let app = sui_testing::TestApp::new(|| build_dev_application().build())?;
+        let app = sui_testing::TestApp::from_runtime(build_dev_application().build()?)?;
         let window = app.main_window()?;
         let snapshot = window.snapshot()?;
         let frame = render_snapshot(
@@ -1340,6 +1924,28 @@ mod tests {
         for label in ["Widget book", "64 buttons", "HDR validation", "Settings"] {
             assert!(frame.contains(label), "missing generated TUI label {label}");
         }
+
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generated_tui_actions_do_not_require_unique_role_name_pairs() -> sui::Result<()> {
+        let app = sui_testing::TestApp::from_runtime(build_dev_application().build()?)?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        let floating_content = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some("Floating view content")
+            })
+            .cloned()
+            .expect("floating view content scroll semantics present");
+
+        activate_tui_node(&window, &floating_content)?;
 
         Ok(())
     }

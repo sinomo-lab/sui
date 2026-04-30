@@ -25,6 +25,8 @@ sui = { path = "../sui", default-features = false }
 sui-widget-book = { path = "../sui-widget-book", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+crossterm = "0.29"
+ratatui = "0.29"
 sui-testing = { workspace = true }
 sui-tui = { workspace = true }
 
