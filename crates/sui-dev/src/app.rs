@@ -1420,15 +1420,6 @@ fn build_render_settings_tab_with_options(options: WindowRenderOptions) -> impl 
     RenderSettingsTab::with_initial_options(options)
 }
 
-pub fn build_dev_workspace_with_widget_book_bounds(
-    widget_book_bounds: Rect,
-) -> (FloatingWorkspaceState, FloatingWorkspace) {
-    build_dev_workspace_with_widget_book_bounds_and_render_options(
-        widget_book_bounds,
-        RenderSettingsTab::default_options(),
-    )
-}
-
 pub(crate) fn build_dev_workspace_with_widget_book_bounds_and_render_options(
     widget_book_bounds: Rect,
     render_options: WindowRenderOptions,
@@ -2752,8 +2743,10 @@ final_max_luminance={final_max_luminance}
 
     #[test]
     fn dev_workspace_exposes_retained_text_benchmark_view() -> Result<()> {
-        let (workspace, _views) =
-            build_dev_workspace_with_widget_book_bounds(Rect::new(24.0, 24.0, 680.0, 760.0));
+        let (workspace, _views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
+            Rect::new(24.0, 24.0, 680.0, 760.0),
+            RenderSettingsTab::default_options(),
+        );
 
         let retained_text_view = workspace
             .snapshots()
