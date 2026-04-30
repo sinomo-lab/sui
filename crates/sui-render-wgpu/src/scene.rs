@@ -3620,19 +3620,16 @@ pub(crate) fn output_transform_requires_intermediate(strategy: OutputStrategy) -
 pub(crate) fn output_sdr_content_scale(
     strategy: OutputStrategy,
     brightness_nits: f32,
-    display_sdr_white_nits: Option<f32>,
+    _display_sdr_white_nits: Option<f32>,
 ) -> f32 {
     let sanitized = if brightness_nits.is_finite() && brightness_nits > 0.0 {
         brightness_nits
     } else {
         DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS
     };
-    let display_sdr_white_nits = display_sdr_white_nits
-        .filter(|value| value.is_finite() && *value > 0.0)
-        .unwrap_or(SCRGB_REFERENCE_WHITE_NITS);
 
     match strategy {
-        OutputStrategy::HdrNativeSurface { .. } => sanitized / display_sdr_white_nits,
+        OutputStrategy::HdrNativeSurface { .. } => sanitized / SCRGB_REFERENCE_WHITE_NITS,
         OutputStrategy::HdrIntermediateThenToneMap { .. } => sanitized / SCRGB_REFERENCE_WHITE_NITS,
         OutputStrategy::SdrSurface { .. } | OutputStrategy::WideGamutSurface { .. } => 1.0,
     }

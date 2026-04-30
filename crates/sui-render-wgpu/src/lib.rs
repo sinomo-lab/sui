@@ -4657,7 +4657,7 @@ mod tests {
     }
 
     #[test]
-    fn native_hdr_output_uses_reported_display_sdr_white_when_available() {
+    fn native_hdr_output_uses_sc_rgb_reference_white_when_display_sdr_white_is_reported() {
         let strategy = OutputStrategy::HdrNativeSurface {
             format: wgpu::TextureFormat::Rgba16Float,
             primaries: DisplayColorPrimaries::DisplayP3,
@@ -4671,9 +4671,10 @@ mod tests {
             Some(203.0),
         );
 
-        assert!((transformed[0] - 0.5).abs() < 0.0001);
-        assert!((transformed[1] - 0.5).abs() < 0.0001);
-        assert!((transformed[2] - 0.5).abs() < 0.0001);
+        let expected = 101.5 / 80.0;
+        assert!((transformed[0] - expected).abs() < 0.0001);
+        assert!((transformed[1] - expected).abs() < 0.0001);
+        assert!((transformed[2] - expected).abs() < 0.0001);
         assert_eq!(transformed[3], 1.0);
     }
 
