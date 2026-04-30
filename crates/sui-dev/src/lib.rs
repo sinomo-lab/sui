@@ -6,6 +6,7 @@ pub use app::{build_dev_application, build_dev_application_with_widget_book_boun
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
+    collections::{HashMap, HashSet},
     env,
     io::{self, Stdout},
     time::Duration,
@@ -28,7 +29,9 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect as TerminalRect},
     style::{Color as TerminalColor, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap, block::Title,
+    },
 };
 use sui::{Application, Rect};
 #[cfg(not(target_arch = "wasm32"))]
@@ -344,11 +347,16 @@ fn print_tui_snapshot(window: &TestWindow, tui: DesktopTuiLaunchMode) -> sui::Re
 fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Result<()> {
     let mut terminal = TuiTerminalSession::new()?;
     let mut selected = 0usize;
+    let mut selection_initialized = false;
     loop {
         let snapshot = window.snapshot()?;
         let actionable = actionable_nodes(&snapshot.accessibility.nodes);
         if actionable.is_empty() {
             selected = 0;
+            selection_initialized = false;
+        } else if !selection_initialized {
+            selected = preferred_initial_actionable_index(&actionable).unwrap_or(0);
+            selection_initialized = true;
         } else {
             selected = selected.min(actionable.len().saturating_sub(1));
         }
@@ -535,31 +543,27 @@ fn draw_tui(
                 .fg(TerminalColor::Black)
                 .bg(TerminalColor::Cyan),
         ),
-        Span::raw(" generated TUI from accessibility tree "),
+        Span::raw(" accessibility TUI "),
         Span::styled(
             format!(
-                " nodes={} actionable={} issues={} ",
+                "nodes={} actions={} issues={}",
                 nodes.len(),
                 actionable.len(),
                 issue_count
             ),
             Style::default().fg(TerminalColor::Yellow),
         ),
-        Span::raw(if show_hidden {
-            " hidden=shown"
-        } else {
-            " hidden=off"
-        }),
+        Span::raw(if show_hidden { " hidden" } else { "" }),
     ]));
     frame.render_widget(title, root[0]);
 
     let areas = tui_layout_areas(frame.area());
 
     draw_spatial_canvas(frame, areas.spatial, nodes, actionable.get(selected));
-    draw_actionable_list(frame, areas.list, actionable, selected);
+    draw_actionable_list(frame, areas.list, nodes, actionable, selected);
     draw_details(frame, areas.details, actionable.get(selected));
 
-    let help = Paragraph::new("Keys: q/esc quit  up/down or j/k select  enter/space activate  e edit  +/- adjust  pgup/pgdn scroll  mouse click select  wheel scroll  right-click activate")
+    let help = Paragraph::new("q quit | up/down/jk select | enter activate | e edit | +/- adjust | Pg scroll | click/wheel/right-click mouse")
         .style(Style::default().fg(TerminalColor::Gray));
     frame.render_widget(help, root[2]);
 }
@@ -585,17 +589,17 @@ fn tui_layout_areas(area: TerminalRect) -> TuiLayoutAreas {
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(62),
-            Constraint::Percentage(22),
-            Constraint::Percentage(16),
-        ])
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(root[1]);
+    let side = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+        .split(body[1]);
 
     TuiLayoutAreas {
         spatial: body[0],
-        list: body[1],
-        details: body[2],
+        list: side[0],
+        details: side[1],
     }
 }
 
@@ -607,14 +611,24 @@ fn draw_spatial_canvas(
     selected: Option<&SemanticsNode>,
 ) {
     let world = tui_world_bounds(nodes).unwrap_or_else(|| SuiRect::new(0.0, 0.0, 1.0, 1.0));
-    let canvas_nodes = nodes
+    let selected_id = selected.map(|node| node.id);
+    let mut canvas_nodes = nodes
         .iter()
-        .filter(|node| tui_canvas_node(node) && node.bounds.intersection(world).is_some())
+        .filter(|node| {
+            tui_spatial_map_node(node, selected_id) && node.bounds.intersection(world).is_some()
+        })
         .cloned()
         .collect::<Vec<_>>();
-    let selected_id = selected.map(|node| node.id);
+    canvas_nodes.sort_by(|left, right| {
+        let left_selected = selected_id == Some(left.id);
+        let right_selected = selected_id == Some(right.id);
+        left_selected
+            .cmp(&right_selected)
+            .then_with(|| tui_node_area(right).total_cmp(&tui_node_area(left)))
+            .then_with(|| left.id.cmp(&right.id))
+    });
 
-    frame.render_widget(tui_view_block("Spatial Accessibility Map"), area);
+    frame.render_widget(tui_view_block("Spatial Map"), area);
     let Some(inner) = inner_terminal_rect(area) else {
         return;
     };
@@ -637,28 +651,38 @@ fn draw_spatial_canvas(
 fn draw_actionable_list(
     frame: &mut Frame<'_>,
     area: TerminalRect,
+    nodes: &[SemanticsNode],
     actionable: &[SemanticsNode],
     selected: usize,
 ) {
-    let items = actionable
+    let rows = tui_action_tree_rows(nodes, actionable);
+    let selected_row = tui_selected_action_tree_row(&rows, selected).unwrap_or(0);
+    let items = rows
         .iter()
-        .map(|node| {
+        .map(|row| {
+            let actionable_style = if row.actionable_index.is_some() {
+                Style::default().fg(TerminalColor::Cyan)
+            } else {
+                Style::default().fg(TerminalColor::DarkGray)
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    format!("{:?}", node.role),
-                    Style::default().fg(TerminalColor::Cyan),
+                    row.prefix.clone(),
+                    Style::default().fg(TerminalColor::DarkGray),
                 ),
+                Span::styled(tui_role_label(&row.node.role), actionable_style),
                 Span::raw(" "),
-                Span::raw(node.name.as_deref().unwrap_or("<unnamed>").to_string()),
+                Span::raw(row.node.name.as_deref().unwrap_or("<unnamed>").to_string()),
             ]))
         })
         .collect::<Vec<_>>();
-    let mut state = ListState::default();
-    if !items.is_empty() {
-        state.select(Some(selected.min(items.len().saturating_sub(1))));
-    }
+    let item_count = items.len();
     let list = List::new(items)
-        .block(tui_view_block("Actionable Nodes"))
+        .block(tui_view_block(format!(
+            "Action Tree {}/{}",
+            selected.saturating_add(1).min(actionable.len()),
+            actionable.len()
+        )))
         .highlight_style(
             Style::default()
                 .fg(TerminalColor::Black)
@@ -666,7 +690,127 @@ fn draw_actionable_list(
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");
+    let offset = tui_list_offset(selected_row, area, rows.len());
+    let mut state = ListState::default().with_offset(offset);
+    if item_count > 0 {
+        state.select(Some(selected_row.min(item_count.saturating_sub(1))));
+    }
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+struct TuiActionTreeRow {
+    node: SemanticsNode,
+    actionable_index: Option<usize>,
+    prefix: String,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_action_tree_rows(
+    nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
+) -> Vec<TuiActionTreeRow> {
+    let node_by_id = nodes
+        .iter()
+        .map(|node| (node.id, node))
+        .collect::<HashMap<_, _>>();
+    let actionable_by_id = actionable
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id, index))
+        .collect::<HashMap<_, _>>();
+    let mut relevant = actionable_by_id.keys().copied().collect::<HashSet<_>>();
+
+    for node in actionable {
+        let mut parent = node.parent;
+        while let Some(parent_id) = parent {
+            if !relevant.insert(parent_id) {
+                break;
+            }
+            parent = node_by_id.get(&parent_id).and_then(|node| node.parent);
+        }
+    }
+
+    let mut roots = Vec::new();
+    let mut children = HashMap::<sui::WidgetId, Vec<sui::WidgetId>>::new();
+    for node in nodes.iter().filter(|node| relevant.contains(&node.id)) {
+        if let Some(parent) = node.parent
+            && relevant.contains(&parent)
+        {
+            children.entry(parent).or_default().push(node.id);
+            continue;
+        }
+        roots.push(node.id);
+    }
+
+    let mut rows = Vec::new();
+    for (index, root) in roots.iter().copied().enumerate() {
+        let is_last = index + 1 == roots.len();
+        push_tui_action_tree_row(
+            root,
+            "",
+            is_last,
+            true,
+            &node_by_id,
+            &actionable_by_id,
+            &children,
+            &mut rows,
+        );
+    }
+    rows
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn push_tui_action_tree_row(
+    node_id: sui::WidgetId,
+    ancestor_prefix: &str,
+    is_last: bool,
+    is_root: bool,
+    node_by_id: &HashMap<sui::WidgetId, &SemanticsNode>,
+    actionable_by_id: &HashMap<sui::WidgetId, usize>,
+    children: &HashMap<sui::WidgetId, Vec<sui::WidgetId>>,
+    rows: &mut Vec<TuiActionTreeRow>,
+) {
+    let Some(node) = node_by_id.get(&node_id) else {
+        return;
+    };
+    let prefix = if is_root {
+        String::new()
+    } else {
+        format!("{}{}", ancestor_prefix, if is_last { "└─ " } else { "├─ " })
+    };
+    rows.push(TuiActionTreeRow {
+        node: (**node).clone(),
+        actionable_index: actionable_by_id.get(&node_id).copied(),
+        prefix,
+    });
+
+    let child_prefix = if is_root {
+        String::new()
+    } else {
+        format!("{}{}", ancestor_prefix, if is_last { "   " } else { "│  " })
+    };
+    if let Some(child_ids) = children.get(&node_id) {
+        for (index, child_id) in child_ids.iter().copied().enumerate() {
+            push_tui_action_tree_row(
+                child_id,
+                &child_prefix,
+                index + 1 == child_ids.len(),
+                false,
+                node_by_id,
+                actionable_by_id,
+                children,
+                rows,
+            );
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_selected_action_tree_row(rows: &[TuiActionTreeRow], selected: usize) -> Option<usize> {
+    rows.iter()
+        .position(|row| row.actionable_index == Some(selected))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -681,7 +825,7 @@ fn draw_details(frame: &mut Frame<'_>, area: TerminalRect, selected: Option<&Sem
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn tui_view_block(title: &'static str) -> Block<'static> {
+fn tui_view_block(title: impl Into<Title<'static>>) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -795,7 +939,9 @@ fn handle_tui_mouse(
 ) -> sui::Result<()> {
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            if let Some(index) = mouse_hit_action_list(mouse, areas.list, actionable) {
+            if let Some(index) =
+                mouse_hit_action_tree(mouse, areas.list, nodes, actionable, *selected)
+            {
                 *selected = index;
             } else if let Some(index) =
                 mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable)
@@ -804,8 +950,9 @@ fn handle_tui_mouse(
             }
         }
         MouseEventKind::Down(MouseButton::Right) => {
-            if let Some(index) = mouse_hit_action_list(mouse, areas.list, actionable)
-                .or_else(|| mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable))
+            if let Some(index) =
+                mouse_hit_action_tree(mouse, areas.list, nodes, actionable, *selected)
+                    .or_else(|| mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable))
             {
                 *selected = index;
                 if let Some(node) = actionable.get(index) {
@@ -816,21 +963,29 @@ fn handle_tui_mouse(
             }
         }
         MouseEventKind::ScrollDown => {
-            let index = mouse_hit_action_list(mouse, areas.list, actionable)
-                .or_else(|| mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable))
-                .unwrap_or(*selected);
-            if let Some(node) = actionable.get(index) {
-                *selected = index;
-                scroll_tui_node(window, node, Vector::new(0.0, -120.0))?;
+            if terminal_rect_contains(areas.list, mouse.column, mouse.row) {
+                *selected = (*selected)
+                    .saturating_add(3)
+                    .min(actionable.len().saturating_sub(1));
+            } else {
+                let index = mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable)
+                    .unwrap_or(*selected);
+                if let Some(node) = actionable.get(index) {
+                    *selected = index;
+                    scroll_tui_node(window, node, Vector::new(0.0, -120.0))?;
+                }
             }
         }
         MouseEventKind::ScrollUp => {
-            let index = mouse_hit_action_list(mouse, areas.list, actionable)
-                .or_else(|| mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable))
-                .unwrap_or(*selected);
-            if let Some(node) = actionable.get(index) {
-                *selected = index;
-                scroll_tui_node(window, node, Vector::new(0.0, 120.0))?;
+            if terminal_rect_contains(areas.list, mouse.column, mouse.row) {
+                *selected = (*selected).saturating_sub(3);
+            } else {
+                let index = mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable)
+                    .unwrap_or(*selected);
+                if let Some(node) = actionable.get(index) {
+                    *selected = index;
+                    scroll_tui_node(window, node, Vector::new(0.0, 120.0))?;
+                }
             }
         }
         _ => {}
@@ -839,21 +994,39 @@ fn handle_tui_mouse(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn mouse_hit_action_list(
+fn mouse_hit_action_tree(
     mouse: MouseEvent,
     area: TerminalRect,
+    nodes: &[SemanticsNode],
     actionable: &[SemanticsNode],
+    selected: usize,
 ) -> Option<usize> {
     if !terminal_rect_contains(area, mouse.column, mouse.row) || area.height <= 2 {
         return None;
     }
     let row = mouse.row.checked_sub(area.y + 1)? as usize;
     let visible_rows = area.height.saturating_sub(2) as usize;
-    if row >= visible_rows || row >= actionable.len() {
-        None
-    } else {
-        Some(row)
+    let rows = tui_action_tree_rows(nodes, actionable);
+    let selected_row = tui_selected_action_tree_row(&rows, selected).unwrap_or(0);
+    let offset = tui_list_offset(selected_row, area, rows.len());
+    let index = offset.saturating_add(row);
+    if row >= visible_rows || index >= rows.len() {
+        return None;
     }
+    rows[index].actionable_index
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_list_offset(selected: usize, area: TerminalRect, item_count: usize) -> usize {
+    let visible_rows = area.height.saturating_sub(2) as usize;
+    if visible_rows == 0 || item_count <= visible_rows {
+        return 0;
+    }
+
+    let selected = selected.min(item_count.saturating_sub(1));
+    selected
+        .saturating_sub(visible_rows / 2)
+        .min(item_count.saturating_sub(visible_rows))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -999,14 +1172,13 @@ fn tui_spatial_bounds(node: &SemanticsNode) -> Option<SuiRect> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn tui_canvas_node(node: &SemanticsNode) -> bool {
-    node.state.focused
-        || tui_interactive_role(node)
+fn tui_spatial_map_node(node: &SemanticsNode, selected_id: Option<sui::WidgetId>) -> bool {
+    selected_id == Some(node.id)
+        || node.state.focused
         || matches!(
             node.role,
             SemanticsRole::Window
                 | SemanticsRole::Root
-                | SemanticsRole::GenericContainer
                 | SemanticsRole::Separator
                 | SemanticsRole::List
                 | SemanticsRole::Tree
@@ -1248,6 +1420,26 @@ fn actionable_nodes(nodes: &[SemanticsNode]) -> Vec<SemanticsNode> {
         })
         .cloned()
         .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn preferred_initial_actionable_index(actionable: &[SemanticsNode]) -> Option<usize> {
+    actionable.iter().position(|node| {
+        node.actions
+            .iter()
+            .any(|action| matches!(action, SemanticsAction::Activate))
+            || matches!(
+                node.role,
+                SemanticsRole::Button
+                    | SemanticsRole::CheckBox
+                    | SemanticsRole::Switch
+                    | SemanticsRole::TextInput
+                    | SemanticsRole::Slider
+                    | SemanticsRole::SpinBox
+                    | SemanticsRole::ComboBox
+                    | SemanticsRole::ColorPicker
+            )
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2262,18 +2454,54 @@ mod tests {
             SemanticsRole::Button,
             SuiRect::new(10.0, 10.0, 20.0, 20.0),
         );
+        first.parent = Some(root.id);
         first.name = Some("First".to_string());
         let mut second = SemanticsNode::new(
             sui::WidgetId::new(3),
             SemanticsRole::Button,
             SuiRect::new(60.0, 60.0, 20.0, 20.0),
         );
+        second.parent = Some(root.id);
         second.name = Some("Second".to_string());
         let actionable = vec![first.clone(), second.clone()];
+        let tree_nodes = vec![root.clone(), first.clone(), second.clone()];
+        let rows = tui_action_tree_rows(&tree_nodes, &actionable);
+
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].actionable_index, None);
+        assert_eq!(rows[1].actionable_index, Some(0));
+        assert_eq!(rows[2].actionable_index, Some(1));
 
         assert_eq!(
-            mouse_hit_action_list(mouse, list_area, &actionable),
+            mouse_hit_action_tree(mouse, list_area, &tree_nodes, &actionable, 0),
+            Some(0)
+        );
+        let mouse_second_tree_row = MouseEvent { row: 6, ..mouse };
+        assert_eq!(
+            mouse_hit_action_tree(
+                mouse_second_tree_row,
+                list_area,
+                &tree_nodes,
+                &actionable,
+                0
+            ),
             Some(1)
+        );
+        let long_actionable = (0..40)
+            .map(|index| {
+                let mut node = SemanticsNode::new(
+                    sui::WidgetId::new(10 + index as u64),
+                    SemanticsRole::Button,
+                    SuiRect::new(0.0, 0.0, 10.0, 10.0),
+                );
+                node.name = Some(format!("Button {index}"));
+                node
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(tui_list_offset(20, list_area, long_actionable.len()), 17);
+        assert_eq!(
+            mouse_hit_action_tree(mouse, list_area, &long_actionable, &long_actionable, 20),
+            Some(18)
         );
 
         let spatial_area = TerminalRect::new(0, 0, 12, 12);
@@ -2285,7 +2513,7 @@ mod tests {
         };
 
         assert_eq!(
-            mouse_hit_spatial_node(mouse, spatial_area, &[root, first, second], &actionable),
+            mouse_hit_spatial_node(mouse, spatial_area, &tree_nodes, &actionable),
             Some(1)
         );
     }
