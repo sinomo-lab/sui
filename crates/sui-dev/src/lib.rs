@@ -559,7 +559,13 @@ fn draw_tui(
 
     let areas = tui_layout_areas(frame.area());
 
-    draw_spatial_canvas(frame, areas.spatial, nodes, actionable.get(selected));
+    draw_spatial_canvas(
+        frame,
+        areas.spatial,
+        nodes,
+        actionable,
+        actionable.get(selected),
+    );
     draw_actionable_list(frame, areas.list, nodes, actionable, selected);
     draw_details(frame, areas.details, actionable.get(selected));
 
@@ -608,14 +614,23 @@ fn draw_spatial_canvas(
     frame: &mut Frame<'_>,
     area: TerminalRect,
     nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
     selected: Option<&SemanticsNode>,
 ) {
     let world = tui_world_bounds(nodes).unwrap_or_else(|| SuiRect::new(0.0, 0.0, 1.0, 1.0));
     let selected_id = selected.map(|node| node.id);
+    frame.render_widget(tui_view_block("Spatial Map"), area);
+    let Some(inner) = inner_terminal_rect(area) else {
+        return;
+    };
+    let floating_tabs = tui_floating_tabs(nodes, selected_id);
     let mut canvas_nodes = nodes
         .iter()
         .filter(|node| {
-            tui_spatial_map_node(node, selected_id) && node.bounds.intersection(world).is_some()
+            tui_spatial_map_node(node, selected_id)
+                && tui_projected_spatial_bounds(node, &floating_tabs)
+                    .and_then(|bounds| bounds.intersection(world))
+                    .is_some()
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -628,14 +643,12 @@ fn draw_spatial_canvas(
             .then_with(|| left.id.cmp(&right.id))
     });
 
-    frame.render_widget(tui_view_block("Spatial Map"), area);
-    let Some(inner) = inner_terminal_rect(area) else {
-        return;
-    };
-
     for node in &canvas_nodes {
         let color = tui_node_color(node, selected_id == Some(node.id));
-        let Some(rect) = tui_node_terminal_rect(node, inner, world) else {
+        let Some(bounds) = tui_projected_spatial_bounds(node, &floating_tabs) else {
+            continue;
+        };
+        let Some(rect) = tui_bounds_terminal_rect(bounds, inner, world) else {
             continue;
         };
         draw_tui_solid_outline(
@@ -645,6 +658,44 @@ fn draw_spatial_canvas(
             tui_label_node(node).then(|| tui_compact_label(node)),
         );
     }
+
+    let mut widget_nodes = nodes
+        .iter()
+        .filter(|node| {
+            tui_compact_widget_node(node, selected_id)
+                && tui_projected_spatial_bounds(node, &floating_tabs)
+                    .and_then(|bounds| bounds.intersection(world))
+                    .is_some()
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    widget_nodes.sort_by(|left, right| {
+        let left_selected = selected_id == Some(left.id);
+        let right_selected = selected_id == Some(right.id);
+        left_selected
+            .cmp(&right_selected)
+            .then_with(|| tui_node_area(right).total_cmp(&tui_node_area(left)))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    for node in &widget_nodes {
+        let Some(bounds) = tui_projected_spatial_bounds(node, &floating_tabs) else {
+            continue;
+        };
+        let Some(rect) = tui_bounds_terminal_rect(bounds, inner, world) else {
+            continue;
+        };
+        draw_tui_compact_widget(frame, rect, node, selected_id == Some(node.id));
+    }
+    draw_tui_accessibility_flow(
+        frame,
+        inner,
+        world,
+        nodes,
+        actionable,
+        selected_id,
+        &floating_tabs,
+    );
+    draw_tui_floating_tabs(frame, inner, world, &floating_tabs);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -834,8 +885,392 @@ fn tui_view_block(title: impl Into<Title<'static>>) -> Block<'static> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn tui_node_terminal_rect(
+#[derive(Clone)]
+struct TuiFloatingTabs {
+    parent: SemanticsNode,
+    windows: Vec<SemanticsNode>,
+    active_window_id: sui::WidgetId,
+    active_index: usize,
+    node_window: HashMap<sui::WidgetId, sui::WidgetId>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_floating_tabs(
+    nodes: &[SemanticsNode],
+    selected_id: Option<sui::WidgetId>,
+) -> Option<TuiFloatingTabs> {
+    let node_by_id = nodes
+        .iter()
+        .map(|node| (node.id, node))
+        .collect::<HashMap<_, _>>();
+    let mut windows_by_parent = HashMap::<sui::WidgetId, Vec<SemanticsNode>>::new();
+    for node in nodes
+        .iter()
+        .filter(|node| node.role == SemanticsRole::Window && node.parent.is_some())
+    {
+        if let Some(parent) = node.parent {
+            windows_by_parent
+                .entry(parent)
+                .or_default()
+                .push(node.clone());
+        }
+    }
+
+    let (parent_id, mut windows) = windows_by_parent
+        .into_iter()
+        .filter(|(_, windows)| windows.len() > 1)
+        .filter(|(parent_id, _)| {
+            node_by_id.get(parent_id).is_some_and(|parent| {
+                parent.name.as_deref() == Some("Development workspace")
+                    || parent.role == SemanticsRole::GenericContainer
+            })
+        })
+        .max_by_key(|(_, windows)| windows.len())?;
+    windows.sort_by(|left, right| {
+        left.bounds
+            .x()
+            .total_cmp(&right.bounds.x())
+            .then(left.id.cmp(&right.id))
+    });
+    let parent = (*node_by_id.get(&parent_id)?).clone();
+    let window_ids = windows
+        .iter()
+        .map(|window| window.id)
+        .collect::<HashSet<_>>();
+    let mut node_window = HashMap::new();
+    for node in nodes {
+        let mut current = Some(node.id);
+        while let Some(id) = current {
+            if window_ids.contains(&id) {
+                node_window.insert(node.id, id);
+                break;
+            }
+            current = node_by_id.get(&id).and_then(|node| node.parent);
+        }
+    }
+    let active_index = selected_id
+        .and_then(|id| {
+            windows
+                .iter()
+                .position(|window| tui_node_has_ancestor(id, window.id, &node_by_id))
+        })
+        .unwrap_or(0);
+    let active_window_id = windows.get(active_index)?.id;
+
+    Some(TuiFloatingTabs {
+        parent,
+        windows,
+        active_window_id,
+        active_index,
+        node_window,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_node_has_ancestor(
+    node_id: sui::WidgetId,
+    ancestor_id: sui::WidgetId,
+    node_by_id: &HashMap<sui::WidgetId, &SemanticsNode>,
+) -> bool {
+    let mut current = Some(node_id);
+    while let Some(id) = current {
+        if id == ancestor_id {
+            return true;
+        }
+        current = node_by_id.get(&id).and_then(|node| node.parent);
+    }
+    false
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_projected_spatial_bounds(
     node: &SemanticsNode,
+    tabs: &Option<TuiFloatingTabs>,
+) -> Option<SuiRect> {
+    let Some(tabs) = tabs else {
+        return Some(node.bounds);
+    };
+    if node.id == tabs.parent.id {
+        return Some(node.bounds);
+    }
+    if tabs.windows.iter().any(|window| window.id == node.id) {
+        return None;
+    }
+
+    if tabs.node_window.contains_key(&node.id) {
+        return None;
+    }
+    Some(node.bounds)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn draw_tui_floating_tabs(
+    frame: &mut Frame<'_>,
+    inner: TerminalRect,
+    world: SuiRect,
+    tabs: &Option<TuiFloatingTabs>,
+) {
+    let Some(tabs) = tabs else {
+        return;
+    };
+    let Some(parent_rect) = tui_bounds_terminal_rect(tabs.parent.bounds, inner, world) else {
+        return;
+    };
+    let tab_area = TerminalRect::new(parent_rect.x, parent_rect.y, parent_rect.width, 1);
+    fill_tui_rect(
+        frame.buffer_mut(),
+        tab_area,
+        Style::default().bg(TerminalColor::DarkGray),
+    );
+    let mut x = tab_area.x.saturating_add(1);
+    let max_x = tab_area.x.saturating_add(tab_area.width);
+    for (index, window) in tabs.windows.iter().enumerate() {
+        if x >= max_x {
+            break;
+        }
+        let active = index == tabs.active_index;
+        let style = if active {
+            Style::default()
+                .fg(TerminalColor::Black)
+                .bg(TerminalColor::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(TerminalColor::White)
+                .bg(TerminalColor::DarkGray)
+        };
+        let label = format!(" {} ", window.name.as_deref().unwrap_or("Window"));
+        let width = (label.chars().count() as u16).min(max_x.saturating_sub(x));
+        frame
+            .buffer_mut()
+            .set_stringn(x, tab_area.y, label, width as usize, style);
+        x = x.saturating_add(width).saturating_add(1);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+struct TuiAccessibilityFlowItem {
+    node: SemanticsNode,
+    rect: TerminalRect,
+    actionable_index: Option<usize>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+struct TuiAccessibilityFlowVirtualItem {
+    node: SemanticsNode,
+    column: u16,
+    row: usize,
+    width: u16,
+    actionable_index: Option<usize>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn draw_tui_accessibility_flow(
+    frame: &mut Frame<'_>,
+    inner: TerminalRect,
+    world: SuiRect,
+    nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
+    selected_id: Option<sui::WidgetId>,
+    tabs: &Option<TuiFloatingTabs>,
+) {
+    let Some(tabs) = tabs else {
+        return;
+    };
+    let Some(area) = tui_active_tab_content_area(inner, world, tabs) else {
+        return;
+    };
+    fill_tui_rect(frame.buffer_mut(), area, Style::default());
+    for item in tui_accessibility_flow_layout(nodes, actionable, tabs, area, selected_id) {
+        draw_tui_compact_widget(
+            frame,
+            item.rect,
+            &item.node,
+            selected_id == Some(item.node.id),
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_active_tab_content_area(
+    inner: TerminalRect,
+    world: SuiRect,
+    tabs: &TuiFloatingTabs,
+) -> Option<TerminalRect> {
+    let parent_rect = tui_bounds_terminal_rect(tabs.parent.bounds, inner, world)?;
+    if parent_rect.height <= 1 || parent_rect.width == 0 {
+        return None;
+    }
+    Some(TerminalRect::new(
+        parent_rect.x,
+        parent_rect.y.saturating_add(1),
+        parent_rect.width,
+        parent_rect.height.saturating_sub(1),
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_accessibility_flow_layout(
+    nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
+    tabs: &TuiFloatingTabs,
+    area: TerminalRect,
+    selected_id: Option<sui::WidgetId>,
+) -> Vec<TuiAccessibilityFlowItem> {
+    if area.width == 0 || area.height == 0 {
+        return Vec::new();
+    }
+
+    let virtual_items = tui_accessibility_flow_virtual_layout(nodes, actionable, tabs, area.width);
+    let offset = tui_accessibility_flow_offset(&virtual_items, area.height, selected_id);
+    virtual_items
+        .into_iter()
+        .filter_map(|item| {
+            let visible_row = item.row.checked_sub(offset)?;
+            if visible_row >= area.height as usize {
+                return None;
+            }
+            let available = area.width.saturating_sub(item.column);
+            if available == 0 {
+                return None;
+            }
+            Some(TuiAccessibilityFlowItem {
+                node: item.node,
+                rect: TerminalRect::new(
+                    area.x.saturating_add(item.column),
+                    area.y.saturating_add(visible_row as u16),
+                    item.width.min(available),
+                    1,
+                ),
+                actionable_index: item.actionable_index,
+            })
+        })
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_accessibility_flow_virtual_layout(
+    nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
+    tabs: &TuiFloatingTabs,
+    area_width: u16,
+) -> Vec<TuiAccessibilityFlowVirtualItem> {
+    if area_width == 0 {
+        return Vec::new();
+    }
+
+    let actionable_by_id = actionable
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id, index))
+        .collect::<HashMap<_, _>>();
+    let mut items = Vec::new();
+    let mut x = 0u16;
+    let mut row = 0usize;
+
+    for node in nodes.iter().filter(|node| {
+        tabs.node_window.get(&node.id) == Some(&tabs.active_window_id)
+            && tui_accessibility_flow_node(node)
+    }) {
+        let inline = tui_accessibility_flow_inline_node(node);
+        let item_width = if inline {
+            tui_accessibility_flow_cell_width(node, area_width)
+        } else {
+            area_width
+        };
+
+        if inline {
+            if x > 0 && x.saturating_add(item_width) > area_width {
+                x = 0;
+                row = row.saturating_add(1);
+            }
+            let available = area_width.saturating_sub(x);
+            if available == 0 {
+                x = 0;
+                row = row.saturating_add(1);
+                continue;
+            }
+            let item_width = item_width.min(available);
+            items.push(TuiAccessibilityFlowVirtualItem {
+                node: node.clone(),
+                column: x,
+                row,
+                width: item_width,
+                actionable_index: actionable_by_id.get(&node.id).copied(),
+            });
+            x = x.saturating_add(item_width).saturating_add(1);
+        } else {
+            if x != 0 {
+                x = 0;
+                row = row.saturating_add(1);
+            }
+            items.push(TuiAccessibilityFlowVirtualItem {
+                node: node.clone(),
+                column: 0,
+                row,
+                width: item_width,
+                actionable_index: actionable_by_id.get(&node.id).copied(),
+            });
+            row = row.saturating_add(1);
+        }
+    }
+
+    items
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_accessibility_flow_offset(
+    items: &[TuiAccessibilityFlowVirtualItem],
+    visible_height: u16,
+    selected_id: Option<sui::WidgetId>,
+) -> usize {
+    let visible_rows = visible_height as usize;
+    let total_rows = items
+        .iter()
+        .map(|item| item.row.saturating_add(1))
+        .max()
+        .unwrap_or(0);
+    if visible_rows == 0 || total_rows <= visible_rows {
+        return 0;
+    }
+
+    let selected_row = selected_id
+        .and_then(|id| items.iter().find(|item| item.node.id == id))
+        .map(|item| item.row)
+        .unwrap_or(0);
+    selected_row
+        .saturating_sub(visible_rows / 2)
+        .min(total_rows.saturating_sub(visible_rows))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_accessibility_flow_node(node: &SemanticsNode) -> bool {
+    !node.state.hidden
+        && tui_compact_widget_node(node, None)
+        && node.name.as_deref() != Some("Floating view content")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_accessibility_flow_inline_node(node: &SemanticsNode) -> bool {
+    matches!(
+        node.role,
+        SemanticsRole::Button | SemanticsRole::MenuItem | SemanticsRole::ColorSwatch
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_accessibility_flow_cell_width(node: &SemanticsNode, area_width: u16) -> u16 {
+    let text_width = tui_widget_text(node).chars().count() as u16;
+    let max_width = area_width.min(24).max(1);
+    let min_width = 6.min(max_width);
+    text_width.saturating_add(2).clamp(min_width, max_width)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_bounds_terminal_rect(
+    bounds: SuiRect,
     inner: TerminalRect,
     world: SuiRect,
 ) -> Option<TerminalRect> {
@@ -843,10 +1278,10 @@ fn tui_node_terminal_rect(
         return None;
     }
 
-    let x0 = world_to_tui_column(node.bounds.x(), inner, world);
-    let x1 = world_to_tui_column(node.bounds.max_x(), inner, world);
-    let y0 = world_to_tui_row(node.bounds.max_y(), inner, world);
-    let y1 = world_to_tui_row(node.bounds.y(), inner, world);
+    let x0 = world_to_tui_column(bounds.x(), inner, world);
+    let x1 = world_to_tui_column(bounds.max_x(), inner, world);
+    let y0 = world_to_tui_row(bounds.max_y(), inner, world);
+    let y1 = world_to_tui_row(bounds.y(), inner, world);
     let left = x0.min(x1);
     let right = x0.max(x1);
     let top = y0.min(y1);
@@ -870,7 +1305,7 @@ fn world_to_tui_column(x: f32, inner: TerminalRect, world: SuiRect) -> u16 {
 #[cfg(not(target_arch = "wasm32"))]
 fn world_to_tui_row(y: f32, inner: TerminalRect, world: SuiRect) -> u16 {
     let span = inner.height.saturating_sub(1).max(1) as f32;
-    let ratio = ((world.max_y() - y) / world.height()).clamp(0.0, 1.0);
+    let ratio = ((y - world.y()) / world.height()).clamp(0.0, 1.0);
     inner.y + (ratio * span).round() as u16
 }
 
@@ -922,6 +1357,175 @@ fn draw_tui_solid_outline(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn draw_tui_compact_widget(
+    frame: &mut Frame<'_>,
+    rect: TerminalRect,
+    node: &SemanticsNode,
+    selected: bool,
+) {
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+
+    match node.role {
+        SemanticsRole::Text => {
+            draw_tui_clipped_text(
+                frame,
+                rect,
+                &tui_widget_text(node),
+                Style::default().fg(TerminalColor::White),
+                false,
+            );
+        }
+        SemanticsRole::Button | SemanticsRole::MenuItem => {
+            let style = if selected {
+                Style::default()
+                    .fg(TerminalColor::Black)
+                    .bg(TerminalColor::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(TerminalColor::Black)
+                    .bg(TerminalColor::Cyan)
+            };
+            draw_tui_filled_label(frame, rect, &tui_widget_text(node), style);
+        }
+        SemanticsRole::CheckBox | SemanticsRole::Switch | SemanticsRole::RadioButton => {
+            let marker = if tui_node_checked(node) { "[x]" } else { "[ ]" };
+            let text = format!("{marker} {}", tui_widget_text(node));
+            let style = if selected {
+                Style::default()
+                    .fg(TerminalColor::Black)
+                    .bg(TerminalColor::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(TerminalColor::Cyan)
+            };
+            draw_tui_clipped_text(frame, rect, &text, style, false);
+        }
+        SemanticsRole::TextInput | SemanticsRole::ComboBox | SemanticsRole::SpinBox => {
+            let text = tui_widget_value_text(node).unwrap_or_else(|| tui_widget_text(node));
+            let style = if selected {
+                Style::default()
+                    .fg(TerminalColor::Black)
+                    .bg(TerminalColor::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(TerminalColor::White)
+                    .bg(TerminalColor::DarkGray)
+            };
+            draw_tui_filled_label(frame, rect, &text, style);
+        }
+        SemanticsRole::Slider | SemanticsRole::ProgressBar => {
+            draw_tui_compact_range(frame, rect, node, selected);
+        }
+        SemanticsRole::ColorSwatch | SemanticsRole::ColorPicker => {
+            let style = if selected {
+                Style::default()
+                    .fg(TerminalColor::Black)
+                    .bg(TerminalColor::Yellow)
+            } else {
+                Style::default()
+                    .fg(TerminalColor::Black)
+                    .bg(TerminalColor::Magenta)
+            };
+            draw_tui_filled_label(frame, rect, &tui_widget_text(node), style);
+        }
+        SemanticsRole::BusyIndicator => {
+            draw_tui_clipped_text(
+                frame,
+                rect,
+                "busy",
+                Style::default().fg(TerminalColor::Magenta),
+                false,
+            );
+        }
+        _ => {}
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn draw_tui_filled_label(frame: &mut Frame<'_>, rect: TerminalRect, text: &str, style: Style) {
+    fill_tui_rect(frame.buffer_mut(), rect, style);
+    draw_tui_clipped_text(frame, rect, text, style, true);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn draw_tui_clipped_text(
+    frame: &mut Frame<'_>,
+    rect: TerminalRect,
+    text: &str,
+    style: Style,
+    center_vertical: bool,
+) {
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    let y = if center_vertical {
+        rect.y + rect.height.saturating_sub(1) / 2
+    } else {
+        rect.y
+    };
+    let text_x = rect
+        .x
+        .saturating_add(1)
+        .min(rect.x + rect.width.saturating_sub(1));
+    let max_width = rect
+        .width
+        .saturating_sub(if rect.width > 2 { 2 } else { 0 }) as usize;
+    if max_width == 0 {
+        return;
+    }
+    frame
+        .buffer_mut()
+        .set_stringn(text_x, y, text, max_width, style);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn draw_tui_compact_range(
+    frame: &mut Frame<'_>,
+    rect: TerminalRect,
+    node: &SemanticsNode,
+    selected: bool,
+) {
+    let style = if selected {
+        Style::default()
+            .fg(TerminalColor::Black)
+            .bg(TerminalColor::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(TerminalColor::White)
+            .bg(TerminalColor::DarkGray)
+    };
+    fill_tui_rect(frame.buffer_mut(), rect, style);
+    let y = rect.y + rect.height.saturating_sub(1) / 2;
+    let fill_width = tui_range_fill_width(node, rect.width);
+    for x in rect.x..rect.x.saturating_add(fill_width) {
+        set_tui_symbol(
+            frame.buffer_mut(),
+            x,
+            y,
+            "━",
+            Style::default().fg(TerminalColor::Cyan),
+        );
+    }
+    draw_tui_clipped_text(frame, rect, &tui_widget_text(node), style, true);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fill_tui_rect(buffer: &mut Buffer, rect: TerminalRect, style: Style) {
+    for y in rect.y..rect.y.saturating_add(rect.height) {
+        for x in rect.x..rect.x.saturating_add(rect.width) {
+            if let Some(cell) = buffer.cell_mut((x, y)) {
+                cell.set_symbol(" ").set_style(style);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn set_tui_symbol(buffer: &mut Buffer, x: u16, y: u16, symbol: &str, style: Style) {
     if let Some(cell) = buffer.cell_mut((x, y)) {
         cell.set_symbol(symbol).set_style(style);
@@ -937,6 +1541,7 @@ fn handle_tui_mouse(
     actionable: &[SemanticsNode],
     selected: &mut usize,
 ) -> sui::Result<()> {
+    let selected_id = actionable.get(*selected).map(|node| node.id);
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some(index) =
@@ -944,15 +1549,16 @@ fn handle_tui_mouse(
             {
                 *selected = index;
             } else if let Some(index) =
-                mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable)
+                mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable, selected_id)
             {
                 *selected = index;
             }
         }
         MouseEventKind::Down(MouseButton::Right) => {
             if let Some(index) =
-                mouse_hit_action_tree(mouse, areas.list, nodes, actionable, *selected)
-                    .or_else(|| mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable))
+                mouse_hit_action_tree(mouse, areas.list, nodes, actionable, *selected).or_else(
+                    || mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable, selected_id),
+                )
             {
                 *selected = index;
                 if let Some(node) = actionable.get(index) {
@@ -968,8 +1574,9 @@ fn handle_tui_mouse(
                     .saturating_add(3)
                     .min(actionable.len().saturating_sub(1));
             } else {
-                let index = mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable)
-                    .unwrap_or(*selected);
+                let index =
+                    mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable, selected_id)
+                        .unwrap_or(*selected);
                 if let Some(node) = actionable.get(index) {
                     *selected = index;
                     scroll_tui_node(window, node, Vector::new(0.0, -120.0))?;
@@ -980,8 +1587,9 @@ fn handle_tui_mouse(
             if terminal_rect_contains(areas.list, mouse.column, mouse.row) {
                 *selected = (*selected).saturating_sub(3);
             } else {
-                let index = mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable)
-                    .unwrap_or(*selected);
+                let index =
+                    mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable, selected_id)
+                        .unwrap_or(*selected);
                 if let Some(node) = actionable.get(index) {
                     *selected = index;
                     scroll_tui_node(window, node, Vector::new(0.0, 120.0))?;
@@ -1035,6 +1643,7 @@ fn mouse_hit_spatial_node(
     area: TerminalRect,
     nodes: &[SemanticsNode],
     actionable: &[SemanticsNode],
+    selected_id: Option<sui::WidgetId>,
 ) -> Option<usize> {
     if !terminal_rect_contains(area, mouse.column, mouse.row) || area.width <= 2 || area.height <= 2
     {
@@ -1045,12 +1654,24 @@ fn mouse_hit_spatial_node(
         return None;
     }
     let world = tui_world_bounds(nodes)?;
+    let tabs = tui_floating_tabs(nodes, selected_id);
+    if let Some(tabs) = tabs.as_ref()
+        && let Some(flow_area) = tui_active_tab_content_area(inner, world, tabs)
+        && terminal_rect_contains(flow_area, mouse.column, mouse.row)
+    {
+        return tui_accessibility_flow_layout(nodes, actionable, tabs, flow_area, selected_id)
+            .into_iter()
+            .find(|item| terminal_rect_contains(item.rect, mouse.column, mouse.row))
+            .and_then(|item| item.actionable_index);
+    }
     let point = mouse_to_world_point(mouse, inner, world)?;
 
     actionable
         .iter()
         .enumerate()
-        .filter(|(_, node)| node.bounds.contains(point))
+        .filter(|(_, node)| {
+            tui_projected_spatial_bounds(node, &tabs).is_some_and(|bounds| bounds.contains(point))
+        })
         .min_by(|(_, left), (_, right)| {
             tui_node_area(left)
                 .total_cmp(&tui_node_area(right))
@@ -1068,7 +1689,7 @@ fn mouse_to_world_point(mouse: MouseEvent, inner: TerminalRect, world: SuiRect) 
     let y_ratio = (mouse.row.saturating_sub(inner.y)) as f32 / (inner.height - 1) as f32;
     Some(Point::new(
         world.x() + world.width() * x_ratio.clamp(0.0, 1.0),
-        world.max_y() - world.height() * y_ratio.clamp(0.0, 1.0),
+        world.y() + world.height() * y_ratio.clamp(0.0, 1.0),
     ))
 }
 
@@ -1197,6 +1818,28 @@ fn tui_spatial_map_node(node: &SemanticsNode, selected_id: Option<sui::WidgetId>
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn tui_compact_widget_node(node: &SemanticsNode, selected_id: Option<sui::WidgetId>) -> bool {
+    selected_id == Some(node.id)
+        || matches!(
+            node.role,
+            SemanticsRole::Button
+                | SemanticsRole::CheckBox
+                | SemanticsRole::Switch
+                | SemanticsRole::RadioButton
+                | SemanticsRole::MenuItem
+                | SemanticsRole::Slider
+                | SemanticsRole::ProgressBar
+                | SemanticsRole::BusyIndicator
+                | SemanticsRole::Text
+                | SemanticsRole::TextInput
+                | SemanticsRole::SpinBox
+                | SemanticsRole::ComboBox
+                | SemanticsRole::ColorSwatch
+                | SemanticsRole::ColorPicker
+        )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn tui_label_node(node: &SemanticsNode) -> bool {
     node.state.focused
         || tui_interactive_role(node)
@@ -1253,6 +1896,41 @@ fn tui_node_color(node: &SemanticsNode, selected: bool) -> TerminalColor {
     } else {
         TerminalColor::DarkGray
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_widget_text(node: &SemanticsNode) -> String {
+    node.name
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .or_else(|| tui_widget_value_text(node))
+        .unwrap_or_else(|| tui_role_label(&node.role).to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_widget_value_text(node: &SemanticsNode) -> Option<String> {
+    node.value.as_ref().map(format_semantics_value)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_node_checked(node: &SemanticsNode) -> bool {
+    matches!(
+        node.state.checked,
+        Some(ToggleState::Checked | ToggleState::Mixed)
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tui_range_fill_width(node: &SemanticsNode, width: u16) -> u16 {
+    let ratio = match node.value {
+        Some(SemanticsValue::Range { value, min, max }) if max > min => {
+            ((value - min) / (max - min)).clamp(0.0, 1.0)
+        }
+        Some(SemanticsValue::Number(value)) => value.clamp(0.0, 1.0),
+        _ => 0.5,
+    };
+    ((width as f64) * ratio).round().clamp(0.0, width as f64) as u16
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2505,17 +3183,181 @@ mod tests {
         );
 
         let spatial_area = TerminalRect::new(0, 0, 12, 12);
+        let spatial_inner = inner_terminal_rect(spatial_area).expect("inner spatial area");
+        let world = SuiRect::new(0.0, 0.0, 100.0, 100.0);
+        assert!(
+            world_to_tui_row(10.0, spatial_inner, world)
+                < world_to_tui_row(80.0, spatial_inner, world),
+            "spatial map should preserve top-left GUI coordinate orientation"
+        );
         let mouse = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 7,
-            row: 3,
+            row: 7,
             modifiers: KeyModifiers::empty(),
         };
 
         assert_eq!(
-            mouse_hit_spatial_node(mouse, spatial_area, &tree_nodes, &actionable),
+            mouse_hit_spatial_node(mouse, spatial_area, &tree_nodes, &actionable, None),
             Some(1)
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generated_tui_spatial_widgets_render_compact_clipped_text() -> sui::Result<()> {
+        let mut root = SemanticsNode::new(
+            sui::WidgetId::new(1),
+            SemanticsRole::Window,
+            SuiRect::new(0.0, 0.0, 100.0, 40.0),
+        );
+        root.name = Some("Root".to_string());
+        let mut button = SemanticsNode::new(
+            sui::WidgetId::new(2),
+            SemanticsRole::Button,
+            SuiRect::new(10.0, 10.0, 80.0, 16.0),
+        );
+        button.parent = Some(root.id);
+        button.name = Some("Very long button label".to_string());
+        let actionable = vec![button.clone()];
+        let nodes = vec![root, button];
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(24, 8)).map_err(to_sui_io_error)?;
+
+        terminal
+            .draw(|frame| draw_tui(frame, &nodes, &actionable, 0, false))
+            .map_err(to_sui_io_error)?;
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("Very"));
+        assert!(!rendered.contains("Very long button label"));
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generated_tui_renders_floating_view_from_accessibility_tree_flow() {
+        let mut workspace = SemanticsNode::new(
+            sui::WidgetId::new(1),
+            SemanticsRole::GenericContainer,
+            SuiRect::new(0.0, 0.0, 300.0, 200.0),
+        );
+        workspace.name = Some("Development workspace".to_string());
+        let mut first_window = SemanticsNode::new(
+            sui::WidgetId::new(2),
+            SemanticsRole::Window,
+            SuiRect::new(20.0, 20.0, 120.0, 100.0),
+        );
+        first_window.parent = Some(workspace.id);
+        first_window.name = Some("First".to_string());
+        let mut second_window = SemanticsNode::new(
+            sui::WidgetId::new(3),
+            SemanticsRole::Window,
+            SuiRect::new(80.0, 60.0, 120.0, 100.0),
+        );
+        second_window.parent = Some(workspace.id);
+        second_window.name = Some("Second".to_string());
+        let mut first_button = SemanticsNode::new(
+            sui::WidgetId::new(4),
+            SemanticsRole::Button,
+            SuiRect::new(40.0, 40.0, 40.0, 20.0),
+        );
+        first_button.parent = Some(first_window.id);
+        first_button.name = Some("First button".to_string());
+        let mut second_button = SemanticsNode::new(
+            sui::WidgetId::new(5),
+            SemanticsRole::Button,
+            SuiRect::new(100.0, 80.0, 40.0, 20.0),
+        );
+        second_button.parent = Some(second_window.id);
+        second_button.name = Some("Second button".to_string());
+        let mut second_content = SemanticsNode::new(
+            sui::WidgetId::new(6),
+            SemanticsRole::ScrollView,
+            SuiRect::new(100.0, 80.0, 100.0, 80.0),
+        );
+        second_content.parent = Some(second_window.id);
+        second_content.name = Some("Floating view content".to_string());
+        second_button.parent = Some(second_content.id);
+        let second_window_id = second_window.id;
+        let nodes = vec![
+            workspace,
+            first_window,
+            second_window,
+            first_button.clone(),
+            second_content,
+            second_button.clone(),
+        ];
+        let actionable = vec![first_button.clone(), second_button.clone()];
+        let tabs = tui_floating_tabs(&nodes, Some(second_button.id)).expect("floating tabs");
+        let flow_area = TerminalRect::new(0, 1, 40, 8);
+        let flow_items = tui_accessibility_flow_layout(&nodes, &actionable, &tabs, flow_area, None);
+
+        assert_eq!(tabs.active_window_id, second_window_id);
+        assert!(tui_projected_spatial_bounds(&first_button, &Some(tabs.clone())).is_none());
+        assert!(tui_projected_spatial_bounds(&second_button, &Some(tabs)).is_none());
+        assert_eq!(flow_items.len(), 1);
+        assert_eq!(flow_items[0].node.id, second_button.id);
+        assert_eq!(flow_items[0].actionable_index, Some(1));
+        assert_eq!(flow_items[0].rect.x, 0);
+        assert_eq!(flow_items[0].rect.y, 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generated_tui_scrolls_accessibility_flow_to_selected_node() {
+        let mut workspace = SemanticsNode::new(
+            sui::WidgetId::new(1),
+            SemanticsRole::GenericContainer,
+            SuiRect::new(0.0, 0.0, 300.0, 200.0),
+        );
+        workspace.name = Some("Development workspace".to_string());
+        let mut first_window = SemanticsNode::new(
+            sui::WidgetId::new(2),
+            SemanticsRole::Window,
+            SuiRect::new(0.0, 0.0, 120.0, 100.0),
+        );
+        first_window.parent = Some(workspace.id);
+        first_window.name = Some("First".to_string());
+        let mut second_window = SemanticsNode::new(
+            sui::WidgetId::new(3),
+            SemanticsRole::Window,
+            SuiRect::new(120.0, 0.0, 120.0, 100.0),
+        );
+        second_window.parent = Some(workspace.id);
+        second_window.name = Some("Second".to_string());
+
+        let mut nodes = vec![workspace, first_window, second_window.clone()];
+        let mut actionable = Vec::new();
+        for index in 0..12 {
+            let mut button = SemanticsNode::new(
+                sui::WidgetId::new(10 + index),
+                SemanticsRole::Button,
+                SuiRect::new(0.0, index as f32 * 10.0, 40.0, 8.0),
+            );
+            button.parent = Some(second_window.id);
+            button.name = Some(format!("Button {index}"));
+            actionable.push(button.clone());
+            nodes.push(button);
+        }
+        let selected = actionable[10].id;
+        let tabs = tui_floating_tabs(&nodes, Some(selected)).expect("floating tabs");
+        let flow_area = TerminalRect::new(0, 4, 10, 3);
+        let flow_items =
+            tui_accessibility_flow_layout(&nodes, &actionable, &tabs, flow_area, Some(selected));
+
+        assert!(flow_items.iter().any(|item| item.node.id == selected));
+        assert!(flow_items.iter().all(|item| terminal_rect_contains(
+            flow_area,
+            item.rect.x,
+            item.rect.y
+        )));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
