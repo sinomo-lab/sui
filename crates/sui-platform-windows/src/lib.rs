@@ -20,6 +20,7 @@ pub struct WindowsAdvancedColorProbe {
     pub min_luminance_nits: Option<f32>,
     pub max_luminance_nits: Option<f32>,
     pub max_full_frame_luminance_nits: Option<f32>,
+    pub sdr_white_nits: Option<f32>,
 }
 
 #[cfg(target_os = "windows")]

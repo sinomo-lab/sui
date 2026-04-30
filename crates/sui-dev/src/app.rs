@@ -4,8 +4,8 @@ use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton,
     PointerEventKind, SemanticsNode, SemanticsRole, TextHinting, WgpuRenderer, WidgetPodMutVisitor,
     WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
-    WindowOutputColorPrimaries, WindowRenderOptions, WindowStemDarkening, WindowTextHinting,
-    WindowToneMappingMode, prelude::*, window_output_diagnostics,
+    WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
+    WindowTextHinting, WindowToneMappingMode, prelude::*, window_output_diagnostics,
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
@@ -40,6 +40,7 @@ const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
 const DYNAMIC_RANGE_MODE_NAME: &str = "Dynamic range";
 const TONE_MAPPING_MODE_NAME: &str = "Tone mapping";
 const SDR_CONTENT_BRIGHTNESS_NAME: &str = "SDR content brightness";
+const USE_SYSTEM_SDR_BRIGHTNESS_LABEL: &str = "Use system SDR brightness";
 const HDR_THEME_MODE_NAME: &str = "HDR theme mode";
 const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
 const HDR_THEME_INSPECTION_TITLE: &str = "HDR theme mode inspection";
@@ -767,6 +768,27 @@ fn output_policy_label(strategy_debug: &str) -> &'static str {
     }
 }
 
+fn sdr_content_brightness_line(diagnostics: &WindowOutputDiagnostics) -> String {
+    let source = if diagnostics.use_system_sdr_content_brightness
+        && diagnostics.system_sdr_content_brightness_nits.is_some()
+    {
+        "system"
+    } else if diagnostics.use_system_sdr_content_brightness {
+        "manual fallback"
+    } else {
+        "manual"
+    };
+    let system = diagnostics
+        .system_sdr_content_brightness_nits
+        .map(|nits| format!("{nits:.0} nits"))
+        .unwrap_or_else(|| "unavailable".to_string());
+    format!(
+        "SDR content brightness: {:.0} nits ({source}; system {system}, manual {:.0} nits)",
+        diagnostics.requested_sdr_content_brightness_nits,
+        diagnostics.configured_sdr_content_brightness_nits,
+    )
+}
+
 fn hdr_theme_inspection_lines(window_id: WindowId) -> Vec<String> {
     let current_mode = widget_book_hdr_theme_mode();
     let mut lines = vec![format!(
@@ -784,10 +806,7 @@ fn hdr_theme_inspection_lines(window_id: WindowId) -> Vec<String> {
             "Requested presentation: {:?} / {:?}",
             diagnostics.requested_color_management_mode, diagnostics.requested_dynamic_range_mode
         ));
-        lines.push(format!(
-            "Requested SDR content brightness: {:.0} nits",
-            diagnostics.requested_sdr_content_brightness_nits
-        ));
+        lines.push(sdr_content_brightness_line(&diagnostics));
         lines.push(format!("Active strategy: {strategy_debug}"));
     } else {
         lines.push("Window output policy: waiting for first presented frame".to_string());
@@ -819,10 +838,7 @@ fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
             "Requested tone mapping: {:?}",
             diagnostics.requested_tone_mapping_mode
         ),
-        format!(
-            "Requested SDR content brightness: {:.0} nits",
-            diagnostics.requested_sdr_content_brightness_nits
-        ),
+        sdr_content_brightness_line(&diagnostics),
         format!(
             "Detected primaries: {:?}",
             diagnostics.display_capabilities.preferred_primaries
@@ -980,6 +996,45 @@ impl Widget for OutputDiagnosticsPanel {
     }
 }
 
+struct SdrContentBrightnessStatus;
+
+impl Widget for SdrContentBrightnessStatus {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(constraints.max.width.min(420.0), 34.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = DefaultTheme::default().palette;
+        let text = window_output_diagnostics(ctx.window_id())
+            .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
+            .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
+        ctx.draw_text(
+            ctx.bounds(),
+            text,
+            TextStyle {
+                font_size: 12.0,
+                line_height: 16.0,
+                color: palette.text.with_alpha(0.78),
+                ..TextStyle::default()
+            },
+        );
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let description = window_output_diagnostics(ctx.window_id())
+            .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
+            .unwrap_or_else(|| "SDR content brightness waiting for first frame".to_string());
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(SDR_CONTENT_BRIGHTNESS_NAME.to_string());
+        node.description = Some(description);
+        ctx.push(node);
+    }
+}
+
 struct RenderSettingsScrollPane {
     spacing: f32,
     content: SingleChild,
@@ -1096,6 +1151,7 @@ impl RenderSettingsTab {
         let dynamic_range_state = Rc::clone(&state);
         let tone_mapping_state = Rc::clone(&state);
         let sdr_content_brightness_state = Rc::clone(&state);
+        let system_sdr_content_brightness_state = Rc::clone(&state);
         let current_hdr_theme_mode = widget_book_hdr_theme_mode();
         let scroll_state = ScrollState::new();
 
@@ -1309,18 +1365,33 @@ impl RenderSettingsTab {
                     ))
                     .with_child(labeled_settings_control(
                         SDR_CONTENT_BRIGHTNESS_NAME,
-                        220.0,
-                        NumberInput::new(SDR_CONTENT_BRIGHTNESS_NAME)
-                            .range(48.0, 1000.0)
-                            .step(1.0)
-                            .precision(0)
-                            .value(initial.sdr_content_brightness_nits as f64)
-                            .on_change(move |value| {
-                                sdr_content_brightness_state
-                                    .borrow_mut()
-                                    .sdr_content_brightness_nits = value.clamp(48.0, 1000.0)
-                                    as f32;
-                            }),
+                        420.0,
+                        Stack::vertical()
+                            .spacing(8.0)
+                            .alignment(Alignment::Start)
+                            .with_child(SizedBox::new().width(220.0).with_child(
+                                NumberInput::new(SDR_CONTENT_BRIGHTNESS_NAME)
+                                    .range(48.0, 1000.0)
+                                    .step(1.0)
+                                    .precision(0)
+                                    .value(initial.sdr_content_brightness_nits as f64)
+                                    .on_change(move |value| {
+                                        sdr_content_brightness_state
+                                            .borrow_mut()
+                                            .sdr_content_brightness_nits =
+                                            value.clamp(48.0, 1000.0) as f32;
+                                    }),
+                            ))
+                            .with_child(
+                                Checkbox::new(USE_SYSTEM_SDR_BRIGHTNESS_LABEL)
+                                    .checked(initial.use_system_sdr_content_brightness)
+                                    .on_toggle(move |checked| {
+                                        system_sdr_content_brightness_state
+                                            .borrow_mut()
+                                            .use_system_sdr_content_brightness = checked;
+                                    }),
+                            )
+                            .with_child(SdrContentBrightnessStatus),
                     ))
                     .with_child(labeled_settings_control(
                         HDR_THEME_MODE_NAME,
@@ -2049,7 +2120,8 @@ mod tests {
             .with_color_management_mode(WindowColorManagementMode::PreferHdr)
             .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
             .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
-            .with_tone_mapping_mode(WindowToneMappingMode::Automatic);
+            .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
+            .with_system_sdr_content_brightness_enabled(false);
         let app = TestApp::new_visible_no_vsync(move || {
             sui_widget_book::build_color_validation_application()
                 .with_window_render_options(options)
@@ -2192,7 +2264,8 @@ final_max_luminance={final_max_luminance}
             .with_color_management_mode(WindowColorManagementMode::PreferHdr)
             .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
             .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
-            .with_tone_mapping_mode(WindowToneMappingMode::Automatic);
+            .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
+            .with_system_sdr_content_brightness_enabled(false);
         let app = TestApp::new_visible_no_vsync(move || {
             sui_widget_book::build_color_validation_application()
                 .with_window_render_options(options)
@@ -2201,7 +2274,7 @@ final_max_luminance={final_max_luminance}
         let scroll = window
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(sui_widget_book::COLOR_VALIDATION_SCROLL_NAME);
-        scroll.scroll_pixels(Vector::new(0.0, -900.0))?;
+        scroll.scroll_pixels(Vector::new(0.0, -240.0))?;
 
         let artifact = window.capture_debug_frame(DebugCaptureRequest {
             stage: DebugCaptureStage::HdrIntermediate,
@@ -2244,6 +2317,7 @@ final_max_luminance={final_max_luminance}
             DYNAMIC_RANGE_MODE_NAME,
             TONE_MAPPING_MODE_NAME,
             SDR_CONTENT_BRIGHTNESS_NAME,
+            USE_SYSTEM_SDR_BRIGHTNESS_LABEL,
             HDR_THEME_MODE_NAME,
         ] {
             assert!(
@@ -3927,7 +4001,7 @@ final_max_luminance={final_max_luminance}
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
 
-        scroll_story_until_visible(window, &gallery, role.clone(), name, 80)?;
+        scroll_story_until_visible(window, &gallery, role.clone(), name, 240)?;
         let before_snapshot = window.snapshot()?;
         let viewport = viewport_bounds(&before_snapshot);
         let view = find_named_node(

@@ -660,6 +660,7 @@ pub struct WindowRenderOptions {
     pub tone_mapping_mode: WindowToneMappingMode,
     pub color_management_mode: WindowColorManagementMode,
     pub sdr_content_brightness_nits: f32,
+    pub use_system_sdr_content_brightness: bool,
 }
 
 impl WindowRenderOptions {
@@ -676,6 +677,7 @@ impl WindowRenderOptions {
             tone_mapping_mode: WindowToneMappingMode::Automatic,
             color_management_mode: WindowColorManagementMode::Automatic,
             sdr_content_brightness_nits: DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS,
+            use_system_sdr_content_brightness: true,
         }
     }
 
@@ -727,6 +729,11 @@ impl WindowRenderOptions {
         self
     }
 
+    pub const fn with_system_sdr_content_brightness_enabled(mut self, enabled: bool) -> Self {
+        self.use_system_sdr_content_brightness = enabled;
+        self
+    }
+
     pub fn clamped(self) -> Self {
         Self {
             feathering_enabled: self.feathering_enabled,
@@ -746,6 +753,7 @@ impl WindowRenderOptions {
             } else {
                 DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS
             },
+            use_system_sdr_content_brightness: self.use_system_sdr_content_brightness,
         }
     }
 }

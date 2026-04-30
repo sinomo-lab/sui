@@ -31,6 +31,7 @@ use crate::{
     AccessibilityBridge, WindowOutputDiagnostics, detect_window_display_capabilities,
     headless::PlatformWindow, map_window_color_management, map_window_stem_darkening,
     map_window_text_hinting, publish_window_output_diagnostics,
+    resolve_sdr_content_brightness_nits,
 };
 
 #[derive(Debug, Default)]
@@ -606,35 +607,47 @@ impl DesktopApp {
         self.renderer.set_runtime_glyph_pixel_alignment_override(
             render_options.map(|options| options.glyph_pixel_alignment_enabled),
         );
+        let active_render_options =
+            render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
+        let display_capabilities_for_brightness = self
+            .renderer
+            .window_display_capabilities(window_id)
+            .unwrap_or_default();
+        let sdr_content_brightness_nits = resolve_sdr_content_brightness_nits(
+            active_render_options.sdr_content_brightness_nits,
+            active_render_options.use_system_sdr_content_brightness,
+            &display_capabilities_for_brightness,
+        );
         self.renderer.set_window_color_management(
             window_id,
-            render_options
-                .map(|options| {
-                    map_window_color_management(
-                        options.color_management_mode,
-                        options.output_color_primaries,
-                        options.dynamic_range_mode,
-                        options.tone_mapping_mode,
-                        options.sdr_content_brightness_nits,
-                    )
-                })
-                .unwrap_or_default(),
+            map_window_color_management(
+                active_render_options.color_management_mode,
+                active_render_options.output_color_primaries,
+                active_render_options.dynamic_range_mode,
+                active_render_options.tone_mapping_mode,
+                sdr_content_brightness_nits,
+            ),
         )?;
         self.renderer.render(&output.frame)?;
         if let (Some(display_capabilities), Some(active_output_strategy)) = (
             self.renderer.window_display_capabilities(window_id),
             self.renderer.window_output_strategy(window_id),
         ) {
-            let options = render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
+            let system_sdr_content_brightness_nits = display_capabilities.sdr_white_nits;
             publish_window_output_diagnostics(
                 window_id,
                 WindowOutputDiagnostics {
                     display_capabilities,
-                    requested_color_management_mode: options.color_management_mode,
-                    requested_output_primaries: options.output_color_primaries,
-                    requested_dynamic_range_mode: options.dynamic_range_mode,
-                    requested_tone_mapping_mode: options.tone_mapping_mode,
-                    requested_sdr_content_brightness_nits: options.sdr_content_brightness_nits,
+                    requested_color_management_mode: active_render_options.color_management_mode,
+                    requested_output_primaries: active_render_options.output_color_primaries,
+                    requested_dynamic_range_mode: active_render_options.dynamic_range_mode,
+                    requested_tone_mapping_mode: active_render_options.tone_mapping_mode,
+                    requested_sdr_content_brightness_nits: sdr_content_brightness_nits,
+                    configured_sdr_content_brightness_nits: active_render_options
+                        .sdr_content_brightness_nits,
+                    system_sdr_content_brightness_nits,
+                    use_system_sdr_content_brightness: active_render_options
+                        .use_system_sdr_content_brightness,
                     active_output_strategy,
                 },
             );

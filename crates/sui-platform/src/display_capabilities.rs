@@ -32,6 +32,9 @@ pub struct WindowOutputDiagnostics {
     pub requested_dynamic_range_mode: WindowDynamicRangeMode,
     pub requested_tone_mapping_mode: WindowToneMappingMode,
     pub requested_sdr_content_brightness_nits: f32,
+    pub configured_sdr_content_brightness_nits: f32,
+    pub system_sdr_content_brightness_nits: Option<f32>,
+    pub use_system_sdr_content_brightness: bool,
     pub active_output_strategy: OutputStrategy,
 }
 
@@ -69,6 +72,27 @@ pub fn clear_window_output_diagnostics_all() {
         .write()
         .expect("window output diagnostics store lock should not be poisoned");
     store.clear();
+}
+
+pub fn resolve_sdr_content_brightness_nits(
+    configured_nits: f32,
+    use_system_value: bool,
+    capabilities: &DisplayCapabilities,
+) -> f32 {
+    let configured = if configured_nits.is_finite() && configured_nits > 0.0 {
+        configured_nits
+    } else {
+        DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS
+    };
+
+    if use_system_value {
+        capabilities
+            .sdr_white_nits
+            .filter(|nits| nits.is_finite() && *nits > 0.0)
+            .unwrap_or(configured)
+    } else {
+        configured
+    }
 }
 
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
@@ -225,6 +249,7 @@ struct WindowsAdvancedColorInfo {
     min_luminance_nits: Option<f32>,
     max_luminance_nits: Option<f32>,
     max_full_frame_luminance_nits: Option<f32>,
+    sdr_white_nits: Option<f32>,
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -290,9 +315,12 @@ fn display_capabilities_from_windows_advanced_color_info(
     } else {
         sui_render_wgpu::DynamicRangeMode::StandardDynamicRange
     };
-    let sdr_white_nits = hdr_active.then_some(WINDOWS_SDR_REFERENCE_WHITE_NITS);
+    let detected_sdr_white_nits = finite_positive(info.sdr_white_nits);
+    let sdr_white_nits = hdr_active.then_some(detected_sdr_white_nits).flatten();
+    let sdr_reference_white_nits =
+        detected_sdr_white_nits.unwrap_or(WINDOWS_SDR_REFERENCE_WHITE_NITS);
     let max_content_headroom = if hdr_active {
-        max_luminance_nits.map(|nits| nits / WINDOWS_SDR_REFERENCE_WHITE_NITS)
+        max_luminance_nits.map(|nits| nits / sdr_reference_white_nits)
     } else {
         None
     };
@@ -335,7 +363,7 @@ fn display_capabilities_from_windows_advanced_color_info(
         max_content_headroom,
         native_hdr_presentation_supported,
         notes: format!(
-            "Windows monitor {}{}: {}; {}; bits_per_color={}; min_luminance_nits={:?}; max_full_frame_luminance_nits={:?}; white_point={:?}",
+            "Windows monitor {}{}: {}; {}; bits_per_color={}; sdr_white_nits={:?}; sdr_reference_white_nits={}; min_luminance_nits={:?}; max_full_frame_luminance_nits={:?}; white_point={:?}",
             info.monitor_name,
             info.device_name
                 .as_ref()
@@ -344,6 +372,8 @@ fn display_capabilities_from_windows_advanced_color_info(
             mode_summary,
             gamut_summary,
             info.bits_per_color,
+            sdr_white_nits,
+            sdr_reference_white_nits,
             min_luminance_nits,
             max_full_frame_luminance_nits,
             info.white_point,
@@ -388,6 +418,7 @@ fn detect_windows_monitor_capabilities(
         min_luminance_nits: probe.min_luminance_nits,
         max_luminance_nits: probe.max_luminance_nits,
         max_full_frame_luminance_nits: probe.max_full_frame_luminance_nits,
+        sdr_white_nits: probe.sdr_white_nits,
     };
     Some(display_capabilities_from_windows_advanced_color_info(&info))
 }
@@ -564,6 +595,7 @@ mod tests {
                 min_luminance_nits: Some(0.05),
                 max_luminance_nits: Some(1000.0),
                 max_full_frame_luminance_nits: Some(600.0),
+                sdr_white_nits: Some(203.0),
             });
 
         assert!(capabilities.supports_hdr);
@@ -577,10 +609,11 @@ mod tests {
             capabilities.preferred_dynamic_range,
             DynamicRangeMode::HighDynamicRange
         );
-        assert_eq!(capabilities.sdr_white_nits, Some(80.0));
-        assert_eq!(capabilities.max_content_headroom, Some(12.5));
+        assert_eq!(capabilities.sdr_white_nits, Some(203.0));
+        assert_eq!(capabilities.max_content_headroom, Some(1000.0 / 203.0));
         assert!(capabilities.notes.contains("Advanced Color"));
         assert!(capabilities.notes.contains("scRGB"));
+        assert!(capabilities.notes.contains("sdr_white_nits=Some(203.0)"));
     }
 
     #[test]
@@ -598,6 +631,7 @@ mod tests {
                 min_luminance_nits: None,
                 max_luminance_nits: Some(300.0),
                 max_full_frame_luminance_nits: Some(280.0),
+                sdr_white_nits: None,
             });
 
         assert!(capabilities.supports_wide_gamut);
@@ -612,5 +646,48 @@ mod tests {
             DynamicRangeMode::StandardDynamicRange
         );
         assert!(capabilities.notes.contains("wide-gamut SDR"));
+    }
+
+    #[test]
+    fn default_sdr_brightness_resolves_to_detected_display_white() {
+        let capabilities = sui_render_wgpu::DisplayCapabilities {
+            sdr_white_nits: Some(240.0),
+            ..sui_render_wgpu::DisplayCapabilities::default()
+        };
+
+        assert_eq!(
+            super::resolve_sdr_content_brightness_nits(
+                DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS,
+                true,
+                &capabilities
+            ),
+            240.0
+        );
+        assert_eq!(
+            super::resolve_sdr_content_brightness_nits(180.0, true, &capabilities),
+            240.0
+        );
+        assert_eq!(
+            super::resolve_sdr_content_brightness_nits(180.0, false, &capabilities),
+            180.0
+        );
+    }
+
+    #[test]
+    fn default_sdr_brightness_keeps_configured_value_without_detection() {
+        let capabilities = sui_render_wgpu::DisplayCapabilities {
+            supports_hdr: true,
+            sdr_white_nits: None,
+            ..sui_render_wgpu::DisplayCapabilities::default()
+        };
+
+        assert_eq!(
+            super::resolve_sdr_content_brightness_nits(
+                DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS,
+                true,
+                &capabilities
+            ),
+            DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS
+        );
     }
 }
