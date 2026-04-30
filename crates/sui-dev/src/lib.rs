@@ -8,23 +8,29 @@ pub use app::{build_dev_application, build_dev_application_with_widget_book_boun
 use std::env;
 
 use sui::{Application, Rect};
+#[cfg(not(target_arch = "wasm32"))]
 use sui::{
     DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, SceneStatisticsDetailMode,
-    SemanticsRole, WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-    WindowRenderOptions, WindowToneMappingMode, set_window_render_options,
-    set_window_scene_statistics_detail_mode,
+    SemanticsRole, set_window_render_options, set_window_scene_statistics_detail_mode,
 };
+use sui::{
+    WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
+    WindowRenderOptions, WindowToneMappingMode,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use sui_widget_book::GALLERY_SCROLL_NAME;
 use sui_widget_book::{
-    GALLERY_SCROLL_NAME, build_button_grid_benchmark_application,
-    build_color_validation_application, build_retained_text_benchmark_application,
-    build_text_editing_benchmark_application, build_text_rendering_comparison_application,
-    build_widget_book_application, default_widget_book_state,
+    build_button_grid_benchmark_application, build_color_validation_application,
+    build_retained_text_benchmark_application, build_text_editing_benchmark_application,
+    build_text_rendering_comparison_application, build_widget_book_application,
+    default_widget_book_state,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
 const DESKTOP_NO_VSYNC_ENV: &str = "SUI_DEV_NO_VSYNC";
 #[cfg(not(target_arch = "wasm32"))]
 const DESKTOP_AUTOMATION_ENV: &str = "SUI_DEV_AUTOMATION";
+const DEFAULT_WEB_SDR_CONTENT_BRIGHTNESS_NITS: f32 = 203.0;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,7 +248,7 @@ enum WebCanvasToneMappingPreference {
     Extended,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct WebLaunchMode {
     benchmark: Option<WebBenchmarkKind>,
     frames: usize,
@@ -254,6 +260,8 @@ struct WebLaunchMode {
     output_primaries: WindowOutputColorPrimaries,
     dynamic_range: WindowDynamicRangeMode,
     tone_mapping: WindowToneMappingMode,
+    sdr_content_brightness_nits: f32,
+    use_system_sdr_content_brightness: bool,
 }
 
 impl Default for WebLaunchMode {
@@ -269,7 +277,26 @@ impl Default for WebLaunchMode {
             output_primaries: WindowOutputColorPrimaries::Automatic,
             dynamic_range: WindowDynamicRangeMode::Automatic,
             tone_mapping: WindowToneMappingMode::Automatic,
+            sdr_content_brightness_nits: DEFAULT_WEB_SDR_CONTENT_BRIGHTNESS_NITS,
+            use_system_sdr_content_brightness: true,
         }
+    }
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+fn parse_positive_nits(value: &str) -> Option<f32> {
+    value
+        .parse::<f32>()
+        .ok()
+        .filter(|nits| nits.is_finite() && *nits > 0.0)
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+fn parse_bool_query_value(value: &str) -> Option<bool> {
+    match value {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
 
@@ -363,6 +390,16 @@ fn parse_web_launch_mode(query: &str) -> WebLaunchMode {
                     "reinhard" => WindowToneMappingMode::Reinhard,
                     _ => WindowToneMappingMode::Automatic,
                 };
+            }
+            "sdr-content-brightness" | "sdr-content-brightness-nits" => {
+                if let Some(nits) = parse_positive_nits(value) {
+                    mode.sdr_content_brightness_nits = nits;
+                }
+            }
+            "use-system-sdr-brightness" | "use-system-sdr-content-brightness" => {
+                if let Some(enabled) = parse_bool_query_value(value) {
+                    mode.use_system_sdr_content_brightness = enabled;
+                }
             }
             _ => {}
         }
@@ -496,7 +533,7 @@ fn web_browser_probe_report(mode: &WebLaunchMode, probe: &WebBrowserProbe) -> St
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 fn web_validation_query(mode: &WebLaunchMode) -> String {
     format!(
-        "benchmark={}&frames={}&warmup={}&canvas-format={}&canvas-color-space={}&canvas-tone-mapping={}&color-management={}&output-primaries={}&dynamic-range={}&tone-mapping={}",
+        "benchmark={}&frames={}&warmup={}&canvas-format={}&canvas-color-space={}&canvas-tone-mapping={}&color-management={}&output-primaries={}&dynamic-range={}&tone-mapping={}&sdr-content-brightness={:.0}&use-system-sdr-brightness={}",
         web_benchmark_slug(mode.benchmark),
         mode.frames,
         mode.warmup_frames,
@@ -507,13 +544,15 @@ fn web_validation_query(mode: &WebLaunchMode) -> String {
         web_output_primaries_slug(mode.output_primaries),
         web_dynamic_range_slug(mode.dynamic_range),
         web_tone_mapping_slug(mode.tone_mapping),
+        mode.sdr_content_brightness_nits,
+        mode.use_system_sdr_content_brightness,
     )
 }
 
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 fn web_validation_report(mode: &WebLaunchMode) -> String {
     format!(
-        "route={}; canvas_format={}; canvas_color_space={}; canvas_tone_mapping={}; color_management={}; output_primaries={}; dynamic_range={}; tone_mapping={}; query=?{}",
+        "route={}; canvas_format={}; canvas_color_space={}; canvas_tone_mapping={}; color_management={}; output_primaries={}; dynamic_range={}; tone_mapping={}; sdr_content_brightness={:.0}; use_system_sdr_brightness={}; query=?{}",
         web_benchmark_slug(mode.benchmark),
         web_canvas_format_slug(mode.canvas_format),
         web_canvas_color_space_slug(mode.canvas_color_space),
@@ -522,6 +561,8 @@ fn web_validation_report(mode: &WebLaunchMode) -> String {
         web_output_primaries_slug(mode.output_primaries),
         web_dynamic_range_slug(mode.dynamic_range),
         web_tone_mapping_slug(mode.tone_mapping),
+        mode.sdr_content_brightness_nits,
+        mode.use_system_sdr_content_brightness,
         web_validation_query(mode),
     )
 }
@@ -533,6 +574,8 @@ fn web_window_render_options(mode: &WebLaunchMode) -> WindowRenderOptions {
         .with_output_color_primaries(mode.output_primaries)
         .with_dynamic_range_mode(mode.dynamic_range)
         .with_tone_mapping_mode(mode.tone_mapping)
+        .with_sdr_content_brightness_nits(mode.sdr_content_brightness_nits)
+        .with_system_sdr_content_brightness_enabled(mode.use_system_sdr_content_brightness)
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -774,7 +817,7 @@ mod tests {
     #[test]
     fn parses_color_validation_and_web_output_preferences() {
         let mode = parse_web_launch_mode(
-            "benchmark=color-validation&canvas-format=float16&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard",
+            "benchmark=color-validation&canvas-format=float16&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard&sdr-content-brightness=260&use-system-sdr-brightness=false",
         );
         assert_eq!(mode.benchmark, Some(WebBenchmarkKind::ColorValidation));
         assert_eq!(mode.canvas_format, WebCanvasFormatPreference::Rgba16Float);
@@ -793,12 +836,14 @@ mod tests {
         assert_eq!(mode.output_primaries, WindowOutputColorPrimaries::DisplayP3);
         assert_eq!(mode.dynamic_range, WindowDynamicRangeMode::HighDynamicRange);
         assert_eq!(mode.tone_mapping, WindowToneMappingMode::Reinhard);
+        assert_eq!(mode.sdr_content_brightness_nits, 260.0);
+        assert!(!mode.use_system_sdr_content_brightness);
     }
 
     #[test]
     fn web_window_render_options_reflect_launch_mode_preferences() {
         let mode = parse_web_launch_mode(
-            "color-management=prefer-wide-gamut&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=clamp",
+            "color-management=prefer-wide-gamut&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=clamp&sdr-content-brightness=180&use-system-sdr-brightness=off",
         );
         let options = web_window_render_options(&mode);
 
@@ -815,6 +860,8 @@ mod tests {
             WindowDynamicRangeMode::HighDynamicRange
         );
         assert_eq!(options.tone_mapping_mode, WindowToneMappingMode::Clamp);
+        assert_eq!(options.sdr_content_brightness_nits, 180.0);
+        assert!(!options.use_system_sdr_content_brightness);
     }
 
     #[test]
@@ -825,7 +872,7 @@ mod tests {
 
         assert_eq!(
             web_validation_query(&mode),
-            "benchmark=color-validation&frames=240&warmup=24&canvas-format=rgba16float&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard"
+            "benchmark=color-validation&frames=240&warmup=24&canvas-format=rgba16float&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard&sdr-content-brightness=203&use-system-sdr-brightness=true"
         );
     }
 
@@ -844,6 +891,8 @@ mod tests {
         assert!(report.contains("output_primaries=display-p3"));
         assert!(report.contains("dynamic_range=hdr"));
         assert!(report.contains("tone_mapping=clamp"));
+        assert!(report.contains("sdr_content_brightness=203"));
+        assert!(report.contains("use_system_sdr_brightness=true"));
     }
 
     #[test]

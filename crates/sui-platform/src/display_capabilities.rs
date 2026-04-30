@@ -14,7 +14,7 @@ use sui_runtime::{
 use winit::window::Window;
 
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 struct WebCapabilityHints {
     force_sdr: bool,
     wide_gamut: bool,
@@ -22,6 +22,7 @@ struct WebCapabilityHints {
     display_p3: bool,
     float16_canvas: bool,
     extended_tone_mapping: bool,
+    sdr_white_nits: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -154,6 +155,9 @@ fn parse_web_capability_hints(query: &str) -> WebCapabilityHints {
                     hints.force_sdr = true;
                 }
             }
+            "system-sdr-content-brightness" | "sdr-white-nits" => {
+                hints.sdr_white_nits = parse_positive_nits(value);
+            }
             _ => {}
         }
     }
@@ -164,9 +168,18 @@ fn parse_web_capability_hints(query: &str) -> WebCapabilityHints {
         hints.display_p3 = false;
         hints.float16_canvas = false;
         hints.extended_tone_mapping = false;
+        hints.sdr_white_nits = None;
     }
 
     hints
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+fn parse_positive_nits(value: &str) -> Option<f32> {
+    value
+        .parse::<f32>()
+        .ok()
+        .filter(|nits| nits.is_finite() && *nits > 0.0)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -200,15 +213,16 @@ fn display_capabilities_from_web_signals(
         } else {
             sui_render_wgpu::DynamicRangeMode::StandardDynamicRange
         },
-        sdr_white_nits: media_hdr.then_some(DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS),
+        sdr_white_nits: hints.sdr_white_nits,
         native_hdr_presentation_supported: media_hdr,
         notes: format!(
-            "Web output on {monitor_name}: query hints -> force_sdr={} float16_canvas={} display_p3={} extended_tone_mapping={} hdr={}; media queries -> wide_gamut={} hdr={}.",
+            "Web output on {monitor_name}: query hints -> force_sdr={} float16_canvas={} display_p3={} extended_tone_mapping={} hdr={} sdr_white_nits={:?}; media queries -> wide_gamut={} hdr={}. Browser APIs do not expose the OS SDR content brightness slider, so auto SDR brightness uses this explicit hint when present and otherwise falls back to the configured value.",
             hints.force_sdr,
             hints.float16_canvas,
             hints.display_p3,
             hints.extended_tone_mapping,
             hints.hdr,
+            hints.sdr_white_nits,
             media_wide_gamut,
             media_hdr,
         ),
@@ -500,7 +514,7 @@ mod tests {
     #[test]
     fn parse_web_capability_hints_detects_phase4_query_preferences() {
         let hints = parse_web_capability_hints(
-            "?canvas-format=float16&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&dynamic-range=hdr",
+            "?canvas-format=float16&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&dynamic-range=hdr&system-sdr-content-brightness=240",
         );
 
         assert!(hints.float16_canvas);
@@ -508,6 +522,7 @@ mod tests {
         assert!(hints.extended_tone_mapping);
         assert!(hints.wide_gamut);
         assert!(hints.hdr);
+        assert_eq!(hints.sdr_white_nits, Some(240.0));
     }
 
     #[test]
@@ -530,6 +545,7 @@ mod tests {
         assert!(!hints.extended_tone_mapping);
         assert!(!hints.wide_gamut);
         assert!(!hints.hdr);
+        assert_eq!(hints.sdr_white_nits, None);
     }
 
     #[test]
@@ -556,14 +572,20 @@ mod tests {
         assert!(capabilities.supports_wide_gamut);
         assert!(capabilities.supports_hdr);
         assert!(capabilities.native_hdr_presentation_supported);
-        assert_eq!(
-            capabilities.sdr_white_nits,
-            Some(DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS)
-        );
+        assert_eq!(capabilities.sdr_white_nits, None);
         assert_eq!(
             capabilities.preferred_dynamic_range,
             DynamicRangeMode::HighDynamicRange
         );
+    }
+
+    #[test]
+    fn web_capabilities_use_explicit_sdr_white_hint_for_auto_brightness() {
+        let hints = parse_web_capability_hints("?sdr-white-nits=260");
+        let capabilities = display_capabilities_from_web_signals("browser", hints, true, true);
+
+        assert_eq!(capabilities.sdr_white_nits, Some(260.0));
+        assert!(capabilities.notes.contains("sdr_white_nits=Some(260.0)"));
     }
 
     #[test]
