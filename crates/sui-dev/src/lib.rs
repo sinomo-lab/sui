@@ -5,18 +5,26 @@ use app::{DesktopAutomationMode, build_dev_application_with_automation};
 pub use app::{build_dev_application, build_dev_application_with_widget_book_bounds};
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::env;
+use std::{
+    env,
+    io::{self, Write},
+};
 
 use sui::{Application, Rect};
 #[cfg(not(target_arch = "wasm32"))]
 use sui::{
     DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, SceneStatisticsDetailMode,
-    SemanticsRole, set_window_render_options, set_window_scene_statistics_detail_mode,
+    SemanticsAction, SemanticsNode, SemanticsRole, Vector, set_window_render_options,
+    set_window_scene_statistics_detail_mode,
 };
 use sui::{
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowRenderOptions, WindowToneMappingMode,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use sui_testing::TestWindow;
+#[cfg(not(target_arch = "wasm32"))]
+use sui_tui::{TuiLayoutMode, TuiRenderOptions, render_snapshot};
 #[cfg(not(target_arch = "wasm32"))]
 use sui_widget_book::GALLERY_SCROLL_NAME;
 use sui_widget_book::{
@@ -37,6 +45,7 @@ const DEFAULT_WEB_SDR_CONTENT_BRIGHTNESS_NITS: f32 = 203.0;
 struct DesktopLaunchMode {
     vsync_enabled: bool,
     automation: Option<DesktopLaunchAutomation>,
+    tui: Option<DesktopTuiLaunchMode>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,6 +54,7 @@ impl Default for DesktopLaunchMode {
         Self {
             vsync_enabled: true,
             automation: None,
+            tui: None,
         }
     }
 }
@@ -54,6 +64,32 @@ impl Default for DesktopLaunchMode {
 enum DesktopLaunchAutomation {
     ButtonGridResize,
     WidgetBookScroll,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopTuiLaunchKind {
+    Interactive,
+    DumpAccessibility,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DesktopTuiLaunchMode {
+    kind: DesktopTuiLaunchKind,
+    layout: TuiLayoutMode,
+    show_hidden: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for DesktopTuiLaunchMode {
+    fn default() -> Self {
+        Self {
+            kind: DesktopTuiLaunchKind::Interactive,
+            layout: TuiLayoutMode::Structured,
+            show_hidden: false,
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -69,6 +105,17 @@ fn parse_desktop_automation(
         Some("widget-book-scroll") => Ok(Some(DesktopLaunchAutomation::WidgetBookScroll)),
         Some(other) => Err(sui::Error::new(format!(
             "unsupported sui-dev automation `{other}`; supported values: button-grid-resize, widget-book-scroll"
+        ))),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_tui_layout(raw_value: &str) -> sui::Result<TuiLayoutMode> {
+    match raw_value {
+        "structured" => Ok(TuiLayoutMode::Structured),
+        "spatial" => Ok(TuiLayoutMode::Spatial),
+        other => Err(sui::Error::new(format!(
+            "unsupported sui-dev TUI layout `{other}`; supported values: structured, spatial"
         ))),
     }
 }
@@ -127,12 +174,38 @@ where
     let mut mode = DesktopLaunchMode {
         vsync_enabled: !env_disables_vsync,
         automation: env_automation,
+        tui: None,
     };
 
     for arg in args {
         match arg.as_ref() {
             "--no-vsync" => mode.vsync_enabled = false,
             "--vsync" => mode.vsync_enabled = true,
+            "--tui" => {
+                mode.tui = Some(DesktopTuiLaunchMode {
+                    kind: DesktopTuiLaunchKind::Interactive,
+                    ..mode.tui.unwrap_or_default()
+                });
+            }
+            "--tui-dump-accessibility" => {
+                mode.tui = Some(DesktopTuiLaunchMode {
+                    kind: DesktopTuiLaunchKind::DumpAccessibility,
+                    ..mode.tui.unwrap_or_default()
+                });
+            }
+            "--tui-show-hidden" => {
+                mode.tui = Some(DesktopTuiLaunchMode {
+                    show_hidden: true,
+                    ..mode.tui.unwrap_or_default()
+                });
+            }
+            value if value.starts_with("--tui-layout=") => {
+                let layout = parse_tui_layout(value.split_once('=').map(|(_, rhs)| rhs).unwrap())?;
+                mode.tui = Some(DesktopTuiLaunchMode {
+                    layout,
+                    ..mode.tui.unwrap_or_default()
+                });
+            }
             value if value.starts_with("--automation=") => {
                 mode.automation =
                     parse_desktop_automation(value.split_once('=').map(|(_, rhs)| rhs))?;
@@ -140,7 +213,7 @@ where
             "" => {}
             other => {
                 return Err(sui::Error::new(format!(
-                    "unsupported sui-dev argument `{other}`; supported flags: --no-vsync, --vsync, --automation=<button-grid-resize|widget-book-scroll>"
+                    "unsupported sui-dev argument `{other}`; supported flags: --no-vsync, --vsync, --automation=<button-grid-resize|widget-book-scroll>, --tui, --tui-dump-accessibility, --tui-layout=<structured|spatial>, --tui-show-hidden"
                 )));
             }
         }
@@ -187,6 +260,10 @@ fn run_desktop_application(app: Application, vsync_enabled: bool) -> sui::Result
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_desktop_application_with_mode(launch_mode: DesktopLaunchMode) -> sui::Result<()> {
+    if let Some(tui) = launch_mode.tui {
+        return run_tui_application(tui);
+    }
+
     let app = build_dev_application_with_automation(app_automation_mode(launch_mode.automation));
     let feathering_enabled = app.feathering_enabled();
     let feather_width = app.feather_width();
@@ -213,6 +290,217 @@ fn run_desktop_application_with_mode(launch_mode: DesktopLaunchMode) -> sui::Res
     }
     let _ = platform.run(runtime)?;
     Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_tui_application(tui: DesktopTuiLaunchMode) -> sui::Result<()> {
+    let app = sui_testing::TestApp::new(|| build_dev_application().build())?;
+    let window = app.main_window()?;
+    match tui.kind {
+        DesktopTuiLaunchKind::DumpAccessibility => print_tui_snapshot(&window, tui),
+        DesktopTuiLaunchKind::Interactive => run_interactive_tui(window, tui),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn print_tui_snapshot(window: &TestWindow, tui: DesktopTuiLaunchMode) -> sui::Result<()> {
+    let snapshot = window.snapshot()?;
+    let frame = render_snapshot(
+        &snapshot.accessibility,
+        TuiRenderOptions {
+            width: 120,
+            height: 48,
+            mode: tui.layout,
+            show_hidden: tui.show_hidden,
+        },
+    );
+    println!("{frame}");
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Result<()> {
+    let mut selected = 0usize;
+    loop {
+        let snapshot = window.snapshot()?;
+        let actionable = actionable_nodes(&snapshot.accessibility.nodes);
+        if actionable.is_empty() {
+            selected = 0;
+        } else {
+            selected = selected.min(actionable.len().saturating_sub(1));
+        }
+
+        let frame = render_snapshot(
+            &snapshot.accessibility,
+            TuiRenderOptions {
+                width: 120,
+                height: 40,
+                mode: tui.layout,
+                show_hidden: tui.show_hidden,
+            },
+        );
+        println!("{frame}");
+        println!();
+        println!(
+            "sui-dev --tui commands: n/p select, a activate, s <text> set text, r redraw, q quit"
+        );
+        if let Some(node) = actionable.get(selected) {
+            println!(
+                "selected {}/{}: #{} {:?} {}",
+                selected + 1,
+                actionable.len(),
+                node.id.get(),
+                node.role,
+                node.name.as_deref().unwrap_or("<unnamed>")
+            );
+        } else {
+            println!("selected: no actionable nodes");
+        }
+        print!("sui-dev:tui> ");
+        io::stdout()
+            .flush()
+            .map_err(|error| sui::Error::new(error.to_string()))?;
+
+        let mut command = String::new();
+        if io::stdin()
+            .read_line(&mut command)
+            .map_err(|error| sui::Error::new(error.to_string()))?
+            == 0
+        {
+            return Ok(());
+        }
+        let command = command.trim();
+        match command {
+            "q" | "quit" | "exit" => return Ok(()),
+            "n" | "next" => {
+                if !actionable.is_empty() {
+                    selected = (selected + 1) % actionable.len();
+                }
+            }
+            "p" | "prev" | "previous" => {
+                if !actionable.is_empty() {
+                    selected = if selected == 0 {
+                        actionable.len().saturating_sub(1)
+                    } else {
+                        selected - 1
+                    };
+                }
+            }
+            "a" | "activate" => {
+                if let Some(node) = actionable.get(selected) {
+                    activate_tui_node(&window, node)?;
+                }
+            }
+            "r" | "redraw" | "" => {}
+            value if value.starts_with("s ") || value.starts_with("set ") => {
+                let text = value
+                    .split_once(' ')
+                    .map(|(_, rhs)| rhs)
+                    .unwrap_or_default()
+                    .trim();
+                if let Some(node) = actionable.get(selected) {
+                    set_tui_node_value(&window, node, text)?;
+                }
+            }
+            other => {
+                println!("unknown TUI command `{other}`");
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn actionable_nodes(nodes: &[SemanticsNode]) -> Vec<SemanticsNode> {
+    nodes
+        .iter()
+        .filter(|node| {
+            !node.state.hidden
+                && !node.state.disabled
+                && (node.actions.iter().any(|action| {
+                    matches!(
+                        action,
+                        SemanticsAction::Activate
+                            | SemanticsAction::Focus
+                            | SemanticsAction::Increment
+                            | SemanticsAction::Decrement
+                            | SemanticsAction::SetValue
+                    )
+                }) || matches!(
+                    node.role,
+                    SemanticsRole::Button
+                        | SemanticsRole::CheckBox
+                        | SemanticsRole::Switch
+                        | SemanticsRole::TextInput
+                        | SemanticsRole::Slider
+                        | SemanticsRole::SpinBox
+                        | SemanticsRole::ScrollView
+                ))
+        })
+        .cloned()
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn activate_tui_node(window: &TestWindow, node: &SemanticsNode) -> sui::Result<()> {
+    let locator = named_locator(window, node)?;
+    if node
+        .actions
+        .iter()
+        .any(|action| matches!(action, SemanticsAction::Activate))
+        || matches!(
+            node.role,
+            SemanticsRole::Button
+                | SemanticsRole::CheckBox
+                | SemanticsRole::Switch
+                | SemanticsRole::RadioButton
+                | SemanticsRole::MenuItem
+        )
+    {
+        return locator.click();
+    }
+
+    if matches!(node.role, SemanticsRole::ScrollView) {
+        return locator.scroll_pixels(Vector::new(0.0, -80.0));
+    }
+
+    if node
+        .actions
+        .iter()
+        .any(|action| matches!(action, SemanticsAction::Increment))
+    {
+        return locator.press("ArrowRight");
+    }
+
+    locator.focus()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn set_tui_node_value(window: &TestWindow, node: &SemanticsNode, text: &str) -> sui::Result<()> {
+    let locator = named_locator(window, node)?;
+    if node
+        .actions
+        .iter()
+        .any(|action| matches!(action, SemanticsAction::SetValue))
+        || matches!(node.role, SemanticsRole::TextInput)
+    {
+        locator.fill(text)
+    } else {
+        Err(sui::Error::new(format!(
+            "node #{} {:?} does not expose SetValue",
+            node.id, node.role
+        )))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn named_locator(window: &TestWindow, node: &SemanticsNode) -> sui::Result<sui_testing::Locator> {
+    let Some(name) = node.name.as_deref().filter(|name| !name.trim().is_empty()) else {
+        return Err(sui::Error::new(format!(
+            "node #{} {:?} cannot be targeted because it has no accessible name",
+            node.id, node.role
+        )));
+    };
+    Ok(window.get_by_role(node.role.clone()).with_name(name))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -997,6 +1285,63 @@ mod tests {
             mode.automation,
             Some(DesktopLaunchAutomation::WidgetBookScroll)
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_launch_mode_accepts_tui_flags() {
+        let mode = parse_desktop_launch_mode(
+            ["--tui", "--tui-layout=spatial", "--tui-show-hidden"],
+            false,
+            None,
+        )
+        .unwrap();
+
+        let tui = mode.tui.expect("tui mode parsed");
+        assert_eq!(tui.kind, DesktopTuiLaunchKind::Interactive);
+        assert_eq!(tui.layout, TuiLayoutMode::Spatial);
+        assert!(tui.show_hidden);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_launch_mode_accepts_tui_dump_mode() {
+        let mode = parse_desktop_launch_mode(["--tui-dump-accessibility"], false, None).unwrap();
+
+        let tui = mode.tui.expect("tui mode parsed");
+        assert_eq!(tui.kind, DesktopTuiLaunchKind::DumpAccessibility);
+        assert_eq!(tui.layout, TuiLayoutMode::Structured);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_launch_mode_rejects_unknown_tui_layout() {
+        let error = parse_desktop_launch_mode(["--tui-layout=diagonal"], false, None).unwrap_err();
+        assert!(error.to_string().contains("unsupported sui-dev TUI layout"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generated_tui_includes_major_dev_workspace_views() -> sui::Result<()> {
+        let app = sui_testing::TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        let frame = render_snapshot(
+            &snapshot.accessibility,
+            TuiRenderOptions {
+                width: 160,
+                height: 2000,
+                mode: TuiLayoutMode::Structured,
+                show_hidden: true,
+            },
+        )
+        .to_string();
+
+        for label in ["Widget book", "64 buttons", "HDR validation", "Settings"] {
+            assert!(frame.contains(label), "missing generated TUI label {label}");
+        }
+
+        Ok(())
     }
 
     #[cfg(not(target_arch = "wasm32"))]

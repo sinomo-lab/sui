@@ -2479,6 +2479,7 @@ dependencies = [
  "sui-render-wgpu",
  "sui-scene",
  "sui-testing",
+ "sui-tui",
  "sui-widget-book",
  "wasm-bindgen",
  "web-sys",
@@ -2583,6 +2584,14 @@ dependencies = [
  "rustybuzz",
  "sui-core",
  "ttf-parser",
+]
+
+[[package]]
+name = "sui-tui"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+ "sui-platform",
 ]
 
 [[package]]
