@@ -60,6 +60,7 @@ const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
 const SIDEBAR_TITLE: &str = "Available views";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(target_arch = "wasm32"))]
 pub enum DesktopAutomationMode {
     ButtonGridResize,
 }
@@ -92,6 +93,7 @@ struct ViewSidebar {
     pointer_id: Option<u64>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
     ctx.request(InvalidationRequest::new(
         InvalidationTarget::Window(ctx.window_id()),
@@ -117,6 +119,7 @@ fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
     ));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct DesktopAutomationRoot {
     workspace: FloatingWorkspaceState,
     target_view_id: u64,
@@ -129,6 +132,7 @@ struct DesktopAutomationRoot {
     last_report_frame_index: u64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl DesktopAutomationRoot {
     const STEP_INTERVAL_S: f64 = 1.0 / 120.0;
     const BENCH_DURATION_S: f64 = 3.0;
@@ -253,6 +257,7 @@ impl DesktopAutomationRoot {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Widget for DesktopAutomationRoot {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
@@ -1563,6 +1568,33 @@ pub(crate) fn build_dev_workspace_with_widget_book_bounds_and_render_options(
     (workspace, views)
 }
 
+pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
+    widget_book_bounds: Rect,
+    render_options: WindowRenderOptions,
+) -> Application {
+    build_dev_application_with_widget_book_bounds_render_options(widget_book_bounds, render_options)
+}
+
+fn build_dev_application_with_widget_book_bounds_render_options(
+    widget_book_bounds: Rect,
+    render_options: WindowRenderOptions,
+) -> Application {
+    let (workspace, views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
+        widget_book_bounds,
+        render_options,
+    );
+
+    let root = SplitView::horizontal(ViewSidebar::new(workspace.clone()), views)
+        .name("Development workspace split")
+        .ratio(0.24)
+        .min_first(236.0)
+        .min_second(420.0)
+        .divider_thickness(12.0);
+
+    finish_dev_application(root)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_dev_application_with_widget_book_bounds_and_automation(
     widget_book_bounds: Rect,
     automation: Option<DesktopAutomationMode>,
@@ -1574,17 +1606,7 @@ pub fn build_dev_application_with_widget_book_bounds_and_automation(
     )
 }
 
-pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
-    widget_book_bounds: Rect,
-    render_options: WindowRenderOptions,
-) -> Application {
-    build_dev_application_with_widget_book_bounds_render_options_and_automation(
-        widget_book_bounds,
-        render_options,
-        None,
-    )
-}
-
+#[cfg(not(target_arch = "wasm32"))]
 fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
     widget_book_bounds: Rect,
     render_options: WindowRenderOptions,
@@ -1616,6 +1638,10 @@ fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
         root,
     );
 
+    finish_dev_application(root)
+}
+
+fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
     let mut app = Application::new();
     register_widget_book_images(&mut app);
     let app = app.window(WindowBuilder::new().title(WINDOW_TITLE).root(
@@ -1626,13 +1652,17 @@ fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
 }
 
 pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
-    build_dev_application_with_widget_book_bounds_and_automation(widget_book_bounds, None)
+    build_dev_application_with_widget_book_bounds_render_options(
+        widget_book_bounds,
+        RenderSettingsTab::default_options(),
+    )
 }
 
 pub fn build_dev_application() -> Application {
     build_dev_application_with_widget_book_bounds(Rect::new(24.0, 24.0, 680.0, 760.0))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_dev_application_with_automation(
     automation: Option<DesktopAutomationMode>,
 ) -> Application {
