@@ -31,6 +31,7 @@ use crate::{
     AccessibilityBridge, WindowOutputDiagnostics, detect_window_display_capabilities,
     headless::PlatformWindow, map_window_color_management, map_window_stem_darkening,
     map_window_text_hinting, publish_window_output_diagnostics,
+    resolve_sdr_content_brightness_nits,
 };
 
 #[derive(Debug, Default)]
@@ -508,6 +509,7 @@ impl DesktopApp {
 
         let is_redraw = matches!(event, Event::Window(WindowEvent::RedrawRequested));
         let is_close = matches!(event, Event::Window(WindowEvent::CloseRequested));
+        let render_immediately = event_renders_immediately(&event);
 
         let event_started = Instant::now();
         self.runtime.handle_event(window_id, event)?;
@@ -531,147 +533,9 @@ impl DesktopApp {
                 window.redraw_requested = false;
             }
 
-            if self.runtime.needs_render(window_id)? {
-                self.update_clock();
-                self.runtime.tick(self.frame_clock);
-
-                let render_started_at_ms = self.current_time_ms();
-                let mut presentation_latency = PresentationLatencyDiagnostics::default();
-                if let Some(window) = self.windows.get(&window_id) {
-                    presentation_latency = PresentationLatencyDiagnostics::new(
-                        window
-                            .last_non_redraw_event_at_ms
-                            .map(|timestamp| (render_started_at_ms - timestamp).max(0.0))
-                            .unwrap_or(0.0),
-                        0.0,
-                        window
-                            .redraw_requested_at_ms
-                            .map(|timestamp| (render_started_at_ms - timestamp).max(0.0))
-                            .unwrap_or(0.0),
-                    );
-                }
-
-                let runtime_started = Instant::now();
-                let output = self.runtime.render(window_id)?;
-                let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
-                let semantics = output.semantics.clone();
-                let renderer_started = Instant::now();
-                let diagnostics_enabled =
-                    window_scene_statistics_detail_mode(window_id).is_detailed();
-                self.renderer
-                    .set_runtime_diagnostics_enabled(diagnostics_enabled);
-                let render_options = window_render_options(window_id);
-                if self
-                    .windows
-                    .get(&window_id)
-                    .is_some_and(|window| window.display_capabilities_dirty)
-                {
-                    self.refresh_window_display_capabilities(window_id)?;
-                    if let Some(window) = self.windows.get_mut(&window_id) {
-                        window.display_capabilities_dirty = false;
-                    }
-                }
-                self.renderer
-                    .set_runtime_feathering_override(render_options.map(|options| {
-                        FeatheringOptions::new(options.feathering_enabled, options.feather_width)
-                    }));
-                self.renderer.set_runtime_text_hinting_override(
-                    render_options.map(|options| map_window_text_hinting(options.text_hinting)),
-                );
-                self.renderer.set_runtime_stem_darkening_override(
-                    render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
-                );
-                self.renderer.set_runtime_glyph_pixel_alignment_override(
-                    render_options.map(|options| options.glyph_pixel_alignment_enabled),
-                );
-                self.renderer.set_window_color_management(
-                    window_id,
-                    render_options
-                        .map(|options| {
-                            map_window_color_management(
-                                options.color_management_mode,
-                                options.output_color_primaries,
-                                options.dynamic_range_mode,
-                                options.tone_mapping_mode,
-                                options.sdr_content_brightness_nits,
-                            )
-                        })
-                        .unwrap_or_default(),
-                )?;
-                self.renderer.render(&output.frame)?;
-                if let (Some(display_capabilities), Some(active_output_strategy)) = (
-                    self.renderer.window_display_capabilities(window_id),
-                    self.renderer.window_output_strategy(window_id),
-                ) {
-                    let options =
-                        render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
-                    publish_window_output_diagnostics(
-                        window_id,
-                        WindowOutputDiagnostics {
-                            display_capabilities,
-                            requested_color_management_mode: options.color_management_mode,
-                            requested_output_primaries: options.output_color_primaries,
-                            requested_dynamic_range_mode: options.dynamic_range_mode,
-                            requested_tone_mapping_mode: options.tone_mapping_mode,
-                            requested_sdr_content_brightness_nits: options
-                                .sdr_content_brightness_nits,
-                            active_output_strategy,
-                        },
-                    );
-                }
-                let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
-                let presented_at_ms = self.current_time_ms();
-                if let Some(window) = self.windows.get(&window_id) {
-                    presentation_latency.event_to_present_ms = window
-                        .last_non_redraw_event_at_ms
-                        .map(|timestamp| (presented_at_ms - timestamp).max(0.0))
-                        .unwrap_or(0.0);
-                }
-
-                let mut frame_index = 0;
-                let mut pending_event_time_ms = 0.0;
-
-                if let Some(window) = self.windows.get_mut(&window_id) {
-                    frame_index = window.frame_index + 1;
-                    pending_event_time_ms = std::mem::take(&mut window.pending_event_time_ms);
-                    window.frame_index = frame_index;
-
-                    if window.title != output.title {
-                        window.title = output.title.clone();
-                        window.window.set_title(&output.title);
-                    }
-
-                    window.accessibility.update(window_id, semantics);
-                    window.last_non_redraw_event_at_ms = None;
-                    window.redraw_requested_at_ms = None;
-
-                    apply_ime_composition_rect(window.window.as_ref(), output.ime_composition_rect);
-                }
-
-                crate::publish_frame_performance(
-                    window_id,
-                    frame_index,
-                    pending_event_time_ms,
-                    event_time_ms,
-                    runtime_time_ms,
-                    presentation_latency,
-                    &output,
-                    &self.renderer,
-                    renderer_time_ms,
-                );
-
-                let bootstrap_redraw_at_ms = self.current_time_ms();
-                if let Some(window) = self.windows.get_mut(&window_id) {
-                    if window.awaiting_performance_bootstrap {
-                        window.awaiting_performance_bootstrap = false;
-                        if !window.redraw_requested {
-                            window.redraw_requested = true;
-                            window.redraw_requested_at_ms = Some(bootstrap_redraw_at_ms);
-                            window.window.request_redraw();
-                        }
-                    }
-                }
-            }
+            self.render_window_if_needed(window_id, event_time_ms)?;
+        } else if render_immediately && !is_close {
+            self.render_window_if_needed(window_id, event_time_ms)?;
         }
 
         if is_close {
@@ -682,6 +546,163 @@ impl DesktopApp {
 
         if self.windows.is_empty() {
             event_loop.exit();
+        }
+
+        Ok(())
+    }
+
+    fn render_window_if_needed(&mut self, window_id: WindowId, event_time_ms: f64) -> Result<()> {
+        if !self.runtime.needs_render(window_id)? {
+            return Ok(());
+        }
+
+        self.update_clock();
+        self.runtime.tick(self.frame_clock);
+
+        let render_started_at_ms = self.current_time_ms();
+        let mut presentation_latency = PresentationLatencyDiagnostics::default();
+        if let Some(window) = self.windows.get(&window_id) {
+            presentation_latency = PresentationLatencyDiagnostics::new(
+                window
+                    .last_non_redraw_event_at_ms
+                    .map(|timestamp| (render_started_at_ms - timestamp).max(0.0))
+                    .unwrap_or(0.0),
+                0.0,
+                window
+                    .redraw_requested_at_ms
+                    .map(|timestamp| (render_started_at_ms - timestamp).max(0.0))
+                    .unwrap_or(0.0),
+            );
+        }
+
+        let runtime_started = Instant::now();
+        let output = self.runtime.render(window_id)?;
+        let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
+        let semantics = output.semantics.clone();
+        let renderer_started = Instant::now();
+        let diagnostics_enabled = window_scene_statistics_detail_mode(window_id).is_detailed();
+        self.renderer
+            .set_runtime_diagnostics_enabled(diagnostics_enabled);
+        let render_options = window_render_options(window_id);
+        if self
+            .windows
+            .get(&window_id)
+            .is_some_and(|window| window.display_capabilities_dirty)
+        {
+            self.refresh_window_display_capabilities(window_id)?;
+            if let Some(window) = self.windows.get_mut(&window_id) {
+                window.display_capabilities_dirty = false;
+            }
+        }
+        self.renderer
+            .set_runtime_feathering_override(render_options.map(|options| {
+                FeatheringOptions::new(options.feathering_enabled, options.feather_width)
+            }));
+        self.renderer.set_runtime_text_hinting_override(
+            render_options.map(|options| map_window_text_hinting(options.text_hinting)),
+        );
+        self.renderer.set_runtime_stem_darkening_override(
+            render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
+        );
+        self.renderer.set_runtime_glyph_pixel_alignment_override(
+            render_options.map(|options| options.glyph_pixel_alignment_enabled),
+        );
+        let active_render_options =
+            render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
+        let display_capabilities_for_brightness = self
+            .renderer
+            .window_display_capabilities(window_id)
+            .unwrap_or_default();
+        let sdr_content_brightness_nits = resolve_sdr_content_brightness_nits(
+            active_render_options.sdr_content_brightness_nits,
+            active_render_options.use_system_sdr_content_brightness,
+            &display_capabilities_for_brightness,
+        );
+        self.renderer.set_window_color_management(
+            window_id,
+            map_window_color_management(
+                active_render_options.color_management_mode,
+                active_render_options.output_color_primaries,
+                active_render_options.dynamic_range_mode,
+                active_render_options.tone_mapping_mode,
+                sdr_content_brightness_nits,
+            ),
+        )?;
+        self.renderer.render(&output.frame)?;
+        if let (Some(display_capabilities), Some(active_output_strategy)) = (
+            self.renderer.window_display_capabilities(window_id),
+            self.renderer.window_output_strategy(window_id),
+        ) {
+            let system_sdr_content_brightness_nits = display_capabilities.sdr_white_nits;
+            publish_window_output_diagnostics(
+                window_id,
+                WindowOutputDiagnostics {
+                    display_capabilities,
+                    requested_color_management_mode: active_render_options.color_management_mode,
+                    requested_output_primaries: active_render_options.output_color_primaries,
+                    requested_dynamic_range_mode: active_render_options.dynamic_range_mode,
+                    requested_tone_mapping_mode: active_render_options.tone_mapping_mode,
+                    requested_sdr_content_brightness_nits: sdr_content_brightness_nits,
+                    configured_sdr_content_brightness_nits: active_render_options
+                        .sdr_content_brightness_nits,
+                    system_sdr_content_brightness_nits,
+                    use_system_sdr_content_brightness: active_render_options
+                        .use_system_sdr_content_brightness,
+                    active_output_strategy,
+                },
+            );
+        }
+        let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
+        let presented_at_ms = self.current_time_ms();
+        if let Some(window) = self.windows.get(&window_id) {
+            presentation_latency.event_to_present_ms = window
+                .last_non_redraw_event_at_ms
+                .map(|timestamp| (presented_at_ms - timestamp).max(0.0))
+                .unwrap_or(0.0);
+        }
+
+        let mut frame_index = 0;
+        let mut pending_event_time_ms = 0.0;
+
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            frame_index = window.frame_index + 1;
+            pending_event_time_ms = std::mem::take(&mut window.pending_event_time_ms);
+            window.frame_index = frame_index;
+
+            if window.title != output.title {
+                window.title = output.title.clone();
+                window.window.set_title(&output.title);
+            }
+
+            window.accessibility.update(window_id, semantics);
+            window.last_non_redraw_event_at_ms = None;
+            window.redraw_requested_at_ms = None;
+
+            apply_ime_composition_rect(window.window.as_ref(), output.ime_composition_rect);
+        }
+
+        crate::publish_frame_performance(
+            window_id,
+            frame_index,
+            pending_event_time_ms,
+            event_time_ms,
+            runtime_time_ms,
+            presentation_latency,
+            &output,
+            &self.renderer,
+            renderer_time_ms,
+        );
+
+        let bootstrap_redraw_at_ms = self.current_time_ms();
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            if window.awaiting_performance_bootstrap {
+                window.awaiting_performance_bootstrap = false;
+                if !window.redraw_requested {
+                    window.redraw_requested = true;
+                    window.redraw_requested_at_ms = Some(bootstrap_redraw_at_ms);
+                    window.window.request_redraw();
+                }
+            }
         }
 
         Ok(())
@@ -1288,6 +1309,14 @@ fn physical_position_to_logical_vector(
     Vector::new(logical.x, logical.y)
 }
 
+fn event_renders_immediately(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Window(WindowEvent::Resized(_))
+            | Event::Window(WindowEvent::ScaleFactorChanged { .. })
+    )
+}
+
 fn apply_ime_composition_rect(window: &Window, rect: Option<sui_core::Rect>) {
     let cursor_area = rect.and_then(|rect| sanitize_ime_cursor_area(rect, window.scale_factor()));
     window.set_ime_allowed(cursor_area.is_some());
@@ -1418,10 +1447,11 @@ fn map_os_error(error: OsError) -> Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        physical_position_to_logical_point, physical_position_to_logical_vector,
-        physical_size_to_logical_size, sanitize_ime_cursor_area,
+        event_renders_immediately, physical_position_to_logical_point,
+        physical_position_to_logical_vector, physical_size_to_logical_size,
+        sanitize_ime_cursor_area,
     };
-    use sui_core::Rect;
+    use sui_core::{Event, Rect, Size, WindowEvent};
     use winit::dpi::{PhysicalPosition, PhysicalSize};
 
     #[test]
@@ -1446,6 +1476,23 @@ mod tests {
 
         assert_eq!(delta.x, 60.0);
         assert_eq!(delta.y, 30.0);
+    }
+
+    #[test]
+    fn window_geometry_events_render_immediately() {
+        assert!(event_renders_immediately(&Event::Window(
+            WindowEvent::Resized(Size::new(640.0, 360.0))
+        )));
+        assert!(event_renders_immediately(&Event::Window(
+            WindowEvent::ScaleFactorChanged {
+                scale_factor: 2.0,
+                raw_dpi: Some(192.0),
+                suggested_size: Some(Size::new(320.0, 180.0)),
+            }
+        )));
+        assert!(!event_renders_immediately(&Event::Window(
+            WindowEvent::RedrawRequested
+        )));
     }
 
     #[test]

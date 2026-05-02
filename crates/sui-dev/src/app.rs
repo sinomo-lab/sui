@@ -4,8 +4,8 @@ use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton,
     PointerEventKind, SemanticsNode, SemanticsRole, TextHinting, WgpuRenderer, WidgetPodMutVisitor,
     WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
-    WindowOutputColorPrimaries, WindowRenderOptions, WindowStemDarkening, WindowTextHinting,
-    WindowToneMappingMode, prelude::*, window_output_diagnostics,
+    WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
+    WindowTextHinting, WindowToneMappingMode, prelude::*, window_output_diagnostics,
 };
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
@@ -40,6 +40,7 @@ const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
 const DYNAMIC_RANGE_MODE_NAME: &str = "Dynamic range";
 const TONE_MAPPING_MODE_NAME: &str = "Tone mapping";
 const SDR_CONTENT_BRIGHTNESS_NAME: &str = "SDR content brightness";
+const USE_SYSTEM_SDR_BRIGHTNESS_LABEL: &str = "Use system SDR brightness";
 const HDR_THEME_MODE_NAME: &str = "HDR theme mode";
 const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
 const HDR_THEME_INSPECTION_TITLE: &str = "HDR theme mode inspection";
@@ -59,6 +60,7 @@ const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
 const SIDEBAR_TITLE: &str = "Available views";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(target_arch = "wasm32"))]
 pub enum DesktopAutomationMode {
     ButtonGridResize,
 }
@@ -91,6 +93,7 @@ struct ViewSidebar {
     pointer_id: Option<u64>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
     ctx.request(InvalidationRequest::new(
         InvalidationTarget::Window(ctx.window_id()),
@@ -116,6 +119,7 @@ fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
     ));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct DesktopAutomationRoot {
     workspace: FloatingWorkspaceState,
     target_view_id: u64,
@@ -128,6 +132,7 @@ struct DesktopAutomationRoot {
     last_report_frame_index: u64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl DesktopAutomationRoot {
     const STEP_INTERVAL_S: f64 = 1.0 / 120.0;
     const BENCH_DURATION_S: f64 = 3.0;
@@ -252,6 +257,7 @@ impl DesktopAutomationRoot {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Widget for DesktopAutomationRoot {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
@@ -767,6 +773,27 @@ fn output_policy_label(strategy_debug: &str) -> &'static str {
     }
 }
 
+fn sdr_content_brightness_line(diagnostics: &WindowOutputDiagnostics) -> String {
+    let source = if diagnostics.use_system_sdr_content_brightness
+        && diagnostics.system_sdr_content_brightness_nits.is_some()
+    {
+        "system"
+    } else if diagnostics.use_system_sdr_content_brightness {
+        "manual fallback"
+    } else {
+        "manual"
+    };
+    let system = diagnostics
+        .system_sdr_content_brightness_nits
+        .map(|nits| format!("{nits:.0} nits"))
+        .unwrap_or_else(|| "unavailable".to_string());
+    format!(
+        "SDR content brightness: {:.0} nits ({source}; system {system}, manual {:.0} nits)",
+        diagnostics.requested_sdr_content_brightness_nits,
+        diagnostics.configured_sdr_content_brightness_nits,
+    )
+}
+
 fn hdr_theme_inspection_lines(window_id: WindowId) -> Vec<String> {
     let current_mode = widget_book_hdr_theme_mode();
     let mut lines = vec![format!(
@@ -784,10 +811,7 @@ fn hdr_theme_inspection_lines(window_id: WindowId) -> Vec<String> {
             "Requested presentation: {:?} / {:?}",
             diagnostics.requested_color_management_mode, diagnostics.requested_dynamic_range_mode
         ));
-        lines.push(format!(
-            "Requested SDR content brightness: {:.0} nits",
-            diagnostics.requested_sdr_content_brightness_nits
-        ));
+        lines.push(sdr_content_brightness_line(&diagnostics));
         lines.push(format!("Active strategy: {strategy_debug}"));
     } else {
         lines.push("Window output policy: waiting for first presented frame".to_string());
@@ -819,10 +843,7 @@ fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
             "Requested tone mapping: {:?}",
             diagnostics.requested_tone_mapping_mode
         ),
-        format!(
-            "Requested SDR content brightness: {:.0} nits",
-            diagnostics.requested_sdr_content_brightness_nits
-        ),
+        sdr_content_brightness_line(&diagnostics),
         format!(
             "Detected primaries: {:?}",
             diagnostics.display_capabilities.preferred_primaries
@@ -980,6 +1001,45 @@ impl Widget for OutputDiagnosticsPanel {
     }
 }
 
+struct SdrContentBrightnessStatus;
+
+impl Widget for SdrContentBrightnessStatus {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(constraints.max.width.min(420.0), 34.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = DefaultTheme::default().palette;
+        let text = window_output_diagnostics(ctx.window_id())
+            .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
+            .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
+        ctx.draw_text(
+            ctx.bounds(),
+            text,
+            TextStyle {
+                font_size: 12.0,
+                line_height: 16.0,
+                color: palette.text.with_alpha(0.78),
+                ..TextStyle::default()
+            },
+        );
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let description = window_output_diagnostics(ctx.window_id())
+            .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
+            .unwrap_or_else(|| "SDR content brightness waiting for first frame".to_string());
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(SDR_CONTENT_BRIGHTNESS_NAME.to_string());
+        node.description = Some(description);
+        ctx.push(node);
+    }
+}
+
 struct RenderSettingsScrollPane {
     spacing: f32,
     content: SingleChild,
@@ -1096,6 +1156,7 @@ impl RenderSettingsTab {
         let dynamic_range_state = Rc::clone(&state);
         let tone_mapping_state = Rc::clone(&state);
         let sdr_content_brightness_state = Rc::clone(&state);
+        let system_sdr_content_brightness_state = Rc::clone(&state);
         let current_hdr_theme_mode = widget_book_hdr_theme_mode();
         let scroll_state = ScrollState::new();
 
@@ -1309,18 +1370,33 @@ impl RenderSettingsTab {
                     ))
                     .with_child(labeled_settings_control(
                         SDR_CONTENT_BRIGHTNESS_NAME,
-                        220.0,
-                        NumberInput::new(SDR_CONTENT_BRIGHTNESS_NAME)
-                            .range(48.0, 1000.0)
-                            .step(1.0)
-                            .precision(0)
-                            .value(initial.sdr_content_brightness_nits as f64)
-                            .on_change(move |value| {
-                                sdr_content_brightness_state
-                                    .borrow_mut()
-                                    .sdr_content_brightness_nits = value.clamp(48.0, 1000.0)
-                                    as f32;
-                            }),
+                        420.0,
+                        Stack::vertical()
+                            .spacing(8.0)
+                            .alignment(Alignment::Start)
+                            .with_child(SizedBox::new().width(220.0).with_child(
+                                NumberInput::new(SDR_CONTENT_BRIGHTNESS_NAME)
+                                    .range(48.0, 1000.0)
+                                    .step(1.0)
+                                    .precision(0)
+                                    .value(initial.sdr_content_brightness_nits as f64)
+                                    .on_change(move |value| {
+                                        sdr_content_brightness_state
+                                            .borrow_mut()
+                                            .sdr_content_brightness_nits =
+                                            value.clamp(48.0, 1000.0) as f32;
+                                    }),
+                            ))
+                            .with_child(
+                                Checkbox::new(USE_SYSTEM_SDR_BRIGHTNESS_LABEL)
+                                    .checked(initial.use_system_sdr_content_brightness)
+                                    .on_toggle(move |checked| {
+                                        system_sdr_content_brightness_state
+                                            .borrow_mut()
+                                            .use_system_sdr_content_brightness = checked;
+                                    }),
+                            )
+                            .with_child(SdrContentBrightnessStatus),
                     ))
                     .with_child(labeled_settings_control(
                         HDR_THEME_MODE_NAME,
@@ -1420,15 +1496,6 @@ fn build_render_settings_tab_with_options(options: WindowRenderOptions) -> impl 
     RenderSettingsTab::with_initial_options(options)
 }
 
-pub fn build_dev_workspace_with_widget_book_bounds(
-    widget_book_bounds: Rect,
-) -> (FloatingWorkspaceState, FloatingWorkspace) {
-    build_dev_workspace_with_widget_book_bounds_and_render_options(
-        widget_book_bounds,
-        RenderSettingsTab::default_options(),
-    )
-}
-
 pub(crate) fn build_dev_workspace_with_widget_book_bounds_and_render_options(
     widget_book_bounds: Rect,
     render_options: WindowRenderOptions,
@@ -1501,6 +1568,33 @@ pub(crate) fn build_dev_workspace_with_widget_book_bounds_and_render_options(
     (workspace, views)
 }
 
+pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
+    widget_book_bounds: Rect,
+    render_options: WindowRenderOptions,
+) -> Application {
+    build_dev_application_with_widget_book_bounds_render_options(widget_book_bounds, render_options)
+}
+
+fn build_dev_application_with_widget_book_bounds_render_options(
+    widget_book_bounds: Rect,
+    render_options: WindowRenderOptions,
+) -> Application {
+    let (workspace, views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
+        widget_book_bounds,
+        render_options,
+    );
+
+    let root = SplitView::horizontal(ViewSidebar::new(workspace.clone()), views)
+        .name("Development workspace split")
+        .ratio(0.24)
+        .min_first(236.0)
+        .min_second(420.0)
+        .divider_thickness(12.0);
+
+    finish_dev_application(root)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_dev_application_with_widget_book_bounds_and_automation(
     widget_book_bounds: Rect,
     automation: Option<DesktopAutomationMode>,
@@ -1512,17 +1606,7 @@ pub fn build_dev_application_with_widget_book_bounds_and_automation(
     )
 }
 
-pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
-    widget_book_bounds: Rect,
-    render_options: WindowRenderOptions,
-) -> Application {
-    build_dev_application_with_widget_book_bounds_render_options_and_automation(
-        widget_book_bounds,
-        render_options,
-        None,
-    )
-}
-
+#[cfg(not(target_arch = "wasm32"))]
 fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
     widget_book_bounds: Rect,
     render_options: WindowRenderOptions,
@@ -1554,6 +1638,10 @@ fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
         root,
     );
 
+    finish_dev_application(root)
+}
+
+fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
     let mut app = Application::new();
     register_widget_book_images(&mut app);
     let app = app.window(WindowBuilder::new().title(WINDOW_TITLE).root(
@@ -1564,13 +1652,17 @@ fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
 }
 
 pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
-    build_dev_application_with_widget_book_bounds_and_automation(widget_book_bounds, None)
+    build_dev_application_with_widget_book_bounds_render_options(
+        widget_book_bounds,
+        RenderSettingsTab::default_options(),
+    )
 }
 
 pub fn build_dev_application() -> Application {
     build_dev_application_with_widget_book_bounds(Rect::new(24.0, 24.0, 680.0, 760.0))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_dev_application_with_automation(
     automation: Option<DesktopAutomationMode>,
 ) -> Application {
@@ -1604,7 +1696,7 @@ mod tests {
     };
     use sui_testing::{
         Screenshot, TestApp, TestWindow, WindowSnapshot, hdr_clip_mask, hdr_headroom_heatmap,
-        hdr_luminance_heatmap, write_hdr_avif, write_hdr_exr,
+        hdr_luminance_heatmap, write_hdr_exr,
     };
 
     const FRONTING_TEST_TITLE: &str = "Fronting test";
@@ -2058,8 +2150,9 @@ mod tests {
             .with_color_management_mode(WindowColorManagementMode::PreferHdr)
             .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
             .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
-            .with_tone_mapping_mode(WindowToneMappingMode::Automatic);
-        let app = TestApp::new_visible_no_vsync(move || {
+            .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
+            .with_system_sdr_content_brightness_enabled(false);
+        let app = TestApp::new_no_vsync(move || {
             sui_widget_book::build_color_validation_application()
                 .with_window_render_options(options)
         })?;
@@ -2080,7 +2173,6 @@ mod tests {
             .fold(f32::NEG_INFINITY, f32::max);
         let artifact_dir = unique_debug_artifact_dir("color-validation");
         write_hdr_exr(&image, artifact_dir.join("hdr-intermediate.exr"))?;
-        write_hdr_avif(&image, artifact_dir.join("hdr-intermediate.avif"), 1.0)?;
         hdr_luminance_heatmap(&image)?.write_png(artifact_dir.join("luminance-map.png"))?;
         hdr_headroom_heatmap(&image, 1.0)?.write_png(artifact_dir.join("headroom-map.png"))?;
         hdr_clip_mask(&image, 1.0)?.write_png(artifact_dir.join("clip-mask.png"))?;
@@ -2131,7 +2223,6 @@ notes={}
         let (final_max_channel, final_max_luminance, final_artifact_kind) = match final_artifact {
             DebugCaptureArtifact::HdrLinearRgbaF32(final_image) => {
                 write_hdr_exr(&final_image, artifact_dir.join("final-composed.exr"))?;
-                write_hdr_avif(&final_image, artifact_dir.join("final-composed.avif"), 1.0)?;
                 hdr_luminance_heatmap(&final_image)?
                     .write_png(artifact_dir.join("final-luminance-map.png"))?;
                 let max_channel = final_image
@@ -2170,7 +2261,6 @@ final_max_luminance={final_max_luminance}
         .expect("write capture metrics artifact");
 
         assert!(artifact_dir.join("hdr-intermediate.exr").exists());
-        assert!(artifact_dir.join("hdr-intermediate.avif").exists());
         assert!(artifact_dir.join("luminance-map.png").exists());
         assert!(artifact_dir.join("headroom-map.png").exists());
         assert!(artifact_dir.join("clip-mask.png").exists());
@@ -2179,7 +2269,6 @@ final_max_luminance={final_max_luminance}
         assert!(
             artifact_dir.join("final-composed.exr").exists()
                 || artifact_dir.join("final-composed.png").exists()
-                || artifact_dir.join("final-composed.avif").exists()
         );
         assert!(
             max_channel > 1.0,
@@ -2201,8 +2290,9 @@ final_max_luminance={final_max_luminance}
             .with_color_management_mode(WindowColorManagementMode::PreferHdr)
             .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
             .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
-            .with_tone_mapping_mode(WindowToneMappingMode::Automatic);
-        let app = TestApp::new_visible_no_vsync(move || {
+            .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
+            .with_system_sdr_content_brightness_enabled(false);
+        let app = TestApp::new_no_vsync(move || {
             sui_widget_book::build_color_validation_application()
                 .with_window_render_options(options)
         })?;
@@ -2210,7 +2300,7 @@ final_max_luminance={final_max_luminance}
         let scroll = window
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(sui_widget_book::COLOR_VALIDATION_SCROLL_NAME);
-        scroll.scroll_pixels(Vector::new(0.0, -900.0))?;
+        scroll.scroll_pixels(Vector::new(0.0, -240.0))?;
 
         let artifact = window.capture_debug_frame(DebugCaptureRequest {
             stage: DebugCaptureStage::HdrIntermediate,
@@ -2253,6 +2343,7 @@ final_max_luminance={final_max_luminance}
             DYNAMIC_RANGE_MODE_NAME,
             TONE_MAPPING_MODE_NAME,
             SDR_CONTENT_BRIGHTNESS_NAME,
+            USE_SYSTEM_SDR_BRIGHTNESS_LABEL,
             HDR_THEME_MODE_NAME,
         ] {
             assert!(
@@ -2752,8 +2843,10 @@ final_max_luminance={final_max_luminance}
 
     #[test]
     fn dev_workspace_exposes_retained_text_benchmark_view() -> Result<()> {
-        let (workspace, _views) =
-            build_dev_workspace_with_widget_book_bounds(Rect::new(24.0, 24.0, 680.0, 760.0));
+        let (workspace, _views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
+            Rect::new(24.0, 24.0, 680.0, 760.0),
+            RenderSettingsTab::default_options(),
+        );
 
         let retained_text_view = workspace
             .snapshots()
@@ -3934,7 +4027,7 @@ final_max_luminance={final_max_luminance}
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
 
-        scroll_story_until_visible(window, &gallery, role.clone(), name, 80)?;
+        scroll_story_until_visible(window, &gallery, role.clone(), name, 240)?;
         let before_snapshot = window.snapshot()?;
         let viewport = viewport_bounds(&before_snapshot);
         let view = find_named_node(

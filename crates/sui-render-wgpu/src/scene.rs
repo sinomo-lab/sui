@@ -45,6 +45,7 @@ pub(crate) enum DrawOpKind {
     Image { handle: ImageHandle },
     TextAtlas,
     AnalyticPath { id: u64 },
+    WidgetShader,
 }
 
 #[derive(Debug, Clone)]
@@ -221,6 +222,7 @@ pub(crate) enum PreparedDrawKind {
     Image { handle: ImageHandle },
     TextAtlas,
     AnalyticPath { resource_signature: u64 },
+    WidgetShader,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,6 +231,7 @@ enum PreparedDrawPipelineKind {
     Image,
     TextAtlas,
     AnalyticPath,
+    WidgetShader,
 }
 
 impl PreparedDrawKind {
@@ -238,6 +241,7 @@ impl PreparedDrawKind {
             Self::Image { .. } => PreparedDrawPipelineKind::Image,
             Self::TextAtlas => PreparedDrawPipelineKind::TextAtlas,
             Self::AnalyticPath { .. } => PreparedDrawPipelineKind::AnalyticPath,
+            Self::WidgetShader => PreparedDrawPipelineKind::WidgetShader,
         }
     }
 }
@@ -463,6 +467,7 @@ fn prepared_draw_kind(draw_ops: &DrawOpArena, op: &DrawOp) -> PreparedDrawKind {
         DrawOpKind::AnalyticPath { id } => PreparedDrawKind::AnalyticPath {
             resource_signature: draw_ops.analytic_paths[&id].resource_signature,
         },
+        DrawOpKind::WidgetShader => PreparedDrawKind::WidgetShader,
     }
 }
 
@@ -487,6 +492,7 @@ pub(crate) fn collect_draw_op_resources(
                     .entry(path.resource_signature)
                     .or_insert_with(|| path.clone());
             }
+            DrawOpKind::WidgetShader => {}
         }
     }
     uses_text_atlas
@@ -822,6 +828,12 @@ fn encode_draws_for_pass(
                 (PreparedDrawPipelineKind::AnalyticPath, false) => {
                     shared.analytic_path_pipeline(target_format)
                 }
+                (PreparedDrawPipelineKind::WidgetShader, true) => {
+                    shared.clipped_widget_shader_pipeline(target_format)
+                }
+                (PreparedDrawPipelineKind::WidgetShader, false) => {
+                    shared.widget_shader_pipeline(target_format)
+                }
             };
             render_pass.set_pipeline(pipeline);
             if pipeline_kind == PreparedDrawPipelineKind::AnalyticPath {
@@ -851,6 +863,7 @@ fn encode_draws_for_pass(
                 render_pass.set_bind_group(0, bind_group, &[]);
             }
             PreparedDrawKind::AnalyticPath { .. } => {}
+            PreparedDrawKind::WidgetShader => {}
         }
 
         let (vertex_range, instances) = match draw.kind {
@@ -877,6 +890,13 @@ fn encode_draws_for_pass(
                     .copied()
                     .expect("analytic path slot prepared before retained render pass");
                 (0..draw.vertices.len, slot..slot + 1)
+            }
+            PreparedDrawKind::WidgetShader => {
+                let scene_buffer = scene_buffer.ok_or_else(|| {
+                    Error::new("prepared render batch is missing a scene vertex buffer")
+                })?;
+                render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
+                (0..draw.vertices.len, 0..1)
             }
             _ => {
                 let scene_buffer = scene_buffer.ok_or_else(|| {
@@ -1172,6 +1192,24 @@ impl SceneDrawOpBuilder<'_> {
                 diagnostics.image_command_count += 1;
                 Ok(())
             }
+            SceneCommand::DrawShaderRect { rect, shader } => {
+                self.scratch_vertices.clear();
+                append_widget_shader_rect(
+                    &mut self.scratch_vertices,
+                    state,
+                    *rect,
+                    *shader,
+                    viewport,
+                );
+                push_draw_op(
+                    draw_ops,
+                    DrawOpKind::WidgetShader,
+                    &self.scratch_vertices,
+                    state,
+                );
+                diagnostics.rect_command_count += 1;
+                Ok(())
+            }
             SceneCommand::PushClip { rect } => {
                 state.push_clip(*rect);
                 diagnostics.rect_command_count += 1;
@@ -1223,6 +1261,7 @@ impl SceneDrawOpBuilder<'_> {
             SceneCommand::Clear(_)
             | SceneCommand::FillRect { .. }
             | SceneCommand::StrokeRect { .. }
+            | SceneCommand::DrawShaderRect { .. }
             | SceneCommand::PushClip { .. } => {
                 diagnostics.rect_command_time_ms += elapsed_ms;
             }
@@ -2313,31 +2352,37 @@ fn append_text_instance_vertices(vertices: &mut Vec<Vertex>, instances: &[TextAt
                 position: top_left,
                 color: instance.color,
                 tex_coords: instance.uv_min,
+                shader_params: [0.0; 4],
             },
             Vertex {
                 position: top_right,
                 color: instance.color,
                 tex_coords: [instance.uv_max[0], instance.uv_min[1]],
+                shader_params: [0.0; 4],
             },
             Vertex {
                 position: bottom_left,
                 color: instance.color,
                 tex_coords: [instance.uv_min[0], instance.uv_max[1]],
+                shader_params: [0.0; 4],
             },
             Vertex {
                 position: bottom_left,
                 color: instance.color,
                 tex_coords: [instance.uv_min[0], instance.uv_max[1]],
+                shader_params: [0.0; 4],
             },
             Vertex {
                 position: top_right,
                 color: instance.color,
                 tex_coords: [instance.uv_max[0], instance.uv_min[1]],
+                shader_params: [0.0; 4],
             },
             Vertex {
                 position: bottom_right,
                 color: instance.color,
                 tex_coords: instance.uv_max,
+                shader_params: [0.0; 4],
             },
         ]);
     }
@@ -2404,6 +2449,7 @@ pub(crate) fn append_cached_path_mesh(
             position: ndc,
             color: [rgba[0], rgba[1], rgba[2], rgba[3] * vertex.coverage],
             tex_coords: [0.0, 0.0],
+            shader_params: [0.0; 4],
         });
     }
 }
@@ -2637,31 +2683,37 @@ fn append_analytic_path_quad(vertices: &mut Vec<Vertex>, rect: Rect, color: Colo
             position: [min[0], min[1]],
             color: rgba,
             tex_coords: [x0, y0],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [max[0], min[1]],
             color: rgba,
             tex_coords: [x1, y0],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [min[0], max[1]],
             color: rgba,
             tex_coords: [x0, y1],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [min[0], max[1]],
             color: rgba,
             tex_coords: [x0, y1],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [max[0], min[1]],
             color: rgba,
             tex_coords: [x1, y0],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [max[0], max[1]],
             color: rgba,
             tex_coords: [x1, y1],
+            shader_params: [0.0; 4],
         },
     ]);
 }
@@ -2777,6 +2829,7 @@ fn append_indexed_triangles(
             position: [ndc[0], ndc[1]],
             color: rgba,
             tex_coords: [0.0, 0.0],
+            shader_params: [0.0; 4],
         });
     }
 }
@@ -2841,33 +2894,165 @@ fn append_image(
             position: [min[0], min[1]],
             color: tint,
             tex_coords: [uv_left, uv_top],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [max[0], min[1]],
             color: tint,
             tex_coords: [uv_right, uv_top],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [min[0], max[1]],
             color: tint,
             tex_coords: [uv_left, uv_bottom],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [min[0], max[1]],
             color: tint,
             tex_coords: [uv_left, uv_bottom],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [max[0], min[1]],
             color: tint,
             tex_coords: [uv_right, uv_top],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [max[0], max[1]],
             color: tint,
             tex_coords: [uv_right, uv_bottom],
+            shader_params: [0.0; 4],
         },
     ]);
+}
+
+fn append_widget_shader_rect(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    rect: Rect,
+    shader: sui_scene::WidgetShader,
+    viewport: Size,
+) {
+    if rect.is_empty() || viewport.is_empty() {
+        return;
+    }
+
+    let transformed = state.current_transform.transform_rect_bbox(rect);
+    let Some(visible) = (match state.current_clip_bounds() {
+        Some(clip) => transformed.intersection(clip),
+        None => Some(transformed),
+    }) else {
+        return;
+    };
+
+    if transformed.width() <= 0.0 || transformed.height() <= 0.0 {
+        return;
+    }
+
+    let left = ((visible.x() - transformed.x()) / transformed.width()).clamp(0.0, 1.0);
+    let right = ((visible.max_x() - transformed.x()) / transformed.width()).clamp(0.0, 1.0);
+    let top = ((visible.y() - transformed.y()) / transformed.height()).clamp(0.0, 1.0);
+    let bottom = ((visible.max_y() - transformed.y()) / transformed.height()).clamp(0.0, 1.0);
+    let min = to_ndc(visible.x(), visible.y(), viewport);
+    let max = to_ndc(visible.max_x(), visible.max_y(), viewport);
+    let (metadata, params) = widget_shader_metadata(shader);
+
+    vertices.extend_from_slice(&[
+        Vertex {
+            position: [min[0], min[1]],
+            color: metadata,
+            tex_coords: [left, top],
+            shader_params: params,
+        },
+        Vertex {
+            position: [max[0], min[1]],
+            color: metadata,
+            tex_coords: [right, top],
+            shader_params: params,
+        },
+        Vertex {
+            position: [min[0], max[1]],
+            color: metadata,
+            tex_coords: [left, bottom],
+            shader_params: params,
+        },
+        Vertex {
+            position: [min[0], max[1]],
+            color: metadata,
+            tex_coords: [left, bottom],
+            shader_params: params,
+        },
+        Vertex {
+            position: [max[0], min[1]],
+            color: metadata,
+            tex_coords: [right, top],
+            shader_params: params,
+        },
+        Vertex {
+            position: [max[0], max[1]],
+            color: metadata,
+            tex_coords: [right, bottom],
+            shader_params: params,
+        },
+    ]);
+}
+
+fn widget_shader_metadata(shader: sui_scene::WidgetShader) -> ([f32; 4], [f32; 4]) {
+    match shader {
+        sui_scene::WidgetShader::ColorWheel => ([0.0, 0.0, 0.0, 0.0], [0.0; 4]),
+        sui_scene::WidgetShader::ColorPickerHueBar => ([1.0, 0.0, 0.0, 0.0], [0.0; 4]),
+        sui_scene::WidgetShader::ColorPickerSaturationValuePlane {
+            color_space,
+            hue,
+            max_value,
+        } => (
+            [2.0, shader_color_space(color_space), hue, max_value],
+            [0.0; 4],
+        ),
+        sui_scene::WidgetShader::ColorPickerSaturationBar {
+            color_space,
+            hue,
+            value,
+        } => ([3.0, shader_color_space(color_space), hue, value], [0.0; 4]),
+        sui_scene::WidgetShader::ColorPickerValueBar {
+            color_space,
+            hue,
+            saturation,
+            max_value,
+        } => (
+            [4.0, shader_color_space(color_space), hue, saturation],
+            [max_value, 0.0, 0.0, 0.0],
+        ),
+        sui_scene::WidgetShader::ColorPickerAlphaBar { color } => (
+            [5.0, shader_color_space(color.space), 0.0, 0.0],
+            color.to_array(),
+        ),
+        sui_scene::WidgetShader::ColorPickerRgbChannelBar {
+            color,
+            channel,
+            max_value,
+        } => (
+            [
+                6.0,
+                shader_color_space(color.space),
+                channel as f32,
+                max_value,
+            ],
+            color.to_array(),
+        ),
+    }
+}
+
+fn shader_color_space(space: ColorSpace) -> f32 {
+    match space {
+        ColorSpace::Srgb => 0.0,
+        ColorSpace::LinearSrgb => 1.0,
+        ColorSpace::DisplayP3 => 2.0,
+        ColorSpace::LinearDisplayP3 => 3.0,
+    }
 }
 
 fn append_stroke_rect(
@@ -2915,31 +3100,37 @@ pub(crate) fn append_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, 
             position: [min[0], min[1]],
             color: rgba,
             tex_coords: [0.0, 0.0],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [max[0], min[1]],
             color: rgba,
             tex_coords: [0.0, 0.0],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [min[0], max[1]],
             color: rgba,
             tex_coords: [0.0, 0.0],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [min[0], max[1]],
             color: rgba,
             tex_coords: [0.0, 0.0],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [max[0], min[1]],
             color: rgba,
             tex_coords: [0.0, 0.0],
+            shader_params: [0.0; 4],
         },
         Vertex {
             position: [max[0], max[1]],
             color: rgba,
             tex_coords: [0.0, 0.0],
+            shader_params: [0.0; 4],
         },
     ]);
 }
@@ -3378,6 +3569,7 @@ pub(crate) fn append_scene_mesh(vertices: &mut Vec<Vertex>, mesh: &SceneMesh, vi
             position: ndc,
             color: shader_color(vertex.color),
             tex_coords: [0.0, 0.0],
+            shader_params: [0.0; 4],
         });
     }
 }
@@ -3428,19 +3620,16 @@ pub(crate) fn output_transform_requires_intermediate(strategy: OutputStrategy) -
 pub(crate) fn output_sdr_content_scale(
     strategy: OutputStrategy,
     brightness_nits: f32,
-    display_sdr_white_nits: Option<f32>,
+    _display_sdr_white_nits: Option<f32>,
 ) -> f32 {
     let sanitized = if brightness_nits.is_finite() && brightness_nits > 0.0 {
         brightness_nits
     } else {
         DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS
     };
-    let display_sdr_white_nits = display_sdr_white_nits
-        .filter(|value| value.is_finite() && *value > 0.0)
-        .unwrap_or(SCRGB_REFERENCE_WHITE_NITS);
 
     match strategy {
-        OutputStrategy::HdrNativeSurface { .. } => sanitized / display_sdr_white_nits,
+        OutputStrategy::HdrNativeSurface { .. } => sanitized / SCRGB_REFERENCE_WHITE_NITS,
         OutputStrategy::HdrIntermediateThenToneMap { .. } => sanitized / SCRGB_REFERENCE_WHITE_NITS,
         OutputStrategy::SdrSurface { .. } | OutputStrategy::WideGamutSurface { .. } => 1.0,
     }

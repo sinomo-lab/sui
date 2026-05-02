@@ -1,4 +1,10 @@
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Devices::Display::{
+    DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL, DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+    DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
+    DISPLAYCONFIG_SDR_WHITE_LEVEL, DISPLAYCONFIG_SOURCE_DEVICE_NAME, DisplayConfigGetDeviceInfo,
+    GetDisplayConfigBufferSizes, QDC_ONLY_ACTIVE_PATHS, QDC_VIRTUAL_MODE_AWARE, QueryDisplayConfig,
+};
+use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, HWND};
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
     DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020, DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020,
@@ -34,6 +40,92 @@ fn map_color_space(color_space: DXGI_COLOR_SPACE_TYPE) -> WindowsAdvancedColorSp
     }
 }
 
+fn sdr_white_level_nits(raw_level: u32) -> Option<f32> {
+    let nits = raw_level as f32 / 1000.0 * 80.0;
+    (nits.is_finite() && nits > 0.0).then_some(nits)
+}
+
+fn query_active_display_paths() -> Option<Vec<DISPLAYCONFIG_PATH_INFO>> {
+    let flags = QDC_ONLY_ACTIVE_PATHS | QDC_VIRTUAL_MODE_AWARE;
+
+    loop {
+        let mut path_count = 0;
+        let mut mode_count = 0;
+        let size_result =
+            unsafe { GetDisplayConfigBufferSizes(flags, &mut path_count, &mut mode_count) };
+        if size_result != ERROR_SUCCESS {
+            return None;
+        }
+
+        let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
+        let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
+        let query_result = unsafe {
+            QueryDisplayConfig(
+                flags,
+                &mut path_count,
+                paths.as_mut_ptr(),
+                &mut mode_count,
+                modes.as_mut_ptr(),
+                None,
+            )
+        };
+
+        if query_result == ERROR_INSUFFICIENT_BUFFER {
+            continue;
+        }
+        if query_result != ERROR_SUCCESS {
+            return None;
+        }
+
+        paths.truncate(path_count as usize);
+        return Some(paths);
+    }
+}
+
+fn source_device_name_for_path(path: &DISPLAYCONFIG_PATH_INFO) -> Option<String> {
+    let mut source_name = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+        header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+            r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+            size: std::mem::size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32,
+            adapterId: path.sourceInfo.adapterId,
+            id: path.sourceInfo.id,
+        },
+        ..DISPLAYCONFIG_SOURCE_DEVICE_NAME::default()
+    };
+
+    let result = unsafe { DisplayConfigGetDeviceInfo(&mut source_name.header) };
+    (result == ERROR_SUCCESS.0 as i32)
+        .then(|| decode_wide_string(&source_name.viewGdiDeviceName))
+        .filter(|name| !name.is_empty())
+}
+
+fn sdr_white_nits_for_path(path: &DISPLAYCONFIG_PATH_INFO) -> Option<f32> {
+    let mut sdr_white = DISPLAYCONFIG_SDR_WHITE_LEVEL {
+        header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+            r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL,
+            size: std::mem::size_of::<DISPLAYCONFIG_SDR_WHITE_LEVEL>() as u32,
+            adapterId: path.targetInfo.adapterId,
+            id: path.targetInfo.id,
+        },
+        ..DISPLAYCONFIG_SDR_WHITE_LEVEL::default()
+    };
+
+    let result = unsafe { DisplayConfigGetDeviceInfo(&mut sdr_white.header) };
+    (result == ERROR_SUCCESS.0 as i32)
+        .then_some(sdr_white.SDRWhiteLevel)
+        .and_then(sdr_white_level_nits)
+}
+
+fn query_sdr_white_nits_for_gdi_device(device_name: &str) -> Option<f32> {
+    query_active_display_paths()?
+        .iter()
+        .find(|path| {
+            source_device_name_for_path(path)
+                .is_some_and(|source_name| source_name.eq_ignore_ascii_case(device_name))
+        })
+        .and_then(sdr_white_nits_for_path)
+}
+
 pub fn probe_monitor_for_hwnd(hwnd: isize) -> Option<WindowsAdvancedColorProbe> {
     let hwnd = HWND(hwnd as *mut core::ffi::c_void);
     let target_monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
@@ -56,8 +148,10 @@ pub fn probe_monitor_for_hwnd(hwnd: isize) -> Option<WindowsAdvancedColorProbe> 
                 continue;
             };
             if desc.Monitor == target_monitor {
+                let device_name = decode_wide_string(&desc.DeviceName);
+                let sdr_white_nits = query_sdr_white_nits_for_gdi_device(&device_name);
                 return Some(WindowsAdvancedColorProbe {
-                    device_name: Some(decode_wide_string(&desc.DeviceName)),
+                    device_name: Some(device_name),
                     bits_per_color: desc.BitsPerColor,
                     color_space: map_color_space(desc.ColorSpace),
                     red_primary: Some(desc.RedPrimary),
@@ -67,6 +161,7 @@ pub fn probe_monitor_for_hwnd(hwnd: isize) -> Option<WindowsAdvancedColorProbe> 
                     min_luminance_nits: Some(desc.MinLuminance),
                     max_luminance_nits: Some(desc.MaxLuminance),
                     max_full_frame_luminance_nits: Some(desc.MaxFullFrameLuminance),
+                    sdr_white_nits,
                 });
             }
             output_index += 1;

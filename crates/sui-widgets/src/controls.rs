@@ -2841,6 +2841,21 @@ impl NumberInput {
         }
     }
 
+    fn apply_edit_buffer(&mut self) {
+        let Ok(parsed) = self.buffer.trim().parse::<f64>() else {
+            return;
+        };
+        if !parsed.is_finite() || parsed < self.min || parsed > self.max {
+            return;
+        }
+        if (parsed - self.value).abs() > f64::EPSILON {
+            self.value = parsed;
+            if let Some(on_change) = &mut self.on_change {
+                on_change(self.value);
+            }
+        }
+    }
+
     fn nudge(&mut self, delta: f64) {
         let next = clamp_and_snap_value(self.value + delta, self.min, self.max, self.step);
         if (next - self.value).abs() > f64::EPSILON {
@@ -2900,16 +2915,17 @@ impl Widget for NumberInput {
                     "Escape" => self.buffer = format_number(self.value, self.precision),
                     "Backspace" => {
                         self.buffer.pop();
+                        self.apply_edit_buffer();
                     }
                     _ => {
                         if let Some(text) = keyboard_text(key) {
                             if text.chars().all(is_numeric_input_char) {
                                 self.buffer.push_str(text);
+                                self.apply_edit_buffer();
                             }
                         }
                     }
                 }
-                self.commit_buffer();
                 ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -3037,7 +3053,7 @@ impl Widget for NumberInput {
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if !focused {
-            self.buffer = format_number(self.value, self.precision);
+            self.commit_buffer();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -6113,6 +6129,51 @@ mod tests {
             .find(|node| node.role == SemanticsRole::SpinBox)
             .expect("spinbox semantics present");
         assert_eq!(input.value, Some(SemanticsValue::Number(6.0)));
+        Ok(())
+    }
+
+    #[test]
+    fn number_input_preserves_raw_text_while_typing() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            NumberInput::new("Count")
+                .range(0.0, 10.0)
+                .precision(2)
+                .value(0.0)
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 16.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Backspace", KeyState::Pressed)),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("2", KeyState::Pressed)),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new(".", KeyState::Pressed)),
+        )?;
+
+        assert_eq!(changes.borrow().as_slice(), &[2.0]);
+
+        let output = runtime.render(window_id)?;
+        let run = text_run_for(&output, "2.");
+        assert_eq!(run.text, "2.");
+
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::SpinBox)
+            .expect("spinbox semantics present");
+        assert_eq!(input.value, Some(SemanticsValue::Number(2.0)));
         Ok(())
     }
 

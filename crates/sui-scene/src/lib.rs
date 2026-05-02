@@ -3,8 +3,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use sui_core::{
-    Color, DirtyRegion, Error, ImageHandle, Path, PathElement, Rect, Result, Size, Transform,
-    Vector, WidgetId, WindowId,
+    Color, ColorSpace, DirtyRegion, Error, ImageHandle, Path, PathElement, Rect, Result, Size,
+    Transform, Vector, WidgetId, WindowId,
 };
 use sui_text::{FontRegistry, ShapedText, ShapedTextWindow, TextLayoutRegistry, TextRun};
 
@@ -61,6 +61,36 @@ impl ImageSource {
         self.tint = Some(tint);
         self
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WidgetShader {
+    ColorWheel,
+    ColorPickerHueBar,
+    ColorPickerSaturationValuePlane {
+        color_space: ColorSpace,
+        hue: f32,
+        max_value: f32,
+    },
+    ColorPickerSaturationBar {
+        color_space: ColorSpace,
+        hue: f32,
+        value: f32,
+    },
+    ColorPickerValueBar {
+        color_space: ColorSpace,
+        hue: f32,
+        saturation: f32,
+        max_value: f32,
+    },
+    ColorPickerAlphaBar {
+        color: Color,
+    },
+    ColorPickerRgbChannelBar {
+        color: Color,
+        channel: u32,
+        max_value: f32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -354,6 +384,10 @@ pub enum SceneCommand {
         rect: Rect,
         source: ImageSource,
     },
+    DrawShaderRect {
+        rect: Rect,
+        shader: WidgetShader,
+    },
     PushClip {
         rect: Rect,
     },
@@ -593,6 +627,7 @@ impl SceneBoundsState {
                 self.apply_rect(text.translated_bounds(), clipped)
             }
             SceneCommand::DrawImage { rect, .. } => self.apply_rect(*rect, clipped),
+            SceneCommand::DrawShaderRect { rect, .. } => self.apply_rect(*rect, clipped),
             SceneCommand::PushClip { rect } => {
                 let clip = self.transform.transform_rect_bbox(*rect);
                 self.push_clip(clip);
@@ -668,6 +703,7 @@ fn translate_command(command: &mut SceneCommand, delta: Vector) {
         SceneCommand::FillRect { rect, .. }
         | SceneCommand::StrokeRect { rect, .. }
         | SceneCommand::DrawImage { rect, .. }
+        | SceneCommand::DrawShaderRect { rect, .. }
         | SceneCommand::PushClip { rect }
         | SceneCommand::Label { rect, .. } => {
             *rect = rect.translate(delta);
@@ -864,7 +900,7 @@ mod tests {
     use super::{
         Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, RegisteredImage,
         Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId,
-        SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
+        SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle, WidgetShader,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -906,6 +942,10 @@ mod tests {
             source: ImageSource::new(ImageHandle::new(7))
                 .with_tint(Color::rgba(1.0, 0.0, 0.0, 1.0)),
         };
+        let shader = SceneCommand::DrawShaderRect {
+            rect: Rect::new(0.0, 0.0, 32.0, 8.0),
+            shader: WidgetShader::ColorPickerHueBar,
+        };
         let stroke = SceneCommand::StrokeRect {
             rect: Rect::new(1.0, 2.0, 30.0, 12.0),
             brush: Brush::Solid(Color::BLACK),
@@ -934,6 +974,7 @@ mod tests {
             SceneCommand::DrawShapedTextWindow(_)
         ));
         assert!(matches!(image, SceneCommand::DrawImage { .. }));
+        assert!(matches!(shader, SceneCommand::DrawShaderRect { .. }));
         assert!(matches!(stroke, SceneCommand::StrokeRect { .. }));
         assert!(matches!(path_fill, SceneCommand::FillPath { .. }));
         assert!(matches!(clip_path, SceneCommand::PushClipPath { .. }));

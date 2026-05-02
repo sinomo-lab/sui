@@ -458,7 +458,7 @@ impl Widget for FloatingWorkspace {
                 };
                 if let Some(dirty_region) = self.update_drag(ctx.bounds(), pointer.position) {
                     if resizing {
-                        request_widget_drag_refresh(ctx, refresh_target, dirty_region);
+                        request_widget_refresh(ctx, refresh_target, true, false, dirty_region);
                     } else {
                         request_widget_refresh(ctx, refresh_target, false, false, dirty_region);
                     }
@@ -830,6 +830,10 @@ impl FloatingViewHost {
             content: SingleChild::new(scroll_view),
         }
     }
+
+    fn resizing(&self) -> bool {
+        self.state.active_resize_view() == Some(self.view_id)
+    }
 }
 
 impl Widget for FloatingViewHost {
@@ -892,15 +896,21 @@ impl Widget for FloatingViewHost {
     fn paint(&self, ctx: &mut PaintCtx) {
         ctx.push_clip_rect(ctx.bounds());
         self.content.paint(ctx);
-        self.vertical_scroll_bar.paint(ctx);
-        self.horizontal_scroll_bar.paint(ctx);
+        if !self.resizing() {
+            self.vertical_scroll_bar.paint(ctx);
+            self.horizontal_scroll_bar.paint(ctx);
+        }
         ctx.pop_clip();
     }
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: LayerCompositionMode::Scroll,
+            composition_mode: if self.resizing() {
+                LayerCompositionMode::Normal
+            } else {
+                LayerCompositionMode::Scroll
+            },
         }
     }
 
@@ -910,8 +920,10 @@ impl Widget for FloatingViewHost {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.content.semantics(ctx);
-        self.vertical_scroll_bar.semantics(ctx);
-        self.horizontal_scroll_bar.semantics(ctx);
+        if !self.resizing() {
+            self.vertical_scroll_bar.semantics(ctx);
+            self.horizontal_scroll_bar.semantics(ctx);
+        }
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
@@ -1710,12 +1722,6 @@ fn request_widget_refresh(
     ctx.request(InvalidationRequest::new(target, InvalidationKind::Semantics).with_region(region));
 }
 
-fn request_widget_drag_refresh(ctx: &mut EventCtx, widget_id: WidgetId, region: Rect) {
-    let target = InvalidationTarget::Widget(widget_id);
-    ctx.request(InvalidationRequest::new(target, InvalidationKind::Arrange).with_region(region));
-    ctx.request(InvalidationRequest::new(target, InvalidationKind::Paint).with_region(region));
-}
-
 fn widget_invalidation_region(
     invalidations: &[InvalidationRequest],
     widget_id: WidgetId,
@@ -2058,6 +2064,63 @@ mod tests {
     }
 
     #[test]
+    fn floating_workspace_resize_drag_remeasures_content_before_drop() -> Result<()> {
+        let state = FloatingWorkspaceState::new();
+        let seen_constraints = Rc::new(RefCell::new(Vec::new()));
+        let mut workspace = FloatingWorkspace::new(state.clone());
+        let view_id = workspace.push_view(
+            FloatingViewConfig::new("Inspector", Rect::new(24.0, 24.0, 240.0, 180.0)),
+            ConstraintProbe::new(
+                "Resizable content",
+                Size::new(420.0, 300.0),
+                Color::rgba(0.22, 0.48, 0.72, 1.0),
+                Rc::clone(&seen_constraints),
+            ),
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(520.0)
+                .height(360.0)
+                .with_child(workspace),
+        );
+        let _ = runtime.render(window_id)?;
+        let initial_count = seen_constraints.borrow().len();
+        let initial_constraints = *seen_constraints
+            .borrow()
+            .last()
+            .expect("content should be measured initially");
+        let initial_bounds = state.snapshot(view_id).expect("view state present").bounds;
+        let handle = super::floating_view_resize_handle_rect(initial_bounds);
+        let resize_start = Point::new(
+            handle.x() + handle.width() * 0.5,
+            handle.y() + handle.height() * 0.5,
+        );
+        let resize_end = Point::new(resize_start.x + 72.0, resize_start.y + 48.0);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, resize_start, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, resize_end, true),
+        )?;
+        let _ = runtime.render(window_id)?;
+
+        let seen = seen_constraints.borrow();
+        let latest = seen
+            .last()
+            .copied()
+            .expect("content should be measured after resize move");
+        assert!(seen.len() > initial_count);
+        assert!(latest.max.width > initial_constraints.max.width + 40.0);
+        assert!(latest.max.height > initial_constraints.max.height + 20.0);
+
+        Ok(())
+    }
+
+    #[test]
     fn floating_workspace_body_click_brings_view_to_front() -> Result<()> {
         let state = FloatingWorkspaceState::new();
         let mut workspace = FloatingWorkspace::new(state.clone());
@@ -2183,6 +2246,44 @@ mod tests {
             horizontal.value,
             Some(SemanticsValue::Range { max, .. }) if max > 0.0
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn floating_workspace_active_resize_clips_preview_without_host_scroll_bars() -> Result<()> {
+        let state = FloatingWorkspaceState::new();
+        let seen_constraints = Rc::new(RefCell::new(Vec::new()));
+        let mut workspace = FloatingWorkspace::new(state.clone());
+        let view_id = workspace.push_view(
+            FloatingViewConfig::new("Inspector", Rect::new(24.0, 24.0, 240.0, 180.0)),
+            ConstraintProbe::new(
+                "Overflowing content",
+                Size::new(420.0, 300.0),
+                Color::rgba(0.22, 0.48, 0.72, 1.0),
+                Rc::clone(&seen_constraints),
+            ),
+        );
+        state.set_active_resize_view(Some(view_id));
+
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(520.0)
+                .height(360.0)
+                .with_child(workspace),
+        );
+        let output = runtime.render(window_id)?;
+
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some("Overflowing content")
+        }));
+        assert!(!output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Slider
+                && matches!(
+                    node.name.as_deref(),
+                    Some("Vertical scroll bar" | "Horizontal scroll bar")
+                )
+        }));
         Ok(())
     }
 

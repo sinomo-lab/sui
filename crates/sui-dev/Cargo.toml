@@ -24,6 +24,12 @@ required-features = ["native"]
 sui = { path = "../sui", default-features = false }
 sui-widget-book = { path = "../sui-widget-book", default-features = false }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+crossterm = "0.29"
+ratatui = "0.29"
+sui-testing = { workspace = true }
+sui-tui = { workspace = true }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
 wasm-bindgen = { workspace = true }
@@ -32,4 +38,3 @@ web-sys = { workspace = true, features = ["Window", "Location", "Document", "Nav
 [dev-dependencies]
 sui-render-wgpu = { workspace = true }
 sui-scene = { workspace = true }
-sui-testing = { workspace = true }

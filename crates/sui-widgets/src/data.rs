@@ -367,16 +367,18 @@ impl Widget for ListView {
             let pressed = self.pressed == Some(index);
 
             if selected || hovered || pressed {
-                ctx.fill(
-                    rounded_rect_path(inset_rect(row, Insets::all(1.0)), 6.0),
-                    if selected {
-                        palette.accent.with_alpha(0.14)
-                    } else if pressed {
-                        palette.surface_pressed
-                    } else {
-                        palette.surface_hover
-                    },
-                );
+                if let Some(highlight) = row_highlight_rect(row, viewport) {
+                    ctx.fill_rect(
+                        highlight,
+                        if selected {
+                            palette.accent.with_alpha(0.14)
+                        } else if pressed {
+                            palette.surface_pressed
+                        } else {
+                            palette.surface_hover
+                        },
+                    );
+                }
             }
 
             let Some(item) = self.items.get(index) else {
@@ -430,13 +432,6 @@ impl Widget for ListView {
         }
 
         ctx.pop_clip();
-        draw_vertical_scroll_thumb(
-            ctx,
-            viewport,
-            self.content_height(),
-            self.scroll_y,
-            palette.border_hover,
-        );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -525,6 +520,12 @@ pub struct TreeView {
     scroll_y: f32,
     on_change: Option<Box<dyn FnMut(Vec<usize>, String)>>,
 }
+
+const TREE_DISCLOSURE_LEFT: f32 = 8.0;
+const TREE_DISCLOSURE_SIZE: f32 = 12.0;
+const TREE_DISCLOSURE_LABEL_GAP: f32 = 6.0;
+const TREE_DEPTH_INDENT: f32 = 18.0;
+const TREE_ROW_RIGHT_PADDING: f32 = 8.0;
 
 impl TreeView {
     pub fn new(name: impl Into<String>) -> Self {
@@ -829,19 +830,18 @@ impl Widget for TreeView {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let label_style = self.theme.body_text_style();
         let detail_style = caption_style(self.theme.as_ref());
-        let row_padding = 34.0;
         let width = self
             .visible_rows()
             .iter()
             .map(|row| {
-                let indent = row.depth as f32 * 18.0;
+                let label_start = tree_label_offset(row.depth);
                 let label = measure_text(ctx, &row.label, &label_style).width;
                 let detail = row
                     .detail
                     .as_deref()
                     .map(|detail| measure_text(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
-                indent + label.max(detail) + row_padding
+                label_start + label.max(detail) + TREE_ROW_RIGHT_PADDING
             })
             .fold(220.0, f32::max);
         let desired = Size::new(width + 16.0, self.content_height() + 16.0);
@@ -883,19 +883,20 @@ impl Widget for TreeView {
             let pressed = self.pressed.as_deref() == Some(row.path.as_slice());
 
             if selected || hovered || pressed {
-                ctx.fill(
-                    rounded_rect_path(inset_rect(row_rect, Insets::all(1.0)), 6.0),
-                    if selected {
-                        palette.accent.with_alpha(0.14)
-                    } else if pressed {
-                        palette.surface_pressed
-                    } else {
-                        palette.surface_hover
-                    },
-                );
+                if let Some(highlight) = row_highlight_rect(row_rect, viewport) {
+                    ctx.fill_rect(
+                        highlight,
+                        if selected {
+                            palette.accent.with_alpha(0.14)
+                        } else if pressed {
+                            palette.surface_pressed
+                        } else {
+                            palette.surface_hover
+                        },
+                    );
+                }
             }
 
-            let indent = row.depth as f32 * 16.0;
             if row.has_children {
                 ctx.fill(
                     disclosure_path(disclosure_rect(row_rect, row.depth), row.expanded),
@@ -907,7 +908,7 @@ impl Widget for TreeView {
                 );
             }
 
-            let label_x = row_rect.x() + 16.0 + indent;
+            let label_x = row_rect.x() + tree_label_offset(row.depth);
             let text_bounds = Rect::new(
                 label_x,
                 row_rect.y(),
@@ -950,13 +951,6 @@ impl Widget for TreeView {
         }
 
         ctx.pop_clip();
-        draw_vertical_scroll_thumb(
-            ctx,
-            viewport,
-            self.content_height(),
-            self.scroll_y,
-            palette.border_hover,
-        );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1796,11 +1790,18 @@ fn tree_item_mut<'a>(items: &'a mut [TreeItem], path: &[usize]) -> Option<&'a mu
 
 fn disclosure_rect(row: Rect, depth: usize) -> Rect {
     Rect::new(
-        row.x() + 8.0 + depth as f32 * 18.0,
-        row.y() + ((row.height() - 12.0) * 0.5),
-        12.0,
-        12.0,
+        row.x() + TREE_DISCLOSURE_LEFT + depth as f32 * TREE_DEPTH_INDENT,
+        row.y() + ((row.height() - TREE_DISCLOSURE_SIZE) * 0.5),
+        TREE_DISCLOSURE_SIZE,
+        TREE_DISCLOSURE_SIZE,
     )
+}
+
+fn tree_label_offset(depth: usize) -> f32 {
+    TREE_DISCLOSURE_LEFT
+        + depth as f32 * TREE_DEPTH_INDENT
+        + TREE_DISCLOSURE_SIZE
+        + TREE_DISCLOSURE_LABEL_GAP
 }
 
 fn disclosure_path(rect: Rect, expanded: bool) -> Path {
@@ -2035,6 +2036,12 @@ fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
     builder.build()
 }
 
+fn row_highlight_rect(row: Rect, viewport: Rect) -> Option<Rect> {
+    row.intersection(viewport)
+        .map(|visible| inset_rect(visible, Insets::all(1.0)))
+        .filter(|rect| !rect.is_empty())
+}
+
 fn inset_rect(rect: Rect, padding: Insets) -> Rect {
     Rect::new(
         rect.x() + padding.left,
@@ -2056,8 +2063,8 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Breadcrumb, BreadcrumbItem, DefaultTheme, ListItem, ListView, Table, TableColumn, TableRow,
-        TreeItem, TreeView,
+        Breadcrumb, BreadcrumbItem, DefaultTheme, ListItem, ListView, TREE_DISCLOSURE_LABEL_GAP,
+        Table, TableColumn, TableRow, TreeItem, TreeView,
     };
     use crate::{ScrollView, SizedBox, Stack};
     use sui_core::{
@@ -2066,7 +2073,7 @@ mod tests {
         SemanticsValue, Size, Vector,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
-    use sui_scene::SceneCommand;
+    use sui_scene::{Brush, SceneCommand};
     use sui_text::{FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -2145,10 +2152,41 @@ mod tests {
         runs
     }
 
+    fn selected_highlight_rects(output: &RenderOutput) -> Vec<Rect> {
+        let selected_brush = Brush::Solid(DefaultTheme::default().palette.accent.with_alpha(0.14));
+        let mut rects = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillPath { path, brush } if *brush == selected_brush => {
+                    rects.push(path.bounds());
+                }
+                SceneCommand::FillRect { rect, brush } if *brush == selected_brush => {
+                    rects.push(*rect);
+                }
+                _ => {}
+            });
+        rects
+    }
+
     fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
         let top = -measurement.cap_height.unwrap_or(measurement.ascent);
         let bottom = measurement.descent * 0.5;
         (top + bottom) * 0.5
+    }
+
+    fn vertical_scroll_thumb_rects(output: &RenderOutput) -> Vec<Rect> {
+        let mut rects = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillPath { path, .. } = command {
+                let bounds = path.bounds();
+                if (bounds.width() - 4.0).abs() <= f32::EPSILON && bounds.height() >= 28.0 {
+                    rects.push(bounds);
+                }
+            }
+        });
+        rects
     }
 
     fn primary_pointer(kind: PointerEventKind, position: Point, pressed: bool) -> Event {
@@ -2169,6 +2207,12 @@ mod tests {
             pointer_kind: PointerKind::Mouse,
             is_primary: true,
         })
+    }
+
+    fn wheel_scroll(position: Point, delta: Vector) -> Event {
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, position);
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(delta));
+        Event::Pointer(scroll)
     }
 
     #[test]
@@ -2313,6 +2357,195 @@ mod tests {
         let detail = text_rects_for(&output, "Visible")[0];
 
         assert!(label.max_y() <= detail.y());
+    }
+
+    #[test]
+    fn list_view_does_not_paint_internal_scroll_thumb() {
+        let output = render(
+            SizedBox::new().width(320.0).height(100.0).with_child(
+                ListView::new("Assets")
+                    .items([
+                        ListItem::new("Hero texture").detail("2048 x 2048 RGBA"),
+                        ListItem::new("UI icon sheet").detail("Tagged for export"),
+                        ListItem::new("Archive cache").detail("Read only"),
+                        ListItem::new("Normals atlas").detail("Streaming mip chain"),
+                    ])
+                    .selected(1),
+            ),
+        );
+
+        assert!(vertical_scroll_thumb_rects(&output).is_empty());
+    }
+
+    #[test]
+    fn list_view_scrolls_overflowing_rows_without_thumb() -> Result<()> {
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(320.0).height(100.0).with_child(
+                ListView::new("Assets").items([
+                    ListItem::new("Hero texture").detail("2048 x 2048 RGBA"),
+                    ListItem::new("UI icon sheet").detail("Tagged for export"),
+                    ListItem::new("Archive cache").detail("Read only"),
+                    ListItem::new("Normals atlas").detail("Streaming mip chain"),
+                ]),
+            ));
+
+        let before = runtime.render(window_id)?;
+        let before_y = text_rects_for(&before, "Hero texture")[0].y();
+
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(60.0, 60.0), Vector::new(0.0, -24.0)),
+        )?;
+        let after = runtime.render(window_id)?;
+        let after_y = text_rects_for(&after, "Hero texture")[0].y();
+
+        assert!(after_y < before_y);
+        assert!(vertical_scroll_thumb_rects(&after).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn list_view_clips_scrolled_selection_highlight_to_viewport() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(100.0).with_child(
+                ListView::new("Assets")
+                    .items([
+                        ListItem::new("Hero texture").detail("2048 x 2048 RGBA"),
+                        ListItem::new("UI icon sheet").detail("Tagged for export"),
+                        ListItem::new("Archive cache").detail("Read only"),
+                        ListItem::new("Normals atlas").detail("Streaming mip chain"),
+                    ])
+                    .selected(0),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(60.0, 60.0), Vector::new(0.0, -24.0)),
+        )?;
+        let output = runtime.render(window_id)?;
+        let highlight = selected_highlight_rects(&output)
+            .first()
+            .copied()
+            .expect("selected list row highlight should be painted");
+
+        assert!(highlight.y() >= 8.0);
+        assert!(highlight.max_y() <= 100.0 - 8.0);
+        Ok(())
+    }
+
+    #[test]
+    fn tree_view_does_not_paint_internal_scroll_thumb() {
+        let output = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene").item(
+                    TreeItem::new("Environment")
+                        .with_child(TreeItem::new("Sky dome").detail("Visible"))
+                        .with_child(TreeItem::new("Fog volume").detail("Animated"))
+                        .with_child(TreeItem::new("Characters").detail("Selected")),
+                ),
+            ),
+        );
+
+        assert!(vertical_scroll_thumb_rects(&output).is_empty());
+    }
+
+    #[test]
+    fn tree_view_scrolls_overflowing_rows_without_thumb() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene").item(
+                    TreeItem::new("Scene")
+                        .expanded(true)
+                        .with_child(TreeItem::new("Environment").detail("Visible"))
+                        .with_child(TreeItem::new("Sky dome").detail("Visible"))
+                        .with_child(TreeItem::new("Fog volume").detail("Animated"))
+                        .with_child(TreeItem::new("Pilot").detail("Selected")),
+                ),
+            ),
+        );
+
+        let before = runtime.render(window_id)?;
+        let before_y = text_rects_for(&before, "Scene")[0].y();
+
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(60.0, 60.0), Vector::new(0.0, -24.0)),
+        )?;
+        let after = runtime.render(window_id)?;
+        let after_y = text_rects_for(&after, "Scene")[0].y();
+
+        assert!(after_y < before_y);
+        assert!(vertical_scroll_thumb_rects(&after).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn tree_view_clips_scrolled_selection_highlight_to_viewport() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene").item(
+                    TreeItem::new("Scene")
+                        .expanded(true)
+                        .with_child(TreeItem::new("Environment").detail("Visible"))
+                        .with_child(TreeItem::new("Sky dome").detail("Visible"))
+                        .with_child(TreeItem::new("Fog volume").detail("Animated"))
+                        .with_child(TreeItem::new("Pilot").detail("Selected")),
+                ),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(60.0, 24.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(60.0, 24.0), false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(60.0, 60.0), Vector::new(0.0, -24.0)),
+        )?;
+        let output = runtime.render(window_id)?;
+        let highlight = selected_highlight_rects(&output)
+            .first()
+            .copied()
+            .expect("selected tree row highlight should be painted");
+
+        assert!(highlight.y() >= 8.0);
+        assert!(highlight.max_y() <= 120.0 - 8.0);
+        Ok(())
+    }
+
+    #[test]
+    fn tree_view_disclosure_does_not_overlap_primary_label() {
+        let output = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene").item(
+                    TreeItem::new("Environment")
+                        .with_child(TreeItem::new("Sky dome").detail("Visible")),
+                ),
+            ),
+        );
+
+        let label = text_rects_for(&output, "Environment")[0];
+        let mut disclosure_bounds = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillPath { path, .. } = command {
+                let bounds = path.bounds();
+                if bounds.width() <= 12.0 && bounds.height() <= 12.0 {
+                    disclosure_bounds.push(bounds);
+                }
+            }
+        });
+
+        let disclosure = disclosure_bounds
+            .first()
+            .expect("tree disclosure should be painted");
+        assert!(disclosure.max_x() + TREE_DISCLOSURE_LABEL_GAP <= label.x());
     }
 
     #[test]

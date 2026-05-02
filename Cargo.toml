@@ -43,6 +43,7 @@ sui-layout = { path = "crates/sui-layout" }
 sui-platform = { path = "crates/sui-platform" }
 sui-text = { path = "crates/sui-text" }
 sui-testing = { path = "crates/sui-testing" }
+sui-tui = { path = "crates/sui-tui" }
 sui-widget-book = { path = "crates/sui-widget-book" }
 sui-widgets = { path = "crates/sui-widgets" }
 sui-render-wgpu = { path = "crates/sui-render-wgpu" }

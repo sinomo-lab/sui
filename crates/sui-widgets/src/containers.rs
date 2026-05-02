@@ -440,6 +440,7 @@ impl Widget for Stack {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollAxes {
+    None,
     Vertical,
     Horizontal,
     Both,
@@ -452,6 +453,24 @@ impl ScrollAxes {
 
     const fn allows_vertical(self) -> bool {
         matches!(self, Self::Vertical | Self::Both)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overflow {
+    Visible,
+    Clip,
+    Scroll,
+    Auto,
+}
+
+impl Overflow {
+    const fn is_scrollable(self) -> bool {
+        matches!(self, Self::Scroll | Self::Auto)
+    }
+
+    const fn clips_paint(self) -> bool {
+        !matches!(self, Self::Visible)
     }
 }
 
@@ -1041,10 +1060,12 @@ impl Widget for ScrollBar {
 }
 
 pub struct ScrollView {
-    axes: ScrollAxes,
     name: Option<String>,
     state: Option<ScrollState>,
-    viewport_size_hint: bool,
+    overflow_x: Overflow,
+    overflow_y: Overflow,
+    viewport_width_hint: bool,
+    viewport_height_hint: bool,
     offset: Vector,
     content_size: Size,
     child: SingleChild,
@@ -1056,10 +1077,12 @@ impl ScrollView {
         W: Widget + 'static,
     {
         Self {
-            axes: ScrollAxes::Vertical,
             name: None,
             state: None,
-            viewport_size_hint: false,
+            overflow_x: Overflow::Clip,
+            overflow_y: Overflow::Auto,
+            viewport_width_hint: false,
+            viewport_height_hint: false,
             offset: Vector::ZERO,
             content_size: Size::ZERO,
             child: SingleChild::new(child),
@@ -1088,7 +1111,36 @@ impl ScrollView {
     }
 
     pub fn axes(mut self, axes: ScrollAxes) -> Self {
-        self.axes = axes;
+        self.overflow_x = if axes.allows_horizontal() {
+            Overflow::Auto
+        } else {
+            Overflow::Clip
+        };
+        self.overflow_y = if axes.allows_vertical() {
+            Overflow::Auto
+        } else {
+            Overflow::Clip
+        };
+        self.viewport_width_hint = false;
+        self.viewport_height_hint = false;
+        self
+    }
+
+    pub fn overflow(mut self, overflow: Overflow) -> Self {
+        self.overflow_x = overflow;
+        self.overflow_y = overflow;
+        self.viewport_width_hint = overflow.is_scrollable();
+        self
+    }
+
+    pub fn overflow_x(mut self, overflow: Overflow) -> Self {
+        self.overflow_x = overflow;
+        self.viewport_width_hint = overflow.is_scrollable();
+        self
+    }
+
+    pub fn overflow_y(mut self, overflow: Overflow) -> Self {
+        self.overflow_y = overflow;
         self
     }
 
@@ -1103,7 +1155,18 @@ impl ScrollView {
     }
 
     pub const fn viewport_size_hint(mut self, enabled: bool) -> Self {
-        self.viewport_size_hint = enabled;
+        self.viewport_width_hint = enabled;
+        self.viewport_height_hint = enabled;
+        self
+    }
+
+    pub const fn viewport_width_hint(mut self, enabled: bool) -> Self {
+        self.viewport_width_hint = enabled;
+        self
+    }
+
+    pub const fn viewport_height_hint(mut self, enabled: bool) -> Self {
+        self.viewport_height_hint = enabled;
         self
     }
 
@@ -1140,17 +1203,58 @@ impl ScrollView {
         let max_y = (self.content_size.height - viewport.height).max(0.0);
 
         Vector::new(
-            if self.axes.allows_horizontal() {
+            if self.overflow_x.is_scrollable() {
                 offset.x.clamp(0.0, max_x)
             } else {
                 0.0
             },
-            if self.axes.allows_vertical() {
+            if self.overflow_y.is_scrollable() {
                 offset.y.clamp(0.0, max_y)
             } else {
                 0.0
             },
         )
+    }
+
+    fn scroll_axes(&self) -> ScrollAxes {
+        match (
+            self.overflow_x.is_scrollable(),
+            self.overflow_y.is_scrollable(),
+        ) {
+            (true, true) => ScrollAxes::Both,
+            (true, false) => ScrollAxes::Horizontal,
+            (false, true) => ScrollAxes::Vertical,
+            (false, false) => ScrollAxes::None,
+        }
+    }
+
+    fn should_clip_paint(&self) -> bool {
+        self.overflow_x.clips_paint() || self.overflow_y.clips_paint()
+    }
+
+    fn clip_rect(&self, bounds: Rect) -> Rect {
+        let large = 1_000_000.0;
+        let x = if self.overflow_x.clips_paint() {
+            bounds.x()
+        } else {
+            -large
+        };
+        let width = if self.overflow_x.clips_paint() {
+            bounds.width()
+        } else {
+            large * 2.0
+        };
+        let y = if self.overflow_y.clips_paint() {
+            bounds.y()
+        } else {
+            -large
+        };
+        let height = if self.overflow_y.clips_paint() {
+            bounds.height()
+        } else {
+            large * 2.0
+        };
+        Rect::new(x, y, width, height)
     }
 
     fn scroll_by(&mut self, viewport: Size, delta: Vector, ctx: &mut EventCtx) -> bool {
@@ -1181,7 +1285,7 @@ impl ScrollView {
         };
 
         state.bind_scroll_view(ctx.widget_id(), self.child.child().id());
-        if state.sync_metrics(self.axes, viewport, self.content_size) {
+        if state.sync_metrics(self.scroll_axes(), viewport, self.content_size) {
             for scroll_bar_id in state.subscribers().scroll_bar_ids {
                 request_scroll_bar_refresh(ctx, scroll_bar_id);
             }
@@ -1200,7 +1304,7 @@ impl ScrollView {
         };
 
         state.bind_scroll_view(ctx.widget_id(), self.child.child().id());
-        let _ = state.sync_metrics(self.axes, viewport, self.content_size);
+        let _ = state.sync_metrics(self.scroll_axes(), viewport, self.content_size);
         if state.set_offset(self.offset) {
             for scroll_bar_id in state.subscribers().scroll_bar_ids {
                 if scroll_bar_id != ctx.widget_id() {
@@ -1215,6 +1319,7 @@ pub struct VirtualScrollView {
     name: Option<String>,
     padding: Insets,
     spacing: f32,
+    state: Option<ScrollState>,
     offset_y: f32,
     last_arranged_offset_y: f32,
     content_height: f32,
@@ -1229,6 +1334,7 @@ impl VirtualScrollView {
             name: None,
             padding: Insets::ZERO,
             spacing: 0.0,
+            state: None,
             offset_y: 0.0,
             last_arranged_offset_y: 0.0,
             content_height: 0.0,
@@ -1253,6 +1359,11 @@ impl VirtualScrollView {
         self
     }
 
+    pub fn state(mut self, state: ScrollState) -> Self {
+        self.state = Some(state);
+        self
+    }
+
     pub fn with_child<W>(mut self, child: W) -> Self
     where
         W: Widget + 'static,
@@ -1274,6 +1385,10 @@ impl VirtualScrollView {
 
     pub fn set_offset(&mut self, offset: Vector) {
         self.offset_y = offset.y.max(0.0);
+        if let Some(state) = &self.state {
+            let _ = state.set_offset(Vector::new(0.0, self.offset_y));
+            self.offset_y = state.current_offset().y;
+        }
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
@@ -1344,6 +1459,7 @@ impl VirtualScrollView {
         let next = self.clamp_offset(viewport.height(), previous_offset_y + delta_y);
         if (next - previous_offset_y).abs() > f32::EPSILON {
             self.offset_y = next;
+            self.publish_state(ctx, viewport.size);
             ctx.request_arrange();
             if let Some(exposed_strip) = self.exposed_viewport_strip(viewport, previous_offset_y) {
                 ctx.request_paint_rect(exposed_strip);
@@ -1358,6 +1474,47 @@ impl VirtualScrollView {
             true
         } else {
             false
+        }
+    }
+
+    fn sync_state<C>(&mut self, ctx: &mut C, viewport: Size)
+    where
+        C: ScrollInvalidationCtx + ScrollWidgetCtx,
+    {
+        let Some(state) = &self.state else {
+            self.offset_y = self.clamp_offset(viewport.height, self.offset_y);
+            return;
+        };
+
+        state.bind_scroll_view(ctx.widget_id(), ctx.widget_id());
+        let content_size = Size::new(viewport.width, self.content_height);
+        if state.sync_metrics(ScrollAxes::Vertical, viewport, content_size) {
+            for scroll_bar_id in state.subscribers().scroll_bar_ids {
+                request_scroll_bar_refresh(ctx, scroll_bar_id);
+            }
+        }
+        self.offset_y = self.clamp_offset(viewport.height, state.current_offset().y);
+        if state.set_offset(Vector::new(0.0, self.offset_y)) {
+            for scroll_bar_id in state.subscribers().scroll_bar_ids {
+                request_scroll_bar_refresh(ctx, scroll_bar_id);
+            }
+        }
+    }
+
+    fn publish_state(&self, ctx: &mut EventCtx, viewport: Size) {
+        let Some(state) = &self.state else {
+            return;
+        };
+
+        state.bind_scroll_view(ctx.widget_id(), ctx.widget_id());
+        let content_size = Size::new(viewport.width, self.content_height);
+        let _ = state.sync_metrics(ScrollAxes::Vertical, viewport, content_size);
+        if state.set_offset(Vector::new(0.0, self.offset_y)) {
+            for scroll_bar_id in state.subscribers().scroll_bar_ids {
+                if scroll_bar_id != ctx.widget_id() {
+                    request_scroll_bar_refresh(ctx, scroll_bar_id);
+                }
+            }
         }
     }
 
@@ -1453,8 +1610,8 @@ impl Widget for ScrollView {
             },
         );
         let mut child_constraints = constraints.loosen();
-        if self.axes.allows_horizontal() {
-            child_constraints.max.width = if self.viewport_size_hint {
+        if self.overflow_x.is_scrollable() {
+            child_constraints.max.width = if self.viewport_width_hint {
                 viewport_hint.width
             } else {
                 f32::INFINITY
@@ -1464,8 +1621,8 @@ impl Widget for ScrollView {
             child_constraints.max.width = constraints.max.width;
         }
 
-        if self.axes.allows_vertical() {
-            child_constraints.max.height = if self.viewport_size_hint {
+        if self.overflow_y.is_scrollable() {
+            child_constraints.max.height = if self.viewport_height_hint {
                 viewport_hint.height
             } else {
                 f32::INFINITY
@@ -1507,15 +1664,23 @@ impl Widget for ScrollView {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.push_clip_rect(ctx.bounds());
-        self.child.paint(ctx);
-        ctx.pop_clip();
+        if self.should_clip_paint() {
+            ctx.push_clip_rect(self.clip_rect(ctx.bounds()));
+            self.child.paint(ctx);
+            ctx.pop_clip();
+        } else {
+            self.child.paint(ctx);
+        }
     }
 
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: LayerCompositionMode::Scroll,
+            composition_mode: if self.scroll_axes() == ScrollAxes::None {
+                LayerCompositionMode::Normal
+            } else {
+                LayerCompositionMode::Scroll
+            },
         }
     }
 
@@ -1650,7 +1815,7 @@ impl Widget for VirtualScrollView {
         ));
 
         let viewport = self.viewport_rect(Rect::from_origin_size(Point::ZERO, size));
-        self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
+        self.sync_state(ctx, viewport.size);
         self.update_visible_range(viewport.height());
         if previous_content_height != self.content_height
             || previous_item_offsets != self.item_offsets
@@ -1663,7 +1828,7 @@ impl Widget for VirtualScrollView {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let viewport = self.viewport_rect(bounds);
-        self.offset_y = self.clamp_offset(viewport.height(), self.offset_y);
+        self.sync_state(ctx, viewport.size);
         let previous_visible_range = self.visible_range.clone();
         let previous_arranged_offset_y = self.last_arranged_offset_y;
         self.update_visible_range(viewport.height());
@@ -2023,8 +2188,8 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Align, Background, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox,
-        Stack, VirtualScrollView,
+        Align, Background, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView,
+        SizedBox, Stack, VirtualScrollView,
     };
     use crate::SplitView;
     use sui_core::{
@@ -2069,6 +2234,27 @@ mod tests {
         }
     }
 
+    struct OverflowingBox {
+        size: Size,
+        color: Color,
+    }
+
+    impl OverflowingBox {
+        fn new(size: Size, color: Color) -> Self {
+            Self { size, color }
+        }
+    }
+
+    impl Widget for OverflowingBox {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
+            self.size
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(self.color);
+        }
+    }
+
     struct PaintCounterBox {
         size: Size,
         color: Color,
@@ -2095,6 +2281,24 @@ mod tests {
         fn paint(&self, ctx: &mut PaintCtx) {
             self.counts.borrow_mut()[self.index] += 1;
             ctx.fill_bounds(self.color);
+        }
+    }
+
+    struct ConstraintProbe {
+        size: Size,
+        seen: Rc<RefCell<Vec<Constraints>>>,
+    }
+
+    impl ConstraintProbe {
+        fn new(size: Size, seen: Rc<RefCell<Vec<Constraints>>>) -> Self {
+            Self { size, seen }
+        }
+    }
+
+    impl Widget for ConstraintProbe {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.seen.borrow_mut().push(constraints);
+            constraints.clamp(self.size)
         }
     }
 
@@ -2664,6 +2868,68 @@ mod tests {
             layer_descriptor_for(&output, scroll_id).expect("scroll view layer present");
 
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
+    }
+
+    #[test]
+    fn scroll_view_auto_overflow_uses_finite_width_and_natural_height() {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (output, _) = render_root(
+            SizedBox::new().size(Size::new(120.0, 60.0)).with_child(
+                ScrollView::both(ConstraintProbe::new(
+                    Size::new(90.0, 180.0),
+                    Rc::clone(&seen),
+                ))
+                .overflow_x(Overflow::Auto)
+                .overflow_y(Overflow::Auto),
+            ),
+        );
+
+        let constraints = seen
+            .borrow()
+            .last()
+            .copied()
+            .expect("probe should be measured");
+        assert_eq!(constraints.max.width, 120.0);
+        assert!(constraints.max.height.is_infinite());
+        assert_eq!(output.frame.viewport, Size::new(120.0, 60.0));
+    }
+
+    #[test]
+    fn scroll_view_visible_overflow_does_not_scroll_or_use_scroll_layer() {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .overflow(Overflow::Visible),
+            ),
+        );
+
+        let output = runtime.render(window_id).unwrap();
+        let scroll_id = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ScrollView)
+            .expect("scroll view semantics present")
+            .id;
+        let descriptor =
+            layer_descriptor_for(&output, scroll_id).expect("scroll view layer present");
+        assert_eq!(descriptor.composition_mode, LayerCompositionMode::Normal);
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
+            .expect("visible overflow content present");
+        assert_eq!(content.bounds, Rect::new(0.0, 0.0, 80.0, 120.0));
     }
 
     #[test]
