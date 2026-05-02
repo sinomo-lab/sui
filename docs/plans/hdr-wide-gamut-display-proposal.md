@@ -1,7 +1,5 @@
 # HDR And Wide-Gamut Display Support Proposal
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
-
 **Goal:** Add a platform-aware color pipeline to SUI that can render correctly on SDR, wide-gamut SDR, and HDR displays without regressing the current SDR path.
 
 **Architecture:** Introduce explicit output color-space and dynamic-range concepts above the `wgpu` surface layer, keep the renderer internally linear, and split implementation into: capability detection, swapchain/output configuration, color conversion/tone mapping, and validation tooling. Prefer a conservative staged rollout: first make wide-gamut SDR and HDR-capable intermediate rendering correct, then enable native HDR presentation per platform where the stack actually supports it.

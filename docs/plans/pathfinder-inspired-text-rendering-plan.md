@@ -1,7 +1,5 @@
 # Pathfinder-Inspired Text Rendering Improvement Plan
 
-> For Hermes: Use subagent-driven-development skill to implement this plan task-by-task.
-
 Goal: Improve small-text readability and overall text quality in SUI by adding a real LCD/subpixel text path, small-size hinting controls, stem-darkening experiments, and benchmark/visual comparison surfaces without replacing the existing atlas-first renderer architecture.
 
 Architecture: Keep SUI’s current atlas-backed text pipeline as the default rendering path, but split text rendering policy into explicit modes instead of treating all text as grayscale coverage. Add a true subpixel atlas path that preserves per-channel coverage from swash, then layer in optional small-size hinting and stem darkening behind renderer-facing settings and benchmark surfaces in sui-dev. Reserve any Pathfinder-style analytic/vector text work as a later hybrid path for selected cases such as large transformed text.

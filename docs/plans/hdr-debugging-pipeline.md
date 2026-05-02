@@ -1,7 +1,5 @@
 # HDR Debugging Pipeline and Windows HDR Bring-Up Implementation Plan
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task when parallelization is helpful, but keep Windows-PC validation grounded in `D:\Workspace\sui`.
-
 **Goal:** Build a standard HDR debugging pipeline for SUI, use it to diagnose and fix Windows HDR rendering, then clean up SUI Dev HDR-mode visual/performance issues.
 
 **Architecture:** Extend the existing renderer/debug infrastructure with stage-aware capture APIs that can inspect both scene-linear HDR intermediates and final composed SDR/HDR outputs. Ship EXR-first HDR export plus SDR-derived debugging images, surface the interface through standard renderer/platform/testing APIs, then use those artifacts to debug the Windows HDR path on real hardware.

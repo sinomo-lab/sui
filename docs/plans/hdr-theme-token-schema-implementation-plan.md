@@ -1,7 +1,5 @@
 # HDR Theme And Token Schema Implementation Plan
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task when parallelization is helpful, but keep the rollout incremental and preserve current `DefaultTheme` behavior unless an HDR-aware path is explicitly enabled.
-
 **Goal:** Implement an HDR-aware theme/token system for SUI that preserves the current `DefaultTheme` workflow, adds a disciplined schema for wide-gamut and HDR-native styling, and proves the model in a small set of built-in widgets plus widget-book validation surfaces.
 
 **Architecture:** Introduce a lightweight HDR token layer in `sui-widgets`, keep `ThemeColors` as the semantic identity baseline, and resolve HDR luminance/material/effect behavior into widget-ready values through explicit helper APIs instead of baking HDR behavior directly into every existing palette field. Because built-in widgets currently consume `DefaultTheme` directly rather than reading top-level `ThemeExtensions` from runtime contexts, the first implementation should thread HDR tokens through `DefaultTheme` itself and only then add a top-level `ThemeExtension` bridge for broader ecosystem use.
