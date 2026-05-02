@@ -5,14 +5,15 @@ use app::{DesktopAutomationMode, build_dev_application_with_automation};
 pub use app::{build_dev_application, build_dev_application_with_widget_book_bounds};
 
 #[cfg(not(target_arch = "wasm32"))]
+use std::env;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use std::{
     collections::{HashMap, HashSet},
-    env,
     io::{self, Stdout},
     time::Duration,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event as TerminalEvent, KeyCode,
@@ -21,7 +22,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -36,19 +37,22 @@ use ratatui::{
 use sui::{Application, Rect};
 #[cfg(not(target_arch = "wasm32"))]
 use sui::{
-    DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, Event, ImeEvent, KeyState,
-    KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-    Rect as SuiRect, SceneStatisticsDetailMode, SemanticsAction, SemanticsNode, SemanticsRole,
-    SemanticsValue, ToggleState, Vector, set_window_render_options,
-    set_window_scene_statistics_detail_mode,
+    DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, SceneStatisticsDetailMode,
+    SemanticsRole, set_window_render_options, set_window_scene_statistics_detail_mode,
+};
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+use sui::{
+    Event, ImeEvent, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
+    PointerEventKind, Rect as SuiRect, SemanticsAction, SemanticsNode, SemanticsValue, ToggleState,
+    Vector,
 };
 use sui::{
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowRenderOptions, WindowToneMappingMode,
 };
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use sui_testing::TestWindow;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use sui_tui::{TuiLayoutMode, TuiRenderOptions, render_snapshot};
 #[cfg(not(target_arch = "wasm32"))]
 use sui_widget_book::GALLERY_SCROLL_NAME;
@@ -70,6 +74,7 @@ const DEFAULT_WEB_SDR_CONTENT_BRIGHTNESS_NITS: f32 = 203.0;
 struct DesktopLaunchMode {
     vsync_enabled: bool,
     automation: Option<DesktopLaunchAutomation>,
+    #[cfg(feature = "tui")]
     tui: Option<DesktopTuiLaunchMode>,
 }
 
@@ -79,6 +84,7 @@ impl Default for DesktopLaunchMode {
         Self {
             vsync_enabled: true,
             automation: None,
+            #[cfg(feature = "tui")]
             tui: None,
         }
     }
@@ -91,14 +97,14 @@ enum DesktopLaunchAutomation {
     WidgetBookScroll,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DesktopTuiLaunchKind {
     Interactive,
     DumpAccessibility,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DesktopTuiLaunchMode {
     kind: DesktopTuiLaunchKind,
@@ -106,7 +112,7 @@ struct DesktopTuiLaunchMode {
     show_hidden: bool,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 impl Default for DesktopTuiLaunchMode {
     fn default() -> Self {
         Self {
@@ -134,7 +140,7 @@ fn parse_desktop_automation(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn parse_tui_layout(raw_value: &str) -> sui::Result<TuiLayoutMode> {
     match raw_value {
         "structured" => Ok(TuiLayoutMode::Structured),
@@ -199,6 +205,7 @@ where
     let mut mode = DesktopLaunchMode {
         vsync_enabled: !env_disables_vsync,
         automation: env_automation,
+        #[cfg(feature = "tui")]
         tui: None,
     };
 
@@ -206,30 +213,42 @@ where
         match arg.as_ref() {
             "--no-vsync" => mode.vsync_enabled = false,
             "--vsync" => mode.vsync_enabled = true,
+            #[cfg(feature = "tui")]
             "--tui" => {
                 mode.tui = Some(DesktopTuiLaunchMode {
                     kind: DesktopTuiLaunchKind::Interactive,
                     ..mode.tui.unwrap_or_default()
                 });
             }
+            #[cfg(feature = "tui")]
             "--tui-dump-accessibility" => {
                 mode.tui = Some(DesktopTuiLaunchMode {
                     kind: DesktopTuiLaunchKind::DumpAccessibility,
                     ..mode.tui.unwrap_or_default()
                 });
             }
+            #[cfg(feature = "tui")]
             "--tui-show-hidden" => {
                 mode.tui = Some(DesktopTuiLaunchMode {
                     show_hidden: true,
                     ..mode.tui.unwrap_or_default()
                 });
             }
+            #[cfg(not(feature = "tui"))]
+            "--tui" | "--tui-dump-accessibility" | "--tui-show-hidden" => {
+                return Err(tui_feature_disabled_error(arg.as_ref()));
+            }
+            #[cfg(feature = "tui")]
             value if value.starts_with("--tui-layout=") => {
                 let layout = parse_tui_layout(value.split_once('=').map(|(_, rhs)| rhs).unwrap())?;
                 mode.tui = Some(DesktopTuiLaunchMode {
                     layout,
                     ..mode.tui.unwrap_or_default()
                 });
+            }
+            #[cfg(not(feature = "tui"))]
+            value if value.starts_with("--tui-layout=") => {
+                return Err(tui_feature_disabled_error(value));
             }
             value if value.starts_with("--automation=") => {
                 mode.automation =
@@ -245,6 +264,13 @@ where
     }
 
     Ok(mode)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "tui")))]
+fn tui_feature_disabled_error(flag: &str) -> sui::Error {
+    sui::Error::new(format!(
+        "unsupported sui-dev argument `{flag}`; this binary was built without the `tui` feature"
+    ))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -285,6 +311,7 @@ fn run_desktop_application(app: Application, vsync_enabled: bool) -> sui::Result
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_desktop_application_with_mode(launch_mode: DesktopLaunchMode) -> sui::Result<()> {
+    #[cfg(feature = "tui")]
     if let Some(tui) = launch_mode.tui {
         return run_tui_application(tui);
     }
@@ -317,7 +344,7 @@ fn run_desktop_application_with_mode(launch_mode: DesktopLaunchMode) -> sui::Res
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn run_tui_application(tui: DesktopTuiLaunchMode) -> sui::Result<()> {
     let app = sui_testing::TestApp::from_runtime(build_dev_application().build()?)?;
     let window = app.main_window()?;
@@ -327,7 +354,7 @@ fn run_tui_application(tui: DesktopTuiLaunchMode) -> sui::Result<()> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn print_tui_snapshot(window: &TestWindow, tui: DesktopTuiLaunchMode) -> sui::Result<()> {
     let snapshot = window.snapshot()?;
     let frame = render_snapshot(
@@ -343,7 +370,7 @@ fn print_tui_snapshot(window: &TestWindow, tui: DesktopTuiLaunchMode) -> sui::Re
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Result<()> {
     let mut terminal = TuiTerminalSession::new()?;
     let mut selected = 0usize;
@@ -451,12 +478,12 @@ fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Re
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 struct TuiTerminalSession {
     terminal: Terminal<CrosstermBackend<Stdout>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 impl TuiTerminalSession {
     fn new() -> sui::Result<Self> {
         enable_raw_mode().map_err(to_sui_io_error)?;
@@ -493,7 +520,7 @@ impl TuiTerminalSession {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 impl Drop for TuiTerminalSession {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
@@ -506,7 +533,7 @@ impl Drop for TuiTerminalSession {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_tui(
     frame: &mut Frame<'_>,
     nodes: &[SemanticsNode],
@@ -574,7 +601,7 @@ fn draw_tui(
     frame.render_widget(help, root[2]);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 #[derive(Debug, Clone, Copy)]
 struct TuiLayoutAreas {
     spatial: TerminalRect,
@@ -582,7 +609,7 @@ struct TuiLayoutAreas {
     details: TerminalRect,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_layout_areas(area: TerminalRect) -> TuiLayoutAreas {
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -609,7 +636,7 @@ fn tui_layout_areas(area: TerminalRect) -> TuiLayoutAreas {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_spatial_canvas(
     frame: &mut Frame<'_>,
     area: TerminalRect,
@@ -698,7 +725,7 @@ fn draw_spatial_canvas(
     draw_tui_floating_tabs(frame, inner, world, &floating_tabs);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_actionable_list(
     frame: &mut Frame<'_>,
     area: TerminalRect,
@@ -749,7 +776,7 @@ fn draw_actionable_list(
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 #[derive(Clone)]
 struct TuiActionTreeRow {
     node: SemanticsNode,
@@ -757,7 +784,7 @@ struct TuiActionTreeRow {
     prefix: String,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_action_tree_rows(
     nodes: &[SemanticsNode],
     actionable: &[SemanticsNode],
@@ -812,7 +839,7 @@ fn tui_action_tree_rows(
     rows
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn push_tui_action_tree_row(
     node_id: sui::WidgetId,
     ancestor_prefix: &str,
@@ -858,13 +885,13 @@ fn push_tui_action_tree_row(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_selected_action_tree_row(rows: &[TuiActionTreeRow], selected: usize) -> Option<usize> {
     rows.iter()
         .position(|row| row.actionable_index == Some(selected))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_details(frame: &mut Frame<'_>, area: TerminalRect, selected: Option<&SemanticsNode>) {
     let text = selected.map(format_tui_details).unwrap_or_else(|| {
         "No actionable nodes are available in the current accessibility snapshot.".to_string()
@@ -875,7 +902,7 @@ fn draw_details(frame: &mut Frame<'_>, area: TerminalRect, selected: Option<&Sem
     frame.render_widget(details, area);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_view_block(title: impl Into<Title<'static>>) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
@@ -884,7 +911,7 @@ fn tui_view_block(title: impl Into<Title<'static>>) -> Block<'static> {
         .title(title)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 #[derive(Clone)]
 struct TuiFloatingTabs {
     parent: SemanticsNode,
@@ -894,7 +921,7 @@ struct TuiFloatingTabs {
     node_window: HashMap<sui::WidgetId, sui::WidgetId>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_floating_tabs(
     nodes: &[SemanticsNode],
     selected_id: Option<sui::WidgetId>,
@@ -966,7 +993,7 @@ fn tui_floating_tabs(
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_node_has_ancestor(
     node_id: sui::WidgetId,
     ancestor_id: sui::WidgetId,
@@ -982,7 +1009,7 @@ fn tui_node_has_ancestor(
     false
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_projected_spatial_bounds(
     node: &SemanticsNode,
     tabs: &Option<TuiFloatingTabs>,
@@ -1003,7 +1030,7 @@ fn tui_projected_spatial_bounds(
     Some(node.bounds)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_tui_floating_tabs(
     frame: &mut Frame<'_>,
     inner: TerminalRect,
@@ -1048,7 +1075,7 @@ fn draw_tui_floating_tabs(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 #[derive(Clone)]
 struct TuiAccessibilityFlowItem {
     node: SemanticsNode,
@@ -1056,7 +1083,7 @@ struct TuiAccessibilityFlowItem {
     actionable_index: Option<usize>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 #[derive(Clone)]
 struct TuiAccessibilityFlowVirtualItem {
     node: SemanticsNode,
@@ -1066,7 +1093,7 @@ struct TuiAccessibilityFlowVirtualItem {
     actionable_index: Option<usize>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_tui_accessibility_flow(
     frame: &mut Frame<'_>,
     inner: TerminalRect,
@@ -1093,7 +1120,7 @@ fn draw_tui_accessibility_flow(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_active_tab_content_area(
     inner: TerminalRect,
     world: SuiRect,
@@ -1111,7 +1138,7 @@ fn tui_active_tab_content_area(
     ))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_accessibility_flow_layout(
     nodes: &[SemanticsNode],
     actionable: &[SemanticsNode],
@@ -1150,7 +1177,7 @@ fn tui_accessibility_flow_layout(
         .collect()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_accessibility_flow_virtual_layout(
     nodes: &[SemanticsNode],
     actionable: &[SemanticsNode],
@@ -1220,7 +1247,7 @@ fn tui_accessibility_flow_virtual_layout(
     items
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_accessibility_flow_offset(
     items: &[TuiAccessibilityFlowVirtualItem],
     visible_height: u16,
@@ -1245,14 +1272,14 @@ fn tui_accessibility_flow_offset(
         .min(total_rows.saturating_sub(visible_rows))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_accessibility_flow_node(node: &SemanticsNode) -> bool {
     !node.state.hidden
         && tui_compact_widget_node(node, None)
         && node.name.as_deref() != Some("Floating view content")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_accessibility_flow_inline_node(node: &SemanticsNode) -> bool {
     matches!(
         node.role,
@@ -1260,7 +1287,7 @@ fn tui_accessibility_flow_inline_node(node: &SemanticsNode) -> bool {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_accessibility_flow_cell_width(node: &SemanticsNode, area_width: u16) -> u16 {
     let text_width = tui_widget_text(node).chars().count() as u16;
     let max_width = area_width.min(24).max(1);
@@ -1268,7 +1295,7 @@ fn tui_accessibility_flow_cell_width(node: &SemanticsNode, area_width: u16) -> u
     text_width.saturating_add(2).clamp(min_width, max_width)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_bounds_terminal_rect(
     bounds: SuiRect,
     inner: TerminalRect,
@@ -1295,21 +1322,21 @@ fn tui_bounds_terminal_rect(
     ))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn world_to_tui_column(x: f32, inner: TerminalRect, world: SuiRect) -> u16 {
     let span = inner.width.saturating_sub(1).max(1) as f32;
     let ratio = ((x - world.x()) / world.width()).clamp(0.0, 1.0);
     inner.x + (ratio * span).round() as u16
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn world_to_tui_row(y: f32, inner: TerminalRect, world: SuiRect) -> u16 {
     let span = inner.height.saturating_sub(1).max(1) as f32;
     let ratio = ((y - world.y()) / world.height()).clamp(0.0, 1.0);
     inner.y + (ratio * span).round() as u16
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_tui_solid_outline(
     frame: &mut Frame<'_>,
     rect: TerminalRect,
@@ -1356,7 +1383,7 @@ fn draw_tui_solid_outline(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_tui_compact_widget(
     frame: &mut Frame<'_>,
     rect: TerminalRect,
@@ -1445,13 +1472,13 @@ fn draw_tui_compact_widget(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_tui_filled_label(frame: &mut Frame<'_>, rect: TerminalRect, text: &str, style: Style) {
     fill_tui_rect(frame.buffer_mut(), rect, style);
     draw_tui_clipped_text(frame, rect, text, style, true);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_tui_clipped_text(
     frame: &mut Frame<'_>,
     rect: TerminalRect,
@@ -1482,7 +1509,7 @@ fn draw_tui_clipped_text(
         .set_stringn(text_x, y, text, max_width, style);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn draw_tui_compact_range(
     frame: &mut Frame<'_>,
     rect: TerminalRect,
@@ -1514,7 +1541,7 @@ fn draw_tui_compact_range(
     draw_tui_clipped_text(frame, rect, &tui_widget_text(node), style, true);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn fill_tui_rect(buffer: &mut Buffer, rect: TerminalRect, style: Style) {
     for y in rect.y..rect.y.saturating_add(rect.height) {
         for x in rect.x..rect.x.saturating_add(rect.width) {
@@ -1525,14 +1552,14 @@ fn fill_tui_rect(buffer: &mut Buffer, rect: TerminalRect, style: Style) {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn set_tui_symbol(buffer: &mut Buffer, x: u16, y: u16, symbol: &str, style: Style) {
     if let Some(cell) = buffer.cell_mut((x, y)) {
         cell.set_symbol(symbol).set_style(style);
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn handle_tui_mouse(
     window: &TestWindow,
     mouse: MouseEvent,
@@ -1601,7 +1628,7 @@ fn handle_tui_mouse(
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn mouse_hit_action_tree(
     mouse: MouseEvent,
     area: TerminalRect,
@@ -1624,7 +1651,7 @@ fn mouse_hit_action_tree(
     rows[index].actionable_index
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_list_offset(selected: usize, area: TerminalRect, item_count: usize) -> usize {
     let visible_rows = area.height.saturating_sub(2) as usize;
     if visible_rows == 0 || item_count <= visible_rows {
@@ -1637,7 +1664,7 @@ fn tui_list_offset(selected: usize, area: TerminalRect, item_count: usize) -> us
         .min(item_count.saturating_sub(visible_rows))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn mouse_hit_spatial_node(
     mouse: MouseEvent,
     area: TerminalRect,
@@ -1680,7 +1707,7 @@ fn mouse_hit_spatial_node(
         .map(|(index, _)| index)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn mouse_to_world_point(mouse: MouseEvent, inner: TerminalRect, world: SuiRect) -> Option<Point> {
     if inner.width <= 1 || inner.height <= 1 || world.width() <= 0.0 || world.height() <= 0.0 {
         return None;
@@ -1693,7 +1720,7 @@ fn mouse_to_world_point(mouse: MouseEvent, inner: TerminalRect, world: SuiRect) 
     ))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn terminal_rect_contains(area: TerminalRect, column: u16, row: u16) -> bool {
     column >= area.x
         && column < area.x.saturating_add(area.width)
@@ -1701,7 +1728,7 @@ fn terminal_rect_contains(area: TerminalRect, column: u16, row: u16) -> bool {
         && row < area.y.saturating_add(area.height)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn inner_terminal_rect(area: TerminalRect) -> Option<TerminalRect> {
     if area.width <= 2 || area.height <= 2 {
         return None;
@@ -1714,22 +1741,22 @@ fn inner_terminal_rect(area: TerminalRect) -> Option<TerminalRect> {
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_node_area(node: &SemanticsNode) -> f32 {
     node.bounds.width().max(0.0) * node.bounds.height().max(0.0)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn terminal_event_ready() -> sui::Result<bool> {
     event::poll(Duration::from_millis(120)).map_err(to_sui_io_error)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn read_terminal_event() -> sui::Result<TerminalEvent> {
     event::read().map_err(to_sui_io_error)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn prompt_for_tui_value(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     node: &SemanticsNode,
@@ -1754,12 +1781,12 @@ fn prompt_for_tui_value(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn to_sui_io_error(error: io::Error) -> sui::Error {
     sui::Error::new(error.to_string())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_world_bounds(nodes: &[SemanticsNode]) -> Option<SuiRect> {
     nodes
         .iter()
@@ -1777,7 +1804,7 @@ fn tui_world_bounds(nodes: &[SemanticsNode]) -> Option<SuiRect> {
         })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_spatial_bounds(node: &SemanticsNode) -> Option<SuiRect> {
     let bounds = node.bounds;
     if bounds.is_empty()
@@ -1792,7 +1819,7 @@ fn tui_spatial_bounds(node: &SemanticsNode) -> Option<SuiRect> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_spatial_map_node(node: &SemanticsNode, selected_id: Option<sui::WidgetId>) -> bool {
     selected_id == Some(node.id)
         || node.state.focused
@@ -1817,7 +1844,7 @@ fn tui_spatial_map_node(node: &SemanticsNode, selected_id: Option<sui::WidgetId>
         )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_compact_widget_node(node: &SemanticsNode, selected_id: Option<sui::WidgetId>) -> bool {
     selected_id == Some(node.id)
         || matches!(
@@ -1839,7 +1866,7 @@ fn tui_compact_widget_node(node: &SemanticsNode, selected_id: Option<sui::Widget
         )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_label_node(node: &SemanticsNode) -> bool {
     node.state.focused
         || tui_interactive_role(node)
@@ -1855,7 +1882,7 @@ fn tui_label_node(node: &SemanticsNode) -> bool {
         )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_interactive_role(node: &SemanticsNode) -> bool {
     matches!(
         node.role,
@@ -1873,7 +1900,7 @@ fn tui_interactive_role(node: &SemanticsNode) -> bool {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_node_color(node: &SemanticsNode, selected: bool) -> TerminalColor {
     if selected {
         TerminalColor::Yellow
@@ -1898,7 +1925,7 @@ fn tui_node_color(node: &SemanticsNode, selected: bool) -> TerminalColor {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_widget_text(node: &SemanticsNode) -> String {
     node.name
         .as_deref()
@@ -1908,12 +1935,12 @@ fn tui_widget_text(node: &SemanticsNode) -> String {
         .unwrap_or_else(|| tui_role_label(&node.role).to_string())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_widget_value_text(node: &SemanticsNode) -> Option<String> {
     node.value.as_ref().map(format_semantics_value)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_node_checked(node: &SemanticsNode) -> bool {
     matches!(
         node.state.checked,
@@ -1921,7 +1948,7 @@ fn tui_node_checked(node: &SemanticsNode) -> bool {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_range_fill_width(node: &SemanticsNode, width: u16) -> u16 {
     let ratio = match node.value {
         Some(SemanticsValue::Range { value, min, max }) if max > min => {
@@ -1933,7 +1960,7 @@ fn tui_range_fill_width(node: &SemanticsNode, width: u16) -> u16 {
     ((width as f64) * ratio).round().clamp(0.0, width as f64) as u16
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_compact_label(node: &SemanticsNode) -> String {
     let role = match node.role {
         SemanticsRole::GenericContainer => "Group",
@@ -1950,7 +1977,7 @@ fn tui_compact_label(node: &SemanticsNode) -> String {
     format!("{role}:{}", node.name.as_deref().unwrap_or("<unnamed>"))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn format_tui_details(node: &SemanticsNode) -> String {
     format!(
         "#{id}\nrole: {role:?}\nname: {name}\nvalue: {value}\nstate: {state}\nactions: {actions}\nbounds: ({x:.0}, {y:.0}, {w:.0}, {h:.0})\n\nEnter/space activates. e edits SetValue controls. +/- adjust slider-like controls.",
@@ -1979,7 +2006,7 @@ fn format_tui_details(node: &SemanticsNode) -> String {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn format_semantics_value(value: &SemanticsValue) -> String {
     match value {
         SemanticsValue::Text(text) => text.clone(),
@@ -1988,7 +2015,7 @@ fn format_semantics_value(value: &SemanticsValue) -> String {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn format_tui_state(node: &SemanticsNode) -> String {
     let mut states = Vec::new();
     if node.state.disabled {
@@ -2029,7 +2056,7 @@ fn format_tui_state(node: &SemanticsNode) -> String {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_role_label(role: &SemanticsRole) -> &'static str {
     match role {
         SemanticsRole::Window => "Window",
@@ -2069,7 +2096,7 @@ fn tui_role_label(role: &SemanticsRole) -> &'static str {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn actionable_nodes(nodes: &[SemanticsNode]) -> Vec<SemanticsNode> {
     nodes
         .iter()
@@ -2100,7 +2127,7 @@ fn actionable_nodes(nodes: &[SemanticsNode]) -> Vec<SemanticsNode> {
         .collect()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn preferred_initial_actionable_index(actionable: &[SemanticsNode]) -> Option<usize> {
     actionable.iter().position(|node| {
         node.actions
@@ -2120,7 +2147,7 @@ fn preferred_initial_actionable_index(actionable: &[SemanticsNode]) -> Option<us
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn activate_tui_node(window: &TestWindow, node: &SemanticsNode) -> sui::Result<()> {
     if node
         .actions
@@ -2153,7 +2180,7 @@ fn activate_tui_node(window: &TestWindow, node: &SemanticsNode) -> sui::Result<(
     click_tui_node(window, node)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn set_tui_node_value(window: &TestWindow, node: &SemanticsNode, text: &str) -> sui::Result<()> {
     if node
         .actions
@@ -2170,7 +2197,7 @@ fn set_tui_node_value(window: &TestWindow, node: &SemanticsNode, text: &str) -> 
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn click_tui_node(window: &TestWindow, node: &SemanticsNode) -> sui::Result<()> {
     let point = tui_action_point(node);
     dispatch_tui_event(
@@ -2188,7 +2215,7 @@ fn click_tui_node(window: &TestWindow, node: &SemanticsNode) -> sui::Result<()> 
     dispatch_tui_event(window, Event::Pointer(up))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn scroll_tui_node(window: &TestWindow, node: &SemanticsNode, delta: Vector) -> sui::Result<()> {
     let point = tui_action_point(node);
     dispatch_tui_event(
@@ -2201,7 +2228,7 @@ fn scroll_tui_node(window: &TestWindow, node: &SemanticsNode, delta: Vector) -> 
     dispatch_tui_event(window, Event::Pointer(scroll))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn press_tui_node(window: &TestWindow, node: &SemanticsNode, key: &str) -> sui::Result<()> {
     click_tui_node(window, node)?;
     dispatch_tui_event(
@@ -2214,7 +2241,7 @@ fn press_tui_node(window: &TestWindow, node: &SemanticsNode, key: &str) -> sui::
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn fill_tui_node(window: &TestWindow, node: &SemanticsNode, text: &str) -> sui::Result<()> {
     click_tui_node(window, node)?;
     dispatch_tui_event(window, Event::Ime(ImeEvent::CompositionStart))?;
@@ -2233,12 +2260,12 @@ fn fill_tui_node(window: &TestWindow, node: &SemanticsNode, text: &str) -> sui::
     dispatch_tui_event(window, Event::Ime(ImeEvent::CompositionEnd))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn dispatch_tui_event(window: &TestWindow, event: Event) -> sui::Result<()> {
     window.root().dispatch_event(event)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_action_point(node: &SemanticsNode) -> Point {
     if matches!(node.role, SemanticsRole::ScrollView) {
         Point::new(
@@ -3037,7 +3064,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
     fn desktop_launch_mode_accepts_tui_flags() {
         let mode = parse_desktop_launch_mode(["--tui", "--tui-show-hidden"], false, None).unwrap();
@@ -3048,7 +3075,7 @@ mod tests {
         assert!(tui.show_hidden);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
     fn desktop_launch_mode_accepts_tui_dump_mode() {
         let mode = parse_desktop_launch_mode(["--tui-dump-accessibility"], false, None).unwrap();
@@ -3058,14 +3085,21 @@ mod tests {
         assert_eq!(tui.layout, TuiLayoutMode::Spatial);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
     fn desktop_launch_mode_rejects_unknown_tui_layout() {
         let error = parse_desktop_launch_mode(["--tui-layout=diagonal"], false, None).unwrap_err();
         assert!(error.to_string().contains("unsupported sui-dev TUI layout"));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "tui")))]
+    #[test]
+    fn desktop_launch_mode_rejects_tui_flags_without_tui_feature() {
+        let error = parse_desktop_launch_mode(["--tui"], false, None).unwrap_err();
+        assert!(error.to_string().contains("without the `tui` feature"));
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
     fn generated_tui_includes_major_dev_workspace_views() -> sui::Result<()> {
         let app = sui_testing::TestApp::from_runtime(build_dev_application().build()?)?;
@@ -3089,7 +3123,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
     fn generated_tui_actions_do_not_require_unique_role_name_pairs() -> sui::Result<()> {
         let app = sui_testing::TestApp::from_runtime(build_dev_application().build()?)?;
@@ -3111,7 +3145,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
     fn generated_tui_mouse_hit_tests_list_and_spatial_nodes() {
         let list_area = TerminalRect::new(20, 3, 24, 8);
@@ -3203,7 +3237,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
     fn generated_tui_spatial_widgets_render_compact_clipped_text() -> sui::Result<()> {
         let mut root = SemanticsNode::new(
@@ -3240,7 +3274,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
     fn generated_tui_renders_floating_view_from_accessibility_tree_flow() {
         let mut workspace = SemanticsNode::new(
@@ -3309,7 +3343,7 @@ mod tests {
         assert_eq!(flow_items[0].rect.y, 1);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
     fn generated_tui_scrolls_accessibility_flow_to_selected_node() {
         let mut workspace = SemanticsNode::new(

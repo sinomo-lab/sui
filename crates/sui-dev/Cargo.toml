@@ -8,8 +8,9 @@ publish = false
 default-run = "sui-dev"
 
 [features]
-default = ["native"]
+default = ["native", "tui"]
 native = ["sui/desktop", "sui/wgpu", "sui-widget-book/native"]
+tui = ["dep:crossterm", "dep:ratatui", "dep:sui-tui"]
 web = ["sui/web", "sui/wgpu", "sui-widget-book/web"]
 
 [lib]
@@ -25,10 +26,10 @@ sui = { path = "../sui", default-features = false }
 sui-widget-book = { path = "../sui-widget-book", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-crossterm = "0.29"
-ratatui = "0.29"
+crossterm = { version = "0.29", optional = true }
+ratatui = { version = "0.29", optional = true }
 sui-testing = { workspace = true }
-sui-tui = { workspace = true }
+sui-tui = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
