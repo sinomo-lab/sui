@@ -375,6 +375,7 @@ fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Re
     let mut terminal = TuiTerminalSession::new()?;
     let mut selected = 0usize;
     let mut selection_initialized = false;
+    let mut spatial_state = TuiSpatialState::default();
     loop {
         let snapshot = window.snapshot()?;
         let actionable = actionable_nodes(&snapshot.accessibility.nodes);
@@ -388,11 +389,21 @@ fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Re
             selected = selected.min(actionable.len().saturating_sub(1));
         }
 
+        let size = terminal.size()?;
+        let areas = tui_layout_areas(size);
+        sync_tui_spatial_selection(
+            &mut spatial_state,
+            areas.spatial,
+            &snapshot.accessibility.nodes,
+            &actionable,
+            actionable.get(selected).map(|node| node.id),
+        );
         terminal.draw(
             &snapshot.accessibility.nodes,
             &actionable,
             selected,
             tui.show_hidden,
+            &spatial_state,
         )?;
 
         if !terminal_event_ready()? {
@@ -463,14 +474,14 @@ fn run_interactive_tui(window: TestWindow, tui: DesktopTuiLaunchMode) -> sui::Re
                 }
             }
             TerminalEvent::Mouse(mouse) => {
-                let size = terminal.size()?;
                 handle_tui_mouse(
                     &window,
                     mouse,
-                    tui_layout_areas(size),
+                    areas,
                     &snapshot.accessibility.nodes,
                     &actionable,
                     &mut selected,
+                    &mut spatial_state,
                 )?;
             }
             _ => {}
@@ -512,9 +523,19 @@ impl TuiTerminalSession {
         actionable: &[SemanticsNode],
         selected: usize,
         show_hidden: bool,
+        spatial_state: &TuiSpatialState,
     ) -> sui::Result<()> {
         self.terminal
-            .draw(|frame| draw_tui(frame, nodes, actionable, selected, show_hidden))
+            .draw(|frame| {
+                draw_tui(
+                    frame,
+                    nodes,
+                    actionable,
+                    selected,
+                    show_hidden,
+                    spatial_state,
+                )
+            })
             .map(|_| ())
             .map_err(to_sui_io_error)
     }
@@ -540,6 +561,7 @@ fn draw_tui(
     actionable: &[SemanticsNode],
     selected: usize,
     show_hidden: bool,
+    spatial_state: &TuiSpatialState,
 ) {
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -592,6 +614,7 @@ fn draw_tui(
         nodes,
         actionable,
         actionable.get(selected),
+        spatial_state,
     );
     draw_actionable_list(frame, areas.list, nodes, actionable, selected);
     draw_details(frame, areas.details, actionable.get(selected));
@@ -607,6 +630,27 @@ struct TuiLayoutAreas {
     spatial: TerminalRect,
     list: TerminalRect,
     details: TerminalRect,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+#[derive(Default, Debug, Clone)]
+struct TuiSpatialState {
+    flow_offsets: HashMap<sui::WidgetId, usize>,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+impl TuiSpatialState {
+    fn flow_offset(&self, window_id: sui::WidgetId) -> usize {
+        self.flow_offsets.get(&window_id).copied().unwrap_or(0)
+    }
+
+    fn set_flow_offset(&mut self, window_id: sui::WidgetId, offset: usize) {
+        if offset == 0 {
+            self.flow_offsets.remove(&window_id);
+        } else {
+            self.flow_offsets.insert(window_id, offset);
+        }
+    }
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
@@ -643,6 +687,7 @@ fn draw_spatial_canvas(
     nodes: &[SemanticsNode],
     actionable: &[SemanticsNode],
     selected: Option<&SemanticsNode>,
+    spatial_state: &TuiSpatialState,
 ) {
     let world = tui_world_bounds(nodes).unwrap_or_else(|| SuiRect::new(0.0, 0.0, 1.0, 1.0));
     let selected_id = selected.map(|node| node.id);
@@ -721,6 +766,7 @@ fn draw_spatial_canvas(
         actionable,
         selected_id,
         &floating_tabs,
+        spatial_state,
     );
     draw_tui_floating_tabs(frame, inner, world, &floating_tabs);
 }
@@ -1040,22 +1086,16 @@ fn draw_tui_floating_tabs(
     let Some(tabs) = tabs else {
         return;
     };
-    let Some(parent_rect) = tui_bounds_terminal_rect(tabs.parent.bounds, inner, world) else {
+    let Some(tab_area) = tui_floating_tab_area(inner, world, tabs) else {
         return;
     };
-    let tab_area = TerminalRect::new(parent_rect.x, parent_rect.y, parent_rect.width, 1);
     fill_tui_rect(
         frame.buffer_mut(),
         tab_area,
         Style::default().bg(TerminalColor::DarkGray),
     );
-    let mut x = tab_area.x.saturating_add(1);
-    let max_x = tab_area.x.saturating_add(tab_area.width);
-    for (index, window) in tabs.windows.iter().enumerate() {
-        if x >= max_x {
-            break;
-        }
-        let active = index == tabs.active_index;
+    for tab in tui_floating_tab_rects(inner, world, tabs) {
+        let active = tab.index == tabs.active_index;
         let style = if active {
             Style::default()
                 .fg(TerminalColor::Black)
@@ -1066,13 +1106,67 @@ fn draw_tui_floating_tabs(
                 .fg(TerminalColor::White)
                 .bg(TerminalColor::DarkGray)
         };
+        frame.buffer_mut().set_stringn(
+            tab.rect.x,
+            tab.rect.y,
+            tab.label,
+            tab.rect.width as usize,
+            style,
+        );
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+#[derive(Clone)]
+struct TuiFloatingTabRect {
+    window_id: sui::WidgetId,
+    index: usize,
+    rect: TerminalRect,
+    label: String,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+fn tui_floating_tab_area(
+    inner: TerminalRect,
+    world: SuiRect,
+    tabs: &TuiFloatingTabs,
+) -> Option<TerminalRect> {
+    let parent_rect = tui_bounds_terminal_rect(tabs.parent.bounds, inner, world)?;
+    Some(TerminalRect::new(
+        parent_rect.x,
+        parent_rect.y,
+        parent_rect.width,
+        1,
+    ))
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+fn tui_floating_tab_rects(
+    inner: TerminalRect,
+    world: SuiRect,
+    tabs: &TuiFloatingTabs,
+) -> Vec<TuiFloatingTabRect> {
+    let Some(tab_area) = tui_floating_tab_area(inner, world, tabs) else {
+        return Vec::new();
+    };
+    let mut x = tab_area.x.saturating_add(1);
+    let max_x = tab_area.x.saturating_add(tab_area.width);
+    let mut rects = Vec::new();
+    for (index, window) in tabs.windows.iter().enumerate() {
+        if x >= max_x {
+            break;
+        }
         let label = format!(" {} ", window.name.as_deref().unwrap_or("Window"));
         let width = (label.chars().count() as u16).min(max_x.saturating_sub(x));
-        frame
-            .buffer_mut()
-            .set_stringn(x, tab_area.y, label, width as usize, style);
+        rects.push(TuiFloatingTabRect {
+            window_id: window.id,
+            index,
+            rect: TerminalRect::new(x, tab_area.y, width, 1),
+            label,
+        });
         x = x.saturating_add(width).saturating_add(1);
     }
+    rects
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
@@ -1102,6 +1196,7 @@ fn draw_tui_accessibility_flow(
     actionable: &[SemanticsNode],
     selected_id: Option<sui::WidgetId>,
     tabs: &Option<TuiFloatingTabs>,
+    spatial_state: &TuiSpatialState,
 ) {
     let Some(tabs) = tabs else {
         return;
@@ -1110,7 +1205,13 @@ fn draw_tui_accessibility_flow(
         return;
     };
     fill_tui_rect(frame.buffer_mut(), area, Style::default());
-    for item in tui_accessibility_flow_layout(nodes, actionable, tabs, area, selected_id) {
+    let virtual_items = tui_accessibility_flow_virtual_layout(nodes, actionable, tabs, area.width);
+    let offset = tui_accessibility_flow_clamped_offset(
+        &virtual_items,
+        area.height,
+        spatial_state.flow_offset(tabs.active_window_id),
+    );
+    for item in tui_accessibility_flow_layout_from_virtual(virtual_items, area, offset) {
         draw_tui_compact_widget(
             frame,
             item.rect,
@@ -1144,14 +1245,23 @@ fn tui_accessibility_flow_layout(
     actionable: &[SemanticsNode],
     tabs: &TuiFloatingTabs,
     area: TerminalRect,
-    selected_id: Option<sui::WidgetId>,
+    offset: usize,
 ) -> Vec<TuiAccessibilityFlowItem> {
     if area.width == 0 || area.height == 0 {
         return Vec::new();
     }
 
     let virtual_items = tui_accessibility_flow_virtual_layout(nodes, actionable, tabs, area.width);
-    let offset = tui_accessibility_flow_offset(&virtual_items, area.height, selected_id);
+    let offset = tui_accessibility_flow_clamped_offset(&virtual_items, area.height, offset);
+    tui_accessibility_flow_layout_from_virtual(virtual_items, area, offset)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+fn tui_accessibility_flow_layout_from_virtual(
+    virtual_items: Vec<TuiAccessibilityFlowVirtualItem>,
+    area: TerminalRect,
+    offset: usize,
+) -> Vec<TuiAccessibilityFlowItem> {
     virtual_items
         .into_iter()
         .filter_map(|item| {
@@ -1248,28 +1358,163 @@ fn tui_accessibility_flow_virtual_layout(
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
-fn tui_accessibility_flow_offset(
+fn tui_accessibility_flow_clamped_offset(
     items: &[TuiAccessibilityFlowVirtualItem],
     visible_height: u16,
-    selected_id: Option<sui::WidgetId>,
+    offset: usize,
 ) -> usize {
     let visible_rows = visible_height as usize;
-    let total_rows = items
-        .iter()
-        .map(|item| item.row.saturating_add(1))
-        .max()
-        .unwrap_or(0);
+    let total_rows = tui_accessibility_flow_total_rows(items);
     if visible_rows == 0 || total_rows <= visible_rows {
         return 0;
     }
 
-    let selected_row = selected_id
-        .and_then(|id| items.iter().find(|item| item.node.id == id))
-        .map(|item| item.row)
-        .unwrap_or(0);
-    selected_row
-        .saturating_sub(visible_rows / 2)
-        .min(total_rows.saturating_sub(visible_rows))
+    offset.min(total_rows.saturating_sub(visible_rows))
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+fn tui_accessibility_flow_total_rows(items: &[TuiAccessibilityFlowVirtualItem]) -> usize {
+    items
+        .iter()
+        .map(|item| item.row.saturating_add(1))
+        .max()
+        .unwrap_or(0)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+fn sync_tui_spatial_selection(
+    state: &mut TuiSpatialState,
+    area: TerminalRect,
+    nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
+    selected_id: Option<sui::WidgetId>,
+) {
+    let Some(selected_id) = selected_id else {
+        return;
+    };
+    let Some((tabs, flow_area, items)) =
+        tui_spatial_flow_items(area, nodes, actionable, Some(selected_id))
+    else {
+        return;
+    };
+    let Some(selected_item) = items.iter().find(|item| item.node.id == selected_id) else {
+        return;
+    };
+
+    let visible_rows = flow_area.height as usize;
+    if visible_rows == 0 {
+        return;
+    }
+
+    let mut offset = tui_accessibility_flow_clamped_offset(
+        &items,
+        flow_area.height,
+        state.flow_offset(tabs.active_window_id),
+    );
+    if selected_item.row < offset {
+        offset = selected_item.row;
+    } else if selected_item.row >= offset.saturating_add(visible_rows) {
+        offset = selected_item
+            .row
+            .saturating_add(1)
+            .saturating_sub(visible_rows);
+    }
+    state.set_flow_offset(
+        tabs.active_window_id,
+        tui_accessibility_flow_clamped_offset(&items, flow_area.height, offset),
+    );
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+fn tui_spatial_flow_items(
+    area: TerminalRect,
+    nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
+    selected_id: Option<sui::WidgetId>,
+) -> Option<(
+    TuiFloatingTabs,
+    TerminalRect,
+    Vec<TuiAccessibilityFlowVirtualItem>,
+)> {
+    let inner = inner_terminal_rect(area)?;
+    let world = tui_world_bounds(nodes)?;
+    let tabs = tui_floating_tabs(nodes, selected_id)?;
+    let flow_area = tui_active_tab_content_area(inner, world, &tabs)?;
+    let items = tui_accessibility_flow_virtual_layout(nodes, actionable, &tabs, flow_area.width);
+    Some((tabs, flow_area, items))
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+fn scroll_tui_spatial_flow(
+    mouse: MouseEvent,
+    area: TerminalRect,
+    nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
+    selected: usize,
+    state: &mut TuiSpatialState,
+    row_delta: isize,
+) -> Option<usize> {
+    let selected_id = actionable.get(selected).map(|node| node.id);
+    let (tabs, flow_area, items) = tui_spatial_flow_items(area, nodes, actionable, selected_id)?;
+    if !terminal_rect_contains(flow_area, mouse.column, mouse.row) {
+        return None;
+    }
+
+    let current = tui_accessibility_flow_clamped_offset(
+        &items,
+        flow_area.height,
+        state.flow_offset(tabs.active_window_id),
+    );
+    let requested = if row_delta.is_negative() {
+        current.saturating_sub(row_delta.unsigned_abs())
+    } else {
+        current.saturating_add(row_delta as usize)
+    };
+    let offset = tui_accessibility_flow_clamped_offset(&items, flow_area.height, requested);
+    state.set_flow_offset(tabs.active_window_id, offset);
+
+    let target_row = offset.saturating_add(mouse.row.saturating_sub(flow_area.y) as usize);
+    tui_visible_flow_actionable_index_near(&items, offset, flow_area.height, target_row)
+        .or(Some(selected))
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+fn tui_visible_flow_actionable_index_near(
+    items: &[TuiAccessibilityFlowVirtualItem],
+    offset: usize,
+    visible_height: u16,
+    target_row: usize,
+) -> Option<usize> {
+    let visible_end = offset.saturating_add(visible_height as usize);
+    items
+        .iter()
+        .filter(|item| item.row >= offset && item.row < visible_end)
+        .filter_map(|item| item.actionable_index.map(|index| (index, item.row)))
+        .min_by_key(|(_, row)| row.abs_diff(target_row))
+        .map(|(index, _)| index)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+fn mouse_hit_spatial_tab(
+    mouse: MouseEvent,
+    area: TerminalRect,
+    nodes: &[SemanticsNode],
+    actionable: &[SemanticsNode],
+    selected_id: Option<sui::WidgetId>,
+) -> Option<usize> {
+    if !terminal_rect_contains(area, mouse.column, mouse.row) {
+        return None;
+    }
+    let inner = inner_terminal_rect(area)?;
+    let world = tui_world_bounds(nodes)?;
+    let tabs = tui_floating_tabs(nodes, selected_id)?;
+    let window_id = tui_floating_tab_rects(inner, world, &tabs)
+        .into_iter()
+        .find(|tab| terminal_rect_contains(tab.rect, mouse.column, mouse.row))
+        .map(|tab| tab.window_id)?;
+    actionable
+        .iter()
+        .position(|node| tabs.node_window.get(&node.id) == Some(&window_id))
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
@@ -1567,6 +1812,7 @@ fn handle_tui_mouse(
     nodes: &[SemanticsNode],
     actionable: &[SemanticsNode],
     selected: &mut usize,
+    spatial_state: &mut TuiSpatialState,
 ) -> sui::Result<()> {
     let selected_id = actionable.get(*selected).map(|node| node.id);
     match mouse.kind {
@@ -1576,17 +1822,34 @@ fn handle_tui_mouse(
             {
                 *selected = index;
             } else if let Some(index) =
-                mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable, selected_id)
+                mouse_hit_spatial_tab(mouse, areas.spatial, nodes, actionable, selected_id)
             {
+                *selected = index;
+            } else if let Some(index) = mouse_hit_spatial_node(
+                mouse,
+                areas.spatial,
+                nodes,
+                actionable,
+                selected_id,
+                spatial_state,
+            ) {
                 *selected = index;
             }
         }
         MouseEventKind::Down(MouseButton::Right) => {
-            if let Some(index) =
-                mouse_hit_action_tree(mouse, areas.list, nodes, actionable, *selected).or_else(
-                    || mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable, selected_id),
+            if let Some(index) = mouse_hit_action_tree(
+                mouse, areas.list, nodes, actionable, *selected,
+            )
+            .or_else(|| {
+                mouse_hit_spatial_node(
+                    mouse,
+                    areas.spatial,
+                    nodes,
+                    actionable,
+                    selected_id,
+                    spatial_state,
                 )
-            {
+            }) {
                 *selected = index;
                 if let Some(node) = actionable.get(index) {
                     activate_tui_node(window, node)?;
@@ -1600,10 +1863,26 @@ fn handle_tui_mouse(
                 *selected = (*selected)
                     .saturating_add(3)
                     .min(actionable.len().saturating_sub(1));
+            } else if let Some(index) = scroll_tui_spatial_flow(
+                mouse,
+                areas.spatial,
+                nodes,
+                actionable,
+                *selected,
+                spatial_state,
+                3,
+            ) {
+                *selected = index;
             } else {
-                let index =
-                    mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable, selected_id)
-                        .unwrap_or(*selected);
+                let index = mouse_hit_spatial_node(
+                    mouse,
+                    areas.spatial,
+                    nodes,
+                    actionable,
+                    selected_id,
+                    spatial_state,
+                )
+                .unwrap_or(*selected);
                 if let Some(node) = actionable.get(index) {
                     *selected = index;
                     scroll_tui_node(window, node, Vector::new(0.0, -120.0))?;
@@ -1613,10 +1892,26 @@ fn handle_tui_mouse(
         MouseEventKind::ScrollUp => {
             if terminal_rect_contains(areas.list, mouse.column, mouse.row) {
                 *selected = (*selected).saturating_sub(3);
+            } else if let Some(index) = scroll_tui_spatial_flow(
+                mouse,
+                areas.spatial,
+                nodes,
+                actionable,
+                *selected,
+                spatial_state,
+                -3,
+            ) {
+                *selected = index;
             } else {
-                let index =
-                    mouse_hit_spatial_node(mouse, areas.spatial, nodes, actionable, selected_id)
-                        .unwrap_or(*selected);
+                let index = mouse_hit_spatial_node(
+                    mouse,
+                    areas.spatial,
+                    nodes,
+                    actionable,
+                    selected_id,
+                    spatial_state,
+                )
+                .unwrap_or(*selected);
                 if let Some(node) = actionable.get(index) {
                     *selected = index;
                     scroll_tui_node(window, node, Vector::new(0.0, 120.0))?;
@@ -1671,6 +1966,7 @@ fn mouse_hit_spatial_node(
     nodes: &[SemanticsNode],
     actionable: &[SemanticsNode],
     selected_id: Option<sui::WidgetId>,
+    spatial_state: &TuiSpatialState,
 ) -> Option<usize> {
     if !terminal_rect_contains(area, mouse.column, mouse.row) || area.width <= 2 || area.height <= 2
     {
@@ -1686,7 +1982,8 @@ fn mouse_hit_spatial_node(
         && let Some(flow_area) = tui_active_tab_content_area(inner, world, tabs)
         && terminal_rect_contains(flow_area, mouse.column, mouse.row)
     {
-        return tui_accessibility_flow_layout(nodes, actionable, tabs, flow_area, selected_id)
+        let offset = spatial_state.flow_offset(tabs.active_window_id);
+        return tui_accessibility_flow_layout(nodes, actionable, tabs, flow_area, offset)
             .into_iter()
             .find(|item| terminal_rect_contains(item.rect, mouse.column, mouse.row))
             .and_then(|item| item.actionable_index);
@@ -3232,7 +3529,14 @@ mod tests {
         };
 
         assert_eq!(
-            mouse_hit_spatial_node(mouse, spatial_area, &tree_nodes, &actionable, None),
+            mouse_hit_spatial_node(
+                mouse,
+                spatial_area,
+                &tree_nodes,
+                &actionable,
+                None,
+                &TuiSpatialState::default()
+            ),
             Some(1)
         );
     }
@@ -3259,7 +3563,16 @@ mod tests {
             Terminal::new(ratatui::backend::TestBackend::new(24, 8)).map_err(to_sui_io_error)?;
 
         terminal
-            .draw(|frame| draw_tui(frame, &nodes, &actionable, 0, false))
+            .draw(|frame| {
+                draw_tui(
+                    frame,
+                    &nodes,
+                    &actionable,
+                    0,
+                    false,
+                    &TuiSpatialState::default(),
+                )
+            })
             .map_err(to_sui_io_error)?;
         let rendered = terminal
             .backend()
@@ -3331,7 +3644,7 @@ mod tests {
         let actionable = vec![first_button.clone(), second_button.clone()];
         let tabs = tui_floating_tabs(&nodes, Some(second_button.id)).expect("floating tabs");
         let flow_area = TerminalRect::new(0, 1, 40, 8);
-        let flow_items = tui_accessibility_flow_layout(&nodes, &actionable, &tabs, flow_area, None);
+        let flow_items = tui_accessibility_flow_layout(&nodes, &actionable, &tabs, flow_area, 0);
 
         assert_eq!(tabs.active_window_id, second_window_id);
         assert!(tui_projected_spatial_bounds(&first_button, &Some(tabs.clone())).is_none());
@@ -3383,8 +3696,21 @@ mod tests {
         let selected = actionable[10].id;
         let tabs = tui_floating_tabs(&nodes, Some(selected)).expect("floating tabs");
         let flow_area = TerminalRect::new(0, 4, 10, 3);
-        let flow_items =
-            tui_accessibility_flow_layout(&nodes, &actionable, &tabs, flow_area, Some(selected));
+        let mut state = TuiSpatialState::default();
+        sync_tui_spatial_selection(
+            &mut state,
+            TerminalRect::new(0, 0, 10, 5),
+            &nodes,
+            &actionable,
+            Some(selected),
+        );
+        let flow_items = tui_accessibility_flow_layout(
+            &nodes,
+            &actionable,
+            &tabs,
+            flow_area,
+            state.flow_offset(tabs.active_window_id),
+        );
 
         assert!(flow_items.iter().any(|item| item.node.id == selected));
         assert!(flow_items.iter().all(|item| terminal_rect_contains(
@@ -3392,6 +3718,136 @@ mod tests {
             item.rect.x,
             item.rect.y
         )));
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+    #[test]
+    fn generated_tui_mouse_click_switches_spatial_tabs() {
+        let mut workspace = SemanticsNode::new(
+            sui::WidgetId::new(1),
+            SemanticsRole::GenericContainer,
+            SuiRect::new(0.0, 0.0, 300.0, 200.0),
+        );
+        workspace.name = Some("Development workspace".to_string());
+        let mut first_window = SemanticsNode::new(
+            sui::WidgetId::new(2),
+            SemanticsRole::Window,
+            SuiRect::new(0.0, 0.0, 120.0, 100.0),
+        );
+        first_window.parent = Some(workspace.id);
+        first_window.name = Some("First".to_string());
+        let mut second_window = SemanticsNode::new(
+            sui::WidgetId::new(3),
+            SemanticsRole::Window,
+            SuiRect::new(120.0, 0.0, 120.0, 100.0),
+        );
+        second_window.parent = Some(workspace.id);
+        second_window.name = Some("Second".to_string());
+        let mut first_button = SemanticsNode::new(
+            sui::WidgetId::new(4),
+            SemanticsRole::Button,
+            SuiRect::new(0.0, 0.0, 40.0, 8.0),
+        );
+        first_button.parent = Some(first_window.id);
+        first_button.name = Some("First button".to_string());
+        let mut second_button = SemanticsNode::new(
+            sui::WidgetId::new(5),
+            SemanticsRole::Button,
+            SuiRect::new(0.0, 0.0, 40.0, 8.0),
+        );
+        second_button.parent = Some(second_window.id);
+        second_button.name = Some("Second button".to_string());
+        let nodes = vec![
+            workspace,
+            first_window,
+            second_window,
+            first_button.clone(),
+            second_button.clone(),
+        ];
+        let actionable = vec![first_button.clone(), second_button.clone()];
+        let spatial_area = TerminalRect::new(0, 0, 48, 12);
+        let inner = inner_terminal_rect(spatial_area).expect("inner spatial area");
+        let world = tui_world_bounds(&nodes).expect("world bounds");
+        let tabs = tui_floating_tabs(&nodes, Some(second_button.id)).expect("floating tabs");
+        let first_tab = tui_floating_tab_rects(inner, world, &tabs)
+            .into_iter()
+            .find(|tab| tab.window_id == first_button.parent.unwrap())
+            .expect("first tab rect");
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: first_tab.rect.x,
+            row: first_tab.rect.y,
+            modifiers: KeyModifiers::empty(),
+        };
+
+        assert_eq!(
+            mouse_hit_spatial_tab(
+                mouse,
+                spatial_area,
+                &nodes,
+                &actionable,
+                Some(second_button.id)
+            ),
+            Some(0)
+        );
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
+    #[test]
+    fn generated_tui_mouse_wheel_scrolls_spatial_flow() {
+        let mut workspace = SemanticsNode::new(
+            sui::WidgetId::new(1),
+            SemanticsRole::GenericContainer,
+            SuiRect::new(0.0, 0.0, 300.0, 200.0),
+        );
+        workspace.name = Some("Development workspace".to_string());
+        let mut first_window = SemanticsNode::new(
+            sui::WidgetId::new(2),
+            SemanticsRole::Window,
+            SuiRect::new(0.0, 0.0, 120.0, 100.0),
+        );
+        first_window.parent = Some(workspace.id);
+        first_window.name = Some("First".to_string());
+        let mut second_window = SemanticsNode::new(
+            sui::WidgetId::new(3),
+            SemanticsRole::Window,
+            SuiRect::new(120.0, 0.0, 120.0, 100.0),
+        );
+        second_window.parent = Some(workspace.id);
+        second_window.name = Some("Second".to_string());
+
+        let mut nodes = vec![workspace, first_window, second_window.clone()];
+        let mut actionable = Vec::new();
+        for index in 0..12 {
+            let mut button = SemanticsNode::new(
+                sui::WidgetId::new(10 + index),
+                SemanticsRole::Button,
+                SuiRect::new(0.0, index as f32 * 10.0, 40.0, 8.0),
+            );
+            button.parent = Some(second_window.id);
+            button.name = Some(format!("Button {index}"));
+            actionable.push(button.clone());
+            nodes.push(button);
+        }
+
+        let spatial_area = TerminalRect::new(0, 0, 12, 8);
+        let (tabs, flow_area, _) =
+            tui_spatial_flow_items(spatial_area, &nodes, &actionable, Some(actionable[0].id))
+                .expect("spatial flow items");
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: flow_area.x,
+            row: flow_area.y,
+            modifiers: KeyModifiers::empty(),
+        };
+        let mut state = TuiSpatialState::default();
+
+        let selected =
+            scroll_tui_spatial_flow(mouse, spatial_area, &nodes, &actionable, 0, &mut state, 3)
+                .expect("spatial flow scroll consumed");
+
+        assert_eq!(state.flow_offset(tabs.active_window_id), 3);
+        assert_eq!(selected, 3);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
