@@ -512,9 +512,3 @@ impl StrokeVertexConstructor<[f32; 2]> for TessellatedPoint {
         [position.x, position.y]
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct MeshVertex {
-    pub(crate) position: Point,
-    pub(crate) color: Color,
-}

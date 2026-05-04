@@ -164,6 +164,7 @@ impl CachedGlyphMesh {
         index
     }
 
+    #[cfg(test)]
     pub(crate) fn add_triangle(&mut self, a: u32, b: u32, c: u32) {
         self.indices.extend_from_slice(&[a, b, c]);
     }

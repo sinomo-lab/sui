@@ -2,24 +2,6 @@
 
 use super::*;
 
-#[derive(Debug, Default, Clone)]
-pub(crate) struct SceneMesh {
-    pub(crate) vertices: Vec<MeshVertex>,
-    pub(crate) indices: Vec<u32>,
-}
-
-impl SceneMesh {
-    pub(crate) fn colored_vertex(&mut self, position: Point, color: Color) -> u32 {
-        let index = self.vertices.len() as u32;
-        self.vertices.push(MeshVertex { position, color });
-        index
-    }
-
-    pub(crate) fn add_triangle(&mut self, a: u32, b: u32, c: u32) {
-        self.indices.extend_from_slice(&[a, b, c]);
-    }
-}
-
 #[cfg(test)]
 pub(crate) fn build_vertices(
     frame: &SceneFrame,
@@ -508,6 +490,32 @@ pub(crate) fn prepared_batch_counts(passes: &[PreparedPassBatch]) -> (usize, usi
     )
 }
 
+pub(crate) fn stamp_analytic_path_slots(
+    vertices: &mut [Vertex],
+    passes: &[PreparedPassBatch],
+    analytic_path_resources: Option<&PreparedAnalyticPathResources>,
+) {
+    let Some(resources) = analytic_path_resources else {
+        return;
+    };
+
+    for pass in passes {
+        for draw in &pass.draws {
+            let PreparedDrawKind::AnalyticPath { resource_signature } = draw.kind else {
+                continue;
+            };
+            let Some(slot) = resources.slots.get(&resource_signature).copied() else {
+                continue;
+            };
+            let start = draw.vertices.start as usize;
+            let end = start + draw.vertices.len as usize;
+            for vertex in &mut vertices[start..end] {
+                vertex.shader_params[0] = slot as f32;
+            }
+        }
+    }
+}
+
 pub(crate) fn create_static_vertex_buffer(
     device: &wgpu::Device,
     label: &str,
@@ -878,18 +886,12 @@ fn encode_draws_for_pass(
                 );
                 (0..6, 0..draw.vertices.len)
             }
-            PreparedDrawKind::AnalyticPath { resource_signature } => {
+            PreparedDrawKind::AnalyticPath { .. } => {
                 let scene_buffer = scene_buffer.ok_or_else(|| {
                     Error::new("prepared render batch is missing a scene vertex buffer")
                 })?;
                 render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
-                let slot = analytic_path_resources
-                    .expect("analytic path resources prepared before retained render pass")
-                    .slots
-                    .get(&resource_signature)
-                    .copied()
-                    .expect("analytic path slot prepared before retained render pass");
-                (0..draw.vertices.len, slot..slot + 1)
+                (0..draw.vertices.len, 0..1)
             }
             PreparedDrawKind::WidgetShader => {
                 let scene_buffer = scene_buffer.ok_or_else(|| {
@@ -2477,7 +2479,6 @@ fn append_painted_path(
         let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let lyon_path = build_lyon_path(path, state.current_transform);
         if let Some(data) = build_analytic_fill_path_data(&lyon_path, feather_width) {
-            tessellate_filled_lyon_path(vertices, &lyon_path, color, viewport)?;
             append_analytic_path_quad(
                 overlay_vertices,
                 transformed_bounds.inflate(feather_width, feather_width),
@@ -2521,11 +2522,8 @@ fn append_stroked_path(
         return Ok(None);
     }
 
-    // The analytic stroke path is efficient for broad strokes, but very thin UI
-    // strokes can lose most of their visible ink once feathering and clipping
-    // are combined. Route thin strokes through the cached mesh path instead.
     #[cfg(not(target_arch = "wasm32"))]
-    if feather_width > 0.0 && line_width > feather_width * 2.0 {
+    if feather_width > 0.0 {
         let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let lyon_path = build_lyon_path(path, state.current_transform);
         if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
@@ -3203,6 +3201,18 @@ impl DrawOpArena {
             vertex.position[0] += delta_x;
             vertex.position[1] += delta_y;
         }
+        for draw_op in &self.draw_ops {
+            if !matches!(draw_op.kind, DrawOpKind::AnalyticPath { .. }) {
+                continue;
+            }
+
+            let start = draw_op.vertices.start as usize;
+            let end = start + draw_op.vertices.len as usize;
+            for vertex in &mut self.scene_vertices[start..end] {
+                vertex.tex_coords[0] += translation.x;
+                vertex.tex_coords[1] += translation.y;
+            }
+        }
         for vertex in &mut self.clip_vertices {
             vertex.position[0] += delta_x;
             vertex.position[1] += delta_y;
@@ -3559,19 +3569,6 @@ pub(crate) fn normalize_framebuffer_size(size: Size) -> Option<(u32, u32)> {
 
 pub(crate) fn normalize_surface_size(width: u32, height: u32) -> (u32, u32) {
     (width.max(1), height.max(1))
-}
-
-pub(crate) fn append_scene_mesh(vertices: &mut Vec<Vertex>, mesh: &SceneMesh, viewport: Size) {
-    for index in &mesh.indices {
-        let vertex = mesh.vertices[*index as usize];
-        let ndc = to_ndc(vertex.position.x, vertex.position.y, viewport);
-        vertices.push(Vertex {
-            position: ndc,
-            color: shader_color(vertex.color),
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        });
-    }
 }
 
 pub(crate) fn shader_color(color: Color) -> [f32; 4] {

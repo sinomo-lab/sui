@@ -2320,7 +2320,12 @@ impl WgpuRenderer {
         for fragment in submission.fragments {
             let RetainedFrameFragment::Transient(draw_ops) = fragment;
             let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
-            let prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
+            let mut prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
+            stamp_analytic_path_slots(
+                &mut prepared.scene_vertices,
+                &prepared.passes,
+                analytic_path_resources.as_ref(),
+            );
             if let Some(started) = batch_prepare_started {
                 batch_prepare_time_us += started.elapsed().as_micros() as u64;
             }
@@ -3265,21 +3270,44 @@ const SHADER_SOURCE: &str = r#"
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) local_position: vec2<f32>,
+    @location(2) rect_params: vec4<f32>,
 };
 
 @vertex
 fn vs_main(
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) tex_coords: vec2<f32>,
+    @location(3) shader_params: vec4<f32>,
 ) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(position, 0.0, 1.0);
     out.color = color;
+    out.local_position = tex_coords;
+    out.rect_params = shader_params;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let feather_width = in.rect_params.z;
+    if feather_width > 0.0 {
+        let size = max(in.rect_params.xy, vec2<f32>(0.0));
+        let p = in.local_position;
+        let outside_distance = max(
+            max(-p.x, p.x - size.x),
+            max(-p.y, p.y - size.y),
+        );
+        let derivative_width = length(vec2<f32>(fwidth(p.x), fwidth(p.y)));
+        let feather = max(feather_width, derivative_width);
+        let coverage = select(
+            clamp(1.0 - (outside_distance / max(feather, 1e-4)), 0.0, 1.0),
+            1.0,
+            outside_distance <= 0.0,
+        );
+        return vec4<f32>(in.color.rgb, in.color.a * coverage);
+    }
     return in.color;
 }
 "#;
@@ -3593,13 +3621,13 @@ fn vs_main(
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) scene_position: vec2<f32>,
-    @builtin(instance_index) instance_index: u32,
+    @location(3) shader_params: vec4<f32>,
 ) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(position, 0.0, 1.0);
     out.color = color;
     out.scene_position = scene_position;
-    out.path_index = instance_index;
+    out.path_index = u32(shader_params.x + 0.5);
     return out;
 }
 
@@ -3660,21 +3688,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var coverage = 0.0;
 
     if path_meta.mode == ANALYTIC_PATH_MODE_FILL {
-        let signed_distance = select(min_distance, -min_distance, inside);
-        coverage = clamp(0.5 - (signed_distance / max(feather, 1e-4)), 0.0, 1.0);
+        coverage = select(
+            clamp(1.0 - (min_distance / max(feather, 1e-4)), 0.0, 1.0),
+            1.0,
+            inside,
+        );
     } else {
-        if path_meta.stroke_width <= feather {
-            let opacity = clamp(path_meta.stroke_width / max(feather, 1e-4), 0.0, 1.0);
-            coverage = opacity * clamp(1.0 - (min_distance / max(feather, 1e-4)), 0.0, 1.0);
-        } else {
-            let inner_radius = max(0.0, 0.5 * (path_meta.stroke_width - path_meta.feather_width));
-            let outer_radius = 0.5 * (path_meta.stroke_width + path_meta.feather_width);
-            coverage = select(
-                clamp((outer_radius - min_distance) / max(feather, 1e-4), 0.0, 1.0),
-                1.0,
-                min_distance <= inner_radius,
-            );
-        }
+        let inner_radius = max(0.0, 0.5 * path_meta.stroke_width);
+        let outer_radius = inner_radius + (0.5 * path_meta.feather_width);
+        coverage = select(
+            clamp((outer_radius - min_distance) / max(outer_radius - inner_radius, 1e-4), 0.0, 1.0),
+            1.0,
+            min_distance <= inner_radius,
+        );
     }
 
     return vec4<f32>(in.color.rgb, in.color.a * coverage);
@@ -4017,6 +4043,49 @@ mod tests {
         count
     }
 
+    fn non_white_pixel_count(image: &super::RgbaImage, rect: Rect) -> usize {
+        let min_x = rect.x().floor().max(0.0) as u32;
+        let min_y = rect.y().floor().max(0.0) as u32;
+        let max_x = rect.max_x().ceil().min(image.width() as f32) as u32;
+        let max_y = rect.max_y().ceil().min(image.height() as f32) as u32;
+        let pixels = image.pixels();
+        let width = image.width() as usize;
+
+        let mut count = 0usize;
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                let index = ((y as usize * width) + x as usize) * 4;
+                if pixels[index..index + 4] != [255, 255, 255, 255] {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    fn non_white_row_count(image: &super::RgbaImage, rect: Rect) -> usize {
+        let min_x = rect.x().floor().max(0.0) as u32;
+        let min_y = rect.y().floor().max(0.0) as u32;
+        let max_x = rect.max_x().ceil().min(image.width() as f32) as u32;
+        let max_y = rect.max_y().ceil().min(image.height() as f32) as u32;
+        let pixels = image.pixels();
+        let width = image.width() as usize;
+
+        let mut rows = 0usize;
+        for y in min_y..max_y {
+            let mut row_has_ink = false;
+            for x in min_x..max_x {
+                let index = ((y as usize * width) + x as usize) * 4;
+                if pixels[index..index + 4] != [255, 255, 255, 255] {
+                    row_has_ink = true;
+                    break;
+                }
+            }
+            rows += row_has_ink as usize;
+        }
+        rows
+    }
+
     fn rgba_pixel(image: &super::RgbaImage, x: u32, y: u32) -> [u8; 4] {
         let width = image.width() as usize;
         let index = ((y as usize * width) + x as usize) * 4;
@@ -4215,10 +4284,10 @@ mod tests {
         )
         .unwrap();
 
-        let expected_min = to_ndc(14.0, 8.0, Size::new(100.0, 100.0));
-        let expected_max = to_ndc(26.0, 17.0, Size::new(100.0, 100.0));
+        let expected_min = to_ndc(13.5, 7.5, Size::new(100.0, 100.0));
+        let expected_max = to_ndc(26.5, 17.5, Size::new(100.0, 100.0));
 
-        assert!(vertices.len() > 6);
+        assert_eq!(vertices.len(), 6);
         assert!(
             vertices
                 .iter()
@@ -4229,7 +4298,21 @@ mod tests {
                 .iter()
                 .any(|vertex| vertex.position == expected_max)
         );
-        assert!(vertices.iter().any(|vertex| vertex.color[3] == 0.0));
+        assert!(
+            vertices
+                .iter()
+                .all(|vertex| vertex.shader_params == [12.0, 9.0, DEFAULT_FEATHER_WIDTH, 0.0])
+        );
+        assert!(
+            vertices
+                .iter()
+                .any(|vertex| vertex.tex_coords == [-0.5, -0.5])
+        );
+        assert!(
+            vertices
+                .iter()
+                .any(|vertex| vertex.tex_coords == [12.5, 9.5])
+        );
     }
 
     #[test]
@@ -5768,7 +5851,7 @@ mod tests {
 
         assert!(!draw_ops.draw_ops.is_empty());
         assert_eq!(compositor.path_cache.stats(), (0, 0, 0));
-        assert_eq!(draw_ops.analytic_paths.len(), 2);
+        assert_eq!(draw_ops.analytic_paths.len(), 1);
         assert!(
             draw_ops
                 .draw_ops
@@ -5831,7 +5914,7 @@ mod tests {
 
         assert!(!draw_ops.draw_ops.is_empty());
         assert_eq!(compositor.path_cache.stats(), (0, 0, 0));
-        assert_eq!(draw_ops.analytic_paths.len(), 2);
+        assert_eq!(draw_ops.analytic_paths.len(), 1);
         assert!(
             draw_ops
                 .draw_ops
@@ -9447,6 +9530,49 @@ mod tests {
     }
 
     #[test]
+    fn feathered_stroke_path_keeps_nominal_line_thickness() {
+        let mut builder = PathBuilder::new();
+        builder
+            .move_to(Point::new(24.0, 32.0))
+            .line_to(Point::new(196.0, 32.0));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(98),
+            viewport: Size::new(220.0, 64.0),
+            surface_size: Size::new(220.0, 64.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::FillRect {
+                    rect: Rect::new(0.0, 0.0, 220.0, 64.0),
+                    brush: Color::WHITE.into(),
+                });
+                scene.push(SceneCommand::StrokePath {
+                    path: builder.build(),
+                    brush: Color::BLACK.into(),
+                    stroke: StrokeStyle::new(1.0),
+                });
+                scene
+            },
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        renderer.render(&frame).unwrap();
+        let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+        let visible_rows = non_white_row_count(&pixels, Rect::new(20.0, 26.0, 180.0, 12.0));
+
+        assert!(
+            visible_rows <= 3,
+            "feathered one-pixel stroke expanded across too many rows (visible_rows={visible_rows})"
+        );
+    }
+
+    #[test]
     fn feathered_rounded_border_retains_most_ink_at_fractional_scale() {
         let build_frame = || {
             let mut scene = Scene::new();
@@ -9613,6 +9739,139 @@ mod tests {
         assert!(
             feathered_select_ink * 3 >= hard_select_ink,
             "feathered select border or chevron lost too much ink (feathered={feathered_select_ink}, hard={hard_select_ink})"
+        );
+    }
+
+    #[test]
+    fn feathered_splitter_rects_stay_at_divider_location() {
+        let divider = Rect::new(140.0, 10.0, 12.0, 84.0);
+        let handle = Rect::new(144.0, 38.0, 4.0, 28.0);
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 220.0, 108.0),
+            brush: Color::WHITE.into(),
+        });
+        scene.push(SceneCommand::FillRect {
+            rect: divider,
+            brush: Color::rgba(0.94, 0.955, 0.975, 1.0).into(),
+        });
+        scene.push(SceneCommand::StrokeRect {
+            rect: divider,
+            brush: Color::rgba(0.58, 0.62, 0.68, 1.0).into(),
+            stroke: StrokeStyle::new(1.0),
+        });
+        scene.push(SceneCommand::FillRect {
+            rect: handle,
+            brush: Color::rgba(0.58, 0.62, 0.68, 0.9).into(),
+        });
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(103),
+            viewport: Size::new(220.0, 108.0),
+            surface_size: Size::new(220.0, 108.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        renderer.render(&frame).unwrap();
+        let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        let misplaced_left_pixels =
+            non_white_pixel_count(&pixels, Rect::new(0.0, 0.0, 100.0, 108.0));
+        let divider_pixels = non_white_pixel_count(&pixels, Rect::new(138.0, 8.0, 18.0, 88.0));
+
+        assert_eq!(
+            misplaced_left_pixels, 0,
+            "splitter feathering rendered away from the divider"
+        );
+        assert!(
+            divider_pixels > 250,
+            "splitter divider did not render enough visible pixels at its expected location (divider_pixels={divider_pixels})"
+        );
+    }
+
+    #[test]
+    fn transformed_layer_keeps_feathered_path_at_translated_location() {
+        let layer_id = WidgetId::new(104);
+        let window_id = WindowId::new(104);
+        let build_layer = |x: f32| {
+            let bounds = Rect::new(x, 12.0, 72.0, 52.0);
+            let descriptor =
+                SceneLayerDescriptor::new(SceneLayerId::from_widget(layer_id), layer_id, bounds)
+                    .with_content_bounds(bounds)
+                    .with_paint_bounds(bounds)
+                    .with_cache_policy(LayerCachePolicy::Direct);
+
+            let mut layer_scene = Scene::new();
+            layer_scene.push(SceneCommand::FillPath {
+                path: Path::rounded_rect(Rect::new(x + 14.0, 24.0, 44.0, 24.0), 7.0),
+                brush: Color::rgba(0.18, 0.32, 0.86, 1.0).into(),
+            });
+
+            (
+                descriptor.clone(),
+                SceneLayer::from_descriptor(descriptor, layer_scene),
+            )
+        };
+
+        let build_frame = |descriptor: SceneLayerDescriptor, layer: SceneLayer, update_kind| {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 240.0, 92.0),
+                brush: Color::WHITE.into(),
+            });
+            scene.push(SceneCommand::Layer(layer));
+
+            SceneFrame {
+                window_id,
+                viewport: Size::new(240.0, 92.0),
+                surface_size: Size::new(240.0, 92.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: vec![SceneLayerUpdate::from_descriptor(update_kind, descriptor)],
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+            }
+        };
+
+        let (initial_descriptor, initial_layer) = build_layer(28.0);
+        let (moved_descriptor, moved_layer) = build_layer(136.0);
+
+        let mut renderer = WgpuRenderer::default();
+        let first = build_frame(
+            initial_descriptor,
+            initial_layer,
+            SceneLayerUpdateKind::Content,
+        );
+        renderer.render(&first).unwrap();
+
+        let second = build_frame(
+            moved_descriptor,
+            moved_layer,
+            SceneLayerUpdateKind::Transform,
+        );
+        renderer.render(&second).unwrap();
+        let pixels = renderer.capture_last_frame_rgba(window_id).unwrap();
+
+        let old_location_pixels = non_white_pixel_count(&pixels, Rect::new(34.0, 18.0, 60.0, 40.0));
+        let moved_location_pixels =
+            non_white_pixel_count(&pixels, Rect::new(142.0, 18.0, 60.0, 40.0));
+
+        assert_eq!(
+            old_location_pixels, 0,
+            "translated feathered path left pixels at its previous layer location"
+        );
+        assert!(
+            moved_location_pixels > 400,
+            "translated feathered path did not render at its moved layer location (moved_location_pixels={moved_location_pixels})"
         );
     }
 
