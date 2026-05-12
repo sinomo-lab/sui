@@ -9,6 +9,12 @@ use sui_scene::StrokeStyle;
 
 use crate::DefaultTheme;
 
+const PIXEL_CANVAS_TARGET_TILE_SCREEN_SIZE: f32 = 3.0;
+const PIXEL_CANVAS_MAX_RENDER_TILES: usize = 20_000;
+const PIXEL_CANVAS_EXACT_PIXEL_ZOOM: f32 = 4.0;
+const PIXEL_GRID_ZOOM: f32 = 6.0;
+const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CanvasViewport {
     pub pan: Vector,
@@ -487,12 +493,48 @@ enum PixelCanvasDrag {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PixelColor {
+    red: u8,
+    green: u8,
+    blue: u8,
+    alpha: u8,
+}
+
+impl PixelColor {
+    const TRANSPARENT: Self = Self {
+        red: 0,
+        green: 0,
+        blue: 0,
+        alpha: 0,
+    };
+
+    fn from_color(color: Color) -> Self {
+        let color = color.clamped();
+        Self {
+            red: channel_to_u8(color.red),
+            green: channel_to_u8(color.green),
+            blue: channel_to_u8(color.blue),
+            alpha: channel_to_u8(color.alpha),
+        }
+    }
+
+    fn to_color(self) -> Color {
+        Color::rgba(
+            self.red as f32 / 255.0,
+            self.green as f32 / 255.0,
+            self.blue as f32 / 255.0,
+            self.alpha as f32 / 255.0,
+        )
+    }
+}
+
 pub struct PixelCanvas {
     theme: DefaultTheme,
     name: String,
     width: usize,
     height: usize,
-    pixels: Vec<Color>,
+    pixels: Vec<PixelColor>,
     viewport: CanvasViewport,
     brush: Color,
     drag: Option<PixelCanvasDrag>,
@@ -508,12 +550,26 @@ impl PixelCanvas {
             name: name.into(),
             width,
             height,
-            pixels: vec![Color::TRANSPARENT; width * height],
+            pixels: vec![PixelColor::TRANSPARENT; width * height],
             viewport: CanvasViewport::new().zoom(14.0),
             brush: Color::rgba(0.12, 0.28, 0.88, 1.0),
             drag: None,
             desired_size: Size::new(520.0, 360.0),
         }
+    }
+
+    pub fn from_fn<F>(name: impl Into<String>, width: usize, height: usize, mut pixel: F) -> Self
+    where
+        F: FnMut(usize, usize) -> Color,
+    {
+        let mut canvas = Self::new(name, width, height);
+        for y in 0..canvas.height {
+            for x in 0..canvas.width {
+                let index = y * canvas.width + x;
+                canvas.pixels[index] = PixelColor::from_color(pixel(x, y));
+            }
+        }
+        canvas
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -538,7 +594,7 @@ impl PixelCanvas {
 
     pub fn with_pixels(mut self, pixels: Vec<Color>) -> Self {
         if pixels.len() == self.pixels.len() {
-            self.pixels = pixels;
+            self.pixels = pixels.into_iter().map(PixelColor::from_color).collect();
         }
         self
     }
@@ -547,12 +603,13 @@ impl PixelCanvas {
         let Some(index) = self.pixel_index(x, y) else {
             return false;
         };
-        self.pixels[index] = color;
+        self.pixels[index] = PixelColor::from_color(color);
         true
     }
 
     pub fn pixel_at(&self, x: usize, y: usize) -> Option<Color> {
-        self.pixel_index(x, y).map(|index| self.pixels[index])
+        self.pixel_index(x, y)
+            .map(|index| self.pixels[index].to_color())
     }
 
     pub const fn width(&self) -> usize {
@@ -585,6 +642,44 @@ impl PixelCanvas {
             return false;
         }
         self.set_pixel(x as usize, y as usize, self.brush)
+    }
+
+    fn average_pixel_color(
+        &self,
+        start_x: usize,
+        start_y: usize,
+        end_x: usize,
+        end_y: usize,
+    ) -> PixelColor {
+        let mut alpha_sum = 0_u64;
+        let mut red_sum = 0_u64;
+        let mut green_sum = 0_u64;
+        let mut blue_sum = 0_u64;
+        let mut count = 0_u64;
+
+        for y in start_y..end_y {
+            let row = y * self.width;
+            for x in start_x..end_x {
+                let pixel = self.pixels[row + x];
+                let alpha = pixel.alpha as u64;
+                alpha_sum += alpha;
+                red_sum += pixel.red as u64 * alpha;
+                green_sum += pixel.green as u64 * alpha;
+                blue_sum += pixel.blue as u64 * alpha;
+                count += 1;
+            }
+        }
+
+        if alpha_sum == 0 || count == 0 {
+            return PixelColor::TRANSPARENT;
+        }
+
+        PixelColor {
+            red: ((red_sum + (alpha_sum / 2)) / alpha_sum).min(255) as u8,
+            green: ((green_sum + (alpha_sum / 2)) / alpha_sum).min(255) as u8,
+            blue: ((blue_sum + (alpha_sum / 2)) / alpha_sum).min(255) as u8,
+            alpha: ((alpha_sum + (count / 2)) / count).min(255) as u8,
+        }
     }
 
     fn request_interaction_update(ctx: &mut EventCtx) {
@@ -752,29 +847,52 @@ impl Widget for PixelCanvas {
         let transform = self
             .viewport
             .transform(ctx.bounds(), self.document_origin());
-        paint_pixel_canvas_background(ctx, self.width, self.height, transform);
-        for y in 0..self.height {
-            for x in 0..self.width {
-                let color = self.pixels[y * self.width + x];
-                if color.alpha > 0.0 {
-                    ctx.fill(
-                        transform_path(
-                            &Path::rect(Rect::new(x as f32, y as f32, 1.0, 1.0)),
+        let image_bounds = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
+        fill_transformed_rect(
+            ctx,
+            image_bounds,
+            transform,
+            Color::rgba(0.93, 0.94, 0.96, 1.0),
+        );
+        if let Some(range) = pixel_render_range(
+            self.viewport,
+            ctx.bounds(),
+            self.document_origin(),
+            self.width,
+            self.height,
+        ) {
+            let tile_start_x = range.start_x - (range.start_x % range.step);
+            let tile_start_y = range.start_y - (range.start_y % range.step);
+            for y in (tile_start_y..range.end_y).step_by(range.step) {
+                for x in (tile_start_x..range.end_x).step_by(range.step) {
+                    let tile_end_x = (x + range.step).min(self.width);
+                    let tile_end_y = (y + range.step).min(self.height);
+                    let color = if range.step == 1 {
+                        self.pixels[y * self.width + x]
+                    } else {
+                        self.average_pixel_color(x, y, tile_end_x, tile_end_y)
+                    };
+                    if color.alpha > 0 {
+                        fill_transformed_rect(
+                            ctx,
+                            Rect::new(
+                                x as f32,
+                                y as f32,
+                                (tile_end_x - x) as f32,
+                                (tile_end_y - y) as f32,
+                            ),
                             transform,
-                        ),
-                        color,
-                    );
+                            color.to_color(),
+                        );
+                    }
                 }
             }
-        }
-        if self.viewport.zoom >= 6.0 {
-            paint_pixel_grid(ctx, self.width, self.height, transform);
+            if self.viewport.zoom >= PIXEL_GRID_ZOOM && range.step == 1 {
+                paint_pixel_grid(ctx, range, transform);
+            }
         }
         ctx.stroke(
-            transform_path(
-                &Path::rect(Rect::new(0.0, 0.0, self.width as f32, self.height as f32)),
-                transform,
-            ),
+            transformed_rect_path(image_bounds, transform),
             Color::rgba(0.08, 0.10, 0.14, 1.0),
             StrokeStyle::new(1.0),
         );
@@ -804,6 +922,14 @@ impl Widget for PixelCanvas {
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
         Self::request_interaction_update(ctx);
+    }
+}
+
+fn fill_transformed_rect(ctx: &mut PaintCtx, rect: Rect, transform: Transform, color: Color) {
+    if transform.yx.abs() < AXIS_ALIGNED_EPSILON && transform.xy.abs() < AXIS_ALIGNED_EPSILON {
+        ctx.fill_rect(transform.transform_rect_bbox(rect), color);
+    } else {
+        ctx.fill(transformed_rect_path(rect, transform), color);
     }
 }
 
@@ -987,41 +1113,78 @@ fn transform_path(path: &Path, transform: Transform) -> Path {
     builder.build()
 }
 
-fn paint_pixel_canvas_background(
-    ctx: &mut PaintCtx,
-    width: usize,
-    height: usize,
-    transform: Transform,
-) {
-    let light = Color::rgba(0.93, 0.94, 0.96, 1.0);
-    let dark = Color::rgba(0.80, 0.82, 0.86, 1.0);
-    for y in 0..height {
-        for x in 0..width {
-            let color = if (x + y) % 2 == 0 { light } else { dark };
-            ctx.fill(
-                transform_path(
-                    &Path::rect(Rect::new(x as f32, y as f32, 1.0, 1.0)),
-                    transform,
-                ),
-                color,
-            );
-        }
-    }
+fn transformed_rect_path(rect: Rect, transform: Transform) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(transform.transform_point(rect.origin))
+        .line_to(transform.transform_point(Point::new(rect.max_x(), rect.y())))
+        .line_to(transform.transform_point(Point::new(rect.max_x(), rect.max_y())))
+        .line_to(transform.transform_point(Point::new(rect.x(), rect.max_y())))
+        .close();
+    builder.build()
 }
 
-fn paint_pixel_grid(ctx: &mut PaintCtx, width: usize, height: usize, transform: Transform) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PixelRenderRange {
+    start_x: usize,
+    end_x: usize,
+    start_y: usize,
+    end_y: usize,
+    step: usize,
+}
+
+fn pixel_render_range(
+    viewport: CanvasViewport,
+    bounds: Rect,
+    document_origin: Point,
+    width: usize,
+    height: usize,
+) -> Option<PixelRenderRange> {
+    let visible = canvas_visible_world_rect(viewport, bounds, document_origin)
+        .intersection(Rect::new(0.0, 0.0, width as f32, height as f32))?;
+    let start_x = visible.x().floor().max(0.0) as usize;
+    let start_y = visible.y().floor().max(0.0) as usize;
+    let end_x = visible.max_x().ceil().min(width as f32) as usize;
+    let end_y = visible.max_y().ceil().min(height as f32) as usize;
+    if start_x >= end_x || start_y >= end_y {
+        return None;
+    }
+
+    let visible_pixels = (end_x - start_x) * (end_y - start_y);
+    let screen_lod_step = if viewport.zoom >= PIXEL_CANVAS_EXACT_PIXEL_ZOOM {
+        1
+    } else {
+        (PIXEL_CANVAS_TARGET_TILE_SCREEN_SIZE / viewport.zoom.max(0.01))
+            .ceil()
+            .max(1.0) as usize
+    };
+    let budget_lod_step = ((visible_pixels as f32 / PIXEL_CANVAS_MAX_RENDER_TILES as f32)
+        .sqrt()
+        .ceil()
+        .max(1.0)) as usize;
+
+    Some(PixelRenderRange {
+        start_x,
+        end_x,
+        start_y,
+        end_y,
+        step: screen_lod_step.max(budget_lod_step),
+    })
+}
+
+fn paint_pixel_grid(ctx: &mut PaintCtx, range: PixelRenderRange, transform: Transform) {
     let mut builder = PathBuilder::new();
-    for x in 0..=width {
+    for x in range.start_x..=range.end_x {
         let x = x as f32;
         builder
-            .move_to(transform.transform_point(Point::new(x, 0.0)))
-            .line_to(transform.transform_point(Point::new(x, height as f32)));
+            .move_to(transform.transform_point(Point::new(x, range.start_y as f32)))
+            .line_to(transform.transform_point(Point::new(x, range.end_y as f32)));
     }
-    for y in 0..=height {
+    for y in range.start_y..=range.end_y {
         let y = y as f32;
         builder
-            .move_to(transform.transform_point(Point::new(0.0, y)))
-            .line_to(transform.transform_point(Point::new(width as f32, y)));
+            .move_to(transform.transform_point(Point::new(range.start_x as f32, y)))
+            .line_to(transform.transform_point(Point::new(range.end_x as f32, y)));
     }
     ctx.stroke(
         builder.build(),
@@ -1030,9 +1193,16 @@ fn paint_pixel_grid(ctx: &mut PaintCtx, width: usize, height: usize, transform: 
     );
 }
 
+fn channel_to_u8(channel: f32) -> u8 {
+    (channel.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Canvas, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas};
+    use super::{
+        Canvas, CanvasShape, CanvasStroke, CanvasViewport, PIXEL_CANVAS_MAX_RENDER_TILES,
+        PixelCanvas,
+    };
     use sui_core::{
         Color, Event, Modifiers, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, ScrollDelta, SemanticsRole, Size, Vector,
@@ -1162,14 +1332,61 @@ mod tests {
 
         let mut painted = false;
         output.frame.scene.visit_commands(&mut |command| {
-            if let SceneCommand::FillPath { brush, .. } = command
-                && matches!(brush, Brush::Solid(color) if color.blue > 0.8)
-            {
+            if matches!(
+                command,
+                SceneCommand::FillPath {
+                    brush: Brush::Solid(color),
+                    ..
+                } | SceneCommand::FillRect {
+                    brush: Brush::Solid(color),
+                    ..
+                } if color.blue > 0.8
+            ) {
                 painted = true;
             }
         });
         assert!(painted);
         Ok(())
+    }
+
+    #[test]
+    fn pixel_canvas_uses_lod_for_large_images_when_zoomed_out() {
+        let output = render(
+            PixelCanvas::from_fn("Large paint", 1920, 1080, |x, y| {
+                Color::rgba(x as f32 / 1919.0, y as f32 / 1079.0, 0.5, 1.0)
+            })
+            .viewport(CanvasViewport::new().zoom(0.28)),
+        );
+
+        let mut paint_fill_count = 0;
+        output.frame.scene.visit_commands(&mut |command| {
+            if matches!(
+                command,
+                SceneCommand::FillPath { .. } | SceneCommand::FillRect { .. }
+            ) {
+                paint_fill_count += 1;
+            }
+        });
+
+        assert!(paint_fill_count > 100);
+        assert!(
+            paint_fill_count <= PIXEL_CANVAS_MAX_RENDER_TILES + 4,
+            "expected LOD renderer to cap high resolution paint commands, got {paint_fill_count}"
+        );
+    }
+
+    #[test]
+    fn pixel_canvas_lod_averages_tile_pixels() {
+        let mut canvas = PixelCanvas::new("Blend", 2, 1);
+        canvas.set_pixel(0, 0, Color::rgba(1.0, 0.0, 0.0, 1.0));
+        canvas.set_pixel(1, 0, Color::rgba(0.0, 0.0, 1.0, 1.0));
+
+        let color = canvas.average_pixel_color(0, 0, 2, 1).to_color();
+
+        assert!((color.red - 0.5).abs() < 0.01);
+        assert_eq!(color.green, 0.0);
+        assert!((color.blue - 0.5).abs() < 0.01);
+        assert_eq!(color.alpha, 1.0);
     }
 
     #[test]

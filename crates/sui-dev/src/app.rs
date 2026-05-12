@@ -1246,34 +1246,24 @@ fn build_render_settings_tab_with_options(options: WindowRenderOptions) -> impl 
 }
 
 fn build_paint_demo() -> PixelCanvas {
-    let width = 32;
-    let height = 24;
-    let mut pixels = vec![Color::TRANSPARENT; width * height];
-    for y in 0..height {
-        for x in 0..width {
-            let dx = x as f32 - 15.5;
-            let dy = y as f32 - 11.5;
-            let distance = ((dx * dx) + (dy * dy)).sqrt();
-            if distance < 9.5 {
-                let t = (distance / 9.5).clamp(0.0, 1.0);
-                pixels[y * width + x] =
-                    Color::rgba(0.10 + (0.55 * t), 0.30, 0.88 - (0.45 * t), 1.0);
-            }
-        }
-    }
-    for x in 6..26 {
-        pixels[6 * width + x] = Color::rgba(1.0, 0.78, 0.22, 1.0);
-        pixels[17 * width + x] = Color::rgba(1.0, 0.78, 0.22, 1.0);
-    }
-    for y in 6..18 {
-        pixels[y * width + 6] = Color::rgba(1.0, 0.78, 0.22, 1.0);
-        pixels[y * width + 25] = Color::rgba(1.0, 0.78, 0.22, 1.0);
-    }
-
-    PixelCanvas::new(PAINT_TAB_LABEL, width, height)
-        .with_pixels(pixels)
-        .brush_color(Color::rgba(0.08, 0.22, 0.78, 1.0))
-        .viewport(CanvasViewport::new().zoom(13.0))
+    let width = 1920;
+    let height = 1080;
+    PixelCanvas::from_fn(PAINT_TAB_LABEL, width, height, |x, y| {
+        let u = x as f32 / (width - 1) as f32;
+        let v = y as f32 / (height - 1) as f32;
+        let dx = u - 0.5;
+        let dy = v - 0.5;
+        let vignette = (1.0 - ((dx * dx + dy * dy).sqrt() * 1.45)).clamp(0.0, 1.0);
+        let wave = ((u * 18.0).sin() * (v * 11.0).cos() * 0.5) + 0.5;
+        Color::rgba(
+            0.08 + (0.58 * u) + (0.18 * vignette),
+            0.18 + (0.42 * v) + (0.14 * wave),
+            0.38 + (0.36 * (1.0 - u)) + (0.20 * vignette),
+            1.0,
+        )
+    })
+    .brush_color(Color::rgba(0.08, 0.22, 0.78, 1.0))
+    .viewport(CanvasViewport::new().zoom(0.28))
 }
 
 fn build_vector_editor_demo() -> Canvas {
