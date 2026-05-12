@@ -1,9 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui::{
-    HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, PointerButton,
-    PointerEventKind, SemanticsNode, SemanticsRole, TextHinting, WgpuRenderer, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
+    HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, SemanticsNode,
+    SemanticsRole, TextHinting, WgpuRenderer, WidgetPodMutVisitor, WidgetPodVisitor,
+    WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
     WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
     WindowTextHinting, WindowToneMappingMode, prelude::*, window_output_diagnostics,
 };
@@ -65,32 +65,10 @@ pub enum DesktopAutomationMode {
     ButtonGridResize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SidebarActionKind {
-    Visibility,
-    Maximize,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct SidebarActionTarget {
-    view_id: u64,
-    kind: SidebarActionKind,
-}
-
-struct SidebarRowLayout {
-    view_id: u64,
-    row_bounds: Rect,
-    visibility_bounds: Rect,
-    maximize_bounds: Rect,
-}
-
 struct ViewSidebar {
-    theme: DefaultTheme,
     workspace: FloatingWorkspaceState,
-    rows: Vec<SidebarRowLayout>,
-    hovered: Option<SidebarActionTarget>,
-    pressed: Option<SidebarActionTarget>,
-    pointer_id: Option<u64>,
+    content: SingleChild,
+    signature: Vec<(u64, String, bool, bool)>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -306,348 +284,117 @@ impl Widget for DesktopAutomationRoot {
 
 impl ViewSidebar {
     fn new(workspace: FloatingWorkspaceState) -> Self {
+        let signature = sidebar_signature(&workspace);
+        let content = SingleChild::new(build_sidebar_list(workspace.clone()));
         Self {
-            theme: DefaultTheme::default(),
             workspace,
-            rows: Vec::new(),
-            hovered: None,
-            pressed: None,
-            pointer_id: None,
+            content,
+            signature,
         }
     }
 
-    fn action_at(&self, position: Point) -> Option<SidebarActionTarget> {
-        self.rows.iter().find_map(|row| {
-            if row.visibility_bounds.contains(position) {
-                return Some(SidebarActionTarget {
-                    view_id: row.view_id,
-                    kind: SidebarActionKind::Visibility,
-                });
-            }
-            if row.maximize_bounds.contains(position) {
-                return Some(SidebarActionTarget {
-                    view_id: row.view_id,
-                    kind: SidebarActionKind::Maximize,
-                });
-            }
-            None
-        })
-    }
-
-    fn button_label(&self, target: SidebarActionTarget) -> String {
-        let Some(view) = self.workspace.snapshot(target.view_id) else {
-            return String::new();
-        };
-        match target.kind {
-            SidebarActionKind::Visibility => if view.visible { "Hide" } else { "Show" }.to_string(),
-            SidebarActionKind::Maximize => if view.maximized {
-                "Restore"
-            } else {
-                "Maximize"
-            }
-            .to_string(),
+    fn sync_content(&mut self) {
+        let signature = sidebar_signature(&self.workspace);
+        if signature != self.signature {
+            self.content = SingleChild::new(build_sidebar_list(self.workspace.clone()));
+            self.signature = signature;
         }
-    }
-
-    fn apply_action(&mut self, target: SidebarActionTarget) -> bool {
-        match target.kind {
-            SidebarActionKind::Visibility => {
-                self.workspace.toggle_view_visible(target.view_id).is_some()
-            }
-            SidebarActionKind::Maximize => {
-                let Some(view) = self.workspace.snapshot(target.view_id) else {
-                    return false;
-                };
-                self.workspace
-                    .set_view_maximized(target.view_id, !view.maximized)
-            }
-        }
-    }
-
-    fn request_workspace_refresh(&self, ctx: &mut EventCtx, include_ordering: bool) {
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Window(ctx.window_id()),
-            InvalidationKind::Measure,
-        ));
-        if include_ordering {
-            ctx.request(InvalidationRequest::new(
-                InvalidationTarget::Window(ctx.window_id()),
-                InvalidationKind::Ordering,
-            ));
-        }
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Window(ctx.window_id()),
-            InvalidationKind::Paint,
-        ));
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Window(ctx.window_id()),
-            InvalidationKind::HitTest,
-        ));
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Window(ctx.window_id()),
-            InvalidationKind::Semantics,
-        ));
     }
 }
 
 impl Widget for ViewSidebar {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        match event {
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = self.action_at(pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Primary) =>
-            {
-                if let Some(target) = self.action_at(pointer.position) {
-                    self.hovered = Some(target);
-                    self.pressed = Some(target);
-                    self.pointer_id = Some(pointer.pointer_id);
-                    ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.set_handled();
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Up
-                    && pointer.button == Some(PointerButton::Primary)
-                    && self.pointer_id == Some(pointer.pointer_id) =>
-            {
-                let hovered = self.action_at(pointer.position);
-                let triggered = self.pressed.filter(|pressed| Some(*pressed) == hovered);
-                self.pointer_id = None;
-                self.pressed = None;
-                self.hovered = hovered;
-                ctx.release_pointer_capture(pointer.pointer_id);
-                if let Some(target) = triggered {
-                    if self.apply_action(target) {
-                        self.request_workspace_refresh(ctx, true);
-                    }
-                    ctx.set_handled();
-                } else {
-                    ctx.request_paint();
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Cancel
-                    && self.pointer_id == Some(pointer.pointer_id) =>
-            {
-                self.pointer_id = None;
-                self.pressed = None;
-                self.hovered = None;
-                ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.pointer_id.is_none() && self.hovered.take().is_some() {
-                    ctx.request_paint();
-                }
-            }
-            _ => {}
-        }
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_content();
+        self.content.measure(ctx, constraints)
     }
 
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let row_height = 54.0;
-        let height = 96.0 + (self.workspace.snapshots().len() as f32 * row_height);
-        constraints.clamp(Size::new(
-            if constraints.max.width.is_finite() {
-                constraints.max.width
-            } else {
-                272.0
-            },
-            if constraints.max.height.is_finite() {
-                constraints.max.height
-            } else {
-                height
-            },
-        ))
-    }
-
-    fn arrange(&mut self, _ctx: &mut ArrangeCtx, bounds: Rect) {
-        self.rows.clear();
-        let mut y = bounds.y() + 72.0;
-        for view in self.workspace.snapshots() {
-            let row_bounds =
-                Rect::new(bounds.x() + 16.0, y, (bounds.width() - 32.0).max(0.0), 44.0);
-            let maximize_width = 74.0;
-            let visibility_width = 60.0;
-            let gap = 8.0;
-            let maximize_bounds = Rect::new(
-                row_bounds.max_x() - maximize_width,
-                row_bounds.y() + 7.0,
-                maximize_width,
-                30.0,
-            );
-            let visibility_bounds = Rect::new(
-                maximize_bounds.x() - gap - visibility_width,
-                row_bounds.y() + 7.0,
-                visibility_width,
-                30.0,
-            );
-            self.rows.push(SidebarRowLayout {
-                view_id: view.id,
-                row_bounds,
-                visibility_bounds,
-                maximize_bounds,
-            });
-            y += 54.0;
-        }
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.content.arrange(ctx, bounds);
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
-        let border = StrokeStyle::new(metrics.border_width.max(1.0));
-
-        ctx.fill_bounds(Color::rgba(0.965, 0.972, 0.985, 1.0));
-        ctx.stroke_rect(
-            Rect::new(
-                ctx.bounds().max_x() - 1.0,
-                ctx.bounds().y(),
-                1.0,
-                ctx.bounds().height(),
-            ),
-            palette.border,
-            border.clone(),
-        );
-        ctx.draw_text(
-            Rect::new(
-                ctx.bounds().x() + 16.0,
-                ctx.bounds().y() + 16.0,
-                ctx.bounds().width() - 32.0,
-                22.0,
-            ),
-            SIDEBAR_TITLE,
-            TextStyle {
-                font_size: 18.0,
-                line_height: 22.0,
-                color: Color::rgba(0.13, 0.17, 0.22, 1.0),
-                ..TextStyle::default()
-            },
-        );
-        ctx.draw_text(
-            Rect::new(
-                ctx.bounds().x() + 16.0,
-                ctx.bounds().y() + 40.0,
-                ctx.bounds().width() - 32.0,
-                20.0,
-            ),
-            "Show, hide, or maximize each floating tool view.",
-            TextStyle {
-                font_size: 12.0,
-                line_height: 16.0,
-                color: Color::rgba(0.42, 0.48, 0.56, 1.0),
-                ..TextStyle::default()
-            },
-        );
-
-        for row in &self.rows {
-            let Some(view) = self.workspace.snapshot(row.view_id) else {
-                continue;
-            };
-            let hovered_row = self
-                .hovered
-                .is_some_and(|target| target.view_id == row.view_id);
-            let row_fill = if hovered_row {
-                Color::rgba(0.90, 0.93, 0.98, 1.0)
-            } else {
-                palette.surface.with_alpha(0.72)
-            };
-            ctx.fill_rect(row.row_bounds, row_fill);
-            ctx.stroke_rect(
-                row.row_bounds,
-                palette.border.with_alpha(0.7),
-                border.clone(),
-            );
-            ctx.draw_text(
-                Rect::new(
-                    row.row_bounds.x() + 12.0,
-                    row.row_bounds.y() + 11.0,
-                    (row.row_bounds.width() - 166.0).max(0.0),
-                    20.0,
-                ),
-                view.title,
-                TextStyle {
-                    font_size: 13.0,
-                    line_height: 18.0,
-                    color: if view.visible {
-                        Color::rgba(0.12, 0.16, 0.22, 1.0)
-                    } else {
-                        Color::rgba(0.49, 0.54, 0.62, 1.0)
-                    },
-                    ..TextStyle::default()
-                },
-            );
-
-            for target in [
-                SidebarActionTarget {
-                    view_id: row.view_id,
-                    kind: SidebarActionKind::Visibility,
-                },
-                SidebarActionTarget {
-                    view_id: row.view_id,
-                    kind: SidebarActionKind::Maximize,
-                },
-            ] {
-                let bounds = match target.kind {
-                    SidebarActionKind::Visibility => row.visibility_bounds,
-                    SidebarActionKind::Maximize => row.maximize_bounds,
-                };
-                let hovered = self.hovered == Some(target);
-                let pressed = self.pressed == Some(target);
-                let is_primary =
-                    matches!(target.kind, SidebarActionKind::Maximize) && view.maximized;
-                let fill = if pressed {
-                    Color::rgba(0.80, 0.85, 0.93, 1.0)
-                } else if hovered {
-                    Color::rgba(0.86, 0.90, 0.96, 1.0)
-                } else if is_primary {
-                    palette.accent.with_alpha(0.18)
-                } else {
-                    Color::rgba(0.94, 0.95, 0.98, 1.0)
-                };
-                let stroke_color = if is_primary {
-                    palette.accent
-                } else {
-                    palette.border
-                };
-                ctx.fill_rect(bounds, fill);
-                ctx.stroke_rect(bounds, stroke_color, border.clone());
-                ctx.draw_text(
-                    Rect::new(
-                        bounds.x() + 10.0,
-                        bounds.y() + 7.0,
-                        bounds.width() - 20.0,
-                        bounds.height() - 14.0,
-                    ),
-                    self.button_label(target),
-                    TextStyle {
-                        font_size: 11.0,
-                        line_height: 14.0,
-                        color: if is_primary {
-                            palette.accent
-                        } else {
-                            Color::rgba(0.22, 0.27, 0.34, 1.0)
-                        },
-                        ..TextStyle::default()
-                    },
-                );
-            }
-        }
+        self.content.paint(ctx);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::List, ctx.bounds());
-        node.name = Some(SIDEBAR_TITLE.to_string());
-        node.description = Some("Floating workspace view controls".to_string());
-        ctx.push(node);
+        self.content.semantics(ctx);
     }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.content.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.content.visit_children_mut(visitor);
+    }
+}
+
+fn sidebar_signature(workspace: &FloatingWorkspaceState) -> Vec<(u64, String, bool, bool)> {
+    workspace
+        .snapshots()
+        .into_iter()
+        .map(|view| (view.id, view.title, view.visible, view.maximized))
+        .collect()
+}
+
+fn build_sidebar_list(workspace: FloatingWorkspaceState) -> ListView {
+    ListView::new(SIDEBAR_TITLE)
+        .row_height(44.0)
+        .items(workspace.snapshots().into_iter().map(|view| {
+            ListItem::new(view.title.clone()).with_child(build_sidebar_row(workspace.clone(), view))
+        }))
+}
+
+fn build_sidebar_row(workspace: FloatingWorkspaceState, view: FloatingViewSnapshot) -> Stack {
+    let view_id = view.id;
+    let visibility_workspace = workspace.clone();
+    let maximize_workspace = workspace;
+    let visibility_label = if view.visible { "Hide" } else { "Show" };
+    let maximize_label = if view.maximized {
+        "Restore"
+    } else {
+        "Maximize"
+    };
+    let label_color = if view.visible {
+        Color::rgba(0.12, 0.16, 0.22, 1.0)
+    } else {
+        Color::rgba(0.49, 0.54, 0.62, 1.0)
+    };
+
+    Stack::horizontal()
+        .spacing(8.0)
+        .alignment(Alignment::Center)
+        .with_child(
+            SizedBox::new().width(104.0).with_child(
+                Label::new(view.title)
+                    .font_size(12.0)
+                    .line_height(16.0)
+                    .color(label_color),
+            ),
+        )
+        .with_child(
+            Button::new(visibility_label)
+                .min_width(58.0)
+                .min_height(30.0)
+                .on_press_with_ctx(move |ctx| {
+                    if visibility_workspace.toggle_view_visible(view_id).is_some() {
+                        request_window_refresh(ctx, true);
+                    }
+                }),
+        )
+        .with_child(
+            Button::new(maximize_label)
+                .min_width(76.0)
+                .min_height(30.0)
+                .on_press_with_ctx(move |ctx| {
+                    let Some(snapshot) = maximize_workspace.snapshot(view_id) else {
+                        return;
+                    };
+                    if maximize_workspace.set_view_maximized(view_id, !snapshot.maximized) {
+                        request_window_refresh(ctx, true);
+                    }
+                }),
+        )
 }
 
 fn window_text_hinting_from_renderer(hinting: TextHinting) -> WindowTextHinting {
@@ -2141,6 +1888,42 @@ mod tests {
             semantics
                 .iter()
                 .any(|node| { node.name.as_deref() == Some("Live performance overlay") })
+        );
+    }
+
+    #[test]
+    fn dev_workspace_sidebar_uses_list_rows_with_button_widgets() {
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("dev application should render for sidebar semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("dev application semantics should exist");
+
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::List && node.name.as_deref() == Some(SIDEBAR_TITLE)
+            }),
+            "expected the workspace sidebar to expose the standard ListView semantics"
+        );
+        for button in ["Hide", "Show", "Maximize"] {
+            assert!(
+                semantics.iter().any(|node| {
+                    node.role == SemanticsRole::Button && node.name.as_deref() == Some(button)
+                }),
+                "expected sidebar list rows to expose a {button:?} button"
+            );
+        }
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some(WIDGET_BOOK_TAB_LABEL)
+            }),
+            "expected sidebar list rows to expose labels as standard Label widgets"
         );
     }
 

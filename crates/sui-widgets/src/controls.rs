@@ -628,6 +628,7 @@ pub struct Button {
     label_measurement: Option<TextMeasurement>,
     label_layout: Option<PersistentTextLayout>,
     on_press: Option<Box<dyn FnMut()>>,
+    on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -656,6 +657,7 @@ impl Button {
             label_measurement: None,
             label_layout: None,
             on_press: None,
+            on_press_with_ctx: None,
         }
     }
 
@@ -700,9 +702,20 @@ impl Button {
         self
     }
 
-    fn activate(&mut self) {
+    pub fn on_press_with_ctx<F>(mut self, on_press: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.on_press_with_ctx = Some(Box::new(on_press));
+        self
+    }
+
+    fn activate(&mut self, ctx: &mut EventCtx) {
         if let Some(on_press) = &mut self.on_press {
             on_press();
+        }
+        if let Some(on_press) = &mut self.on_press_with_ctx {
+            on_press(ctx);
         }
     }
 
@@ -854,7 +867,7 @@ impl Widget for Button {
                 set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if activate {
-                    self.activate();
+                    self.activate(ctx);
                 }
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -887,7 +900,7 @@ impl Widget for Button {
                     && ctx.is_focused()
                     && matches!(key.key.as_str(), "Enter" | " ") =>
             {
-                self.activate();
+                self.activate(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();

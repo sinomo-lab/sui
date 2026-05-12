@@ -3,17 +3,20 @@ use sui_core::{
     SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector,
 };
 use sui_layout::{Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget, window_render_options};
+use sui_runtime::{
+    ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+    WidgetPodMutVisitor, WidgetPodVisitor, window_render_options,
+};
 use sui_text::{TextMeasurement, TextStyle};
 
 use crate::DefaultTheme;
 
-#[derive(Debug, Clone, PartialEq)]
 pub struct ListItem {
     label: String,
     detail: Option<String>,
     accent: Option<Color>,
     disabled: bool,
+    content: Option<SingleChild>,
 }
 
 impl ListItem {
@@ -23,6 +26,7 @@ impl ListItem {
             detail: None,
             accent: None,
             disabled: false,
+            content: None,
         }
     }
 
@@ -41,8 +45,20 @@ impl ListItem {
         self
     }
 
+    pub fn with_child<W>(mut self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.content = Some(SingleChild::new(child));
+        self
+    }
+
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    pub fn has_child(&self) -> bool {
+        self.content.is_some()
     }
 }
 
@@ -55,6 +71,9 @@ pub struct ListView {
     pressed: Option<usize>,
     row_height: f32,
     scroll_y: f32,
+    row_heights: Vec<f32>,
+    row_offsets: Vec<f32>,
+    content_height: f32,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
 }
 
@@ -69,6 +88,9 @@ impl ListView {
             pressed: None,
             row_height: 28.0,
             scroll_y: 0.0,
+            row_heights: Vec::new(),
+            row_offsets: Vec::new(),
+            content_height: 0.0,
             on_change: None,
         }
     }
@@ -131,13 +153,30 @@ impl ListView {
         inset_rect(bounds, Insets::all(8.0))
     }
 
-    fn content_height(&self) -> f32 {
-        self.items.len() as f32 * self.resolved_row_height()
+    fn measured_content_height(&self) -> f32 {
+        if self.row_heights.len() == self.items.len() {
+            self.content_height
+        } else {
+            self.items.len() as f32 * self.resolved_row_height()
+        }
     }
 
     fn clamp_scroll(&self, viewport_height: f32, scroll_y: f32) -> f32 {
-        let max_scroll = (self.content_height() - viewport_height).max(0.0);
+        let max_scroll = (self.measured_content_height() - viewport_height).max(0.0);
         scroll_y.clamp(0.0, max_scroll)
+    }
+
+    fn row_metrics(&self, index: usize) -> Option<(f32, f32)> {
+        self.row_offsets
+            .get(index)
+            .zip(self.row_heights.get(index))
+            .map(|(offset, height)| (*offset, *height))
+            .or_else(|| {
+                (index < self.items.len()).then(|| {
+                    let row_height = self.resolved_row_height();
+                    (index as f32 * row_height, row_height)
+                })
+            })
     }
 
     fn row_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
@@ -147,13 +186,16 @@ impl ListView {
         }
 
         let y = position.y - viewport.y() + self.scroll_y;
-        let index = (y / self.resolved_row_height()).floor() as usize;
-        (index < self.items.len()).then_some(index)
+        (0..self.items.len()).find(|index| {
+            self.row_metrics(*index)
+                .is_some_and(|(top, height)| y >= top && y < top + height)
+        })
     }
 
     fn ensure_visible(&mut self, viewport_height: f32, index: usize) {
-        let row_height = self.resolved_row_height();
-        let top = index as f32 * row_height;
+        let Some((top, row_height)) = self.row_metrics(index) else {
+            return;
+        };
         let bottom = top + row_height;
         if top < self.scroll_y {
             self.scroll_y = top;
@@ -161,6 +203,10 @@ impl ListView {
             self.scroll_y = bottom - viewport_height;
         }
         self.scroll_y = self.clamp_scroll(viewport_height, self.scroll_y);
+    }
+
+    fn row_has_child(&self, index: usize) -> bool {
+        self.items.get(index).is_some_and(ListItem::has_child)
     }
 
     fn activate(&mut self, index: usize) {
@@ -223,7 +269,11 @@ impl Widget for ListView {
                     && pointer.button == Some(PointerButton::Primary)
                     && viewport.contains(pointer.position) =>
             {
-                self.pressed = self.row_at_position(ctx.bounds(), pointer.position);
+                let row = self.row_at_position(ctx.bounds(), pointer.position);
+                if row.is_some_and(|index| self.row_has_child(index)) {
+                    return;
+                }
+                self.pressed = row;
                 self.hovered = self.pressed;
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
@@ -235,6 +285,9 @@ impl Widget for ListView {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                if self.pressed.is_none() {
+                    return;
+                }
                 let hovered = self.row_at_position(ctx.bounds(), pointer.position);
                 if let Some(index) = self
                     .pressed
@@ -242,7 +295,9 @@ impl Widget for ListView {
                     .filter(|(pressed, hovered)| pressed == hovered)
                     .map(|(index, _)| index)
                 {
-                    self.activate(index);
+                    if !self.row_has_child(index) {
+                        self.activate(index);
+                    }
                 }
                 self.hovered = hovered;
                 self.pressed = None;
@@ -314,20 +369,43 @@ impl Widget for ListView {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.theme.body_text_style();
         let detail_style = caption_style(self.theme.as_ref());
-        let content_width = self
-            .items
-            .iter()
-            .map(|item| {
+        let base_row_height = self.resolved_row_height();
+        let child_max_width = if constraints.max.width.is_finite() {
+            (constraints.max.width - 36.0).max(0.0)
+        } else {
+            260.0
+        };
+        let child_constraints =
+            Constraints::new(Size::ZERO, Size::new(child_max_width, f32::INFINITY));
+        let mut content_width: f32 = 220.0;
+        let mut content_height = 0.0;
+        self.row_offsets.clear();
+        self.row_heights.clear();
+
+        for item in &mut self.items {
+            self.row_offsets.push(content_height);
+            let (row_width, row_height) = if let Some(content) = &mut item.content {
+                let child_size = content.measure(ctx, child_constraints);
+                (
+                    (child_size.width + 20.0).max(220.0),
+                    (child_size.height + 12.0).max(base_row_height),
+                )
+            } else {
                 let label = measure_text(ctx, &item.label, &text_style).width;
                 let detail = item
                     .detail
                     .as_deref()
                     .map(|detail| measure_text(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
-                label.max(detail) + 28.0
-            })
-            .fold(220.0, f32::max);
-        let desired = Size::new(content_width + 16.0, self.content_height() + 16.0);
+                (label.max(detail) + 28.0, base_row_height)
+            };
+            content_width = content_width.max(row_width);
+            content_height += row_height;
+            self.row_heights.push(row_height);
+        }
+
+        self.content_height = content_height;
+        let desired = Size::new(content_width + 16.0, self.measured_content_height() + 16.0);
         let size = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
@@ -345,22 +423,48 @@ impl Widget for ListView {
         size
     }
 
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let viewport = self.viewport_rect(bounds);
+        for index in 0..self.items.len() {
+            let Some((top, row_height)) = self.row_metrics(index) else {
+                continue;
+            };
+            let Some(content) = self.items[index].content.as_mut() else {
+                continue;
+            };
+            let row_y = viewport.y() + top - self.scroll_y;
+            if row_y + row_height < viewport.y() || row_y > viewport.max_y() {
+                content.arrange(ctx, Rect::from_origin_size(Point::ZERO, Size::ZERO));
+                continue;
+            }
+            let child_size = content.child().measured_size();
+            content.arrange(
+                ctx,
+                Rect::from_origin_size(
+                    Point::new(viewport.x() + 10.0, row_y + 6.0),
+                    Size::new((viewport.width() - 20.0).max(0.0), child_size.height),
+                ),
+            );
+        }
+    }
+
     fn paint(&self, ctx: &mut PaintCtx) {
         let palette = self.theme.palette;
         let viewport = self.viewport_rect(ctx.bounds());
-        let row_height = self.resolved_row_height();
         let label_style = self.theme.body_text_style();
         let detail_style = caption_style(self.theme.as_ref());
 
         draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
         ctx.push_clip_rect(viewport);
 
-        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
-        let end = (((self.scroll_y + viewport.height()) / row_height).ceil() as usize + 1)
-            .min(self.items.len());
-
-        for index in start..end {
-            let y = viewport.y() + (index as f32 * row_height) - self.scroll_y;
+        for index in 0..self.items.len() {
+            let Some((top, row_height)) = self.row_metrics(index) else {
+                continue;
+            };
+            let y = viewport.y() + top - self.scroll_y;
+            if y + row_height < viewport.y() || y > viewport.max_y() {
+                continue;
+            }
             let row = Rect::new(viewport.x(), y, viewport.width(), row_height);
             let selected = self.selected == Some(index);
             let hovered = self.hovered == Some(index);
@@ -389,6 +493,11 @@ impl Widget for ListView {
                     Rect::new(row.x() + 4.0, row.y() + 5.0, 3.0, row.height() - 10.0),
                     accent,
                 );
+            }
+
+            if let Some(content) = &item.content {
+                content.paint(ctx);
+                continue;
             }
 
             let text_x = row.x() + 14.0;
@@ -444,6 +553,12 @@ impl Widget for ListView {
             .map(|item| SemanticsValue::Text(item.label.clone()));
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
+
+        for item in &self.items {
+            if let Some(content) = &item.content {
+                content.semantics(ctx);
+            }
+        }
     }
 
     fn accepts_focus(&self) -> bool {
@@ -453,6 +568,22 @@ impl Widget for ListView {
     fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
         ctx.request_paint();
         ctx.request_semantics();
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        for item in &self.items {
+            if let Some(content) = &item.content {
+                content.visit_children(visitor);
+            }
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        for item in &mut self.items {
+            if let Some(content) = &mut item.content {
+                content.visit_children_mut(visitor);
+            }
+        }
     }
 }
 
@@ -2066,7 +2197,7 @@ mod tests {
         Breadcrumb, BreadcrumbItem, DefaultTheme, ListItem, ListView, TREE_DISCLOSURE_LABEL_GAP,
         Table, TableColumn, TableRow, TreeItem, TreeView,
     };
-    use crate::{ScrollView, SizedBox, Stack};
+    use crate::{Button, Label, ScrollView, SizedBox, Stack};
     use sui_core::{
         Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
         PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsRole,
@@ -2248,6 +2379,43 @@ mod tests {
             .find(|node| node.role == SemanticsRole::List)
             .expect("list semantics present");
         assert_eq!(list.value, Some(SemanticsValue::Text("Second".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn list_item_child_widget_receives_pointer_events() -> Result<()> {
+        let presses = Rc::new(RefCell::new(0));
+        let on_press = Rc::clone(&presses);
+        let row = Stack::horizontal()
+            .spacing(8.0)
+            .with_child(SizedBox::new().width(96.0).with_child(Label::new("Asset")))
+            .with_child(Button::new("Open").on_press(move || *on_press.borrow_mut() += 1));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(260.0)
+                .height(80.0)
+                .with_child(ListView::new("Actions").item(ListItem::new("Asset").with_child(row))),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(136.0, 28.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(136.0, 28.0), false),
+        )?;
+
+        assert_eq!(*presses.borrow(), 1);
+        let output = runtime.render(window_id)?;
+        assert!(
+            output
+                .semantics
+                .iter()
+                .any(|node| node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Open"))
+        );
         Ok(())
     }
 
