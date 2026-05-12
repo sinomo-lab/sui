@@ -31,7 +31,6 @@ const SETTINGS_TAB_LABEL: &str = "Settings";
 const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
 const FEATHER_WIDTH_NAME: &str = "Feather width";
 const OPTICAL_TEXT_CENTERING_TOGGLE_LABEL: &str = "Enable optical vertical text centering";
-const GLYPH_PIXEL_ALIGNMENT_TOGGLE_LABEL: &str = "Snap atlas glyphs to physical pixels";
 const TEXT_HINTING_TOGGLE_LABEL: &str = "Enable slight small-text hinting";
 const TEXT_HINTING_MAX_PPEM_NAME: &str = "Hinting max ppem";
 const STEM_DARKENING_TOGGLE_LABEL: &str = "Enable small-text stem darkening";
@@ -882,7 +881,6 @@ impl RenderSettingsTab {
     fn default_options() -> WindowRenderOptions {
         let renderer = WgpuRenderer::new();
         WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
-            .with_glyph_pixel_alignment_enabled(renderer.glyph_pixel_alignment_enabled())
             .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
             .with_stem_darkening(window_stem_darkening_from_renderer(
                 renderer.stem_darkening(),
@@ -894,7 +892,6 @@ impl RenderSettingsTab {
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
         let text_centering_state = Rc::clone(&state);
-        let glyph_alignment_state = Rc::clone(&state);
         let hinting_toggle_state = Rc::clone(&state);
         let hinting_max_ppem_state = Rc::clone(&state);
         let stem_darkening_toggle_state = Rc::clone(&state);
@@ -923,7 +920,7 @@ impl RenderSettingsTab {
                     )
                     .with_child(
                         Label::new(
-                            "These controls update the active window's runtime presentation and atlas glyph alignment on the next redraw.",
+                            "These controls update the active window's runtime presentation on the next redraw.",
                         )
                         .font_size(14.0)
                         .line_height(20.0)
@@ -943,14 +940,6 @@ impl RenderSettingsTab {
                                 text_centering_state
                                     .borrow_mut()
                                     .optical_vertical_text_alignment_enabled = checked;
-                            }),
-                    )
-                    .with_child(
-                        Checkbox::new(GLYPH_PIXEL_ALIGNMENT_TOGGLE_LABEL)
-                            .checked(initial.glyph_pixel_alignment_enabled)
-                            .on_toggle(move |checked| {
-                                glyph_alignment_state.borrow_mut().glyph_pixel_alignment_enabled =
-                                    checked;
                             }),
                     )
                     .with_child(
@@ -1161,7 +1150,7 @@ impl RenderSettingsTab {
                     .with_child(OutputDiagnosticsPanel)
                     .with_child(
                         Label::new(
-                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Glyph pixel alignment only affects the atlas path for axis-aligned text. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
+                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)

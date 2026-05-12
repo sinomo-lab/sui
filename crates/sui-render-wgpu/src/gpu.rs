@@ -28,6 +28,7 @@ pub(crate) struct SharedRenderer {
     pub(crate) image_sampler: wgpu::Sampler,
     pub(crate) text_atlas_sampler: wgpu::Sampler,
     pub(crate) text_quad_buffer: wgpu::Buffer,
+    pub(crate) dual_source_blending_enabled: bool,
 }
 
 impl SharedRenderer {
@@ -133,6 +134,11 @@ impl SharedRenderer {
                     SHADER_SOURCE
                 }
                 PipelineKind::Textured | PipelineKind::TexturedClipped => TEXTURED_SHADER_SOURCE,
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
+                    if self.dual_source_blending_enabled =>
+                {
+                    TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE
+                }
                 PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
                     TEXT_ATLAS_SHADER_SOURCE
                 }
@@ -208,6 +214,22 @@ impl SharedRenderer {
                 }),
             };
             let blend = match kind {
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
+                    if self.dual_source_blending_enabled =>
+                {
+                    wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Src1,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrc1,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }
+                }
                 PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => wgpu::BlendState {
                     color: wgpu::BlendComponent {
                         src_factor: wgpu::BlendFactor::One,

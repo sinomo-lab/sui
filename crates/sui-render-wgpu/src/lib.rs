@@ -292,9 +292,13 @@ pub enum TextHinting {
     Slight { max_ppem: f32 },
 }
 
+const DEFAULT_TEXT_HINTING_MAX_PPEM: f32 = 96.0;
+
 impl Default for TextHinting {
     fn default() -> Self {
-        Self::None
+        Self::Slight {
+            max_ppem: DEFAULT_TEXT_HINTING_MAX_PPEM,
+        }
     }
 }
 
@@ -699,13 +703,11 @@ pub struct WgpuRenderer {
     text_hinting: TextHinting,
     stem_darkening: StemDarkening,
     text_coverage_policy: TextCoveragePolicy,
-    glyph_pixel_alignment_enabled: bool,
     vsync_enabled: bool,
     runtime_feathering_override: Option<FeatheringOptions>,
     runtime_text_hinting_override: Option<TextHinting>,
     runtime_stem_darkening_override: Option<StemDarkening>,
     runtime_text_coverage_policy_override: Option<TextCoveragePolicy>,
-    runtime_glyph_pixel_alignment_override: Option<bool>,
     runtime_diagnostics_enabled: bool,
     frames_rendered: usize,
     capabilities: RendererCapabilities,
@@ -898,6 +900,17 @@ fn decode_rgba16f_pixels(raw: &[u8]) -> Vec<f32> {
     pixels
 }
 
+fn optional_renderer_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    let mut features = wgpu::Features::empty();
+    if adapter
+        .features()
+        .contains(wgpu::Features::DUAL_SOURCE_BLENDING)
+    {
+        features |= wgpu::Features::DUAL_SOURCE_BLENDING;
+    }
+    features
+}
+
 impl WgpuRenderer {
     pub fn new() -> Self {
         Self::default()
@@ -930,11 +943,6 @@ impl WgpuRenderer {
 
     pub fn with_stem_darkening(mut self, darkening: StemDarkening) -> Self {
         self.set_stem_darkening(darkening);
-        self
-    }
-
-    pub fn with_glyph_pixel_alignment_enabled(mut self, enabled: bool) -> Self {
-        self.set_glyph_pixel_alignment_enabled(enabled);
         self
     }
 
@@ -978,10 +986,6 @@ impl WgpuRenderer {
 
     pub fn stem_darkening(&self) -> StemDarkening {
         self.stem_darkening
-    }
-
-    pub fn glyph_pixel_alignment_enabled(&self) -> bool {
-        self.glyph_pixel_alignment_enabled
     }
 
     pub fn set_feathering(&mut self, feathering: FeatheringOptions) {
@@ -1040,13 +1044,6 @@ impl WgpuRenderer {
         self.stem_darkening = darkening;
         if let Some(text_engine) = self.text_engine.as_mut() {
             text_engine.set_stem_darkening(darkening);
-        }
-    }
-
-    pub fn set_glyph_pixel_alignment_enabled(&mut self, enabled: bool) {
-        self.glyph_pixel_alignment_enabled = enabled;
-        if let Some(text_engine) = self.text_engine.as_mut() {
-            text_engine.set_glyph_pixel_alignment_enabled(enabled);
         }
     }
 
@@ -1123,10 +1120,6 @@ impl WgpuRenderer {
         self.runtime_text_coverage_policy_override = policy.map(TextCoveragePolicy::normalized);
     }
 
-    pub fn set_runtime_glyph_pixel_alignment_override(&mut self, enabled: Option<bool>) {
-        self.runtime_glyph_pixel_alignment_override = enabled;
-    }
-
     pub fn set_runtime_diagnostics_enabled(&mut self, enabled: bool) {
         self.runtime_diagnostics_enabled = enabled;
         if let Some(text_engine) = self.text_engine.as_mut() {
@@ -1159,11 +1152,6 @@ impl WgpuRenderer {
         self.runtime_text_coverage_policy_override
             .unwrap_or(self.text_coverage_policy)
             .normalized()
-    }
-
-    fn active_glyph_pixel_alignment_enabled(&self) -> bool {
-        self.runtime_glyph_pixel_alignment_override
-            .unwrap_or(self.glyph_pixel_alignment_enabled)
     }
 
     fn invalidate_text_render_state(&mut self) {
@@ -1479,8 +1467,10 @@ impl WgpuRenderer {
             }))
             .map_err(|error| Error::new(format!("failed to acquire wgpu adapter: {error}")))?;
 
+        let required_features = optional_renderer_features(&adapter);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("SUI renderer device"),
+            required_features,
             ..Default::default()
         }))
         .map_err(|error| Error::new(format!("failed to create wgpu device: {error}")))?;
@@ -1589,6 +1579,10 @@ impl WgpuRenderer {
                 ],
             });
 
+        let dual_source_blending_enabled = device
+            .features()
+            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
+
         self.shared = Some(SharedRenderer {
             adapter,
             device,
@@ -1600,6 +1594,7 @@ impl WgpuRenderer {
             image_sampler,
             text_atlas_sampler,
             text_quad_buffer,
+            dual_source_blending_enabled,
         });
 
         Ok(())
@@ -1624,9 +1619,11 @@ impl WgpuRenderer {
             .await
             .map_err(|error| Error::new(format!("failed to acquire wgpu adapter: {error}")))?;
 
+        let required_features = optional_renderer_features(&adapter);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("SUI renderer device"),
+                required_features,
                 ..Default::default()
             })
             .await
@@ -1736,6 +1733,10 @@ impl WgpuRenderer {
                 ],
             });
 
+        let dual_source_blending_enabled = device
+            .features()
+            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
+
         self.shared = Some(SharedRenderer {
             adapter,
             device,
@@ -1747,6 +1748,7 @@ impl WgpuRenderer {
             image_sampler,
             text_atlas_sampler,
             text_quad_buffer,
+            dual_source_blending_enabled,
         });
 
         Ok(())
@@ -2211,7 +2213,6 @@ impl WgpuRenderer {
         let text_hinting = self.active_text_hinting();
         let stem_darkening = self.active_stem_darkening();
         let text_coverage_policy = self.active_text_coverage_policy();
-        let glyph_pixel_alignment_enabled = self.active_glyph_pixel_alignment_enabled();
         let mut atlas_retry_attempted = false;
         let (submission, compositor_stats, text_frame_stats) = loop {
             if self.text_engine.is_none() {
@@ -2226,7 +2227,6 @@ impl WgpuRenderer {
                 text_engine.set_text_hinting(text_hinting);
                 text_engine.set_stem_darkening(stem_darkening);
                 text_engine.set_text_coverage_policy(text_coverage_policy);
-                text_engine.set_glyph_pixel_alignment_enabled(glyph_pixel_alignment_enabled);
                 text_engine.set_diagnostics_enabled(diagnostics_enabled);
                 text_engine.begin_frame();
                 let compositor = self.compositors.entry(frame.window_id).or_default();
@@ -3115,13 +3115,11 @@ impl Default for WgpuRenderer {
             text_hinting: TextHinting::default(),
             stem_darkening: StemDarkening::default(),
             text_coverage_policy: TextCoveragePolicy::default(),
-            glyph_pixel_alignment_enabled: true,
             vsync_enabled: true,
             runtime_feathering_override: None,
             runtime_text_hinting_override: None,
             runtime_stem_darkening_override: None,
             runtime_text_coverage_policy_override: None,
-            runtime_glyph_pixel_alignment_override: None,
             runtime_diagnostics_enabled: true,
             frames_rendered: 0,
             capabilities: RendererCapabilities::default(),
@@ -3148,10 +3146,6 @@ impl fmt::Debug for WgpuRenderer {
             .field("feathering_enabled", &self.feathering_enabled)
             .field("feather_width", &self.feather_width)
             .field("text_coverage_policy", &self.text_coverage_policy)
-            .field(
-                "glyph_pixel_alignment_enabled",
-                &self.glyph_pixel_alignment_enabled,
-            )
             .field("frames_rendered", &self.frames_rendered)
             .field("capabilities", &self.capabilities)
             .field("last_frame_count", &self.last_frames.len())
@@ -3545,6 +3539,53 @@ fn vs_main(
     return out;
 }
 
+const TEXT_GAMMA_RATIOS: vec4<f32> = vec4<f32>(0.14805442, -0.8945945, 1.475908, -0.32466823);
+const TEXT_GRAYSCALE_ENHANCED_CONTRAST: f32 = 1.0;
+const TEXT_SUBPIXEL_ENHANCED_CONTRAST: f32 = 0.5;
+
+fn color_brightness(color: vec3<f32>) -> f32 {
+    return dot(color, vec3<f32>(0.30, 0.59, 0.11));
+}
+
+fn light_on_dark_contrast(enhanced_contrast: f32, color: vec3<f32>) -> f32 {
+    let brightness = color_brightness(color);
+    let multiplier = clamp(4.0 * (0.75 - brightness), 0.0, 1.0);
+    return enhanced_contrast * multiplier;
+}
+
+fn enhance_contrast(alpha: f32, k: f32) -> f32 {
+    return alpha * (k + 1.0) / (alpha * k + 1.0);
+}
+
+fn enhance_contrast3(alpha: vec3<f32>, k: f32) -> vec3<f32> {
+    return alpha * (k + 1.0) / (alpha * k + 1.0);
+}
+
+fn apply_alpha_correction(alpha: f32, brightness: f32, gamma_ratios: vec4<f32>) -> f32 {
+    let brightness_adjustment = gamma_ratios.x * brightness + gamma_ratios.y;
+    let correction = brightness_adjustment * alpha + (gamma_ratios.z * brightness + gamma_ratios.w);
+    return alpha + alpha * (1.0 - alpha) * correction;
+}
+
+fn apply_alpha_correction3(alpha: vec3<f32>, color: vec3<f32>, gamma_ratios: vec4<f32>) -> vec3<f32> {
+    let brightness_adjustment = gamma_ratios.x * color + gamma_ratios.y;
+    let correction = brightness_adjustment * alpha + (gamma_ratios.z * color + gamma_ratios.w);
+    return alpha + alpha * (1.0 - alpha) * correction;
+}
+
+fn apply_contrast_and_gamma_correction(sample: f32, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> f32 {
+    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
+    let brightness = color_brightness(color);
+    let contrasted = enhance_contrast(sample, enhanced_contrast);
+    return clamp(apply_alpha_correction(contrasted, brightness, gamma_ratios), 0.0, 1.0);
+}
+
+fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> vec3<f32> {
+    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
+    let contrasted = enhance_contrast3(sample, enhanced_contrast);
+    return clamp(apply_alpha_correction3(contrasted, color, gamma_ratios), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let sampled = textureSample(text_atlas_texture, text_atlas_sampler, in.tex_coords);
@@ -3555,21 +3596,169 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     if in.metadata.x > 0.5 {
-        let coverage = sampled.rgb;
+        let coverage = apply_contrast_and_gamma_correction3(
+            sampled.rgb,
+            in.color.rgb,
+            TEXT_SUBPIXEL_ENHANCED_CONTRAST,
+            TEXT_GAMMA_RATIOS,
+        );
         let max_coverage = max(max(coverage.r, coverage.g), coverage.b);
         let premul = in.color.rgb * coverage * in.color.a;
         return vec4<f32>(premul, in.color.a * max_coverage);
     }
 
     if in.metadata.y > 0.5 {
-        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
+        let coverage = apply_contrast_and_gamma_correction(
+            (sampled.r + sampled.g + sampled.b) / 3.0,
+            in.color.rgb,
+            TEXT_GRAYSCALE_ENHANCED_CONTRAST,
+            TEXT_GAMMA_RATIOS,
+        );
         let alpha = in.color.a * coverage;
         return vec4<f32>(in.color.rgb * alpha, alpha);
     }
 
-    let coverage = sampled.a;
+    let coverage = apply_contrast_and_gamma_correction(
+        sampled.a,
+        in.color.rgb,
+        TEXT_GRAYSCALE_ENHANCED_CONTRAST,
+        TEXT_GAMMA_RATIOS,
+    );
     let alpha = in.color.a * coverage;
     return vec4<f32>(in.color.rgb * alpha, alpha);
+}
+"#;
+
+const TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE: &str = r#"
+enable dual_source_blending;
+
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) tex_coords: vec2<f32>,
+    @location(2) metadata: vec2<f32>,
+};
+
+struct FragmentOutput {
+    @location(0) @blend_src(0) foreground: vec4<f32>,
+    @location(0) @blend_src(1) alpha: vec4<f32>,
+};
+
+@group(0) @binding(0)
+var text_atlas_sampler: sampler;
+
+@group(0) @binding(1)
+var text_atlas_texture: texture_2d<f32>;
+
+@vertex
+fn vs_main(
+    @location(0) local_pos: vec2<f32>,
+    @location(1) top_left: vec2<f32>,
+    @location(2) x_axis: vec2<f32>,
+    @location(3) y_axis: vec2<f32>,
+    @location(4) uv_min: vec2<f32>,
+    @location(5) uv_max: vec2<f32>,
+    @location(6) color: vec4<f32>,
+    @location(7) metadata: vec2<f32>,
+) -> VsOut {
+    var out: VsOut;
+    out.position = vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0);
+    out.color = color;
+    out.tex_coords = uv_min + local_pos * (uv_max - uv_min);
+    out.metadata = metadata;
+    return out;
+}
+
+const TEXT_GAMMA_RATIOS: vec4<f32> = vec4<f32>(0.14805442, -0.8945945, 1.475908, -0.32466823);
+const TEXT_GRAYSCALE_ENHANCED_CONTRAST: f32 = 1.0;
+const TEXT_SUBPIXEL_ENHANCED_CONTRAST: f32 = 0.5;
+
+fn color_brightness(color: vec3<f32>) -> f32 {
+    return dot(color, vec3<f32>(0.30, 0.59, 0.11));
+}
+
+fn light_on_dark_contrast(enhanced_contrast: f32, color: vec3<f32>) -> f32 {
+    let brightness = color_brightness(color);
+    let multiplier = clamp(4.0 * (0.75 - brightness), 0.0, 1.0);
+    return enhanced_contrast * multiplier;
+}
+
+fn enhance_contrast(alpha: f32, k: f32) -> f32 {
+    return alpha * (k + 1.0) / (alpha * k + 1.0);
+}
+
+fn enhance_contrast3(alpha: vec3<f32>, k: f32) -> vec3<f32> {
+    return alpha * (k + 1.0) / (alpha * k + 1.0);
+}
+
+fn apply_alpha_correction(alpha: f32, brightness: f32, gamma_ratios: vec4<f32>) -> f32 {
+    let brightness_adjustment = gamma_ratios.x * brightness + gamma_ratios.y;
+    let correction = brightness_adjustment * alpha + (gamma_ratios.z * brightness + gamma_ratios.w);
+    return alpha + alpha * (1.0 - alpha) * correction;
+}
+
+fn apply_alpha_correction3(alpha: vec3<f32>, color: vec3<f32>, gamma_ratios: vec4<f32>) -> vec3<f32> {
+    let brightness_adjustment = gamma_ratios.x * color + gamma_ratios.y;
+    let correction = brightness_adjustment * alpha + (gamma_ratios.z * color + gamma_ratios.w);
+    return alpha + alpha * (1.0 - alpha) * correction;
+}
+
+fn apply_contrast_and_gamma_correction(sample: f32, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> f32 {
+    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
+    let brightness = color_brightness(color);
+    let contrasted = enhance_contrast(sample, enhanced_contrast);
+    return clamp(apply_alpha_correction(contrasted, brightness, gamma_ratios), 0.0, 1.0);
+}
+
+fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> vec3<f32> {
+    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
+    let contrasted = enhance_contrast3(sample, enhanced_contrast);
+    return clamp(apply_alpha_correction3(contrasted, color, gamma_ratios), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn dual_source(foreground: vec3<f32>, alpha: vec3<f32>) -> FragmentOutput {
+    var out: FragmentOutput;
+    let source_alpha = max(max(alpha.r, alpha.g), alpha.b);
+    out.foreground = vec4<f32>(foreground, source_alpha);
+    out.alpha = vec4<f32>(alpha, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> FragmentOutput {
+    let sampled = textureSample(text_atlas_texture, text_atlas_sampler, in.tex_coords);
+    if in.color.a < 0.0 {
+        let opacity = -in.color.a;
+        return dual_source(sampled.rgb, vec3<f32>(sampled.a * opacity));
+    }
+
+    if in.metadata.x > 0.5 {
+        let coverage = apply_contrast_and_gamma_correction3(
+            sampled.rgb,
+            in.color.rgb,
+            TEXT_SUBPIXEL_ENHANCED_CONTRAST,
+            TEXT_GAMMA_RATIOS,
+        );
+        return dual_source(in.color.rgb, coverage * in.color.a);
+    }
+
+    if in.metadata.y > 0.5 {
+        let coverage = apply_contrast_and_gamma_correction(
+            (sampled.r + sampled.g + sampled.b) / 3.0,
+            in.color.rgb,
+            TEXT_GRAYSCALE_ENHANCED_CONTRAST,
+            TEXT_GAMMA_RATIOS,
+        );
+        return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
+    }
+
+    let coverage = apply_contrast_and_gamma_correction(
+        sampled.a,
+        in.color.rgb,
+        TEXT_GRAYSCALE_ENHANCED_CONTRAST,
+        TEXT_GAMMA_RATIOS,
+    );
+    return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
 }
 "#;
 
@@ -3791,22 +3980,24 @@ mod tests {
         CachedGlyphAtlas, CachedGlyphMesh, ClipState, ColorManagementMode, CompositionContainerId,
         DEFAULT_FEATHER_WIDTH, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
         DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries, DisplayTransferFunction,
-        DrawOp, DrawOpArena, DrawOpKind, DynamicRangeMode, OutputStrategy, PacketRebuildReason,
-        PreparedClipPath, PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches,
-        PreparedPassBatch, PreparedVertices, RendererFrameStats, RequestedColorManagementMode,
+        DrawOp, DrawOpArena, DrawOpKind, DynamicRangeMode, GlyphCacheKey, GlyphFaceCacheKey,
+        GlyphSubpixelOffsetKey, OutputStrategy, PacketRebuildReason, PreparedClipPath,
+        PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
+        PreparedVertices, RendererFrameStats, RequestedColorManagementMode,
         RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
         RetainedCompositorFrameStats, RetainedCompositorState, RetainedPacketId,
         RetainedPacketRebuildStats, ScissorRect, StemDarkening, SwashImageContent, SwashSource,
-        SwashStrikeWith, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_WIDTH, TextAtlas, TextAtlasColorMode,
+        SwashStrikeWith, TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE, TEXT_ATLAS_HEIGHT,
+        TEXT_ATLAS_SHADER_SOURCE, TEXT_ATLAS_WIDTH, TextAtlas, TextAtlasColorMode,
         TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode, VERTEX_SIZE, Vertex,
         WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
         decode_rgba16f_pixels, prepare_frame_batches,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
             apply_output_transform_for_testing, apply_stem_darkening_to_coverage,
-            convert_subpixel_texel_for_mode, glyph_raster_offset, linearized_color_unorm,
-            output_transform_requires_intermediate, prepare_cached_passes, select_output_strategy,
-            swash_image_to_rgba, tone_map_linear_color,
+            convert_subpixel_texel_for_mode, glyph_raster_offset, glyph_subpixel_offset,
+            linearized_color_unorm, output_transform_requires_intermediate, prepare_cached_passes,
+            select_output_strategy, swash_image_to_rgba, tone_map_linear_color,
         },
         shader_color, strip_padded_readback_rows, to_ndc,
     };
@@ -4856,7 +5047,6 @@ mod tests {
             Transform::IDENTITY,
             Size::new(64.0, 64.0),
             1.0,
-            true,
         );
 
         assert_eq!(vertices.len(), 6);
@@ -4921,7 +5111,6 @@ mod tests {
             Transform::IDENTITY,
             Size::new(64.0, 64.0),
             1.0,
-            true,
         );
 
         assert_eq!(vertices.len(), 6);
@@ -5069,22 +5258,87 @@ mod tests {
             0.0,
             TextCoveragePolicy::Linear,
         );
-        assert_eq!(converted, [255, 128, 32, 255]);
+        assert_eq!(converted, [32, 128, 255, 255]);
+    }
+
+    #[test]
+    fn glyph_subpixel_offset_tracks_quarter_pixel_phase() {
+        let glyph = ShapedGlyph {
+            glyph_id: 42,
+            cluster: 0,
+            span_id: sui_text::TextSpanId {
+                paragraph_index: 0,
+                span_index: 0,
+            },
+            run_index: 0,
+            line_index: 0,
+            face_index: 0,
+            origin_x: 10.25,
+            origin_y: 20.0,
+            advance: Vector::new(8.0, 0.0),
+            scale: 12.0,
+            bounds: None,
+        };
+
+        assert_eq!(
+            glyph_subpixel_offset(Transform::IDENTITY, &glyph, 1.0),
+            GlyphSubpixelOffsetKey::new(1, 0)
+        );
+        assert_eq!(
+            glyph_subpixel_offset(Transform::IDENTITY, &glyph, 2.0),
+            GlyphSubpixelOffsetKey::new(2, 0)
+        );
+        assert_eq!(
+            glyph_subpixel_offset(Transform::rotation(0.25), &glyph, 1.0),
+            GlyphSubpixelOffsetKey::default()
+        );
+    }
+
+    #[test]
+    fn glyph_cache_key_includes_subpixel_offset() {
+        let face = GlyphFaceCacheKey {
+            data_ptr: 0x1000,
+            data_len: 128,
+            face_index: 0,
+        };
+        let first = GlyphCacheKey::new(
+            face,
+            7,
+            1024,
+            GlyphSubpixelOffsetKey::new(0, 0),
+            TextRenderMode::Grayscale,
+            TextHinting::None,
+            StemDarkening::None,
+            TextCoveragePolicy::Linear,
+        );
+        let second = GlyphCacheKey::new(
+            face,
+            7,
+            1024,
+            GlyphSubpixelOffsetKey::new(1, 0),
+            TextRenderMode::Grayscale,
+            TextHinting::None,
+            StemDarkening::None,
+            TextCoveragePolicy::Linear,
+        );
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn text_atlas_shaders_apply_correction_and_dual_source_blending() {
+        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("apply_contrast_and_gamma_correction"));
+        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(0)"));
+        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(1)"));
     }
 
     #[test]
     fn lcd_text_requires_axis_aligned_pixel_snapped_path() {
-        assert!(allows_lcd_text(Transform::IDENTITY, true));
-        assert!(!allows_lcd_text(
-            Transform::rotation(std::f32::consts::FRAC_PI_4),
-            true
-        ));
-        assert!(!allows_lcd_text(Transform::scale(-1.0, 1.0), true));
-        assert!(!allows_lcd_text(
-            Transform::rotation(std::f32::consts::PI),
-            true
-        ));
-        assert!(!allows_lcd_text(Transform::IDENTITY, false));
+        assert!(allows_lcd_text(Transform::IDENTITY));
+        assert!(!allows_lcd_text(Transform::rotation(
+            std::f32::consts::FRAC_PI_4
+        )));
+        assert!(!allows_lcd_text(Transform::scale(-1.0, 1.0)));
+        assert!(!allows_lcd_text(Transform::rotation(std::f32::consts::PI)));
     }
 
     #[test]

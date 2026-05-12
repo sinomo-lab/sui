@@ -1528,7 +1528,6 @@ pub(crate) struct TextEngine {
     pub(crate) text_hinting: TextHinting,
     pub(crate) stem_darkening: StemDarkening,
     pub(crate) coverage_policy: TextCoveragePolicy,
-    pub(crate) glyph_pixel_alignment_enabled: bool,
     pub(crate) diagnostics_enabled: bool,
     pub(crate) glyph_cache_hits: usize,
     pub(crate) glyph_cache_misses: usize,
@@ -1584,7 +1583,6 @@ impl Default for TextEngine {
             text_hinting: TextHinting::default(),
             stem_darkening: StemDarkening::default(),
             coverage_policy: TextCoveragePolicy::default(),
-            glyph_pixel_alignment_enabled: true,
             diagnostics_enabled: true,
             glyph_cache_hits: 0,
             glyph_cache_misses: 0,
@@ -1621,10 +1619,6 @@ impl TextEngine {
 
     pub(crate) fn set_text_coverage_policy(&mut self, policy: TextCoveragePolicy) {
         self.coverage_policy = policy.normalized();
-    }
-
-    pub(crate) fn set_glyph_pixel_alignment_enabled(&mut self, enabled: bool) {
-        self.glyph_pixel_alignment_enabled = enabled;
     }
 
     pub(crate) fn begin_frame(&mut self) {
@@ -1798,8 +1792,6 @@ impl TextEngine {
     {
         let mut active_face_index = None;
         let mut swash_face = None;
-        let glyph_pixel_alignment_enabled = self.glyph_pixel_alignment_enabled;
-
         for glyph in glyphs {
             let face_index = glyph.glyph.face_index;
             if active_face_index != Some(face_index) {
@@ -1827,6 +1819,11 @@ impl TextEngine {
                 glyph.glyph.glyph_id,
                 glyph.glyph.scale,
                 raster_scale_factor,
+                glyph_subpixel_offset(
+                    state.current_transform,
+                    &translated_glyph,
+                    raster_scale_factor,
+                ),
                 coverage_policy,
             )? {
                 if let Some(instance) = build_text_atlas_instance(
@@ -1836,7 +1833,6 @@ impl TextEngine {
                     state.current_transform,
                     viewport,
                     raster_scale_factor,
-                    glyph_pixel_alignment_enabled,
                 ) {
                     atlas_instances.push(instance);
                     if self.diagnostics_enabled {
@@ -1866,6 +1862,7 @@ impl TextEngine {
         glyph_id: u16,
         glyph_scale: f32,
         raster_scale_factor: f32,
+        subpixel_offset: GlyphSubpixelOffsetKey,
         coverage_policy: TextCoveragePolicy,
     ) -> Result<Option<&CachedGlyphAtlas>> {
         let atlas_physical_scale = glyph_scale * raster_scale_factor.max(1.0);
@@ -1874,6 +1871,7 @@ impl TextEngine {
             face_key,
             glyph_id,
             scale_bucket,
+            subpixel_offset,
             self.text_render_mode,
             self.text_hinting,
             self.stem_darkening,
@@ -1911,6 +1909,7 @@ impl TextEngine {
                     swash_face.ppem_for_scale(bucketed_physical_scale),
                     raster_scale_factor.max(1.0),
                     bucketed_logical_scale,
+                    subpixel_offset,
                     self.text_render_mode,
                     self.text_hinting,
                     self.stem_darkening,
@@ -1972,6 +1971,7 @@ fn build_cached_glyph_atlas(
     font_size_physical: f32,
     raster_scale_factor: f32,
     glyph_scale_logical: f32,
+    subpixel_offset: GlyphSubpixelOffsetKey,
     text_render_mode: TextRenderMode,
     text_hinting: TextHinting,
     stem_darkening: StemDarkening,
@@ -1990,8 +1990,9 @@ fn build_cached_glyph_atlas(
     let mut renderer = SwashRender::new(&sources);
     renderer.format(match text_render_mode {
         TextRenderMode::Grayscale => SwashFormat::Alpha,
-        TextRenderMode::LcdSubpixel => SwashFormat::Subpixel,
+        TextRenderMode::LcdSubpixel => SwashFormat::subpixel_bgra(),
     });
+    renderer.offset(subpixel_offset.as_swash_offset());
     let Some(image) = renderer.render(&mut scaler, glyph_id) else {
         return Ok(None);
     };
@@ -2166,9 +2167,9 @@ pub(crate) fn convert_subpixel_texel_for_mode(
             [255, 255, 255, alpha]
         }
         TextRenderMode::LcdSubpixel => {
-            let red = apply_stem_darkening_to_coverage(source[0], stem_darkening_amount);
+            let red = apply_stem_darkening_to_coverage(source[2], stem_darkening_amount);
             let green = apply_stem_darkening_to_coverage(source[1], stem_darkening_amount);
-            let blue = apply_stem_darkening_to_coverage(source[2], stem_darkening_amount);
+            let blue = apply_stem_darkening_to_coverage(source[0], stem_darkening_amount);
             let red = (coverage_policy.apply(red as f32 / 255.0) * 255.0).round() as u8;
             let green = (coverage_policy.apply(green as f32 / 255.0) * 255.0).round() as u8;
             let blue = (coverage_policy.apply(blue as f32 / 255.0) * 255.0).round() as u8;
@@ -2261,7 +2262,6 @@ pub(crate) fn append_cached_glyph_atlas(
     transform: Transform,
     viewport: Size,
     raster_scale_factor: f32,
-    glyph_pixel_alignment_enabled: bool,
 ) {
     if let Some(instance) = build_text_atlas_instance(
         atlas,
@@ -2270,7 +2270,6 @@ pub(crate) fn append_cached_glyph_atlas(
         transform,
         viewport,
         raster_scale_factor,
-        glyph_pixel_alignment_enabled,
     ) {
         append_text_instance_vertices(vertices, std::slice::from_ref(&instance));
     }
@@ -2283,7 +2282,6 @@ fn build_text_atlas_instance(
     transform: Transform,
     viewport: Size,
     raster_scale_factor: f32,
-    glyph_pixel_alignment_enabled: bool,
 ) -> Option<TextAtlasInstance> {
     if atlas.size.is_empty() || viewport.is_empty() {
         return None;
@@ -2303,7 +2301,6 @@ fn build_text_atlas_instance(
         transform,
         Rect::new(left, top, width, height),
         raster_scale_factor,
-        glyph_pixel_alignment_enabled,
     );
 
     let top_left = to_ndc(top_left.x, top_left.y, viewport);
@@ -2321,16 +2318,38 @@ fn build_text_atlas_instance(
         uv_max: atlas.uv_max,
         color: rgba,
         metadata: [
-            (atlas_contains_lcd_subpixels
-                && allows_lcd_text(transform, glyph_pixel_alignment_enabled)) as u8
-                as f32,
+            (atlas_contains_lcd_subpixels && allows_lcd_text(transform)) as u8 as f32,
             atlas_contains_lcd_subpixels as u8 as f32,
         ],
     })
 }
 
-pub(crate) fn allows_lcd_text(transform: Transform, glyph_pixel_alignment_enabled: bool) -> bool {
-    glyph_pixel_alignment_enabled && transform_is_lcd_safe(transform)
+pub(crate) fn allows_lcd_text(transform: Transform) -> bool {
+    transform_is_lcd_safe(transform)
+}
+
+pub(crate) fn glyph_subpixel_offset(
+    transform: Transform,
+    glyph: &SceneShapedGlyph,
+    raster_scale_factor: f32,
+) -> GlyphSubpixelOffsetKey {
+    if !transform_is_axis_aligned(transform) || raster_scale_factor <= 0.0 {
+        return GlyphSubpixelOffsetKey::default();
+    }
+
+    let origin = transform.transform_point(Point::new(glyph.origin_x, glyph.origin_y));
+    GlyphSubpixelOffsetKey::new(
+        subpixel_variant_for(origin.x * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_X),
+        subpixel_variant_for(origin.y * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_Y),
+    )
+}
+
+fn subpixel_variant_for(physical_position: f32, variants: u8) -> u8 {
+    if variants <= 1 {
+        return 0;
+    }
+
+    ((physical_position * f32::from(variants)).round() as i32).rem_euclid(i32::from(variants)) as u8
 }
 
 #[cfg(test)]
@@ -2394,17 +2413,13 @@ fn snapped_glyph_quad(
     transform: Transform,
     rect: Rect,
     raster_scale_factor: f32,
-    glyph_pixel_alignment_enabled: bool,
 ) -> (Point, Point, Point, Point) {
     let top_left = transform.transform_point(rect.origin);
     let top_right = transform.transform_point(Point::new(rect.max_x(), rect.y()));
     let bottom_left = transform.transform_point(Point::new(rect.x(), rect.max_y()));
     let bottom_right = transform.transform_point(Point::new(rect.max_x(), rect.max_y()));
 
-    if !glyph_pixel_alignment_enabled
-        || !transform_is_axis_aligned(transform)
-        || raster_scale_factor <= 0.0
-    {
+    if !transform_is_axis_aligned(transform) || raster_scale_factor <= 0.0 {
         return (top_left, top_right, bottom_left, bottom_right);
     }
 

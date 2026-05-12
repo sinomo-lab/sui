@@ -652,7 +652,6 @@ pub struct WindowRenderOptions {
     pub feathering_enabled: bool,
     pub feather_width: f32,
     pub optical_vertical_text_alignment_enabled: bool,
-    pub glyph_pixel_alignment_enabled: bool,
     pub text_hinting: WindowTextHinting,
     pub stem_darkening: WindowStemDarkening,
     pub output_color_primaries: WindowOutputColorPrimaries,
@@ -669,7 +668,6 @@ impl WindowRenderOptions {
             feathering_enabled,
             feather_width,
             optical_vertical_text_alignment_enabled: true,
-            glyph_pixel_alignment_enabled: true,
             text_hinting: WindowTextHinting::None,
             stem_darkening: WindowStemDarkening::None,
             output_color_primaries: WindowOutputColorPrimaries::Automatic,
@@ -683,11 +681,6 @@ impl WindowRenderOptions {
 
     pub const fn with_optical_vertical_text_alignment_enabled(mut self, enabled: bool) -> Self {
         self.optical_vertical_text_alignment_enabled = enabled;
-        self
-    }
-
-    pub const fn with_glyph_pixel_alignment_enabled(mut self, enabled: bool) -> Self {
-        self.glyph_pixel_alignment_enabled = enabled;
         self
     }
 
@@ -739,7 +732,6 @@ impl WindowRenderOptions {
             feathering_enabled: self.feathering_enabled,
             feather_width: self.feather_width.max(0.0),
             optical_vertical_text_alignment_enabled: self.optical_vertical_text_alignment_enabled,
-            glyph_pixel_alignment_enabled: self.glyph_pixel_alignment_enabled,
             text_hinting: self.text_hinting.normalized(),
             stem_darkening: self.stem_darkening.normalized(),
             output_color_primaries: self.output_color_primaries,
@@ -1738,7 +1730,6 @@ mod tests {
             window_id,
             WindowRenderOptions::new(true, 1.0)
                 .with_optical_vertical_text_alignment_enabled(false)
-                .with_glyph_pixel_alignment_enabled(false)
                 .with_output_color_primaries(WindowOutputColorPrimaries::Srgb)
                 .with_dynamic_range_mode(WindowDynamicRangeMode::StandardDynamicRange)
                 .with_tone_mapping_mode(WindowToneMappingMode::Clamp)
@@ -1749,7 +1740,6 @@ mod tests {
             window_render_options(window_id),
             Some(
                 WindowRenderOptions::new(true, 1.0)
-                    .with_glyph_pixel_alignment_enabled(false)
                     .with_optical_vertical_text_alignment_enabled(false)
                     .with_output_color_primaries(WindowOutputColorPrimaries::Srgb)
                     .with_dynamic_range_mode(WindowDynamicRangeMode::StandardDynamicRange)
