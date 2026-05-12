@@ -25,6 +25,8 @@ const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
 const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
 const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
+const PAINT_TAB_LABEL: &str = "Paint";
+const VECTOR_EDITOR_TAB_LABEL: &str = "Vector editor";
 const SETTINGS_TAB_LABEL: &str = "Settings";
 const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
 const FEATHER_WIDTH_NAME: &str = "Feather width";
@@ -1243,6 +1245,68 @@ fn build_render_settings_tab_with_options(options: WindowRenderOptions) -> impl 
     RenderSettingsTab::with_initial_options(options)
 }
 
+fn build_paint_demo() -> PixelCanvas {
+    let width = 32;
+    let height = 24;
+    let mut pixels = vec![Color::TRANSPARENT; width * height];
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 - 15.5;
+            let dy = y as f32 - 11.5;
+            let distance = ((dx * dx) + (dy * dy)).sqrt();
+            if distance < 9.5 {
+                let t = (distance / 9.5).clamp(0.0, 1.0);
+                pixels[y * width + x] =
+                    Color::rgba(0.10 + (0.55 * t), 0.30, 0.88 - (0.45 * t), 1.0);
+            }
+        }
+    }
+    for x in 6..26 {
+        pixels[6 * width + x] = Color::rgba(1.0, 0.78, 0.22, 1.0);
+        pixels[17 * width + x] = Color::rgba(1.0, 0.78, 0.22, 1.0);
+    }
+    for y in 6..18 {
+        pixels[y * width + 6] = Color::rgba(1.0, 0.78, 0.22, 1.0);
+        pixels[y * width + 25] = Color::rgba(1.0, 0.78, 0.22, 1.0);
+    }
+
+    PixelCanvas::new(PAINT_TAB_LABEL, width, height)
+        .with_pixels(pixels)
+        .brush_color(Color::rgba(0.08, 0.22, 0.78, 1.0))
+        .viewport(CanvasViewport::new().zoom(13.0))
+}
+
+fn build_vector_editor_demo() -> Canvas {
+    let mut curve = PathBuilder::new();
+    curve.move_to(Point::new(-160.0, 72.0)).cubic_to(
+        Point::new(-96.0, -96.0),
+        Point::new(88.0, 124.0),
+        Point::new(160.0, -64.0),
+    );
+
+    Canvas::new(VECTOR_EDITOR_TAB_LABEL)
+        .viewport(CanvasViewport::new().zoom(1.05))
+        .draw_stroke(CanvasStroke::new(Color::rgba(0.12, 0.28, 0.84, 1.0), 3.0))
+        .shape(CanvasShape::rect(
+            Rect::new(-180.0, -110.0, 360.0, 220.0),
+            Some(Color::rgba(1.0, 1.0, 1.0, 0.82)),
+            Some(CanvasStroke::new(Color::rgba(0.12, 0.16, 0.22, 1.0), 2.0)),
+        ))
+        .shape(CanvasShape::circle(
+            Point::new(-72.0, -28.0),
+            46.0,
+            Some(Color::rgba(0.18, 0.54, 0.86, 0.78)),
+            Some(CanvasStroke::new(Color::rgba(0.08, 0.22, 0.42, 1.0), 2.0)),
+        ))
+        .shape(CanvasShape::circle(
+            Point::new(82.0, 34.0),
+            58.0,
+            Some(Color::rgba(0.94, 0.58, 0.16, 0.72)),
+            Some(CanvasStroke::new(Color::rgba(0.42, 0.22, 0.06, 1.0), 2.0)),
+        ))
+        .shape(CanvasShape::path(curve.build()))
+}
+
 pub(crate) fn build_dev_workspace_with_widget_book_bounds_and_render_options(
     widget_book_bounds: Rect,
     render_options: WindowRenderOptions,
@@ -1305,6 +1369,21 @@ pub(crate) fn build_dev_workspace_with_widget_book_bounds_and_render_options(
         )
         .min_size(Size::new(460.0, 320.0)),
         build_color_validation_surface(),
+    );
+    views.push_view(
+        FloatingViewConfig::new(PAINT_TAB_LABEL, Rect::new(280.0, 160.0, 520.0, 420.0))
+            .min_size(Size::new(360.0, 280.0))
+            .visible(false),
+        build_paint_demo(),
+    );
+    views.push_view(
+        FloatingViewConfig::new(
+            VECTOR_EDITOR_TAB_LABEL,
+            Rect::new(340.0, 200.0, 560.0, 440.0),
+        )
+        .min_size(Size::new(380.0, 300.0))
+        .visible(false),
+        build_vector_editor_demo(),
     );
     views.push_view(
         FloatingViewConfig::new(SETTINGS_TAB_LABEL, Rect::new(420.0, 440.0, 420.0, 320.0))
@@ -2643,6 +2722,45 @@ final_max_luminance={final_max_luminance}
             !retained_text_view.visible,
             "expected retained text benchmark view to be available from the sidebar without changing the default sui-dev layout",
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn dev_workspace_registers_canvas_editor_demos() -> Result<()> {
+        let (workspace, _views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
+            Rect::new(24.0, 24.0, 680.0, 760.0),
+            RenderSettingsTab::default_options(),
+        );
+        let snapshots = workspace.snapshots();
+
+        for title in [PAINT_TAB_LABEL, VECTOR_EDITOR_TAB_LABEL] {
+            let view = snapshots
+                .iter()
+                .find(|view| view.title == title)
+                .unwrap_or_else(|| panic!("expected {title:?} to be registered"));
+            assert!(
+                !view.visible,
+                "expected {title:?} to start hidden but available from the sidebar"
+            );
+        }
+
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+        runtime.render(window_id)?;
+        let semantics = runtime.semantics(window_id)?;
+
+        for title in [PAINT_TAB_LABEL, VECTOR_EDITOR_TAB_LABEL] {
+            assert!(
+                semantics
+                    .iter()
+                    .any(|node| node.role == SemanticsRole::Text
+                        && node.name.as_deref() == Some(title)),
+                "expected sidebar to expose {title:?}"
+            );
+        }
 
         Ok(())
     }
