@@ -272,9 +272,8 @@ The sections above describe the long-term direction. The current implementation 
 The active window carries a `WindowRenderOptions` bundle with the text-related controls that the dev workspace and validation surfaces expose:
 
 - `text_coverage_policy`, which defaults to `Linear`
-- `text_hinting`, which defaults to `None`
+- `text_hinting`, which defaults to slight hinting for normal text sizes
 - `stem_darkening`, which defaults to `None`
-- `glyph_pixel_alignment_enabled`, which defaults to `true`
 
 These controls are window-scoped runtime presentation settings. They are not currently independent per sample card inside the comparison surface.
 
@@ -293,9 +292,10 @@ SUI now distinguishes between two separate concerns:
 
 LCD/subpixel text is only considered safe when the path stays compatible with physical subpixel layout. The current renderer requires:
 
-- glyph pixel alignment to be enabled
 - an axis-aligned transform
 - positive X and Y scale components
+
+Atlas glyph quads are always snapped to the physical pixel grid. Fractional glyph phase is represented by quarter-pixel raster variants in the glyph cache instead of by drawing the atlas sprite at fractional screen coordinates.
 
 In practice, rotated, mirrored, or otherwise non-LCD-safe transforms fall back to grayscale expectations instead of trying to preserve LCD sampling through an unsafe transform.
 

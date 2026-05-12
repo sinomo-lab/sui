@@ -337,9 +337,6 @@ impl HeadlessPlatform {
                 self.renderer.set_runtime_stem_darkening_override(
                     render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
                 );
-                self.renderer.set_runtime_glyph_pixel_alignment_override(
-                    render_options.map(|options| options.glyph_pixel_alignment_enabled),
-                );
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
                 let presented_at_ms = self.current_time() * 1000.0;

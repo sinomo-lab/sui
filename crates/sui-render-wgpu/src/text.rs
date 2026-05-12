@@ -37,6 +37,7 @@ pub(crate) struct GlyphCacheKey {
     pub(crate) face: GlyphFaceCacheKey,
     pub(crate) glyph_id: u16,
     pub(crate) scale_bucket: u32,
+    pub(crate) subpixel_offset: GlyphSubpixelOffsetKey,
     pub(crate) atlas_color_mode: TextAtlasColorMode,
     pub(crate) text_hinting: TextHintingCacheKey,
     pub(crate) stem_darkening: StemDarkeningCacheKey,
@@ -48,6 +49,7 @@ impl GlyphCacheKey {
         face: GlyphFaceCacheKey,
         glyph_id: u16,
         scale_bucket: u32,
+        subpixel_offset: GlyphSubpixelOffsetKey,
         text_render_mode: TextRenderMode,
         text_hinting: TextHinting,
         stem_darkening: StemDarkening,
@@ -57,11 +59,37 @@ impl GlyphCacheKey {
             face,
             glyph_id,
             scale_bucket,
+            subpixel_offset,
             atlas_color_mode: TextAtlasColorMode::from(text_render_mode),
             text_hinting: TextHintingCacheKey::from(text_hinting),
             stem_darkening: StemDarkeningCacheKey::from(stem_darkening),
             coverage_policy: TextCoverageCacheKey::from(coverage_policy),
         }
+    }
+}
+
+pub(crate) const GLYPH_SUBPIXEL_VARIANTS_X: u8 = 4;
+pub(crate) const GLYPH_SUBPIXEL_VARIANTS_Y: u8 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(crate) struct GlyphSubpixelOffsetKey {
+    pub(crate) x: u8,
+    pub(crate) y: u8,
+}
+
+impl GlyphSubpixelOffsetKey {
+    pub(crate) fn new(x: u8, y: u8) -> Self {
+        Self {
+            x: x % GLYPH_SUBPIXEL_VARIANTS_X,
+            y: y % GLYPH_SUBPIXEL_VARIANTS_Y,
+        }
+    }
+
+    pub(crate) fn as_swash_offset(self) -> swash::zeno::Vector {
+        swash::zeno::Vector::new(
+            f32::from(self.x) / f32::from(GLYPH_SUBPIXEL_VARIANTS_X),
+            f32::from(self.y) / f32::from(GLYPH_SUBPIXEL_VARIANTS_Y),
+        )
     }
 }
 

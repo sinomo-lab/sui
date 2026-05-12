@@ -228,12 +228,12 @@ Example:
 ```rust
 #[test]
 fn lcd_text_is_rejected_for_non_axis_aligned_transform() {
-    assert!(!allows_lcd_text(transform_with_rotation(), true));
+    assert!(!allows_lcd_text(transform_with_rotation()));
 }
 
 #[test]
 fn lcd_text_is_allowed_for_axis_aligned_translation() {
-    assert!(allows_lcd_text(Transform::IDENTITY, true));
+    assert!(allows_lcd_text(Transform::IDENTITY));
 }
 ```
 
@@ -262,11 +262,9 @@ Pseudo-code:
 fn effective_text_render_mode(
     requested: TextRenderMode,
     transform: Transform,
-    glyph_pixel_alignment_enabled: bool,
 ) -> TextRenderMode {
     if requested == TextRenderMode::LcdSubpixel
         && is_axis_aligned(transform)
-        && glyph_pixel_alignment_enabled
     {
         TextRenderMode::LcdSubpixel
     } else {

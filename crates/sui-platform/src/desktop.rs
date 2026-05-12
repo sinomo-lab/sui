@@ -604,9 +604,6 @@ impl DesktopApp {
         self.renderer.set_runtime_stem_darkening_override(
             render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
         );
-        self.renderer.set_runtime_glyph_pixel_alignment_override(
-            render_options.map(|options| options.glyph_pixel_alignment_enabled),
-        );
         let active_render_options =
             render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
         let display_capabilities_for_brightness = self
