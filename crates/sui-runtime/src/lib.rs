@@ -42,6 +42,8 @@ pub use widget::{
     SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
     WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
+use std::rc::Rc;
+use widget::MeasureScope;
 use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
 
 pub struct WindowBuilder {
@@ -1106,8 +1108,13 @@ impl WindowState {
         image_registry: Arc<ImageRegistry>,
     ) {
         if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
-            let invalidations =
-                self.run_measure_arrange_pass(text_system, font_registry, image_registry);
+            let scope_source = self.pending_invalidations.clone();
+            let invalidations = self.run_measure_arrange_pass(
+                &scope_source,
+                text_system,
+                font_registry,
+                image_registry,
+            );
             self.schedule.extend(&invalidations);
             self.pending_invalidations.extend(invalidations);
             return;
@@ -1486,6 +1493,7 @@ impl WindowState {
         if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
             let started = Instant::now();
             let pass_invalidations = self.run_measure_arrange_pass(
+                &invalidations,
                 Arc::clone(&text_system),
                 Arc::clone(&font_registry),
                 Arc::clone(&image_registry),
@@ -2295,14 +2303,62 @@ impl WindowState {
         })
     }
 
+    /// Build the measure scope for this pass from the pending invalidations.
+    ///
+    /// Measure/Text/Visibility/Ordering invalidations targeting a widget that is
+    /// in the current graph define the changed subtrees; their ancestor paths
+    /// must also re-measure. Anything that cannot be resolved to concrete widgets
+    /// (non-widget targets, widgets missing from the graph, or no relevant
+    /// invalidation at all) falls back to re-measuring everything, which is always
+    /// correct.
+    fn build_measure_scope(&self, invalidations: &[InvalidationRequest]) -> Rc<MeasureScope> {
+        let mut subtree_roots: HashSet<WidgetId> = HashSet::new();
+        let mut force_all = false;
+        for request in invalidations {
+            if !matches!(
+                request.kind,
+                InvalidationKind::Measure
+                    | InvalidationKind::Text
+                    | InvalidationKind::Visibility
+                    | InvalidationKind::Ordering
+            ) {
+                continue;
+            }
+            match request.target {
+                InvalidationTarget::Widget(widget_id) => {
+                    subtree_roots.insert(widget_id);
+                }
+                InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => {
+                    force_all = true;
+                }
+            }
+        }
+
+        if force_all || subtree_roots.is_empty() {
+            return Rc::new(MeasureScope::force_all());
+        }
+
+        let mut dirty: HashSet<WidgetId> = HashSet::new();
+        for widget_id in &subtree_roots {
+            match self.graph.path_to(*widget_id) {
+                Some(path) => dirty.extend(path),
+                None => return Rc::new(MeasureScope::force_all()),
+            }
+        }
+
+        Rc::new(MeasureScope::scoped(dirty, subtree_roots))
+    }
+
     fn run_measure_arrange_pass(
         &mut self,
+        invalidations: &[InvalidationRequest],
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) -> Vec<InvalidationRequest> {
         let constraints = self.measure_constraints();
-        let mut measure_ctx = MeasureCtx::new(
+        let scope = self.build_measure_scope(invalidations);
+        let mut measure_ctx = MeasureCtx::new_scoped(
             self.id,
             self.root.id(),
             self.root.bounds(),
@@ -2310,6 +2366,7 @@ impl WindowState {
             text_system,
             font_registry,
             image_registry,
+            scope,
         );
         let measured_root = if self.schedule.measure || self.viewport.is_none() {
             self.root.measure(&mut measure_ctx, constraints)

@@ -4389,6 +4389,59 @@ mod tests {
         println!("avg repaint boundaries: {avg_repaint_boundaries:.2}");
         println!("avg scene layers:       {avg_scene_layers:.2}");
         println!("avg dirty coverage:     {avg_dirty_coverage:.2}%");
+
+        // Per-frame-phase breakdown (Event / MeasureArrange / Paint / Renderer / ...).
+        // Shows where wall-clock time actually goes within a frame.
+        let mut phase_totals: std::collections::BTreeMap<&'static str, f64> =
+            std::collections::BTreeMap::new();
+        for sample in samples {
+            for timing in &sample.phase_timings {
+                *phase_totals.entry(timing.phase.label()).or_default() += timing.duration_ms;
+            }
+        }
+        if !phase_totals.is_empty() {
+            let mut phases = phase_totals
+                .into_iter()
+                .map(|(label, total)| (label, total / frame_count))
+                .collect::<Vec<_>>();
+            phases.sort_by(|a, b| b.1.total_cmp(&a.1));
+            println!("--- avg frame-phase breakdown ---");
+            for (label, avg_ms) in phases {
+                let pct = if avg_total_ms > 0.0 {
+                    (avg_ms / avg_total_ms) * 100.0
+                } else {
+                    0.0
+                };
+                println!("  {label:<22} {avg_ms:>8.3} ms ({pct:>5.1}%)");
+            }
+        }
+
+        // Per-widget measure/arrange/paint timings, only populated when the runtime
+        // env var SUI_PROFILE_WIDGET_TIMINGS is set. Surfaces the hottest widgets.
+        let mut widget_totals: std::collections::BTreeMap<(&'static str, &'static str), (f64, usize)> =
+            std::collections::BTreeMap::new();
+        for sample in samples {
+            for timing in &sample.widget_timings {
+                let entry = widget_totals
+                    .entry((timing.widget_name, timing.phase.label()))
+                    .or_default();
+                entry.0 += timing.duration_ms;
+                entry.1 += timing.calls;
+            }
+        }
+        if !widget_totals.is_empty() {
+            let mut widgets = widget_totals
+                .into_iter()
+                .map(|((name, phase), (total, calls))| {
+                    (name, phase, total / frame_count, calls as f64 / frame_count)
+                })
+                .collect::<Vec<_>>();
+            widgets.sort_by(|a, b| b.2.total_cmp(&a.2));
+            println!("--- top widget timings (avg/frame) ---");
+            for (name, phase, avg_ms, avg_calls) in widgets.into_iter().take(15) {
+                println!("  {name:<28} {phase:<8} {avg_ms:>8.4} ms  x{avg_calls:>6.1}");
+            }
+        }
     }
 
     #[cfg(feature = "artifacts")]

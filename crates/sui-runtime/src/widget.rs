@@ -1,6 +1,7 @@
 use std::{
-    collections::{HashMap, hash_map::DefaultHasher},
+    collections::{HashMap, HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -344,13 +345,27 @@ impl WidgetPod {
     }
 
     pub fn measure(&mut self, parent_ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        // Incremental-layout fast path. Cache invalidation is driven entirely by
+        // the measure recursion (never a separate tree walk), so it cannot diverge
+        // from how parents actually reach their children:
+        //
+        // - `force` is true when this pod sits inside a subtree rooted at a widget
+        //   that changed this frame; such a pod always re-measures (which also
+        //   preserves any side effects of measuring more than once per pass).
+        // - otherwise a pod whose own id is listed dirty re-measures, while a clean
+        //   pod measured before under identical constraints returns its cached size
+        //   without recursing.
+        let force = parent_ctx.child_force();
+        let must_remeasure = force || parent_ctx.scope().must_remeasure(self.id);
+        if !must_remeasure
+            && self.layout_state.measure_valid
+            && self.layout_state.last_constraints == constraints
+        {
+            return self.layout_state.measured_size;
+        }
+
         let origin = self.layout_state.arranged_bounds.origin;
-        let mut child_ctx = MeasureCtx::with_layout(
-            parent_ctx.window_id(),
-            self.id,
-            self.layout_state.arranged_bounds,
-            parent_ctx.layout().clone(),
-        );
+        let mut child_ctx = parent_ctx.child(self.id, self.layout_state.arranged_bounds, force);
         let started = Instant::now();
         let size = self.widget.measure(&mut child_ctx, constraints);
         record_widget_timing(
@@ -997,6 +1012,49 @@ impl EventCtx {
     }
 }
 
+/// Per-measure-pass invalidation scope, shared (via `Rc`) by every `MeasureCtx`
+/// in a single pass. Drives which pods may reuse their cached measure.
+///
+/// - `force_all`: ignore all caches and re-measure everything (bootstrap, resize,
+///   or any frame whose dirty set could not be resolved to concrete widgets).
+/// - `dirty`: pods that must recompute their own measure — the changed widgets
+///   plus every ancestor on the path from the root (an ancestor's layout can
+///   depend on a descendant's size).
+/// - `subtree_roots`: the changed widgets themselves; entering their children
+///   forces the whole subtree to re-measure, because the change is inside them.
+#[derive(Debug, Default)]
+pub(crate) struct MeasureScope {
+    force_all: bool,
+    dirty: HashSet<WidgetId>,
+    subtree_roots: HashSet<WidgetId>,
+}
+
+impl MeasureScope {
+    pub(crate) fn force_all() -> Self {
+        Self {
+            force_all: true,
+            dirty: HashSet::new(),
+            subtree_roots: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn scoped(dirty: HashSet<WidgetId>, subtree_roots: HashSet<WidgetId>) -> Self {
+        Self {
+            force_all: false,
+            dirty,
+            subtree_roots,
+        }
+    }
+
+    fn must_remeasure(&self, widget_id: WidgetId) -> bool {
+        self.force_all || self.dirty.contains(&widget_id)
+    }
+
+    fn forces_subtree(&self, widget_id: WidgetId) -> bool {
+        self.subtree_roots.contains(&widget_id)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MeasureCtx {
     window_id: WindowId,
@@ -1004,6 +1062,9 @@ pub struct MeasureCtx {
     bounds: Rect,
     layout: LayoutContext,
     invalidations: Vec<InvalidationRequest>,
+    scope: Rc<MeasureScope>,
+    /// Whether the pod this ctx belongs to is inside a forced subtree.
+    force: bool,
 }
 
 impl MeasureCtx {
@@ -1013,15 +1074,37 @@ impl MeasureCtx {
         bounds: Rect,
         layout: LayoutContext,
     ) -> Self {
+        // External / test callers get full-measure semantics by default.
+        Self::with_layout_scoped(
+            window_id,
+            widget_id,
+            bounds,
+            layout,
+            Rc::new(MeasureScope::force_all()),
+            true,
+        )
+    }
+
+    pub(crate) fn with_layout_scoped(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        bounds: Rect,
+        layout: LayoutContext,
+        scope: Rc<MeasureScope>,
+        force: bool,
+    ) -> Self {
         Self {
             window_id,
             widget_id,
             bounds,
             layout,
             invalidations: Vec::new(),
+            scope,
+            force,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn new(
         window_id: WindowId,
         widget_id: WidgetId,
@@ -1036,6 +1119,50 @@ impl MeasureCtx {
             widget_id,
             bounds,
             LayoutContext::new(dpi_info, text_system, font_registry, image_registry),
+        )
+    }
+
+    pub(crate) fn new_scoped(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        bounds: Rect,
+        dpi_info: DpiInfo,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
+        scope: Rc<MeasureScope>,
+    ) -> Self {
+        Self::with_layout_scoped(
+            window_id,
+            widget_id,
+            bounds,
+            LayoutContext::new(dpi_info, text_system, font_registry, image_registry),
+            scope,
+            false,
+        )
+    }
+
+    pub(crate) fn scope(&self) -> &MeasureScope {
+        &self.scope
+    }
+
+    /// Whether the *children* of this pod must be force-remeasured: either this
+    /// pod is already inside a forced subtree, or this pod is itself a changed
+    /// widget whose subtree must be rebuilt.
+    pub(crate) fn child_force(&self) -> bool {
+        self.force || self.scope.forces_subtree(self.widget_id)
+    }
+
+    /// Build the measure ctx for a child pod, carrying the shared scope and the
+    /// child's resolved force flag.
+    pub(crate) fn child(&self, widget_id: WidgetId, bounds: Rect, force: bool) -> Self {
+        Self::with_layout_scoped(
+            self.window_id,
+            widget_id,
+            bounds,
+            self.layout.clone(),
+            Rc::clone(&self.scope),
+            force,
         )
     }
 
@@ -1598,9 +1725,13 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
-        WakeRequest, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+        ArrangeCtx, EventCtx, EventPhase, MeasureCtx, MeasureScope, PaintCtx, SemanticsCtx,
+        SingleChild, WakeRequest, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor,
+        WidgetPodVisitor,
     };
+    use std::cell::Cell;
+    use std::collections::HashSet;
+    use std::rc::Rc;
     use sui_core::{
         Color, DpiInfo, ImageHandle, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole,
         Size, Vector, WidgetId, WindowId,
@@ -1764,6 +1895,98 @@ mod tests {
             vec![WakeRequest::RequestAnimationFrame {
                 target: WidgetId::new(9)
             }]
+        );
+    }
+
+    struct CountingChild {
+        measures: Rc<Cell<u32>>,
+    }
+
+    impl Widget for CountingChild {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> sui_core::Size {
+            self.measures.set(self.measures.get() + 1);
+            constraints.clamp(sui_core::Size::new(10.0, 10.0))
+        }
+    }
+
+    struct PassthroughParent {
+        child: WidgetPod,
+    }
+
+    impl Widget for PassthroughParent {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> sui_core::Size {
+            self.child.measure(ctx, constraints)
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            visitor.visit(&self.child);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            visitor.visit(&mut self.child);
+        }
+    }
+
+    fn scoped_measure_ctx(root_id: WidgetId, scope: MeasureScope) -> MeasureCtx {
+        MeasureCtx::new_scoped(
+            WindowId::new(1),
+            root_id,
+            Rect::ZERO,
+            DpiInfo::default(),
+            Arc::new(TextSystem::new()),
+            Arc::new(FontRegistry::new()),
+            Arc::new(ImageRegistry::new()),
+            Rc::new(scope),
+        )
+    }
+
+    #[test]
+    fn measure_cache_skips_clean_subtrees_and_forces_changed_ones() {
+        let measures = Rc::new(Cell::new(0u32));
+        let child = WidgetPod::new(CountingChild {
+            measures: Rc::clone(&measures),
+        });
+        let mut parent = WidgetPod::new(PassthroughParent { child });
+        let parent_id = parent.id();
+        let outside = WidgetId::new(u64::MAX);
+        let constraints = Constraints::tight(sui_core::Size::new(10.0, 10.0));
+
+        // 1. First pass (force_all) measures everything, populating caches.
+        let mut ctx = scoped_measure_ctx(outside, MeasureScope::force_all());
+        parent.measure(&mut ctx, constraints);
+        assert_eq!(measures.get(), 1, "initial pass must measure the child");
+
+        // 2. A pass where nothing is dirty short-circuits the clean parent before
+        //    it ever recurses, so the child is not re-measured.
+        let mut ctx = scoped_measure_ctx(outside, MeasureScope::scoped(HashSet::new(), HashSet::new()));
+        parent.measure(&mut ctx, constraints);
+        assert_eq!(measures.get(), 1, "clean subtree must be skipped");
+
+        // 3. Re-measuring only the parent (ancestor) without marking it a subtree
+        //    root recomputes the parent but lets the clean child short-circuit.
+        let mut dirty = HashSet::new();
+        dirty.insert(parent_id);
+        let mut ctx = scoped_measure_ctx(outside, MeasureScope::scoped(dirty, HashSet::new()));
+        parent.measure(&mut ctx, constraints);
+        assert_eq!(
+            measures.get(),
+            1,
+            "ancestor-only re-measure must not force the subtree"
+        );
+
+        // 4. Marking the parent a subtree root forces its whole subtree to
+        //    re-measure even though the child was never individually invalidated.
+        //    This is the case that the popover/stack-surface regression needed.
+        let mut dirty = HashSet::new();
+        dirty.insert(parent_id);
+        let mut roots = HashSet::new();
+        roots.insert(parent_id);
+        let mut ctx = scoped_measure_ctx(outside, MeasureScope::scoped(dirty, roots));
+        parent.measure(&mut ctx, constraints);
+        assert_eq!(
+            measures.get(),
+            2,
+            "a changed widget must force its descendants to re-measure"
         );
     }
 
