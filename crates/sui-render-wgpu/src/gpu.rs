@@ -25,7 +25,8 @@ pub(crate) struct SharedRenderer {
     pub(crate) image_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) analytic_path_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) output_transform_bind_group_layout: wgpu::BindGroupLayout,
-    pub(crate) image_sampler: wgpu::Sampler,
+    pub(crate) image_linear_sampler: wgpu::Sampler,
+    pub(crate) image_nearest_sampler: wgpu::Sampler,
     pub(crate) text_atlas_sampler: wgpu::Sampler,
     pub(crate) text_quad_buffer: wgpu::Buffer,
     pub(crate) dual_source_blending_enabled: bool,
@@ -374,9 +375,11 @@ pub(crate) enum PipelineKind {
 }
 
 pub(crate) struct CachedImageTexture {
-    pub(crate) _texture: wgpu::Texture,
+    pub(crate) texture: wgpu::Texture,
     pub(crate) _view: wgpu::TextureView,
-    pub(crate) bind_group: wgpu::BindGroup,
+    pub(crate) linear_bind_group: wgpu::BindGroup,
+    pub(crate) nearest_bind_group: wgpu::BindGroup,
+    pub(crate) image: sui_scene::RegisteredImage,
 }
 
 pub(crate) struct CachedTextAtlasTexture {

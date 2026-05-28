@@ -10,14 +10,14 @@ use std::{
 use crate::diagnostics::{WidgetTimingPhase, record_widget_timing};
 
 use sui_core::{
-    AsyncWakeToken, Color, DpiInfo, Event, InvalidationKind, InvalidationRequest,
+    AsyncWakeToken, Color, DpiInfo, Event, ImageHandle, InvalidationKind, InvalidationRequest,
     InvalidationTarget, Path, Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector,
     WidgetId, WindowId,
 };
 use sui_layout::{Constraints, LayoutContext};
 use sui_scene::{
-    Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, Scene, SceneCommand,
-    SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle, WidgetShader,
+    Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, RegisteredImage,
+    Scene, SceneCommand, SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle, WidgetShader,
 };
 use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
@@ -28,6 +28,7 @@ use web_time::Instant;
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TIMER_TOKEN: AtomicU64 = AtomicU64::new(1);
 static NEXT_ASYNC_WAKE_TOKEN: AtomicU64 = AtomicU64::new(1);
+const WIDGET_IMAGE_HANDLE_NAMESPACE: u64 = 1 << 63;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventPhase {
@@ -403,7 +404,7 @@ impl WidgetPod {
             started.elapsed(),
         );
 
-        let (scene, widget_paint_bounds, invalidations, ime_composition_rect) =
+        let (scene, images, widget_paint_bounds, invalidations, ime_composition_rect) =
             child_ctx.into_parts();
         let paint_bounds = scene
             .paint_bounds()
@@ -415,6 +416,7 @@ impl WidgetPod {
             parent_ctx.append_scene(scene);
         }
         parent_ctx.extend_widget_paint_bounds(widget_paint_bounds);
+        parent_ctx.extend_images(images);
         parent_ctx.extend_invalidations(invalidations);
         parent_ctx.extend_ime_composition_rect(ime_composition_rect);
     }
@@ -1181,6 +1183,7 @@ pub struct PaintCtx {
     text_system: Arc<TextSystem>,
     font_registry: Arc<FontRegistry>,
     scene: Scene,
+    images: Vec<(ImageHandle, RegisteredImage)>,
     widget_paint_bounds: HashMap<WidgetId, Rect>,
     invalidations: Vec<InvalidationRequest>,
     ime_composition_rect: Option<Rect>,
@@ -1205,6 +1208,7 @@ impl PaintCtx {
             text_system,
             font_registry,
             scene: Scene::new(),
+            images: Vec::new(),
             widget_paint_bounds: HashMap::new(),
             invalidations: Vec::new(),
             ime_composition_rect: None,
@@ -1347,6 +1351,26 @@ impl PaintCtx {
         self.scene.push(SceneCommand::DrawImage { rect, source });
     }
 
+    pub fn draw_image_quad(&mut self, points: [Point; 4], image: ImageHandle) {
+        self.draw_image_quad_source(points, ImageSource::new(image));
+    }
+
+    pub fn draw_image_quad_source(&mut self, points: [Point; 4], source: ImageSource) {
+        self.scene
+            .push(SceneCommand::DrawImageQuad { points, source });
+    }
+
+    pub fn widget_image_handle(&self, slot: u64) -> ImageHandle {
+        let mut hasher = DefaultHasher::new();
+        self.widget_id.hash(&mut hasher);
+        slot.hash(&mut hasher);
+        ImageHandle::new(WIDGET_IMAGE_HANDLE_NAMESPACE | (hasher.finish() >> 1))
+    }
+
+    pub fn register_image(&mut self, handle: ImageHandle, image: RegisteredImage) {
+        self.images.push((handle, image));
+    }
+
     pub fn draw_shader_rect(&mut self, rect: Rect, shader: WidgetShader) {
         self.scene
             .push(SceneCommand::DrawShaderRect { rect, shader });
@@ -1445,6 +1469,10 @@ impl PaintCtx {
         self.widget_paint_bounds.extend(widget_paint_bounds);
     }
 
+    pub(crate) fn extend_images(&mut self, images: Vec<(ImageHandle, RegisteredImage)>) {
+        self.images.extend(images);
+    }
+
     pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {
         self.invalidations.extend(invalidations);
     }
@@ -1459,12 +1487,14 @@ impl PaintCtx {
         self,
     ) -> (
         Scene,
+        Vec<(ImageHandle, RegisteredImage)>,
         HashMap<WidgetId, Rect>,
         Vec<InvalidationRequest>,
         Option<Rect>,
     ) {
         (
             self.scene,
+            self.images,
             self.widget_paint_bounds,
             self.invalidations,
             self.ime_composition_rect,

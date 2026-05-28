@@ -628,7 +628,7 @@ fn command_kind(command: &SceneCommand) -> &'static str {
         SceneCommand::DrawText(_) => "DrawText",
         SceneCommand::DrawShapedText(_) => "DrawShapedText",
         SceneCommand::DrawShapedTextWindow(_) => "DrawShapedTextWindow",
-        SceneCommand::DrawImage { .. } => "DrawImage",
+        SceneCommand::DrawImage { .. } | SceneCommand::DrawImageQuad { .. } => "DrawImage",
         SceneCommand::DrawShaderRect { .. } => "DrawShaderRect",
         SceneCommand::PushClip { .. } => "PushClip",
         SceneCommand::PushClipPath { .. } => "PushClipPath",

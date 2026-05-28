@@ -25,8 +25,8 @@ use sui_core::{
     Size, Transform, Vector, WindowId,
 };
 use sui_scene::{
-    Brush, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame, SceneLayer,
-    SceneLayerId, SceneLayerUpdateKind, StrokeStyle,
+    Brush, ImageSampling, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame,
+    SceneLayer, SceneLayerId, SceneLayerUpdateKind, StrokeStyle,
 };
 use sui_text::{
     FontRegistry, ResolvedTextFace, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout,
@@ -1497,10 +1497,17 @@ impl WgpuRenderer {
                     },
                 ],
             });
-        let image_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("SUI image sampler"),
+        let image_linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SUI linear image sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let image_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SUI nearest image sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
@@ -1591,7 +1598,8 @@ impl WgpuRenderer {
             image_bind_group_layout,
             analytic_path_bind_group_layout,
             output_transform_bind_group_layout,
-            image_sampler,
+            image_linear_sampler,
+            image_nearest_sampler,
             text_atlas_sampler,
             text_quad_buffer,
             dual_source_blending_enabled,
@@ -1651,10 +1659,17 @@ impl WgpuRenderer {
                     },
                 ],
             });
-        let image_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("SUI image sampler"),
+        let image_linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SUI linear image sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let image_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SUI nearest image sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
@@ -1745,7 +1760,8 @@ impl WgpuRenderer {
             image_bind_group_layout,
             analytic_path_bind_group_layout,
             output_transform_bind_group_layout,
-            image_sampler,
+            image_linear_sampler,
+            image_nearest_sampler,
             text_atlas_sampler,
             text_quad_buffer,
             dual_source_blending_enabled,
@@ -2257,13 +2273,13 @@ impl WgpuRenderer {
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
         let mut analytic_paths = HashMap::new();
-        let mut image_handles = HashSet::new();
+        let mut image_resources = HashSet::new();
         let mut uses_text_atlas = false;
         let resource_collection_started = diagnostics_enabled.then(|| Instant::now());
         for fragment in &submission.fragments {
             let RetainedFrameFragment::Transient(draw_ops) = fragment;
             uses_text_atlas |=
-                collect_draw_op_resources(draw_ops, &mut analytic_paths, &mut image_handles);
+                collect_draw_op_resources(draw_ops, &mut analytic_paths, &mut image_resources);
         }
         let resource_collection_time_us = resource_collection_started
             .map(|started| started.elapsed().as_micros() as u64)
@@ -2278,11 +2294,14 @@ impl WgpuRenderer {
 
         let image_bind_group_started = diagnostics_enabled.then(|| Instant::now());
         let mut image_bind_groups = HashMap::new();
-        for handle in image_handles {
+        for (handle, sampling) in image_resources {
             let image = frame.image_registry.get(handle).ok_or_else(|| {
                 Error::new(format!("image handle {} is not registered", handle.get()))
             })?;
-            image_bind_groups.insert(handle, self.ensure_image_bind_group(handle, image)?);
+            image_bind_groups.insert(
+                (handle, sampling),
+                self.ensure_image_bind_group(handle, sampling, image)?,
+            );
         }
         let image_bind_group_time_us = image_bind_group_started
             .map(|started| started.elapsed().as_micros() as u64)
@@ -2509,13 +2528,62 @@ impl WgpuRenderer {
         Ok(frame_stats)
     }
 
+    fn registered_image_data_identity_eq(left: &RegisteredImage, right: &RegisteredImage) -> bool {
+        left.width() == right.width()
+            && left.height() == right.height()
+            && left.format() == right.format()
+            && left.bytes().len() == right.bytes().len()
+            && std::ptr::addr_eq(left.bytes().as_ptr(), right.bytes().as_ptr())
+    }
+
+    fn write_registered_image_texture(
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        image: &RegisteredImage,
+    ) {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            image.bytes(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(image.width() * 4),
+                rows_per_image: Some(image.height()),
+            },
+            wgpu::Extent3d {
+                width: image.width(),
+                height: image.height(),
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
     fn ensure_image_bind_group(
         &mut self,
         handle: ImageHandle,
+        sampling: ImageSampling,
         image: &RegisteredImage,
     ) -> Result<wgpu::BindGroup> {
-        if let Some(cached) = self.image_cache.get(&handle) {
-            return Ok(cached.bind_group.clone());
+        if let Some(cached) = self.image_cache.get_mut(&handle) {
+            if Self::registered_image_data_identity_eq(&cached.image, image) {
+                return Ok(Self::image_bind_group_for_sampling(cached, sampling));
+            }
+            if cached.image.width() == image.width()
+                && cached.image.height() == image.height()
+                && cached.image.format() == image.format()
+            {
+                let shared = self
+                    .shared
+                    .as_ref()
+                    .expect("renderer shared state initialized");
+                Self::write_registered_image_texture(&shared.queue, &cached.texture, image);
+                cached.image = image.clone();
+                return Ok(Self::image_bind_group_for_sampling(cached, sampling));
+            }
         }
 
         let shared = self
@@ -2539,51 +2607,60 @@ impl WgpuRenderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        shared.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            image.bytes(),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(image.width() * 4),
-                rows_per_image: Some(image.height()),
-            },
-            wgpu::Extent3d {
-                width: image.width(),
-                height: image.height(),
-                depth_or_array_layers: 1,
+        Self::write_registered_image_texture(&shared.queue, &texture, image);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let linear_bind_group =
+            Self::create_image_bind_group(shared, &view, &shared.image_linear_sampler);
+        let nearest_bind_group =
+            Self::create_image_bind_group(shared, &view, &shared.image_nearest_sampler);
+        let bind_group = match sampling {
+            ImageSampling::Nearest => nearest_bind_group.clone(),
+            ImageSampling::Linear => linear_bind_group.clone(),
+        };
+
+        self.image_cache.insert(
+            handle,
+            CachedImageTexture {
+                texture,
+                _view: view,
+                linear_bind_group,
+                nearest_bind_group,
+                image: image.clone(),
             },
         );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
+
+        Ok(bind_group)
+    }
+
+    fn image_bind_group_for_sampling(
+        cached: &CachedImageTexture,
+        sampling: ImageSampling,
+    ) -> wgpu::BindGroup {
+        match sampling {
+            ImageSampling::Nearest => cached.nearest_bind_group.clone(),
+            ImageSampling::Linear => cached.linear_bind_group.clone(),
+        }
+    }
+
+    fn create_image_bind_group(
+        shared: &SharedRenderer,
+        view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
+        shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("SUI image bind group"),
             layout: &shared.image_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&shared.image_sampler),
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: wgpu::BindingResource::TextureView(view),
                 },
             ],
-        });
-
-        self.image_cache.insert(
-            handle,
-            CachedImageTexture {
-                _texture: texture,
-                _view: view,
-                bind_group: bind_group.clone(),
-            },
-        );
-
-        Ok(bind_group)
+        })
     }
 
     fn ensure_text_atlas_bind_group(
@@ -4007,8 +4084,8 @@ mod tests {
         WidgetId, WindowId,
     };
     use sui_scene::{
-        ImageRegistry, ImageSource, LayerCompositionMode, RegisteredImage, Scene, SceneCommand,
-        SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
+        ImageRegistry, ImageSampling, ImageSource, LayerCompositionMode, RegisteredImage, Scene,
+        SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
         SceneLayerUpdateKind, StrokeStyle, WidgetShader,
     };
     use sui_text::{
@@ -5762,6 +5839,7 @@ mod tests {
                 draws: vec![CachedDrawBatch {
                     kind: PreparedDrawKind::Image {
                         handle: ImageHandle::new(99),
+                        sampling: ImageSampling::Linear,
                     },
                     clip_rect: None,
                     vertices: PreparedVertices { start: 0, len: 6 },
@@ -5797,6 +5875,7 @@ mod tests {
                 draws: vec![CachedDrawBatch {
                     kind: PreparedDrawKind::Image {
                         handle: ImageHandle::new(100),
+                        sampling: ImageSampling::Linear,
                     },
                     clip_rect: Some(Rect::new(70.0, 70.0, 20.0, 20.0)),
                     vertices: PreparedVertices { start: 0, len: 6 },
@@ -5855,6 +5934,7 @@ mod tests {
                     draws: vec![PreparedDrawBatch {
                         kind: PreparedDrawKind::Image {
                             handle: ImageHandle::new(1),
+                            sampling: ImageSampling::Linear,
                         },
                         clip_rect: None,
                         vertices: PreparedVertices { start: 0, len: 3 },
@@ -10601,8 +10681,60 @@ mod tests {
 
         assert_eq!(ops.draw_ops.len(), 1);
         let op = &ops.draw_ops[0];
-        assert!(matches!(op.kind, DrawOpKind::Image { handle: value } if value == handle));
+        assert!(
+            matches!(op.kind, DrawOpKind::Image { handle: value, sampling: ImageSampling::Linear } if value == handle)
+        );
         assert_eq!(op.vertices.len, 6);
+    }
+
+    #[test]
+    fn retained_compositor_preserves_transformed_image_quad() {
+        let handle = ImageHandle::new(24);
+        let mut images = ImageRegistry::new();
+        images.insert(
+            handle,
+            RegisteredImage::from_rgba8(
+                2,
+                2,
+                vec![
+                    255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+                ],
+            )
+            .unwrap(),
+        );
+
+        let rect = Rect::new(4.0, 6.0, 32.0, 24.0);
+        let transform = Transform::translation(40.0, 10.0).then(Transform::rotation(0.35));
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::PushTransform { transform });
+        scene.push(SceneCommand::DrawImage {
+            rect,
+            source: ImageSource::new(handle),
+        });
+        scene.push(SceneCommand::PopTransform);
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let vertices = build_vertices(
+            &SceneFrame {
+                window_id: WindowId::new(7),
+                viewport: Size::new(128.0, 96.0),
+                surface_size: Size::new(128.0, 96.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(images),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+            },
+            &mut text_engine,
+        )
+        .unwrap();
+
+        let expected = transform.transform_point(rect.origin);
+        let expected = to_ndc(expected.x, expected.y, Size::new(128.0, 96.0));
+        assert!((vertices[0].position[0] - expected[0]).abs() < 0.001);
+        assert!((vertices[0].position[1] - expected[1]).abs() < 0.001);
     }
 
     #[test]

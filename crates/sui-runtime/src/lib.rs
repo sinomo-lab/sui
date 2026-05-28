@@ -1592,32 +1592,38 @@ impl WindowState {
                 None
             };
 
-            let (scene, paint_bounds_by_widget, paint_invalidations, ime_composition_rect) =
-                if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
-                    self.paint_full_scene(
-                        dpi_info,
-                        Arc::clone(&text_system),
-                        Arc::clone(&font_registry),
-                    )
-                } else if repaint_layers.is_empty() {
-                    (
-                        self.last_frame
-                            .as_ref()
-                            .map(|frame| frame.scene.clone())
-                            .unwrap_or_default(),
-                        self.last_paint_bounds_by_widget.clone(),
-                        Vec::new(),
-                        baseline_ime_composition_rect,
-                    )
-                } else {
-                    self.repaint_dirty_layers(
-                        dpi_info,
-                        &repaint_layers,
-                        baseline_ime_composition_rect,
-                        Arc::clone(&text_system),
-                        Arc::clone(&font_registry),
-                    )
-                };
+            let (
+                scene,
+                paint_images,
+                paint_bounds_by_widget,
+                paint_invalidations,
+                ime_composition_rect,
+            ) = if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
+                self.paint_full_scene(
+                    dpi_info,
+                    Arc::clone(&text_system),
+                    Arc::clone(&font_registry),
+                )
+            } else if repaint_layers.is_empty() {
+                (
+                    self.last_frame
+                        .as_ref()
+                        .map(|frame| frame.scene.clone())
+                        .unwrap_or_default(),
+                    Vec::new(),
+                    self.last_paint_bounds_by_widget.clone(),
+                    Vec::new(),
+                    baseline_ime_composition_rect,
+                )
+            } else {
+                self.repaint_dirty_layers(
+                    dpi_info,
+                    &repaint_layers,
+                    baseline_ime_composition_rect,
+                    Arc::clone(&text_system),
+                    Arc::clone(&font_registry),
+                )
+            };
             let mut scene = scene;
             for translation in &composition_only_transforms {
                 let _ = scene.translate_layer(translation.widget_id, translation.delta);
@@ -1643,6 +1649,8 @@ impl WindowState {
                     .map(|translation| translation.widget_id)
                     .collect::<Vec<_>>(),
             );
+            let frame_image_registry =
+                self.frame_image_registry(Arc::clone(&image_registry), paint_images);
             self.last_frame = Some(SceneFrame {
                 window_id: self.id,
                 viewport,
@@ -1652,7 +1660,7 @@ impl WindowState {
                 layer_updates: layer_updates.clone(),
                 scene,
                 font_registry: Arc::clone(&font_registry),
-                image_registry: Arc::clone(&image_registry),
+                image_registry: frame_image_registry,
                 text_layout_registry: text_system.text_layout_registry(),
             });
             if diagnostics_enabled && repainted {
@@ -1703,7 +1711,7 @@ impl WindowState {
             )
         };
         frame.font_registry = font_registry;
-        frame.image_registry = image_registry;
+        frame.image_registry = self.frame_image_registry(image_registry, Vec::new());
 
         if diagnostics_enabled {
             let layout_cache = text_system.layout_cache_snapshot();
@@ -1735,6 +1743,25 @@ impl WindowState {
         }
     }
 
+    fn frame_image_registry(
+        &self,
+        base: Arc<ImageRegistry>,
+        paint_images: Vec<(ImageHandle, RegisteredImage)>,
+    ) -> Arc<ImageRegistry> {
+        let mut registry = self
+            .last_frame
+            .as_ref()
+            .map(|frame| frame.image_registry.as_ref().clone())
+            .unwrap_or_else(|| base.as_ref().clone());
+        for (handle, image) in base.iter() {
+            registry.insert(handle, image.clone());
+        }
+        for (handle, image) in paint_images {
+            registry.insert(handle, image);
+        }
+        Arc::new(registry)
+    }
+
     fn paint_full_scene(
         &mut self,
         dpi_info: DpiInfo,
@@ -1742,6 +1769,7 @@ impl WindowState {
         font_registry: Arc<FontRegistry>,
     ) -> (
         Scene,
+        Vec<(ImageHandle, RegisteredImage)>,
         HashMap<WidgetId, Rect>,
         Vec<InvalidationRequest>,
         Option<Rect>,
@@ -1770,6 +1798,7 @@ impl WindowState {
         font_registry: Arc<FontRegistry>,
     ) -> (
         Scene,
+        Vec<(ImageHandle, RegisteredImage)>,
         HashMap<WidgetId, Rect>,
         Vec<InvalidationRequest>,
         Option<Rect>,
@@ -1779,6 +1808,7 @@ impl WindowState {
             .as_ref()
             .map(|frame| frame.scene.clone())
             .unwrap_or_default();
+        let mut images = Vec::new();
         let mut invalidations = Vec::new();
         let mut paint_bounds_by_widget = self.last_paint_bounds_by_widget.clone();
         let mut ime_composition_rect = baseline_ime_composition_rect;
@@ -1808,8 +1838,13 @@ impl WindowState {
                 return self.paint_full_scene(dpi_info, text_system, font_registry);
             }
 
-            let (layer_scene, layer_paint_bounds, layer_invalidations, layer_ime_composition_rect) =
-                paint_ctx.into_parts();
+            let (
+                layer_scene,
+                layer_images,
+                layer_paint_bounds,
+                layer_invalidations,
+                layer_ime_composition_rect,
+            ) = paint_ctx.into_parts();
             let Some(descriptor) = self.root.layer_descriptor_for(widget_id, &layer_scene) else {
                 return self.paint_full_scene(dpi_info, text_system, font_registry);
             };
@@ -1822,6 +1857,7 @@ impl WindowState {
                 return self.paint_full_scene(dpi_info, text_system, font_registry);
             }
 
+            images.extend(layer_images);
             paint_bounds_by_widget.extend(layer_paint_bounds);
             invalidations.extend(layer_invalidations);
             if layer_ime_composition_rect.is_some() {
@@ -1831,6 +1867,7 @@ impl WindowState {
 
         (
             scene,
+            images,
             paint_bounds_by_widget,
             invalidations,
             ime_composition_rect,

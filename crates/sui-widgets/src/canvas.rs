@@ -5,14 +5,12 @@ use sui_core::{
 };
 use sui_layout::Constraints;
 use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
-use sui_scene::StrokeStyle;
+use sui_scene::{ImageSampling, ImageSource, RegisteredImage, StrokeStyle};
 
 use crate::DefaultTheme;
 
-const PIXEL_CANVAS_TARGET_TILE_SCREEN_SIZE: f32 = 3.0;
-const PIXEL_CANVAS_MAX_RENDER_TILES: usize = 20_000;
-const PIXEL_CANVAS_EXACT_PIXEL_ZOOM: f32 = 4.0;
 const PIXEL_GRID_ZOOM: f32 = 6.0;
+const PIXEL_CANVAS_NEAREST_SAMPLING_ZOOM: f32 = 1.0;
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -644,42 +642,12 @@ impl PixelCanvas {
         self.set_pixel(x as usize, y as usize, self.brush)
     }
 
-    fn average_pixel_color(
-        &self,
-        start_x: usize,
-        start_y: usize,
-        end_x: usize,
-        end_y: usize,
-    ) -> PixelColor {
-        let mut alpha_sum = 0_u64;
-        let mut red_sum = 0_u64;
-        let mut green_sum = 0_u64;
-        let mut blue_sum = 0_u64;
-        let mut count = 0_u64;
-
-        for y in start_y..end_y {
-            let row = y * self.width;
-            for x in start_x..end_x {
-                let pixel = self.pixels[row + x];
-                let alpha = pixel.alpha as u64;
-                alpha_sum += alpha;
-                red_sum += pixel.red as u64 * alpha;
-                green_sum += pixel.green as u64 * alpha;
-                blue_sum += pixel.blue as u64 * alpha;
-                count += 1;
-            }
+    fn image_data(&self) -> Vec<u8> {
+        let mut data = Vec::with_capacity(self.pixels.len() * 4);
+        for pixel in &self.pixels {
+            data.extend_from_slice(&[pixel.red, pixel.green, pixel.blue, pixel.alpha]);
         }
-
-        if alpha_sum == 0 || count == 0 {
-            return PixelColor::TRANSPARENT;
-        }
-
-        PixelColor {
-            red: ((red_sum + (alpha_sum / 2)) / alpha_sum).min(255) as u8,
-            green: ((green_sum + (alpha_sum / 2)) / alpha_sum).min(255) as u8,
-            blue: ((blue_sum + (alpha_sum / 2)) / alpha_sum).min(255) as u8,
-            alpha: ((alpha_sum + (count / 2)) / count).min(255) as u8,
-        }
+        data
     }
 
     fn request_interaction_update(ctx: &mut EventCtx) {
@@ -854,42 +822,30 @@ impl Widget for PixelCanvas {
             transform,
             Color::rgba(0.93, 0.94, 0.96, 1.0),
         );
-        if let Some(range) = pixel_render_range(
-            self.viewport,
-            ctx.bounds(),
-            self.document_origin(),
-            self.width,
-            self.height,
-        ) {
-            let tile_start_x = range.start_x - (range.start_x % range.step);
-            let tile_start_y = range.start_y - (range.start_y % range.step);
-            for y in (tile_start_y..range.end_y).step_by(range.step) {
-                for x in (tile_start_x..range.end_x).step_by(range.step) {
-                    let tile_end_x = (x + range.step).min(self.width);
-                    let tile_end_y = (y + range.step).min(self.height);
-                    let color = if range.step == 1 {
-                        self.pixels[y * self.width + x]
-                    } else {
-                        self.average_pixel_color(x, y, tile_end_x, tile_end_y)
-                    };
-                    if color.alpha > 0 {
-                        fill_transformed_rect(
-                            ctx,
-                            Rect::new(
-                                x as f32,
-                                y as f32,
-                                (tile_end_x - x) as f32,
-                                (tile_end_y - y) as f32,
-                            ),
-                            transform,
-                            color.to_color(),
-                        );
-                    }
-                }
-            }
-            if self.viewport.zoom >= PIXEL_GRID_ZOOM && range.step == 1 {
-                paint_pixel_grid(ctx, range, transform);
-            }
+        let image_handle = ctx.widget_image_handle(0);
+        let image =
+            RegisteredImage::from_rgba8(self.width as u32, self.height as u32, self.image_data())
+                .expect("pixel canvas image data should match its dimensions");
+        ctx.register_image(image_handle, image);
+        let sampling = if self.viewport.zoom >= PIXEL_CANVAS_NEAREST_SAMPLING_ZOOM {
+            ImageSampling::Nearest
+        } else {
+            ImageSampling::Linear
+        };
+        ctx.draw_image_quad_source(
+            transformed_rect_points(image_bounds, transform),
+            ImageSource::new(image_handle).with_sampling(sampling),
+        );
+        if self.viewport.zoom >= PIXEL_GRID_ZOOM
+            && let Some(range) = pixel_visible_range(
+                self.viewport,
+                ctx.bounds(),
+                self.document_origin(),
+                self.width,
+                self.height,
+            )
+        {
+            paint_pixel_grid(ctx, range, transform);
         }
         ctx.stroke(
             transformed_rect_path(image_bounds, transform),
@@ -1114,14 +1070,24 @@ fn transform_path(path: &Path, transform: Transform) -> Path {
 }
 
 fn transformed_rect_path(rect: Rect, transform: Transform) -> Path {
+    let points = transformed_rect_points(rect, transform);
     let mut builder = PathBuilder::new();
     builder
-        .move_to(transform.transform_point(rect.origin))
-        .line_to(transform.transform_point(Point::new(rect.max_x(), rect.y())))
-        .line_to(transform.transform_point(Point::new(rect.max_x(), rect.max_y())))
-        .line_to(transform.transform_point(Point::new(rect.x(), rect.max_y())))
+        .move_to(points[0])
+        .line_to(points[1])
+        .line_to(points[3])
+        .line_to(points[2])
         .close();
     builder.build()
+}
+
+fn transformed_rect_points(rect: Rect, transform: Transform) -> [Point; 4] {
+    [
+        transform.transform_point(rect.origin),
+        transform.transform_point(Point::new(rect.max_x(), rect.y())),
+        transform.transform_point(Point::new(rect.x(), rect.max_y())),
+        transform.transform_point(Point::new(rect.max_x(), rect.max_y())),
+    ]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1130,10 +1096,9 @@ struct PixelRenderRange {
     end_x: usize,
     start_y: usize,
     end_y: usize,
-    step: usize,
 }
 
-fn pixel_render_range(
+fn pixel_visible_range(
     viewport: CanvasViewport,
     bounds: Rect,
     document_origin: Point,
@@ -1150,25 +1115,11 @@ fn pixel_render_range(
         return None;
     }
 
-    let visible_pixels = (end_x - start_x) * (end_y - start_y);
-    let screen_lod_step = if viewport.zoom >= PIXEL_CANVAS_EXACT_PIXEL_ZOOM {
-        1
-    } else {
-        (PIXEL_CANVAS_TARGET_TILE_SCREEN_SIZE / viewport.zoom.max(0.01))
-            .ceil()
-            .max(1.0) as usize
-    };
-    let budget_lod_step = ((visible_pixels as f32 / PIXEL_CANVAS_MAX_RENDER_TILES as f32)
-        .sqrt()
-        .ceil()
-        .max(1.0)) as usize;
-
     Some(PixelRenderRange {
         start_x,
         end_x,
         start_y,
         end_y,
-        step: screen_lod_step.max(budget_lod_step),
     })
 }
 
@@ -1199,16 +1150,13 @@ fn channel_to_u8(channel: f32) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Canvas, CanvasShape, CanvasStroke, CanvasViewport, PIXEL_CANVAS_MAX_RENDER_TILES,
-        PixelCanvas,
-    };
+    use super::{Canvas, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas};
     use sui_core::{
         Color, Event, Modifiers, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, ScrollDelta, SemanticsRole, Size, Vector,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
-    use sui_scene::{Brush, SceneCommand};
+    use sui_scene::{ImageSampling, SceneCommand};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -1330,27 +1278,29 @@ mod tests {
         )?;
         let output = runtime.render(window_id)?;
 
-        let mut painted = false;
+        let mut image_handle = None;
         output.frame.scene.visit_commands(&mut |command| {
-            if matches!(
-                command,
-                SceneCommand::FillPath {
-                    brush: Brush::Solid(color),
-                    ..
-                } | SceneCommand::FillRect {
-                    brush: Brush::Solid(color),
-                    ..
-                } if color.blue > 0.8
-            ) {
-                painted = true;
+            if let SceneCommand::DrawImage { source, .. }
+            | SceneCommand::DrawImageQuad { source, .. } = command
+            {
+                image_handle = Some(source.image);
             }
         });
+        let image = output
+            .frame
+            .image_registry
+            .get(image_handle.expect("pixel canvas should draw an image"))
+            .expect("pixel canvas image should be registered");
+        let painted = image
+            .bytes()
+            .chunks_exact(4)
+            .any(|pixel| pixel[2] > 200 && pixel[3] == 255);
         assert!(painted);
         Ok(())
     }
 
     #[test]
-    fn pixel_canvas_uses_lod_for_large_images_when_zoomed_out() {
+    fn pixel_canvas_draws_one_image_instead_of_per_pixel_rects() {
         let output = render(
             PixelCanvas::from_fn("Large paint", 1920, 1080, |x, y| {
                 Color::rgba(x as f32 / 1919.0, y as f32 / 1079.0, 0.5, 1.0)
@@ -1358,35 +1308,58 @@ mod tests {
             .viewport(CanvasViewport::new().zoom(0.28)),
         );
 
-        let mut paint_fill_count = 0;
+        let mut image_handle = None;
+        let mut image_command_count = 0;
+        let mut fill_command_count = 0;
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::DrawImage { source, .. }
+                | SceneCommand::DrawImageQuad { source, .. } => {
+                    image_handle = Some(source.image);
+                    image_command_count += 1;
+                }
+                SceneCommand::FillPath { .. } | SceneCommand::FillRect { .. } => {
+                    fill_command_count += 1;
+                }
+                _ => {}
+            });
+
+        assert_eq!(image_command_count, 1);
+        assert!(fill_command_count <= 3);
+        let mut sampling = None;
         output.frame.scene.visit_commands(&mut |command| {
-            if matches!(
-                command,
-                SceneCommand::FillPath { .. } | SceneCommand::FillRect { .. }
-            ) {
-                paint_fill_count += 1;
+            if let SceneCommand::DrawImage { source, .. }
+            | SceneCommand::DrawImageQuad { source, .. } = command
+            {
+                sampling = Some(source.sampling);
             }
         });
-
-        assert!(paint_fill_count > 100);
-        assert!(
-            paint_fill_count <= PIXEL_CANVAS_MAX_RENDER_TILES + 4,
-            "expected LOD renderer to cap high resolution paint commands, got {paint_fill_count}"
-        );
+        assert_eq!(sampling, Some(ImageSampling::Linear));
+        let image = output
+            .frame
+            .image_registry
+            .get(image_handle.expect("pixel canvas should draw an image"))
+            .expect("pixel canvas image should be registered");
+        assert_eq!(image.width(), 1920);
+        assert_eq!(image.height(), 1080);
     }
 
     #[test]
-    fn pixel_canvas_lod_averages_tile_pixels() {
-        let mut canvas = PixelCanvas::new("Blend", 2, 1);
-        canvas.set_pixel(0, 0, Color::rgba(1.0, 0.0, 0.0, 1.0));
-        canvas.set_pixel(1, 0, Color::rgba(0.0, 0.0, 1.0, 1.0));
+    fn pixel_canvas_uses_nearest_sampling_at_pixel_zoom() {
+        let output = render(PixelCanvas::new("Paint", 8, 8));
 
-        let color = canvas.average_pixel_color(0, 0, 2, 1).to_color();
+        let mut sampling = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::DrawImage { source, .. }
+            | SceneCommand::DrawImageQuad { source, .. } = command
+            {
+                sampling = Some(source.sampling);
+            }
+        });
 
-        assert!((color.red - 0.5).abs() < 0.01);
-        assert_eq!(color.green, 0.0);
-        assert!((color.blue - 0.5).abs() < 0.01);
-        assert_eq!(color.alpha, 1.0);
+        assert_eq!(sampling, Some(ImageSampling::Nearest));
     }
 
     #[test]

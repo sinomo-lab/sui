@@ -24,11 +24,18 @@ pub(crate) fn build_vertices(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DrawOpKind {
     Solid,
-    Image { handle: ImageHandle },
+    Image {
+        handle: ImageHandle,
+        sampling: ImageSampling,
+    },
     TextAtlas,
-    AnalyticPath { id: u64 },
+    AnalyticPath {
+        id: u64,
+    },
     WidgetShader,
 }
+
+pub(crate) type ImageBindGroupKey = (ImageHandle, ImageSampling);
 
 #[derive(Debug, Clone)]
 pub(crate) struct DrawOp {
@@ -201,9 +208,14 @@ pub(crate) struct PreparedClipPath {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PreparedDrawKind {
     Solid,
-    Image { handle: ImageHandle },
+    Image {
+        handle: ImageHandle,
+        sampling: ImageSampling,
+    },
     TextAtlas,
-    AnalyticPath { resource_signature: u64 },
+    AnalyticPath {
+        resource_signature: u64,
+    },
     WidgetShader,
 }
 
@@ -260,7 +272,7 @@ pub(crate) struct PreparedSceneSubmission {
     pub(crate) viewport: Size,
     pub(crate) framebuffer_size: (u32, u32),
     pub(crate) encodable_passes: Vec<EncodablePassBatch>,
-    pub(crate) image_bind_groups: HashMap<ImageHandle, wgpu::BindGroup>,
+    pub(crate) image_bind_groups: HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     pub(crate) text_atlas_bind_group: Option<wgpu::BindGroup>,
     pub(crate) analytic_path_resources: Option<PreparedAnalyticPathResources>,
     pub(crate) frame_stats: RendererFrameStats,
@@ -444,7 +456,7 @@ pub(crate) fn prepare_cached_passes(
 fn prepared_draw_kind(draw_ops: &DrawOpArena, op: &DrawOp) -> PreparedDrawKind {
     match op.kind {
         DrawOpKind::Solid => PreparedDrawKind::Solid,
-        DrawOpKind::Image { handle } => PreparedDrawKind::Image { handle },
+        DrawOpKind::Image { handle, sampling } => PreparedDrawKind::Image { handle, sampling },
         DrawOpKind::TextAtlas => PreparedDrawKind::TextAtlas,
         DrawOpKind::AnalyticPath { id } => PreparedDrawKind::AnalyticPath {
             resource_signature: draw_ops.analytic_paths[&id].resource_signature,
@@ -456,14 +468,14 @@ fn prepared_draw_kind(draw_ops: &DrawOpArena, op: &DrawOp) -> PreparedDrawKind {
 pub(crate) fn collect_draw_op_resources(
     draw_ops: &DrawOpArena,
     analytic_paths: &mut HashMap<u64, Arc<AnalyticPathCpuData>>,
-    image_handles: &mut HashSet<ImageHandle>,
+    image_resources: &mut HashSet<ImageBindGroupKey>,
 ) -> bool {
     let mut uses_text_atlas = false;
     for draw in &draw_ops.draw_ops {
         match draw.kind {
             DrawOpKind::Solid => {}
-            DrawOpKind::Image { handle } => {
-                image_handles.insert(handle);
+            DrawOpKind::Image { handle, sampling } => {
+                image_resources.insert((handle, sampling));
             }
             DrawOpKind::TextAtlas => {
                 uses_text_atlas = true;
@@ -579,7 +591,7 @@ pub(crate) fn encode_fragment_passes(
     framebuffer_size: (u32, u32),
     passes: &[EncodablePassBatch],
     stencil_view: Option<&wgpu::TextureView>,
-    image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
 ) -> Result<usize> {
@@ -638,7 +650,7 @@ fn encode_unclipped_pass_run(
     viewport: Size,
     framebuffer_size: (u32, u32),
     passes: &[EncodablePassBatch],
-    image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
     cleared: &mut bool,
@@ -692,7 +704,7 @@ fn encode_clipped_pass(
     framebuffer_size: (u32, u32),
     batch: &EncodablePassBatch,
     stencil_view: Option<&wgpu::TextureView>,
-    image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
     cleared: &mut bool,
@@ -791,7 +803,7 @@ fn encode_draws_for_pass(
     text_instance_buffer: Option<&wgpu::Buffer>,
     translation: Vector,
     clipped: bool,
-    image_bind_groups: &HashMap<ImageHandle, wgpu::BindGroup>,
+    image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
     current_kind: &mut Option<PreparedDrawPipelineKind>,
@@ -859,9 +871,9 @@ fn encode_draws_for_pass(
 
         match draw.kind {
             PreparedDrawKind::Solid => {}
-            PreparedDrawKind::Image { handle } => {
+            PreparedDrawKind::Image { handle, sampling } => {
                 let bind_group = image_bind_groups
-                    .get(&handle)
+                    .get(&(handle, sampling))
                     .expect("image bind group prepared before retained render pass");
                 render_pass.set_bind_group(0, bind_group, &[]);
             }
@@ -1187,6 +1199,35 @@ impl SceneDrawOpBuilder<'_> {
                     draw_ops,
                     DrawOpKind::Image {
                         handle: source.image,
+                        sampling: source.sampling,
+                    },
+                    &self.scratch_vertices,
+                    state,
+                );
+                diagnostics.image_command_count += 1;
+                Ok(())
+            }
+            SceneCommand::DrawImageQuad { points, source } => {
+                self.scratch_vertices.clear();
+                let image = self.frame.image_registry.get(source.image).ok_or_else(|| {
+                    Error::new(format!(
+                        "image handle {} is not registered",
+                        source.image.get()
+                    ))
+                })?;
+                append_image_quad(
+                    &mut self.scratch_vertices,
+                    state,
+                    *points,
+                    source,
+                    image,
+                    viewport,
+                );
+                push_draw_op(
+                    draw_ops,
+                    DrawOpKind::Image {
+                        handle: source.image,
+                        sampling: source.sampling,
                     },
                     &self.scratch_vertices,
                     state,
@@ -1276,7 +1317,7 @@ impl SceneDrawOpBuilder<'_> {
             | SceneCommand::Label { .. } => {
                 diagnostics.text_command_time_ms += elapsed_ms;
             }
-            SceneCommand::DrawImage { .. } => {
+            SceneCommand::DrawImage { .. } | SceneCommand::DrawImageQuad { .. } => {
                 diagnostics.image_command_time_ms += elapsed_ms;
             }
             SceneCommand::PushClipPath { .. } => {
@@ -2888,6 +2929,77 @@ fn append_image(
     let v0 = source_min_y / image_height;
     let u1 = source_max_x / image_width;
     let v1 = source_max_y / image_height;
+    let tint = source.tint.unwrap_or(Color::WHITE).clamped().to_array();
+
+    let axis_aligned = state.current_transform.yx.abs() < 0.0001
+        && state.current_transform.xy.abs() < 0.0001
+        && state.current_transform.xx >= 0.0
+        && state.current_transform.yy >= 0.0;
+    if !axis_aligned {
+        let transformed_bounds = state.current_transform.transform_rect_bbox(rect);
+        let visible = match state.current_clip_bounds() {
+            Some(clip) => transformed_bounds.intersection(clip),
+            None => Some(transformed_bounds),
+        };
+        if visible.is_none() {
+            return;
+        }
+
+        let top_left = state.current_transform.transform_point(rect.origin);
+        let top_right = state
+            .current_transform
+            .transform_point(Point::new(rect.max_x(), rect.y()));
+        let bottom_left = state
+            .current_transform
+            .transform_point(Point::new(rect.x(), rect.max_y()));
+        let bottom_right = state
+            .current_transform
+            .transform_point(Point::new(rect.max_x(), rect.max_y()));
+        let top_left = to_ndc(top_left.x, top_left.y, viewport);
+        let top_right = to_ndc(top_right.x, top_right.y, viewport);
+        let bottom_left = to_ndc(bottom_left.x, bottom_left.y, viewport);
+        let bottom_right = to_ndc(bottom_right.x, bottom_right.y, viewport);
+
+        vertices.extend_from_slice(&[
+            Vertex {
+                position: top_left,
+                color: tint,
+                tex_coords: [u0, v0],
+                shader_params: [0.0; 4],
+            },
+            Vertex {
+                position: top_right,
+                color: tint,
+                tex_coords: [u1, v0],
+                shader_params: [0.0; 4],
+            },
+            Vertex {
+                position: bottom_left,
+                color: tint,
+                tex_coords: [u0, v1],
+                shader_params: [0.0; 4],
+            },
+            Vertex {
+                position: bottom_left,
+                color: tint,
+                tex_coords: [u0, v1],
+                shader_params: [0.0; 4],
+            },
+            Vertex {
+                position: top_right,
+                color: tint,
+                tex_coords: [u1, v0],
+                shader_params: [0.0; 4],
+            },
+            Vertex {
+                position: bottom_right,
+                color: tint,
+                tex_coords: [u1, v1],
+                shader_params: [0.0; 4],
+            },
+        ]);
+        return;
+    }
 
     let left = ((visible.x() - transformed.x()) / transformed.width()).clamp(0.0, 1.0);
     let right = ((visible.max_x() - transformed.x()) / transformed.width()).clamp(0.0, 1.0);
@@ -2900,7 +3012,6 @@ fn append_image(
     let uv_bottom = v0 + ((v1 - v0) * bottom);
     let min = to_ndc(visible.x(), visible.y(), viewport);
     let max = to_ndc(visible.max_x(), visible.max_y(), viewport);
-    let tint = source.tint.unwrap_or(Color::WHITE).clamped().to_array();
 
     vertices.extend_from_slice(&[
         Vertex {
@@ -2937,6 +3048,90 @@ fn append_image(
             position: [max[0], max[1]],
             color: tint,
             tex_coords: [uv_right, uv_bottom],
+            shader_params: [0.0; 4],
+        },
+    ]);
+}
+
+fn append_image_quad(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    points: [Point; 4],
+    source: &sui_scene::ImageSource,
+    image: &RegisteredImage,
+    viewport: Size,
+) {
+    if viewport.is_empty() {
+        return;
+    }
+
+    let points = points.map(|point| state.current_transform.transform_point(point));
+    let bounds = points_bounds(&points);
+    let Some(_) = (match state.current_clip_bounds() {
+        Some(clip) => bounds.intersection(clip),
+        None => Some(bounds),
+    }) else {
+        return;
+    };
+
+    let image_width = image.width() as f32;
+    let image_height = image.height() as f32;
+    let source_rect = source
+        .source_rect
+        .unwrap_or(Rect::new(0.0, 0.0, image_width, image_height));
+    let source_min_x = source_rect.x().clamp(0.0, image_width);
+    let source_min_y = source_rect.y().clamp(0.0, image_height);
+    let source_max_x = source_rect.max_x().clamp(source_min_x, image_width);
+    let source_max_y = source_rect.max_y().clamp(source_min_y, image_height);
+    if source_max_x <= source_min_x || source_max_y <= source_min_y {
+        return;
+    }
+
+    let u0 = source_min_x / image_width;
+    let v0 = source_min_y / image_height;
+    let u1 = source_max_x / image_width;
+    let v1 = source_max_y / image_height;
+    let tint = source.tint.unwrap_or(Color::WHITE).clamped().to_array();
+    let top_left = to_ndc(points[0].x, points[0].y, viewport);
+    let top_right = to_ndc(points[1].x, points[1].y, viewport);
+    let bottom_left = to_ndc(points[2].x, points[2].y, viewport);
+    let bottom_right = to_ndc(points[3].x, points[3].y, viewport);
+
+    vertices.extend_from_slice(&[
+        Vertex {
+            position: top_left,
+            color: tint,
+            tex_coords: [u0, v0],
+            shader_params: [0.0; 4],
+        },
+        Vertex {
+            position: top_right,
+            color: tint,
+            tex_coords: [u1, v0],
+            shader_params: [0.0; 4],
+        },
+        Vertex {
+            position: bottom_left,
+            color: tint,
+            tex_coords: [u0, v1],
+            shader_params: [0.0; 4],
+        },
+        Vertex {
+            position: bottom_left,
+            color: tint,
+            tex_coords: [u0, v1],
+            shader_params: [0.0; 4],
+        },
+        Vertex {
+            position: top_right,
+            color: tint,
+            tex_coords: [u1, v0],
+            shader_params: [0.0; 4],
+        },
+        Vertex {
+            position: bottom_right,
+            color: tint,
+            tex_coords: [u1, v1],
             shader_params: [0.0; 4],
         },
     ]);
@@ -3011,6 +3206,20 @@ fn append_widget_shader_rect(
             shader_params: params,
         },
     ]);
+}
+
+fn points_bounds(points: &[Point]) -> Rect {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for point in points {
+        min_x = min_x.min(point.x);
+        min_y = min_y.min(point.y);
+        max_x = max_x.max(point.x);
+        max_y = max_y.max(point.y);
+    }
+    Rect::from_points(Point::new(min_x, min_y), Point::new(max_x, max_y))
 }
 
 fn widget_shader_metadata(shader: sui_scene::WidgetShader) -> ([f32; 4], [f32; 4]) {

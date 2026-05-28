@@ -3,8 +3,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use sui_core::{
-    Color, ColorSpace, DirtyRegion, Error, ImageHandle, Path, PathElement, Rect, Result, Size,
-    Transform, Vector, WidgetId, WindowId,
+    Color, ColorSpace, DirtyRegion, Error, ImageHandle, Path, PathElement, Point, Rect, Result,
+    Size, Transform, Vector, WidgetId, WindowId,
 };
 use sui_text::{FontRegistry, ShapedText, ShapedTextWindow, TextLayoutRegistry, TextRun};
 
@@ -41,6 +41,14 @@ pub struct ImageSource {
     pub image: ImageHandle,
     pub source_rect: Option<Rect>,
     pub tint: Option<Color>,
+    pub sampling: ImageSampling,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ImageSampling {
+    Nearest,
+    #[default]
+    Linear,
 }
 
 impl ImageSource {
@@ -49,6 +57,7 @@ impl ImageSource {
             image,
             source_rect: None,
             tint: None,
+            sampling: ImageSampling::Linear,
         }
     }
 
@@ -59,6 +68,11 @@ impl ImageSource {
 
     pub const fn with_tint(mut self, tint: Color) -> Self {
         self.tint = Some(tint);
+        self
+    }
+
+    pub const fn with_sampling(mut self, sampling: ImageSampling) -> Self {
+        self.sampling = sampling;
         self
     }
 }
@@ -384,6 +398,10 @@ pub enum SceneCommand {
         rect: Rect,
         source: ImageSource,
     },
+    DrawImageQuad {
+        points: [Point; 4],
+        source: ImageSource,
+    },
     DrawShaderRect {
         rect: Rect,
         shader: WidgetShader,
@@ -627,6 +645,7 @@ impl SceneBoundsState {
                 self.apply_rect(text.translated_bounds(), clipped)
             }
             SceneCommand::DrawImage { rect, .. } => self.apply_rect(*rect, clipped),
+            SceneCommand::DrawImageQuad { points, .. } => self.apply_points(*points, clipped),
             SceneCommand::DrawShaderRect { rect, .. } => self.apply_rect(*rect, clipped),
             SceneCommand::PushClip { rect } => {
                 let clip = self.transform.transform_rect_bbox(*rect);
@@ -672,6 +691,16 @@ impl SceneBoundsState {
         }
     }
 
+    fn apply_points(&self, points: [Point; 4], clipped: bool) -> Option<Rect> {
+        let transformed = points.map(|point| self.transform.transform_point(point));
+        let bounds = points_bounds(&transformed);
+        if clipped {
+            self.clip_rect(bounds)
+        } else {
+            Some(bounds)
+        }
+    }
+
     fn push_clip(&mut self, clip: Rect) {
         let clip = self.clip_rect(clip).unwrap_or(Rect::ZERO);
         self.clip_stack.push(clip);
@@ -708,6 +737,11 @@ fn translate_command(command: &mut SceneCommand, delta: Vector) {
         | SceneCommand::Label { rect, .. } => {
             *rect = rect.translate(delta);
         }
+        SceneCommand::DrawImageQuad { points, .. } => {
+            for point in points {
+                *point += delta;
+            }
+        }
         SceneCommand::FillPath { path, .. }
         | SceneCommand::StrokePath { path, .. }
         | SceneCommand::PushClipPath { path } => {
@@ -727,6 +761,20 @@ fn translate_command(command: &mut SceneCommand, delta: Vector) {
             layer.translate(delta);
         }
     }
+}
+
+fn points_bounds(points: &[Point]) -> Rect {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for point in points {
+        min_x = min_x.min(point.x);
+        min_y = min_y.min(point.y);
+        max_x = max_x.max(point.x);
+        max_y = max_y.max(point.y);
+    }
+    Rect::from_points(Point::new(min_x, min_y), Point::new(max_x, max_y))
 }
 
 fn translate_path(path: &Path, delta: Vector) -> Path {
@@ -853,6 +901,10 @@ impl ImageRegistry {
 
     pub fn contains(&self, handle: ImageHandle) -> bool {
         self.images.contains_key(&handle)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (ImageHandle, &RegisteredImage)> {
+        self.images.iter().map(|(handle, image)| (*handle, image))
     }
 
     pub fn len(&self) -> usize {

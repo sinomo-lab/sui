@@ -713,6 +713,7 @@ impl RetainedCompositorState {
             | SceneCommand::DrawShapedText(_)
             | SceneCommand::DrawShapedTextWindow(_)
             | SceneCommand::DrawImage { .. }
+            | SceneCommand::DrawImageQuad { .. }
             | SceneCommand::DrawShaderRect { .. }
             | SceneCommand::Layer(_)
             | SceneCommand::Label { .. } => {}
@@ -1400,6 +1401,7 @@ fn scene_has_draw_content(scene: &Scene) -> bool {
                 | SceneCommand::DrawText(_)
                 | SceneCommand::DrawShapedText(_)
                 | SceneCommand::DrawImage { .. }
+                | SceneCommand::DrawImageQuad { .. }
                 | SceneCommand::DrawShaderRect { .. }
                 | SceneCommand::Label { .. }
         )
@@ -1584,6 +1586,29 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
             7u8.hash(hasher);
             hash_rect(hasher, *rect);
             source.image.get().hash(hasher);
+            source.sampling.hash(hasher);
+            source
+                .source_rect
+                .map(|rect| {
+                    1u8.hash(hasher);
+                    hash_rect(hasher, rect);
+                })
+                .unwrap_or_else(|| 0u8.hash(hasher));
+            source
+                .tint
+                .map(|color| {
+                    1u8.hash(hasher);
+                    hash_color(color, hasher);
+                })
+                .unwrap_or_else(|| 0u8.hash(hasher));
+        }
+        SceneCommand::DrawImageQuad { points, source } => {
+            17u8.hash(hasher);
+            for point in points {
+                hash_point(hasher, *point);
+            }
+            source.image.get().hash(hasher);
+            source.sampling.hash(hasher);
             source
                 .source_rect
                 .map(|rect| {
