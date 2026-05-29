@@ -1563,7 +1563,7 @@ pub(crate) fn hash_path(path: &ScenePath, transform: Transform) -> u64 {
 pub(crate) struct TextEngine {
     pub(crate) system: TextSystem,
     pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphAtlas>,
-    pub(crate) atlas: TextAtlas,
+    pub(crate) atlas: TextAtlasPages,
     swash_scale_context: SwashScaleContext,
     pub(crate) text_render_mode: TextRenderMode,
     pub(crate) text_hinting: TextHinting,
@@ -1572,6 +1572,8 @@ pub(crate) struct TextEngine {
     pub(crate) diagnostics_enabled: bool,
     pub(crate) glyph_cache_hits: usize,
     pub(crate) glyph_cache_misses: usize,
+    /// Monotonic per-frame counter used to stamp atlas pages for LRU eviction.
+    frame_counter: u64,
     #[cfg(test)]
     swash_face_parse_count: usize,
     pub(crate) frame_stats: TextFrameStats,
@@ -1618,7 +1620,7 @@ impl Default for TextEngine {
         Self {
             system: TextSystem::new(),
             glyph_cache: HashMap::new(),
-            atlas: TextAtlas::default(),
+            atlas: TextAtlasPages::new(TEXT_ATLAS_WIDTH, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_MAX_PAGES),
             swash_scale_context: SwashScaleContext::new(),
             text_render_mode: TextRenderMode::default(),
             text_hinting: TextHinting::default(),
@@ -1627,6 +1629,7 @@ impl Default for TextEngine {
             diagnostics_enabled: true,
             glyph_cache_hits: 0,
             glyph_cache_misses: 0,
+            frame_counter: 0,
             #[cfg(test)]
             swash_face_parse_count: 0,
             frame_stats: TextFrameStats::default(),
@@ -1664,6 +1667,8 @@ impl TextEngine {
 
     pub(crate) fn begin_frame(&mut self) {
         self.frame_stats = TextFrameStats::default();
+        // New frame: advance the clock used to age atlas pages for LRU eviction.
+        self.frame_counter = self.frame_counter.wrapping_add(1);
     }
 
     pub(crate) fn frame_stats(&self) -> TextFrameStats {
@@ -1918,63 +1923,68 @@ impl TextEngine {
             self.stem_darkening,
             coverage_policy,
         );
-        match self.glyph_cache.entry(key) {
-            Entry::Occupied(entry) => {
-                if self.diagnostics_enabled {
-                    self.glyph_cache_hits += 1;
-                }
-                Ok(Some(&*entry.into_mut()))
+        // Hit: stamp the glyph's page as used this frame (for LRU) and return the cached entry.
+        if self.glyph_cache.contains_key(&key) {
+            if self.diagnostics_enabled {
+                self.glyph_cache_hits += 1;
             }
-            Entry::Vacant(entry) => {
-                if self.diagnostics_enabled {
-                    self.glyph_cache_misses += 1;
-                }
-                if swash_face.is_none() {
-                    #[cfg(test)]
-                    {
-                        self.swash_face_parse_count += 1;
-                    }
-                    *swash_face = Some(SwashFaceState::new(face, face_key)?);
-                }
-                let swash_face = swash_face
-                    .as_ref()
-                    .expect("swash text face should be cached after initialization");
-                let atlas_miss_started = self.diagnostics_enabled.then(Instant::now);
-                let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
-                let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
-                let primitive = if let Some(atlas) = build_cached_glyph_atlas(
-                    &mut self.atlas,
-                    &mut self.swash_scale_context,
-                    swash_face,
-                    glyph_id,
-                    swash_face.ppem_for_scale(bucketed_physical_scale),
-                    raster_scale_factor.max(1.0),
-                    bucketed_logical_scale,
-                    subpixel_offset,
-                    self.text_render_mode,
-                    self.text_hinting,
-                    self.stem_darkening,
-                    coverage_policy,
-                )? {
-                    if let Some(started) = atlas_miss_started {
-                        self.frame_stats.atlas_miss_count += 1;
-                        self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
-                    }
-                    atlas
-                } else {
-                    if let Some(started) = atlas_miss_started {
-                        self.frame_stats.atlas_miss_count += 1;
-                        self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
-                    }
-                    return Ok(None);
-                };
-                Ok(Some(&*entry.insert(primitive)))
-            }
+            let page_index = self.glyph_cache[&key].page_index;
+            self.atlas.touch_page(page_index, self.frame_counter);
+            return Ok(self.glyph_cache.get(&key));
         }
+
+        // Miss: rasterize and insert into the atlas (which may evict an LRU page).
+        if self.diagnostics_enabled {
+            self.glyph_cache_misses += 1;
+        }
+        if swash_face.is_none() {
+            #[cfg(test)]
+            {
+                self.swash_face_parse_count += 1;
+            }
+            *swash_face = Some(SwashFaceState::new(face, face_key)?);
+        }
+        let swash_face = swash_face
+            .as_ref()
+            .expect("swash text face should be cached after initialization");
+        let atlas_miss_started = self.diagnostics_enabled.then(Instant::now);
+        let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
+        let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
+        let built = build_cached_glyph_atlas(
+            &mut self.atlas,
+            &mut self.swash_scale_context,
+            swash_face,
+            glyph_id,
+            swash_face.ppem_for_scale(bucketed_physical_scale),
+            raster_scale_factor.max(1.0),
+            bucketed_logical_scale,
+            subpixel_offset,
+            self.text_render_mode,
+            self.text_hinting,
+            self.stem_darkening,
+            coverage_policy,
+            self.frame_counter,
+        )?;
+        if let Some(started) = atlas_miss_started {
+            self.frame_stats.atlas_miss_count += 1;
+            self.frame_stats.atlas_miss_time_us += started.elapsed().as_micros() as u64;
+        }
+        let Some((primitive, evicted_page)) = built else {
+            return Ok(None);
+        };
+        // If a page was recycled, drop every glyph that pointed into it: its atlas region -- and
+        // therefore the UVs cached here -- are no longer valid.
+        if let Some(evicted) = evicted_page {
+            self.glyph_cache
+                .retain(|_, cached| cached.page_index != evicted);
+        }
+        self.glyph_cache.insert(key.clone(), primitive);
+        Ok(self.glyph_cache.get(&key))
     }
 
-    pub(crate) fn take_atlas_upload(&mut self) -> Option<TextAtlasUpload> {
-        self.atlas.take_upload()
+    /// Drain pending per-page atlas uploads, each tagged with its texture-array layer index.
+    pub(crate) fn take_atlas_uploads(&mut self) -> Vec<(usize, TextAtlasUpload)> {
+        self.atlas.take_uploads()
     }
 
     #[cfg(test)]
@@ -2005,7 +2015,7 @@ impl TextEngine {
 }
 
 fn build_cached_glyph_atlas(
-    atlas: &mut TextAtlas,
+    pages: &mut TextAtlasPages,
     scale_context: &mut SwashScaleContext,
     face: &SwashFaceState<'_>,
     glyph_id: u16,
@@ -2017,7 +2027,8 @@ fn build_cached_glyph_atlas(
     text_hinting: TextHinting,
     stem_darkening: StemDarkening,
     coverage_policy: TextCoveragePolicy,
-) -> Result<Option<CachedGlyphAtlas>> {
+    frame: u64,
+) -> Result<Option<(CachedGlyphAtlas, Option<usize>)>> {
     let sources = [
         SwashSource::ColorOutline(0),
         SwashSource::ColorBitmap(SwashStrikeWith::BestFit),
@@ -2053,42 +2064,53 @@ fn build_cached_glyph_atlas(
     };
 
     if width == 0 || height == 0 {
-        return Ok(Some(CachedGlyphAtlas {
-            scale: glyph_scale_logical,
-            offset: logical_offset,
-            size: Size::ZERO,
-            uv_min: [0.0, 0.0],
-            uv_max: [0.0, 0.0],
-            color_mode: TextAtlasColorMode::from(text_render_mode),
-            is_color: rasterized.is_color,
-        }));
+        return Ok(Some((
+            CachedGlyphAtlas {
+                scale: glyph_scale_logical,
+                offset: logical_offset,
+                size: Size::ZERO,
+                uv_min: [0.0, 0.0],
+                uv_max: [0.0, 0.0],
+                color_mode: TextAtlasColorMode::from(text_render_mode),
+                is_color: rasterized.is_color,
+                page_index: 0,
+            },
+            None,
+        )));
     }
 
-    let placement = match atlas.insert_rgba(width, height, &rasterized.pixels) {
-        Ok(placement) => placement,
-        Err(TextAtlasInsertError::TooLarge) => return Ok(None),
-        Err(TextAtlasInsertError::Full) => return Err(text_atlas_retry_error()),
+    let insertion = match pages.insert_rgba(width, height, &rasterized.pixels, frame) {
+        Ok(insertion) => insertion,
+        // Too large for any page, or every page is already hot this frame: drop the glyph for
+        // this frame. With on-demand page growth + LRU eviction there is no atlas-full cliff.
+        Err(TextAtlasInsertError::TooLarge) | Err(TextAtlasInsertError::Full) => return Ok(None),
     };
+    let page_index = insertion.page_index;
+    let placement = insertion.placement;
 
-    let atlas_size = atlas.size();
+    let atlas_size = pages.page_size();
     let inv_width = 1.0 / atlas_size.0 as f32;
     let inv_height = 1.0 / atlas_size.1 as f32;
     let logical_uv_min_x = placement.x as f32;
     let logical_uv_min_y = placement.y as f32;
     let logical_uv_max_x = logical_uv_min_x + image.placement.width as f32;
     let logical_uv_max_y = logical_uv_min_y + image.placement.height as f32;
-    Ok(Some(CachedGlyphAtlas {
-        scale: glyph_scale_logical,
-        offset: logical_offset,
-        size: Size::new(
-            image.placement.width as f32 / raster_scale_factor,
-            image.placement.height as f32 / raster_scale_factor,
-        ),
-        uv_min: [logical_uv_min_x * inv_width, logical_uv_min_y * inv_height],
-        uv_max: [logical_uv_max_x * inv_width, logical_uv_max_y * inv_height],
-        color_mode: TextAtlasColorMode::from(text_render_mode),
-        is_color: rasterized.is_color,
-    }))
+    Ok(Some((
+        CachedGlyphAtlas {
+            scale: glyph_scale_logical,
+            offset: logical_offset,
+            size: Size::new(
+                image.placement.width as f32 / raster_scale_factor,
+                image.placement.height as f32 / raster_scale_factor,
+            ),
+            uv_min: [logical_uv_min_x * inv_width, logical_uv_min_y * inv_height],
+            uv_max: [logical_uv_max_x * inv_width, logical_uv_max_y * inv_height],
+            color_mode: TextAtlasColorMode::from(text_render_mode),
+            is_color: rasterized.is_color,
+            page_index,
+        },
+        insertion.evicted_page,
+    )))
 }
 
 pub(crate) fn glyph_raster_offset(
@@ -2362,6 +2384,7 @@ fn build_text_atlas_instance(
             (atlas_contains_lcd_subpixels && allows_lcd_text(transform)) as u8 as f32,
             atlas_contains_lcd_subpixels as u8 as f32,
         ],
+        layer: atlas.page_index as u32,
     })
 }
 

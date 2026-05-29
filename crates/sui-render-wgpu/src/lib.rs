@@ -434,8 +434,10 @@ struct TextFrameStats {
 
 const TEXT_ATLAS_WIDTH: usize = 2048;
 const TEXT_ATLAS_HEIGHT: usize = 2048;
-const TEXT_ATLAS_PADDING: usize = 1;
-const TEXT_ATLAS_TEXTURE_RING_LEN: usize = 2;
+const TEXT_ATLAS_PADDING: usize = 2;
+/// Maximum number of atlas pages (texture-array layers) before whole-page LRU eviction kicks in.
+/// Each page is TEXT_ATLAS_WIDTH x TEXT_ATLAS_HEIGHT x 4 bytes (~16 MB); 4 pages -> ~64 MB.
+const TEXT_ATLAS_MAX_PAGES: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RetainedPacketRebuildStats {
@@ -716,8 +718,7 @@ pub struct WgpuRenderer {
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
     image_cache: HashMap<ImageHandle, CachedImageTexture>,
-    text_atlas_textures: Vec<CachedTextAtlasTexture>,
-    active_text_atlas_texture_index: usize,
+    text_atlas_array: Option<CachedTextAtlasTexture>,
     analytic_path_cache: HashMap<u64, CachedAnalyticPathGpu>,
     compositors: HashMap<WindowId, RetainedCompositorState>,
     surfaces: HashMap<WindowId, SurfaceState>,
@@ -868,14 +869,31 @@ impl HdrRgbaImage {
 
 const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 const DEFAULT_FEATHER_WIDTH: f32 = 1.0;
-const TEXT_ATLAS_RETRY_ERROR_MESSAGE: &str = "text atlas capacity exceeded; retry with reset";
 
-fn text_atlas_retry_error() -> Error {
-    Error::new(TEXT_ATLAS_RETRY_ERROR_MESSAGE)
-}
-
-fn is_text_atlas_retry_error(error: &Error) -> bool {
-    error.message() == TEXT_ATLAS_RETRY_ERROR_MESSAGE
+/// Bind group layout for the multi-page glyph atlas: a filtering sampler plus a
+/// `texture_2d_array` (one layer per atlas page). Distinct from the image layout, which is `D2`.
+fn create_text_atlas_array_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("SUI text atlas array bind group layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    })
 }
 
 fn strip_padded_readback_rows(
@@ -1156,8 +1174,7 @@ impl WgpuRenderer {
 
     fn invalidate_text_render_state(&mut self) {
         self.text_engine = None;
-        self.text_atlas_textures.clear();
-        self.active_text_atlas_texture_index = 0;
+        self.text_atlas_array = None;
         self.compositors.clear();
         self.last_frames.clear();
         self.last_frame_stats.clear();
@@ -1497,6 +1514,8 @@ impl WgpuRenderer {
                     },
                 ],
             });
+        let text_atlas_array_bind_group_layout =
+            create_text_atlas_array_bind_group_layout(&device);
         let image_linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("SUI linear image sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -1596,6 +1615,7 @@ impl WgpuRenderer {
             queue,
             pipelines: HashMap::new(),
             image_bind_group_layout,
+            text_atlas_array_bind_group_layout,
             analytic_path_bind_group_layout,
             output_transform_bind_group_layout,
             image_linear_sampler,
@@ -1659,6 +1679,8 @@ impl WgpuRenderer {
                     },
                 ],
             });
+        let text_atlas_array_bind_group_layout =
+            create_text_atlas_array_bind_group_layout(&device);
         let image_linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("SUI linear image sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -1758,6 +1780,7 @@ impl WgpuRenderer {
             queue,
             pipelines: HashMap::new(),
             image_bind_group_layout,
+            text_atlas_array_bind_group_layout,
             analytic_path_bind_group_layout,
             output_transform_bind_group_layout,
             image_linear_sampler,
@@ -2229,47 +2252,34 @@ impl WgpuRenderer {
         let text_hinting = self.active_text_hinting();
         let stem_darkening = self.active_stem_darkening();
         let text_coverage_policy = self.active_text_coverage_policy();
-        let mut atlas_retry_attempted = false;
-        let (submission, compositor_stats, text_frame_stats) = loop {
-            if self.text_engine.is_none() {
-                self.text_engine = Some(TextEngine::new()?);
-            }
-            let attempt = {
-                let text_engine = self
-                    .text_engine
-                    .as_mut()
-                    .expect("text engine initialized before draw-op construction");
-                text_engine.set_text_render_mode(text_render_mode);
-                text_engine.set_text_hinting(text_hinting);
-                text_engine.set_stem_darkening(stem_darkening);
-                text_engine.set_text_coverage_policy(text_coverage_policy);
-                text_engine.set_diagnostics_enabled(diagnostics_enabled);
-                text_engine.begin_frame();
-                let compositor = self.compositors.entry(frame.window_id).or_default();
-                compositor.set_diagnostics_enabled(diagnostics_enabled);
-                compositor
-                    .prepare_frame_submission(frame, text_engine, feather_width)
-                    .map(|submission| {
-                        (
-                            submission,
-                            compositor.last_frame_stats.clone(),
-                            if diagnostics_enabled {
-                                text_engine.frame_stats()
-                            } else {
-                                TextFrameStats::default()
-                            },
-                        )
-                    })
+        if self.text_engine.is_none() {
+            self.text_engine = Some(TextEngine::new()?);
+        }
+        // The multi-page atlas grows and evicts on demand, so a glyph that cannot be placed is
+        // simply dropped for the frame -- there is no longer an "atlas full" error to recover
+        // from, hence no retry loop.
+        let (submission, compositor_stats, text_frame_stats) = {
+            let text_engine = self
+                .text_engine
+                .as_mut()
+                .expect("text engine initialized before draw-op construction");
+            text_engine.set_text_render_mode(text_render_mode);
+            text_engine.set_text_hinting(text_hinting);
+            text_engine.set_stem_darkening(stem_darkening);
+            text_engine.set_text_coverage_policy(text_coverage_policy);
+            text_engine.set_diagnostics_enabled(diagnostics_enabled);
+            text_engine.begin_frame();
+            let compositor = self.compositors.entry(frame.window_id).or_default();
+            compositor.set_diagnostics_enabled(diagnostics_enabled);
+            let submission =
+                compositor.prepare_frame_submission(frame, text_engine, feather_width)?;
+            let compositor_stats = compositor.last_frame_stats.clone();
+            let text_frame_stats = if diagnostics_enabled {
+                text_engine.frame_stats()
+            } else {
+                TextFrameStats::default()
             };
-
-            match attempt {
-                Ok(result) => break result,
-                Err(error) if !atlas_retry_attempted && is_text_atlas_retry_error(&error) => {
-                    atlas_retry_attempted = true;
-                    self.invalidate_text_render_state();
-                }
-                Err(error) => return Err(error),
-            }
+            (submission, compositor_stats, text_frame_stats)
         };
         let framebuffer_size = normalize_framebuffer_size(frame.surface_size).unwrap_or((1, 1));
         let mut analytic_paths = HashMap::new();
@@ -2670,105 +2680,71 @@ impl WgpuRenderer {
     ) -> Result<(wgpu::BindGroup, TextAtlasBindGroupStats)> {
         let total_started = collect_stats.then(|| Instant::now());
         let upload_copy_started = collect_stats.then(|| Instant::now());
-        let upload = text_engine.take_atlas_upload();
+        let uploads = text_engine.take_atlas_uploads();
+        let page_size = text_engine.atlas.page_size();
+        let page_count = text_engine.atlas.page_count() as u32;
         let mut stats = TextAtlasBindGroupStats {
             upload_copy_time_us: upload_copy_started
                 .map(|started| started.elapsed().as_micros() as u64)
                 .unwrap_or(0),
             upload_bytes: if collect_stats {
-                upload
-                    .as_ref()
-                    .map_or(0, |upload| upload.pixels.len() as u64)
+                uploads
+                    .iter()
+                    .map(|(_, upload)| upload.pixels.len() as u64)
+                    .sum()
             } else {
                 0
             },
             ..TextAtlasBindGroupStats::default()
         };
 
-        if let Some(upload) = upload {
-            let target_index = if self.text_atlas_textures.is_empty() {
-                0
-            } else {
-                (self.active_text_atlas_texture_index + 1) % TEXT_ATLAS_TEXTURE_RING_LEN
-            };
-            self.ensure_text_atlas_texture_slot(target_index, upload.size)?;
+        // One persistent texture array; each atlas page is a layer. Dirty rects are written
+        // directly to their layer -- no ring rotation, no full-texture forward-copy.
+        self.ensure_text_atlas_array(page_size, page_count)?;
+
+        if !uploads.is_empty() {
             let shared = self
                 .shared
                 .as_ref()
                 .expect("renderer shared state initialized");
-            if !upload.full_texture && !self.text_atlas_textures.is_empty() {
-                let source = self
-                    .text_atlas_textures
-                    .get(self.active_text_atlas_texture_index)
-                    .expect("active text atlas texture exists before partial ring upload");
-                let target = self
-                    .text_atlas_textures
-                    .get(target_index)
-                    .expect("target text atlas texture exists before partial ring upload");
-                let mut encoder =
-                    shared
-                        .device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("SUI text atlas ring copy"),
-                        });
-                encoder.copy_texture_to_texture(
+            let cached = self
+                .text_atlas_array
+                .as_ref()
+                .expect("text atlas array created above");
+            let upload_write_started = collect_stats.then(|| Instant::now());
+            for (page_index, upload) in &uploads {
+                shared.queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
-                        texture: &source.texture,
+                        texture: &cached.texture,
                         mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
+                        origin: wgpu::Origin3d {
+                            x: upload.offset.0,
+                            y: upload.offset.1,
+                            z: *page_index as u32,
+                        },
                         aspect: wgpu::TextureAspect::All,
                     },
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &target.texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
+                    &upload.pixels,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(upload.extent.0 * 4),
+                        rows_per_image: Some(upload.extent.1),
                     },
                     wgpu::Extent3d {
-                        width: upload.size.0,
-                        height: upload.size.1,
+                        width: upload.extent.0,
+                        height: upload.extent.1,
                         depth_or_array_layers: 1,
                     },
                 );
-                shared.queue.submit([encoder.finish()]);
             }
-            let cached = self
-                .text_atlas_textures
-                .get(target_index)
-                .expect("text atlas texture cached after creation");
-            let upload_write_started = collect_stats.then(|| Instant::now());
-            shared.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &cached.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: upload.offset.0,
-                        y: upload.offset.1,
-                        z: 0,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &upload.pixels,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(upload.extent.0 * 4),
-                    rows_per_image: Some(upload.extent.1),
-                },
-                wgpu::Extent3d {
-                    width: upload.extent.0,
-                    height: upload.extent.1,
-                    depth_or_array_layers: 1,
-                },
-            );
             stats.upload_write_time_us = upload_write_started
                 .map(|started| started.elapsed().as_micros() as u64)
                 .unwrap_or(0);
-            self.active_text_atlas_texture_index = target_index;
         }
 
         let bind_group = self
-            .text_atlas_textures
-            .get(self.active_text_atlas_texture_index)
+            .text_atlas_array
+            .as_ref()
             .map(|cached| cached.bind_group.clone())
             .ok_or_else(|| Error::new("text atlas bind group requested before any atlas upload"))?;
         stats.total_time_us = total_started
@@ -2777,26 +2753,30 @@ impl WgpuRenderer {
         Ok((bind_group, stats))
     }
 
-    fn ensure_text_atlas_texture_slot(&mut self, index: usize, size: (u32, u32)) -> Result<()> {
+    fn ensure_text_atlas_array(&mut self, page_size: (u32, u32), required_layers: u32) -> Result<()> {
+        // Allocate only as many layers as there are live pages, growing on demand up to the page
+        // budget. This keeps the common single-page case at one 16 MB layer instead of committing
+        // the whole budget up front.
+        let required_layers = required_layers.clamp(1, TEXT_ATLAS_MAX_PAGES as u32);
+        if self
+            .text_atlas_array
+            .as_ref()
+            .is_some_and(|cached| cached.size == page_size && cached.layers >= required_layers)
+        {
+            return Ok(());
+        }
+
         let shared = self
             .shared
             .as_ref()
             .expect("renderer shared state initialized before text atlas texture setup");
 
-        if self
-            .text_atlas_textures
-            .get(index)
-            .is_some_and(|cached| cached.size == size)
-        {
-            return Ok(());
-        }
-
         let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("SUI text atlas texture"),
+            label: Some("SUI text atlas array texture"),
             size: wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
-                depth_or_array_layers: 1,
+                width: page_size.0,
+                height: page_size.1,
+                depth_or_array_layers: required_layers,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -2807,10 +2787,13 @@ impl WgpuRenderer {
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
         let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("SUI text atlas bind group"),
-            layout: &shared.image_bind_group_layout,
+            label: Some("SUI text atlas array bind group"),
+            layout: &shared.text_atlas_array_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -2822,18 +2805,47 @@ impl WgpuRenderer {
                 },
             ],
         });
-        let cached = CachedTextAtlasTexture {
+
+        // Growing an existing array of the same page size: copy the already-populated layers
+        // forward so their glyphs survive (their CPU dirty state was cleared after first upload).
+        if let Some(old) = self.text_atlas_array.as_ref() {
+            if old.size == page_size {
+                let mut encoder =
+                    shared
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("SUI text atlas array grow copy"),
+                        });
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &old.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: page_size.0,
+                        height: page_size.1,
+                        depth_or_array_layers: old.layers,
+                    },
+                );
+                shared.queue.submit([encoder.finish()]);
+            }
+        }
+
+        self.text_atlas_array = Some(CachedTextAtlasTexture {
             texture,
             _view: view,
             bind_group,
-            size,
-        };
-
-        if index < self.text_atlas_textures.len() {
-            self.text_atlas_textures[index] = cached;
-        } else {
-            self.text_atlas_textures.push(cached);
-        }
+            size: page_size,
+            layers: required_layers,
+        });
 
         Ok(())
     }
@@ -3205,8 +3217,7 @@ impl Default for WgpuRenderer {
             shared: None,
             text_engine: None,
             image_cache: HashMap::new(),
-            text_atlas_textures: Vec::new(),
-            active_text_atlas_texture_index: 0,
+            text_atlas_array: None,
             analytic_path_cache: HashMap::new(),
             compositors: HashMap::new(),
             surfaces: HashMap::new(),
@@ -3589,13 +3600,16 @@ struct VsOut {
     @location(0) color: vec4<f32>,
     @location(1) tex_coords: vec2<f32>,
     @location(2) metadata: vec2<f32>,
+    @location(3) @interpolate(flat) layer: u32,
+    @location(4) uv_min: vec2<f32>,
+    @location(5) uv_max: vec2<f32>,
 };
 
 @group(0) @binding(0)
 var text_atlas_sampler: sampler;
 
 @group(0) @binding(1)
-var text_atlas_texture: texture_2d<f32>;
+var text_atlas_texture: texture_2d_array<f32>;
 
 @vertex
 fn vs_main(
@@ -3607,12 +3621,16 @@ fn vs_main(
     @location(5) uv_max: vec2<f32>,
     @location(6) color: vec4<f32>,
     @location(7) metadata: vec2<f32>,
+    @location(8) layer: u32,
 ) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0);
     out.color = color;
     out.tex_coords = uv_min + local_pos * (uv_max - uv_min);
     out.metadata = metadata;
+    out.layer = layer;
+    out.uv_min = uv_min;
+    out.uv_max = uv_max;
     return out;
 }
 
@@ -3665,7 +3683,11 @@ fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enh
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let sampled = textureSample(text_atlas_texture, text_atlas_sampler, in.tex_coords);
+    // Clamp the sample point to the glyph's half-texel-inset UV rect so bilinear taps at the quad
+    // edges can't reach into neighbouring glyphs (or the padding) at non-integer scales.
+    let atlas_half_texel = 0.5 / vec2<f32>(textureDimensions(text_atlas_texture));
+    let clamped_uv = clamp(in.tex_coords, in.uv_min + atlas_half_texel, in.uv_max - atlas_half_texel);
+    let sampled = textureSample(text_atlas_texture, text_atlas_sampler, clamped_uv, i32(in.layer));
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
         let alpha = sampled.a * opacity;
@@ -3714,6 +3736,9 @@ struct VsOut {
     @location(0) color: vec4<f32>,
     @location(1) tex_coords: vec2<f32>,
     @location(2) metadata: vec2<f32>,
+    @location(3) @interpolate(flat) layer: u32,
+    @location(4) uv_min: vec2<f32>,
+    @location(5) uv_max: vec2<f32>,
 };
 
 struct FragmentOutput {
@@ -3725,7 +3750,7 @@ struct FragmentOutput {
 var text_atlas_sampler: sampler;
 
 @group(0) @binding(1)
-var text_atlas_texture: texture_2d<f32>;
+var text_atlas_texture: texture_2d_array<f32>;
 
 @vertex
 fn vs_main(
@@ -3737,12 +3762,16 @@ fn vs_main(
     @location(5) uv_max: vec2<f32>,
     @location(6) color: vec4<f32>,
     @location(7) metadata: vec2<f32>,
+    @location(8) layer: u32,
 ) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0);
     out.color = color;
     out.tex_coords = uv_min + local_pos * (uv_max - uv_min);
     out.metadata = metadata;
+    out.layer = layer;
+    out.uv_min = uv_min;
+    out.uv_max = uv_max;
     return out;
 }
 
@@ -3803,7 +3832,11 @@ fn dual_source(foreground: vec3<f32>, alpha: vec3<f32>) -> FragmentOutput {
 
 @fragment
 fn fs_main(in: VsOut) -> FragmentOutput {
-    let sampled = textureSample(text_atlas_texture, text_atlas_sampler, in.tex_coords);
+    // Clamp the sample point to the glyph's half-texel-inset UV rect so bilinear taps at the quad
+    // edges can't reach into neighbouring glyphs (or the padding) at non-integer scales.
+    let atlas_half_texel = 0.5 / vec2<f32>(textureDimensions(text_atlas_texture));
+    let clamped_uv = clamp(in.tex_coords, in.uv_min + atlas_half_texel, in.uv_max - atlas_half_texel);
+    let sampled = textureSample(text_atlas_texture, text_atlas_sampler, clamped_uv, i32(in.layer));
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
         return dual_source(sampled.rgb, vec3<f32>(sampled.a * opacity));
@@ -4064,8 +4097,8 @@ mod tests {
         RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
         RetainedCompositorFrameStats, RetainedCompositorState, RetainedPacketId,
         RetainedPacketRebuildStats, ScissorRect, StemDarkening, SwashImageContent, SwashSource,
-        SwashStrikeWith, TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE, TEXT_ATLAS_HEIGHT,
-        TEXT_ATLAS_SHADER_SOURCE, TEXT_ATLAS_WIDTH, TextAtlas, TextAtlasColorMode,
+        SwashStrikeWith, TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE, TEXT_ATLAS_SHADER_SOURCE,
+        TextAtlasColorMode, TextAtlasPages,
         TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode, VERTEX_SIZE, Vertex,
         WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
         decode_rgba16f_pixels, prepare_frame_batches,
@@ -5096,6 +5129,7 @@ mod tests {
             uv_max: [0.5, 0.75],
             color_mode: TextAtlasColorMode::Grayscale,
             is_color: false,
+            page_index: 0,
         };
         let glyph = ShapedGlyph {
             glyph_id: 42,
@@ -5161,6 +5195,7 @@ mod tests {
             uv_max: [0.5, 0.75],
             color_mode: TextAtlasColorMode::Grayscale,
             is_color: true,
+            page_index: 0,
         };
         let glyph = ShapedGlyph {
             glyph_id: 42,
@@ -10582,7 +10617,7 @@ mod tests {
     }
 
     #[test]
-    fn renderer_resets_and_retries_when_text_atlas_fills_mid_frame() {
+    fn renderer_grows_atlas_pages_when_text_atlas_fills_mid_frame() {
         let mut scene = Scene::new();
         let text: String = (33u8..=126).map(char::from).collect();
         scene.push(SceneCommand::DrawText(TextRun {
@@ -10610,7 +10645,9 @@ mod tests {
 
         let mut renderer = WgpuRenderer::new();
         let mut text_engine = TextEngine::new().unwrap();
-        text_engine.atlas = TextAtlas::new(64, 64);
+        // Tiny pages with room for several layers: the printable-ASCII run overflows the first
+        // page, so the atlas must grow onto additional texture-array layers rather than reset.
+        text_engine.atlas = TextAtlasPages::new(96, 96, 4);
         renderer.text_engine = Some(text_engine);
 
         renderer.render(&frame).unwrap();
@@ -10618,23 +10655,155 @@ mod tests {
         let active_text_engine = renderer
             .text_engine
             .as_ref()
-            .expect("renderer should recreate the text engine after atlas retry");
-        assert_eq!(
-            active_text_engine.atlas.size(),
-            (TEXT_ATLAS_WIDTH as u32, TEXT_ATLAS_HEIGHT as u32)
+            .expect("renderer keeps the same text engine -- no nuclear reset");
+        // The engine was NOT replaced: it still has the small page size we configured (a reset
+        // would have rebuilt it at the default page size).
+        assert_eq!(active_text_engine.atlas.page_size(), (96, 96));
+        // Overflowing one page grew the atlas onto more pages instead of resetting.
+        assert!(
+            active_text_engine.atlas.page_count() >= 2,
+            "atlas should have grown onto multiple pages"
         );
         assert!(active_text_engine.glyph_cache_stats().0 > 32);
 
         let stats = renderer
             .last_frame_stats(frame.window_id)
-            .expect("renderer should record frame stats after retry");
+            .expect("renderer should record frame stats");
         assert!(stats.text_glyph_instance_count > 0);
 
         let image = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
         assert!(
             image.pixels().chunks_exact(4).any(|pixel| pixel[3] != 0),
-            "retried frame should still render visible text"
+            "frame should render visible text across atlas pages"
         );
+    }
+
+    #[test]
+    fn multi_page_atlas_is_stable_across_frames() {
+        // Rendering the same overflowing scene twice must not re-rasterize glyphs or churn pages.
+        // This is the property that replaces the old "atlas full -> full reset every frame"
+        // stutter: once warm, repeat frames are pure cache hits.
+        let text: String = (33u8..=126).map(char::from).collect();
+        let make_frame = || {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::DrawText(TextRun {
+                rect: Rect::new(4.0, 6.0, 1800.0, 32.0),
+                text: text.clone(),
+                style: TextStyle {
+                    font_size: 18.0,
+                    line_height: 22.0,
+                    ..TextStyle::new(Color::WHITE)
+                },
+            }));
+            SceneFrame {
+                window_id: WindowId::new(17),
+                viewport: Size::new(1800.0, 64.0),
+                surface_size: Size::new(1800.0, 64.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+            }
+        };
+
+        let mut renderer = WgpuRenderer::new();
+        let mut text_engine = TextEngine::new().unwrap();
+        text_engine.atlas = TextAtlasPages::new(96, 96, 4);
+        renderer.text_engine = Some(text_engine);
+
+        renderer.render(&make_frame()).unwrap();
+        let (entries_after_first, pages_after_first) = {
+            let text_engine = renderer.text_engine.as_ref().unwrap();
+            (
+                text_engine.glyph_cache_stats().0,
+                text_engine.atlas.page_count(),
+            )
+        };
+        assert!(pages_after_first >= 2, "glyphs should span multiple pages");
+
+        renderer.render(&make_frame()).unwrap();
+        let text_engine = renderer.text_engine.as_ref().unwrap();
+        assert_eq!(
+            text_engine.atlas.page_count(),
+            pages_after_first,
+            "page count must be stable across frames (no growth/thrash)"
+        );
+        assert_eq!(
+            text_engine.atlas.page_size(),
+            (96, 96),
+            "engine must not have been reset"
+        );
+        assert_eq!(
+            text_engine.glyph_cache_stats().0,
+            entries_after_first,
+            "no glyphs should be re-rasterized on the second frame"
+        );
+
+        let image = renderer.capture_last_frame_rgba(WindowId::new(17)).unwrap();
+        assert!(image.pixels().chunks_exact(4).any(|pixel| pixel[3] != 0));
+    }
+
+    #[test]
+    fn multi_page_atlas_evicts_without_corruption_under_pressure() {
+        // A tight 2-page budget with a rotating glyph set forces LRU eviction across frames. The
+        // atlas must never exceed its budget, the glyph cache must never dangle past the live
+        // pages (coupled entries are dropped on eviction), and rendering must keep working.
+        let texts = [
+            "the quick brown fox",
+            "JUMPS OVER THE LAZY",
+            "0123456789 !?#@&*()",
+            "Pack my box w/ jugs",
+            "Sphinx of black quartz",
+        ];
+
+        let mut renderer = WgpuRenderer::new();
+        let mut text_engine = TextEngine::new().unwrap();
+        text_engine.atlas = TextAtlasPages::new(64, 64, 2);
+        renderer.text_engine = Some(text_engine);
+
+        for label in texts {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::DrawText(TextRun {
+                rect: Rect::new(4.0, 6.0, 600.0, 28.0),
+                text: label.to_string(),
+                style: TextStyle {
+                    font_size: 18.0,
+                    line_height: 22.0,
+                    ..TextStyle::new(Color::WHITE)
+                },
+            }));
+            let frame = SceneFrame {
+                window_id: WindowId::new(21),
+                viewport: Size::new(600.0, 40.0),
+                surface_size: Size::new(600.0, 40.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+            };
+
+            renderer.render(&frame).unwrap();
+
+            let text_engine = renderer.text_engine.as_ref().unwrap();
+            let pages = text_engine.atlas.page_count();
+            assert!(pages <= 2, "atlas must respect the page budget");
+            assert!(
+                text_engine
+                    .glyph_cache
+                    .values()
+                    .all(|cached| cached.page_index < pages),
+                "every cached glyph must reference a live page after eviction"
+            );
+        }
+
+        let image = renderer.capture_last_frame_rgba(WindowId::new(21)).unwrap();
+        assert!(image.pixels().chunks_exact(4).any(|pixel| pixel[3] != 0));
     }
 
     #[test]

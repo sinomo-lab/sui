@@ -23,6 +23,7 @@ pub(crate) struct SharedRenderer {
     pub(crate) queue: wgpu::Queue,
     pub(crate) pipelines: HashMap<(wgpu::TextureFormat, PipelineKind), wgpu::RenderPipeline>,
     pub(crate) image_bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) text_atlas_array_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) analytic_path_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) output_transform_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) image_linear_sampler: wgpu::Sampler,
@@ -263,18 +264,29 @@ impl SharedRenderer {
                 PipelineKind::Textured
                 | PipelineKind::TexturedClipped
                 | PipelineKind::TextAtlas
-                | PipelineKind::TextAtlasClipped => Some(self.device.create_pipeline_layout(
-                    &wgpu::PipelineLayoutDescriptor {
-                        label: Some(match kind {
-                            PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
-                                "SUI text atlas pipeline layout"
-                            }
-                            _ => "SUI textured scene pipeline layout",
-                        }),
-                        bind_group_layouts: &[Some(&self.image_bind_group_layout)],
-                        immediate_size: 0,
-                    },
-                )),
+                | PipelineKind::TextAtlasClipped => {
+                    let is_text =
+                        matches!(kind, PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped);
+                    // Text samples a texture_2d_array (one layer per atlas page); images use a
+                    // plain texture_2d. They therefore need different bind group layouts.
+                    let bind_group_layout = if is_text {
+                        &self.text_atlas_array_bind_group_layout
+                    } else {
+                        &self.image_bind_group_layout
+                    };
+                    Some(
+                        self.device
+                            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                                label: Some(if is_text {
+                                    "SUI text atlas pipeline layout"
+                                } else {
+                                    "SUI textured scene pipeline layout"
+                                }),
+                                bind_group_layouts: &[Some(bind_group_layout)],
+                                immediate_size: 0,
+                            }),
+                    )
+                }
                 PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => Some(
                     self.device
                         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -387,6 +399,8 @@ pub(crate) struct CachedTextAtlasTexture {
     pub(crate) _view: wgpu::TextureView,
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) size: (u32, u32),
+    /// Number of array layers currently allocated (grows on demand up to the page budget).
+    pub(crate) layers: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -499,17 +513,21 @@ pub(crate) struct TextAtlasInstance {
     pub(crate) uv_max: [f32; 2],
     pub(crate) color: [f32; 4],
     pub(crate) metadata: [f32; 2],
+    /// Atlas page == texture-array layer this glyph lives on. Sampled in the fragment shader
+    /// once the multi-page texture array goes live (Phase 3).
+    pub(crate) layer: u32,
 }
 
 impl TextAtlasInstance {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
         1 => Float32x2,
         2 => Float32x2,
         3 => Float32x2,
         4 => Float32x2,
         5 => Float32x2,
         6 => Float32x4,
-        7 => Float32x2
+        7 => Float32x2,
+        8 => Uint32
     ];
 
     pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {

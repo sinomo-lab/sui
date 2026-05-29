@@ -177,6 +177,8 @@ pub(crate) struct CachedGlyphAtlas {
     pub(crate) uv_max: [f32; 2],
     pub(crate) color_mode: TextAtlasColorMode,
     pub(crate) is_color: bool,
+    /// Which atlas page (texture-array layer) this glyph was rasterized into.
+    pub(crate) page_index: usize,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -229,7 +231,7 @@ impl AtlasRectU {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TextAtlasPlacement {
     pub(crate) x: usize,
     pub(crate) y: usize,
@@ -241,15 +243,18 @@ pub(crate) enum TextAtlasInsertError {
     TooLarge,
 }
 
+/// A pending CPU->GPU copy for one atlas page: the dirty rectangle (`offset`/`extent`) and its
+/// pixels. The destination page (texture-array layer) is supplied alongside by `take_uploads`.
 #[derive(Debug, Clone)]
 pub(crate) struct TextAtlasUpload {
-    pub(crate) size: (u32, u32),
     pub(crate) offset: (u32, u32),
     pub(crate) extent: (u32, u32),
-    pub(crate) full_texture: bool,
     pub(crate) pixels: Vec<u8>,
 }
 
+/// A single atlas page: a CPU-side pixel buffer with a shelf-packing cursor and a dirty
+/// rectangle for incremental GPU uploads. The multi-page atlas ([`TextAtlasPages`]) holds a
+/// collection of these.
 #[derive(Debug, Clone)]
 pub(crate) struct TextAtlas {
     pub(crate) width: usize,
@@ -259,6 +264,8 @@ pub(crate) struct TextAtlas {
     pub(crate) full_upload: bool,
     pub(crate) cursor: (usize, usize),
     pub(crate) row_height: usize,
+    /// Frame index of the most recent insert/touch, used for whole-page LRU eviction.
+    pub(crate) last_used_frame: u64,
 }
 
 impl Default for TextAtlas {
@@ -277,7 +284,19 @@ impl TextAtlas {
             full_upload: true,
             cursor: (TEXT_ATLAS_PADDING, TEXT_ATLAS_PADDING),
             row_height: 0,
+            last_used_frame: 0,
         }
+    }
+
+    /// Reset this page so its space can be recycled (used when a page is evicted). Zeroes the
+    /// pixels, rewinds the packing cursor, and forces a full re-upload of the cleared contents.
+    pub(crate) fn clear_for_reuse(&mut self) {
+        self.pixels.iter_mut().for_each(|byte| *byte = 0);
+        self.cursor = (TEXT_ATLAS_PADDING, TEXT_ATLAS_PADDING);
+        self.row_height = 0;
+        self.dirty = AtlasRectU::EVERYTHING;
+        self.full_upload = true;
+        self.last_used_frame = 0;
     }
 
     pub(crate) fn size(&self) -> (u32, u32) {
@@ -350,10 +369,8 @@ impl TextAtlas {
         if self.full_upload || dirty == AtlasRectU::EVERYTHING {
             self.full_upload = false;
             return Some(TextAtlasUpload {
-                size: self.size(),
                 offset: (0, 0),
                 extent: self.size(),
-                full_texture: true,
                 pixels: self.pixels.clone(),
             });
         }
@@ -370,12 +387,233 @@ impl TextAtlas {
         }
 
         Some(TextAtlasUpload {
-            size: self.size(),
             offset: (dirty.min_x as u32, dirty.min_y as u32),
             extent: (width as u32, height as u32),
-            full_texture: false,
             pixels,
         })
+    }
+}
+
+/// Result of inserting a glyph into the multi-page atlas: where it landed, plus the page that was
+/// cleared to make room (if any) so the caller can drop the glyph-cache entries that pointed into
+/// the now-recycled page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TextAtlasInsertion {
+    pub(crate) page_index: usize,
+    pub(crate) placement: TextAtlasPlacement,
+    pub(crate) evicted_page: Option<usize>,
+}
+
+impl TextAtlasInsertion {
+    fn placed(page_index: usize, placement: TextAtlasPlacement) -> Self {
+        Self {
+            page_index,
+            placement,
+            evicted_page: None,
+        }
+    }
+
+    fn evicted(page_index: usize, placement: TextAtlasPlacement) -> Self {
+        Self {
+            page_index,
+            placement,
+            evicted_page: Some(page_index),
+        }
+    }
+}
+
+/// A multi-page glyph atlas: a collection of uniformly sized [`TextAtlas`] pages that grows on
+/// demand up to `max_pages`, then recycles the least-recently-used page. Each page maps to one
+/// layer of the GPU texture array.
+#[derive(Debug, Clone)]
+pub(crate) struct TextAtlasPages {
+    pages: Vec<TextAtlas>,
+    page_width: usize,
+    page_height: usize,
+    max_pages: usize,
+}
+
+impl TextAtlasPages {
+    pub(crate) fn new(page_width: usize, page_height: usize, max_pages: usize) -> Self {
+        Self {
+            pages: vec![TextAtlas::new(page_width, page_height)],
+            page_width,
+            page_height,
+            max_pages: max_pages.max(1),
+        }
+    }
+
+    /// Number of allocated atlas pages (drives how many texture-array layers are allocated).
+    pub(crate) fn page_count(&self) -> usize {
+        self.pages.len()
+    }
+
+    /// Uniform dimensions of every page, in pixels.
+    pub(crate) fn page_size(&self) -> (u32, u32) {
+        (self.page_width as u32, self.page_height as u32)
+    }
+
+    /// Mark a page as used in `frame` so LRU eviction won't reclaim it prematurely. Called on a
+    /// glyph-cache hit (the insert path stamps the page itself).
+    pub(crate) fn touch_page(&mut self, index: usize, frame: u64) {
+        if let Some(page) = self.pages.get_mut(index) {
+            page.last_used_frame = frame;
+        }
+    }
+
+    /// Insert a rasterized glyph, returning the page it landed on plus its placement within that
+    /// page. Tries existing pages in order, then grows a new page if under budget. At budget this
+    /// returns `Full` for now; whole-page LRU eviction is added in a later phase. `frame` stamps
+    /// the chosen page for that future eviction policy.
+    pub(crate) fn insert_rgba(
+        &mut self,
+        width: usize,
+        height: usize,
+        pixels: &[u8],
+        frame: u64,
+    ) -> std::result::Result<TextAtlasInsertion, TextAtlasInsertError> {
+        // A glyph larger than a page can never fit on any page.
+        if width == 0 || height == 0 || width > self.page_width || height > self.page_height {
+            return Err(TextAtlasInsertError::TooLarge);
+        }
+
+        for index in 0..self.pages.len() {
+            match self.pages[index].insert_rgba(width, height, pixels) {
+                Ok(placement) => {
+                    self.pages[index].last_used_frame = frame;
+                    return Ok(TextAtlasInsertion::placed(index, placement));
+                }
+                Err(TextAtlasInsertError::TooLarge) => return Err(TextAtlasInsertError::TooLarge),
+                Err(TextAtlasInsertError::Full) => {}
+            }
+        }
+
+        if self.pages.len() < self.max_pages {
+            let mut page = TextAtlas::new(self.page_width, self.page_height);
+            let placement = page.insert_rgba(width, height, pixels)?;
+            page.last_used_frame = frame;
+            let index = self.pages.len();
+            self.pages.push(page);
+            return Ok(TextAtlasInsertion::placed(index, placement));
+        }
+
+        // At the page budget: evict the least-recently-used page that was NOT touched this frame.
+        // Pages used earlier this frame are off-limits -- glyphs already emitted this frame point
+        // into them, so clearing one would make those draws sample garbage. This guard is the
+        // load-bearing invariant of the eviction scheme.
+        let evict_index = self
+            .pages
+            .iter()
+            .enumerate()
+            .filter(|(_, page)| page.last_used_frame != frame)
+            .min_by_key(|(_, page)| page.last_used_frame)
+            .map(|(index, _)| index);
+        let Some(evict_index) = evict_index else {
+            // Every page is hot this frame; signal Full so the caller drops this glyph for now.
+            return Err(TextAtlasInsertError::Full);
+        };
+
+        self.pages[evict_index].clear_for_reuse();
+        let placement = self.pages[evict_index].insert_rgba(width, height, pixels)?;
+        self.pages[evict_index].last_used_frame = frame;
+        Ok(TextAtlasInsertion::evicted(evict_index, placement))
+    }
+
+    /// Drain the pending dirty-rect upload from each page that has one, tagged with its page index
+    /// (the destination texture-array layer).
+    pub(crate) fn take_uploads(&mut self) -> Vec<(usize, TextAtlasUpload)> {
+        let mut uploads = Vec::new();
+        for (index, page) in self.pages.iter_mut().enumerate() {
+            if let Some(upload) = page.take_upload() {
+                uploads.push((index, upload));
+            }
+        }
+        uploads
+    }
+}
+
+#[cfg(test)]
+mod page_tests {
+    use super::*;
+
+    fn opaque(width: usize, height: usize) -> Vec<u8> {
+        vec![255u8; width * height * 4]
+    }
+
+    #[test]
+    fn overflow_allocates_second_page() {
+        let mut pages = TextAtlasPages::new(64, 64, 2);
+        let glyph = opaque(60, 60);
+
+        // First 60x60 fits on page 0; a second can't share the 64-tall page, so it grows.
+        assert_eq!(pages.insert_rgba(60, 60, &glyph, 1).unwrap().page_index, 0);
+        assert_eq!(pages.insert_rgba(60, 60, &glyph, 1).unwrap().page_index, 1);
+        assert_eq!(pages.page_count(), 2);
+
+        // Both pages are full, we are at the 2-page budget, and every page was touched this same
+        // frame -> nothing is eligible for eviction -> Full.
+        assert_eq!(
+            pages.insert_rgba(60, 60, &glyph, 1),
+            Err(TextAtlasInsertError::Full)
+        );
+    }
+
+    #[test]
+    fn eviction_reuses_lru_page() {
+        let mut pages = TextAtlasPages::new(64, 64, 2);
+        let glyph = opaque(60, 60);
+
+        // Page 0 last used at frame 1, page 1 at frame 2.
+        assert_eq!(pages.insert_rgba(60, 60, &glyph, 1).unwrap().page_index, 0);
+        assert_eq!(pages.insert_rgba(60, 60, &glyph, 2).unwrap().page_index, 1);
+
+        // At budget; inserting at frame 3 evicts the LRU page (page 0) and reuses it.
+        let insertion = pages.insert_rgba(60, 60, &glyph, 3).unwrap();
+        assert_eq!(insertion.page_index, 0);
+        assert_eq!(insertion.evicted_page, Some(0));
+        assert_eq!(pages.page_count(), 2);
+    }
+
+    #[test]
+    fn current_frame_page_not_evicted() {
+        let mut pages = TextAtlasPages::new(64, 64, 2);
+        let glyph = opaque(60, 60);
+
+        // Both pages are used in frame 5.
+        pages.insert_rgba(60, 60, &glyph, 5).unwrap();
+        pages.insert_rgba(60, 60, &glyph, 5).unwrap();
+
+        // A third glyph in frame 5 must NOT evict a page referenced earlier this frame.
+        assert_eq!(
+            pages.insert_rgba(60, 60, &glyph, 5),
+            Err(TextAtlasInsertError::Full)
+        );
+    }
+
+    #[test]
+    fn too_large_glyph_is_rejected() {
+        let mut pages = TextAtlasPages::new(64, 64, 4);
+        assert_eq!(
+            pages.insert_rgba(70, 70, &opaque(70, 70), 1),
+            Err(TextAtlasInsertError::TooLarge)
+        );
+        assert_eq!(pages.page_count(), 1);
+    }
+
+    #[test]
+    fn take_uploads_returns_per_page() {
+        let mut pages = TextAtlasPages::new(64, 64, 2);
+        let glyph = opaque(60, 60);
+        pages.insert_rgba(60, 60, &glyph, 1).unwrap();
+        pages.insert_rgba(60, 60, &glyph, 1).unwrap();
+
+        let uploads = pages.take_uploads();
+        let indices: Vec<usize> = uploads.iter().map(|(index, _)| *index).collect();
+        assert_eq!(uploads.len(), 2);
+        assert!(indices.contains(&0) && indices.contains(&1));
+
+        // Dirty state is consumed: a second drain yields nothing.
+        assert!(pages.take_uploads().is_empty());
     }
 }
 
