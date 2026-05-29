@@ -2222,30 +2222,18 @@ pub(crate) fn swash_image_to_rgba(
             })
         }
         SwashImageContent::Color => {
-            if image.data.len() < pixel_count.checked_mul(4)? {
+            let bytes = pixel_count.checked_mul(4)?;
+            if image.data.len() < bytes {
                 return None;
             }
-
-            let mut pixels = vec![0; pixel_count.checked_mul(4)?];
-            for (source, pixel) in image.data.chunks_exact(4).zip(pixels.chunks_exact_mut(4)) {
-                pixel[0] = linearized_color_unorm(source[0]);
-                pixel[1] = linearized_color_unorm(source[1]);
-                pixel[2] = linearized_color_unorm(source[2]);
-                pixel[3] = source[3];
-            }
-
+            // Store the glyph's sRGB color verbatim; the fragment shader linearizes at full float
+            // precision, avoiding the dark-tone banding of 8-bit linear storage.
             Some(SwashRasterizedGlyph {
-                pixels,
+                pixels: image.data[..bytes].to_vec(),
                 is_color: true,
             })
         }
     }
-}
-
-pub(crate) fn linearized_color_unorm(channel: u8) -> u8 {
-    (srgb_transfer_to_linear(channel as f32 / 255.0) * 255.0)
-        .round()
-        .clamp(0.0, 255.0) as u8
 }
 
 pub(crate) fn convert_subpixel_texel_for_mode(
@@ -3999,14 +3987,6 @@ pub(crate) fn shader_color(color: Color) -> [f32; 4] {
         linear.blue,
         linear.alpha.clamp(0.0, 1.0),
     ]
-}
-
-fn srgb_transfer_to_linear(channel: f32) -> f32 {
-    if channel <= 0.04045 {
-        channel / 12.92
-    } else {
-        ((channel + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 fn preferred_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {

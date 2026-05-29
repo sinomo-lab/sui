@@ -3634,6 +3634,12 @@ fn vs_main(
     return out;
 }
 
+fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
+    let low = color / 12.92;
+    let high = pow((color + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(high, low, color <= vec3<f32>(0.04045));
+}
+
 const TEXT_GAMMA_RATIOS: vec4<f32> = vec4<f32>(0.14805442, -0.8945945, 1.475908, -0.32466823);
 const TEXT_GRAYSCALE_ENHANCED_CONTRAST: f32 = 1.0;
 const TEXT_SUBPIXEL_ENHANCED_CONTRAST: f32 = 0.5;
@@ -3691,7 +3697,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
         let alpha = sampled.a * opacity;
-        return vec4<f32>(sampled.rgb * alpha, alpha);
+        // Color glyphs are stored as sRGB; linearize before premultiplying for the linear blend.
+        return vec4<f32>(srgb_to_linear(sampled.rgb) * alpha, alpha);
     }
 
     if in.metadata.x > 0.5 {
@@ -3775,6 +3782,12 @@ fn vs_main(
     return out;
 }
 
+fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
+    let low = color / 12.92;
+    let high = pow((color + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(high, low, color <= vec3<f32>(0.04045));
+}
+
 const TEXT_GAMMA_RATIOS: vec4<f32> = vec4<f32>(0.14805442, -0.8945945, 1.475908, -0.32466823);
 const TEXT_GRAYSCALE_ENHANCED_CONTRAST: f32 = 1.0;
 const TEXT_SUBPIXEL_ENHANCED_CONTRAST: f32 = 0.5;
@@ -3839,7 +3852,8 @@ fn fs_main(in: VsOut) -> FragmentOutput {
     let sampled = textureSample(text_atlas_texture, text_atlas_sampler, clamped_uv, i32(in.layer));
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
-        return dual_source(sampled.rgb, vec3<f32>(sampled.a * opacity));
+        // Color glyphs are stored as sRGB; linearize before premultiplying for the linear blend.
+        return dual_source(srgb_to_linear(sampled.rgb), vec3<f32>(sampled.a * opacity));
     }
 
     if in.metadata.x > 0.5 {
@@ -4106,7 +4120,7 @@ mod tests {
             CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
             apply_output_transform_for_testing, apply_stem_darkening_to_coverage,
             convert_subpixel_texel_for_mode, glyph_raster_offset, glyph_subpixel_offset,
-            linearized_color_unorm, output_transform_requires_intermediate, prepare_cached_passes,
+            output_transform_requires_intermediate, prepare_cached_passes,
             select_output_strategy, swash_image_to_rgba, tone_map_linear_color,
         },
         shader_color, strip_padded_readback_rows, to_ndc,
@@ -5235,7 +5249,7 @@ mod tests {
     }
 
     #[test]
-    fn swash_color_glyph_images_are_linearized_for_text_atlas() {
+    fn swash_color_glyph_images_store_srgb_for_text_atlas() {
         let image = swash::scale::image::Image {
             source: SwashSource::ColorBitmap(SwashStrikeWith::BestFit),
             content: SwashImageContent::Color,
@@ -5258,11 +5272,8 @@ mod tests {
         .expect("color glyph should convert into atlas pixels");
 
         assert!(rasterized.is_color);
-        assert_eq!(rasterized.pixels.len(), 4);
-        assert_eq!(rasterized.pixels[0], linearized_color_unorm(66));
-        assert_eq!(rasterized.pixels[1], linearized_color_unorm(42));
-        assert_eq!(rasterized.pixels[2], linearized_color_unorm(213));
-        assert_eq!(rasterized.pixels[3], 128);
+        // The atlas stores sRGB verbatim; the fragment shader linearizes at sample time.
+        assert_eq!(rasterized.pixels, vec![66, 42, 213, 128]);
     }
 
     #[test]
@@ -5285,24 +5296,33 @@ mod tests {
 
     #[test]
     fn color_text_atlas_shader_outputs_sampled_premultiplied_alpha() {
-        let sampled = [
-            linearized_color_unorm(66) as f32 / 255.0,
-            linearized_color_unorm(42) as f32 / 255.0,
-            linearized_color_unorm(213) as f32 / 255.0,
-            0.5,
+        // The atlas now holds sRGB; the shader linearizes the sampled color before premultiplying.
+        fn srgb_to_linear(channel: f32) -> f32 {
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        let sampled_srgb = [66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0];
+        let linear = [
+            srgb_to_linear(sampled_srgb[0]),
+            srgb_to_linear(sampled_srgb[1]),
+            srgb_to_linear(sampled_srgb[2]),
         ];
+        let sampled_alpha = 0.5;
         let opacity = 0.75;
-        let alpha = sampled[3] * opacity;
+        let alpha = sampled_alpha * opacity;
         let premultiplied = [
-            sampled[0] * alpha,
-            sampled[1] * alpha,
-            sampled[2] * alpha,
+            linear[0] * alpha,
+            linear[1] * alpha,
+            linear[2] * alpha,
             alpha,
         ];
 
-        assert!((premultiplied[0] - sampled[0] * 0.375).abs() < 0.0001);
-        assert!((premultiplied[1] - sampled[1] * 0.375).abs() < 0.0001);
-        assert!((premultiplied[2] - sampled[2] * 0.375).abs() < 0.0001);
+        assert!((premultiplied[0] - linear[0] * 0.375).abs() < 0.0001);
+        assert!((premultiplied[1] - linear[1] * 0.375).abs() < 0.0001);
+        assert!((premultiplied[2] - linear[2] * 0.375).abs() < 0.0001);
         assert!((premultiplied[3] - 0.375).abs() < 0.0001);
     }
 
