@@ -2053,14 +2053,58 @@ fn build_cached_glyph_atlas(
 
     let width = image.placement.width as usize;
     let height = image.placement.height as usize;
-    let Some(rasterized) = swash_image_to_rgba(
-        &image,
-        font_size_physical,
-        text_render_mode,
-        stem_darkening,
-        coverage_policy,
-    ) else {
-        return Ok(None);
+    let pixel_count = width.saturating_mul(height);
+
+    // A grayscale outline that rendered to a pure binary mask (jaggy) is re-rendered with
+    // oversampling for true anti-aliased coverage; everything else uses the direct render.
+    let needs_oversample = matches!(text_render_mode, TextRenderMode::Grayscale)
+        && matches!(image.content, SwashImageContent::Mask)
+        && pixel_count > 0
+        && image.data.len() >= pixel_count
+        && is_binary_coverage(&image.data[..pixel_count]);
+
+    let rasterized = if needs_oversample {
+        let placement = image.placement;
+        drop(scaler);
+        let oversampled = oversampled_mask_coverage(
+            scale_context,
+            face,
+            glyph_id,
+            font_size_physical,
+            subpixel_offset,
+            &placement,
+        )
+        .map(|coverage| SwashRasterizedGlyph {
+            pixels: mask_coverage_to_rgba(
+                &coverage,
+                stem_darkening.effective_amount(font_size_physical),
+                coverage_policy,
+            ),
+            is_color: false,
+        });
+        match oversampled.or_else(|| {
+            swash_image_to_rgba(
+                &image,
+                font_size_physical,
+                text_render_mode,
+                stem_darkening,
+                coverage_policy,
+            )
+        }) {
+            Some(rasterized) => rasterized,
+            None => return Ok(None),
+        }
+    } else {
+        match swash_image_to_rgba(
+            &image,
+            font_size_physical,
+            text_render_mode,
+            stem_darkening,
+            coverage_policy,
+        ) {
+            Some(rasterized) => rasterized,
+            None => return Ok(None),
+        }
     };
 
     if width == 0 || height == 0 {
@@ -2143,28 +2187,17 @@ pub(crate) fn swash_image_to_rgba(
 
     match image.content {
         SwashImageContent::Mask => {
-            let mut coverage = vec![0; pixel_count];
             if image.data.len() < pixel_count {
                 return None;
             }
-            coverage.copy_from_slice(&image.data[..pixel_count]);
-
-            if coverage.iter().all(|value| *value == 0 || *value == 255) {
-                coverage = soften_binary_coverage(&coverage, width, height);
-            }
-
-            let mut pixels = vec![0; pixel_count.checked_mul(4)?];
-            for (coverage, pixel) in coverage.into_iter().zip(pixels.chunks_exact_mut(4)) {
-                let coverage = apply_stem_darkening_to_coverage(coverage, stem_darkening_amount);
-                let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
-                pixel[0] = 255;
-                pixel[1] = 255;
-                pixel[2] = 255;
-                pixel[3] = alpha;
-            }
-
+            // Coverage is already anti-aliased here; the binary-mask case is intercepted earlier
+            // (build_cached_glyph_atlas) and re-rendered with oversampling for true coverage.
             Some(SwashRasterizedGlyph {
-                pixels,
+                pixels: mask_coverage_to_rgba(
+                    &image.data[..pixel_count],
+                    stem_darkening_amount,
+                    coverage_policy,
+                ),
                 is_color: false,
             })
         }
@@ -2252,30 +2285,170 @@ pub(crate) fn apply_stem_darkening_to_coverage(coverage: u8, amount: f32) -> u8 
     (((coverage + ((1.0 - coverage) * amount)).clamp(0.0, 1.0)) * 255.0).round() as u8
 }
 
-fn soften_binary_coverage(coverage: &[u8], width: usize, height: usize) -> Vec<u8> {
-    let mut softened = vec![0; coverage.len()];
+fn mask_coverage_to_rgba(
+    coverage: &[u8],
+    stem_darkening_amount: f32,
+    coverage_policy: TextCoveragePolicy,
+) -> Vec<u8> {
+    let mut pixels = vec![0u8; coverage.len() * 4];
+    for (value, pixel) in coverage.iter().zip(pixels.chunks_exact_mut(4)) {
+        let value = apply_stem_darkening_to_coverage(*value, stem_darkening_amount);
+        let alpha = (coverage_policy.apply(value as f32 / 255.0) * 255.0).round() as u8;
+        pixel[0] = 255;
+        pixel[1] = 255;
+        pixel[2] = 255;
+        pixel[3] = alpha;
+    }
+    pixels
+}
 
-    for y in 0..height {
-        let y_start = y.saturating_sub(1);
-        let y_end = (y + 1).min(height.saturating_sub(1));
-        for x in 0..width {
-            let x_start = x.saturating_sub(1);
-            let x_end = (x + 1).min(width.saturating_sub(1));
+fn is_binary_coverage(data: &[u8]) -> bool {
+    !data.is_empty() && data.iter().all(|&value| value == 0 || value == 255)
+}
+
+/// Area-average a `factor`x oversampled coverage mask (`src`) down onto the 1x pixel grid defined
+/// by the target placement, preserving the target's exact origin and dimensions. Oversample
+/// samples that fall outside `src` count as zero (transparent outside the glyph), so each output
+/// pixel is the true fractional coverage over its `factor` x `factor` footprint.
+fn downsample_to_target(
+    src: &[u8],
+    src_width: usize,
+    src_height: usize,
+    src_left: i32,
+    src_top: i32,
+    dst_width: usize,
+    dst_height: usize,
+    dst_left: i32,
+    dst_top: i32,
+    factor: i32,
+) -> Vec<u8> {
+    let mut out = vec![0u8; dst_width * dst_height];
+    // The glyph sits at factor x the 1x position, so 1x pixel p maps to oversample pixels
+    // [p*factor, (p+1)*factor); align that span into src-local coordinates.
+    let delta_x = dst_left * factor - src_left;
+    let delta_y = dst_top * factor - src_top;
+    let samples_per_pixel = (factor * factor).max(1) as u32;
+    for j in 0..dst_height {
+        let base_y = delta_y + j as i32 * factor;
+        for i in 0..dst_width {
+            let base_x = delta_x + i as i32 * factor;
             let mut sum = 0u32;
-            let mut samples = 0u32;
-
-            for sample_y in y_start..=y_end {
-                for sample_x in x_start..=x_end {
-                    sum += u32::from(coverage[sample_y * width + sample_x]);
-                    samples += 1;
+            for sy in 0..factor {
+                let oy = base_y + sy;
+                if oy < 0 || oy as usize >= src_height {
+                    continue;
+                }
+                let row = oy as usize * src_width;
+                for sx in 0..factor {
+                    let ox = base_x + sx;
+                    if ox < 0 || ox as usize >= src_width {
+                        continue;
+                    }
+                    sum += u32::from(src[row + ox as usize]);
                 }
             }
-
-            softened[y * width + x] = (sum / samples.max(1)) as u8;
+            out[j * dst_width + i] = (sum / samples_per_pixel) as u8;
         }
     }
+    out
+}
 
-    softened
+/// Re-render a glyph's coverage at OVERSAMPLE x and area-average it back onto the 1x grid defined
+/// by `target`. Recovers true anti-aliased coverage for glyphs whose 1x render came out as a pure
+/// binary mask (jaggy small or heavily-hinted outlines). Returns coverage at `target`'s exact
+/// dimensions so glyph placement is unchanged.
+fn oversampled_mask_coverage(
+    scale_context: &mut SwashScaleContext,
+    face: &SwashFaceState<'_>,
+    glyph_id: u16,
+    font_size_physical: f32,
+    subpixel_offset: GlyphSubpixelOffsetKey,
+    target: &swash::zeno::Placement,
+) -> Option<Vec<u8>> {
+    const OVERSAMPLE: i32 = 4;
+    let sources = [SwashSource::Outline];
+    let mut scaler = scale_context
+        .builder_with_id(face.font_ref, face.font_id)
+        .size(font_size_physical * OVERSAMPLE as f32)
+        .hint(false)
+        .build();
+    let mut renderer = SwashRender::new(&sources);
+    renderer.format(SwashFormat::Alpha);
+    // Same fractional sub-pixel position as the 1x render, expressed in oversample pixels.
+    let offset = subpixel_offset.as_swash_offset();
+    renderer.offset(swash::zeno::Vector::new(
+        offset.x * OVERSAMPLE as f32,
+        offset.y * OVERSAMPLE as f32,
+    ));
+    let image = renderer.render(&mut scaler, glyph_id)?;
+    if !matches!(image.content, SwashImageContent::Mask) {
+        return None;
+    }
+    Some(downsample_to_target(
+        &image.data,
+        image.placement.width as usize,
+        image.placement.height as usize,
+        image.placement.left,
+        image.placement.top,
+        target.width as usize,
+        target.height as usize,
+        target.left,
+        target.top,
+        OVERSAMPLE,
+    ))
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn downsample_all_covered_is_full() {
+        // A 4x4 fully-covered oversample block becomes one fully-covered 1x pixel.
+        let src = vec![255u8; 16];
+        let out = downsample_to_target(&src, 4, 4, 0, 0, 1, 1, 0, 0, 4);
+        assert_eq!(out, vec![255]);
+    }
+
+    #[test]
+    fn downsample_half_covered_is_half() {
+        // Top two oversample rows covered, bottom two empty -> ~50% coverage.
+        let mut src = vec![0u8; 16];
+        for value in src.iter_mut().take(8) {
+            *value = 255;
+        }
+        let out = downsample_to_target(&src, 4, 4, 0, 0, 1, 1, 0, 0, 4);
+        assert_eq!(out, vec![127]); // 8*255 / 16 = 127 (integer division)
+    }
+
+    #[test]
+    fn downsample_preserves_target_dimensions() {
+        // 8x4 oversample -> 2x1 target; only the left 4x4 block is covered.
+        let mut src = vec![0u8; 32];
+        for y in 0..4 {
+            for x in 0..4 {
+                src[y * 8 + x] = 255;
+            }
+        }
+        let out = downsample_to_target(&src, 8, 4, 0, 0, 2, 1, 0, 0, 4);
+        assert_eq!(out, vec![255, 0]);
+    }
+
+    #[test]
+    fn downsample_aligns_via_placement_delta() {
+        // Target pixel at 1x x=1 covers oversample [4,8); src begins at global x=4, so its local
+        // [0,4) maps exactly onto that pixel. The delta term must absorb src_left vs dst_left*4.
+        let src = vec![255u8; 16];
+        let out = downsample_to_target(&src, 4, 4, 4, 0, 1, 1, 1, 0, 4);
+        assert_eq!(out, vec![255]);
+    }
+
+    #[test]
+    fn binary_coverage_detection() {
+        assert!(is_binary_coverage(&[0, 255, 0, 255]));
+        assert!(!is_binary_coverage(&[0, 128, 255]));
+        assert!(!is_binary_coverage(&[]));
+    }
 }
 
 #[cfg(test)]
