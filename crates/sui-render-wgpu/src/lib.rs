@@ -5442,6 +5442,7 @@ mod tests {
             TextHinting::None,
             StemDarkening::None,
             TextCoveragePolicy::Linear,
+            400,
         );
         let second = GlyphCacheKey::new(
             face,
@@ -5452,8 +5453,34 @@ mod tests {
             TextHinting::None,
             StemDarkening::None,
             TextCoveragePolicy::Linear,
+            400,
         );
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn glyph_cache_key_includes_weight() {
+        let face = GlyphFaceCacheKey {
+            data_ptr: 0x1000,
+            data_len: 128,
+            face_index: 0,
+        };
+        let key = |weight| {
+            GlyphCacheKey::new(
+                face,
+                7,
+                1024,
+                GlyphSubpixelOffsetKey::new(0, 0),
+                TextRenderMode::Grayscale,
+                TextHinting::None,
+                StemDarkening::None,
+                TextCoveragePolicy::Linear,
+                weight,
+            )
+        };
+        // Different weights of a variable font rasterize differently -> distinct cache entries.
+        assert_ne!(key(400), key(700));
+        assert_eq!(key(700), key(700));
     }
 
     #[test]
@@ -7868,6 +7895,7 @@ mod tests {
                         font_size: 18.0,
                         line_height: 22.0,
                         color: text_color,
+                        ..Default::default()
                     },
                 }));
                 layer_scene.push(SceneCommand::DrawText(TextRun {
@@ -7878,6 +7906,7 @@ mod tests {
                         font_size: 13.0,
                         line_height: 18.0,
                         color: subtle_text,
+                        ..Default::default()
                     },
                 }));
 
@@ -10391,6 +10420,7 @@ mod tests {
                         font_size: 18.0,
                         line_height: 22.0,
                         color: text_color,
+                        ..Default::default()
                     },
                 }));
                 layer_scene.push(SceneCommand::DrawText(TextRun {
@@ -10405,6 +10435,7 @@ mod tests {
                         font_size: 13.0,
                         line_height: 18.0,
                         color: subtle_text,
+                        ..Default::default()
                     },
                 }));
                 layer_scene.push(SceneCommand::FillPath {
@@ -10424,6 +10455,7 @@ mod tests {
                         font_size: 13.0,
                         line_height: 18.0,
                         color: subtle_text,
+                        ..Default::default()
                     },
                 }));
                 layer_scene.push(SceneCommand::FillPath {
@@ -10438,6 +10470,7 @@ mod tests {
                         font_size: 13.0,
                         line_height: 18.0,
                         color: Color::rgba(1.0, 1.0, 1.0, 1.0),
+                        ..Default::default()
                     },
                 }));
                 layer_scene.push(SceneCommand::FillRect {
@@ -10452,6 +10485,7 @@ mod tests {
                         font_size: 14.0,
                         line_height: 20.0,
                         color: text_color,
+                        ..Default::default()
                     },
                 }));
             }

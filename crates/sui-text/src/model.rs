@@ -3,6 +3,7 @@ use std::{collections::HashMap, ops::Deref, ops::Range, sync::Arc};
 use sui_core::{Color, FontHandle, Point, Rect, Size, Vector};
 
 use crate::font::ResolvedTextFace;
+use crate::style::{FontFeatures, FontStretch, FontStyle, FontWeight};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextAlign {
@@ -72,6 +73,14 @@ pub struct TextStyle {
     pub font_size: f32,
     pub line_height: f32,
     pub color: Color,
+    /// Weight axis / weight class (drives the variable `wght` axis and bold-face selection).
+    pub weight: FontWeight,
+    /// Slant (italic / oblique face selection).
+    pub style: FontStyle,
+    /// Width / stretch (condensed..expanded face selection).
+    pub stretch: FontStretch,
+    /// OpenType feature settings applied to this run.
+    pub features: FontFeatures,
 }
 
 impl TextStyle {
@@ -90,6 +99,10 @@ impl Default for TextStyle {
             font_size: 14.0,
             line_height: 18.0,
             color: Color::WHITE,
+            weight: FontWeight::NORMAL,
+            style: FontStyle::Normal,
+            stretch: FontStretch::Normal,
+            features: FontFeatures::new(),
         }
     }
 }

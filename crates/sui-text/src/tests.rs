@@ -1,7 +1,7 @@
 use crate::{
-    FontRegistry, RegisteredFont, TextDirection, TextDocument, TextFlowDirection,
-    TextLayoutCacheSnapshot, TextLayoutRequest, TextParagraph, TextParagraphStyle, TextSelection,
-    TextSpan, TextStyle, TextSystem,
+    FontFeature, FontFeatures, FontRegistry, FontWeight, RegisteredFont, TextDirection,
+    TextDocument, TextFlowDirection, TextLayoutCacheSnapshot, TextLayoutRequest, TextParagraph,
+    TextParagraphStyle, TextSelection, TextSpan, TextStyle, TextSystem,
 };
 use sui_core::{Color, FontHandle, Point, Size};
 
@@ -268,6 +268,109 @@ fn text_system_reuses_cached_layouts_across_color_changes() {
     assert_eq!(second.id(), layout.id());
     assert_eq!(second.version(), layout.version());
     assert_eq!(second.glyphs(), layout.glyphs());
+}
+
+#[test]
+fn text_system_caches_distinct_layouts_per_weight() {
+    let system = TextSystem::new();
+    let shape = |weight| {
+        system
+            .shape_text(
+                "weighted",
+                Size::new(120.0, 24.0),
+                TextStyle {
+                    weight,
+                    ..TextStyle::new(Color::WHITE)
+                },
+                &FontRegistry::new(),
+            )
+            .unwrap()
+    };
+
+    shape(FontWeight::NORMAL);
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 1,
+            hits: 0,
+            misses: 1,
+        }
+    );
+
+    // A different weight is a distinct layout, not a cache reuse.
+    shape(FontWeight::BOLD);
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 2,
+            hits: 0,
+            misses: 2,
+        }
+    );
+
+    // Re-requesting the original weight hits the cache.
+    shape(FontWeight::NORMAL);
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 2,
+            hits: 1,
+            misses: 2,
+        }
+    );
+}
+
+#[test]
+fn text_system_caches_distinct_layouts_per_features() {
+    let system = TextSystem::new();
+    let shape = |features| {
+        system
+            .shape_text(
+                "ligatures",
+                Size::new(160.0, 24.0),
+                TextStyle {
+                    features,
+                    ..TextStyle::new(Color::WHITE)
+                },
+                &FontRegistry::new(),
+            )
+            .unwrap()
+    };
+
+    shape(FontFeatures::new());
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 1,
+            hits: 0,
+            misses: 1,
+        }
+    );
+
+    let mut no_ligatures = FontFeatures::new();
+    no_ligatures.disable(FontFeature::STANDARD_LIGATURES);
+
+    // Distinct feature settings -> distinct cache entry.
+    shape(no_ligatures.clone());
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 2,
+            hits: 0,
+            misses: 2,
+        }
+    );
+
+    // Same feature settings -> cache hit.
+    shape(no_ligatures);
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 2,
+            hits: 1,
+            misses: 2,
+        }
+    );
 }
 
 #[test]

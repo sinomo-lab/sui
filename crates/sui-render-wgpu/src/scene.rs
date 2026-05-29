@@ -1871,6 +1871,7 @@ impl TextEngine {
                     raster_scale_factor,
                 ),
                 coverage_policy,
+                glyph_style.weight.value(),
             )? {
                 if let Some(instance) = build_text_atlas_instance(
                     atlas,
@@ -1910,6 +1911,7 @@ impl TextEngine {
         raster_scale_factor: f32,
         subpixel_offset: GlyphSubpixelOffsetKey,
         coverage_policy: TextCoveragePolicy,
+        weight: u16,
     ) -> Result<Option<&CachedGlyphAtlas>> {
         let atlas_physical_scale = glyph_scale * raster_scale_factor.max(1.0);
         let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
@@ -1922,6 +1924,7 @@ impl TextEngine {
             self.text_hinting,
             self.stem_darkening,
             coverage_policy,
+            weight,
         );
         // Hit: stamp the glyph's page as used this frame (for LRU) and return the cached entry.
         if self.glyph_cache.contains_key(&key) {
@@ -1963,6 +1966,7 @@ impl TextEngine {
             self.text_hinting,
             self.stem_darkening,
             coverage_policy,
+            weight,
             self.frame_counter,
         )?;
         if let Some(started) = atlas_miss_started {
@@ -2027,6 +2031,7 @@ fn build_cached_glyph_atlas(
     text_hinting: TextHinting,
     stem_darkening: StemDarkening,
     coverage_policy: TextCoveragePolicy,
+    weight: u16,
     frame: u64,
 ) -> Result<Option<(CachedGlyphAtlas, Option<usize>)>> {
     let sources = [
@@ -2037,6 +2042,9 @@ fn build_cached_glyph_atlas(
     let mut scaler = scale_context
         .builder_with_id(face.font_ref, face.font_id)
         .size(font_size_physical)
+        // Rasterize the requested weight instance to match cosmic-text's shaped advances.
+        // No-op on static fonts (no `wght` axis).
+        .variations([("wght", f32::from(weight))])
         .hint(text_hinting.should_hint(font_size_physical))
         .build();
     let mut renderer = SwashRender::new(&sources);
@@ -2072,6 +2080,7 @@ fn build_cached_glyph_atlas(
             glyph_id,
             font_size_physical,
             subpixel_offset,
+            weight,
             &placement,
         )
         .map(|coverage| SwashRasterizedGlyph {
@@ -2351,6 +2360,7 @@ fn oversampled_mask_coverage(
     glyph_id: u16,
     font_size_physical: f32,
     subpixel_offset: GlyphSubpixelOffsetKey,
+    weight: u16,
     target: &swash::zeno::Placement,
 ) -> Option<Vec<u8>> {
     const OVERSAMPLE: i32 = 4;
@@ -2358,6 +2368,7 @@ fn oversampled_mask_coverage(
     let mut scaler = scale_context
         .builder_with_id(face.font_ref, face.font_id)
         .size(font_size_physical * OVERSAMPLE as f32)
+        .variations([("wght", f32::from(weight))])
         .hint(false)
         .build();
     let mut renderer = SwashRender::new(&sources);

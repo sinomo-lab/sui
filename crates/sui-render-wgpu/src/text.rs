@@ -42,9 +42,13 @@ pub(crate) struct GlyphCacheKey {
     pub(crate) text_hinting: TextHintingCacheKey,
     pub(crate) stem_darkening: StemDarkeningCacheKey,
     pub(crate) coverage_policy: TextCoverageCacheKey,
+    /// Requested `wght` axis value — different weights of a variable font rasterize to distinct
+    /// outlines and must cache separately. (Static fonts ignore the axis, so this is constant.)
+    pub(crate) weight: u16,
 }
 
 impl GlyphCacheKey {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         face: GlyphFaceCacheKey,
         glyph_id: u16,
@@ -54,6 +58,7 @@ impl GlyphCacheKey {
         text_hinting: TextHinting,
         stem_darkening: StemDarkening,
         coverage_policy: TextCoveragePolicy,
+        weight: u16,
     ) -> Self {
         Self {
             face,
@@ -64,6 +69,7 @@ impl GlyphCacheKey {
             text_hinting: TextHintingCacheKey::from(text_hinting),
             stem_darkening: StemDarkeningCacheKey::from(stem_darkening),
             coverage_policy: TextCoverageCacheKey::from(coverage_policy),
+            weight,
         }
     }
 }

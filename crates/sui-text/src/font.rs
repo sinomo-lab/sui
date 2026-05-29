@@ -3,11 +3,96 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use cosmic_text::{Attrs, Family, FontSystem, Metrics, fontdb};
+use cosmic_text::{Attrs, FeatureTag, Family, FontSystem, Metrics, Stretch, Style, Weight, fontdb};
 use sui_core::{Error, FontHandle, Rect, Result};
 use ttf_parser::GlyphId;
 
 use crate::model::{TextSpanId, TextStyle};
+use crate::style::{FontFeatures, FontStretch, FontStyle, FontWeight};
+
+/// Map sui-text's `FontWeight` to cosmic-text's `Weight` (drives bold-face selection and, for
+/// variable fonts, the `wght` shaping instance).
+pub(crate) fn to_cosmic_weight(weight: FontWeight) -> Weight {
+    Weight(weight.value())
+}
+
+pub(crate) fn to_cosmic_style(style: FontStyle) -> Style {
+    match style {
+        FontStyle::Normal => Style::Normal,
+        FontStyle::Italic => Style::Italic,
+        FontStyle::Oblique => Style::Oblique,
+    }
+}
+
+pub(crate) fn to_cosmic_stretch(stretch: FontStretch) -> Stretch {
+    match stretch {
+        FontStretch::UltraCondensed => Stretch::UltraCondensed,
+        FontStretch::ExtraCondensed => Stretch::ExtraCondensed,
+        FontStretch::Condensed => Stretch::Condensed,
+        FontStretch::SemiCondensed => Stretch::SemiCondensed,
+        FontStretch::Normal => Stretch::Normal,
+        FontStretch::SemiExpanded => Stretch::SemiExpanded,
+        FontStretch::Expanded => Stretch::Expanded,
+        FontStretch::ExtraExpanded => Stretch::ExtraExpanded,
+        FontStretch::UltraExpanded => Stretch::UltraExpanded,
+    }
+}
+
+pub(crate) fn to_cosmic_features(features: &FontFeatures) -> cosmic_text::FontFeatures {
+    let mut out = cosmic_text::FontFeatures::new();
+    for feature in features.iter() {
+        out.set(FeatureTag::new(&feature.tag), feature.value);
+    }
+    out
+}
+
+#[cfg(test)]
+mod attrs_mapping_tests {
+    use super::*;
+    use crate::style::FontFeature;
+
+    #[test]
+    fn weight_maps_to_cosmic_weight() {
+        assert_eq!(to_cosmic_weight(FontWeight::NORMAL), Weight(400));
+        assert_eq!(to_cosmic_weight(FontWeight::BOLD), Weight(700));
+        assert_eq!(to_cosmic_weight(FontWeight::new(550)), Weight(550));
+    }
+
+    #[test]
+    fn style_maps_to_cosmic_style() {
+        assert_eq!(to_cosmic_style(FontStyle::Normal), Style::Normal);
+        assert_eq!(to_cosmic_style(FontStyle::Italic), Style::Italic);
+        assert_eq!(to_cosmic_style(FontStyle::Oblique), Style::Oblique);
+    }
+
+    #[test]
+    fn stretch_maps_to_cosmic_stretch() {
+        assert_eq!(to_cosmic_stretch(FontStretch::Normal), Stretch::Normal);
+        assert_eq!(to_cosmic_stretch(FontStretch::Condensed), Stretch::Condensed);
+        assert_eq!(
+            to_cosmic_stretch(FontStretch::UltraExpanded),
+            Stretch::UltraExpanded
+        );
+    }
+
+    #[test]
+    fn features_map_to_cosmic_features_preserving_tag_value_and_order() {
+        let mut features = FontFeatures::new();
+        features
+            .disable(FontFeature::STANDARD_LIGATURES)
+            .enable(FontFeature::SMALL_CAPS);
+
+        let mut expected = cosmic_text::FontFeatures::new();
+        expected.set(FeatureTag::new(b"liga"), 0);
+        expected.set(FeatureTag::new(b"smcp"), 1);
+
+        assert_eq!(to_cosmic_features(&features), expected);
+        assert_eq!(
+            to_cosmic_features(&FontFeatures::new()),
+            cosmic_text::FontFeatures::new()
+        );
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisteredFont {
@@ -200,9 +285,16 @@ impl FontContext {
     }
 
     pub(crate) fn attrs_for_span<'a>(span: &'a ResolvedSpanInput, metadata: usize) -> Attrs<'a> {
-        let attrs = Attrs::new()
-            .metrics(Metrics::new(span.style.font_size, span.style.line_height))
-            .metadata(metadata);
+        let text_style = &span.style;
+        let mut attrs = Attrs::new()
+            .metrics(Metrics::new(text_style.font_size, text_style.line_height))
+            .metadata(metadata)
+            .weight(to_cosmic_weight(text_style.weight))
+            .style(to_cosmic_style(text_style.style))
+            .stretch(to_cosmic_stretch(text_style.stretch));
+        if !text_style.features.is_empty() {
+            attrs = attrs.font_features(to_cosmic_features(&text_style.features));
+        }
 
         match span.family_name.as_deref() {
             Some(name) => attrs.family(Family::Name(name)),

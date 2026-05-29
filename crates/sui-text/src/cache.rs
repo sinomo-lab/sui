@@ -9,6 +9,7 @@ use sui_core::{FontHandle, Size};
 use crate::{
     font::FaceCacheKey,
     model::{TextDocument, TextLayout, TextLayoutId, TextParagraphStyle, TextStyle},
+    style::{FontFeatures, FontStretch, FontStyle},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,6 +32,12 @@ struct TextStyleCacheKey {
     font_handle: Option<u64>,
     font_size_bits: u32,
     line_height_bits: u32,
+    weight: u16,
+    style: FontStyle,
+    stretch: FontStretch,
+    // Features are hashed into a u64 so the key stays `Copy` and cheap to compare; layouts with
+    // different OpenType features must not share a cache entry.
+    features_hash: u64,
 }
 
 impl TextStyleCacheKey {
@@ -39,8 +46,18 @@ impl TextStyleCacheKey {
             font_handle: style.font.map(FontHandle::get),
             font_size_bits: style.font_size.to_bits(),
             line_height_bits: style.line_height.to_bits(),
+            weight: style.weight.value(),
+            style: style.style,
+            stretch: style.stretch,
+            features_hash: hash_features(&style.features),
         }
     }
+}
+
+fn hash_features(features: &FontFeatures) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    features.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

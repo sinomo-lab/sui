@@ -1048,12 +1048,15 @@ fn default_attrs_for_style<'a>(
     family_name: Option<&'a str>,
     metadata: usize,
 ) -> cosmic_text::Attrs<'a> {
-    let attrs = cosmic_text::Attrs::new()
-        .metrics(cosmic_text::Metrics::new(
-            style.font_size,
-            style.line_height,
-        ))
-        .metadata(metadata);
+    let mut attrs = cosmic_text::Attrs::new()
+        .metrics(cosmic_text::Metrics::new(style.font_size, style.line_height))
+        .metadata(metadata)
+        .weight(crate::font::to_cosmic_weight(style.weight))
+        .style(crate::font::to_cosmic_style(style.style))
+        .stretch(crate::font::to_cosmic_stretch(style.stretch));
+    if !style.features.is_empty() {
+        attrs = attrs.font_features(crate::font::to_cosmic_features(&style.features));
+    }
     match family_name {
         Some(name) => attrs.family(cosmic_text::Family::Name(name)),
         None => attrs,
