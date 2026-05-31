@@ -3958,6 +3958,7 @@ pub struct TextInput {
     theme: Box<DefaultTheme>,
     name: String,
     value: String,
+    caret_offset: usize,
     placeholder: String,
     composition: String,
     text_style: Option<TextStyle>,
@@ -3972,6 +3973,8 @@ pub struct TextInput {
     caret_visible: bool,
     visible_measurement: Option<TextMeasurement>,
     input_measurement: Option<TextMeasurement>,
+    display_layout: Option<PersistentTextLayout>,
+    input_layout: Option<PersistentTextLayout>,
     on_change: Option<Box<dyn FnMut(String)>>,
 }
 
@@ -3981,6 +3984,7 @@ impl TextInput {
             theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             value: String::new(),
+            caret_offset: 0,
             placeholder: String::new(),
             composition: String::new(),
             text_style: None,
@@ -3995,6 +3999,8 @@ impl TextInput {
             caret_visible: true,
             visible_measurement: None,
             input_measurement: None,
+            display_layout: None,
+            input_layout: None,
             on_change: None,
         }
     }
@@ -4035,6 +4041,7 @@ impl TextInput {
 
     pub fn value(mut self, value: impl Into<String>) -> Self {
         self.value = value.into();
+        self.caret_offset = self.value.len();
         self
     }
 
@@ -4045,6 +4052,7 @@ impl TextInput {
     pub fn set_value(&mut self, value: impl Into<String>) {
         self.value = value.into();
         self.composition.clear();
+        self.caret_offset = self.value.len();
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -4056,9 +4064,16 @@ impl TextInput {
     }
 
     fn input_text(&self) -> String {
-        let mut text = self.value.clone();
+        let caret = clamp_text_offset(&self.value, self.caret_offset);
+        let mut text = String::with_capacity(self.value.len() + self.composition.len());
+        text.push_str(&self.value[..caret]);
         text.push_str(&self.composition);
+        text.push_str(&self.value[caret..]);
         text
+    }
+
+    fn display_caret_offset(&self) -> usize {
+        clamp_text_offset(&self.value, self.caret_offset) + self.composition.len()
     }
 
     fn visible_text(&self) -> String {
@@ -4081,7 +4096,9 @@ impl TextInput {
             return;
         }
 
-        self.value.push_str(text);
+        let caret = clamp_text_offset(&self.value, self.caret_offset);
+        self.value.insert_str(caret, text);
+        self.caret_offset = caret + text.len();
         self.composition.clear();
         self.commit_text_change();
         if self.focused {
@@ -4091,6 +4108,102 @@ impl TextInput {
         ctx.request_paint();
         ctx.request_semantics();
         ctx.set_handled();
+    }
+
+    fn delete_before_caret(&mut self, ctx: &mut EventCtx) {
+        if !self.composition.is_empty() {
+            self.composition.clear();
+            self.reset_caret_blink(ctx);
+            ctx.request_measure();
+            ctx.request_paint();
+            ctx.request_semantics();
+            ctx.set_handled();
+            return;
+        }
+
+        let caret = clamp_text_offset(&self.value, self.caret_offset);
+        if caret == 0 {
+            ctx.set_handled();
+            return;
+        }
+
+        let previous = previous_text_offset(&self.value, caret);
+        self.value.replace_range(previous..caret, "");
+        self.caret_offset = previous;
+        self.commit_text_change();
+        self.reset_caret_blink(ctx);
+        ctx.request_measure();
+        ctx.request_paint();
+        ctx.request_semantics();
+        ctx.set_handled();
+    }
+
+    fn delete_after_caret(&mut self, ctx: &mut EventCtx) {
+        if !self.composition.is_empty() {
+            self.composition.clear();
+            self.reset_caret_blink(ctx);
+            ctx.request_measure();
+            ctx.request_paint();
+            ctx.request_semantics();
+            ctx.set_handled();
+            return;
+        }
+
+        let caret = clamp_text_offset(&self.value, self.caret_offset);
+        if caret >= self.value.len() {
+            ctx.set_handled();
+            return;
+        }
+
+        let next = next_text_offset(&self.value, caret);
+        self.value.replace_range(caret..next, "");
+        self.caret_offset = caret;
+        self.commit_text_change();
+        self.reset_caret_blink(ctx);
+        ctx.request_measure();
+        ctx.request_paint();
+        ctx.request_semantics();
+        ctx.set_handled();
+    }
+
+    fn move_caret_to(&mut self, offset: usize, ctx: &mut EventCtx) {
+        let next = clamp_text_offset(&self.value, offset);
+        if self.caret_offset != next || !self.composition.is_empty() {
+            self.caret_offset = next;
+            self.composition.clear();
+            self.reset_caret_blink(ctx);
+            ctx.request_measure();
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+        ctx.set_handled();
+    }
+
+    fn move_caret_left(&mut self, ctx: &mut EventCtx) {
+        self.move_caret_to(previous_text_offset(&self.value, self.caret_offset), ctx);
+    }
+
+    fn move_caret_right(&mut self, ctx: &mut EventCtx) {
+        self.move_caret_to(next_text_offset(&self.value, self.caret_offset), ctx);
+    }
+
+    fn set_caret_from_position(&mut self, bounds: Rect, position: Point, ctx: &mut EventCtx) {
+        let content = inset_rect(bounds, self.resolved_padding());
+        let offset = self
+            .input_layout
+            .as_ref()
+            .map(|layout| {
+                layout
+                    .hit_test_point(Point::new(
+                        position.x - content.x(),
+                        position.y - content.y(),
+                    ))
+                    .utf8_offset
+            })
+            .unwrap_or(self.value.len());
+        self.caret_offset = clamp_text_offset(&self.value, offset);
+        self.composition.clear();
+        self.reset_caret_blink(ctx);
     }
 
     fn caret_blink_delay(&self) -> f64 {
@@ -4161,9 +4274,7 @@ impl Widget for TextInput {
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 self.hovered = true;
-                if self.focused {
-                    self.reset_caret_blink(ctx);
-                }
+                self.set_caret_from_position(ctx.bounds(), pointer.position, ctx);
                 ctx.request_focus();
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -4201,16 +4312,34 @@ impl Widget for TextInput {
             Event::Keyboard(key)
                 if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Backspace" =>
             {
-                if !self.composition.is_empty() {
-                    self.composition.clear();
-                } else if self.value.pop().is_some() {
-                    self.commit_text_change();
-                }
-                self.reset_caret_blink(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+                self.delete_before_caret(ctx);
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Delete" =>
+            {
+                self.delete_after_caret(ctx);
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "ArrowLeft" =>
+            {
+                self.move_caret_left(ctx);
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && key.key == "ArrowRight" =>
+            {
+                self.move_caret_right(ctx);
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Home" =>
+            {
+                self.move_caret_to(0, ctx);
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "End" =>
+            {
+                self.move_caret_to(self.value.len(), ctx);
             }
             Event::Keyboard(key) if ctx.is_focused() && self.composition.is_empty() => {
                 if let Some(text) = keyboard_text(key) {
@@ -4249,22 +4378,57 @@ impl Widget for TextInput {
         let min_size = self.resolved_min_size();
         let visible_text = self.visible_text();
         let input_text = self.input_text();
-        let visible_measurement = measure_text(ctx, &visible_text, &text_style);
-        let input_measurement = if input_text.is_empty() {
-            TextMeasurement {
-                width: 0.0,
-                height: visible_measurement.height,
-                bounds: Rect::new(0.0, 0.0, 0.0, visible_measurement.height),
-                ascent: visible_measurement.ascent,
-                descent: visible_measurement.descent,
-                cap_height: visible_measurement.cap_height,
-            }
+        let display_style = if input_text.is_empty() {
+            self.theme.placeholder_text_style()
         } else {
-            measure_text(ctx, &input_text, &text_style)
+            text_style.clone()
         };
+        let line_box = Size::new(f32::INFINITY, text_style.line_height.max(1.0));
+        let display_layout = ctx
+            .layout()
+            .shape_text_persistent(
+                self.display_layout.as_ref().map(|layout| layout.handle()),
+                visible_text.clone(),
+                line_box,
+                display_style,
+            )
+            .ok();
+        let input_layout = ctx
+            .layout()
+            .shape_text_persistent(
+                self.input_layout.as_ref().map(|layout| layout.handle()),
+                input_text.clone(),
+                line_box,
+                text_style.clone(),
+            )
+            .ok();
+
+        let visible_measurement = display_layout
+            .as_ref()
+            .map(|layout| layout.measurement())
+            .unwrap_or_else(|| measure_text(ctx, &visible_text, &text_style));
+        let input_measurement = input_layout
+            .as_ref()
+            .map(|layout| layout.measurement())
+            .unwrap_or_else(|| {
+                if input_text.is_empty() {
+                    TextMeasurement {
+                        width: 0.0,
+                        height: visible_measurement.height,
+                        bounds: Rect::new(0.0, 0.0, 0.0, visible_measurement.height),
+                        ascent: visible_measurement.ascent,
+                        descent: visible_measurement.descent,
+                        cap_height: visible_measurement.cap_height,
+                    }
+                } else {
+                    measure_text(ctx, &input_text, &text_style)
+                }
+            });
 
         self.visible_measurement = Some(visible_measurement);
         self.input_measurement = Some(input_measurement);
+        self.display_layout = display_layout;
+        self.input_layout = input_layout;
 
         let width = (visible_measurement.width + padding.left + padding.right).max(min_size.width);
         let height =
@@ -4315,28 +4479,54 @@ impl Widget for TextInput {
                     .with_alpha(palette.focus_ring.alpha * focus_progress),
             ),
         );
-        ctx.draw_text(
-            content_rect,
-            display_text,
-            if placeholder {
-                self.theme.placeholder_text_style()
-            } else {
-                text_style.clone()
-            },
-        );
+        ctx.push_clip_rect(content_rect);
+        if let Some(layout) = &self.display_layout {
+            let layout_bounds = layout.measurement().bounds;
+            ctx.draw_persistent_text_layout(
+                Point::new(content_rect.x() - layout_bounds.x(), content_rect.y()),
+                layout,
+            );
+        } else {
+            ctx.draw_text(
+                content_rect,
+                display_text,
+                if placeholder {
+                    self.theme.placeholder_text_style()
+                } else {
+                    text_style.clone()
+                },
+            );
+        }
+        ctx.pop_clip();
 
         if self.focused {
             let caret_width = physical_pixels(ctx, metrics.caret_width);
-            let caret_x = content_rect.x()
-                + self
-                    .input_measurement
-                    .map(|measurement| measurement.width)
-                    .unwrap_or(0.0);
+            let caret_rect = self
+                .input_layout
+                .as_ref()
+                .map(|layout| {
+                    layout
+                        .caret_rect(self.display_caret_offset())
+                        .translate(content_rect.origin.to_vector())
+                })
+                .unwrap_or(Rect::new(
+                    content_rect.x()
+                        + self
+                            .input_measurement
+                            .map(|measurement| measurement.width)
+                            .unwrap_or(0.0),
+                    content_rect.y(),
+                    caret_width,
+                    content_rect.height().max(text_style.line_height),
+                ));
             let caret_rect = Rect::new(
-                caret_x.min((content_rect.max_x() - caret_width).max(content_rect.x())),
-                content_rect.y(),
+                caret_rect
+                    .x()
+                    .min((content_rect.max_x() - caret_width).max(content_rect.x()))
+                    .max(content_rect.x()),
+                caret_rect.y(),
                 caret_width,
-                content_rect.height().max(text_style.line_height),
+                caret_rect.height().max(text_style.line_height),
             );
             ctx.set_ime_composition_rect(caret_rect);
             if self.caret_visible {
@@ -4366,6 +4556,7 @@ impl Widget for TextInput {
         self.focused = focused;
         if !focused && !self.composition.is_empty() {
             self.composition.clear();
+            self.caret_offset = clamp_text_offset(&self.value, self.caret_offset);
             ctx.request_measure();
         }
         if focused {
@@ -4426,6 +4617,37 @@ fn keyboard_text(event: &sui_core::KeyboardEvent) -> Option<&str> {
         .text
         .as_deref()
         .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+}
+
+fn clamp_text_offset(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+fn previous_text_offset(text: &str, offset: usize) -> usize {
+    let offset = clamp_text_offset(text, offset);
+    text[..offset]
+        .char_indices()
+        .last()
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+fn next_text_offset(text: &str, offset: usize) -> usize {
+    let offset = clamp_text_offset(text, offset);
+    if offset >= text.len() {
+        return text.len();
+    }
+
+    offset
+        + text[offset..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(0)
 }
 
 fn center_square(bounds: Rect, side: f32) -> Rect {
@@ -5405,7 +5627,7 @@ mod tests {
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(20.0, 16.0), true),
+            primary_pointer(PointerEventKind::Down, Point::new(100.0, 16.0), true),
         )?;
         let _ = runtime.render(window_id)?;
 
@@ -5576,6 +5798,99 @@ mod tests {
             Some(sui_core::SemanticsValue::Text("Ad".to_string()))
         );
         assert!(output.ime_composition_rect.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_edits_at_caret_with_keyboard_navigation() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("Ada")
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(100.0, 16.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("ArrowLeft", KeyState::Pressed)),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit {
+                text: "m".to_string(),
+            }),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Backspace", KeyState::Pressed)),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("ArrowLeft", KeyState::Pressed)),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Delete", KeyState::Pressed)),
+        )?;
+
+        assert_eq!(
+            changes.borrow().as_slice(),
+            &["Adma".to_string(), "Ada".to_string(), "Aa".to_string()]
+        );
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .unwrap();
+        assert_eq!(
+            input.value,
+            Some(sui_core::SemanticsValue::Text("Aa".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_click_positions_caret_for_insertion() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("Ada")
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(1.0, 16.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit {
+                text: "Lady ".to_string(),
+            }),
+        )?;
+
+        assert_eq!(changes.borrow().as_slice(), &["Lady Ada".to_string()]);
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .unwrap();
+        assert_eq!(
+            input.value,
+            Some(sui_core::SemanticsValue::Text("Lady Ada".to_string()))
+        );
         Ok(())
     }
 
