@@ -6,6 +6,7 @@ pub mod composites;
 pub mod containers;
 pub mod controls;
 pub mod data;
+mod editor;
 pub mod hdr_theme;
 pub mod media;
 pub mod panes;
@@ -43,7 +44,9 @@ pub use panes::{
     FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
     FloatingWorkspaceState, ResizablePane, SplitView,
 };
-pub use text_surface::TextSurface;
+pub use text_surface::{
+    TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,
+};
 pub use theme::{
     ControlMetrics, ControlPalette, ControlTypography, DefaultTheme, ThemeAspectRatios,
     ThemeBlurScale, ThemeBoxShadowScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,

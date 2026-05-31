@@ -50,6 +50,7 @@ sui-render-wgpu = { path = "crates/sui-render-wgpu" }
 sui-runtime = { path = "crates/sui-runtime" }
 sui-scene = { path = "crates/sui-scene" }
 tiny-skia = "0.11"
+unicode-segmentation = "1.12"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"

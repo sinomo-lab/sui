@@ -1427,7 +1427,10 @@ fn physical_key_to_string(key: &PhysicalKey) -> String {
 fn map_ime_event(event: Ime) -> Option<ImeEvent> {
     match event {
         Ime::Enabled => Some(ImeEvent::CompositionStart),
-        Ime::Preedit(text, _) => Some(ImeEvent::CompositionUpdate { text }),
+        Ime::Preedit(text, cursor_range) => Some(ImeEvent::CompositionUpdate {
+            text,
+            cursor_range: cursor_range.map(|(start, end)| start..end),
+        }),
         Ime::Commit(text) => Some(ImeEvent::CompositionCommit { text }),
         Ime::Disabled => Some(ImeEvent::CompositionEnd),
     }

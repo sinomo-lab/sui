@@ -48,6 +48,15 @@ pub enum SemanticsAction {
     Increment,
     Decrement,
     SetValue,
+    SetSelection,
+    InsertText,
+    DeleteBackward,
+    DeleteForward,
+    Copy,
+    Cut,
+    Paste,
+    Undo,
+    Redo,
     Custom(String),
 }
 
@@ -77,6 +86,28 @@ pub struct SemanticsState {
     pub busy: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticsTextRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl SemanticsTextRange {
+    pub const fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditableTextSemantics {
+    pub caret_offset: usize,
+    pub selection: SemanticsTextRange,
+    pub multiline: bool,
+    pub readonly: bool,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticsNode {
     pub id: WidgetId,
@@ -87,6 +118,7 @@ pub struct SemanticsNode {
     pub value: Option<SemanticsValue>,
     pub state: SemanticsState,
     pub actions: Vec<SemanticsAction>,
+    pub editable_text: Option<EditableTextSemantics>,
     pub bounds: Rect,
 }
 
@@ -101,6 +133,7 @@ impl SemanticsNode {
             value: None,
             state: SemanticsState::default(),
             actions: Vec::new(),
+            editable_text: None,
             bounds,
         }
     }

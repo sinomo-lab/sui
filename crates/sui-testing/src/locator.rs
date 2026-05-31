@@ -152,6 +152,7 @@ impl Locator {
         self.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
         self.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate {
             text: text.clone(),
+            cursor_range: None,
         }))?;
         self.dispatch_event(Event::Ime(ImeEvent::CompositionCommit { text }))?;
         self.dispatch_event(Event::Ime(ImeEvent::CompositionEnd))
