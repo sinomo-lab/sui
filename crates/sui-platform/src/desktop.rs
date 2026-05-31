@@ -208,6 +208,22 @@ struct DesktopApp {
 
 impl DesktopApp {
     #[cfg(target_arch = "wasm32")]
+    fn web_viewport_logical_size() -> LogicalSize<f64> {
+        let width = web_sys::window()
+            .and_then(|window| window.inner_width().ok())
+            .and_then(|value| value.as_f64())
+            .unwrap_or(DesktopPlatform::DEFAULT_WINDOW_SIZE.width as f64)
+            .max(1.0);
+        let height = web_sys::window()
+            .and_then(|window| window.inner_height().ok())
+            .and_then(|value| value.as_f64())
+            .unwrap_or(DesktopPlatform::DEFAULT_WINDOW_SIZE.height as f64)
+            .max(1.0);
+
+        LogicalSize::new(width, height)
+    }
+
+    #[cfg(target_arch = "wasm32")]
     fn web_canvas_for_window() -> Option<web_sys::HtmlCanvasElement> {
         let window = web_sys::window()?;
         let canvas = window
@@ -305,13 +321,17 @@ impl DesktopApp {
             }
 
             let title = self.runtime.window_title(window_id)?.to_string();
+            #[cfg(target_arch = "wasm32")]
+            let initial_size = Self::web_viewport_logical_size();
+            #[cfg(not(target_arch = "wasm32"))]
+            let initial_size = LogicalSize::new(
+                DesktopPlatform::DEFAULT_WINDOW_SIZE.width,
+                DesktopPlatform::DEFAULT_WINDOW_SIZE.height,
+            );
             #[allow(unused_mut)]
             let mut attributes = WindowAttributes::default()
                 .with_title(title.clone())
-                .with_inner_size(LogicalSize::new(
-                    DesktopPlatform::DEFAULT_WINDOW_SIZE.width,
-                    DesktopPlatform::DEFAULT_WINDOW_SIZE.height,
-                ));
+                .with_inner_size(initial_size);
             #[cfg(target_arch = "wasm32")]
             {
                 attributes = attributes

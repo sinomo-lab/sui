@@ -2878,6 +2878,25 @@ fn web_validation_url_for_path(path: &str, mode: &WebLaunchMode) -> String {
 }
 
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+fn non_hdr_capture_mode(mode: &WebLaunchMode) -> WebLaunchMode {
+    let mut capture = mode.clone();
+    capture.canvas_format = WebCanvasFormatPreference::Rgba8UnormSrgb;
+    capture.canvas_color_space = WebCanvasColorSpacePreference::Srgb;
+    capture.canvas_tone_mapping = WebCanvasToneMappingPreference::Standard;
+    capture.color_management_mode = WindowColorManagementMode::ForceSdr;
+    capture.output_primaries = WindowOutputColorPrimaries::Srgb;
+    capture.dynamic_range = WindowDynamicRangeMode::StandardDynamicRange;
+    capture.tone_mapping = WindowToneMappingMode::Clamp;
+    capture.use_system_sdr_content_brightness = false;
+    capture
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+fn web_non_hdr_capture_url_for_path(path: &str, mode: &WebLaunchMode) -> String {
+    web_validation_url_for_path(path, &non_hdr_capture_mode(mode))
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 fn web_browser_probe_report(mode: &WebLaunchMode, probe: &WebBrowserProbe) -> String {
     format!(
         "route={}; path={}; document_title={}; language={}; device_pixel_ratio={}; canvas_count={}; user_agent={}; validation_url={}",
@@ -3025,9 +3044,71 @@ fn current_web_browser_probe() -> WebBrowserProbe {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn current_web_canvas_capture() -> WebCanvasCapture {
+fn first_web_canvas() -> Option<web_sys::HtmlCanvasElement> {
     use wasm_bindgen::JsCast;
 
+    web_sys::window()?
+        .document()?
+        .get_elements_by_tag_name("canvas")
+        .item(0)?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn web_canvas_sdr_png_data_url(canvas: &web_sys::HtmlCanvasElement) -> String {
+    use wasm_bindgen::JsCast;
+
+    let fallback = || canvas.to_data_url().unwrap_or_default();
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return fallback();
+    };
+    let Ok(element) = document.create_element("canvas") else {
+        return fallback();
+    };
+    let Ok(sdr_canvas) = element.dyn_into::<web_sys::HtmlCanvasElement>() else {
+        return fallback();
+    };
+    sdr_canvas.set_width(canvas.width().max(1));
+    sdr_canvas.set_height(canvas.height().max(1));
+
+    let Ok(Some(context)) = sdr_canvas.get_context("2d") else {
+        return fallback();
+    };
+    let Ok(context) = context.dyn_into::<web_sys::CanvasRenderingContext2d>() else {
+        return fallback();
+    };
+    context.set_image_smoothing_enabled(false);
+    if context
+        .draw_image_with_html_canvas_element(canvas, 0.0, 0.0)
+        .is_err()
+    {
+        return fallback();
+    }
+    if !web_canvas_context_has_visible_pixels(&context, sdr_canvas.width(), sdr_canvas.height()) {
+        return fallback();
+    }
+
+    sdr_canvas.to_data_url().unwrap_or_else(|_| fallback())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn web_canvas_context_has_visible_pixels(
+    context: &web_sys::CanvasRenderingContext2d,
+    width: u32,
+    height: u32,
+) -> bool {
+    let x = width.max(1) / 2;
+    let y = height.max(1) / 2;
+    context
+        .get_image_data(x as f64, y as f64, 1.0, 1.0)
+        .ok()
+        .and_then(|image_data| image_data.data().0.get(3).copied())
+        .is_some_and(|alpha| alpha > 0)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn current_web_canvas_capture() -> WebCanvasCapture {
     let Some(window) = web_sys::window() else {
         return WebCanvasCapture {
             canvas_count: 0,
@@ -3049,7 +3130,7 @@ fn current_web_canvas_capture() -> WebCanvasCapture {
 
     let canvases = document.get_elements_by_tag_name("canvas");
     let canvas_count = canvases.length();
-    let Some(first_canvas) = canvases.item(0) else {
+    let Some(canvas) = first_web_canvas() else {
         return WebCanvasCapture {
             canvas_count,
             first_canvas_id: String::new(),
@@ -3058,16 +3139,7 @@ fn current_web_canvas_capture() -> WebCanvasCapture {
             first_canvas_data_url_len: 0,
         };
     };
-    let Ok(canvas) = first_canvas.dyn_into::<web_sys::HtmlCanvasElement>() else {
-        return WebCanvasCapture {
-            canvas_count,
-            first_canvas_id: String::new(),
-            first_canvas_width: 0,
-            first_canvas_height: 0,
-            first_canvas_data_url_len: 0,
-        };
-    };
-    let data_url_len = canvas.to_data_url().map(|value| value.len()).unwrap_or(0);
+    let data_url_len = web_canvas_sdr_png_data_url(&canvas).len();
 
     WebCanvasCapture {
         canvas_count,
@@ -3082,6 +3154,12 @@ fn current_web_canvas_capture() -> WebCanvasCapture {
 fn current_web_validation_url() -> String {
     let probe = current_web_browser_probe();
     web_validation_url_for_path(&probe.current_path, &current_web_launch_mode())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn current_web_non_hdr_capture_url() -> String {
+    let probe = current_web_browser_probe();
+    web_non_hdr_capture_url_for_path(&probe.current_path, &current_web_launch_mode())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -3111,27 +3189,21 @@ pub fn sui_web_canvas_capture_report() -> String {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn sui_web_canvas_capture_data_url() -> String {
-    use wasm_bindgen::JsCast;
-
-    let Some(window) = web_sys::window() else {
-        return String::new();
-    };
-    let Some(document) = window.document() else {
-        return String::new();
-    };
-    let Some(first_canvas) = document.get_elements_by_tag_name("canvas").item(0) else {
-        return String::new();
-    };
-    let Ok(canvas) = first_canvas.dyn_into::<web_sys::HtmlCanvasElement>() else {
-        return String::new();
-    };
-    canvas.to_data_url().unwrap_or_default()
+    first_web_canvas()
+        .map(|canvas| web_canvas_sdr_png_data_url(&canvas))
+        .unwrap_or_default()
 }
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn sui_web_validation_url() -> String {
     current_web_validation_url()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn sui_web_non_hdr_canvas_capture_url() -> String {
+    current_web_non_hdr_capture_url()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -3236,6 +3308,26 @@ mod tests {
             web_validation_query(&mode),
             "benchmark=color-validation&frames=240&warmup=24&canvas-format=rgba16float&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard&sdr-content-brightness=203&use-system-sdr-brightness=true"
         );
+    }
+
+    #[test]
+    fn non_hdr_capture_url_overrides_hdr_preferences_for_png_capture() {
+        let mode = parse_web_launch_mode(
+            "benchmark=widget-book&canvas-format=rgba16float&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard&frames=5&warmup=1",
+        );
+        let url = web_non_hdr_capture_url_for_path("/review", &mode);
+
+        assert!(url.starts_with("/review?benchmark=widget-book"));
+        assert!(url.contains("frames=5"));
+        assert!(url.contains("warmup=1"));
+        assert!(url.contains("canvas-format=rgba8unorm-srgb"));
+        assert!(url.contains("canvas-color-space=srgb"));
+        assert!(url.contains("canvas-tone-mapping=standard"));
+        assert!(url.contains("color-management=force-sdr"));
+        assert!(url.contains("output-primaries=srgb"));
+        assert!(url.contains("dynamic-range=sdr"));
+        assert!(url.contains("tone-mapping=clamp"));
+        assert!(url.contains("use-system-sdr-brightness=false"));
     }
 
     #[test]

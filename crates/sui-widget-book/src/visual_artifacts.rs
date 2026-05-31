@@ -762,7 +762,7 @@ pub(crate) fn scroll_to_story_target(
         return Ok(());
     }
 
-    for _ in 0..(max_pages * 2) {
+    for _ in 0..(max_pages * 4) {
         scroll_gallery_by(window, SCROLL_STEP)?;
         if story_node_is_visible(window, role.clone(), name)? {
             return Ok(());

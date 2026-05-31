@@ -26,6 +26,8 @@ pub enum IconGlyph {
     ChevronLeft,
     ChevronRight,
     Close,
+    Maximize,
+    Restore,
     MoreHorizontal,
     MoreVertical,
     Search,
@@ -304,6 +306,7 @@ pub struct IconButton {
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
     on_press: Option<Box<dyn FnMut()>>,
+    on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
 }
 
 impl IconButton {
@@ -319,6 +322,7 @@ impl IconButton {
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
             on_press: None,
+            on_press_with_ctx: None,
         }
     }
 
@@ -345,6 +349,14 @@ impl IconButton {
         self
     }
 
+    pub fn on_press_with_ctx<F>(mut self, on_press: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.on_press_with_ctx = Some(Box::new(on_press));
+        self
+    }
+
     fn resolved_size(&self) -> f32 {
         self.size
             .unwrap_or(self.theme.metrics.icon_button_size)
@@ -355,9 +367,12 @@ impl IconButton {
         self.icon_size.unwrap_or(self.theme.metrics.icon_size)
     }
 
-    fn activate(&mut self) {
+    fn activate(&mut self, ctx: &mut EventCtx) {
         if let Some(on_press) = &mut self.on_press {
             on_press();
+        }
+        if let Some(on_press) = &mut self.on_press_with_ctx {
+            on_press(ctx);
         }
     }
 
@@ -423,7 +438,7 @@ impl Widget for IconButton {
                 set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if activate {
-                    self.activate();
+                    self.activate(ctx);
                 }
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -456,7 +471,7 @@ impl Widget for IconButton {
                     && ctx.is_focused()
                     && matches!(key.key.as_str(), "Enter" | " ") =>
             {
-                self.activate();
+                self.activate(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -4593,6 +4608,30 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
                 stroke,
             );
         }
+        IconGlyph::Maximize => {
+            ctx.stroke(maximize_path(inset), color, stroke);
+        }
+        IconGlyph::Restore => {
+            let offset = inset.width().min(inset.height()) * 0.22;
+            let back = Rect::new(
+                inset.x(),
+                inset.y(),
+                inset.width() - offset,
+                inset.height() - offset,
+            );
+            let front = Rect::new(
+                inset.x() + offset,
+                inset.y() + offset,
+                inset.width() - offset,
+                inset.height() - offset,
+            );
+            ctx.stroke(
+                rounded_rect_path(back, stroke.width * 1.5),
+                color,
+                stroke.clone(),
+            );
+            ctx.stroke(rounded_rect_path(front, stroke.width * 1.5), color, stroke);
+        }
         IconGlyph::MoreHorizontal => {
             for offset in [0.2_f32, 0.5, 0.8] {
                 ctx.fill(
@@ -4700,6 +4739,25 @@ fn chevron_path(bounds: Rect, axis: Axis, direction: f32) -> Path {
                 ));
         }
     }
+    builder.build()
+}
+
+fn maximize_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    let corner = rect.width().min(rect.height()) * 0.34;
+    builder
+        .move_to(Point::new(rect.x(), rect.y() + corner))
+        .line_to(Point::new(rect.x(), rect.y()))
+        .line_to(Point::new(rect.x() + corner, rect.y()))
+        .move_to(Point::new(rect.max_x() - corner, rect.y()))
+        .line_to(Point::new(rect.max_x(), rect.y()))
+        .line_to(Point::new(rect.max_x(), rect.y() + corner))
+        .move_to(Point::new(rect.max_x(), rect.max_y() - corner))
+        .line_to(Point::new(rect.max_x(), rect.max_y()))
+        .line_to(Point::new(rect.max_x() - corner, rect.max_y()))
+        .move_to(Point::new(rect.x() + corner, rect.max_y()))
+        .line_to(Point::new(rect.x(), rect.max_y()))
+        .line_to(Point::new(rect.x(), rect.max_y() - corner));
     builder.build()
 }
 

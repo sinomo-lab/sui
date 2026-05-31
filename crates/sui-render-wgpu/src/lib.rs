@@ -918,6 +918,84 @@ fn decode_rgba16f_pixels(raw: &[u8]) -> Vec<f32> {
     pixels
 }
 
+fn hdr_image_to_sdr_rgba(
+    image: &HdrRgbaImage,
+    visualization: DebugSdrVisualization,
+    reference_white: f32,
+) -> Result<RgbaImage> {
+    let reference_white = if reference_white.is_finite() && reference_white > 0.0 {
+        reference_white
+    } else {
+        1.0
+    };
+    let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
+    for rgba in image.pixels().chunks_exact(4) {
+        match visualization {
+            DebugSdrVisualization::ToneMappedColor => {
+                // Native HDR final targets store SDR white above 1.0 in scRGB space.
+                pixels.extend_from_slice(&[
+                    linear_to_srgb_capture_u8(rgba[0] / reference_white),
+                    linear_to_srgb_capture_u8(rgba[1] / reference_white),
+                    linear_to_srgb_capture_u8(rgba[2] / reference_white),
+                    linear_alpha_to_capture_u8(rgba[3]),
+                ]);
+            }
+            DebugSdrVisualization::LuminanceHeatmap => {
+                let luminance = ((rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
+                    / reference_white)
+                    .max(0.0);
+                let normalized = (luminance / (1.0 + luminance)).clamp(0.0, 1.0);
+                let value = (normalized * 255.0).round() as u8;
+                pixels.extend_from_slice(&[value, value, value, 255]);
+            }
+            DebugSdrVisualization::HeadroomHeatmap => {
+                let headroom = (rgba[0].max(rgba[1]).max(rgba[2]) / reference_white).max(0.0);
+                let normalized = (headroom / (1.0 + headroom)).clamp(0.0, 1.0);
+                let red = (normalized * 255.0).round() as u8;
+                let blue = ((1.0 - normalized) * 96.0).round() as u8;
+                pixels.extend_from_slice(&[red, 32, blue, 255]);
+            }
+            DebugSdrVisualization::ClipMask => {
+                let clipped = rgba[0].max(rgba[1]).max(rgba[2]) > reference_white;
+                if clipped {
+                    pixels.extend_from_slice(&[255, 64, 64, 255]);
+                } else {
+                    pixels.extend_from_slice(&[0, 0, 0, 255]);
+                }
+            }
+        }
+    }
+    RgbaImage::new(image.width(), image.height(), pixels)
+}
+
+fn encode_hdr_debug_artifact(
+    image: HdrRgbaImage,
+    request: DebugCaptureRequest,
+    sdr_reference_white: f32,
+) -> Result<DebugCaptureArtifact> {
+    match request.encoding {
+        DebugCaptureEncoding::Exr => Ok(DebugCaptureArtifact::HdrLinearRgbaF32(image)),
+        DebugCaptureEncoding::Png => {
+            hdr_image_to_sdr_rgba(&image, request.sdr_visualization, sdr_reference_white)
+                .map(DebugCaptureArtifact::SdrRgba8)
+        }
+    }
+}
+
+fn linear_to_srgb_capture_u8(channel: f32) -> u8 {
+    let value = channel.clamp(0.0, 1.0);
+    let encoded = if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        (1.055 * value.powf(1.0 / 2.4)) - 0.055
+    };
+    (encoded.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn linear_alpha_to_capture_u8(alpha: f32) -> u8 {
+    (alpha.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 fn optional_renderer_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let mut features = wgpu::Features::empty();
     if adapter
@@ -1288,15 +1366,14 @@ impl WgpuRenderer {
         window_id: WindowId,
         request: DebugCaptureRequest,
     ) -> Result<DebugCaptureArtifact> {
-        let _ = request.encoding;
-        let _ = request.sdr_visualization;
         match request.stage {
             DebugCaptureStage::FinalComposed => {
-                self.capture_final_composed_debug_artifact(window_id)
+                self.capture_final_composed_debug_artifact(window_id, request)
             }
-            DebugCaptureStage::HdrIntermediate => self
-                .capture_hdr_intermediate_rgba_f32(window_id)
-                .map(DebugCaptureArtifact::HdrLinearRgbaF32),
+            DebugCaptureStage::HdrIntermediate => {
+                let image = self.capture_hdr_intermediate_rgba_f32(window_id)?;
+                encode_hdr_debug_artifact(image, request, 1.0)
+            }
         }
     }
 
@@ -1344,6 +1421,7 @@ impl WgpuRenderer {
     fn capture_final_composed_debug_artifact(
         &self,
         window_id: WindowId,
+        request: DebugCaptureRequest,
     ) -> Result<DebugCaptureArtifact> {
         let target = self.offscreen_targets.get(&window_id).ok_or_else(|| {
             Error::new(format!(
@@ -1356,9 +1434,14 @@ impl WgpuRenderer {
             wgpu::TextureFormat::Bgra8UnormSrgb => self
                 .capture_rgba(window_id)
                 .map(DebugCaptureArtifact::SdrRgba8),
-            wgpu::TextureFormat::Rgba16Float => self
-                .capture_hdr_offscreen_rgba_f32(window_id)
-                .map(DebugCaptureArtifact::HdrLinearRgbaF32),
+            wgpu::TextureFormat::Rgba16Float => {
+                let image = self.capture_hdr_offscreen_rgba_f32(window_id)?;
+                encode_hdr_debug_artifact(
+                    image,
+                    request,
+                    self.final_composed_sdr_reference_white(window_id),
+                )
+            }
             other => Err(Error::new(format!(
                 "window {} uses unsupported final composed debug capture format {other:?}",
                 window_id.get()
@@ -1382,6 +1465,20 @@ impl WgpuRenderer {
         )?;
         let pixels = decode_rgba16f_pixels(&raw);
         HdrRgbaImage::new(target.size.0, target.size.1, pixels)
+    }
+
+    fn final_composed_sdr_reference_white(&self, window_id: WindowId) -> f32 {
+        self.surfaces
+            .get(&window_id)
+            .map(|surface| {
+                scene::output_sdr_content_scale(
+                    surface.output_strategy,
+                    surface.color_management.sdr_content_brightness_nits,
+                    surface.display_capabilities.sdr_white_nits,
+                )
+            })
+            .filter(|scale| scale.is_finite() && *scale > 0.0)
+            .unwrap_or(1.0)
     }
 
     fn readback_target_bytes(
@@ -4104,19 +4201,20 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 mod tests {
     use super::{
         CachedGlyphAtlas, CachedGlyphMesh, ClipState, ColorManagementMode, CompositionContainerId,
-        DEFAULT_FEATHER_WIDTH, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
-        DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries, DisplayTransferFunction,
-        DrawOp, DrawOpArena, DrawOpKind, DynamicRangeMode, GlyphCacheKey, GlyphFaceCacheKey,
-        GlyphSubpixelOffsetKey, OutputStrategy, PacketRebuildReason, PreparedClipPath,
-        PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch,
-        PreparedVertices, RendererFrameStats, RequestedColorManagementMode,
-        RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
-        RetainedCompositorFrameStats, RetainedCompositorState, RetainedPacketId,
-        RetainedPacketRebuildStats, ScissorRect, StemDarkening, SwashImageContent, SwashSource,
-        SwashStrikeWith, TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE, TEXT_ATLAS_SHADER_SOURCE,
-        TextAtlasColorMode, TextAtlasPages, TextCoveragePolicy, TextEngine, TextHinting,
-        TextRenderMode, VERTEX_SIZE, Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops,
-        build_vertices, decode_rgba16f_pixels, prepare_frame_batches,
+        DEFAULT_FEATHER_WIDTH, DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest,
+        DebugCaptureStage, DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries,
+        DisplayTransferFunction, DrawOp, DrawOpArena, DrawOpKind, DynamicRangeMode, GlyphCacheKey,
+        GlyphFaceCacheKey, GlyphSubpixelOffsetKey, HdrRgbaImage, OutputStrategy,
+        PacketRebuildReason, PreparedClipPath, PreparedDrawBatch, PreparedDrawKind,
+        PreparedFrameBatches, PreparedPassBatch, PreparedVertices, RendererFrameStats,
+        RequestedColorManagementMode, RequestedDynamicRangeMode, RequestedOutputColorPrimaries,
+        RequestedToneMappingMode, RetainedCompositorFrameStats, RetainedCompositorState,
+        RetainedPacketId, RetainedPacketRebuildStats, ScissorRect, StemDarkening,
+        SwashImageContent, SwashSource, SwashStrikeWith, TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE,
+        TEXT_ATLAS_SHADER_SOURCE, TextAtlasColorMode, TextAtlasPages, TextCoveragePolicy,
+        TextEngine, TextHinting, TextRenderMode, VERTEX_SIZE, Vertex, WgpuRenderer,
+        append_cached_path_mesh, batch_draw_ops, build_vertices, decode_rgba16f_pixels,
+        encode_hdr_debug_artifact, hdr_image_to_sdr_rgba, prepare_frame_batches,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
             apply_output_transform_for_testing, apply_stem_darkening_to_coverage,
@@ -4235,6 +4333,87 @@ mod tests {
                 "expected {expected}, got {actual}"
             );
         }
+    }
+
+    #[test]
+    fn hdr_png_capture_normalizes_native_hdr_reference_white() {
+        let image = HdrRgbaImage::new(
+            3,
+            1,
+            vec![
+                2.5, 2.5, 2.5, 1.0, //
+                1.25, 1.25, 1.25, 0.5, //
+                5.0, 0.0, 0.0, 1.0,
+            ],
+        )
+        .unwrap();
+
+        let sdr =
+            hdr_image_to_sdr_rgba(&image, DebugSdrVisualization::ToneMappedColor, 2.5).unwrap();
+
+        assert_eq!(&sdr.pixels()[0..4], &[255, 255, 255, 255]);
+        assert!(sdr.pixels()[4] < 255);
+        assert_eq!(sdr.pixels()[4], sdr.pixels()[5]);
+        assert_eq!(sdr.pixels()[7], 128);
+        assert_eq!(&sdr.pixels()[8..12], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn hdr_png_capture_visualizations_use_sdr_reference_white() {
+        let image = HdrRgbaImage::new(
+            2,
+            1,
+            vec![
+                2.0, 2.0, 2.0, 1.0, //
+                2.01, 0.0, 0.0, 1.0,
+            ],
+        )
+        .unwrap();
+
+        let mask = hdr_image_to_sdr_rgba(&image, DebugSdrVisualization::ClipMask, 2.0).unwrap();
+        assert_eq!(&mask.pixels()[0..4], &[0, 0, 0, 255]);
+        assert_eq!(&mask.pixels()[4..8], &[255, 64, 64, 255]);
+
+        let heatmap =
+            hdr_image_to_sdr_rgba(&image, DebugSdrVisualization::HeadroomHeatmap, 2.0).unwrap();
+        assert!(heatmap.pixels()[4] >= heatmap.pixels()[0]);
+        assert_eq!(heatmap.pixels()[7], 255);
+    }
+
+    #[test]
+    fn hdr_debug_artifact_encoding_preserves_exr_and_maps_png_to_sdr() {
+        let image = HdrRgbaImage::new(1, 1, vec![2.5, 1.25, 0.0, 1.0]).unwrap();
+
+        let png = encode_hdr_debug_artifact(
+            image.clone(),
+            DebugCaptureRequest {
+                stage: DebugCaptureStage::FinalComposed,
+                encoding: DebugCaptureEncoding::Png,
+                sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+            },
+            2.5,
+        )
+        .unwrap();
+        let DebugCaptureArtifact::SdrRgba8(png) = png else {
+            panic!("PNG HDR debug capture should be converted to SDR RGBA");
+        };
+        assert_eq!(png.pixels()[0], 255);
+        assert!(png.pixels()[1] < 255);
+
+        let exr = encode_hdr_debug_artifact(
+            image,
+            DebugCaptureRequest {
+                stage: DebugCaptureStage::FinalComposed,
+                encoding: DebugCaptureEncoding::Exr,
+                sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+            },
+            2.5,
+        )
+        .unwrap();
+        let DebugCaptureArtifact::HdrLinearRgbaF32(exr) = exr else {
+            panic!("EXR HDR debug capture should preserve HDR linear RGBA");
+        };
+        assert_eq!(exr.pixels()[0], 2.5);
     }
 
     fn load_test_font() -> RegisteredFont {

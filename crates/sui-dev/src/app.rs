@@ -59,6 +59,14 @@ const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
 ];
 
 const SIDEBAR_TITLE: &str = "Available views";
+const WORKSPACE_SIDEBAR_RATIO: f32 = 0.18;
+const WORKSPACE_SIDEBAR_COMPACT_MAX_VIEWPORT: f32 = 1000.0;
+const WORKSPACE_SIDEBAR_MIN_WIDTH: f32 = 64.0;
+const WORKSPACE_CONTENT_MIN_WIDTH: f32 = 180.0;
+const WORKSPACE_DIVIDER_THICKNESS: f32 = 8.0;
+const SIDEBAR_COMPACT_ROW_WIDTH: f32 = 56.0;
+const SIDEBAR_COMPACT_ICON_SIZE: f32 = 24.0;
+const SIDEBAR_ACTION_ICON_SIZE: f32 = 28.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(not(target_arch = "wasm32"))]
@@ -70,6 +78,12 @@ struct ViewSidebar {
     workspace: FloatingWorkspaceState,
     content: SingleChild,
     signature: Vec<(u64, String, bool, bool)>,
+    compact: bool,
+}
+
+enum SidebarContent {
+    Full(ListView),
+    Compact(Stack),
 }
 
 fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
@@ -282,29 +296,88 @@ impl Widget for DesktopAutomationRoot {
     }
 }
 
+impl Widget for SidebarContent {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match self {
+            Self::Full(content) => content.event(ctx, event),
+            Self::Compact(content) => content.event(ctx, event),
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        match self {
+            Self::Full(content) => content.measure(ctx, constraints),
+            Self::Compact(content) => content.measure(ctx, constraints),
+        }
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        match self {
+            Self::Full(content) => content.arrange(ctx, bounds),
+            Self::Compact(content) => content.arrange(ctx, bounds),
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        match self {
+            Self::Full(content) => content.paint(ctx),
+            Self::Compact(content) => content.paint(ctx),
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        match self {
+            Self::Full(content) => content.semantics(ctx),
+            Self::Compact(content) => content.semantics(ctx),
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        match self {
+            Self::Full(content) => content.visit_children(visitor),
+            Self::Compact(content) => content.visit_children(visitor),
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        match self {
+            Self::Full(content) => content.visit_children_mut(visitor),
+            Self::Compact(content) => content.visit_children_mut(visitor),
+        }
+    }
+}
+
 impl ViewSidebar {
     fn new(workspace: FloatingWorkspaceState) -> Self {
         let signature = sidebar_signature(&workspace);
-        let content = SingleChild::new(build_sidebar_list(workspace.clone()));
+        let compact = false;
+        let content = SingleChild::new(build_sidebar_content(workspace.clone(), compact));
         Self {
             workspace,
             content,
             signature,
+            compact,
         }
     }
 
-    fn sync_content(&mut self) {
+    fn sync_content(&mut self, compact: bool) {
+        if compact {
+            ensure_compact_workspace_focus(&self.workspace);
+        }
         let signature = sidebar_signature(&self.workspace);
-        if signature != self.signature {
-            self.content = SingleChild::new(build_sidebar_list(self.workspace.clone()));
+        if signature != self.signature || compact != self.compact {
+            self.content = SingleChild::new(build_sidebar_content(self.workspace.clone(), compact));
             self.signature = signature;
+            self.compact = compact;
         }
     }
 }
 
 impl Widget for ViewSidebar {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.sync_content();
+        let compact = constraints.max.width.is_finite()
+            && constraints.max.width <= WORKSPACE_SIDEBAR_COMPACT_MAX_VIEWPORT;
+        self.sync_content(compact);
         self.content.measure(ctx, constraints)
     }
 
@@ -337,6 +410,32 @@ fn sidebar_signature(workspace: &FloatingWorkspaceState) -> Vec<(u64, String, bo
         .collect()
 }
 
+fn ensure_compact_workspace_focus(workspace: &FloatingWorkspaceState) {
+    let snapshots = workspace.snapshots();
+    if snapshots.iter().any(|view| view.maximized) {
+        return;
+    }
+
+    let Some(target) = snapshots
+        .iter()
+        .find(|view| view.visible)
+        .or_else(|| snapshots.first())
+        .map(|view| view.id)
+    else {
+        return;
+    };
+
+    let _ = workspace.set_view_maximized(target, true);
+}
+
+fn build_sidebar_content(workspace: FloatingWorkspaceState, compact: bool) -> SidebarContent {
+    if compact {
+        SidebarContent::Compact(build_sidebar_switcher(workspace))
+    } else {
+        SidebarContent::Full(build_sidebar_list(workspace))
+    }
+}
+
 fn build_sidebar_list(workspace: FloatingWorkspaceState) -> ListView {
     ListView::new(SIDEBAR_TITLE)
         .row_height(44.0)
@@ -345,15 +444,52 @@ fn build_sidebar_list(workspace: FloatingWorkspaceState) -> ListView {
         }))
 }
 
-fn build_sidebar_row(workspace: FloatingWorkspaceState, view: FloatingViewSnapshot) -> Stack {
+fn build_sidebar_switcher(workspace: FloatingWorkspaceState) -> Stack {
+    let mut switcher = Stack::vertical()
+        .spacing(10.0)
+        .alignment(Alignment::Center)
+        .with_child(
+            SizedBox::new().width(SIDEBAR_COMPACT_ROW_WIDTH).with_child(
+                Label::new("Views")
+                    .font_size(12.0)
+                    .line_height(16.0)
+                    .color(Color::rgba(0.36, 0.42, 0.52, 1.0)),
+            ),
+        );
+
+    for view in workspace.snapshots() {
+        switcher.push(build_sidebar_switcher_row(workspace.clone(), view));
+    }
+
+    switcher
+}
+
+fn build_sidebar_switcher_row(
+    workspace: FloatingWorkspaceState,
+    view: FloatingViewSnapshot,
+) -> Stack {
     let view_id = view.id;
     let visibility_workspace = workspace.clone();
     let maximize_workspace = workspace;
-    let visibility_label = if view.visible { "Hide" } else { "Show" };
-    let maximize_label = if view.maximized {
-        "Restore"
+    let visibility_label = if view.visible {
+        "Hide view"
     } else {
-        "Maximize"
+        "Show view"
+    };
+    let visibility_icon = if view.visible {
+        IconGlyph::Close
+    } else {
+        IconGlyph::Check
+    };
+    let maximize_label = if view.maximized {
+        "Restore view"
+    } else {
+        "Maximize view"
+    };
+    let maximize_icon = if view.maximized {
+        IconGlyph::Restore
+    } else {
+        IconGlyph::Maximize
     };
     let label_color = if view.visible {
         Color::rgba(0.12, 0.16, 0.22, 1.0)
@@ -361,8 +497,108 @@ fn build_sidebar_row(workspace: FloatingWorkspaceState, view: FloatingViewSnapsh
         Color::rgba(0.49, 0.54, 0.62, 1.0)
     };
 
+    Stack::vertical()
+        .spacing(4.0)
+        .alignment(Alignment::Center)
+        .with_child(
+            SizedBox::new().width(SIDEBAR_COMPACT_ROW_WIDTH).with_child(
+                Label::new(compact_sidebar_title(&view.title))
+                    .font_size(11.0)
+                    .line_height(14.0)
+                    .color(label_color),
+            ),
+        )
+        .with_child(
+            Stack::horizontal()
+                .spacing(4.0)
+                .alignment(Alignment::Center)
+                .with_child(
+                    IconButton::new(visibility_icon, visibility_label)
+                        .size(SIDEBAR_COMPACT_ICON_SIZE)
+                        .icon_size(13.0)
+                        .theme(secondary_sidebar_action_theme())
+                        .on_press_with_ctx(move |ctx| {
+                            if visibility_workspace.toggle_view_visible(view_id).is_some() {
+                                request_window_refresh(ctx, true);
+                            }
+                        }),
+                )
+                .with_child(
+                    IconButton::new(maximize_icon, maximize_label)
+                        .size(SIDEBAR_COMPACT_ICON_SIZE)
+                        .icon_size(13.0)
+                        .theme(secondary_sidebar_action_theme())
+                        .on_press_with_ctx(move |ctx| {
+                            let Some(snapshot) = maximize_workspace.snapshot(view_id) else {
+                                return;
+                            };
+                            if maximize_workspace.set_view_maximized(view_id, !snapshot.maximized) {
+                                request_window_refresh(ctx, true);
+                            }
+                        }),
+                ),
+        )
+}
+
+fn compact_sidebar_title(title: &str) -> String {
+    match title {
+        WIDGET_BOOK_TAB_LABEL => "Book",
+        BUTTON_GRID_TAB_LABEL => "Buttons",
+        RETAINED_TEXT_TAB_LABEL => "Text",
+        TEXT_RENDERING_COMPARISON_TAB_LABEL => "Compare",
+        TEXT_VALIDATION_TAB_LABEL => "Validate",
+        TEXT_EDITING_TAB_LABEL => "Edit",
+        HDR_VALIDATION_TAB_LABEL => "HDR",
+        PAINT_TAB_LABEL => "Paint",
+        VECTOR_EDITOR_TAB_LABEL => "Vector",
+        SETTINGS_TAB_LABEL => "Settings",
+        _ => title,
+    }
+    .to_string()
+}
+
+fn secondary_sidebar_action_theme() -> DefaultTheme {
+    let mut theme = DefaultTheme::default();
+    theme.palette.accent = Color::rgba(0.94, 0.96, 0.98, 1.0);
+    theme.palette.accent_hover = Color::rgba(0.90, 0.93, 0.96, 1.0);
+    theme.palette.accent_pressed = Color::rgba(0.84, 0.88, 0.93, 1.0);
+    theme.palette.accent_border = Color::rgba(0.75, 0.80, 0.86, 1.0);
+    theme.palette.accent_border_hover = Color::rgba(0.63, 0.69, 0.77, 1.0);
+    theme.palette.accent_border_focus = Color::rgba(0.38, 0.45, 0.56, 1.0);
+    theme.palette.accent_text = Color::rgba(0.16, 0.20, 0.28, 1.0);
+    theme.palette.focus_ring = Color::rgba(0.38, 0.45, 0.56, 0.22);
+    theme
+}
+
+fn build_sidebar_row(workspace: FloatingWorkspaceState, view: FloatingViewSnapshot) -> Stack {
+    let view_id = view.id;
+    let visibility_workspace = workspace.clone();
+    let maximize_workspace = workspace;
+    let visibility_label = if view.visible { "Hide" } else { "Show" };
+    let visibility_icon = if view.visible {
+        IconGlyph::Close
+    } else {
+        IconGlyph::Check
+    };
+    let maximize_label = if view.maximized {
+        "Restore"
+    } else {
+        "Maximize"
+    };
+    let maximize_icon = if view.maximized {
+        IconGlyph::Restore
+    } else {
+        IconGlyph::Maximize
+    };
+    let label_color = if view.visible {
+        Color::rgba(0.12, 0.16, 0.22, 1.0)
+    } else {
+        Color::rgba(0.49, 0.54, 0.62, 1.0)
+    };
+    let secondary_theme = secondary_sidebar_action_theme();
+
     Stack::horizontal()
-        .spacing(8.0)
+        .spacing(6.0)
         .alignment(Alignment::Center)
         .with_child(
             SizedBox::new().width(104.0).with_child(
@@ -373,9 +609,10 @@ fn build_sidebar_row(workspace: FloatingWorkspaceState, view: FloatingViewSnapsh
             ),
         )
         .with_child(
-            Button::new(visibility_label)
-                .min_width(58.0)
-                .min_height(30.0)
+            IconButton::new(visibility_icon, visibility_label)
+                .theme(secondary_theme)
+                .size(SIDEBAR_ACTION_ICON_SIZE)
+                .icon_size(13.0)
                 .on_press_with_ctx(move |ctx| {
                     if visibility_workspace.toggle_view_visible(view_id).is_some() {
                         request_window_refresh(ctx, true);
@@ -383,9 +620,10 @@ fn build_sidebar_row(workspace: FloatingWorkspaceState, view: FloatingViewSnapsh
                 }),
         )
         .with_child(
-            Button::new(maximize_label)
-                .min_width(76.0)
-                .min_height(30.0)
+            IconButton::new(maximize_icon, maximize_label)
+                .theme(secondary_theme)
+                .size(SIDEBAR_ACTION_ICON_SIZE)
+                .icon_size(13.0)
                 .on_press_with_ctx(move |ctx| {
                     let Some(snapshot) = maximize_workspace.snapshot(view_id) else {
                         return;
@@ -1390,10 +1628,10 @@ fn build_dev_application_with_widget_book_bounds_render_options(
 
     let root = SplitView::horizontal(ViewSidebar::new(workspace.clone()), views)
         .name("Development workspace split")
-        .ratio(0.24)
-        .min_first(236.0)
-        .min_second(420.0)
-        .divider_thickness(12.0);
+        .ratio(WORKSPACE_SIDEBAR_RATIO)
+        .min_first(WORKSPACE_SIDEBAR_MIN_WIDTH)
+        .min_second(WORKSPACE_CONTENT_MIN_WIDTH)
+        .divider_thickness(WORKSPACE_DIVIDER_THICKNESS);
 
     finish_dev_application(root)
 }
@@ -1429,10 +1667,10 @@ fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
 
     let root = SplitView::horizontal(ViewSidebar::new(workspace.clone()), views)
         .name("Development workspace split")
-        .ratio(0.24)
-        .min_first(236.0)
-        .min_second(420.0)
-        .divider_thickness(12.0);
+        .ratio(WORKSPACE_SIDEBAR_RATIO)
+        .min_first(WORKSPACE_SIDEBAR_MIN_WIDTH)
+        .min_second(WORKSPACE_CONTENT_MIN_WIDTH)
+        .divider_thickness(WORKSPACE_DIVIDER_THICKNESS);
 
     let root = DesktopAutomationRoot::new(
         workspace.clone(),
@@ -1448,9 +1686,15 @@ fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
 fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
     let mut app = Application::new();
     register_widget_book_images(&mut app);
-    let app = app.window(WindowBuilder::new().title(WINDOW_TITLE).root(
-        LivePerformanceRoot::new(WINDOW_TITLE, WINDOW_DESCRIPTION, root).show_performance_overlay(),
-    ));
+    let app = app.window(
+        WindowBuilder::new()
+            .title(WINDOW_TITLE)
+            .root(LivePerformanceRoot::new(
+                WINDOW_TITLE,
+                WINDOW_DESCRIPTION,
+                root,
+            )),
+    );
 
     app
 }
@@ -1556,10 +1800,10 @@ mod tests {
 
         let root = SplitView::horizontal(ViewSidebar::new(workspace), views)
             .name("Fronting test split")
-            .ratio(0.24)
-            .min_first(236.0)
-            .min_second(420.0)
-            .divider_thickness(12.0);
+            .ratio(WORKSPACE_SIDEBAR_RATIO)
+            .min_first(WORKSPACE_SIDEBAR_MIN_WIDTH)
+            .min_second(WORKSPACE_CONTENT_MIN_WIDTH)
+            .divider_thickness(WORKSPACE_DIVIDER_THICKNESS);
 
         Application::new().window(
             WindowBuilder::new().title(FRONTING_TEST_TITLE).root(
@@ -1929,7 +2173,7 @@ mod tests {
     }
 
     #[test]
-    fn dev_workspace_exposes_live_performance_overlay() {
+    fn dev_workspace_omits_live_performance_overlay_by_default() {
         let mut runtime = build_dev_application()
             .build()
             .expect("dev application should build");
@@ -1944,7 +2188,7 @@ mod tests {
         assert!(
             semantics
                 .iter()
-                .any(|node| { node.name.as_deref() == Some("Live performance overlay") })
+                .all(|node| { node.name.as_deref() != Some("Live performance overlay") })
         );
     }
 
