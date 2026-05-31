@@ -194,6 +194,7 @@ struct EffectNode {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResolvedRasterState {
     pub(crate) current_transform: Transform,
+    pub(crate) pixel_snap_offset: Vector,
     pub(crate) clip_stack: Vec<ResolvedClipPrimitive>,
     transform_node: TransformNodeId,
     clip_node: ClipNodeId,
@@ -204,6 +205,8 @@ impl ResolvedRasterState {
     fn signature(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         hash_transform(&mut hasher, self.current_transform);
+        self.pixel_snap_offset.x.to_bits().hash(&mut hasher);
+        self.pixel_snap_offset.y.to_bits().hash(&mut hasher);
         self.transform_node.hash(&mut hasher);
         self.clip_node.hash(&mut hasher);
         self.effect_node.hash(&mut hasher);
@@ -361,6 +364,7 @@ impl CompositionTraversalState {
     fn resolved_state(&self) -> ResolvedRasterState {
         ResolvedRasterState {
             current_transform: self.current_transform,
+            pixel_snap_offset: Vector::ZERO,
             clip_stack: self
                 .clip_stack
                 .iter()
@@ -788,6 +792,8 @@ impl RetainedCompositorState {
                 root_dirty,
                 PacketCoordinateSpace::World,
                 Vector::ZERO,
+                Vector::ZERO,
+                frame.scale_factor,
                 text_engine,
                 feather_width,
                 frame_stats,
@@ -861,6 +867,11 @@ impl RetainedCompositorState {
                 global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
             let coordinate_space = PacketCoordinateSpace::LayerLocal;
             let normalization_origin = layer_snapshot.descriptor.bounds.origin.to_vector();
+            let pixel_snap_origin = layer_snapshot
+                .descriptor
+                .presented_bounds()
+                .origin
+                .to_vector();
             for packet in layer_snapshot.packets {
                 self.upsert_packet(
                     frame,
@@ -868,6 +879,8 @@ impl RetainedCompositorState {
                     packet_dirty,
                     coordinate_space,
                     normalization_origin,
+                    pixel_snap_origin,
+                    frame.scale_factor,
                     text_engine,
                     feather_width,
                     frame_stats,
@@ -887,12 +900,20 @@ impl RetainedCompositorState {
         _forced_dirty: bool,
         coordinate_space: PacketCoordinateSpace,
         normalization_origin: Vector,
+        pixel_snap_origin: Vector,
+        raster_scale_factor: f32,
         text_engine: &mut TextEngine,
         feather_width: f32,
         stats: &mut RetainedCompositorFrameStats,
     ) -> Result<()> {
         let normalize_started = self.diagnostics_enabled.then(Instant::now);
-        let snapshot = normalize_packet_snapshot(snapshot, coordinate_space, normalization_origin);
+        let snapshot = normalize_packet_snapshot(
+            snapshot,
+            coordinate_space,
+            normalization_origin,
+            pixel_snap_origin,
+            raster_scale_factor,
+        );
         let normalize_time_ms = normalize_started
             .map(|started| started.elapsed().as_secs_f64() * 1000.0)
             .unwrap_or(0.0);
@@ -1412,6 +1433,8 @@ fn normalize_packet_snapshot(
     mut snapshot: PacketSnapshot,
     coordinate_space: PacketCoordinateSpace,
     normalization_origin: Vector,
+    pixel_snap_origin: Vector,
+    raster_scale_factor: f32,
 ) -> PacketSnapshot {
     if coordinate_space == PacketCoordinateSpace::LayerLocal && normalization_origin != Vector::ZERO
     {
@@ -1422,8 +1445,25 @@ fn normalize_packet_snapshot(
     if coordinate_space == PacketCoordinateSpace::LayerLocal {
         snapshot.initial_state.clip_stack.clear();
         snapshot.initial_state.clip_node = ClipNodeId::ROOT;
+        snapshot.initial_state.pixel_snap_offset =
+            physical_pixel_phase(pixel_snap_origin, raster_scale_factor);
     }
     snapshot
+}
+
+fn physical_pixel_phase(origin: Vector, raster_scale_factor: f32) -> Vector {
+    if !raster_scale_factor.is_finite() || raster_scale_factor <= 0.0 {
+        return Vector::ZERO;
+    }
+
+    let phase = |value: f32| {
+        if value.is_finite() {
+            value - ((value * raster_scale_factor).floor() / raster_scale_factor)
+        } else {
+            0.0
+        }
+    };
+    Vector::new(phase(origin.x), phase(origin.y))
 }
 
 fn packet_text_sample(scene: &Scene) -> Option<String> {

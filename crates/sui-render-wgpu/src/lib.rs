@@ -3739,53 +3739,6 @@ fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
     return select(high, low, color <= vec3<f32>(0.04045));
 }
 
-const TEXT_GAMMA_RATIOS: vec4<f32> = vec4<f32>(0.14805442, -0.8945945, 1.475908, -0.32466823);
-const TEXT_GRAYSCALE_ENHANCED_CONTRAST: f32 = 1.0;
-const TEXT_SUBPIXEL_ENHANCED_CONTRAST: f32 = 0.5;
-
-fn color_brightness(color: vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.30, 0.59, 0.11));
-}
-
-fn light_on_dark_contrast(enhanced_contrast: f32, color: vec3<f32>) -> f32 {
-    let brightness = color_brightness(color);
-    let multiplier = clamp(4.0 * (0.75 - brightness), 0.0, 1.0);
-    return enhanced_contrast * multiplier;
-}
-
-fn enhance_contrast(alpha: f32, k: f32) -> f32 {
-    return alpha * (k + 1.0) / (alpha * k + 1.0);
-}
-
-fn enhance_contrast3(alpha: vec3<f32>, k: f32) -> vec3<f32> {
-    return alpha * (k + 1.0) / (alpha * k + 1.0);
-}
-
-fn apply_alpha_correction(alpha: f32, brightness: f32, gamma_ratios: vec4<f32>) -> f32 {
-    let brightness_adjustment = gamma_ratios.x * brightness + gamma_ratios.y;
-    let correction = brightness_adjustment * alpha + (gamma_ratios.z * brightness + gamma_ratios.w);
-    return alpha + alpha * (1.0 - alpha) * correction;
-}
-
-fn apply_alpha_correction3(alpha: vec3<f32>, color: vec3<f32>, gamma_ratios: vec4<f32>) -> vec3<f32> {
-    let brightness_adjustment = gamma_ratios.x * color + gamma_ratios.y;
-    let correction = brightness_adjustment * alpha + (gamma_ratios.z * color + gamma_ratios.w);
-    return alpha + alpha * (1.0 - alpha) * correction;
-}
-
-fn apply_contrast_and_gamma_correction(sample: f32, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> f32 {
-    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
-    let brightness = color_brightness(color);
-    let contrasted = enhance_contrast(sample, enhanced_contrast);
-    return clamp(apply_alpha_correction(contrasted, brightness, gamma_ratios), 0.0, 1.0);
-}
-
-fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> vec3<f32> {
-    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
-    let contrasted = enhance_contrast3(sample, enhanced_contrast);
-    return clamp(apply_alpha_correction3(contrasted, color, gamma_ratios), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Clamp the sample point to the glyph's half-texel-inset UV rect so bilinear taps at the quad
@@ -3801,34 +3754,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     if in.metadata.x > 0.5 {
-        let coverage = apply_contrast_and_gamma_correction3(
-            sampled.rgb,
-            in.color.rgb,
-            TEXT_SUBPIXEL_ENHANCED_CONTRAST,
-            TEXT_GAMMA_RATIOS,
-        );
+        let coverage = sampled.rgb;
         let max_coverage = max(max(coverage.r, coverage.g), coverage.b);
         let premul = in.color.rgb * coverage * in.color.a;
         return vec4<f32>(premul, in.color.a * max_coverage);
     }
 
     if in.metadata.y > 0.5 {
-        let coverage = apply_contrast_and_gamma_correction(
-            (sampled.r + sampled.g + sampled.b) / 3.0,
-            in.color.rgb,
-            TEXT_GRAYSCALE_ENHANCED_CONTRAST,
-            TEXT_GAMMA_RATIOS,
-        );
+        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
         let alpha = in.color.a * coverage;
         return vec4<f32>(in.color.rgb * alpha, alpha);
     }
 
-    let coverage = apply_contrast_and_gamma_correction(
-        sampled.a,
-        in.color.rgb,
-        TEXT_GRAYSCALE_ENHANCED_CONTRAST,
-        TEXT_GAMMA_RATIOS,
-    );
+    let coverage = sampled.a;
     let alpha = in.color.a * coverage;
     return vec4<f32>(in.color.rgb * alpha, alpha);
 }
@@ -3887,53 +3825,6 @@ fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
     return select(high, low, color <= vec3<f32>(0.04045));
 }
 
-const TEXT_GAMMA_RATIOS: vec4<f32> = vec4<f32>(0.14805442, -0.8945945, 1.475908, -0.32466823);
-const TEXT_GRAYSCALE_ENHANCED_CONTRAST: f32 = 1.0;
-const TEXT_SUBPIXEL_ENHANCED_CONTRAST: f32 = 0.5;
-
-fn color_brightness(color: vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.30, 0.59, 0.11));
-}
-
-fn light_on_dark_contrast(enhanced_contrast: f32, color: vec3<f32>) -> f32 {
-    let brightness = color_brightness(color);
-    let multiplier = clamp(4.0 * (0.75 - brightness), 0.0, 1.0);
-    return enhanced_contrast * multiplier;
-}
-
-fn enhance_contrast(alpha: f32, k: f32) -> f32 {
-    return alpha * (k + 1.0) / (alpha * k + 1.0);
-}
-
-fn enhance_contrast3(alpha: vec3<f32>, k: f32) -> vec3<f32> {
-    return alpha * (k + 1.0) / (alpha * k + 1.0);
-}
-
-fn apply_alpha_correction(alpha: f32, brightness: f32, gamma_ratios: vec4<f32>) -> f32 {
-    let brightness_adjustment = gamma_ratios.x * brightness + gamma_ratios.y;
-    let correction = brightness_adjustment * alpha + (gamma_ratios.z * brightness + gamma_ratios.w);
-    return alpha + alpha * (1.0 - alpha) * correction;
-}
-
-fn apply_alpha_correction3(alpha: vec3<f32>, color: vec3<f32>, gamma_ratios: vec4<f32>) -> vec3<f32> {
-    let brightness_adjustment = gamma_ratios.x * color + gamma_ratios.y;
-    let correction = brightness_adjustment * alpha + (gamma_ratios.z * color + gamma_ratios.w);
-    return alpha + alpha * (1.0 - alpha) * correction;
-}
-
-fn apply_contrast_and_gamma_correction(sample: f32, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> f32 {
-    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
-    let brightness = color_brightness(color);
-    let contrasted = enhance_contrast(sample, enhanced_contrast);
-    return clamp(apply_alpha_correction(contrasted, brightness, gamma_ratios), 0.0, 1.0);
-}
-
-fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> vec3<f32> {
-    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
-    let contrasted = enhance_contrast3(sample, enhanced_contrast);
-    return clamp(apply_alpha_correction3(contrasted, color, gamma_ratios), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
 fn dual_source(foreground: vec3<f32>, alpha: vec3<f32>) -> FragmentOutput {
     var out: FragmentOutput;
     let source_alpha = max(max(alpha.r, alpha.g), alpha.b);
@@ -3956,31 +3847,16 @@ fn fs_main(in: VsOut) -> FragmentOutput {
     }
 
     if in.metadata.x > 0.5 {
-        let coverage = apply_contrast_and_gamma_correction3(
-            sampled.rgb,
-            in.color.rgb,
-            TEXT_SUBPIXEL_ENHANCED_CONTRAST,
-            TEXT_GAMMA_RATIOS,
-        );
+        let coverage = sampled.rgb;
         return dual_source(in.color.rgb, coverage * in.color.a);
     }
 
     if in.metadata.y > 0.5 {
-        let coverage = apply_contrast_and_gamma_correction(
-            (sampled.r + sampled.g + sampled.b) / 3.0,
-            in.color.rgb,
-            TEXT_GRAYSCALE_ENHANCED_CONTRAST,
-            TEXT_GAMMA_RATIOS,
-        );
+        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
         return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
     }
 
-    let coverage = apply_contrast_and_gamma_correction(
-        sampled.a,
-        in.color.rgb,
-        TEXT_GRAYSCALE_ENHANCED_CONTRAST,
-        TEXT_GAMMA_RATIOS,
-    );
+    let coverage = sampled.a;
     return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
 }
 "#;
@@ -5593,16 +5469,46 @@ mod tests {
         };
 
         assert_eq!(
-            glyph_subpixel_offset(Transform::IDENTITY, &glyph, 1.0),
+            glyph_subpixel_offset(Transform::IDENTITY, Vector::ZERO, &glyph, 1.0),
             GlyphSubpixelOffsetKey::new(1, 0)
         );
         assert_eq!(
-            glyph_subpixel_offset(Transform::IDENTITY, &glyph, 2.0),
+            glyph_subpixel_offset(Transform::IDENTITY, Vector::ZERO, &glyph, 2.0),
             GlyphSubpixelOffsetKey::new(2, 0)
         );
         assert_eq!(
-            glyph_subpixel_offset(Transform::rotation(0.25), &glyph, 1.0),
+            glyph_subpixel_offset(Transform::rotation(0.25), Vector::ZERO, &glyph, 1.0),
             GlyphSubpixelOffsetKey::default()
+        );
+    }
+
+    #[test]
+    fn glyph_subpixel_offset_includes_layer_pixel_snap_phase() {
+        let glyph = ShapedGlyph {
+            glyph_id: 42,
+            cluster: 0,
+            span_id: sui_text::TextSpanId {
+                paragraph_index: 0,
+                span_index: 0,
+            },
+            run_index: 0,
+            line_index: 0,
+            face_index: 0,
+            origin_x: 14.0,
+            origin_y: 20.0,
+            advance: Vector::new(8.0, 0.0),
+            scale: 12.0,
+            bounds: None,
+        };
+
+        assert_eq!(
+            glyph_subpixel_offset(
+                Transform::IDENTITY,
+                Vector::new(1.0 / 3.0, 0.0),
+                &glyph,
+                1.5
+            ),
+            GlyphSubpixelOffsetKey::new(2, 0)
         );
     }
 
@@ -5664,10 +5570,12 @@ mod tests {
     }
 
     #[test]
-    fn text_atlas_shaders_apply_correction_and_dual_source_blending() {
-        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("apply_contrast_and_gamma_correction"));
+    fn text_atlas_shaders_use_sampled_coverage_and_dual_source_blending() {
+        assert!(!TEXT_ATLAS_SHADER_SOURCE.contains("apply_contrast_and_gamma_correction"));
+        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("let coverage = sampled.a;"));
         assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(0)"));
         assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(1)"));
+        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("let coverage = sampled.a;"));
     }
 
     #[test]
@@ -7915,6 +7823,96 @@ mod tests {
         let cached_pixels = renderer.capture_last_frame_rgba(cached.window_id).unwrap();
 
         assert_rgba_images_match(&direct_pixels, &cached_pixels);
+    }
+
+    #[test]
+    fn retained_layer_local_text_snaps_after_fractional_origin_composition() {
+        let handle = FontHandle::new(127);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+        let viewport = Size::new(240.0, 92.0);
+        let layer_id = WidgetId::new(127);
+        let layer_bounds = Rect::new(58.333_332, 18.333_334, 158.0, 54.0);
+        let text_rect = Rect::new(
+            layer_bounds.x() + 14.0,
+            layer_bounds.y() + 14.0,
+            132.0,
+            24.0,
+        );
+        let text_style = TextStyle {
+            font: Some(handle),
+            font_size: 14.0,
+            line_height: 19.0,
+            color: Color::rgba(0.92, 0.94, 0.98, 1.0),
+            ..TextStyle::default()
+        };
+        let text = "Popup text snaps".to_string();
+
+        let descriptor =
+            SceneLayerDescriptor::new(SceneLayerId::from_widget(layer_id), layer_id, layer_bounds)
+                .with_content_bounds(layer_bounds)
+                .with_paint_bounds(layer_bounds);
+        let mut layer_scene = Scene::new();
+        layer_scene.push(SceneCommand::FillRect {
+            rect: layer_bounds,
+            brush: Color::rgba(0.12, 0.15, 0.20, 1.0).into(),
+        });
+        layer_scene.push(SceneCommand::DrawText(TextRun {
+            rect: text_rect,
+            text,
+            style: text_style,
+        }));
+        let mut retained_scene = Scene::new();
+        retained_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, viewport.width, viewport.height),
+            brush: Color::rgba(0.06, 0.07, 0.09, 1.0).into(),
+        });
+        retained_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            descriptor.clone(),
+            layer_scene,
+        )));
+
+        let retained = SceneFrame {
+            window_id: WindowId::new(128),
+            viewport,
+            surface_size: Size::new(360.0, 138.0),
+            scale_factor: 1.5,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, descriptor)
+                    .with_damage(layer_bounds),
+            ],
+            scene: retained_scene,
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let draw_ops = prepare_with_compositor(&retained, &mut text_engine, &mut compositor)
+            .expect("retained frame should prepare");
+        let text_op = draw_ops
+            .draw_ops
+            .iter()
+            .find(|op| matches!(op.kind, DrawOpKind::TextAtlas))
+            .expect("retained layer should emit atlas text");
+        let start = text_op.vertices.start as usize;
+        let end = start + text_op.vertices.len as usize;
+        let instances = &draw_ops.text_instances[start..end];
+        assert!(!instances.is_empty());
+        for (index, instance) in instances.iter().enumerate() {
+            let x = logical_x_from_ndc(instance.top_left[0], viewport);
+            let y = logical_y_from_ndc(instance.top_left[1], viewport);
+            assert!(
+                is_physically_pixel_aligned(x, retained.scale_factor),
+                "text instance {index} x was not aligned after layer composition: {x}"
+            );
+            assert!(
+                is_physically_pixel_aligned(y, retained.scale_factor),
+                "text instance {index} y was not aligned after layer composition: {y}"
+            );
+        }
     }
 
     #[test]

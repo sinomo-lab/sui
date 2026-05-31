@@ -1336,6 +1336,7 @@ impl SceneDrawOpBuilder<'_> {
 #[derive(Debug, Clone)]
 pub(crate) struct SceneRasterState {
     pub(crate) current_transform: Transform,
+    pub(crate) pixel_snap_offset: Vector,
     pub(crate) transform_stack: Vec<Transform>,
     clip_stack: Vec<ClipPrimitive>,
     pub(crate) path_clip_state_id: u64,
@@ -1348,6 +1349,7 @@ impl SceneRasterState {
         let clip_state_index = draw_ops.push_clip_state(&[]);
         Self {
             current_transform: Transform::IDENTITY,
+            pixel_snap_offset: Vector::ZERO,
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
             path_clip_state_id: 0,
@@ -1363,6 +1365,7 @@ impl SceneRasterState {
     ) -> Result<Self> {
         let mut state = Self::new(draw_ops);
         state.current_transform = resolved.current_transform;
+        state.pixel_snap_offset = resolved.pixel_snap_offset;
         state.transform_stack.clear();
         state.path_clip_state_id = 0;
         state.active_path_clips.clear();
@@ -1867,6 +1870,7 @@ impl TextEngine {
                 raster_scale_factor,
                 glyph_subpixel_offset(
                     state.current_transform,
+                    state.pixel_snap_offset,
                     &translated_glyph,
                     raster_scale_factor,
                 ),
@@ -1878,6 +1882,7 @@ impl TextEngine {
                     &translated_glyph,
                     glyph_style.color,
                     state.current_transform,
+                    state.pixel_snap_offset,
                     viewport,
                     raster_scale_factor,
                 ) {
@@ -2503,6 +2508,7 @@ pub(crate) fn append_cached_glyph_atlas(
         glyph,
         color,
         transform,
+        Vector::ZERO,
         viewport,
         raster_scale_factor,
     ) {
@@ -2515,6 +2521,7 @@ fn build_text_atlas_instance(
     glyph: &SceneShapedGlyph,
     color: Color,
     transform: Transform,
+    pixel_snap_offset: Vector,
     viewport: Size,
     raster_scale_factor: f32,
 ) -> Option<TextAtlasInstance> {
@@ -2534,6 +2541,7 @@ fn build_text_atlas_instance(
     let height = atlas.size.height * residual_scale;
     let (top_left, top_right, bottom_left, bottom_right) = snapped_glyph_quad(
         transform,
+        pixel_snap_offset,
         Rect::new(left, top, width, height),
         raster_scale_factor,
     );
@@ -2566,6 +2574,7 @@ pub(crate) fn allows_lcd_text(transform: Transform) -> bool {
 
 pub(crate) fn glyph_subpixel_offset(
     transform: Transform,
+    pixel_snap_offset: Vector,
     glyph: &SceneShapedGlyph,
     raster_scale_factor: f32,
 ) -> GlyphSubpixelOffsetKey {
@@ -2573,7 +2582,8 @@ pub(crate) fn glyph_subpixel_offset(
         return GlyphSubpixelOffsetKey::default();
     }
 
-    let origin = transform.transform_point(Point::new(glyph.origin_x, glyph.origin_y));
+    let origin =
+        transform.transform_point(Point::new(glyph.origin_x, glyph.origin_y)) + pixel_snap_offset;
     GlyphSubpixelOffsetKey::new(
         subpixel_variant_for(origin.x * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_X),
         subpixel_variant_for(origin.y * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_Y),
@@ -2647,6 +2657,7 @@ fn append_text_instance_vertices(vertices: &mut Vec<Vertex>, instances: &[TextAt
 
 fn snapped_glyph_quad(
     transform: Transform,
+    pixel_snap_offset: Vector,
     rect: Rect,
     raster_scale_factor: f32,
 ) -> (Point, Point, Point, Point) {
@@ -2659,8 +2670,11 @@ fn snapped_glyph_quad(
         return (top_left, top_right, bottom_left, bottom_right);
     }
 
-    let snapped_left = snap_to_physical_pixel(top_left.x, raster_scale_factor);
-    let snapped_top = snap_to_physical_pixel(top_left.y, raster_scale_factor);
+    let snapped_left =
+        snap_to_physical_pixel(top_left.x + pixel_snap_offset.x, raster_scale_factor)
+            - pixel_snap_offset.x;
+    let snapped_top = snap_to_physical_pixel(top_left.y + pixel_snap_offset.y, raster_scale_factor)
+        - pixel_snap_offset.y;
     let width = top_right.x - top_left.x;
     let height = bottom_left.y - top_left.y;
 
