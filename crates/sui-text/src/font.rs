@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use cosmic_text::{Attrs, FeatureTag, Family, FontSystem, Metrics, Stretch, Style, Weight, fontdb};
+use cosmic_text::{Attrs, Family, FeatureTag, FontSystem, Metrics, Stretch, Style, Weight, fontdb};
 use sui_core::{Error, FontHandle, Rect, Result};
 use ttf_parser::GlyphId;
 
@@ -68,7 +68,10 @@ mod attrs_mapping_tests {
     #[test]
     fn stretch_maps_to_cosmic_stretch() {
         assert_eq!(to_cosmic_stretch(FontStretch::Normal), Stretch::Normal);
-        assert_eq!(to_cosmic_stretch(FontStretch::Condensed), Stretch::Condensed);
+        assert_eq!(
+            to_cosmic_stretch(FontStretch::Condensed),
+            Stretch::Condensed
+        );
         assert_eq!(
             to_cosmic_stretch(FontStretch::UltraExpanded),
             Stretch::UltraExpanded

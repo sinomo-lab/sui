@@ -1049,7 +1049,10 @@ fn default_attrs_for_style<'a>(
     metadata: usize,
 ) -> cosmic_text::Attrs<'a> {
     let mut attrs = cosmic_text::Attrs::new()
-        .metrics(cosmic_text::Metrics::new(style.font_size, style.line_height))
+        .metrics(cosmic_text::Metrics::new(
+            style.font_size,
+            style.line_height,
+        ))
         .metadata(metadata)
         .weight(crate::font::to_cosmic_weight(style.weight))
         .style(crate::font::to_cosmic_style(style.style))

@@ -4418,8 +4418,10 @@ mod tests {
 
         // Per-widget measure/arrange/paint timings, only populated when the runtime
         // env var SUI_PROFILE_WIDGET_TIMINGS is set. Surfaces the hottest widgets.
-        let mut widget_totals: std::collections::BTreeMap<(&'static str, &'static str), (f64, usize)> =
-            std::collections::BTreeMap::new();
+        let mut widget_totals: std::collections::BTreeMap<
+            (&'static str, &'static str),
+            (f64, usize),
+        > = std::collections::BTreeMap::new();
         for sample in samples {
             for timing in &sample.widget_timings {
                 let entry = widget_totals

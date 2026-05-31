@@ -35,15 +35,15 @@ pub use diagnostics::{
     window_performance_summary, window_performance_text_caches, window_render_options,
     window_scene_statistics_detail_mode,
 };
+use std::rc::Rc;
 pub use sui_core::DpiInfo;
 pub use sui_layout::LayoutContext;
+use widget::MeasureScope;
 pub use widget::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
     SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
     WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use std::rc::Rc;
-use widget::MeasureScope;
 use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
 
 pub struct WindowBuilder {

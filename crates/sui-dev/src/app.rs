@@ -72,7 +72,6 @@ struct ViewSidebar {
     signature: Vec<(u64, String, bool, bool)>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
     ctx.request(InvalidationRequest::new(
         InvalidationTarget::Window(ctx.window_id()),

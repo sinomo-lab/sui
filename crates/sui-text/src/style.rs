@@ -177,8 +177,20 @@ mod tests {
         assert_eq!(FontFeature::SMALL_CAPS, *b"smcp");
         assert_eq!(FontFeature::stylistic_set(1), *b"ss01");
         assert_eq!(FontFeature::stylistic_set(12), *b"ss12");
-        assert_eq!(FontFeature::on(*b"liga"), FontFeature { tag: *b"liga", value: 1 });
-        assert_eq!(FontFeature::off(*b"liga"), FontFeature { tag: *b"liga", value: 0 });
+        assert_eq!(
+            FontFeature::on(*b"liga"),
+            FontFeature {
+                tag: *b"liga",
+                value: 1
+            }
+        );
+        assert_eq!(
+            FontFeature::off(*b"liga"),
+            FontFeature {
+                tag: *b"liga",
+                value: 0
+            }
+        );
         assert_eq!(FontFeature::set(*b"aalt", 3).value, 3);
     }
 

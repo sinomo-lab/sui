@@ -265,8 +265,10 @@ impl SharedRenderer {
                 | PipelineKind::TexturedClipped
                 | PipelineKind::TextAtlas
                 | PipelineKind::TextAtlasClipped => {
-                    let is_text =
-                        matches!(kind, PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped);
+                    let is_text = matches!(
+                        kind,
+                        PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
+                    );
                     // Text samples a texture_2d_array (one layer per atlas page); images use a
                     // plain texture_2d. They therefore need different bind group layouts.
                     let bind_group_layout = if is_text {

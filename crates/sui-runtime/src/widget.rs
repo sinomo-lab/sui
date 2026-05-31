@@ -1958,7 +1958,10 @@ mod tests {
 
         // 2. A pass where nothing is dirty short-circuits the clean parent before
         //    it ever recurses, so the child is not re-measured.
-        let mut ctx = scoped_measure_ctx(outside, MeasureScope::scoped(HashSet::new(), HashSet::new()));
+        let mut ctx = scoped_measure_ctx(
+            outside,
+            MeasureScope::scoped(HashSet::new(), HashSet::new()),
+        );
         parent.measure(&mut ctx, constraints);
         assert_eq!(measures.get(), 1, "clean subtree must be skipped");
 

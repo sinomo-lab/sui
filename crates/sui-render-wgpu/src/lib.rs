@@ -1514,8 +1514,7 @@ impl WgpuRenderer {
                     },
                 ],
             });
-        let text_atlas_array_bind_group_layout =
-            create_text_atlas_array_bind_group_layout(&device);
+        let text_atlas_array_bind_group_layout = create_text_atlas_array_bind_group_layout(&device);
         let image_linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("SUI linear image sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -1640,7 +1639,7 @@ impl WgpuRenderer {
         let adapter = self
             .instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: wgpu::PowerPreference::None,
                 force_fallback_adapter: false,
                 compatible_surface,
             })
@@ -1679,8 +1678,7 @@ impl WgpuRenderer {
                     },
                 ],
             });
-        let text_atlas_array_bind_group_layout =
-            create_text_atlas_array_bind_group_layout(&device);
+        let text_atlas_array_bind_group_layout = create_text_atlas_array_bind_group_layout(&device);
         let image_linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("SUI linear image sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -2753,7 +2751,11 @@ impl WgpuRenderer {
         Ok((bind_group, stats))
     }
 
-    fn ensure_text_atlas_array(&mut self, page_size: (u32, u32), required_layers: u32) -> Result<()> {
+    fn ensure_text_atlas_array(
+        &mut self,
+        page_size: (u32, u32),
+        required_layers: u32,
+    ) -> Result<()> {
         // Allocate only as many layers as there are live pages, growing on demand up to the page
         // budget. This keeps the common single-page case at one 16 MB layer instead of committing
         // the whole budget up front.
@@ -3374,14 +3376,14 @@ fn vs_main(
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let feather_width = in.rect_params.z;
+    let p = in.local_position;
+    let derivative_width = length(vec2<f32>(fwidth(p.x), fwidth(p.y)));
     if feather_width > 0.0 {
         let size = max(in.rect_params.xy, vec2<f32>(0.0));
-        let p = in.local_position;
         let outside_distance = max(
             max(-p.x, p.x - size.x),
             max(-p.y, p.y - size.y),
         );
-        let derivative_width = length(vec2<f32>(fwidth(p.x), fwidth(p.y)));
         let feather = max(feather_width, derivative_width);
         let coverage = select(
             clamp(1.0 - (outside_distance / max(feather, 1e-4)), 0.0, 1.0),
@@ -4112,16 +4114,15 @@ mod tests {
         RetainedCompositorFrameStats, RetainedCompositorState, RetainedPacketId,
         RetainedPacketRebuildStats, ScissorRect, StemDarkening, SwashImageContent, SwashSource,
         SwashStrikeWith, TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE, TEXT_ATLAS_SHADER_SOURCE,
-        TextAtlasColorMode, TextAtlasPages,
-        TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode, VERTEX_SIZE, Vertex,
-        WgpuRenderer, append_cached_path_mesh, batch_draw_ops, build_vertices,
-        decode_rgba16f_pixels, prepare_frame_batches,
+        TextAtlasColorMode, TextAtlasPages, TextCoveragePolicy, TextEngine, TextHinting,
+        TextRenderMode, VERTEX_SIZE, Vertex, WgpuRenderer, append_cached_path_mesh, batch_draw_ops,
+        build_vertices, decode_rgba16f_pixels, prepare_frame_batches,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
             apply_output_transform_for_testing, apply_stem_darkening_to_coverage,
             convert_subpixel_texel_for_mode, glyph_raster_offset, glyph_subpixel_offset,
-            output_transform_requires_intermediate, prepare_cached_passes,
-            select_output_strategy, swash_image_to_rgba, tone_map_linear_color,
+            output_transform_requires_intermediate, prepare_cached_passes, select_output_strategy,
+            swash_image_to_rgba, tone_map_linear_color,
         },
         shader_color, strip_padded_readback_rows, to_ndc,
     };
