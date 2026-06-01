@@ -67,7 +67,9 @@ use sui_widget_book::{
 const DESKTOP_NO_VSYNC_ENV: &str = "SUI_DEV_NO_VSYNC";
 #[cfg(not(target_arch = "wasm32"))]
 const DESKTOP_AUTOMATION_ENV: &str = "SUI_DEV_AUTOMATION";
-const DEFAULT_WEB_SDR_CONTENT_BRIGHTNESS_NITS: f32 = 203.0;
+// WebGPU HDR canvas output treats 1.0 as ordinary browser white and allows
+// values above 1.0 for HDR highlights, so the web default keeps SDR UI at 1.0.
+const DEFAULT_WEB_SDR_CONTENT_BRIGHTNESS_NITS: f32 = 80.0;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3307,7 +3309,7 @@ mod tests {
 
         assert_eq!(
             web_validation_query(&mode),
-            "benchmark=color-validation&frames=240&warmup=24&canvas-format=rgba16float&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard&sdr-content-brightness=203&use-system-sdr-brightness=true"
+            "benchmark=color-validation&frames=240&warmup=24&canvas-format=rgba16float&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard&sdr-content-brightness=80&use-system-sdr-brightness=true"
         );
     }
 
@@ -3346,8 +3348,20 @@ mod tests {
         assert!(report.contains("output_primaries=display-p3"));
         assert!(report.contains("dynamic_range=hdr"));
         assert!(report.contains("tone_mapping=clamp"));
-        assert!(report.contains("sdr_content_brightness=203"));
+        assert!(report.contains("sdr_content_brightness=80"));
         assert!(report.contains("use_system_sdr_brightness=true"));
+    }
+
+    #[test]
+    fn web_default_sdr_brightness_matches_browser_sdr_white() {
+        let mode = parse_web_launch_mode(
+            "benchmark=widget-book&canvas-format=rgba16float&canvas-tone-mapping=extended&color-management=prefer-hdr&dynamic-range=hdr",
+        );
+        let options = web_window_render_options(&mode);
+
+        assert_eq!(mode.sdr_content_brightness_nits, 80.0);
+        assert_eq!(options.sdr_content_brightness_nits, 80.0);
+        assert!(mode.use_system_sdr_content_brightness);
     }
 
     #[test]
