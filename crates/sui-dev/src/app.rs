@@ -541,12 +541,14 @@ impl DevBrowserShell {
 }
 
 fn dev_shell_tab_semantics_id(parent: WidgetId, demo_index: usize) -> WidgetId {
+    const TAG: u64 = 2_u64 << 51;
+    const LOW_MASK: u64 = (1_u64 << 51) - 1;
     WidgetId::new(
-        (1_u64 << 62)
-            | parent
-                .get()
-                .wrapping_mul(313)
-                .wrapping_add(demo_index as u64 + 1),
+        TAG | (parent
+            .get()
+            .wrapping_mul(313)
+            .wrapping_add(demo_index as u64 + 1)
+            & LOW_MASK),
     )
 }
 
@@ -2499,6 +2501,7 @@ mod tests {
     use super::*;
 
     use std::{
+        collections::BTreeSet,
         path::PathBuf,
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -2507,10 +2510,10 @@ mod tests {
     use sui::{
         Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
         SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, StackOrderPolicy, Vector,
-        WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowOutputColorPrimaries,
-        WindowPerformanceSnapshot, WindowRenderOptions, WindowToneMappingMode,
-        set_window_scene_statistics_detail_mode, window_performance_snapshot,
-        window_scene_statistics_detail_mode,
+        WidgetId, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent,
+        WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowRenderOptions,
+        WindowToneMappingMode, set_window_scene_statistics_detail_mode,
+        window_performance_snapshot, window_scene_statistics_detail_mode,
     };
     use sui_render_wgpu::{
         DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
@@ -3085,6 +3088,18 @@ mod tests {
             }),
             "desktop launch builder should not expose the retired sidebar layout"
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn dev_shell_tab_semantics_ids_are_javascript_safe_and_distinct() {
+        let parent = WidgetId::new(17);
+        let mut ids = BTreeSet::new();
+        for demo_index in 0..12 {
+            let id = dev_shell_tab_semantics_id(parent, demo_index).get();
+            assert!(id <= (1_u64 << 53) - 1, "{id} should be JS-safe");
+            assert!(ids.insert(id), "{id} should be unique");
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -505,7 +505,11 @@
         const exposesAriaValue = (node) =>
           ["ComboBox", "SpinBox", "Slider", "ProgressBar"].includes(node.role);
         const visibleContentText = (node, label) =>
-          valueIsVisibleControlContent(node) ? valueText(node) : label;
+          node.role === "ColorPicker"
+            ? ""
+            : valueIsVisibleControlContent(node)
+              ? valueText(node)
+              : label;
         const elementId = (nodeId) => `sui-semantic-dom-node-${nodeId}`;
         const labelId = (nodeId) => `sui-semantic-dom-label-${nodeId}`;
         const needsAssociatedLabel = (node) =>

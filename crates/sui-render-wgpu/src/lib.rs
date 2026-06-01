@@ -3674,7 +3674,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if kind == KIND_SATURATION_VALUE_PLANE {
         let hue = in.metadata.z;
         let max_value = in.metadata.w;
-        return hsv_to_linear_color(space, hue, u, max_value * (1.0 - v), 1.0);
+        let value = hdr_slider_to_value(1.0 - v, max_value);
+        return hsv_to_linear_color(space, hue, u, value, 1.0);
     }
 
     if kind == KIND_SATURATION_BAR {
