@@ -27,6 +27,7 @@ avif-serialize = "0.8.8"
 bytemuck = { version = "1", features = ["derive"] }
 cosmic-text = "0.18.2"
 rav1e = { version = "0.8.1", default-features = false, features = ["threading"] }
+resvg = { version = "0.47", default-features = false }
 fontdb = "0.23"
 lyon_path = "1.0"
 lyon_tessellation = "1.0"

@@ -7,8 +7,9 @@ use sui_core::{
 };
 use sui_render_wgpu::{FeatheringOptions, WgpuRenderer};
 use sui_runtime::{
-    PresentationLatencyDiagnostics, Runtime, WindowPerformanceSnapshot, WindowRenderOptions,
-    window_performance_snapshot, window_render_options, window_scene_statistics_detail_mode,
+    PresentationLatencyDiagnostics, Runtime, WindowIcon as RuntimeWindowIcon,
+    WindowPerformanceSnapshot, WindowRenderOptions, window_performance_snapshot,
+    window_render_options, window_scene_statistics_detail_mode,
 };
 use web_time::Instant;
 use winit::{
@@ -20,6 +21,9 @@ use winit::{
     keyboard::{Key, ModifiersState, NamedKey, PhysicalKey},
     window::{Window, WindowAttributes, WindowId as HostWindowId},
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use winit::window::Icon as WinitIcon;
 
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys, WindowExtWebSys};
@@ -321,6 +325,7 @@ impl DesktopApp {
             }
 
             let title = self.runtime.window_title(window_id)?.to_string();
+            let window_icon = self.runtime.window_icon(window_id)?.cloned();
             #[cfg(target_arch = "wasm32")]
             let initial_size = Self::web_viewport_logical_size();
             #[cfg(not(target_arch = "wasm32"))]
@@ -332,8 +337,18 @@ impl DesktopApp {
             let mut attributes = WindowAttributes::default()
                 .with_title(title.clone())
                 .with_inner_size(initial_size);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                attributes = attributes.with_window_icon(
+                    window_icon
+                        .as_ref()
+                        .map(window_icon_to_winit_icon)
+                        .transpose()?,
+                );
+            }
             #[cfg(target_arch = "wasm32")]
             {
+                install_web_favicon(window_icon.as_ref())?;
                 attributes = attributes
                     .with_canvas(Self::web_canvas_for_window())
                     .with_append(false);
@@ -1456,6 +1471,154 @@ fn map_ime_event(event: Ime) -> Option<ImeEvent> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn window_icon_to_winit_icon(icon: &RuntimeWindowIcon) -> Result<WinitIcon> {
+    match icon {
+        RuntimeWindowIcon::Svg { data } => svg_window_icon_to_winit_icon(data),
+        RuntimeWindowIcon::Rgba8 {
+            width,
+            height,
+            data,
+        } => WinitIcon::from_rgba(data.to_vec(), *width, *height).map_err(map_icon_error),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn svg_window_icon_to_winit_icon(svg: &[u8]) -> Result<WinitIcon> {
+    const DEFAULT_ICON_SIZE: u32 = 256;
+
+    let options = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_data(svg, &options)
+        .map_err(|error| Error::new(format!("failed to parse window icon SVG: {error}")))?;
+    let source_size = tree.size();
+    let scale = (DEFAULT_ICON_SIZE as f32 / source_size.width())
+        .min(DEFAULT_ICON_SIZE as f32 / source_size.height());
+    let offset_x = (DEFAULT_ICON_SIZE as f32 - source_size.width() * scale) * 0.5;
+    let offset_y = (DEFAULT_ICON_SIZE as f32 - source_size.height() * scale) * 0.5;
+    let transform =
+        resvg::tiny_skia::Transform::from_translate(offset_x, offset_y).pre_scale(scale, scale);
+
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(DEFAULT_ICON_SIZE, DEFAULT_ICON_SIZE)
+        .ok_or_else(|| Error::new("failed to allocate window icon bitmap"))?;
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    let mut rgba = Vec::with_capacity((DEFAULT_ICON_SIZE * DEFAULT_ICON_SIZE * 4) as usize);
+    for pixel in pixmap.pixels() {
+        let color = pixel.demultiply();
+        rgba.extend_from_slice(&[color.red(), color.green(), color.blue(), color.alpha()]);
+    }
+
+    WinitIcon::from_rgba(rgba, DEFAULT_ICON_SIZE, DEFAULT_ICON_SIZE).map_err(map_icon_error)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn map_icon_error(error: winit::window::BadIcon) -> Error {
+    Error::new(format!("failed to create window icon: {error}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn install_web_favicon(icon: Option<&RuntimeWindowIcon>) -> Result<()> {
+    let Some(RuntimeWindowIcon::Svg { data }) = icon else {
+        return Ok(());
+    };
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return Ok(());
+    };
+    let Some(head) = document.head() else {
+        return Ok(());
+    };
+
+    let link = if let Some(link) = document.get_element_by_id("sui-window-icon") {
+        link
+    } else {
+        let link = document
+            .create_element("link")
+            .map_err(|_| Error::new("failed to create web favicon link element"))?;
+        link.set_attribute("id", "sui-window-icon")
+            .map_err(|_| Error::new("failed to configure web favicon id"))?;
+        link.set_attribute("rel", "icon")
+            .map_err(|_| Error::new("failed to configure web favicon rel"))?;
+        link.set_attribute("type", "image/svg+xml")
+            .map_err(|_| Error::new("failed to configure web favicon type"))?;
+        head.append_child(&link)
+            .map_err(|_| Error::new("failed to attach web favicon link"))?;
+        link
+    };
+
+    link.set_attribute("href", &svg_favicon_data_url(data))
+        .map_err(|_| Error::new("failed to configure web favicon href"))?;
+    install_web_png_favicon(data, &link);
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn svg_favicon_data_url(svg: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut url = String::from("data:image/svg+xml;charset=utf-8,");
+    for byte in svg {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                url.push(*byte as char)
+            }
+            byte => {
+                url.push('%');
+                url.push(HEX[(byte >> 4) as usize] as char);
+                url.push(HEX[(byte & 0x0f) as usize] as char);
+            }
+        }
+    }
+    url
+}
+
+#[cfg(target_arch = "wasm32")]
+fn install_web_png_favicon(svg: &[u8], link: &web_sys::Element) {
+    use wasm_bindgen::{JsCast, closure::Closure};
+
+    const FAVICON_SIZE: u32 = 64;
+
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let Ok(canvas_element) = document.create_element("canvas") else {
+        return;
+    };
+    let Ok(canvas) = canvas_element.dyn_into::<web_sys::HtmlCanvasElement>() else {
+        return;
+    };
+    canvas.set_width(FAVICON_SIZE);
+    canvas.set_height(FAVICON_SIZE);
+
+    let Ok(Some(context)) = canvas.get_context("2d") else {
+        return;
+    };
+    let Ok(context) = context.dyn_into::<web_sys::CanvasRenderingContext2d>() else {
+        return;
+    };
+    let Ok(image) = web_sys::HtmlImageElement::new() else {
+        return;
+    };
+
+    let svg_url = svg_favicon_data_url(svg);
+    let link = link.clone();
+    let image_for_load = image.clone();
+    let onload = Closure::<dyn FnMut()>::new(move || {
+        context.clear_rect(0.0, 0.0, FAVICON_SIZE as f64, FAVICON_SIZE as f64);
+        if context
+            .draw_image_with_html_image_element(&image_for_load, 0.0, 0.0)
+            .is_ok()
+            && let Ok(png_url) = canvas.to_data_url_with_type("image/png")
+        {
+            let _ = link.set_attribute("type", "image/png");
+            let _ = link.set_attribute("href", &png_url);
+        }
+    });
+
+    image.set_onload(Some(onload.as_ref().unchecked_ref()));
+    image.set_src(&svg_url);
+    onload.forget();
+}
+
 fn map_event_loop_error(error: EventLoopError) -> Error {
     Error::new(format!("winit event loop error: {error}"))
 }
@@ -1469,9 +1632,10 @@ mod tests {
     use super::{
         event_renders_immediately, physical_position_to_logical_point,
         physical_position_to_logical_vector, physical_size_to_logical_size,
-        sanitize_ime_cursor_area,
+        sanitize_ime_cursor_area, window_icon_to_winit_icon,
     };
     use sui_core::{Event, Rect, Size, WindowEvent};
+    use sui_runtime::WindowIcon;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
 
     #[test]
@@ -1538,5 +1702,10 @@ mod tests {
     fn sanitize_ime_cursor_area_rejects_non_finite_geometry() {
         assert!(sanitize_ime_cursor_area(Rect::new(f32::NAN, 0.0, 10.0, 10.0), 1.0).is_none());
         assert!(sanitize_ime_cursor_area(Rect::new(0.0, 0.0, f32::INFINITY, 10.0), 1.0).is_none());
+    }
+
+    #[test]
+    fn default_svg_window_icon_rasterizes_to_winit_icon() {
+        assert!(window_icon_to_winit_icon(&WindowIcon::sui()).is_ok());
     }
 }

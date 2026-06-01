@@ -48,6 +48,7 @@ use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
 
 pub struct WindowBuilder {
     title: String,
+    icon: Option<WindowIcon>,
     root: Option<WidgetPod>,
 }
 
@@ -55,12 +56,28 @@ impl WindowBuilder {
     pub fn new() -> Self {
         Self {
             title: "SUI Window".to_string(),
+            icon: Some(WindowIcon::sui()),
             root: None,
         }
     }
 
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
+        self
+    }
+
+    pub fn icon(mut self, icon: WindowIcon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn icon_svg(mut self, svg: impl Into<Vec<u8>>) -> Self {
+        self.icon = Some(WindowIcon::from_svg(svg));
+        self
+    }
+
+    pub fn without_icon(mut self) -> Self {
+        self.icon = None;
         self
     }
 
@@ -77,13 +94,86 @@ impl WindowBuilder {
             .root
             .ok_or_else(|| Error::new("window root widget must be set before building"))?;
 
-        Ok(WindowState::new(window_id, self.title, root))
+        Ok(WindowState::new(window_id, self.title, self.icon, root))
     }
 }
 
 impl Default for WindowBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowIcon {
+    Svg {
+        data: Arc<[u8]>,
+    },
+    Rgba8 {
+        width: u32,
+        height: u32,
+        data: Arc<[u8]>,
+    },
+}
+
+impl WindowIcon {
+    pub fn sui() -> Self {
+        Self::from_svg(include_bytes!("../assets/sui-logo.svg").as_slice())
+    }
+
+    pub fn from_svg(svg: impl Into<Vec<u8>>) -> Self {
+        Self::Svg {
+            data: Arc::from(svg.into()),
+        }
+    }
+
+    pub fn from_rgba8(width: u32, height: u32, data: impl Into<Vec<u8>>) -> Result<Self> {
+        if width == 0 || height == 0 {
+            return Err(Error::new("window icon dimensions must be non-zero"));
+        }
+
+        let data = data.into();
+        let expected_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| Error::new("window icon dimensions overflow RGBA buffer length"))?;
+
+        if data.len() != expected_len {
+            return Err(Error::new(format!(
+                "window icon RGBA buffer length mismatch: expected {expected_len}, got {}",
+                data.len()
+            )));
+        }
+
+        Ok(Self::Rgba8 {
+            width,
+            height,
+            data: Arc::from(data),
+        })
+    }
+
+    pub fn as_svg(&self) -> Option<&[u8]> {
+        match self {
+            Self::Svg { data } => Some(data),
+            Self::Rgba8 { .. } => None,
+        }
+    }
+
+    pub fn as_rgba8(&self) -> Option<(u32, u32, &[u8])> {
+        match self {
+            Self::Svg { .. } => None,
+            Self::Rgba8 {
+                width,
+                height,
+                data,
+            } => Some((*width, *height, data)),
+        }
+    }
+}
+
+impl Default for WindowIcon {
+    fn default() -> Self {
+        Self::sui()
     }
 }
 
@@ -358,6 +448,11 @@ impl Runtime {
         Ok(&window.title)
     }
 
+    pub fn window_icon(&self, window_id: WindowId) -> Result<Option<&WindowIcon>> {
+        let window = self.window(window_id)?;
+        Ok(window.icon.as_ref())
+    }
+
     pub fn window_ids(&self) -> Vec<WindowId> {
         self.windows.iter().map(|window| window.id).collect()
     }
@@ -618,6 +713,7 @@ const ANIMATION_FRAME_INTERVAL_SECONDS: f64 = 1.0 / 120.0;
 struct WindowState {
     id: WindowId,
     title: String,
+    icon: Option<WindowIcon>,
     root: WidgetPod,
     graph: WidgetGraph,
     focus: FocusState,
@@ -646,7 +742,7 @@ struct WindowState {
 }
 
 impl WindowState {
-    fn new(id: WindowId, title: String, root: WidgetPod) -> Self {
+    fn new(id: WindowId, title: String, icon: Option<WindowIcon>, root: WidgetPod) -> Self {
         let focus = FocusState {
             focused_widget: None,
             window_focused: true,
@@ -655,6 +751,7 @@ impl WindowState {
         Self {
             id,
             title,
+            icon,
             graph: WidgetGraph::empty(root.id()),
             root,
             focus,
@@ -3086,7 +3183,7 @@ mod tests {
         Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
         PaintBoundaryMode, PaintCtx, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
         Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor,
-        WidgetPodVisitor, WindowBuilder, set_window_scene_statistics_detail_mode,
+        WidgetPodVisitor, WindowBuilder, WindowIcon, set_window_scene_statistics_detail_mode,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
@@ -3895,6 +3992,57 @@ mod tests {
 
         let window_id = runtime.window_ids()[0];
         (runtime, window_id, root_counters, leaf_counters)
+    }
+
+    #[test]
+    fn window_builder_uses_default_sui_icon() {
+        let (runtime, window_id, _, _) = build_runtime();
+
+        let icon = runtime.window_icon(window_id).unwrap().unwrap();
+        assert!(matches!(icon, WindowIcon::Svg { .. }));
+        assert!(
+            std::str::from_utf8(icon.as_svg().unwrap())
+                .unwrap()
+                .contains("SUI logo")
+        );
+    }
+
+    #[test]
+    fn window_builder_can_override_or_disable_icon() {
+        let override_icon = WindowIcon::from_svg("<svg viewBox=\"0 0 1 1\"></svg>");
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Custom icon")
+                    .icon(override_icon.clone())
+                    .root(FocusLeaf {
+                        counters: Rc::new(RefCell::new(Counters::default())),
+                    }),
+            )
+            .window(
+                WindowBuilder::new()
+                    .title("No icon")
+                    .without_icon()
+                    .root(FocusLeaf {
+                        counters: Rc::new(RefCell::new(Counters::default())),
+                    }),
+            )
+            .build()
+            .unwrap();
+
+        let window_ids = runtime.window_ids();
+        assert_eq!(
+            runtime.window_icon(window_ids[0]).unwrap(),
+            Some(&override_icon)
+        );
+        assert_eq!(runtime.window_icon(window_ids[1]).unwrap(), None);
+    }
+
+    #[test]
+    fn rgba_window_icon_validates_buffer_shape() {
+        assert!(WindowIcon::from_rgba8(1, 1, vec![0, 0, 0, 255]).is_ok());
+        assert!(WindowIcon::from_rgba8(0, 1, Vec::new()).is_err());
+        assert!(WindowIcon::from_rgba8(1, 1, vec![0, 0, 0]).is_err());
     }
 
     fn build_cached_move_runtime() -> (

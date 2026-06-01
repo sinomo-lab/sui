@@ -53,7 +53,7 @@ pub use sui_runtime::{
     TextCacheDeltaDiagnostics, TextCacheDiagnostics, Widget, WidgetChildren,
     WidgetGeometrySnapshot, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPod,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowColorManagementMode,
-    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
+    WindowDynamicRangeMode, WindowIcon, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
     WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening, WindowTextHinting,
     WindowToneMappingMode, clear_window_render_options, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,

@@ -12,9 +12,12 @@ sui-runtime = { workspace = true }
 winit = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
-web-sys = { workspace = true, features = ["console", "Document", "Element", "HtmlCanvasElement", "Window", "Location", "MediaQueryList"] }
+web-sys = { workspace = true, features = ["console", "CanvasRenderingContext2d", "Document", "Element", "HtmlCanvasElement", "HtmlHeadElement", "HtmlImageElement", "Location", "MediaQueryList", "Node", "Window"] }
 web-time = { workspace = true }
 sui-platform-windows = { path = "../sui-platform-windows" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+resvg = { workspace = true }
 
 [dev-dependencies]
 sui-layout = { path = "../sui-layout" }
