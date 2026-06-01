@@ -83,6 +83,51 @@ impl MenuItem {
     }
 }
 
+fn virtual_menu_item_id(parent: WidgetId, index: usize) -> WidgetId {
+    WidgetId::new(
+        (1_u64 << 63)
+            | parent
+                .get()
+                .wrapping_mul(257)
+                .wrapping_add(index as u64 + 1),
+    )
+}
+
+const MENU_HORIZONTAL_PADDING: f32 = 6.0;
+const MENU_VERTICAL_PADDING: f32 = 6.0;
+const MENU_MIN_ROW_HEIGHT: f32 = 28.0;
+const MENU_ROW_HEIGHT_REDUCTION: f32 = 6.0;
+
+fn menu_row_height(theme: &DefaultTheme) -> f32 {
+    (theme.metrics.min_height - MENU_ROW_HEIGHT_REDUCTION).max(MENU_MIN_ROW_HEIGHT)
+}
+
+fn menu_height_for_rows(row_height: f32, rows: usize) -> f32 {
+    (MENU_VERTICAL_PADDING * 2.0) + (row_height * rows as f32)
+}
+
+fn menu_item_semantics_node(
+    parent: WidgetId,
+    index: usize,
+    item: &MenuItem,
+    bounds: Rect,
+    highlighted: bool,
+) -> SemanticsNode {
+    let mut node = SemanticsNode::new(
+        virtual_menu_item_id(parent, index),
+        SemanticsRole::MenuItem,
+        bounds,
+    );
+    node.parent = Some(parent);
+    node.name = Some(item.label.clone());
+    node.state.disabled = !item.enabled;
+    node.state.selected = highlighted;
+    if item.enabled {
+        node.actions = vec![SemanticsAction::Activate];
+    }
+    node
+}
+
 pub struct TabBar {
     theme: Box<DefaultTheme>,
     name: String,
@@ -858,7 +903,9 @@ pub struct Menu {
     highlighted: Option<usize>,
     pressed: Option<usize>,
     measured_width: f32,
+    focus_on_pointer_down: bool,
     on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
+    on_activate_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, MenuItem)>>,
 }
 
 impl Menu {
@@ -870,7 +917,9 @@ impl Menu {
             highlighted: None,
             pressed: None,
             measured_width: 220.0,
+            focus_on_pointer_down: true,
             on_activate: None,
+            on_activate_with_ctx: None,
         }
     }
 
@@ -900,19 +949,34 @@ impl Menu {
         self
     }
 
-    fn row_height(&self) -> f32 {
-        (self.theme.metrics.min_height + 2.0).max(24.0)
+    pub fn on_activate_with_ctx<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, MenuItem) + 'static,
+    {
+        self.on_activate_with_ctx = Some(Box::new(on_activate));
+        self
     }
 
-    fn activate(&mut self, index: usize) {
+    pub fn focus_on_pointer_down(mut self, focus_on_pointer_down: bool) -> Self {
+        self.focus_on_pointer_down = focus_on_pointer_down;
+        self
+    }
+
+    fn row_height(&self) -> f32 {
+        menu_row_height(self.theme.as_ref())
+    }
+
+    fn activate(&mut self, ctx: &mut EventCtx, index: usize) {
         let Some(item) = self.items.get(index).cloned() else {
             return;
         };
         if !item.enabled {
             return;
         }
-        if let Some(on_activate) = &mut self.on_activate {
-            on_activate(index, item);
+        match (&mut self.on_activate, &mut self.on_activate_with_ctx) {
+            (Some(on_activate), _) => on_activate(index, item),
+            (None, Some(on_activate)) => on_activate(ctx, index, item),
+            (None, None) => {}
         }
     }
 
@@ -920,12 +984,12 @@ impl Menu {
         if index >= self.items.len() {
             return None;
         }
-        let x = bounds.x() + 8.0;
-        let y = bounds.y() + 8.0 + (index as f32 * self.row_height());
+        let x = bounds.x() + MENU_HORIZONTAL_PADDING;
+        let y = bounds.y() + MENU_VERTICAL_PADDING + (index as f32 * self.row_height());
         Some(Rect::new(
             x,
             y,
-            (bounds.width() - 16.0).max(0.0),
+            (bounds.width() - (MENU_HORIZONTAL_PADDING * 2.0)).max(0.0),
             self.row_height(),
         ))
     }
@@ -976,7 +1040,9 @@ impl Widget for Menu {
                 self.pressed = self
                     .highlighted
                     .filter(|index| self.items.get(*index).is_some_and(|item| item.enabled));
-                ctx.request_focus();
+                if self.focus_on_pointer_down {
+                    ctx.request_focus();
+                }
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -993,7 +1059,7 @@ impl Widget for Menu {
                     .filter(|(left, right)| left == right)
                     .map(|(index, _)| index)
                 {
-                    self.activate(index);
+                    self.activate(ctx, index);
                 }
                 self.highlighted = highlighted;
                 self.pressed = None;
@@ -1022,7 +1088,7 @@ impl Widget for Menu {
                     }
                     "Enter" | " " => {
                         if let Some(index) = self.highlighted {
-                            self.activate(index);
+                            self.activate(ctx, index);
                         }
                     }
                     _ => return,
@@ -1049,10 +1115,10 @@ impl Widget for Menu {
             width = width.max(label + shortcut + 64.0);
         }
         self.measured_width = width.max(220.0);
-        let height = 12.0 + (self.row_height() * self.items.len() as f32);
+        let height = menu_height_for_rows(self.row_height(), self.items.len());
         constraints.clamp(Size::new(
             self.measured_width,
-            height.max(self.row_height() + 12.0),
+            height.max(menu_height_for_rows(self.row_height(), 1)),
         ))
     }
 
@@ -1076,7 +1142,12 @@ impl Widget for Menu {
             };
 
             if item.separator_before {
-                let line = Rect::new(row.x(), row.y() - 4.0, row.width(), 1.0);
+                let line = Rect::new(
+                    row.x(),
+                    row.y() - (MENU_VERTICAL_PADDING * 0.5),
+                    row.width(),
+                    1.0,
+                );
                 ctx.fill(rounded_rect_path(line, 0.5), palette.border);
             }
 
@@ -1139,6 +1210,18 @@ impl Widget for Menu {
             SemanticsAction::Activate,
         ];
         ctx.push(node);
+        for (index, item) in self.items.iter().enumerate() {
+            let Some(row) = self.item_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            ctx.push(menu_item_semantics_node(
+                ctx.widget_id(),
+                index,
+                item,
+                row,
+                self.highlighted == Some(index),
+            ));
+        }
     }
 
     fn accepts_focus(&self) -> bool {
@@ -2049,7 +2132,9 @@ pub struct ContextMenu {
     highlighted: Option<usize>,
     pressed: Option<usize>,
     frame_rect: Rect,
+    activation_button: PointerButton,
     on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
+    on_activate_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, MenuItem)>>,
 }
 
 impl ContextMenu {
@@ -2066,7 +2151,9 @@ impl ContextMenu {
             highlighted: None,
             pressed: None,
             frame_rect: Rect::ZERO,
+            activation_button: PointerButton::Secondary,
             on_activate: None,
+            on_activate_with_ctx: None,
         }
     }
 
@@ -2096,8 +2183,21 @@ impl ContextMenu {
         self
     }
 
+    pub fn on_activate_with_ctx<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, MenuItem) + 'static,
+    {
+        self.on_activate_with_ctx = Some(Box::new(on_activate));
+        self
+    }
+
+    pub fn activation_button(mut self, activation_button: PointerButton) -> Self {
+        self.activation_button = activation_button;
+        self
+    }
+
     fn row_height(&self) -> f32 {
-        (self.theme.metrics.min_height + 2.0).max(24.0)
+        menu_row_height(self.theme.as_ref())
     }
 
     fn measured_menu_width(&self, ctx: &mut MeasureCtx) -> f32 {
@@ -2125,12 +2225,12 @@ impl ContextMenu {
             return None;
         }
         let menu = self.frame_rect.translate(bounds.origin.to_vector());
-        let x = menu.x() + 8.0;
-        let y = menu.y() + 8.0 + (index as f32 * self.row_height());
+        let x = menu.x() + MENU_HORIZONTAL_PADDING;
+        let y = menu.y() + MENU_VERTICAL_PADDING + (index as f32 * self.row_height());
         Some(Rect::new(
             x,
             y,
-            (menu.width() - 16.0).max(0.0),
+            (menu.width() - (MENU_HORIZONTAL_PADDING * 2.0)).max(0.0),
             self.row_height(),
         ))
     }
@@ -2143,7 +2243,7 @@ impl ContextMenu {
         })
     }
 
-    fn activate(&mut self, index: usize) {
+    fn activate(&mut self, ctx: &mut EventCtx, index: usize) {
         let Some(item) = self.items.get(index).cloned() else {
             return;
         };
@@ -2151,7 +2251,10 @@ impl ContextMenu {
             return;
         }
         if let Some(on_activate) = &mut self.on_activate {
-            on_activate(index, item);
+            on_activate(index, item.clone());
+        }
+        if let Some(on_activate) = &mut self.on_activate_with_ctx {
+            on_activate(ctx, index, item);
         }
     }
 }
@@ -2169,11 +2272,15 @@ impl Widget for ContextMenu {
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Secondary)
+                    && pointer.button == Some(self.activation_button)
                     && self.trigger_rect().contains(pointer.position) =>
             {
-                self.open = true;
-                self.highlighted = self.items.iter().position(|item| item.enabled);
+                self.open = !self.open;
+                self.highlighted = if self.open {
+                    self.items.iter().position(|item| item.enabled)
+                } else {
+                    None
+                };
                 self.pressed = None;
                 ctx.request_focus();
                 ctx.request_measure();
@@ -2217,7 +2324,7 @@ impl Widget for ContextMenu {
                     .filter(|(left, right)| left == right)
                     .map(|(index, _)| index)
                 {
-                    self.activate(index);
+                    self.activate(ctx, index);
                     self.open = false;
                     self.highlighted = None;
                     ctx.request_measure();
@@ -2254,7 +2361,7 @@ impl Widget for ContextMenu {
                     }
                     "Enter" | " " => {
                         if let Some(index) = self.highlighted {
-                            self.activate(index);
+                            self.activate(ctx, index);
                             self.open = false;
                             ctx.request_measure();
                         }
@@ -2279,7 +2386,7 @@ impl Widget for ContextMenu {
         let mut size = trigger_size;
         if self.open {
             let width = self.measured_menu_width(ctx).max(trigger_size.width);
-            let height = 12.0 + (self.row_height() * self.items.len() as f32);
+            let height = menu_height_for_rows(self.row_height(), self.items.len());
             self.frame_rect = Rect::new(0.0, trigger_size.height + 6.0, width, height);
             size = Size::new(
                 width.max(trigger_size.width),
@@ -2323,7 +2430,12 @@ impl Widget for ContextMenu {
             };
 
             if item.separator_before {
-                let line = Rect::new(row.x(), row.y() - 4.0, row.width(), 1.0);
+                let line = Rect::new(
+                    row.x(),
+                    row.y() - (MENU_VERTICAL_PADDING * 0.5),
+                    row.width(),
+                    1.0,
+                );
                 ctx.fill(rounded_rect_path(line, 0.5), palette.border);
             }
 
@@ -2405,6 +2517,20 @@ impl Widget for ContextMenu {
             SemanticsAction::Activate,
         ];
         ctx.push(node);
+        if self.open {
+            for (index, item) in self.items.iter().enumerate() {
+                let Some(row) = self.item_rect(ctx.bounds(), index) else {
+                    continue;
+                };
+                ctx.push(menu_item_semantics_node(
+                    ctx.widget_id(),
+                    index,
+                    item,
+                    row,
+                    self.highlighted == Some(index),
+                ));
+            }
+        }
         self.trigger.semantics(ctx);
     }
 
@@ -3285,7 +3411,10 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::Tabs;
-    use super::{ContextMenu, Dialog, Menu, MenuItem, Popover, ProgressBar, Spinner, TabBar};
+    use super::{
+        ContextMenu, Dialog, MENU_VERTICAL_PADDING, Menu, MenuItem, Popover, ProgressBar, Spinner,
+        TabBar,
+    };
     use crate::FloatingStack;
     use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken};
     use sui_core::{
@@ -3619,6 +3748,9 @@ mod tests {
         let output = render(
             Menu::new("App menu").items([MenuItem::new("New File"), MenuItem::new("Open...")]),
         );
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("New File")
+        }));
         let text = text_run_for(&output, "New File");
         let layout = TextSystem::new()
             .shape_text_run(&text, &FontRegistry::new())
@@ -3629,8 +3761,8 @@ mod tests {
             .expect("menu item text should contain one line");
         let actual_visual_center =
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
-        let row_height = (output.frame.viewport.height - 12.0) / 2.0;
-        let row_center = 8.0 + (row_height * 0.5);
+        let row_height = (output.frame.viewport.height - (MENU_VERTICAL_PADDING * 2.0)) / 2.0;
+        let row_center = MENU_VERTICAL_PADDING + (row_height * 0.5);
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
     }
@@ -3671,6 +3803,9 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::ContextMenu)
             .expect("context menu semantics present");
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Rename")
+        }));
         let text = text_run_for(&output, "Rename");
         let layout = TextSystem::new()
             .shape_text_run(&text, &FontRegistry::new())
@@ -3682,8 +3817,8 @@ mod tests {
         let actual_visual_center =
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
         let menu_height = context.bounds.height() - trigger.height() - 6.0;
-        let row_height = (menu_height - 12.0) / 2.0;
-        let row_center = trigger.max_y() + 6.0 + 8.0 + (row_height * 0.5);
+        let row_height = (menu_height - (MENU_VERTICAL_PADDING * 2.0)) / 2.0;
+        let row_center = trigger.max_y() + 6.0 + MENU_VERTICAL_PADDING + (row_height * 0.5);
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
         Ok(())

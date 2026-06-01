@@ -14,6 +14,7 @@ pub enum SemanticsRole {
     TabBar,
     Tabs,
     Button,
+    Link,
     CheckBox,
     Switch,
     RadioButton,

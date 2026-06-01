@@ -25,11 +25,23 @@ use winit::{
 #[cfg(not(target_arch = "wasm32"))]
 use winit::window::Icon as WinitIcon;
 
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_WINDOW_ICON_SIZE: u32 = 256;
+
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys, WindowExtWebSys};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
+
+#[cfg(target_arch = "wasm32")]
+const WEB_LEGACY_FAVICON_ID: &str = "sui-window-icon";
+#[cfg(target_arch = "wasm32")]
+const WEB_SVG_FAVICON_ID: &str = "sui-window-icon-svg";
+#[cfg(target_arch = "wasm32")]
+const WEB_PNG_FAVICON_ID: &str = "sui-window-icon-png";
+#[cfg(target_arch = "wasm32")]
+const WEB_APPLE_TOUCH_ICON_ID: &str = "sui-window-apple-touch-icon";
 
 use crate::{
     AccessibilityBridge, WindowOutputDiagnostics, detect_window_display_capabilities,
@@ -434,6 +446,9 @@ impl DesktopApp {
 
         self.sync_windows(event_loop)?;
 
+        #[cfg(target_arch = "wasm32")]
+        self.process_web_interop_commands(event_loop)?;
+
         let window_ids: Vec<_> = self.windows.keys().copied().collect();
         for window_id in window_ids.iter().copied() {
             self.request_redraw_if_needed(window_id)?;
@@ -724,6 +739,19 @@ impl DesktopApp {
             &self.renderer,
             renderer_time_ms,
         );
+
+        #[cfg(target_arch = "wasm32")]
+        if let Some(window) = self.windows.get(&window_id) {
+            let performance = window_performance_snapshot(window_id);
+            crate::web_interop::publish_snapshot(
+                window_id,
+                frame_index,
+                window.scale_factor,
+                output.frame.viewport,
+                &output.semantics,
+                performance.as_ref(),
+            );
+        }
 
         let bootstrap_redraw_at_ms = self.current_time_ms();
         if let Some(window) = self.windows.get_mut(&window_id) {
@@ -1158,6 +1186,216 @@ impl DesktopApp {
         );
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn process_web_interop_commands(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        for command in crate::web_interop::drain_commands() {
+            match command {
+                crate::web_interop::WebInteropCommand::Click { target } => {
+                    if let Some((window_id, point)) = self.find_semantics_node_point(&target) {
+                        self.inject_pointer_click(event_loop, window_id, point)?;
+                    }
+                }
+                crate::web_interop::WebInteropCommand::Scroll {
+                    target,
+                    delta_x,
+                    delta_y,
+                } => {
+                    if let Some((window_id, point)) = self.find_semantics_node_point(&target) {
+                        self.inject_pointer_scroll(
+                            event_loop,
+                            window_id,
+                            point,
+                            Vector::new(delta_x, delta_y),
+                        )?;
+                    }
+                }
+                crate::web_interop::WebInteropCommand::Key { target, key } => {
+                    if let Some((window_id, point)) = self.find_semantics_node_point(&target) {
+                        self.inject_pointer_click(event_loop, window_id, point)?;
+                        self.inject_key(event_loop, window_id, key)?;
+                    }
+                }
+                crate::web_interop::WebInteropCommand::Text { target, text } => {
+                    if let Some((window_id, point)) = self.find_semantics_node_point(&target) {
+                        self.inject_pointer_click(event_loop, window_id, point)?;
+                        self.inject_text(event_loop, window_id, text)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn find_semantics_node_point(
+        &self,
+        target: &crate::web_interop::WebInteropTarget,
+    ) -> Option<(WindowId, Point)> {
+        self.windows.iter().find_map(|(window_id, window)| {
+            let snapshot = window.accessibility.snapshot()?;
+            let node = target
+                .widget_id
+                .and_then(|widget_id| snapshot.nodes.iter().find(|node| node.id == widget_id))
+                .or_else(|| {
+                    snapshot.nodes.iter().find(|node| {
+                        target.role.as_deref().is_none_or(|role| {
+                            format!("{:?}", node.role).eq_ignore_ascii_case(role)
+                        }) && target
+                            .name
+                            .as_deref()
+                            .is_none_or(|name| node.name.as_deref() == Some(name))
+                    })
+                })?;
+            Some((*window_id, center(node.bounds)))
+        })
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn inject_pointer_click(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        point: Point,
+    ) -> Result<()> {
+        self.inject_pointer_move(event_loop, window_id, point, false)?;
+        let modifiers = self
+            .windows
+            .get(&window_id)
+            .map(|window| window.pointer.modifiers)
+            .ok_or_else(|| Error::new(format!("missing window {}", window_id.get())))?;
+
+        let down_buttons = {
+            let window = self
+                .windows
+                .get_mut(&window_id)
+                .ok_or_else(|| Error::new(format!("missing window {}", window_id.get())))?;
+            window.pointer.buttons.insert(PointerButton::Primary);
+            window.pointer.buttons
+        };
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::Pointer(PointerEvent {
+                pointer_id: 1,
+                kind: PointerEventKind::Down,
+                position: point,
+                delta: Vector::ZERO,
+                scroll_delta: None,
+                button: Some(PointerButton::Primary),
+                buttons: down_buttons,
+                modifiers,
+                pointer_kind: PointerKind::Mouse,
+                is_primary: true,
+            }),
+        )?;
+
+        let up_buttons = {
+            let window = self
+                .windows
+                .get_mut(&window_id)
+                .ok_or_else(|| Error::new(format!("missing window {}", window_id.get())))?;
+            window.pointer.buttons =
+                remove_pointer_button(window.pointer.buttons, PointerButton::Primary);
+            window.pointer.buttons
+        };
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::Pointer(PointerEvent {
+                pointer_id: 1,
+                kind: PointerEventKind::Up,
+                position: point,
+                delta: Vector::ZERO,
+                scroll_delta: None,
+                button: Some(PointerButton::Primary),
+                buttons: up_buttons,
+                modifiers,
+                pointer_kind: PointerKind::Mouse,
+                is_primary: true,
+            }),
+        )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn inject_pointer_scroll(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        point: Point,
+        delta: Vector,
+    ) -> Result<()> {
+        self.inject_pointer_move(event_loop, window_id, point, false)?;
+        let (buttons, modifiers) = self
+            .windows
+            .get(&window_id)
+            .map(|window| (window.pointer.buttons, window.pointer.modifiers))
+            .ok_or_else(|| Error::new(format!("missing window {}", window_id.get())))?;
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::Pointer(PointerEvent {
+                pointer_id: 1,
+                kind: PointerEventKind::Scroll,
+                position: point,
+                delta: Vector::ZERO,
+                scroll_delta: Some(ScrollDelta::Pixels(delta)),
+                button: None,
+                buttons,
+                modifiers,
+                pointer_kind: PointerKind::Mouse,
+                is_primary: true,
+            }),
+        )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn inject_key(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        key: String,
+    ) -> Result<()> {
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::Keyboard(KeyboardEvent::new(key.clone(), KeyState::Pressed)),
+        )?;
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::Keyboard(KeyboardEvent::new(key, KeyState::Released)),
+        )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn inject_text(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        text: String,
+    ) -> Result<()> {
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::Ime(ImeEvent::CompositionStart),
+        )?;
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::Ime(ImeEvent::CompositionUpdate {
+                text: text.clone(),
+                cursor_range: None,
+            }),
+        )?;
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit { text }),
+        )?;
+        self.process_event(event_loop, window_id, Event::Ime(ImeEvent::CompositionEnd))
+    }
+
     fn inject_automation_action(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -1430,6 +1668,14 @@ fn remove_pointer_button(buttons: PointerButtons, removed: PointerButton) -> Poi
     next
 }
 
+#[cfg(target_arch = "wasm32")]
+fn center(bounds: sui_core::Rect) -> Point {
+    Point::new(
+        bounds.x() + (bounds.width() * 0.5),
+        bounds.y() + (bounds.height() * 0.5),
+    )
+}
+
 fn logical_key_to_string(key: &Key) -> String {
     match key {
         Key::Character(text) => text.to_string(),
@@ -1485,30 +1731,36 @@ fn window_icon_to_winit_icon(icon: &RuntimeWindowIcon) -> Result<WinitIcon> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn svg_window_icon_to_winit_icon(svg: &[u8]) -> Result<WinitIcon> {
-    const DEFAULT_ICON_SIZE: u32 = 256;
+    let (width, height, rgba) = rasterize_svg_window_icon_rgba8(svg, DEFAULT_WINDOW_ICON_SIZE)?;
+    WinitIcon::from_rgba(rgba, width, height).map_err(map_icon_error)
+}
 
+#[cfg(not(target_arch = "wasm32"))]
+fn rasterize_svg_window_icon_rgba8(svg: &[u8], size: u32) -> Result<(u32, u32, Vec<u8>)> {
+    if size == 0 {
+        return Err(Error::new("window icon bitmap size must be non-zero"));
+    }
     let options = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_data(svg, &options)
         .map_err(|error| Error::new(format!("failed to parse window icon SVG: {error}")))?;
     let source_size = tree.size();
-    let scale = (DEFAULT_ICON_SIZE as f32 / source_size.width())
-        .min(DEFAULT_ICON_SIZE as f32 / source_size.height());
-    let offset_x = (DEFAULT_ICON_SIZE as f32 - source_size.width() * scale) * 0.5;
-    let offset_y = (DEFAULT_ICON_SIZE as f32 - source_size.height() * scale) * 0.5;
+    let scale = (size as f32 / source_size.width()).min(size as f32 / source_size.height());
+    let offset_x = (size as f32 - source_size.width() * scale) * 0.5;
+    let offset_y = (size as f32 - source_size.height() * scale) * 0.5;
     let transform =
         resvg::tiny_skia::Transform::from_translate(offset_x, offset_y).pre_scale(scale, scale);
 
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(DEFAULT_ICON_SIZE, DEFAULT_ICON_SIZE)
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)
         .ok_or_else(|| Error::new("failed to allocate window icon bitmap"))?;
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
-    let mut rgba = Vec::with_capacity((DEFAULT_ICON_SIZE * DEFAULT_ICON_SIZE * 4) as usize);
+    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
     for pixel in pixmap.pixels() {
         let color = pixel.demultiply();
         rgba.extend_from_slice(&[color.red(), color.green(), color.blue(), color.alpha()]);
     }
 
-    WinitIcon::from_rgba(rgba, DEFAULT_ICON_SIZE, DEFAULT_ICON_SIZE).map_err(map_icon_error)
+    Ok((size, size, rgba))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1518,9 +1770,6 @@ fn map_icon_error(error: winit::window::BadIcon) -> Error {
 
 #[cfg(target_arch = "wasm32")]
 fn install_web_favicon(icon: Option<&RuntimeWindowIcon>) -> Result<()> {
-    let Some(RuntimeWindowIcon::Svg { data }) = icon else {
-        return Ok(());
-    };
     let Some(document) = web_sys::window().and_then(|window| window.document()) else {
         return Ok(());
     };
@@ -1528,27 +1777,97 @@ fn install_web_favicon(icon: Option<&RuntimeWindowIcon>) -> Result<()> {
         return Ok(());
     };
 
-    let link = if let Some(link) = document.get_element_by_id("sui-window-icon") {
+    remove_web_icon_link(&document, WEB_LEGACY_FAVICON_ID);
+    let Some(RuntimeWindowIcon::Svg { data }) = icon else {
+        remove_web_icon_links(&document);
+        return Ok(());
+    };
+
+    let svg_url = svg_favicon_data_url(data);
+    install_web_icon_link(
+        &document,
+        &head,
+        WEB_SVG_FAVICON_ID,
+        "icon",
+        "image/svg+xml",
+        "any",
+        &svg_url,
+    )?;
+    install_web_png_icon(
+        &document,
+        &head,
+        data,
+        WEB_PNG_FAVICON_ID,
+        "icon",
+        "64x64",
+        64,
+    );
+    install_web_png_icon(
+        &document,
+        &head,
+        data,
+        WEB_APPLE_TOUCH_ICON_ID,
+        "apple-touch-icon",
+        "180x180",
+        180,
+    );
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn install_web_icon_link(
+    document: &web_sys::Document,
+    head: &web_sys::HtmlHeadElement,
+    id: &str,
+    rel: &str,
+    mime_type: &str,
+    sizes: &str,
+    href: &str,
+) -> Result<()> {
+    let link = if let Some(link) = document.get_element_by_id(id) {
         link
     } else {
         let link = document
             .create_element("link")
-            .map_err(|_| Error::new("failed to create web favicon link element"))?;
-        link.set_attribute("id", "sui-window-icon")
-            .map_err(|_| Error::new("failed to configure web favicon id"))?;
-        link.set_attribute("rel", "icon")
-            .map_err(|_| Error::new("failed to configure web favicon rel"))?;
-        link.set_attribute("type", "image/svg+xml")
-            .map_err(|_| Error::new("failed to configure web favicon type"))?;
+            .map_err(|_| Error::new("failed to create web icon link element"))?;
+        link.set_attribute("id", id)
+            .map_err(|_| Error::new("failed to configure web icon id"))?;
         head.append_child(&link)
-            .map_err(|_| Error::new("failed to attach web favicon link"))?;
+            .map_err(|_| Error::new("failed to attach web icon link"))?;
         link
     };
 
-    link.set_attribute("href", &svg_favicon_data_url(data))
-        .map_err(|_| Error::new("failed to configure web favicon href"))?;
-    install_web_png_favicon(data, &link);
-    Ok(())
+    link.set_attribute("rel", rel)
+        .map_err(|_| Error::new("failed to configure web icon rel"))?;
+    link.set_attribute("type", mime_type)
+        .map_err(|_| Error::new("failed to configure web icon type"))?;
+    if sizes.is_empty() {
+        link.remove_attribute("sizes")
+            .map_err(|_| Error::new("failed to clear web icon sizes"))?;
+    } else {
+        link.set_attribute("sizes", sizes)
+            .map_err(|_| Error::new("failed to configure web icon sizes"))?;
+    }
+    link.set_attribute("href", href)
+        .map_err(|_| Error::new("failed to configure web icon href"))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn remove_web_icon_links(document: &web_sys::Document) {
+    remove_web_icon_link(document, WEB_SVG_FAVICON_ID);
+    remove_web_icon_link(document, WEB_PNG_FAVICON_ID);
+    remove_web_icon_link(document, WEB_APPLE_TOUCH_ICON_ID);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn remove_web_icon_link(document: &web_sys::Document, id: &str) {
+    let Some(link) = document.get_element_by_id(id) else {
+        return;
+    };
+    let Some(parent) = link.parent_node() else {
+        return;
+    };
+    let _ = parent.remove_child(&link);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1572,22 +1891,25 @@ fn svg_favicon_data_url(svg: &[u8]) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn install_web_png_favicon(svg: &[u8], link: &web_sys::Element) {
-    use wasm_bindgen::{JsCast, closure::Closure};
+fn install_web_png_icon(
+    document: &web_sys::Document,
+    head: &web_sys::HtmlHeadElement,
+    svg: &[u8],
+    link_id: &str,
+    rel: &str,
+    sizes: &str,
+    size: u32,
+) {
+    use wasm_bindgen::closure::Closure;
 
-    const FAVICON_SIZE: u32 = 64;
-
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-        return;
-    };
     let Ok(canvas_element) = document.create_element("canvas") else {
         return;
     };
     let Ok(canvas) = canvas_element.dyn_into::<web_sys::HtmlCanvasElement>() else {
         return;
     };
-    canvas.set_width(FAVICON_SIZE);
-    canvas.set_height(FAVICON_SIZE);
+    canvas.set_width(size);
+    canvas.set_height(size);
 
     let Ok(Some(context)) = canvas.get_context("2d") else {
         return;
@@ -1600,17 +1922,29 @@ fn install_web_png_favicon(svg: &[u8], link: &web_sys::Element) {
     };
 
     let svg_url = svg_favicon_data_url(svg);
-    let link = link.clone();
+    let document = document.clone();
+    let head = head.clone();
+    let link_id = link_id.to_string();
+    let rel = rel.to_string();
+    let sizes = sizes.to_string();
     let image_for_load = image.clone();
     let onload = Closure::<dyn FnMut()>::new(move || {
-        context.clear_rect(0.0, 0.0, FAVICON_SIZE as f64, FAVICON_SIZE as f64);
+        let size = size as f64;
+        context.clear_rect(0.0, 0.0, size, size);
         if context
-            .draw_image_with_html_image_element(&image_for_load, 0.0, 0.0)
+            .draw_image_with_html_image_element_and_dw_and_dh(&image_for_load, 0.0, 0.0, size, size)
             .is_ok()
             && let Ok(png_url) = canvas.to_data_url_with_type("image/png")
         {
-            let _ = link.set_attribute("type", "image/png");
-            let _ = link.set_attribute("href", &png_url);
+            let _ = install_web_icon_link(
+                &document,
+                &head,
+                &link_id,
+                &rel,
+                "image/png",
+                &sizes,
+                &png_url,
+            );
         }
     });
 
@@ -1632,7 +1966,7 @@ mod tests {
     use super::{
         event_renders_immediately, physical_position_to_logical_point,
         physical_position_to_logical_vector, physical_size_to_logical_size,
-        sanitize_ime_cursor_area, window_icon_to_winit_icon,
+        rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area, window_icon_to_winit_icon,
     };
     use sui_core::{Event, Rect, Size, WindowEvent};
     use sui_runtime::WindowIcon;
@@ -1707,5 +2041,15 @@ mod tests {
     #[test]
     fn default_svg_window_icon_rasterizes_to_winit_icon() {
         assert!(window_icon_to_winit_icon(&WindowIcon::sui()).is_ok());
+    }
+
+    #[test]
+    fn default_svg_window_icon_rasterizes_to_bitmap() {
+        let (width, height, rgba) =
+            rasterize_svg_window_icon_rgba8(WindowIcon::sui().as_svg().unwrap(), 64).unwrap();
+
+        assert_eq!((width, height), (64, 64));
+        assert_eq!(rgba.len(), 64 * 64 * 4);
+        assert!(rgba.chunks_exact(4).any(|pixel| pixel[3] != 0));
     }
 }

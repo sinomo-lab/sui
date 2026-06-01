@@ -159,7 +159,10 @@ fn app_automation_mode(mode: Option<DesktopLaunchAutomation>) -> Option<DesktopA
         Some(DesktopLaunchAutomation::ButtonGridResize) => {
             Some(DesktopAutomationMode::ButtonGridResize)
         }
-        Some(DesktopLaunchAutomation::WidgetBookScroll) | None => None,
+        Some(DesktopLaunchAutomation::WidgetBookScroll) => {
+            Some(DesktopAutomationMode::WidgetBookScroll)
+        }
+        None => None,
     }
 }
 
@@ -2370,6 +2373,7 @@ fn tui_role_label(role: &SemanticsRole) -> &'static str {
         SemanticsRole::TabBar => "TabBar",
         SemanticsRole::Tabs => "Tabs",
         SemanticsRole::Button => "Button",
+        SemanticsRole::Link => "Link",
         SemanticsRole::CheckBox => "CheckBox",
         SemanticsRole::Switch => "Switch",
         SemanticsRole::RadioButton => "Radio",
@@ -3508,6 +3512,10 @@ mod tests {
     fn generated_tui_includes_major_dev_workspace_views() -> sui::Result<()> {
         let app = sui_testing::TestApp::from_runtime(build_dev_application().build()?)?;
         let window = app.main_window()?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name("SUI menu")
+            .click()?;
         let snapshot = window.snapshot()?;
         let frame = render_snapshot(
             &snapshot.accessibility,
@@ -3520,7 +3528,16 @@ mod tests {
         )
         .to_string();
 
-        for label in ["Widget book", "64 buttons", "HDR validation", "Settings"] {
+        for label in [
+            "Widget book",
+            "64 buttons",
+            "HDR validation",
+            "Paint",
+            "Vector editor",
+            "Open demo",
+            "Dark theme",
+            "Settings",
+        ] {
             assert!(frame.contains(label), "missing generated TUI label {label}");
         }
 
@@ -3529,22 +3546,34 @@ mod tests {
 
     #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
     #[test]
-    fn generated_tui_actions_do_not_require_unique_role_name_pairs() -> sui::Result<()> {
+    fn generated_tui_actions_open_demo_tabs_from_picker() -> sui::Result<()> {
         let app = sui_testing::TestApp::from_runtime(build_dev_application().build()?)?;
         let window = app.main_window()?;
         let snapshot = window.snapshot()?;
-        let floating_content = snapshot
+        let button_grid = snapshot
             .accessibility
             .nodes
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::ScrollView
-                    && node.name.as_deref() == Some("Floating view content")
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("64 buttons")
             })
             .cloned()
-            .expect("floating view content scroll semantics present");
+            .expect("button-grid picker button semantics present");
 
-        activate_tui_node(&window, &floating_content)?;
+        activate_tui_node(&window, &button_grid)?;
+        let snapshot = window.snapshot()?;
+        let shell = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Tabs && node.name.as_deref() == Some("SUI dev browser")
+            })
+            .expect("dev shell tab semantics present");
+        assert_eq!(
+            shell.value,
+            Some(SemanticsValue::Text("64 buttons".to_string()))
+        );
 
         Ok(())
     }

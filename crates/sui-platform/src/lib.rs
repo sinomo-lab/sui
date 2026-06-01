@@ -4,6 +4,8 @@ mod accessibility;
 mod desktop;
 mod display_capabilities;
 mod headless;
+#[cfg(any(target_arch = "wasm32", test))]
+mod web_interop;
 
 use web_time::Instant;
 

@@ -174,6 +174,674 @@
     </script>
     <script>
       (() => {
+        const SemanticDomMode = Object.freeze({
+          Off: "off",
+          Accessibility: "accessibility",
+          Automation: "automation",
+          Debug: "debug",
+        });
+        const validModes = new Set(Object.values(SemanticDomMode));
+        const params = new URLSearchParams(window.location.search);
+        const truthy = (value) =>
+          /^(1|true|yes|on)$/i.test(String(value || ""));
+        const falsy = (value) =>
+          /^(0|false|no|off|none|canvas|canvas-only)$/i.test(
+            String(value || ""),
+          );
+        const parseMode = () => {
+          if (
+            truthy(params.get("canvas-only")) ||
+            truthy(params.get("sui-canvas-only"))
+          ) {
+            return SemanticDomMode.Off;
+          }
+
+          const debug = params.get("sui-debug");
+          if (debug && !falsy(debug)) {
+            return SemanticDomMode.Debug;
+          }
+
+          const raw =
+            params.get("semantic-dom") ?? params.get("sui-semantic-dom");
+          if (raw == null || raw === "") {
+            return SemanticDomMode.Accessibility;
+          }
+          const normalized = raw.toLowerCase();
+          if (falsy(normalized)) {
+            return SemanticDomMode.Off;
+          }
+          return validModes.has(normalized)
+            ? normalized
+            : SemanticDomMode.Accessibility;
+        };
+
+        const mode = parseMode();
+        window.SemanticDomMode = SemanticDomMode;
+        window.__suiSemanticDomMode = mode;
+
+        if (mode === SemanticDomMode.Off) {
+          return;
+        }
+
+        const automationEnabled =
+          mode === SemanticDomMode.Automation || mode === SemanticDomMode.Debug;
+        const debugEnabled = mode === SemanticDomMode.Debug;
+        const state = {
+          mode,
+          snapshot: null,
+          frameIndex: null,
+          viewport: null,
+          devicePixelRatio: window.devicePixelRatio || 1,
+          diagnostics: null,
+          nodes: [],
+          commands: [],
+          waiters: [],
+          elements: new Map(),
+          mirror: null,
+          pendingMirrorUpdate: false,
+          mirrorUpdateCount: 0,
+          fullSnapshotCount: 0,
+          reusedSnapshotCount: 0,
+        };
+
+        window.__suiInteropState = state;
+
+        const clone = (value) =>
+          value == null ? value : JSON.parse(JSON.stringify(value));
+        const valueText = (node) =>
+          node?.value?.kind === "text" ? node.value.text || "" : "";
+        const valueRange = (node) =>
+          node?.value?.kind === "range" ? node.value : null;
+        const nodeLabel = (node) =>
+          node?.name || valueText(node) || node?.description || node?.role || "";
+        const normalizeRole = (role) =>
+          String(role || "").replace(/[\s_-]/g, "").toLowerCase();
+        const command = (type, node, extra = {}) => ({
+          type,
+          id: Number(node.id),
+          role: node.role || null,
+          name: nodeLabel(node) || null,
+          ...extra,
+        });
+        let wakeQueued = false;
+        const wakeRuntime = () => {
+          const canvas = document.getElementById("sui-main-canvas");
+          if (!canvas) {
+            return;
+          }
+          const rect = canvas.getBoundingClientRect();
+          try {
+            window.dispatchEvent(new Event("resize"));
+          } catch (_) {}
+          try {
+            canvas.dispatchEvent(
+              new PointerEvent("pointermove", {
+                bubbles: true,
+                cancelable: true,
+                clientX: rect.left,
+                clientY: rect.top,
+                pointerId: 1,
+                pointerType: "mouse",
+                isPrimary: true,
+                button: 0,
+                buttons: 0,
+              }),
+            );
+          } catch (_) {}
+          try {
+            canvas.dispatchEvent(
+              new MouseEvent("mousemove", {
+                bubbles: true,
+                cancelable: true,
+                clientX: rect.left,
+                clientY: rect.top,
+              }),
+            );
+          } catch (_) {}
+        };
+
+        const enqueue = (nextCommand) => {
+          state.commands.push(nextCommand);
+          window.__suiLastCommandAt = performance.now();
+          if (!wakeQueued) {
+            wakeQueued = true;
+            wakeRuntime();
+            window.setTimeout(() => {
+              wakeQueued = false;
+              wakeRuntime();
+            }, 0);
+          }
+        };
+
+        window.__suiEnqueueCommand = enqueue;
+        window.__suiDrainCommands = () => state.commands.splice(0);
+
+        const findNodes = (selector = {}) => {
+          const snapshot = state.snapshot;
+          if (!snapshot?.nodes) {
+            return [];
+          }
+          const selectorRole = selector.role == null ? null : normalizeRole(selector.role);
+          const selectorName =
+            selector.name == null ? null : String(selector.name).toLowerCase();
+          const selectorId = selector.id == null ? null : Number(selector.id);
+          return snapshot.nodes.filter((node) => {
+            if (selectorId != null && Number(node.id) !== selectorId) {
+              return false;
+            }
+            if (selectorRole != null && normalizeRole(node.role) !== selectorRole) {
+              return false;
+            }
+            if (
+              selectorName != null &&
+              !nodeLabel(node).toLowerCase().includes(selectorName)
+            ) {
+              return false;
+            }
+            return true;
+          });
+        };
+
+        const requireNode = (selector) => {
+          const matches = findNodes(selector);
+          if (matches.length === 0) {
+            throw new Error(`No SUI semantics node matches ${JSON.stringify(selector)}`);
+          }
+          return matches[0];
+        };
+
+        const waitForIdle = (timeoutMs = 2000) =>
+          new Promise((resolve) => {
+            const finish = () => resolve(clone(state.snapshot));
+            if (state.snapshot) {
+              requestAnimationFrame(() => requestAnimationFrame(finish));
+              return;
+            }
+            const timeout = window.setTimeout(finish, timeoutMs);
+            state.waiters.push(() => {
+              window.clearTimeout(timeout);
+              requestAnimationFrame(finish);
+            });
+          });
+
+        const waitForNextFrame = (previousFrame = state.frameIndex) =>
+          new Promise((resolve) => {
+            const timeout = window.setTimeout(
+              () => resolve(clone(state.snapshot)),
+              2000,
+            );
+            state.waiters.push(() => {
+              if (state.frameIndex === previousFrame) {
+                state.waiters.push(() => {
+                  window.clearTimeout(timeout);
+                  resolve(clone(state.snapshot));
+                });
+              } else {
+                window.clearTimeout(timeout);
+                resolve(clone(state.snapshot));
+              }
+            });
+          });
+
+        const elementKind = (node) => {
+          if (node.dom?.tag) return node.dom.tag;
+          if (node.role === "Button") return "button";
+          if (node.role === "Link") return "a";
+          if (node.role === "TextInput") {
+            return node.editableText?.multiline ? "textarea" : "input";
+          }
+          if (node.role === "CheckBox" || node.role === "RadioButton") {
+            return "input";
+          }
+          if (node.role === "Switch") return "button";
+          if (node.role === "Slider") return "input";
+          if (node.role === "Text") return "span";
+          return "div";
+        };
+
+        const ariaRole = (node, element) => {
+          if (node.dom && "role" in node.dom) {
+            return node.dom.role;
+          }
+          const nativeTag = element.localName;
+          if (node.role === "Button" && nativeTag === "button") return null;
+          if (node.role === "Link" && nativeTag === "a") return null;
+          if (node.role === "TextInput") return null;
+          if (node.role === "CheckBox" && nativeTag === "input") return null;
+          if (node.role === "RadioButton" && nativeTag === "input") return null;
+          if (node.role === "Slider" && nativeTag === "input") return null;
+
+          return {
+            Window: "main",
+            Root: "group",
+            GenericContainer: "group",
+            Separator: "separator",
+            List: "list",
+            Tree: "tree",
+            Table: "table",
+            Splitter: "separator",
+            Breadcrumb: "navigation",
+            TabBar: "tablist",
+            Tabs: "group",
+            Switch: "switch",
+            RadioGroup: "radiogroup",
+            Menu: "menu",
+            MenuItem: "menuitem",
+            ContextMenu: "menu",
+            Tooltip: "tooltip",
+            Dialog: "dialog",
+            Popover: "dialog",
+            ProgressBar: "progressbar",
+            BusyIndicator: "status",
+            Image: "img",
+            ColorSwatch: "img",
+            ColorPicker: "button",
+            Canvas: "img",
+            ScrollView: "region",
+            ComboBox: "combobox",
+            SpinBox: "spinbutton",
+          }[node.role] || null;
+        };
+
+        const isInteractive = (node) =>
+          node.dom?.interactive ??
+          [
+            "Button",
+            "Link",
+            "CheckBox",
+            "Switch",
+            "RadioButton",
+            "MenuItem",
+            "Slider",
+            "TextInput",
+            "SpinBox",
+            "ComboBox",
+            "ColorPicker",
+            "ScrollView",
+          ].includes(node.role);
+        const setStyle = (element, property, value) => {
+          if (element.style[property] !== value) {
+            element.style[property] = value;
+          }
+        };
+        const setAttribute = (element, name, value) => {
+          if (value == null || value === "") {
+            if (element.hasAttribute(name)) {
+              element.removeAttribute(name);
+            }
+          } else if (element.getAttribute(name) !== String(value)) {
+            element.setAttribute(name, String(value));
+          }
+        };
+        const setTextContent = (element, value) => {
+          if (element.textContent !== value) {
+            element.textContent = value;
+          }
+        };
+
+        const ensureMirror = () => {
+          if (state.mirror?.isConnected) {
+            return state.mirror;
+          }
+          if (!document.body) {
+            return null;
+          }
+
+          let mirror = document.getElementById("sui-semantic-dom-mirror");
+          if (!mirror) {
+            mirror = document.createElement("div");
+            mirror.id = "sui-semantic-dom-mirror";
+            document.body.appendChild(mirror);
+          }
+          state.mirror = mirror;
+          Object.assign(mirror.style, {
+            position: "fixed",
+            inset: "0",
+            zIndex: "2",
+            pointerEvents: "none",
+            overflow: "hidden",
+            contain: "layout style paint",
+          });
+          if (automationEnabled) {
+            mirror.setAttribute("data-sui-dom-mirror", mode);
+          } else {
+            mirror.removeAttribute("data-sui-dom-mirror");
+          }
+
+          const canvas = document.getElementById("sui-main-canvas");
+          if (canvas) {
+            canvas.setAttribute("role", "presentation");
+            canvas.setAttribute("aria-label", "");
+          }
+          return mirror;
+        };
+
+        const createElement = (node) => {
+          const element = document.createElement(elementKind(node));
+          element.__suiNodeId = Number(node.id);
+          element.__suiKind = elementKind(node);
+          Object.assign(element.style, {
+            position: "absolute",
+            boxSizing: "border-box",
+            margin: "0",
+            padding: "0",
+            border: debugEnabled ? "1px solid #ff4d8d" : "0",
+            borderRadius: "0",
+            background: debugEnabled
+              ? "rgba(255, 77, 141, 0.12)"
+              : "transparent",
+            color: debugEnabled ? "#ff4d8d" : "transparent",
+            opacity: debugEnabled ? "1" : "0",
+            font: "inherit",
+            overflow: "hidden",
+            resize: "none",
+          });
+          element.addEventListener("pointerdown", () => {
+            element.__suiLastPointerAt = performance.now();
+          });
+          element.addEventListener("focus", () => {
+            const pointerAge = performance.now() - (element.__suiLastPointerAt || 0);
+            if (pointerAge > 200 && isInteractive({ role: element.__suiRole })) {
+              window.__suiEnqueueCommand?.(command("click", { id: element.__suiNodeId }));
+            }
+          });
+          element.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            window.__suiEnqueueCommand?.(command("click", { id: element.__suiNodeId }));
+          });
+          element.addEventListener("keydown", (event) => {
+            if (event.isComposing) {
+              return;
+            }
+            window.__suiEnqueueCommand?.(
+              command("key", { id: element.__suiNodeId }, { key: event.key }),
+            );
+          });
+          element.addEventListener("input", () => {
+            if (element.__suiRole !== "TextInput") {
+              return;
+            }
+            const previous = element.__suiValue || "";
+            const next = "value" in element ? element.value : "";
+            element.__suiValue = next;
+            const inserted = next.startsWith(previous)
+              ? next.slice(previous.length)
+              : next;
+            if (inserted) {
+              window.__suiEnqueueCommand?.(
+                command("text", { id: element.__suiNodeId }, { text: inserted }),
+              );
+            }
+          });
+          element.addEventListener(
+            "wheel",
+            (event) => {
+              event.preventDefault();
+              window.__suiEnqueueCommand?.(
+                command("scroll", { id: element.__suiNodeId }, {
+                  deltaX: event.deltaX,
+                  deltaY: event.deltaY,
+                }),
+              );
+            },
+            { passive: false },
+          );
+          return element;
+        };
+
+        const configureElement = (element, node, canvasRect) => {
+          const bounds = node.bounds || { x: 0, y: 0, width: 0, height: 0 };
+          const label = nodeLabel(node);
+          const role = ariaRole(node, element);
+          const hidden = Boolean(node.state?.hidden);
+          const disabled = Boolean(node.state?.disabled);
+          const checked = node.state?.checked;
+          const expanded = node.state?.expanded;
+          const selected = Boolean(node.state?.selected);
+          const range = valueRange(node);
+
+          element.__suiNodeId = Number(node.id);
+          element.__suiRole = node.role;
+          element.__suiName = label;
+          element.__suiValue = valueText(node);
+          element.hidden = hidden;
+          if ("disabled" in element) {
+            element.disabled = disabled;
+          } else {
+            element.toggleAttribute("disabled", disabled);
+          }
+          if (disabled) {
+            setAttribute(element, "aria-disabled", "true");
+          } else {
+            setAttribute(element, "aria-disabled", null);
+          }
+          setStyle(element, "left", `${canvasRect.left + bounds.x}px`);
+          setStyle(element, "top", `${canvasRect.top + bounds.y}px`);
+          setStyle(element, "width", `${Math.max(1, bounds.width)}px`);
+          setStyle(element, "height", `${Math.max(1, bounds.height)}px`);
+          setStyle(element, "pointerEvents", isInteractive(node) ? "auto" : "none");
+
+          if (automationEnabled) {
+            element.dataset.suiId = String(node.id);
+            element.dataset.suiRole = node.role;
+            element.dataset.suiName = label;
+          } else {
+            delete element.dataset.suiId;
+            delete element.dataset.suiRole;
+            delete element.dataset.suiName;
+          }
+
+          if (role) {
+            setAttribute(element, "role", role);
+          } else {
+            setAttribute(element, "role", null);
+          }
+          setAttribute(element, "aria-label", label);
+          setAttribute(element, "title", node.description);
+          if (checked) {
+            setAttribute(element, "aria-checked", checked === "checked" ? "true" : checked);
+          } else {
+            setAttribute(element, "aria-checked", null);
+          }
+          if (expanded == null) {
+            setAttribute(element, "aria-expanded", null);
+          } else {
+            setAttribute(element, "aria-expanded", String(Boolean(expanded)));
+          }
+          if (selected) {
+            setAttribute(element, "aria-selected", "true");
+          } else {
+            setAttribute(element, "aria-selected", null);
+          }
+
+          if (element.localName === "input") {
+            if (node.role === "CheckBox" && element.type !== "checkbox") {
+              element.type = "checkbox";
+            }
+            if (node.role === "RadioButton" && element.type !== "radio") {
+              element.type = "radio";
+            }
+            if (node.role === "Slider" && element.type !== "range") {
+              element.type = "range";
+            }
+            if (node.role === "TextInput" && element.type !== "text") {
+              element.type = "text";
+            }
+            if (node.role === "CheckBox" || node.role === "RadioButton") {
+              element.checked = checked === "checked";
+            }
+            if (node.role === "Slider" && range) {
+              element.min = String(range.min);
+              element.max = String(range.max);
+              element.value = String(range.value);
+            }
+            if (node.role === "TextInput") {
+              const text = valueText(node);
+              if (element.value !== text) {
+                element.value = text;
+              }
+              element.readOnly = Boolean(node.editableText?.readonly);
+            }
+          } else if (element.localName === "textarea") {
+            const text = valueText(node);
+            if (element.value !== text) {
+              element.value = text;
+            }
+            element.readOnly = Boolean(node.editableText?.readonly);
+          } else if (element.localName === "a") {
+            const href = /^https?:\/\//.test(valueText(node)) ? valueText(node) : "#";
+            element.href = href;
+            setTextContent(element, label);
+          } else {
+            setTextContent(element, label);
+          }
+
+          if (isInteractive(node)) {
+            element.tabIndex = 0;
+          } else {
+            element.tabIndex = -1;
+          }
+        };
+
+        const updateMirror = () => {
+          const mirror = ensureMirror();
+          const snapshot = state.snapshot;
+          const canvas = document.getElementById("sui-main-canvas");
+          if (!mirror || !snapshot || !canvas) {
+            return;
+          }
+
+          const canvasRect = canvas.getBoundingClientRect();
+          const activeIds = new Set();
+          for (const node of snapshot.nodes || []) {
+            const key = String(node.id);
+            activeIds.add(key);
+            let element = state.elements.get(key);
+            const kind = elementKind(node);
+            if (!element || !element.isConnected || element.__suiKind !== kind) {
+              element?.remove();
+              element = createElement(node);
+              state.elements.set(key, element);
+            }
+            configureElement(element, node, canvasRect);
+            if (element.parentNode !== mirror) {
+              mirror.appendChild(element);
+            }
+          }
+
+          for (const [key, element] of state.elements) {
+            if (!activeIds.has(key)) {
+              element.remove();
+              state.elements.delete(key);
+            }
+          }
+          state.mirrorUpdateCount += 1;
+        };
+
+        const scheduleMirrorUpdate = () => {
+          if (state.pendingMirrorUpdate) {
+            return;
+          }
+          state.pendingMirrorUpdate = true;
+          requestAnimationFrame(() => {
+            state.pendingMirrorUpdate = false;
+            updateMirror();
+          });
+        };
+
+        window.__suiPublishSnapshot = (json) => {
+          try {
+            const snapshot = typeof json === "string" ? JSON.parse(json) : json;
+            if (Array.isArray(snapshot.nodes)) {
+              state.nodes = snapshot.nodes;
+              state.fullSnapshotCount += 1;
+              scheduleMirrorUpdate();
+            } else {
+              snapshot.nodes = state.nodes;
+              state.reusedSnapshotCount += 1;
+            }
+            state.snapshot = snapshot;
+            state.frameIndex = snapshot.frameIndex;
+            state.viewport = snapshot.viewport;
+            state.devicePixelRatio =
+              snapshot.devicePixelRatio || window.devicePixelRatio || 1;
+            state.diagnostics = snapshot.performance || null;
+            const waiters = state.waiters.splice(0);
+            for (const waiter of waiters) {
+              waiter();
+            }
+          } catch (error) {
+            console.warn("SUI_SEMANTIC_DOM_SNAPSHOT_ERROR " + String(error));
+          }
+        };
+
+        const screenshotNode = async (selector = {}) => {
+          await waitForIdle();
+          const node = requireNode(selector);
+          const canvas = document.getElementById("sui-main-canvas");
+          if (!canvas) {
+            throw new Error("SUI canvas is not available");
+          }
+          const bounds = node.bounds;
+          const dpr = state.devicePixelRatio || window.devicePixelRatio || 1;
+          const x = Math.max(0, Math.floor(bounds.x * dpr));
+          const y = Math.max(0, Math.floor(bounds.y * dpr));
+          const width = Math.max(1, Math.ceil(bounds.width * dpr));
+          const height = Math.max(1, Math.ceil(bounds.height * dpr));
+          const output = document.createElement("canvas");
+          output.width = width;
+          output.height = height;
+          const context = output.getContext("2d");
+          context.drawImage(canvas, x, y, width, height, 0, 0, width, height);
+          return output.toDataURL("image/png");
+        };
+
+        const api = {
+          get mode() {
+            return mode;
+          },
+          ready: waitForIdle,
+          waitForIdle,
+          snapshot: () => clone(state.snapshot),
+          find: (selector = {}) => findNodes(selector).map(clone),
+        };
+
+        if (automationEnabled) {
+          api.click = async (selector = {}) => {
+            const node = requireNode(selector);
+            const previousFrame = state.frameIndex;
+            enqueue(command("click", node));
+            return waitForNextFrame(previousFrame);
+          };
+          api.scroll = async (selector = {}, deltaX = 0, deltaY = 0) => {
+            const node = requireNode(selector);
+            const previousFrame = state.frameIndex;
+            enqueue(command("scroll", node, { deltaX, deltaY }));
+            return waitForNextFrame(previousFrame);
+          };
+          api.press = async (selector = {}, key = "") => {
+            const node = requireNode(selector);
+            const previousFrame = state.frameIndex;
+            enqueue(command("key", node, { key }));
+            return waitForNextFrame(previousFrame);
+          };
+          api.fill = async (selector = {}, text = "") => {
+            const node = requireNode(selector);
+            const previousFrame = state.frameIndex;
+            enqueue(command("text", node, { text }));
+            return waitForNextFrame(previousFrame);
+          };
+          api.screenshot = screenshotNode;
+          window.__sui = api;
+        }
+
+        window.addEventListener("resize", scheduleMirrorUpdate);
+        document.addEventListener("DOMContentLoaded", scheduleMirrorUpdate, { once: true });
+      })();
+    </script>
+    <script>
+      (() => {
         const params = new URLSearchParams(window.location.search);
         const benchmark = params.get("benchmark");
         if (!benchmark) {

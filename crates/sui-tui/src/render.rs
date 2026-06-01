@@ -483,6 +483,7 @@ fn interactive_role(node: &SemanticsNode) -> bool {
     matches!(
         node.role,
         SemanticsRole::Button
+            | SemanticsRole::Link
             | SemanticsRole::CheckBox
             | SemanticsRole::Switch
             | SemanticsRole::RadioButton
@@ -554,6 +555,7 @@ fn role_label(role: &SemanticsRole) -> &'static str {
         SemanticsRole::TabBar => "TabBar",
         SemanticsRole::Tabs => "Tabs",
         SemanticsRole::Button => "Button",
+        SemanticsRole::Link => "Link",
         SemanticsRole::CheckBox => "CheckBox",
         SemanticsRole::Switch => "Switch",
         SemanticsRole::RadioButton => "RadioButton",

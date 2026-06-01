@@ -2903,6 +2903,7 @@ dependencies = [
 name = "sui-platform"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
  "resvg",
  "sui-core",
  "sui-layout",

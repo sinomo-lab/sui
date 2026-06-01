@@ -1,8 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui::{
-    HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, SemanticsNode,
-    SemanticsRole, TextHinting, WgpuRenderer, WidgetPodMutVisitor, WidgetPodVisitor,
+    HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
+    PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
+    TextHinting, ToggleState, WgpuRenderer, WidgetId, WidgetPodMutVisitor, WidgetPodVisitor,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
     WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
     WindowTextHinting, WindowToneMappingMode, prelude::*, window_output_diagnostics,
@@ -17,7 +18,7 @@ use sui_widget_book::{
 
 const WINDOW_TITLE: &str = "SUI Dev";
 const WINDOW_DESCRIPTION: &str =
-    "Floating development workspace for the widget book and focused performance demos.";
+    "Browser-style development workspace for the widget book and focused performance demos.";
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
 const BUTTON_GRID_TAB_LABEL: &str = "64 buttons";
 const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
@@ -58,32 +59,1467 @@ const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
     "Full HDR",
 ];
 
-const SIDEBAR_TITLE: &str = "Available views";
-const WORKSPACE_SIDEBAR_RATIO: f32 = 0.18;
-const WORKSPACE_SIDEBAR_COMPACT_MAX_VIEWPORT: f32 = 1000.0;
-const WORKSPACE_SIDEBAR_MIN_WIDTH: f32 = 64.0;
-const WORKSPACE_CONTENT_MIN_WIDTH: f32 = 180.0;
-const WORKSPACE_DIVIDER_THICKNESS: f32 = 8.0;
-const SIDEBAR_COMPACT_ROW_WIDTH: f32 = 56.0;
-const SIDEBAR_COMPACT_ICON_SIZE: f32 = 24.0;
-const SIDEBAR_ACTION_ICON_SIZE: f32 = 28.0;
+const DEV_SHELL_TOOLBAR_HEIGHT: f32 = 44.0;
+const DEV_SHELL_LOGO_BUTTON_SIZE: f32 = 32.0;
+const DEV_SHELL_TAB_HEIGHT: f32 = 32.0;
+const DEV_SHELL_TAB_GAP: f32 = 6.0;
+const DEV_SHELL_PLUS_BUTTON_SIZE: f32 = 30.0;
+const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 92.0;
+const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
+const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 72.0;
+const DEV_SHELL_SETTINGS_TITLE_HEIGHT: f32 = 38.0;
+const DEV_SHELL_SETTINGS_RESIZE_HANDLE: f32 = 18.0;
+const DEV_SHELL_MIN_SETTINGS_WIDTH: f32 = 320.0;
+const DEV_SHELL_MIN_SETTINGS_HEIGHT: f32 = 260.0;
+const DEV_SHELL_DEFAULT_SETTINGS_WIDTH: f32 = 460.0;
+const DEV_SHELL_DEFAULT_SETTINGS_HEIGHT: f32 = 380.0;
+const DEV_SHELL_DEFAULT_SETTINGS_X: f32 = 420.0;
+const DEV_SHELL_DEFAULT_SETTINGS_Y: f32 = 96.0;
+const DEV_SHELL_PICKER_TITLE: &str = "Open a demo";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(not(target_arch = "wasm32"))]
 pub enum DesktopAutomationMode {
     ButtonGridResize,
+    WidgetBookScroll,
 }
 
-struct ViewSidebar {
-    workspace: FloatingWorkspaceState,
+#[derive(Clone)]
+struct DevShellState {
+    inner: Rc<RefCell<DevShellStateInner>>,
+}
+
+struct DevShellStateInner {
+    open_tabs: Vec<usize>,
+    active_tab: Option<usize>,
+    picker_open: bool,
+    dark_theme: bool,
+    settings_visible: bool,
+    settings_bounds: Rect,
+    settings_host_bounds: Rect,
+}
+
+impl DevShellState {
+    fn new() -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(DevShellStateInner {
+                open_tabs: Vec::new(),
+                active_tab: None,
+                picker_open: true,
+                dark_theme: false,
+                settings_visible: false,
+                settings_bounds: Rect::new(
+                    DEV_SHELL_DEFAULT_SETTINGS_X,
+                    DEV_SHELL_DEFAULT_SETTINGS_Y,
+                    DEV_SHELL_DEFAULT_SETTINGS_WIDTH,
+                    DEV_SHELL_DEFAULT_SETTINGS_HEIGHT,
+                ),
+                settings_host_bounds: Rect::ZERO,
+            })),
+        }
+    }
+
+    fn theme(&self) -> DefaultTheme {
+        if self.inner.borrow().dark_theme {
+            DefaultTheme::dark()
+        } else {
+            DefaultTheme::default()
+        }
+    }
+
+    fn is_dark(&self) -> bool {
+        self.inner.borrow().dark_theme
+    }
+
+    fn toggle_theme(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.dark_theme = !inner.dark_theme;
+    }
+
+    fn open_tabs(&self) -> Vec<usize> {
+        self.inner.borrow().open_tabs.clone()
+    }
+
+    fn active_tab(&self) -> Option<usize> {
+        let inner = self.inner.borrow();
+        inner
+            .active_tab
+            .filter(|index| inner.open_tabs.contains(index))
+    }
+
+    fn picker_visible(&self) -> bool {
+        let inner = self.inner.borrow();
+        inner.open_tabs.is_empty() || inner.picker_open || inner.active_tab.is_none()
+    }
+
+    fn open_demo(&self, index: usize) {
+        let mut inner = self.inner.borrow_mut();
+        if !inner.open_tabs.contains(&index) {
+            inner.open_tabs.push(index);
+        }
+        inner.active_tab = Some(index);
+        inner.picker_open = false;
+    }
+
+    fn select_tab(&self, index: usize) {
+        let mut inner = self.inner.borrow_mut();
+        if inner.open_tabs.contains(&index) {
+            inner.active_tab = Some(index);
+            inner.picker_open = false;
+        }
+    }
+
+    fn show_picker(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.active_tab = None;
+        inner.picker_open = true;
+    }
+
+    fn show_settings(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.settings_visible = true;
+        inner.settings_bounds =
+            clamp_dev_shell_settings_bounds(inner.settings_host_bounds, inner.settings_bounds);
+    }
+
+    fn hide_settings(&self) {
+        self.inner.borrow_mut().settings_visible = false;
+    }
+
+    fn settings_visible(&self) -> bool {
+        self.inner.borrow().settings_visible
+    }
+
+    fn settings_bounds(&self) -> Rect {
+        self.inner.borrow().settings_bounds
+    }
+
+    fn set_settings_bounds(&self, bounds: Rect) {
+        let mut inner = self.inner.borrow_mut();
+        inner.settings_bounds = clamp_dev_shell_settings_bounds(inner.settings_host_bounds, bounds);
+    }
+
+    fn set_settings_host_bounds(&self, bounds: Rect) {
+        let mut inner = self.inner.borrow_mut();
+        inner.settings_host_bounds = bounds;
+        inner.settings_bounds = clamp_dev_shell_settings_bounds(bounds, inner.settings_bounds);
+    }
+}
+
+struct DevDemo {
+    title: &'static str,
+    description: &'static str,
+    child: WidgetPod,
+}
+
+struct DevBrowserShell {
+    state: DevShellState,
+    demos: Vec<DevDemo>,
+    demo_buttons: WidgetChildren,
+    main_menu: SingleChild,
+    plus_button: SingleChild,
+    theme_toggle: SingleChild,
+    settings_window: SingleChild,
+    tab_widths: Vec<f32>,
+    tab_rects: Vec<(usize, Rect)>,
+    hovered_tab: Option<usize>,
+    pressed_tab: Option<usize>,
+    content_bounds: Rect,
+}
+
+impl DevBrowserShell {
+    fn new(render_options: WindowRenderOptions) -> Self {
+        Self::with_initial_demo(render_options, None)
+    }
+
+    fn with_initial_demo(render_options: WindowRenderOptions, initial_demo: Option<&str>) -> Self {
+        set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
+        let state = DevShellState::new();
+        let demos = build_dev_demo_entries();
+        if let Some(index) =
+            initial_demo.and_then(|title| demos.iter().position(|demo| demo.title == title))
+        {
+            state.open_demo(index);
+        }
+
+        let mut demo_buttons = WidgetChildren::with_capacity(demos.len());
+        for (index, demo) in demos.iter().enumerate() {
+            let button_state = state.clone();
+            demo_buttons.push(
+                Button::new(demo.title)
+                    .min_width(180.0)
+                    .min_height(DEV_SHELL_PICKER_TILE_HEIGHT)
+                    .on_press_with_ctx(move |ctx| {
+                        button_state.open_demo(index);
+                        request_window_refresh(ctx, true);
+                    }),
+            );
+        }
+
+        let picker_state = state.clone();
+        let plus_button = IconButton::new(IconGlyph::Add, "Open demo")
+            .size(DEV_SHELL_PLUS_BUTTON_SIZE)
+            .icon_size(16.0)
+            .on_press_with_ctx(move |ctx| {
+                picker_state.show_picker();
+                request_window_refresh(ctx, true);
+            });
+
+        let menu_state = state.clone();
+        let main_menu = ContextMenu::new("SUI menu", SuiLogoButton)
+            .activation_button(PointerButton::Primary)
+            .item(MenuItem::new("Settings"))
+            .on_activate_with_ctx(move |ctx, _, _| {
+                menu_state.show_settings();
+                ctx.clear_focus();
+                request_window_refresh(ctx, true);
+            });
+
+        Self {
+            state: state.clone(),
+            demos,
+            demo_buttons,
+            main_menu: SingleChild::new(main_menu),
+            plus_button: SingleChild::new(plus_button),
+            theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
+            settings_window: SingleChild::new(FloatingSettingsWindow::new(
+                state,
+                build_render_settings_tab_with_options(render_options),
+            )),
+            tab_widths: Vec::new(),
+            tab_rects: Vec::new(),
+            hovered_tab: None,
+            pressed_tab: None,
+            content_bounds: Rect::ZERO,
+        }
+    }
+
+    fn tab_at(&self, position: Point) -> Option<usize> {
+        self.tab_rects
+            .iter()
+            .find_map(|(index, rect)| rect.contains(position).then_some(*index))
+    }
+
+    fn select_adjacent_tab(&mut self, direction: isize) {
+        let tabs = self.state.open_tabs();
+        if tabs.is_empty() {
+            return;
+        }
+        let current = self
+            .state
+            .active_tab()
+            .and_then(|active| tabs.iter().position(|index| *index == active))
+            .unwrap_or(0);
+        let last = tabs.len() as isize - 1;
+        let next = (current as isize + direction).clamp(0, last) as usize;
+        self.state.select_tab(tabs[next]);
+    }
+
+    fn root_size_for_constraints(constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(
+            if constraints.max.width.is_finite() {
+                constraints.max.width
+            } else {
+                1280.0
+            },
+            if constraints.max.height.is_finite() {
+                constraints.max.height
+            } else {
+                820.0
+            },
+        ))
+    }
+
+    fn toolbar_rect(bounds: Rect) -> Rect {
+        Rect::new(
+            bounds.x(),
+            bounds.y(),
+            bounds.width(),
+            DEV_SHELL_TOOLBAR_HEIGHT,
+        )
+    }
+
+    fn logo_rect(bounds: Rect) -> Rect {
+        Rect::new(
+            bounds.x() + 8.0,
+            bounds.y() + ((DEV_SHELL_TOOLBAR_HEIGHT - DEV_SHELL_LOGO_BUTTON_SIZE) * 0.5),
+            DEV_SHELL_LOGO_BUTTON_SIZE,
+            DEV_SHELL_LOGO_BUTTON_SIZE,
+        )
+    }
+
+    fn theme_rect(bounds: Rect) -> Rect {
+        Rect::new(
+            bounds.max_x() - DEV_SHELL_THEME_TOGGLE_WIDTH - 12.0,
+            bounds.y() + ((DEV_SHELL_TOOLBAR_HEIGHT - DEV_SHELL_THEME_TOGGLE_HEIGHT) * 0.5),
+            DEV_SHELL_THEME_TOGGLE_WIDTH,
+            DEV_SHELL_THEME_TOGGLE_HEIGHT,
+        )
+    }
+
+    fn tab_zone_rect(bounds: Rect) -> Rect {
+        let left = bounds.x() + 50.0;
+        let right = Self::theme_rect(bounds).x() - 10.0;
+        Rect::new(
+            left,
+            bounds.y() + 6.0,
+            (right - left).max(0.0),
+            DEV_SHELL_TAB_HEIGHT,
+        )
+    }
+
+    fn picker_grid_rect(content: Rect) -> Rect {
+        Rect::new(
+            content.x() + 32.0,
+            content.y() + 82.0,
+            (content.width() - 64.0).max(0.0),
+            (content.height() - 114.0).max(0.0),
+        )
+    }
+
+    fn arrange_tab_strip(&mut self, bounds: Rect) -> Rect {
+        self.tab_rects.clear();
+        let tab_zone = Self::tab_zone_rect(bounds);
+        let tabs = self.state.open_tabs();
+        let mut x = tab_zone.x();
+        for (order, demo_index) in tabs.into_iter().enumerate() {
+            let width = self.tab_widths.get(order).copied().unwrap_or(132.0);
+            if x + width > tab_zone.max_x() {
+                break;
+            }
+            let rect = Rect::new(x, tab_zone.y(), width, DEV_SHELL_TAB_HEIGHT);
+            self.tab_rects.push((demo_index, rect));
+            x += width + DEV_SHELL_TAB_GAP;
+        }
+
+        Rect::new(
+            x.min(tab_zone.max_x() - DEV_SHELL_PLUS_BUTTON_SIZE)
+                .max(tab_zone.x()),
+            tab_zone.y() + ((DEV_SHELL_TAB_HEIGHT - DEV_SHELL_PLUS_BUTTON_SIZE) * 0.5),
+            DEV_SHELL_PLUS_BUTTON_SIZE,
+            DEV_SHELL_PLUS_BUTTON_SIZE,
+        )
+    }
+
+    fn paint_toolbar(&self, ctx: &mut PaintCtx, theme: &DefaultTheme) {
+        let bounds = ctx.bounds();
+        let toolbar = Self::toolbar_rect(bounds);
+        let palette = theme.palette;
+        let toolbar_background = if self.state.is_dark() {
+            Color::rgba(0.085, 0.105, 0.13, 1.0)
+        } else {
+            Color::rgba(0.95, 0.965, 0.985, 1.0)
+        };
+        ctx.fill_rect(toolbar, toolbar_background);
+        ctx.stroke_rect(
+            Rect::new(toolbar.x(), toolbar.max_y() - 1.0, toolbar.width(), 1.0),
+            palette.border.with_alpha(0.85),
+            StrokeStyle::new(1.0),
+        );
+
+        let active = self.state.active_tab();
+        for (demo_index, rect) in &self.tab_rects {
+            let selected = active == Some(*demo_index);
+            let hovered = self.hovered_tab == Some(*demo_index);
+            let pressed = self.pressed_tab == Some(*demo_index);
+            let tab_background = if selected {
+                palette.surface
+            } else if pressed {
+                palette.surface_pressed
+            } else if hovered {
+                palette.surface_hover
+            } else {
+                Color::rgba(0.0, 0.0, 0.0, 0.0)
+            };
+            if selected || hovered || pressed {
+                ctx.fill(
+                    Path::rounded_rect(*rect, 7.0),
+                    tab_background.with_alpha(if selected { 1.0 } else { 0.82 }),
+                );
+                ctx.stroke(
+                    Path::rounded_rect(*rect, 7.0),
+                    if selected {
+                        palette.border_focus.with_alpha(0.72)
+                    } else {
+                        palette.border.with_alpha(0.62)
+                    },
+                    StrokeStyle::new(1.0),
+                );
+            }
+
+            let label = self.demos[*demo_index].title;
+            ctx.draw_text(
+                Rect::new(rect.x() + 14.0, rect.y() + 8.0, rect.width() - 28.0, 20.0),
+                label,
+                TextStyle {
+                    font_size: 13.0,
+                    line_height: 18.0,
+                    color: if selected {
+                        palette.border_focus
+                    } else {
+                        palette.text
+                    },
+                    ..TextStyle::default()
+                },
+            );
+
+            if selected {
+                ctx.fill(
+                    Path::rounded_rect(
+                        Rect::new(
+                            rect.x() + 12.0,
+                            rect.max_y() - 3.0,
+                            rect.width() - 24.0,
+                            3.0,
+                        ),
+                        1.5,
+                    ),
+                    palette.accent,
+                );
+            }
+        }
+    }
+
+    fn paint_picker(&self, ctx: &mut PaintCtx, theme: &DefaultTheme) {
+        let content = self.content_bounds;
+        let palette = theme.palette;
+        ctx.fill_rect(content, palette.surface);
+        ctx.draw_text(
+            Rect::new(
+                content.x() + 32.0,
+                content.y() + 28.0,
+                content.width() - 64.0,
+                32.0,
+            ),
+            DEV_SHELL_PICKER_TITLE,
+            TextStyle {
+                font_size: 24.0,
+                line_height: 30.0,
+                color: palette.text,
+                ..TextStyle::default()
+            },
+        );
+        ctx.draw_text(
+            Rect::new(
+                content.x() + 32.0,
+                content.y() + 58.0,
+                content.width() - 64.0,
+                20.0,
+            ),
+            "Choose a demo to open it as a tab.",
+            TextStyle {
+                font_size: 13.0,
+                line_height: 18.0,
+                color: palette.placeholder,
+                ..TextStyle::default()
+            },
+        );
+    }
+
+    fn paint_picker_descriptions(&self, ctx: &mut PaintCtx, theme: &DefaultTheme) {
+        let palette = theme.palette;
+        for (index, demo) in self.demos.iter().enumerate() {
+            let Some(tile) = self.demo_buttons.as_slice().get(index) else {
+                continue;
+            };
+            let rect = tile.bounds();
+            if rect.is_empty() {
+                continue;
+            }
+            ctx.draw_text(
+                Rect::new(rect.x() + 16.0, rect.y() + 46.0, rect.width() - 32.0, 18.0),
+                demo.description,
+                TextStyle {
+                    font_size: 11.0,
+                    line_height: 15.0,
+                    color: palette.accent_text.with_alpha(0.82),
+                    ..TextStyle::default()
+                },
+            );
+        }
+    }
+}
+
+fn dev_shell_tab_semantics_id(parent: WidgetId, demo_index: usize) -> WidgetId {
+    WidgetId::new(
+        (1_u64 << 62)
+            | parent
+                .get()
+                .wrapping_mul(313)
+                .wrapping_add(demo_index as u64 + 1),
+    )
+}
+
+impl Widget for DevBrowserShell {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if ctx.phase() != sui::EventPhase::Target {
+            return;
+        }
+
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = self.tab_at(pointer.position);
+                if self.hovered_tab != hovered {
+                    self.hovered_tab = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                if self.hovered_tab.take().is_some() {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+                if self.pressed_tab.is_some() && pointer.buttons.is_empty() {
+                    self.pressed_tab = None;
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                if let Some(tab) = self.tab_at(pointer.position) {
+                    self.pressed_tab = Some(tab);
+                    self.hovered_tab = Some(tab);
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_focus();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                if let Some(pressed) = self.pressed_tab.take() {
+                    let hovered = self.tab_at(pointer.position);
+                    if hovered == Some(pressed) {
+                        self.state.select_tab(pressed);
+                    }
+                    self.hovered_tab = hovered;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    request_window_refresh(ctx, true);
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed_tab.take().is_some() {
+                    self.hovered_tab = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    request_window_refresh(ctx, true);
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key) if key.state == KeyState::Pressed && ctx.is_focused() => {
+                match key.key.as_str() {
+                    "ArrowLeft" => self.select_adjacent_tab(-1),
+                    "ArrowRight" => self.select_adjacent_tab(1),
+                    "Home" => {
+                        if let Some(first) = self.state.open_tabs().first().copied() {
+                            self.state.select_tab(first);
+                        }
+                    }
+                    "End" => {
+                        if let Some(last) = self.state.open_tabs().last().copied() {
+                            self.state.select_tab(last);
+                        }
+                    }
+                    "+" | "N" => self.state.show_picker(),
+                    _ => return,
+                }
+                request_window_refresh(ctx, true);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let root_size = Self::root_size_for_constraints(constraints);
+        let content_size = Size::new(
+            root_size.width,
+            (root_size.height - DEV_SHELL_TOOLBAR_HEIGHT).max(0.0),
+        );
+        let content_constraints = Constraints::tight(content_size);
+
+        let tabs = self.state.open_tabs();
+        let label_style = self.state.theme().body_text_style();
+        self.tab_widths = tabs
+            .iter()
+            .map(|index| {
+                ctx.layout()
+                    .measure_text(self.demos[*index].title, label_style.clone())
+                    .map(|measurement| measurement.width + 36.0)
+                    .unwrap_or(132.0)
+                    .clamp(118.0, 220.0)
+            })
+            .collect();
+
+        self.main_menu.measure(ctx, constraints.loosen());
+        self.plus_button.measure(
+            ctx,
+            Constraints::tight(Size::new(
+                DEV_SHELL_PLUS_BUTTON_SIZE,
+                DEV_SHELL_PLUS_BUTTON_SIZE,
+            )),
+        );
+        self.theme_toggle.measure(
+            ctx,
+            Constraints::tight(Size::new(
+                DEV_SHELL_THEME_TOGGLE_WIDTH,
+                DEV_SHELL_THEME_TOGGLE_HEIGHT,
+            )),
+        );
+
+        if self.state.picker_visible() {
+            for index in 0..self.demo_buttons.len() {
+                self.demo_buttons.measure_child(
+                    index,
+                    ctx,
+                    Constraints::new(
+                        Size::new(160.0, DEV_SHELL_PICKER_TILE_HEIGHT),
+                        Size::new(260.0, DEV_SHELL_PICKER_TILE_HEIGHT),
+                    ),
+                );
+            }
+        } else if let Some(active) = self.state.active_tab() {
+            self.demos[active].child.measure(ctx, content_constraints);
+        }
+
+        if self.state.settings_visible() {
+            let settings_bounds = self.state.settings_bounds();
+            self.settings_window
+                .measure(ctx, Constraints::tight(settings_bounds.size));
+        }
+
+        root_size
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let plus_rect = self.arrange_tab_strip(bounds);
+        self.plus_button.arrange(ctx, plus_rect);
+        self.theme_toggle.arrange(ctx, Self::theme_rect(bounds));
+        let menu_origin = Self::logo_rect(bounds).origin;
+        let menu_size = self.main_menu.child().measured_size();
+        self.main_menu.arrange(
+            ctx,
+            Rect::from_origin_size(
+                menu_origin,
+                Size::new(
+                    menu_size.width.max(DEV_SHELL_LOGO_BUTTON_SIZE),
+                    menu_size.height.max(DEV_SHELL_LOGO_BUTTON_SIZE),
+                ),
+            ),
+        );
+
+        self.content_bounds = Rect::new(
+            bounds.x(),
+            bounds.y() + DEV_SHELL_TOOLBAR_HEIGHT,
+            bounds.width(),
+            (bounds.height() - DEV_SHELL_TOOLBAR_HEIGHT).max(0.0),
+        );
+        self.state.set_settings_host_bounds(self.content_bounds);
+
+        if self.state.picker_visible() {
+            let grid = Self::picker_grid_rect(self.content_bounds);
+            let columns: usize = if grid.width() >= 840.0 {
+                3
+            } else if grid.width() >= 560.0 {
+                2
+            } else {
+                1
+            };
+            let gap = 14.0;
+            let column_width = ((grid.width() - (gap * (columns.saturating_sub(1) as f32)))
+                / columns as f32)
+                .max(160.0);
+            for index in 0..self.demo_buttons.len() {
+                let column = index % columns;
+                let row = index / columns;
+                let rect = Rect::new(
+                    grid.x() + column as f32 * (column_width + gap),
+                    grid.y() + row as f32 * (DEV_SHELL_PICKER_TILE_HEIGHT + gap),
+                    column_width,
+                    DEV_SHELL_PICKER_TILE_HEIGHT,
+                );
+                self.demo_buttons.arrange_child(index, ctx, rect);
+            }
+        } else {
+            for index in 0..self.demo_buttons.len() {
+                self.demo_buttons.arrange_child(index, ctx, Rect::ZERO);
+            }
+            for (index, demo) in self.demos.iter_mut().enumerate() {
+                if self.state.active_tab() == Some(index) {
+                    demo.child.arrange(ctx, self.content_bounds);
+                }
+            }
+        }
+
+        if self.state.settings_visible() {
+            self.settings_window
+                .arrange(ctx, self.state.settings_bounds());
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.state.theme();
+        let palette = theme.palette;
+        ctx.fill_bounds(palette.surface);
+
+        if self.state.picker_visible() {
+            self.paint_picker(ctx, &theme);
+            self.demo_buttons.paint(ctx);
+            self.paint_picker_descriptions(ctx, &theme);
+        } else if let Some(active) = self.state.active_tab() {
+            self.demos[active].child.paint(ctx);
+        }
+
+        self.paint_toolbar(ctx, &theme);
+        self.plus_button.paint(ctx);
+        self.theme_toggle.paint(ctx);
+        self.settings_window.paint(ctx);
+        self.main_menu.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Tabs, ctx.bounds());
+        node.name = Some("SUI dev browser".to_string());
+        node.value = self
+            .state
+            .active_tab()
+            .map(|index| SemanticsValue::Text(self.demos[index].title.to_string()));
+        node.state.focused = ctx.is_focused();
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(node);
+
+        for (demo_index, rect) in &self.tab_rects {
+            let mut tab = SemanticsNode::new(
+                dev_shell_tab_semantics_id(ctx.widget_id(), *demo_index),
+                SemanticsRole::Button,
+                *rect,
+            );
+            tab.parent = Some(ctx.widget_id());
+            tab.name = Some(self.demos[*demo_index].title.to_string());
+            tab.state.selected = self.state.active_tab() == Some(*demo_index);
+            tab.state.hovered = self.hovered_tab == Some(*demo_index);
+            tab.actions = vec![SemanticsAction::Activate, SemanticsAction::Focus];
+            ctx.push(tab);
+        }
+
+        self.plus_button.semantics(ctx);
+        self.theme_toggle.semantics(ctx);
+        if self.state.picker_visible() {
+            self.demo_buttons.semantics(ctx);
+        } else if let Some(active) = self.state.active_tab() {
+            self.demos[active].child.semantics(ctx);
+        }
+        self.settings_window.semantics(ctx);
+        self.main_menu.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if self.state.picker_visible() {
+            self.demo_buttons.visit_children(visitor);
+        } else if let Some(active) = self.state.active_tab() {
+            visitor.visit(&self.demos[active].child);
+        }
+        self.plus_button.visit_children(visitor);
+        self.theme_toggle.visit_children(visitor);
+        if self.state.settings_visible() {
+            self.settings_window.visit_children(visitor);
+        }
+        self.main_menu.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if self.state.picker_visible() {
+            self.demo_buttons.visit_children_mut(visitor);
+        } else if let Some(active) = self.state.active_tab() {
+            visitor.visit(&mut self.demos[active].child);
+        }
+        self.plus_button.visit_children_mut(visitor);
+        self.theme_toggle.visit_children_mut(visitor);
+        if self.state.settings_visible() {
+            self.settings_window.visit_children_mut(visitor);
+        }
+        self.main_menu.visit_children_mut(visitor);
+    }
+}
+
+struct SuiLogoButton;
+
+impl Widget for SuiLogoButton {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(
+            DEV_SHELL_LOGO_BUTTON_SIZE,
+            DEV_SHELL_LOGO_BUTTON_SIZE,
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds();
+        let center = Point::new(
+            bounds.x() + bounds.width() * 0.5,
+            bounds.y() + bounds.height() * 0.5,
+        );
+        let radius = bounds.width().min(bounds.height()) * 0.48;
+        ctx.fill(Path::circle(center, radius), Color::WHITE);
+        ctx.stroke(
+            Path::circle(center, radius - 0.5),
+            Color::rgba(0.08, 0.14, 0.20, 0.18),
+            StrokeStyle::new(1.0),
+        );
+
+        let inner_radius = radius - 3.6;
+        ctx.fill(
+            Path::circle(center, inner_radius),
+            Color::rgba(0.05, 0.52, 0.66, 1.0),
+        );
+        let wave_bounds = Rect::new(
+            center.x - inner_radius,
+            center.y - inner_radius,
+            inner_radius * 2.0,
+            inner_radius * 2.0,
+        );
+        draw_logo_wave(ctx, wave_bounds, 0.32, Color::rgba(0.48, 0.86, 0.93, 1.0));
+        draw_logo_wave(ctx, wave_bounds, 0.52, Color::rgba(0.14, 0.64, 0.76, 1.0));
+        draw_logo_wave(ctx, wave_bounds, 0.70, Color::rgba(0.02, 0.36, 0.50, 1.0));
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+        node.name = Some("SUI menu".to_string());
+        node.actions = vec![SemanticsAction::Activate];
+        ctx.push(node);
+    }
+}
+
+struct ThemeToggleButton {
+    state: DevShellState,
+    hovered: bool,
+    pressed: bool,
+}
+
+impl ThemeToggleButton {
+    fn new(state: DevShellState) -> Self {
+        Self {
+            state,
+            hovered: false,
+            pressed: false,
+        }
+    }
+
+    fn activate(&self, ctx: &mut EventCtx) {
+        self.state.toggle_theme();
+        request_window_refresh(ctx, true);
+    }
+}
+
+impl Widget for ThemeToggleButton {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = ctx.bounds().contains(pointer.position);
+                if self.hovered != hovered {
+                    self.hovered = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                self.hovered = false;
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                self.pressed = true;
+                self.hovered = true;
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.request_focus();
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let activate = self.pressed && ctx.bounds().contains(pointer.position);
+                self.pressed = false;
+                self.hovered = ctx.bounds().contains(pointer.position);
+                ctx.release_pointer_capture(pointer.pointer_id);
+                if activate {
+                    self.activate(ctx);
+                } else {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed {
+                    self.pressed = false;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && matches!(key.key.as_str(), "Enter" | " ") =>
+            {
+                self.activate(ctx);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(
+            DEV_SHELL_THEME_TOGGLE_WIDTH,
+            DEV_SHELL_THEME_TOGGLE_HEIGHT,
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let dark = self.state.is_dark();
+        let theme = self.state.theme();
+        let palette = theme.palette;
+        let bounds = ctx.bounds();
+        let background = if dark {
+            Color::rgba(0.11, 0.15, 0.20, 1.0)
+        } else {
+            Color::rgba(0.97, 0.985, 1.0, 1.0)
+        };
+        let border = if self.hovered || ctx.is_focused() {
+            palette.border_focus
+        } else {
+            palette.border
+        };
+        ctx.fill(Path::rounded_rect(bounds, 17.0), background);
+        ctx.stroke(
+            Path::rounded_rect(bounds, 17.0),
+            border,
+            StrokeStyle::new(1.0),
+        );
+
+        let knob_x = if dark {
+            bounds.max_x() - 31.0
+        } else {
+            bounds.x() + 3.0
+        };
+        let knob = Rect::new(knob_x, bounds.y() + 3.0, 28.0, 28.0);
+        ctx.fill(
+            Path::circle(
+                Point::new(
+                    knob.x() + knob.width() * 0.5,
+                    knob.y() + knob.height() * 0.5,
+                ),
+                14.0,
+            ),
+            if dark {
+                Color::rgba(0.33, 0.74, 0.88, 1.0)
+            } else {
+                Color::rgba(0.98, 0.74, 0.24, 1.0)
+            },
+        );
+        let label_rect = if dark {
+            Rect::new(
+                bounds.x() + 12.0,
+                bounds.y() + 8.0,
+                bounds.width() - 48.0,
+                18.0,
+            )
+        } else {
+            Rect::new(
+                bounds.x() + 38.0,
+                bounds.y() + 8.0,
+                bounds.width() - 50.0,
+                18.0,
+            )
+        };
+        ctx.draw_text(
+            label_rect,
+            if dark { "Dark" } else { "Light" },
+            TextStyle {
+                font_size: 12.0,
+                line_height: 16.0,
+                color: palette.text,
+                ..TextStyle::default()
+            },
+        );
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Switch, ctx.bounds());
+        node.name = Some("Dark theme".to_string());
+        node.state.checked = Some(if self.state.is_dark() {
+            ToggleState::Checked
+        } else {
+            ToggleState::Unchecked
+        });
+        node.state.focused = ctx.is_focused();
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        ctx.push(node);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FloatingSettingsGestureKind {
+    Move,
+    Resize,
+}
+
+struct FloatingSettingsGesture {
+    pointer_id: u64,
+    kind: FloatingSettingsGestureKind,
+    pointer_origin: Point,
+    initial_bounds: Rect,
+}
+
+struct FloatingSettingsWindow {
+    state: DevShellState,
     content: SingleChild,
-    signature: Vec<(u64, String, bool, bool)>,
-    compact: bool,
+    gesture: Option<FloatingSettingsGesture>,
+    close_pressed: bool,
+    close_hovered: bool,
 }
 
-enum SidebarContent {
-    Full(ListView),
-    Compact(Stack),
+impl FloatingSettingsWindow {
+    fn new<W>(state: DevShellState, content: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            state,
+            content: SingleChild::new(content),
+            gesture: None,
+            close_pressed: false,
+            close_hovered: false,
+        }
+    }
+
+    fn title_rect(bounds: Rect) -> Rect {
+        Rect::new(
+            bounds.x(),
+            bounds.y(),
+            bounds.width(),
+            DEV_SHELL_SETTINGS_TITLE_HEIGHT.min(bounds.height()),
+        )
+    }
+
+    fn content_rect(bounds: Rect) -> Rect {
+        Rect::new(
+            bounds.x() + 1.0,
+            bounds.y() + DEV_SHELL_SETTINGS_TITLE_HEIGHT,
+            (bounds.width() - 2.0).max(0.0),
+            (bounds.height() - DEV_SHELL_SETTINGS_TITLE_HEIGHT - 1.0).max(0.0),
+        )
+    }
+
+    fn close_rect(bounds: Rect) -> Rect {
+        Rect::new(bounds.max_x() - 34.0, bounds.y() + 4.0, 30.0, 30.0)
+    }
+
+    fn resize_rect(bounds: Rect) -> Rect {
+        Rect::new(
+            bounds.max_x() - DEV_SHELL_SETTINGS_RESIZE_HANDLE,
+            bounds.max_y() - DEV_SHELL_SETTINGS_RESIZE_HANDLE,
+            DEV_SHELL_SETTINGS_RESIZE_HANDLE,
+            DEV_SHELL_SETTINGS_RESIZE_HANDLE,
+        )
+    }
+
+    fn update_gesture(&mut self, ctx: &mut EventCtx, position: Point) {
+        let Some(gesture) = self.gesture.as_ref() else {
+            return;
+        };
+        let delta = position - gesture.pointer_origin;
+        let next = match gesture.kind {
+            FloatingSettingsGestureKind::Move => Rect::new(
+                gesture.initial_bounds.x() + delta.x,
+                gesture.initial_bounds.y() + delta.y,
+                gesture.initial_bounds.width(),
+                gesture.initial_bounds.height(),
+            ),
+            FloatingSettingsGestureKind::Resize => Rect::new(
+                gesture.initial_bounds.x(),
+                gesture.initial_bounds.y(),
+                gesture.initial_bounds.width() + delta.x,
+                gesture.initial_bounds.height() + delta.y,
+            ),
+        };
+        self.state.set_settings_bounds(next);
+        request_window_refresh(ctx, true);
+    }
+}
+
+impl Widget for FloatingSettingsWindow {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Move
+                    && self
+                        .gesture
+                        .as_ref()
+                        .is_some_and(|gesture| gesture.pointer_id == pointer.pointer_id) =>
+            {
+                self.update_gesture(ctx, pointer.position);
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = Self::close_rect(ctx.bounds()).contains(pointer.position);
+                if self.close_hovered != hovered {
+                    self.close_hovered = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let bounds = ctx.bounds();
+                if Self::close_rect(bounds).contains(pointer.position) {
+                    self.close_pressed = true;
+                    self.close_hovered = true;
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_focus();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                } else if Self::resize_rect(bounds).contains(pointer.position) {
+                    self.gesture = Some(FloatingSettingsGesture {
+                        pointer_id: pointer.pointer_id,
+                        kind: FloatingSettingsGestureKind::Resize,
+                        pointer_origin: pointer.position,
+                        initial_bounds: bounds,
+                    });
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_focus();
+                    ctx.set_handled();
+                } else if Self::title_rect(bounds).contains(pointer.position) {
+                    self.gesture = Some(FloatingSettingsGesture {
+                        pointer_id: pointer.pointer_id,
+                        kind: FloatingSettingsGestureKind::Move,
+                        pointer_origin: pointer.position,
+                        initial_bounds: bounds,
+                    });
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_focus();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let captured = self
+                    .gesture
+                    .as_ref()
+                    .is_some_and(|gesture| gesture.pointer_id == pointer.pointer_id)
+                    || self.close_pressed;
+                if !captured {
+                    return;
+                }
+                if self.close_pressed && Self::close_rect(ctx.bounds()).contains(pointer.position) {
+                    self.state.hide_settings();
+                }
+                self.gesture = None;
+                self.close_pressed = false;
+                self.close_hovered = Self::close_rect(ctx.bounds()).contains(pointer.position);
+                ctx.release_pointer_capture(pointer.pointer_id);
+                request_window_refresh(ctx, true);
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.gesture.is_some() || self.close_pressed {
+                    self.gesture = None;
+                    self.close_pressed = false;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    request_window_refresh(ctx, true);
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Escape" =>
+            {
+                self.state.hide_settings();
+                request_window_refresh(ctx, true);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let size = constraints.clamp(self.state.settings_bounds().size);
+        let content = Self::content_rect(Rect::from_origin_size(Point::ZERO, size));
+        self.content.measure(ctx, Constraints::tight(content.size));
+        size
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.content.arrange(ctx, Self::content_rect(bounds));
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        if !self.state.settings_visible() {
+            return;
+        }
+        let theme = self.state.theme();
+        let palette = theme.palette;
+        let content_palette = DefaultTheme::default().palette;
+        let bounds = ctx.bounds();
+        if bounds.is_empty() {
+            return;
+        }
+        ctx.fill(Path::rounded_rect(bounds, 8.0), content_palette.surface);
+        ctx.stroke(
+            Path::rounded_rect(bounds, 8.0),
+            if self.state.is_dark() {
+                palette.border.with_alpha(0.92)
+            } else {
+                content_palette.border.with_alpha(0.92)
+            },
+            StrokeStyle::new(1.0),
+        );
+
+        let title = Self::title_rect(bounds);
+        ctx.fill(
+            Path::rounded_rect(
+                Rect::new(title.x(), title.y(), title.width(), title.height() + 8.0),
+                8.0,
+            ),
+            if self.state.is_dark() {
+                Color::rgba(0.12, 0.16, 0.21, 1.0)
+            } else {
+                Color::rgba(0.16, 0.20, 0.26, 1.0)
+            },
+        );
+        ctx.fill_rect(
+            Rect::new(title.x(), title.max_y() - 8.0, title.width(), 8.0),
+            if self.state.is_dark() {
+                Color::rgba(0.12, 0.16, 0.21, 1.0)
+            } else {
+                Color::rgba(0.16, 0.20, 0.26, 1.0)
+            },
+        );
+        ctx.draw_text(
+            Rect::new(
+                title.x() + 14.0,
+                title.y() + 9.0,
+                title.width() - 54.0,
+                20.0,
+            ),
+            SETTINGS_TAB_LABEL,
+            TextStyle {
+                font_size: 13.0,
+                line_height: 18.0,
+                color: Color::rgba(0.96, 0.97, 0.99, 1.0),
+                ..TextStyle::default()
+            },
+        );
+
+        let close = Self::close_rect(bounds);
+        if self.close_hovered || self.close_pressed {
+            ctx.fill(
+                Path::rounded_rect(close, 6.0),
+                if self.close_pressed {
+                    Color::rgba(1.0, 1.0, 1.0, 0.24)
+                } else {
+                    Color::rgba(1.0, 1.0, 1.0, 0.14)
+                },
+            );
+        }
+        let close_color = Color::rgba(0.96, 0.97, 0.99, 1.0);
+        ctx.stroke(close_icon_path(close), close_color, StrokeStyle::new(1.5));
+
+        self.content.paint(ctx);
+
+        let handle = Self::resize_rect(bounds);
+        let handle_color = content_palette.border.with_alpha(0.82);
+        ctx.stroke(
+            diagonal_handle_path(handle, 10.0, 1.0),
+            handle_color,
+            StrokeStyle::new(1.4),
+        );
+        ctx.stroke(
+            diagonal_handle_path(handle, 6.0, 5.0),
+            handle_color.with_alpha(0.72),
+            StrokeStyle::new(1.4),
+        );
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if !self.state.settings_visible() {
+            return;
+        }
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Window, ctx.bounds());
+        node.name = Some(SETTINGS_TAB_LABEL.to_string());
+        node.state.focused = ctx.is_focused();
+        node.actions = vec![SemanticsAction::Focus];
+        ctx.push(node);
+        self.content.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if self.state.settings_visible() {
+            self.content.visit_children(visitor);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if self.state.settings_visible() {
+            self.content.visit_children_mut(visitor);
+        }
+    }
+}
+
+fn build_dev_demo_entries() -> Vec<DevDemo> {
+    vec![
+        DevDemo {
+            title: WIDGET_BOOK_TAB_LABEL,
+            description: "Catalog of controls, containers, media, and text surfaces.",
+            child: WidgetPod::new(build_widget_book_gallery(default_widget_book_state())),
+        },
+        DevDemo {
+            title: BUTTON_GRID_TAB_LABEL,
+            description: "Dense button grid used for interaction and resizing performance checks.",
+            child: WidgetPod::new(build_button_grid_benchmark()),
+        },
+        DevDemo {
+            title: RETAINED_TEXT_TAB_LABEL,
+            description: "Retained text layout and redraw benchmark.",
+            child: WidgetPod::new(build_retained_text_benchmark()),
+        },
+        DevDemo {
+            title: TEXT_RENDERING_COMPARISON_TAB_LABEL,
+            description: "Side-by-side text rendering comparison surface.",
+            child: WidgetPod::new(build_text_rendering_comparison_surface()),
+        },
+        DevDemo {
+            title: TEXT_VALIDATION_TAB_LABEL,
+            description: "Validation surface for text metrics, alignment, and rasterization.",
+            child: WidgetPod::new(build_text_validation_surface()),
+        },
+        DevDemo {
+            title: TEXT_EDITING_TAB_LABEL,
+            description: "Single-line and multi-line text editing demos.",
+            child: WidgetPod::new(build_text_editing_benchmark()),
+        },
+        DevDemo {
+            title: HDR_VALIDATION_TAB_LABEL,
+            description: "HDR, color-management, and tone-mapping validation surface.",
+            child: WidgetPod::new(build_color_validation_surface()),
+        },
+        DevDemo {
+            title: PAINT_TAB_LABEL,
+            description: "Pixel canvas painting demo.",
+            child: WidgetPod::new(build_paint_demo()),
+        },
+        DevDemo {
+            title: VECTOR_EDITOR_TAB_LABEL,
+            description: "Vector canvas drawing and editing demo.",
+            child: WidgetPod::new(build_vector_editor_demo()),
+        },
+    ]
+}
+
+fn clamp_dev_shell_settings_bounds(host: Rect, bounds: Rect) -> Rect {
+    if host.is_empty() {
+        return Rect::new(
+            bounds.x(),
+            bounds.y(),
+            bounds.width().max(DEV_SHELL_MIN_SETTINGS_WIDTH),
+            bounds.height().max(DEV_SHELL_MIN_SETTINGS_HEIGHT),
+        );
+    }
+    let width = bounds.width().clamp(
+        DEV_SHELL_MIN_SETTINGS_WIDTH.min(host.width()),
+        host.width().max(1.0),
+    );
+    let height = bounds.height().clamp(
+        DEV_SHELL_MIN_SETTINGS_HEIGHT.min(host.height()),
+        host.height().max(1.0),
+    );
+    let min_visible_width = width.min(64.0);
+    let min_visible_height = DEV_SHELL_SETTINGS_TITLE_HEIGHT.min(height);
+    let max_x = (host.max_x() - min_visible_width).max(host.x());
+    let max_y = (host.max_y() - min_visible_height).max(host.y());
+    Rect::new(
+        bounds.x().clamp(host.x(), max_x),
+        bounds.y().clamp(host.y(), max_y),
+        width,
+        height,
+    )
+}
+
+fn draw_logo_wave(ctx: &mut PaintCtx, bounds: Rect, top_fraction: f32, color: Color) {
+    let radius = bounds.width().min(bounds.height()) * 0.5;
+    let center = Point::new(
+        bounds.x() + bounds.width() * 0.5,
+        bounds.y() + bounds.height() * 0.5,
+    );
+    let top = (bounds.y() + bounds.height() * top_fraction)
+        .clamp(center.y - radius + 0.5, center.y + radius - 0.5);
+    let chord_half_width = (radius * radius - (top - center.y).powi(2)).sqrt();
+    let left = center.x - chord_half_width;
+    let right = center.x + chord_half_width;
+    let width = right - left;
+    let amp = bounds.height() * 0.105;
+    let mut path = PathBuilder::new();
+    path.move_to(Point::new(left, top));
+    path.cubic_to(
+        Point::new(left + width * 0.18, top - amp),
+        Point::new(left + width * 0.30, top - amp),
+        Point::new(left + width * 0.50, top),
+    );
+    path.cubic_to(
+        Point::new(left + width * 0.70, top + amp),
+        Point::new(left + width * 0.82, top + amp),
+        Point::new(right, top),
+    );
+    path.line_to(Point::new(center.x, center.y + radius));
+    path.line_to(Point::new(left, top));
+    path.close();
+    ctx.fill(path.build(), color);
+}
+
+fn close_icon_path(bounds: Rect) -> Path {
+    let mut path = PathBuilder::new();
+    let inset = 9.0;
+    path.move_to(Point::new(bounds.x() + inset, bounds.y() + inset));
+    path.line_to(Point::new(bounds.max_x() - inset, bounds.max_y() - inset));
+    path.move_to(Point::new(bounds.max_x() - inset, bounds.y() + inset));
+    path.line_to(Point::new(bounds.x() + inset, bounds.max_y() - inset));
+    path.build()
+}
+
+fn diagonal_handle_path(bounds: Rect, inset: f32, offset: f32) -> Path {
+    let mut path = PathBuilder::new();
+    path.move_to(Point::new(bounds.max_x() - inset, bounds.max_y() - offset));
+    path.line_to(Point::new(bounds.max_x() - offset, bounds.max_y() - inset));
+    path.build()
 }
 
 fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
@@ -109,530 +1545,6 @@ fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
         InvalidationTarget::Window(ctx.window_id()),
         InvalidationKind::Semantics,
     ));
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-struct DesktopAutomationRoot {
-    workspace: FloatingWorkspaceState,
-    target_view_id: u64,
-    initial_bounds: Rect,
-    content: SingleChild,
-    mode: Option<DesktopAutomationMode>,
-    timer: Option<TimerToken>,
-    started_at: Option<f64>,
-    last_report_at: Option<f64>,
-    last_report_frame_index: u64,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl DesktopAutomationRoot {
-    const STEP_INTERVAL_S: f64 = 1.0 / 120.0;
-    const BENCH_DURATION_S: f64 = 3.0;
-    const REPORT_INTERVAL_S: f64 = 0.5;
-
-    fn new<T: Widget + 'static>(
-        workspace: FloatingWorkspaceState,
-        target_view_id: u64,
-        initial_bounds: Rect,
-        mode: Option<DesktopAutomationMode>,
-        content: T,
-    ) -> Self {
-        Self {
-            workspace,
-            target_view_id,
-            initial_bounds,
-            content: SingleChild::new(content),
-            mode,
-            timer: None,
-            started_at: None,
-            last_report_at: None,
-            last_report_frame_index: 0,
-        }
-    }
-
-    fn ensure_started(&mut self, ctx: &mut EventCtx) {
-        if self.timer.is_some() {
-            return;
-        }
-
-        let now = ctx.current_time();
-        self.started_at = Some(now);
-        self.last_report_at = Some(now);
-        self.last_report_frame_index = sui::window_performance_snapshot(ctx.window_id())
-            .map(|snapshot| snapshot.frame_index)
-            .unwrap_or(0);
-        self.timer = Some(ctx.schedule_timer_after(Self::STEP_INTERVAL_S));
-        println!(
-            "[sui-dev automation] started {:?} on view {}",
-            self.mode, self.target_view_id
-        );
-    }
-
-    fn target_bounds_for_elapsed(&self, elapsed: f64) -> Rect {
-        match self
-            .mode
-            .expect("automation mode should be active when ticking")
-        {
-            DesktopAutomationMode::ButtonGridResize => {
-                let phase = ((elapsed / Self::BENCH_DURATION_S) * 2.0).fract() as f32;
-                let triangle = if phase <= 0.5 {
-                    phase * 2.0
-                } else {
-                    (1.0 - phase) * 2.0
-                };
-                Rect::new(
-                    self.initial_bounds.x(),
-                    self.initial_bounds.y(),
-                    self.initial_bounds.width() + 420.0 * triangle,
-                    self.initial_bounds.height() + 280.0 * triangle,
-                )
-            }
-        }
-    }
-
-    fn report_progress(&mut self, ctx: &EventCtx, force: bool) {
-        let now = ctx.current_time();
-        let Some(last_report_at) = self.last_report_at else {
-            self.last_report_at = Some(now);
-            return;
-        };
-        if !force && now - last_report_at < Self::REPORT_INTERVAL_S {
-            return;
-        }
-
-        let Some(snapshot) = sui::window_performance_snapshot(ctx.window_id()) else {
-            self.last_report_at = Some(now);
-            return;
-        };
-
-        let frame_delta = snapshot
-            .frame_index
-            .saturating_sub(self.last_report_frame_index);
-        let elapsed = (now - last_report_at).max(f64::EPSILON);
-        let fps = frame_delta as f64 / elapsed;
-        println!(
-            "[sui-dev automation] t={now:.3}s fps={fps:.1} frame={} total={:.3}ms acq={:.3}ms pres={:.3}ms build={:.3}ms state={:.3}ms",
-            snapshot.frame_index,
-            snapshot.total_time_ms,
-            snapshot.renderer_submission.surface_acquire_time_us as f64 / 1000.0,
-            snapshot.renderer_submission.surface_present_time_us as f64 / 1000.0,
-            snapshot.renderer_submission.retained_packet_build_time_us as f64 / 1000.0,
-            snapshot.renderer_submission.retained_state_update_time_us as f64 / 1000.0,
-        );
-        self.last_report_at = Some(now);
-        self.last_report_frame_index = snapshot.frame_index;
-    }
-
-    fn tick(&mut self, ctx: &mut EventCtx) {
-        if self.mode.is_none() {
-            return;
-        }
-        self.ensure_started(ctx);
-        let started_at = self.started_at.unwrap_or_else(|| ctx.current_time());
-        let elapsed = (ctx.current_time() - started_at).max(0.0);
-        let next_bounds = self.target_bounds_for_elapsed(elapsed);
-        if self
-            .workspace
-            .set_view_bounds(self.target_view_id, next_bounds)
-        {
-            request_window_refresh(ctx, true);
-        }
-        self.report_progress(ctx, false);
-
-        if elapsed < Self::BENCH_DURATION_S {
-            self.timer = Some(ctx.schedule_timer_after(Self::STEP_INTERVAL_S));
-        } else {
-            self.timer = None;
-            self.report_progress(ctx, true);
-            println!("[sui-dev automation] completed {:?}", self.mode);
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Widget for DesktopAutomationRoot {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        match event {
-            Event::Window(
-                WindowEvent::RedrawRequested
-                | WindowEvent::Resized(_)
-                | WindowEvent::Focused(_)
-                | WindowEvent::ScaleFactorChanged { .. },
-            ) if self.mode.is_some() && self.timer.is_none() => {
-                self.ensure_started(ctx);
-            }
-            Event::Wake(WakeEvent::Timer { token, .. })
-                if self.mode.is_some() && self.timer == Some(*token) =>
-            {
-                self.tick(ctx);
-                ctx.set_handled();
-            }
-            _ => {}
-        }
-    }
-
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.content.measure(ctx, constraints)
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        self.content.arrange(ctx, bounds);
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        self.content.paint(ctx);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.content.semantics(ctx);
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.content.visit_children(visitor);
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.content.visit_children_mut(visitor);
-    }
-}
-
-impl Widget for SidebarContent {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        match self {
-            Self::Full(content) => content.event(ctx, event),
-            Self::Compact(content) => content.event(ctx, event),
-        }
-    }
-
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        match self {
-            Self::Full(content) => content.measure(ctx, constraints),
-            Self::Compact(content) => content.measure(ctx, constraints),
-        }
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        match self {
-            Self::Full(content) => content.arrange(ctx, bounds),
-            Self::Compact(content) => content.arrange(ctx, bounds),
-        }
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        match self {
-            Self::Full(content) => content.paint(ctx),
-            Self::Compact(content) => content.paint(ctx),
-        }
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        match self {
-            Self::Full(content) => content.semantics(ctx),
-            Self::Compact(content) => content.semantics(ctx),
-        }
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        match self {
-            Self::Full(content) => content.visit_children(visitor),
-            Self::Compact(content) => content.visit_children(visitor),
-        }
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        match self {
-            Self::Full(content) => content.visit_children_mut(visitor),
-            Self::Compact(content) => content.visit_children_mut(visitor),
-        }
-    }
-}
-
-impl ViewSidebar {
-    fn new(workspace: FloatingWorkspaceState) -> Self {
-        let signature = sidebar_signature(&workspace);
-        let compact = false;
-        let content = SingleChild::new(build_sidebar_content(workspace.clone(), compact));
-        Self {
-            workspace,
-            content,
-            signature,
-            compact,
-        }
-    }
-
-    fn sync_content(&mut self, compact: bool) {
-        if compact {
-            ensure_compact_workspace_focus(&self.workspace);
-        }
-        let signature = sidebar_signature(&self.workspace);
-        if signature != self.signature || compact != self.compact {
-            self.content = SingleChild::new(build_sidebar_content(self.workspace.clone(), compact));
-            self.signature = signature;
-            self.compact = compact;
-        }
-    }
-}
-
-impl Widget for ViewSidebar {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let compact = constraints.max.width.is_finite()
-            && constraints.max.width <= WORKSPACE_SIDEBAR_COMPACT_MAX_VIEWPORT;
-        self.sync_content(compact);
-        self.content.measure(ctx, constraints)
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        self.content.arrange(ctx, bounds);
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        self.content.paint(ctx);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.content.semantics(ctx);
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.content.visit_children(visitor);
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.content.visit_children_mut(visitor);
-    }
-}
-
-fn sidebar_signature(workspace: &FloatingWorkspaceState) -> Vec<(u64, String, bool, bool)> {
-    workspace
-        .snapshots()
-        .into_iter()
-        .map(|view| (view.id, view.title, view.visible, view.maximized))
-        .collect()
-}
-
-fn ensure_compact_workspace_focus(workspace: &FloatingWorkspaceState) {
-    let snapshots = workspace.snapshots();
-    if snapshots.iter().any(|view| view.maximized) {
-        return;
-    }
-
-    let Some(target) = snapshots
-        .iter()
-        .find(|view| view.visible)
-        .or_else(|| snapshots.first())
-        .map(|view| view.id)
-    else {
-        return;
-    };
-
-    let _ = workspace.set_view_maximized(target, true);
-}
-
-fn build_sidebar_content(workspace: FloatingWorkspaceState, compact: bool) -> SidebarContent {
-    if compact {
-        SidebarContent::Compact(build_sidebar_switcher(workspace))
-    } else {
-        SidebarContent::Full(build_sidebar_list(workspace))
-    }
-}
-
-fn build_sidebar_list(workspace: FloatingWorkspaceState) -> ListView {
-    ListView::new(SIDEBAR_TITLE)
-        .row_height(44.0)
-        .items(workspace.snapshots().into_iter().map(|view| {
-            ListItem::new(view.title.clone()).with_child(build_sidebar_row(workspace.clone(), view))
-        }))
-}
-
-fn build_sidebar_switcher(workspace: FloatingWorkspaceState) -> Stack {
-    let mut switcher = Stack::vertical()
-        .spacing(10.0)
-        .alignment(Alignment::Center)
-        .with_child(
-            SizedBox::new().width(SIDEBAR_COMPACT_ROW_WIDTH).with_child(
-                Label::new("Views")
-                    .font_size(12.0)
-                    .line_height(16.0)
-                    .color(Color::rgba(0.36, 0.42, 0.52, 1.0)),
-            ),
-        );
-
-    for view in workspace.snapshots() {
-        switcher.push(build_sidebar_switcher_row(workspace.clone(), view));
-    }
-
-    switcher
-}
-
-fn build_sidebar_switcher_row(
-    workspace: FloatingWorkspaceState,
-    view: FloatingViewSnapshot,
-) -> Stack {
-    let view_id = view.id;
-    let visibility_workspace = workspace.clone();
-    let maximize_workspace = workspace;
-    let visibility_label = if view.visible {
-        "Hide view"
-    } else {
-        "Show view"
-    };
-    let visibility_icon = if view.visible {
-        IconGlyph::Close
-    } else {
-        IconGlyph::Check
-    };
-    let maximize_label = if view.maximized {
-        "Restore view"
-    } else {
-        "Maximize view"
-    };
-    let maximize_icon = if view.maximized {
-        IconGlyph::Restore
-    } else {
-        IconGlyph::Maximize
-    };
-    let label_color = if view.visible {
-        Color::rgba(0.12, 0.16, 0.22, 1.0)
-    } else {
-        Color::rgba(0.49, 0.54, 0.62, 1.0)
-    };
-
-    Stack::vertical()
-        .spacing(4.0)
-        .alignment(Alignment::Center)
-        .with_child(
-            SizedBox::new().width(SIDEBAR_COMPACT_ROW_WIDTH).with_child(
-                Label::new(compact_sidebar_title(&view.title))
-                    .font_size(11.0)
-                    .line_height(14.0)
-                    .color(label_color),
-            ),
-        )
-        .with_child(
-            Stack::horizontal()
-                .spacing(4.0)
-                .alignment(Alignment::Center)
-                .with_child(
-                    IconButton::new(visibility_icon, visibility_label)
-                        .size(SIDEBAR_COMPACT_ICON_SIZE)
-                        .icon_size(13.0)
-                        .theme(secondary_sidebar_action_theme())
-                        .on_press_with_ctx(move |ctx| {
-                            if visibility_workspace.toggle_view_visible(view_id).is_some() {
-                                request_window_refresh(ctx, true);
-                            }
-                        }),
-                )
-                .with_child(
-                    IconButton::new(maximize_icon, maximize_label)
-                        .size(SIDEBAR_COMPACT_ICON_SIZE)
-                        .icon_size(13.0)
-                        .theme(secondary_sidebar_action_theme())
-                        .on_press_with_ctx(move |ctx| {
-                            let Some(snapshot) = maximize_workspace.snapshot(view_id) else {
-                                return;
-                            };
-                            if maximize_workspace.set_view_maximized(view_id, !snapshot.maximized) {
-                                request_window_refresh(ctx, true);
-                            }
-                        }),
-                ),
-        )
-}
-
-fn compact_sidebar_title(title: &str) -> String {
-    match title {
-        WIDGET_BOOK_TAB_LABEL => "Book",
-        BUTTON_GRID_TAB_LABEL => "Buttons",
-        RETAINED_TEXT_TAB_LABEL => "Text",
-        TEXT_RENDERING_COMPARISON_TAB_LABEL => "Compare",
-        TEXT_VALIDATION_TAB_LABEL => "Validate",
-        TEXT_EDITING_TAB_LABEL => "Edit",
-        HDR_VALIDATION_TAB_LABEL => "HDR",
-        PAINT_TAB_LABEL => "Paint",
-        VECTOR_EDITOR_TAB_LABEL => "Vector",
-        SETTINGS_TAB_LABEL => "Settings",
-        _ => title,
-    }
-    .to_string()
-}
-
-fn secondary_sidebar_action_theme() -> DefaultTheme {
-    let mut theme = DefaultTheme::default();
-    theme.palette.accent = Color::rgba(0.94, 0.96, 0.98, 1.0);
-    theme.palette.accent_hover = Color::rgba(0.90, 0.93, 0.96, 1.0);
-    theme.palette.accent_pressed = Color::rgba(0.84, 0.88, 0.93, 1.0);
-    theme.palette.accent_border = Color::rgba(0.75, 0.80, 0.86, 1.0);
-    theme.palette.accent_border_hover = Color::rgba(0.63, 0.69, 0.77, 1.0);
-    theme.palette.accent_border_focus = Color::rgba(0.38, 0.45, 0.56, 1.0);
-    theme.palette.accent_text = Color::rgba(0.16, 0.20, 0.28, 1.0);
-    theme.palette.focus_ring = Color::rgba(0.38, 0.45, 0.56, 0.22);
-    theme
-}
-
-fn build_sidebar_row(workspace: FloatingWorkspaceState, view: FloatingViewSnapshot) -> Stack {
-    let view_id = view.id;
-    let visibility_workspace = workspace.clone();
-    let maximize_workspace = workspace;
-    let visibility_label = if view.visible { "Hide" } else { "Show" };
-    let visibility_icon = if view.visible {
-        IconGlyph::Close
-    } else {
-        IconGlyph::Check
-    };
-    let maximize_label = if view.maximized {
-        "Restore"
-    } else {
-        "Maximize"
-    };
-    let maximize_icon = if view.maximized {
-        IconGlyph::Restore
-    } else {
-        IconGlyph::Maximize
-    };
-    let label_color = if view.visible {
-        Color::rgba(0.12, 0.16, 0.22, 1.0)
-    } else {
-        Color::rgba(0.49, 0.54, 0.62, 1.0)
-    };
-    let secondary_theme = secondary_sidebar_action_theme();
-
-    Stack::horizontal()
-        .spacing(6.0)
-        .alignment(Alignment::Center)
-        .with_child(
-            SizedBox::new().width(104.0).with_child(
-                Label::new(view.title)
-                    .font_size(12.0)
-                    .line_height(16.0)
-                    .color(label_color),
-            ),
-        )
-        .with_child(
-            IconButton::new(visibility_icon, visibility_label)
-                .theme(secondary_theme)
-                .size(SIDEBAR_ACTION_ICON_SIZE)
-                .icon_size(13.0)
-                .on_press_with_ctx(move |ctx| {
-                    if visibility_workspace.toggle_view_visible(view_id).is_some() {
-                        request_window_refresh(ctx, true);
-                    }
-                }),
-        )
-        .with_child(
-            IconButton::new(maximize_icon, maximize_label)
-                .theme(secondary_theme)
-                .size(SIDEBAR_ACTION_ICON_SIZE)
-                .icon_size(13.0)
-                .on_press_with_ctx(move |ctx| {
-                    let Some(snapshot) = maximize_workspace.snapshot(view_id) else {
-                        return;
-                    };
-                    if maximize_workspace.set_view_maximized(view_id, !snapshot.maximized) {
-                        request_window_refresh(ctx, true);
-                    }
-                }),
-        )
 }
 
 fn window_text_hinting_from_renderer(hinting: TextHinting) -> WindowTextHinting {
@@ -1523,164 +2435,26 @@ fn build_vector_editor_demo() -> Canvas {
         .shape(CanvasShape::path(curve.build()))
 }
 
-pub(crate) fn build_dev_workspace_with_widget_book_bounds_and_render_options(
-    widget_book_bounds: Rect,
-    render_options: WindowRenderOptions,
-) -> (FloatingWorkspaceState, FloatingWorkspace) {
-    set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
-    let widget_book_state = default_widget_book_state();
-    let workspace = FloatingWorkspaceState::new();
-
-    let mut views = FloatingWorkspace::new(workspace.clone()).name("Development workspace");
-    views.push_view(
-        FloatingViewConfig::new(WIDGET_BOOK_TAB_LABEL, widget_book_bounds)
-            .min_size(Size::new(420.0, 320.0)),
-        build_widget_book_gallery(widget_book_state),
-    );
-    views.push_view(
-        FloatingViewConfig::new(BUTTON_GRID_TAB_LABEL, Rect::new(560.0, 72.0, 420.0, 340.0))
-            .min_size(Size::new(280.0, 220.0)),
-        build_button_grid_benchmark(),
-    );
-    views.push_view(
-        FloatingViewConfig::new(
-            RETAINED_TEXT_TAB_LABEL,
-            Rect::new(860.0, 420.0, 360.0, 260.0),
-        )
-        .min_size(Size::new(320.0, 260.0))
-        .visible(false),
-        build_retained_text_benchmark(),
-    );
-    views.push_view(
-        FloatingViewConfig::new(
-            TEXT_RENDERING_COMPARISON_TAB_LABEL,
-            Rect::new(980.0, 72.0, 520.0, 420.0),
-        )
-        .min_size(Size::new(420.0, 320.0))
-        .visible(false),
-        build_text_rendering_comparison_surface(),
-    );
-    views.push_view(
-        FloatingViewConfig::new(
-            TEXT_VALIDATION_TAB_LABEL,
-            Rect::new(720.0, 72.0, 460.0, 380.0),
-        )
-        .min_size(Size::new(360.0, 280.0))
-        .visible(false),
-        build_text_validation_surface(),
-    );
-    views.push_view(
-        FloatingViewConfig::new(
-            TEXT_EDITING_TAB_LABEL,
-            Rect::new(720.0, 470.0, 520.0, 360.0),
-        )
-        .min_size(Size::new(420.0, 300.0))
-        .visible(false),
-        build_text_editing_benchmark(),
-    );
-    views.push_view(
-        FloatingViewConfig::new(
-            HDR_VALIDATION_TAB_LABEL,
-            Rect::new(980.0, 120.0, 620.0, 520.0),
-        )
-        .min_size(Size::new(460.0, 320.0)),
-        build_color_validation_surface(),
-    );
-    views.push_view(
-        FloatingViewConfig::new(PAINT_TAB_LABEL, Rect::new(280.0, 160.0, 520.0, 420.0))
-            .min_size(Size::new(360.0, 280.0))
-            .visible(false),
-        build_paint_demo(),
-    );
-    views.push_view(
-        FloatingViewConfig::new(
-            VECTOR_EDITOR_TAB_LABEL,
-            Rect::new(340.0, 200.0, 560.0, 440.0),
-        )
-        .min_size(Size::new(380.0, 300.0))
-        .visible(false),
-        build_vector_editor_demo(),
-    );
-    views.push_view(
-        FloatingViewConfig::new(SETTINGS_TAB_LABEL, Rect::new(420.0, 440.0, 420.0, 320.0))
-            .min_size(Size::new(300.0, 240.0)),
-        build_render_settings_tab_with_options(render_options),
-    );
-
-    (workspace, views)
-}
-
 pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
-    widget_book_bounds: Rect,
+    _widget_book_bounds: Rect,
     render_options: WindowRenderOptions,
 ) -> Application {
-    build_dev_application_with_widget_book_bounds_render_options(widget_book_bounds, render_options)
-}
-
-fn build_dev_application_with_widget_book_bounds_render_options(
-    widget_book_bounds: Rect,
-    render_options: WindowRenderOptions,
-) -> Application {
-    let (workspace, views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
-        widget_book_bounds,
-        render_options,
-    );
-
-    let root = SplitView::horizontal(ViewSidebar::new(workspace.clone()), views)
-        .name("Development workspace split")
-        .ratio(WORKSPACE_SIDEBAR_RATIO)
-        .min_first(WORKSPACE_SIDEBAR_MIN_WIDTH)
-        .min_second(WORKSPACE_CONTENT_MIN_WIDTH)
-        .divider_thickness(WORKSPACE_DIVIDER_THICKNESS);
-
-    finish_dev_application(root)
+    finish_dev_application(DevBrowserShell::new(render_options))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn build_dev_application_with_widget_book_bounds_and_automation(
-    widget_book_bounds: Rect,
-    automation: Option<DesktopAutomationMode>,
-) -> Application {
-    build_dev_application_with_widget_book_bounds_render_options_and_automation(
-        widget_book_bounds,
-        RenderSettingsTab::default_options(),
-        automation,
-    )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn build_dev_application_with_widget_book_bounds_render_options_and_automation(
-    widget_book_bounds: Rect,
+fn build_dev_application_with_render_options_and_automation(
     render_options: WindowRenderOptions,
     automation: Option<DesktopAutomationMode>,
 ) -> Application {
-    let (workspace, views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
-        widget_book_bounds,
+    let initial_demo = automation.map(|mode| match mode {
+        DesktopAutomationMode::ButtonGridResize => BUTTON_GRID_TAB_LABEL,
+        DesktopAutomationMode::WidgetBookScroll => WIDGET_BOOK_TAB_LABEL,
+    });
+    finish_dev_application(DevBrowserShell::with_initial_demo(
         render_options,
-    );
-    let button_grid_view_id = workspace
-        .snapshots()
-        .into_iter()
-        .find(|view| view.title == BUTTON_GRID_TAB_LABEL)
-        .map(|view| (view.id, view.bounds))
-        .expect("expected button grid view in dev workspace");
-
-    let root = SplitView::horizontal(ViewSidebar::new(workspace.clone()), views)
-        .name("Development workspace split")
-        .ratio(WORKSPACE_SIDEBAR_RATIO)
-        .min_first(WORKSPACE_SIDEBAR_MIN_WIDTH)
-        .min_second(WORKSPACE_CONTENT_MIN_WIDTH)
-        .divider_thickness(WORKSPACE_DIVIDER_THICKNESS);
-
-    let root = DesktopAutomationRoot::new(
-        workspace.clone(),
-        button_grid_view_id.0,
-        button_grid_view_id.1,
-        automation,
-        root,
-    );
-
-    finish_dev_application(root)
+        initial_demo,
+    ))
 }
 
 fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
@@ -1700,7 +2474,7 @@ fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
 }
 
 pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
-    build_dev_application_with_widget_book_bounds_render_options(
+    build_dev_application_with_widget_book_bounds_and_render_options(
         widget_book_bounds,
         RenderSettingsTab::default_options(),
     )
@@ -1714,8 +2488,8 @@ pub fn build_dev_application() -> Application {
 pub fn build_dev_application_with_automation(
     automation: Option<DesktopAutomationMode>,
 ) -> Application {
-    build_dev_application_with_widget_book_bounds_and_automation(
-        Rect::new(24.0, 24.0, 680.0, 760.0),
+    build_dev_application_with_render_options_and_automation(
+        RenderSettingsTab::default_options(),
         automation,
     )
 }
@@ -1786,42 +2560,58 @@ mod tests {
 
     fn build_fronting_test_application() -> Application {
         let workspace = FloatingWorkspaceState::new();
-        let mut views = FloatingWorkspace::new(workspace.clone()).name(FRONTING_TEST_TITLE);
+        let mut views = FloatingWorkspace::new(workspace).name(FRONTING_TEST_TITLE);
         views.push_view(
             FloatingViewConfig::new("First", Rect::new(24.0, 48.0, 320.0, 240.0))
                 .min_size(Size::new(220.0, 160.0)),
             SolidFill::new(Color::rgba(0.86, 0.22, 0.18, 1.0)),
         );
         views.push_view(
-            FloatingViewConfig::new("Second", Rect::new(420.0, 88.0, 320.0, 240.0))
+            FloatingViewConfig::new("Second", Rect::new(220.0, 88.0, 320.0, 240.0))
                 .min_size(Size::new(220.0, 160.0)),
             SolidFill::new(Color::rgba(0.16, 0.62, 0.28, 1.0)),
         );
-
-        let root = SplitView::horizontal(ViewSidebar::new(workspace), views)
-            .name("Fronting test split")
-            .ratio(WORKSPACE_SIDEBAR_RATIO)
-            .min_first(WORKSPACE_SIDEBAR_MIN_WIDTH)
-            .min_second(WORKSPACE_CONTENT_MIN_WIDTH)
-            .divider_thickness(WORKSPACE_DIVIDER_THICKNESS);
 
         Application::new().window(
             WindowBuilder::new().title(FRONTING_TEST_TITLE).root(
                 LivePerformanceRoot::new(
                     FRONTING_TEST_TITLE,
                     "Floating workspace fronting regression.",
-                    root,
+                    views,
                 )
                 .show_performance_overlay(),
             ),
         )
     }
 
+    fn build_floating_widget_book_test_application(widget_book_bounds: Rect) -> Application {
+        set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
+        let workspace = FloatingWorkspaceState::new();
+        let mut views = FloatingWorkspace::new(workspace).name("Widget book floating regression");
+        views.push_view(
+            FloatingViewConfig::new(WIDGET_BOOK_TAB_LABEL, widget_book_bounds)
+                .min_size(Size::new(420.0, 320.0)),
+            build_widget_book_gallery(default_widget_book_state()),
+        );
+        finish_dev_application(views)
+    }
+
+    fn build_floating_button_grid_test_application(initial_bounds: Rect) -> Application {
+        let workspace = FloatingWorkspaceState::new();
+        let mut views = FloatingWorkspace::new(workspace).name("Button grid floating regression");
+        views.push_view(
+            FloatingViewConfig::new(BUTTON_GRID_TAB_LABEL, initial_bounds)
+                .min_size(Size::new(280.0, 220.0)),
+            build_button_grid_benchmark(),
+        );
+        finish_dev_application(views)
+    }
+
     #[test]
     fn widget_book_scroll_does_not_repaint_pixels_outside_shrunken_floating_view() -> Result<()> {
         let initial_bounds = Rect::new(320.0, 28.0, 560.0, 520.0);
         let app = TestApp::new(move || {
-            build_dev_application_with_widget_book_bounds(initial_bounds).build()
+            build_floating_widget_book_test_application(initial_bounds).build()
         })?;
         let window = app.main_window()?;
 
@@ -2047,7 +2837,7 @@ mod tests {
     -> Result<()> {
         let initial_bounds = Rect::new(320.0, 28.0, 560.0, 520.0);
         let app = TestApp::new(move || {
-            build_dev_application_with_widget_book_bounds(initial_bounds).build()
+            build_floating_widget_book_test_application(initial_bounds).build()
         })?;
         let window = app.main_window()?;
 
@@ -2085,6 +2875,7 @@ mod tests {
     fn settings_view_scrolls_without_repainting_outside_its_floating_bounds() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
+        open_dev_shell_settings(&window)?;
 
         let before_snapshot = window.snapshot()?;
         let settings_view =
@@ -2164,9 +2955,10 @@ mod tests {
     fn hdr_validation_view_is_present_in_dev_workspace() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
+        open_dev_shell_demo(&window, HDR_VALIDATION_TAB_LABEL)?;
         window
-            .get_by_role(SemanticsRole::Window)
-            .with_name(HDR_VALIDATION_TAB_LABEL)
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(sui_widget_book::COLOR_VALIDATION_SCROLL_NAME)
             .expect()
             .to_be_visible()?;
         Ok(())
@@ -2193,39 +2985,140 @@ mod tests {
     }
 
     #[test]
-    fn dev_workspace_sidebar_uses_list_rows_with_button_widgets() {
+    fn dev_workspace_uses_picker_buttons_without_sidebar() {
         let mut runtime = build_dev_application()
             .build()
             .expect("dev application should build");
         let window_id = runtime.window_ids()[0];
         runtime
             .render(window_id)
-            .expect("dev application should render for sidebar semantics");
+            .expect("dev application should render for picker semantics");
         let semantics = runtime
             .semantics(window_id)
             .expect("dev application semantics should exist");
 
         assert!(
-            semantics.iter().any(|node| {
-                node.role == SemanticsRole::List && node.name.as_deref() == Some(SIDEBAR_TITLE)
+            semantics.iter().all(|node| {
+                !(node.role == SemanticsRole::List
+                    && node.name.as_deref() == Some("Available views"))
             }),
-            "expected the workspace sidebar to expose the standard ListView semantics"
+            "expected the browser-style dev shell to omit the legacy sidebar"
         );
-        for button in ["Hide", "Show", "Maximize"] {
+        for button in [
+            WIDGET_BOOK_TAB_LABEL,
+            BUTTON_GRID_TAB_LABEL,
+            HDR_VALIDATION_TAB_LABEL,
+            PAINT_TAB_LABEL,
+            VECTOR_EDITOR_TAB_LABEL,
+        ] {
             assert!(
                 semantics.iter().any(|node| {
                     node.role == SemanticsRole::Button && node.name.as_deref() == Some(button)
                 }),
-                "expected sidebar list rows to expose a {button:?} button"
+                "expected the demo picker to expose {button:?} as a button"
             );
         }
         assert!(
             semantics.iter().any(|node| {
-                node.role == SemanticsRole::Text
-                    && node.name.as_deref() == Some(WIDGET_BOOK_TAB_LABEL)
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open demo")
             }),
-            "expected sidebar list rows to expose labels as standard Label widgets"
+            "expected the tab zone to expose the demo picker + button"
         );
+    }
+
+    #[test]
+    fn dev_shell_main_menu_uses_compact_toolbar_metrics() {
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("dev application should render for toolbar semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("dev application semantics should exist");
+
+        let menu_button = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("SUI menu")
+            })
+            .expect("expected compact SUI menu trigger");
+        let open_demo = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open demo")
+            })
+            .expect("expected compact open-demo button");
+
+        assert_eq!(menu_button.bounds.height(), DEV_SHELL_LOGO_BUTTON_SIZE);
+        assert_eq!(open_demo.bounds.height(), DEV_SHELL_PLUS_BUTTON_SIZE);
+        assert!(menu_button.bounds.max_y() <= DEV_SHELL_TOOLBAR_HEIGHT);
+        assert!(open_demo.bounds.max_y() <= DEV_SHELL_TOOLBAR_HEIGHT);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_automation_builder_uses_browser_shell_layout() {
+        let mut runtime = build_dev_application_with_automation(None)
+            .build()
+            .expect("desktop dev application should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("desktop dev application should render");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("desktop dev application semantics should exist");
+
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Tabs && node.name.as_deref() == Some("SUI dev browser")
+            }),
+            "expected the desktop launch builder to use the browser-style dev shell"
+        );
+        assert!(
+            semantics.iter().all(|node| {
+                !(node.role == SemanticsRole::List
+                    && node.name.as_deref() == Some("Available views"))
+            }),
+            "desktop launch builder should not expose the retired sidebar layout"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn desktop_automation_builder_opens_requested_demo() {
+        for (mode, title) in [
+            (
+                DesktopAutomationMode::ButtonGridResize,
+                BUTTON_GRID_TAB_LABEL,
+            ),
+            (
+                DesktopAutomationMode::WidgetBookScroll,
+                WIDGET_BOOK_TAB_LABEL,
+            ),
+        ] {
+            let mut runtime = build_dev_application_with_automation(Some(mode))
+                .build()
+                .expect("desktop dev application should build");
+            let window_id = runtime.window_ids()[0];
+            runtime
+                .render(window_id)
+                .expect("desktop dev application should render");
+            let semantics = runtime
+                .semantics(window_id)
+                .expect("desktop dev application semantics should exist");
+            let shell = semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::Tabs
+                        && node.name.as_deref() == Some("SUI dev browser")
+                })
+                .expect("desktop dev shell tab semantics should exist");
+            assert_eq!(shell.value, Some(SemanticsValue::Text(title.to_string())));
+        }
     }
 
     #[test]
@@ -2409,17 +3302,12 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
-    fn settings_view_exposes_visible_labels_for_render_selectors() {
-        let mut runtime = build_dev_application()
-            .build()
-            .expect("dev application should build");
-        let window_id = runtime.window_ids()[0];
-        runtime
-            .render(window_id)
-            .expect("dev application should render for settings semantics");
-        let semantics = runtime
-            .semantics(window_id)
-            .expect("dev application semantics should exist");
+    fn settings_view_exposes_visible_labels_for_render_selectors() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_settings(&window)?;
+        let snapshot = window.snapshot()?;
+        let semantics = &snapshot.accessibility.nodes;
 
         for label in [
             COLOR_MANAGEMENT_MODE_NAME,
@@ -2437,20 +3325,16 @@ final_max_luminance={final_max_luminance}
                 "expected semantics tree to expose settings control {label:?}"
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn settings_view_exposes_hdr_theme_mode_controls() {
-        let mut runtime = build_dev_application()
-            .build()
-            .expect("dev application should build");
-        let window_id = runtime.window_ids()[0];
-        runtime
-            .render(window_id)
-            .expect("dev application should render for settings semantics");
-        let semantics = runtime
-            .semantics(window_id)
-            .expect("dev application semantics should exist");
+    fn settings_view_exposes_hdr_theme_mode_controls() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_settings(&window)?;
+        let snapshot = window.snapshot()?;
+        let semantics = &snapshot.accessibility.nodes;
 
         assert!(
             semantics
@@ -2459,7 +3343,7 @@ final_max_luminance={final_max_luminance}
         );
 
         let inspection = semantics
-            .into_iter()
+            .iter()
             .find(|node| {
                 node.role == SemanticsRole::GenericContainer
                     && node.name.as_deref() == Some(HDR_THEME_INSPECTION_TITLE)
@@ -2471,6 +3355,7 @@ final_max_luminance={final_max_luminance}
             .expect("HDR theme inspection semantics description should be present");
         assert!(description.contains("Current theme mode: Disabled (SDR baseline)"));
         assert!(description.contains("Window output policy:"));
+        Ok(())
     }
 
     fn drag_pointer(window: &TestWindow, from: Point, to: Point) -> Result<()> {
@@ -2629,13 +3514,51 @@ final_max_luminance={final_max_luminance}
         }
     }
 
+    fn assert_dev_shell_active_tab(window: &TestWindow, title: &str) -> Result<()> {
+        let snapshot = window.snapshot()?;
+        let shell = find_named_node(&snapshot, SemanticsRole::Tabs, "SUI dev browser");
+        assert_eq!(
+            shell.value,
+            Some(SemanticsValue::Text(title.to_string())),
+            "expected dev shell active tab to be {title:?}"
+        );
+        Ok(())
+    }
+
+    fn open_dev_shell_demo(window: &TestWindow, title: &str) -> Result<()> {
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(title)
+            .click()?;
+        assert_dev_shell_active_tab(window, title)
+    }
+
+    fn open_dev_shell_settings(window: &TestWindow) -> Result<()> {
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name("SUI menu")
+            .click()?;
+        window
+            .get_by_role(SemanticsRole::MenuItem)
+            .with_name(SETTINGS_TAB_LABEL)
+            .click()?;
+        window
+            .get_by_role(SemanticsRole::Window)
+            .with_name(SETTINGS_TAB_LABEL)
+            .expect()
+            .to_be_visible()
+    }
+
     #[test]
     fn button_grid_resize_stays_at_stable_60_fps_in_dev_workspace() -> Result<()> {
         const FRAME_BUDGET_MS: f64 = 1000.0 / 60.0;
         const DRAG_STEPS: usize = 28;
         const WARMUP_SAMPLES: usize = 4;
 
-        let app = TestApp::new(|| build_dev_application().build())?;
+        let app = TestApp::new(|| {
+            build_floating_button_grid_test_application(Rect::new(560.0, 72.0, 420.0, 340.0))
+                .build()
+        })?;
         let window = app.main_window()?;
         set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
 
@@ -2927,46 +3850,19 @@ final_max_luminance={final_max_luminance}
 
     #[test]
     fn dev_workspace_exposes_retained_text_benchmark_view() -> Result<()> {
-        let (workspace, _views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
-            Rect::new(24.0, 24.0, 680.0, 760.0),
-            RenderSettingsTab::default_options(),
-        );
-
-        let retained_text_view = workspace
-            .snapshots()
-            .into_iter()
-            .find(|view| view.title == RETAINED_TEXT_TAB_LABEL)
-            .expect(
-                "expected retained text benchmark view to be registered in the sui-dev workspace",
-            );
-        assert_eq!(retained_text_view.min_size, Size::new(320.0, 260.0));
-        assert!(
-            !retained_text_view.visible,
-            "expected retained text benchmark view to be available from the sidebar without changing the default sui-dev layout",
-        );
-
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(RETAINED_TEXT_TAB_LABEL)
+            .expect()
+            .to_be_visible()?;
+        open_dev_shell_demo(&window, RETAINED_TEXT_TAB_LABEL)?;
         Ok(())
     }
 
     #[test]
     fn dev_workspace_registers_canvas_editor_demos() -> Result<()> {
-        let (workspace, _views) = build_dev_workspace_with_widget_book_bounds_and_render_options(
-            Rect::new(24.0, 24.0, 680.0, 760.0),
-            RenderSettingsTab::default_options(),
-        );
-        let snapshots = workspace.snapshots();
-
-        for title in [PAINT_TAB_LABEL, VECTOR_EDITOR_TAB_LABEL] {
-            let view = snapshots
-                .iter()
-                .find(|view| view.title == title)
-                .unwrap_or_else(|| panic!("expected {title:?} to be registered"));
-            assert!(
-                !view.visible,
-                "expected {title:?} to start hidden but available from the sidebar"
-            );
-        }
-
         let mut runtime = build_dev_application()
             .build()
             .expect("dev application should build");
@@ -2978,9 +3874,9 @@ final_max_luminance={final_max_luminance}
             assert!(
                 semantics
                     .iter()
-                    .any(|node| node.role == SemanticsRole::Text
+                    .any(|node| node.role == SemanticsRole::Button
                         && node.name.as_deref() == Some(title)),
-                "expected sidebar to expose {title:?}"
+                "expected browser-style demo picker to expose {title:?}"
             );
         }
 

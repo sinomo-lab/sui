@@ -4189,10 +4189,15 @@ pub(crate) fn select_output_strategy(
     if wants_hdr {
         if capabilities.supports_hdr || native_hdr_available {
             if let Some(format) = native_hdr_format {
+                let transfer = if capabilities.native_hdr_presentation_supported {
+                    DisplayTransferFunction::LinearExtended
+                } else {
+                    DisplayTransferFunction::Srgb
+                };
                 return OutputStrategy::HdrNativeSurface {
                     format,
                     primaries: DisplayColorPrimaries::Srgb,
-                    transfer: DisplayTransferFunction::LinearExtended,
+                    transfer,
                 };
             }
 

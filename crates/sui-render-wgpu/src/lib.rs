@@ -2223,6 +2223,12 @@ impl WgpuRenderer {
         let encode_srgb = matches!(
             destination_format,
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
+        ) || matches!(
+            strategy,
+            OutputStrategy::HdrNativeSurface {
+                transfer: DisplayTransferFunction::Srgb,
+                ..
+            }
         );
         let uniform =
             OutputTransformUniform::new(resolved_tone_mapping, encode_srgb, sdr_content_scale);
@@ -4895,7 +4901,7 @@ mod tests {
             OutputStrategy::HdrNativeSurface {
                 format: wgpu::TextureFormat::Rgba16Float,
                 primaries: DisplayColorPrimaries::Srgb,
-                transfer: DisplayTransferFunction::LinearExtended,
+                transfer: DisplayTransferFunction::Srgb,
             }
         );
     }
