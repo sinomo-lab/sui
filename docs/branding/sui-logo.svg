@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">SUI logo</title>
+  <desc id="desc">A round blue badge with a white border and layered filled waves.</desc>
+  <defs>
+    <linearGradient id="water" x1="104" y1="80" x2="408" y2="432" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2EC7D3"/>
+      <stop offset="0.52" stop-color="#087EA3"/>
+      <stop offset="1" stop-color="#0B355C"/>
+    </linearGradient>
+    <linearGradient id="crest" x1="112" y1="164" x2="400" y2="348" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#CFF8FF"/>
+    </linearGradient>
+    <clipPath id="badge">
+      <circle cx="256" cy="256" r="218"/>
+    </clipPath>
+  </defs>
+
+  <circle cx="256" cy="256" r="244" fill="#FFFFFF"/>
+  <circle cx="256" cy="256" r="245" fill="none" stroke="#0B355C" stroke-opacity="0.18" stroke-width="2"/>
+  <circle cx="256" cy="256" r="218" fill="url(#water)"/>
+
+  <g clip-path="url(#badge)">
+    <!--
+      Wave boundaries share one construction:
+      y = baseline + amplitude * sin(2*pi*(x - 64)/256).
+      Cubic segments are sampled at quarter-period intervals, then each shape
+      closes to the bottom of the badge so the layers read as filled water.
+    -->
+    <path
+      d="M-64 216C-42.7 199.2 -21.3 184 0 184C21.3 184 42.7 199.2 64 216C85.3 232.8 106.7 248 128 248C149.3 248 170.7 232.8 192 216C213.3 199.2 234.7 184 256 184C277.3 184 298.7 199.2 320 216C341.3 232.8 362.7 248 384 248C405.3 248 426.7 232.8 448 216C469.3 199.2 490.7 184 512 184C533.3 184 554.7 199.2 576 216V536H-64Z"
+      fill="url(#crest)"
+    />
+    <path
+      d="M-64 253C-42.7 238.9 -21.3 226 0 226C21.3 226 42.7 238.9 64 253C85.3 267.1 106.7 280 128 280C149.3 280 170.7 267.1 192 253C213.3 238.9 234.7 226 256 226C277.3 226 298.7 238.9 320 253C341.3 267.1 362.7 280 384 280C405.3 280 426.7 267.1 448 253C469.3 238.9 490.7 226 512 226C533.3 226 554.7 238.9 576 253V536H-64Z"
+      fill="#27B7C8"
+    />
+    <path
+      d="M-64 293C-42.7 281.5 -21.3 271 0 271C21.3 271 42.7 281.5 64 293C85.3 304.5 106.7 315 128 315C149.3 315 170.7 304.5 192 293C213.3 281.5 234.7 271 256 271C277.3 271 298.7 281.5 320 293C341.3 304.5 362.7 315 384 315C405.3 315 426.7 304.5 448 293C469.3 281.5 490.7 271 512 271C533.3 271 554.7 281.5 576 293V536H-64Z"
+      fill="#087EA3"
+    />
+    <path
+      d="M-64 336C-42.7 327.6 -21.3 320 0 320C21.3 320 42.7 327.6 64 336C85.3 344.4 106.7 352 128 352C149.3 352 170.7 344.4 192 336C213.3 327.6 234.7 320 256 320C277.3 320 298.7 327.6 320 336C341.3 344.4 362.7 352 384 352C405.3 352 426.7 344.4 448 336C469.3 327.6 490.7 320 512 320C533.3 320 554.7 327.6 576 336V536H-64Z"
+      fill="#0B355C"
+      opacity="0.9"
+    />
+  </g>
+
+  <circle cx="256" cy="256" r="218" fill="none" stroke="#FFFFFF" stroke-width="12"/>
+</svg>
