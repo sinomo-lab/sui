@@ -12,14 +12,15 @@ use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
     build_retained_text_benchmark, build_text_editing_benchmark,
     build_text_rendering_comparison_surface, build_text_validation_surface,
-    build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
-    set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
+    build_theme_demo_surface, build_widget_book_gallery, default_widget_book_state,
+    register_widget_book_images, set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
 };
 
 const WINDOW_TITLE: &str = "SUI Dev";
 const WINDOW_DESCRIPTION: &str =
     "Browser-style development workspace for the widget book and focused performance demos.";
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
+const THEMES_TAB_LABEL: &str = "Themes";
 const BUTTON_GRID_TAB_LABEL: &str = "64 buttons";
 const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
 const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
@@ -1532,6 +1533,11 @@ fn build_dev_demo_entries() -> Vec<DevDemo> {
             title: WIDGET_BOOK_TAB_LABEL,
             description: "Catalog of controls, containers, media, and text surfaces.",
             child: WidgetPod::new(build_widget_book_gallery(default_widget_book_state())),
+        },
+        DevDemo {
+            title: THEMES_TAB_LABEL,
+            description: "Theme previews and HDR theme mode comparisons.",
+            child: WidgetPod::new(build_theme_demo_surface(default_widget_book_state())),
         },
         DevDemo {
             title: BUTTON_GRID_TAB_LABEL,
@@ -3138,6 +3144,7 @@ mod tests {
         );
         for button in [
             WIDGET_BOOK_TAB_LABEL,
+            THEMES_TAB_LABEL,
             BUTTON_GRID_TAB_LABEL,
             HDR_VALIDATION_TAB_LABEL,
             PAINT_TAB_LABEL,

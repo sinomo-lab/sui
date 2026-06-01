@@ -28,9 +28,10 @@ use crate::{
     POPOVER_NAME, POPOVER_TRIGGER_LABEL, PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL,
     RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL,
     SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME,
-    TABS_NAME, TEXT_AREA_LABEL, THEME_PREVIEW_NAME, TOOLBAR_SEPARATOR_NAME, TOOLTIP_TEXT,
-    TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME, WINDOW_TITLE, WidgetBookState,
-    build_color_validation_application, build_widget_book_application, default_widget_book_state,
+    TABS_NAME, TEXT_AREA_LABEL, THEME_DEMO_SCROLL_NAME, THEME_PREVIEW_NAME, TOOLBAR_SEPARATOR_NAME,
+    TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME, WINDOW_TITLE, WidgetBookState,
+    build_color_validation_application, build_theme_demo_application,
+    build_widget_book_application, default_widget_book_state,
 };
 
 #[derive(Clone, Copy)]
@@ -226,6 +227,12 @@ impl StoryCase {
     }
 
     pub(crate) fn build_app(self) -> Result<TestApp> {
+        if matches!(self, Self::ThemePreview) {
+            return TestApp::from_runtime(
+                build_theme_demo_application(default_widget_book_state()).build()?,
+            );
+        }
+
         let state = match self {
             Self::Overview
             | Self::Button
@@ -900,10 +907,9 @@ fn gallery_scroll_point(window: &TestWindow) -> Result<Point> {
         .nodes
         .iter()
         .find(|node| {
-            node.role == SemanticsRole::ScrollView
-                && node.name.as_deref() == Some(GALLERY_SCROLL_NAME)
+            node.role == SemanticsRole::ScrollView && story_scroll_name(node.name.as_deref())
         })
-        .ok_or_else(|| Error::new("widget book gallery scroll view is missing"))?;
+        .ok_or_else(|| Error::new("story scroll view is missing"))?;
 
     Ok(Point::new(
         gallery.bounds.x() + 32.0,
@@ -922,8 +928,7 @@ fn story_node_is_visible(
         .nodes
         .iter()
         .find(|node| {
-            node.role == SemanticsRole::ScrollView
-                && node.name.as_deref() == Some(GALLERY_SCROLL_NAME)
+            node.role == SemanticsRole::ScrollView && story_scroll_name(node.name.as_deref())
         })
         .or_else(|| {
             snapshot
@@ -947,6 +952,13 @@ fn story_node_is_visible(
         let visible_area = visible.width() * visible.height();
         node_area > 0.0 && (visible_area / node_area) >= 0.85
     }))
+}
+
+fn story_scroll_name(name: Option<&str>) -> bool {
+    matches!(
+        name,
+        Some(GALLERY_SCROLL_NAME) | Some(THEME_DEMO_SCROLL_NAME)
+    )
 }
 
 fn node_center(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<Point> {
