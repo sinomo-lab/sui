@@ -12,14 +12,15 @@ use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
     build_retained_text_benchmark, build_text_editing_benchmark,
     build_text_rendering_comparison_surface, build_text_validation_surface,
-    build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
-    set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
+    build_theme_demo_surface, build_widget_book_gallery, default_widget_book_state,
+    register_widget_book_images, set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
 };
 
 const WINDOW_TITLE: &str = "SUI Dev";
 const WINDOW_DESCRIPTION: &str =
     "Browser-style development workspace for the widget book and focused performance demos.";
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
+const THEMES_TAB_LABEL: &str = "Themes";
 const BUTTON_GRID_TAB_LABEL: &str = "64 buttons";
 const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
 const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
@@ -63,7 +64,8 @@ const DEV_SHELL_TOOLBAR_HEIGHT: f32 = 44.0;
 const DEV_SHELL_LOGO_BUTTON_SIZE: f32 = 32.0;
 const DEV_SHELL_TAB_HEIGHT: f32 = 32.0;
 const DEV_SHELL_TAB_GAP: f32 = 6.0;
-const DEV_SHELL_TAB_CLOSE_BUTTON_SIZE: f32 = 22.0;
+const DEV_SHELL_TAB_CLOSE_SIZE: f32 = 18.0;
+const DEV_SHELL_TAB_CLOSE_MARGIN: f32 = 7.0;
 const DEV_SHELL_PLUS_BUTTON_SIZE: f32 = 30.0;
 const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 92.0;
 const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
@@ -175,18 +177,17 @@ impl DevShellState {
         let Some(position) = inner.open_tabs.iter().position(|tab| *tab == index) else {
             return;
         };
-
         inner.open_tabs.remove(position);
+        if inner.active_tab == Some(index) {
+            inner.active_tab = inner
+                .open_tabs
+                .get(position.min(inner.open_tabs.len().saturating_sub(1)))
+                .copied();
+            inner.picker_open = inner.active_tab.is_none();
+        }
         if inner.open_tabs.is_empty() {
             inner.active_tab = None;
             inner.picker_open = true;
-            return;
-        }
-
-        if inner.active_tab == Some(index) {
-            let next_position = position.min(inner.open_tabs.len() - 1);
-            inner.active_tab = Some(inner.open_tabs[next_position]);
-            inner.picker_open = false;
         }
     }
 
@@ -237,7 +238,6 @@ struct DevBrowserShell {
     state: DevShellState,
     demos: Vec<DevDemo>,
     demo_buttons: WidgetChildren,
-    close_buttons: WidgetChildren,
     main_menu: SingleChild,
     plus_button: SingleChild,
     theme_toggle: SingleChild,
@@ -246,6 +246,8 @@ struct DevBrowserShell {
     tab_rects: Vec<(usize, Rect)>,
     hovered_tab: Option<usize>,
     pressed_tab: Option<usize>,
+    hovered_close_tab: Option<usize>,
+    pressed_close_tab: Option<usize>,
     content_bounds: Rect,
 }
 
@@ -265,7 +267,6 @@ impl DevBrowserShell {
         }
 
         let mut demo_buttons = WidgetChildren::with_capacity(demos.len());
-        let mut close_buttons = WidgetChildren::with_capacity(demos.len());
         for (index, demo) in demos.iter().enumerate() {
             let button_state = state.clone();
             demo_buttons.push(
@@ -277,11 +278,6 @@ impl DevBrowserShell {
                         request_window_refresh(ctx, true);
                     }),
             );
-            close_buttons.push(DevTabCloseButton::new(
-                state.clone(),
-                index,
-                format!("Close {}", demo.title),
-            ));
         }
 
         let picker_state = state.clone();
@@ -307,7 +303,6 @@ impl DevBrowserShell {
             state: state.clone(),
             demos,
             demo_buttons,
-            close_buttons,
             main_menu: SingleChild::new(main_menu),
             plus_button: SingleChild::new(plus_button),
             theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
@@ -319,6 +314,8 @@ impl DevBrowserShell {
             tab_rects: Vec::new(),
             hovered_tab: None,
             pressed_tab: None,
+            hovered_close_tab: None,
+            pressed_close_tab: None,
             content_bounds: Rect::ZERO,
         }
     }
@@ -327,6 +324,35 @@ impl DevBrowserShell {
         self.tab_rects
             .iter()
             .find_map(|(index, rect)| rect.contains(position).then_some(*index))
+    }
+
+    fn tab_close_rect(rect: Rect) -> Rect {
+        Rect::new(
+            rect.max_x() - DEV_SHELL_TAB_CLOSE_MARGIN - DEV_SHELL_TAB_CLOSE_SIZE,
+            rect.y() + ((rect.height() - DEV_SHELL_TAB_CLOSE_SIZE) * 0.5),
+            DEV_SHELL_TAB_CLOSE_SIZE,
+            DEV_SHELL_TAB_CLOSE_SIZE,
+        )
+    }
+
+    fn tab_close_at(&self, position: Point) -> Option<usize> {
+        self.tab_rects.iter().find_map(|(index, rect)| {
+            Self::tab_close_rect(*rect)
+                .contains(position)
+                .then_some(*index)
+        })
+    }
+
+    fn tab_label_rect(rect: Rect) -> Rect {
+        let close = Self::tab_close_rect(rect);
+        let x = rect.x() + 12.0;
+        let line_height = 18.0;
+        Rect::new(
+            x,
+            rect.y() + ((rect.height() - line_height) * 0.5),
+            (close.x() - x - 6.0).max(0.0),
+            line_height,
+        )
     }
 
     fn select_adjacent_tab(&mut self, direction: isize) {
@@ -394,15 +420,6 @@ impl DevBrowserShell {
             bounds.y() + 6.0,
             (right - left).max(0.0),
             DEV_SHELL_TAB_HEIGHT,
-        )
-    }
-
-    fn tab_close_rect(tab: Rect) -> Rect {
-        Rect::new(
-            tab.max_x() - DEV_SHELL_TAB_CLOSE_BUTTON_SIZE - 5.0,
-            tab.y() + ((tab.height() - DEV_SHELL_TAB_CLOSE_BUTTON_SIZE) * 0.5),
-            DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
-            DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
         )
     }
 
@@ -486,14 +503,8 @@ impl DevBrowserShell {
             }
 
             let label = self.demos[*demo_index].title;
-            let close_reserve = DEV_SHELL_TAB_CLOSE_BUTTON_SIZE + 16.0;
             ctx.draw_text(
-                Rect::new(
-                    rect.x() + 14.0,
-                    rect.y() + 8.0,
-                    (rect.width() - 14.0 - close_reserve).max(0.0),
-                    20.0,
-                ),
+                Self::tab_label_rect(*rect),
                 label,
                 TextStyle {
                     font_size: 13.0,
@@ -507,15 +518,37 @@ impl DevBrowserShell {
                 },
             );
 
+            let close = Self::tab_close_rect(*rect);
+            let close_hovered = self.hovered_close_tab == Some(*demo_index);
+            let close_pressed = self.pressed_close_tab == Some(*demo_index);
+            if close_hovered || close_pressed {
+                ctx.fill(
+                    Path::rounded_rect(close, 5.0),
+                    if close_pressed {
+                        palette.surface_pressed
+                    } else {
+                        palette.surface_hover
+                    },
+                );
+            }
+            ctx.stroke(
+                close_icon_path(close),
+                if close_hovered || selected {
+                    palette.text
+                } else {
+                    palette.placeholder
+                }
+                .with_alpha(if close_pressed { 0.95 } else { 0.78 }),
+                StrokeStyle::new(1.4),
+            );
+
             if selected {
-                let indicator_width =
-                    (rect.width() - DEV_SHELL_TAB_CLOSE_BUTTON_SIZE - 28.0).max(0.0);
                 ctx.fill(
                     Path::rounded_rect(
                         Rect::new(
-                            rect.x() + ((rect.width() - indicator_width).max(0.0) * 0.5),
+                            rect.x() + 12.0,
                             rect.max_y() - 3.0,
-                            indicator_width,
+                            rect.width() - 24.0,
                             3.0,
                         ),
                         1.5,
@@ -598,6 +631,18 @@ fn dev_shell_tab_semantics_id(parent: WidgetId, demo_index: usize) -> WidgetId {
     )
 }
 
+fn dev_shell_tab_close_semantics_id(parent: WidgetId, demo_index: usize) -> WidgetId {
+    const TAG: u64 = 2_u64 << 51;
+    const LOW_MASK: u64 = (1_u64 << 51) - 1;
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(313)
+            .wrapping_add(10_000 + demo_index as u64)
+            & LOW_MASK),
+    )
+}
+
 impl Widget for DevBrowserShell {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if ctx.phase() != sui::EventPhase::Target {
@@ -607,26 +652,40 @@ impl Widget for DevBrowserShell {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = self.tab_at(pointer.position);
-                if self.hovered_tab != hovered {
+                let hovered_close = self.tab_close_at(pointer.position);
+                if self.hovered_tab != hovered || self.hovered_close_tab != hovered_close {
                     self.hovered_tab = hovered;
+                    self.hovered_close_tab = hovered_close;
                     ctx.request_paint();
                     ctx.request_semantics();
                 }
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered_tab.take().is_some() {
+                if self.hovered_tab.take().is_some() || self.hovered_close_tab.take().is_some() {
                     ctx.request_paint();
                     ctx.request_semantics();
                 }
                 if self.pressed_tab.is_some() && pointer.buttons.is_empty() {
                     self.pressed_tab = None;
                 }
+                if self.pressed_close_tab.is_some() && pointer.buttons.is_empty() {
+                    self.pressed_close_tab = None;
+                }
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                if let Some(tab) = self.tab_at(pointer.position) {
+                if let Some(tab) = self.tab_close_at(pointer.position) {
+                    self.pressed_close_tab = Some(tab);
+                    self.hovered_close_tab = Some(tab);
+                    self.hovered_tab = Some(tab);
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_focus();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                } else if let Some(tab) = self.tab_at(pointer.position) {
                     self.pressed_tab = Some(tab);
                     self.hovered_tab = Some(tab);
                     ctx.request_pointer_capture(pointer.pointer_id);
@@ -640,7 +699,17 @@ impl Widget for DevBrowserShell {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                if let Some(pressed) = self.pressed_tab.take() {
+                if let Some(pressed) = self.pressed_close_tab.take() {
+                    let hovered_close = self.tab_close_at(pointer.position);
+                    if hovered_close == Some(pressed) {
+                        self.state.close_tab(pressed);
+                    }
+                    self.hovered_tab = self.tab_at(pointer.position);
+                    self.hovered_close_tab = hovered_close;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    request_window_refresh(ctx, true);
+                    ctx.set_handled();
+                } else if let Some(pressed) = self.pressed_tab.take() {
                     let hovered = self.tab_at(pointer.position);
                     if hovered == Some(pressed) {
                         self.state.select_tab(pressed);
@@ -652,8 +721,9 @@ impl Widget for DevBrowserShell {
                 }
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed_tab.take().is_some() {
+                if self.pressed_tab.take().is_some() || self.pressed_close_tab.take().is_some() {
                     self.hovered_tab = None;
+                    self.hovered_close_tab = None;
                     ctx.release_pointer_capture(pointer.pointer_id);
                     request_window_refresh(ctx, true);
                     ctx.set_handled();
@@ -698,22 +768,17 @@ impl Widget for DevBrowserShell {
             .map(|index| {
                 ctx.layout()
                     .measure_text(self.demos[*index].title, label_style.clone())
-                    .map(|measurement| measurement.width + DEV_SHELL_TAB_CLOSE_BUTTON_SIZE + 50.0)
-                    .unwrap_or(148.0)
-                    .clamp(132.0, 248.0)
+                    .map(|measurement| {
+                        measurement.width
+                            + 12.0
+                            + 6.0
+                            + DEV_SHELL_TAB_CLOSE_SIZE
+                            + DEV_SHELL_TAB_CLOSE_MARGIN
+                    })
+                    .unwrap_or(132.0)
+                    .clamp(118.0, 240.0)
             })
             .collect();
-
-        for index in 0..self.close_buttons.len() {
-            self.close_buttons.measure_child(
-                index,
-                ctx,
-                Constraints::tight(Size::new(
-                    DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
-                    DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
-                )),
-            );
-        }
 
         self.main_menu.measure(ctx, constraints.loosen());
         self.plus_button.measure(
@@ -757,13 +822,6 @@ impl Widget for DevBrowserShell {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let plus_rect = self.arrange_tab_strip(bounds);
-        for index in 0..self.close_buttons.len() {
-            self.close_buttons.arrange_child(index, ctx, Rect::ZERO);
-        }
-        for (demo_index, rect) in self.tab_rects.iter().copied() {
-            self.close_buttons
-                .arrange_child(demo_index, ctx, Self::tab_close_rect(rect));
-        }
         self.plus_button.arrange(ctx, plus_rect);
         self.theme_toggle.arrange(ctx, Self::theme_rect(bounds));
         let menu_origin = Self::logo_rect(bounds).origin;
@@ -842,7 +900,6 @@ impl Widget for DevBrowserShell {
         }
 
         self.paint_toolbar(ctx, &theme);
-        self.close_buttons.paint(ctx);
         self.plus_button.paint(ctx);
         self.theme_toggle.paint(ctx);
         self.settings_window.paint(ctx);
@@ -861,23 +918,25 @@ impl Widget for DevBrowserShell {
         ctx.push(node);
 
         for (demo_index, rect) in &self.tab_rects {
-            let mut tab = SemanticsNode::new(
-                dev_shell_tab_semantics_id(ctx.widget_id(), *demo_index),
-                SemanticsRole::Button,
-                *rect,
-            );
+            let tab_id = dev_shell_tab_semantics_id(ctx.widget_id(), *demo_index);
+            let mut tab = SemanticsNode::new(tab_id, SemanticsRole::Button, *rect);
             tab.parent = Some(ctx.widget_id());
             tab.name = Some(self.demos[*demo_index].title.to_string());
             tab.state.selected = self.state.active_tab() == Some(*demo_index);
             tab.state.hovered = self.hovered_tab == Some(*demo_index);
             tab.actions = vec![SemanticsAction::Activate, SemanticsAction::Focus];
             ctx.push(tab);
-        }
 
-        for (demo_index, _) in &self.tab_rects {
-            if let Some(button) = self.close_buttons.as_slice().get(*demo_index) {
-                button.semantics(ctx);
-            }
+            let mut close = SemanticsNode::new(
+                dev_shell_tab_close_semantics_id(ctx.widget_id(), *demo_index),
+                SemanticsRole::Button,
+                Self::tab_close_rect(*rect),
+            );
+            close.parent = Some(tab_id);
+            close.name = Some(format!("Close {} tab", self.demos[*demo_index].title));
+            close.state.hovered = self.hovered_close_tab == Some(*demo_index);
+            close.actions = vec![SemanticsAction::Activate, SemanticsAction::Focus];
+            ctx.push(close);
         }
 
         self.plus_button.semantics(ctx);
@@ -901,7 +960,6 @@ impl Widget for DevBrowserShell {
         } else if let Some(active) = self.state.active_tab() {
             visitor.visit(&self.demos[active].child);
         }
-        self.close_buttons.visit_children(visitor);
         self.plus_button.visit_children(visitor);
         self.theme_toggle.visit_children(visitor);
         if self.state.settings_visible() {
@@ -916,7 +974,6 @@ impl Widget for DevBrowserShell {
         } else if let Some(active) = self.state.active_tab() {
             visitor.visit(&mut self.demos[active].child);
         }
-        self.close_buttons.visit_children_mut(visitor);
         self.plus_button.visit_children_mut(visitor);
         self.theme_toggle.visit_children_mut(visitor);
         if self.state.settings_visible() {
@@ -1151,151 +1208,6 @@ impl Widget for ThemeToggleButton {
 
     fn accepts_focus(&self) -> bool {
         true
-    }
-}
-
-struct DevTabCloseButton {
-    state: DevShellState,
-    demo_index: usize,
-    label: String,
-    hovered: bool,
-    pressed: bool,
-}
-
-impl DevTabCloseButton {
-    fn new(state: DevShellState, demo_index: usize, label: String) -> Self {
-        Self {
-            state,
-            demo_index,
-            label,
-            hovered: false,
-            pressed: false,
-        }
-    }
-
-    fn activate(&self, ctx: &mut EventCtx) {
-        self.state.close_tab(self.demo_index);
-        request_window_refresh(ctx, true);
-    }
-}
-
-impl Widget for DevTabCloseButton {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        match event {
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = ctx.bounds().contains(pointer.position);
-                if self.hovered != hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                self.hovered = false;
-                ctx.request_paint();
-                ctx.request_semantics();
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Primary) =>
-            {
-                self.pressed = true;
-                self.hovered = true;
-                ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_focus();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Up
-                    && pointer.button == Some(PointerButton::Primary) =>
-            {
-                let activate = self.pressed && ctx.bounds().contains(pointer.position);
-                self.pressed = false;
-                self.hovered = ctx.bounds().contains(pointer.position);
-                ctx.release_pointer_capture(pointer.pointer_id);
-                if activate {
-                    self.activate(ctx);
-                } else {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed {
-                    self.pressed = false;
-                    self.hovered = false;
-                    ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                    ctx.set_handled();
-                }
-            }
-            Event::Keyboard(key)
-                if key.state == KeyState::Pressed
-                    && ctx.is_focused()
-                    && matches!(key.key.as_str(), "Enter" | " ") =>
-            {
-                self.activate(ctx);
-                ctx.set_handled();
-            }
-            _ => {}
-        }
-    }
-
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(
-            DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
-            DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
-        ))
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        let bounds = ctx.bounds();
-        if bounds.is_empty() {
-            return;
-        }
-
-        let theme = self.state.theme();
-        let palette = theme.palette;
-        let selected = self.state.active_tab() == Some(self.demo_index);
-        if self.hovered || self.pressed || ctx.is_focused() {
-            let fill = if self.pressed {
-                palette.surface_pressed
-            } else if self.hovered {
-                palette.surface_hover
-            } else {
-                palette.surface
-            };
-            ctx.fill(Path::rounded_rect(bounds, 6.0), fill.with_alpha(0.86));
-        }
-
-        let icon_color = if selected {
-            palette.border_focus
-        } else {
-            palette.text.with_alpha(0.72)
-        };
-        ctx.stroke(close_icon_path(bounds), icon_color, StrokeStyle::new(1.45));
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
-        node.name = Some(self.label.clone());
-        node.state.focused = ctx.is_focused();
-        node.state.hovered = self.hovered;
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
-        ctx.push(node);
-    }
-
-    fn accepts_focus(&self) -> bool {
-        true
-    }
-
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
-        ctx.request_paint();
-        ctx.request_semantics();
     }
 }
 
@@ -1623,6 +1535,11 @@ fn build_dev_demo_entries() -> Vec<DevDemo> {
             child: WidgetPod::new(build_widget_book_gallery(default_widget_book_state())),
         },
         DevDemo {
+            title: THEMES_TAB_LABEL,
+            description: "Theme previews and HDR theme mode comparisons.",
+            child: WidgetPod::new(build_theme_demo_surface(default_widget_book_state())),
+        },
+        DevDemo {
             title: BUTTON_GRID_TAB_LABEL,
             description: "Dense button grid used for interaction and resizing performance checks.",
             child: WidgetPod::new(build_button_grid_benchmark()),
@@ -1727,7 +1644,7 @@ fn draw_logo_wave(ctx: &mut PaintCtx, bounds: Rect, top_fraction: f32, color: Co
 
 fn close_icon_path(bounds: Rect) -> Path {
     let mut path = PathBuilder::new();
-    let inset = (bounds.width().min(bounds.height()) * 0.30).max(4.0);
+    let inset = bounds.width().min(bounds.height()) * 0.34;
     path.move_to(Point::new(bounds.x() + inset, bounds.y() + inset));
     path.line_to(Point::new(bounds.max_x() - inset, bounds.max_y() - inset));
     path.move_to(Point::new(bounds.max_x() - inset, bounds.y() + inset));
@@ -3227,6 +3144,7 @@ mod tests {
         );
         for button in [
             WIDGET_BOOK_TAB_LABEL,
+            THEMES_TAB_LABEL,
             BUTTON_GRID_TAB_LABEL,
             HDR_VALIDATION_TAB_LABEL,
             PAINT_TAB_LABEL,
@@ -3245,57 +3163,6 @@ mod tests {
             }),
             "expected the tab zone to expose the demo picker + button"
         );
-    }
-
-    #[test]
-    fn dev_shell_open_tabs_can_be_closed() -> Result<()> {
-        let app = TestApp::new(|| build_dev_application().build())?;
-        let window = app.main_window()?;
-
-        open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name("Open demo")
-            .click()?;
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(BUTTON_GRID_TAB_LABEL)
-            .click()?;
-        assert_dev_shell_active_tab(&window, BUTTON_GRID_TAB_LABEL)?;
-
-        let close_button_grid = format!("Close {BUTTON_GRID_TAB_LABEL}");
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(close_button_grid.as_str())
-            .click()?;
-        assert_dev_shell_active_tab(&window, WIDGET_BOOK_TAB_LABEL)?;
-        let snapshot = window.snapshot()?;
-        assert!(
-            snapshot
-                .accessibility
-                .nodes
-                .iter()
-                .all(|node| node.name.as_deref() != Some(close_button_grid.as_str())),
-            "closed tab should remove its close button semantics"
-        );
-
-        let close_widget_book = format!("Close {WIDGET_BOOK_TAB_LABEL}");
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(close_widget_book.as_str())
-            .click()?;
-        let snapshot = window.snapshot()?;
-        let shell = find_named_node(&snapshot, SemanticsRole::Tabs, "SUI dev browser");
-        assert_eq!(shell.value, None);
-        assert!(
-            snapshot.accessibility.nodes.iter().any(|node| {
-                node.role == SemanticsRole::Button
-                    && node.name.as_deref() == Some(WIDGET_BOOK_TAB_LABEL)
-            }),
-            "closing the last tab should return to the demo picker"
-        );
-
-        Ok(())
     }
 
     #[test]
@@ -3365,9 +3232,13 @@ mod tests {
         let parent = WidgetId::new(17);
         let mut ids = BTreeSet::new();
         for demo_index in 0..12 {
-            let id = dev_shell_tab_semantics_id(parent, demo_index).get();
-            assert!(id <= (1_u64 << 53) - 1, "{id} should be JS-safe");
-            assert!(ids.insert(id), "{id} should be unique");
+            for id in [
+                dev_shell_tab_semantics_id(parent, demo_index).get(),
+                dev_shell_tab_close_semantics_id(parent, demo_index).get(),
+            ] {
+                assert!(id <= (1_u64 << 53) - 1, "{id} should be JS-safe");
+                assert!(ids.insert(id), "{id} should be unique");
+            }
         }
     }
 

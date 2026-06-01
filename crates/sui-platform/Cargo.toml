@@ -13,7 +13,7 @@ js-sys = { workspace = true }
 winit = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
-web-sys = { workspace = true, features = ["console", "CanvasRenderingContext2d", "Document", "Element", "HtmlCanvasElement", "HtmlHeadElement", "HtmlImageElement", "Location", "MediaQueryList", "Node", "Window"] }
+web-sys = { workspace = true, features = ["console", "CanvasRenderingContext2d", "Document", "DomRect", "Element", "HtmlCanvasElement", "HtmlHeadElement", "HtmlImageElement", "Location", "MediaQueryList", "Node", "Window"] }
 web-time = { workspace = true }
 sui-platform-windows = { path = "../sui-platform-windows" }
 

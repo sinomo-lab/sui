@@ -68,6 +68,10 @@ pub const SUMMARY_NAME: &str = "Widget book summary";
 pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
 pub const GALLERY_SCROLL_BAR_NAME: &str = "Widget book scroll bar";
 const GALLERY_TEXT_MAX_WIDTH: f32 = 980.0;
+pub const THEME_DEMO_TITLE: &str = "Themes";
+pub const THEME_DEMO_DESCRIPTION: &str =
+    "Dedicated theme previews for SDR, wide-gamut, and HDR UI styling.";
+pub const THEME_DEMO_SCROLL_NAME: &str = "Theme demo gallery";
 pub const RETAINED_TEXT_BENCHMARK_SCROLL_NAME: &str = "Retained text benchmark scroll";
 pub const TEXT_RENDERING_COMPARISON_SCROLL_NAME: &str = "Text rendering comparison scroll";
 pub const COLOR_VALIDATION_SCROLL_NAME: &str = "Color validation scroll";
@@ -249,7 +253,7 @@ pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
 }
 
 /// Register the images used by [`build_widget_book_gallery`] onto the given
-/// application.  Call this before adding a window that contains the gallery
+/// application. Call this before adding a window that contains the gallery
 /// when you are assembling the application yourself (rather than using
 /// [`build_widget_book_application`]).
 pub fn register_widget_book_images(application: &mut Application) {
@@ -274,6 +278,21 @@ pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> App
                 WINDOW_TITLE,
                 WINDOW_DESCRIPTION,
                 build_widget_book_gallery(Rc::clone(&state)),
+            )
+            .watch_widget_book_state(state),
+        ),
+    )
+}
+
+pub fn build_theme_demo_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
+    set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
+
+    Application::new().window(
+        WindowBuilder::new().title(THEME_DEMO_TITLE).root(
+            LivePerformanceRoot::new(
+                THEME_DEMO_TITLE,
+                THEME_DEMO_DESCRIPTION,
+                build_theme_demo_surface(Rc::clone(&state)),
             )
             .watch_widget_book_state(state),
         ),
@@ -1676,6 +1695,45 @@ fn build_animation_demo_panel() -> impl Widget {
     )
 }
 
+pub fn build_theme_demo_surface(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
+    let scroll_state = ScrollState::new();
+
+    VirtualScrollView::new()
+        .name(THEME_DEMO_SCROLL_NAME)
+        .state(scroll_state)
+        .padding(Insets::all(24.0))
+        .spacing(18.0)
+        .with_child(
+            Stack::vertical()
+                .spacing(6.0)
+                .alignment(Alignment::Stretch)
+                .with_child(MaximumWidth::new(
+                    GALLERY_TEXT_MAX_WIDTH,
+                    Label::new(THEME_DEMO_TITLE)
+                        .font_size(30.0)
+                        .line_height(34.0)
+                        .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
+                ))
+                .with_child(MaximumWidth::new(
+                    GALLERY_TEXT_MAX_WIDTH,
+                    Label::new(THEME_DEMO_DESCRIPTION)
+                        .font_size(15.0)
+                        .line_height(20.0)
+                        .color(Color::rgba(0.40, 0.48, 0.58, 1.0)),
+                )),
+        )
+        .with_child(panel(
+            "Theme preview",
+            "Flip the compare toggle to inspect the simplified light and dark daisy-style themes with the same control composition.",
+            ThemePreviewShowcase::new(Rc::clone(&state)),
+        ))
+        .with_child(panel(
+            "HDR theme lab",
+            "Compare the same tokenized theme across SDR baseline, wide-gamut-only, constrained HDR, and full HDR. The first card follows the shared mode currently selected by the dev host.",
+            HdrThemeLabShowcase::new(),
+        ))
+}
+
 pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
@@ -1734,16 +1792,6 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                     .color(Color::rgba(0.40, 0.48, 0.58, 1.0)),
                 )),
         )
-            .with_child(panel(
-                "Theme preview",
-                "Flip the compare toggle to inspect the simplified light and dark daisy-style themes with the same control composition.",
-                ThemePreviewShowcase::new(Rc::clone(&state)),
-            ))
-            .with_child(panel(
-                "HDR theme lab",
-                "Compare the same tokenized theme across SDR baseline, wide-gamut-only, constrained HDR, and full HDR. The first card follows the shared mode currently selected by the dev host.",
-                HdrThemeLabShowcase::new(),
-            ))
             .with_child(panel(
                 "Common controls",
                 "These defaults should feel contemporary and light, while still staying dense enough for inspectors, toolbars, and side panels.",
@@ -4395,10 +4443,10 @@ mod tests {
         TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE, build_button_grid_benchmark_application,
         build_color_and_imagery_story, build_retained_text_benchmark_application,
         build_text_editing_benchmark_application, build_text_rendering_comparison_application,
-        build_text_validation_surface, build_widget_book_application, build_widget_book_gallery,
-        default_widget_book_state, register_widget_book_images, text_editing_benchmark_document,
-        text_editing_benchmark_style_overlays, text_editing_benchmark_style_spans,
-        theme_preview_card,
+        build_text_validation_surface, build_theme_demo_application, build_widget_book_application,
+        build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
+        text_editing_benchmark_document, text_editing_benchmark_style_overlays,
+        text_editing_benchmark_style_spans, theme_preview_card,
     };
     use sui::{
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -4418,6 +4466,10 @@ mod tests {
         TestApp::new(|| {
             build_widget_book_application_with_overlay(default_widget_book_state()).build()
         })
+    }
+
+    fn build_default_theme_demo_app() -> Result<TestApp> {
+        TestApp::new(|| build_theme_demo_application(default_widget_book_state()).build())
     }
 
     fn build_configured_widget_book_app() -> Result<TestApp> {
@@ -4655,6 +4707,11 @@ mod tests {
     #[cfg(feature = "artifacts")]
     fn build_headless_default_widget_book_app() -> Result<TestApp> {
         TestApp::from_runtime(build_widget_book_application(default_widget_book_state()).build()?)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn build_headless_default_theme_demo_app() -> Result<TestApp> {
+        TestApp::from_runtime(build_theme_demo_application(default_widget_book_state()).build()?)
     }
 
     #[cfg(feature = "artifacts")]
@@ -5423,16 +5480,16 @@ mod tests {
 
     #[test]
     fn hdr_theme_lab_exposes_mode_comparison_sections() {
-        let mut runtime = build_widget_book_application(default_widget_book_state())
+        let mut runtime = build_theme_demo_application(default_widget_book_state())
             .build()
-            .expect("widget book runtime should build");
+            .expect("theme demo runtime should build");
         let window_id = runtime.window_ids()[0];
         runtime
             .render(window_id)
-            .expect("widget book should render for HDR lab semantics");
+            .expect("theme demo should render for HDR lab semantics");
         let semantics = runtime
             .semantics(window_id)
-            .expect("widget book semantics should exist");
+            .expect("theme demo semantics should exist");
 
         for section_name in [
             super::HDR_THEME_LAB_NAME,
@@ -5502,6 +5559,30 @@ mod tests {
     }
 
     #[test]
+    fn widget_book_gallery_omits_theme_demo_sections() {
+        let mut runtime = build_widget_book_application(default_widget_book_state())
+            .build()
+            .expect("widget book runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("widget book should render");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("widget book semantics should exist");
+
+        for removed_section in [super::THEME_PREVIEW_NAME, super::HDR_THEME_LAB_NAME] {
+            assert!(
+                semantics.iter().all(|node| {
+                    node.role != SemanticsRole::GenericContainer
+                        || node.name.as_deref() != Some(removed_section)
+                }),
+                "expected the main widget book gallery to omit {removed_section:?}"
+            );
+        }
+    }
+
+    #[test]
     fn widget_book_exposes_animation_demo_panel() {
         let mut runtime = Application::new()
             .window(
@@ -5551,16 +5632,16 @@ mod tests {
 
     #[test]
     fn hdr_theme_lab_includes_emissive_indicator_and_popup_examples() {
-        let mut runtime = build_widget_book_application(default_widget_book_state())
+        let mut runtime = build_theme_demo_application(default_widget_book_state())
             .build()
-            .expect("widget book runtime should build");
+            .expect("theme demo runtime should build");
         let window_id = runtime.window_ids()[0];
         runtime
             .render(window_id)
-            .expect("widget book should render for HDR lab semantics");
+            .expect("theme demo should render for HDR lab semantics");
         let semantics = runtime
             .semantics(window_id)
-            .expect("widget book semantics should exist");
+            .expect("theme demo semantics should exist");
         let full_hdr_title = super::hdr_theme_mode_title(super::HdrThemeMode::FullHdr);
         let swatch_name = format!("{full_hdr_title} emissive indicator");
         let popover_name = format!("{full_hdr_title} attention popover");
@@ -5642,7 +5723,7 @@ mod tests {
 
     #[test]
     fn widget_book_theme_preview_toggle_hides_dark_card() -> Result<()> {
-        let app = build_default_widget_book_app()?;
+        let app = build_default_theme_demo_app()?;
         let window = app.main_window()?;
 
         scroll_to_story_target(&window, StoryCase::ThemePreview, 2)?;
@@ -6060,7 +6141,7 @@ mod tests {
             ))
         })?;
 
-        let live_app = build_headless_default_widget_book_app()?;
+        let live_app = build_headless_default_theme_demo_app()?;
         let live_window = live_app.main_window()?;
         set_window_scale_factor(&live_window, 1.5, 144.0)?;
         scroll_to_story_target(&live_window, StoryCase::ThemePreview, 12)?;

@@ -225,6 +225,11 @@ struct DesktopApp {
 impl DesktopApp {
     #[cfg(target_arch = "wasm32")]
     fn web_viewport_logical_size() -> LogicalSize<f64> {
+        Self::web_canvas_logical_size(None).unwrap_or_else(Self::web_window_logical_size)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn web_window_logical_size() -> LogicalSize<f64> {
         let width = web_sys::window()
             .and_then(|window| window.inner_width().ok())
             .and_then(|value| value.as_f64())
@@ -240,6 +245,44 @@ impl DesktopApp {
     }
 
     #[cfg(target_arch = "wasm32")]
+    fn web_element_logical_size(element: &web_sys::Element) -> Option<LogicalSize<f64>> {
+        let rect = element.get_bounding_client_rect();
+        let width = rect.width();
+        let height = rect.height();
+        if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
+            return Some(LogicalSize::new(width, height));
+        }
+
+        let width = f64::from(element.client_width());
+        let height = f64::from(element.client_height());
+        if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
+            return Some(LogicalSize::new(width, height));
+        }
+
+        None
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn web_canvas_logical_size(
+        canvas: Option<&web_sys::HtmlCanvasElement>,
+    ) -> Option<LogicalSize<f64>> {
+        let canvas = canvas.cloned().or_else(|| {
+            web_sys::window()?
+                .document()
+                .and_then(|document| document.get_element_by_id("sui-main-canvas"))
+                .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())
+        })?;
+        let canvas_element: &web_sys::Element = canvas.as_ref();
+
+        Self::web_element_logical_size(canvas_element).or_else(|| {
+            canvas
+                .parent_element()
+                .as_ref()
+                .and_then(Self::web_element_logical_size)
+        })
+    }
+
+    #[cfg(target_arch = "wasm32")]
     fn web_canvas_for_window() -> Option<web_sys::HtmlCanvasElement> {
         let window = web_sys::window()?;
         let canvas = window
@@ -247,16 +290,10 @@ impl DesktopApp {
             .and_then(|document| document.get_element_by_id("sui-main-canvas"))
             .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())?;
         let scale_factor = window.device_pixel_ratio().max(1.0);
-        let width = window
-            .inner_width()
-            .ok()
-            .and_then(|value| value.as_f64())
-            .unwrap_or(DesktopPlatform::DEFAULT_WINDOW_SIZE.width as f64);
-        let height = window
-            .inner_height()
-            .ok()
-            .and_then(|value| value.as_f64())
-            .unwrap_or(DesktopPlatform::DEFAULT_WINDOW_SIZE.height as f64);
+        let size = Self::web_canvas_logical_size(Some(&canvas))
+            .unwrap_or_else(Self::web_window_logical_size);
+        let width = size.width;
+        let height = size.height;
         canvas.set_width(((width * scale_factor).round().max(1.0)) as u32);
         canvas.set_height(((height * scale_factor).round().max(1.0)) as u32);
         Some(canvas)
