@@ -556,17 +556,27 @@
             mirror.appendChild(labelElement);
           }
         };
-        const clonePointerEventInit = (event) => ({
+        const canvasEventCoordinates = (canvas, event) => {
+          const rect = canvas.getBoundingClientRect();
+          const scale =
+            state.devicePixelRatio || window.devicePixelRatio || 1;
+          const clientX = rect.left + (event.clientX - rect.left) * scale;
+          const clientY = rect.top + (event.clientY - rect.top) * scale;
+          return {
+            clientX,
+            clientY,
+            screenX: event.screenX + (clientX - event.clientX),
+            screenY: event.screenY + (clientY - event.clientY),
+          };
+        };
+        const clonePointerEventInit = (event, canvas) => ({
           bubbles: true,
           cancelable: true,
           composed: true,
           pointerId: event.pointerId,
           pointerType: event.pointerType,
           isPrimary: event.isPrimary,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          screenX: event.screenX,
-          screenY: event.screenY,
+          ...canvasEventCoordinates(canvas, event),
           button: event.button,
           buttons: event.buttons,
           pressure: event.pressure,
@@ -588,20 +598,18 @@
           }
           try {
             canvas.dispatchEvent(
-              new PointerEvent(event.type, clonePointerEventInit(event)),
+              new PointerEvent(event.type, clonePointerEventInit(event, canvas)),
             );
             return true;
           } catch (_) {
+            const coordinates = canvasEventCoordinates(canvas, event);
             try {
               canvas.dispatchEvent(
                 new MouseEvent(event.type.replace(/^pointer/, "mouse"), {
                   bubbles: true,
                   cancelable: true,
                   composed: true,
-                  clientX: event.clientX,
-                  clientY: event.clientY,
-                  screenX: event.screenX,
-                  screenY: event.screenY,
+                  ...coordinates,
                   button: event.button,
                   buttons: event.buttons,
                   altKey: event.altKey,
@@ -622,15 +630,13 @@
             return false;
           }
           try {
+            const coordinates = canvasEventCoordinates(canvas, event);
             canvas.dispatchEvent(
               new WheelEvent("wheel", {
                 bubbles: true,
                 cancelable: true,
                 composed: true,
-                clientX: event.clientX,
-                clientY: event.clientY,
-                screenX: event.screenX,
-                screenY: event.screenY,
+                ...coordinates,
                 deltaX: event.deltaX,
                 deltaY: event.deltaY,
                 deltaZ: event.deltaZ,
