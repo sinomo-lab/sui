@@ -113,6 +113,10 @@ pub(crate) fn layout_document(
             &mut max_cap_height,
         )?;
 
+        let paragraph_top = block_height;
+        let mut prepared = prepared;
+        translate_prepared_paragraph(&mut prepared, paragraph_top);
+
         for line in &prepared.lines {
             measured_width = measured_width.max(line.width);
             block_height = block_height.max(line.rect.max_y());
@@ -335,6 +339,26 @@ pub(crate) fn layout_document(
             glyphs: shaped_glyphs,
         }),
     })
+}
+
+fn translate_prepared_paragraph(prepared: &mut PreparedParagraphResult, y: f32) {
+    if y == 0.0 {
+        return;
+    }
+
+    let delta = Vector::new(0.0, y);
+    prepared.paragraph_rect = prepared.paragraph_rect.translate(delta);
+    for line in &mut prepared.lines {
+        line.rect = line.rect.translate(delta);
+        line.baseline += y;
+        for glyph in &mut line.glyphs {
+            glyph.origin_y += y;
+            glyph.bounds = glyph.bounds.map(|bounds| bounds.translate(delta));
+        }
+        for run in &mut line.runs {
+            run.rect = run.rect.translate(delta);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

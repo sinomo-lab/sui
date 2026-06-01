@@ -1246,10 +1246,7 @@ impl Widget for TextSurface {
                 current_caret.height().max(1.0),
             );
             ctx.set_ime_composition_rect(caret);
-            ctx.fill(
-                Path::rounded_rect(caret, caret_width * 0.5),
-                palette.accent_text,
-            );
+            ctx.fill(Path::rounded_rect(caret, caret_width * 0.5), palette.caret);
         }
 
         ctx.pop_clip();
@@ -1409,7 +1406,7 @@ mod tests {
         Event, Modifiers, PointerButtons, PointerEvent, PointerKind, SemanticsValue, WindowId,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, WindowBuilder};
-    use sui_scene::SceneCommand;
+    use sui_scene::{Brush, SceneCommand};
 
     fn build_runtime<W>(root: W) -> (Runtime, WindowId)
     where
@@ -1469,6 +1466,25 @@ mod tests {
             }
         });
         found
+    }
+
+    fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::FillPath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
     }
 
     #[test]
@@ -1602,6 +1618,36 @@ mod tests {
                 .and_then(|node| node.value.clone()),
             Some(SemanticsValue::Text("hello".to_string()))
         );
+    }
+
+    #[test]
+    fn text_surface_caret_uses_theme_palette_color() {
+        let mut theme = DefaultTheme::default();
+        theme.palette.caret = Color::rgba(0.02, 0.18, 0.72, 1.0);
+        let caret_color = theme.palette.caret;
+        let accent_text = theme.palette.accent_text;
+        let (mut runtime, window_id) = build_runtime(
+            TextSurface::new("Editor")
+                .theme(theme)
+                .value("Visible caret on white"),
+        );
+
+        runtime
+            .render(window_id)
+            .expect("initial render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(24.0, 24.0), true),
+            )
+            .expect("focus click should succeed");
+        let output = runtime
+            .render(window_id)
+            .expect("focused render should succeed");
+        let fill_colors = solid_fill_colors(&output);
+
+        assert!(fill_colors.iter().any(|color| *color == caret_color));
+        assert!(!fill_colors.iter().any(|color| *color == accent_text));
     }
 
     #[test]

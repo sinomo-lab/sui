@@ -612,6 +612,7 @@ pub struct ControlPalette {
     pub border_hover: Color,
     pub border_focus: Color,
     pub focus_ring: Color,
+    pub caret: Color,
     pub accent: Color,
     pub accent_hover: Color,
     pub accent_pressed: Color,
@@ -638,6 +639,7 @@ impl ControlPalette {
             border_hover,
             border_focus: colors.primary,
             focus_ring: colors.primary.with_alpha(0.28),
+            caret: colors.primary,
             accent: colors.primary,
             accent_hover: interactive_variant(colors.primary, colors.scheme, 0.08),
             accent_pressed: interactive_variant(colors.primary, colors.scheme, 0.16),
@@ -954,6 +956,7 @@ mod tests {
         theme.sync_derived_fields();
 
         assert_eq!(theme.palette.accent, Color::rgba(0.2, 0.3, 0.4, 1.0));
+        assert_eq!(theme.palette.caret, Color::rgba(0.2, 0.3, 0.4, 1.0));
         assert_eq!(theme.typography.body_font_size, 11.0);
         assert_eq!(theme.typography.body_line_height, 15.0);
     }
@@ -987,6 +990,7 @@ mod tests {
         assert_eq!(theme.colors.name, "dark");
         assert_eq!(theme.palette.surface, theme.colors.base_100);
         assert_eq!(theme.palette.text, theme.colors.base_content);
+        assert_eq!(theme.palette.caret, theme.colors.primary);
         assert_eq!(theme.palette.accent, theme.colors.primary);
         assert_eq!(theme.palette.accent_text, theme.colors.primary_content);
     }

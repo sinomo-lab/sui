@@ -4387,7 +4387,7 @@ mod tests {
         LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
         LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
         POPOVER_NAME, POPOVER_TRIGGER_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
-        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME,
+        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, TEXT_AREA_LABEL,
         TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
         TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
         TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
@@ -5900,6 +5900,27 @@ mod tests {
 
         assert_ne!(before, after);
 
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_text_area_focus_does_not_trap_gallery_wheel_scroll() -> Result<()> {
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+        scroll_to_story_target(&window, StoryCase::TextArea, 12)?;
+        let text_area = window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(TEXT_AREA_LABEL);
+
+        text_area.click()?;
+        let before = window.capture_screenshot()?;
+        text_area.scroll_pixels(Vector::new(0.0, -240.0))?;
+        let after = window.capture_screenshot()?;
+
+        assert_ne!(
+            before, after,
+            "wheel scrolling over the focused multiline editor should still move the gallery"
+        );
         Ok(())
     }
 

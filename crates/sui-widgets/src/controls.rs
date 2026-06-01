@@ -3054,10 +3054,7 @@ impl Widget for NumberInput {
                 content.height(),
             );
             ctx.set_ime_composition_rect(caret);
-            ctx.fill(
-                rounded_rect_path(caret, caret_width * 0.5),
-                palette.accent_text,
-            );
+            ctx.fill(rounded_rect_path(caret, caret_width * 0.5), palette.caret);
         }
     }
 
@@ -3450,13 +3447,15 @@ impl Widget for TextArea {
         } else {
             text_style.clone()
         };
+        let display_box = Size::new(content_width.max(1.0), display_style.line_height.max(1.0));
+        let input_box = Size::new(content_width.max(1.0), text_style.line_height.max(1.0));
 
         let display_layout = ctx
             .layout()
             .shape_text_persistent(
                 self.display_layout.as_ref().map(|layout| layout.handle()),
                 display_text,
-                Size::new(content_width.max(1.0), f32::INFINITY),
+                display_box,
                 display_style,
             )
             .ok();
@@ -3465,7 +3464,7 @@ impl Widget for TextArea {
             .shape_text_persistent(
                 self.input_layout.as_ref().map(|layout| layout.handle()),
                 input_text,
-                Size::new(content_width.max(1.0), f32::INFINITY),
+                input_box,
                 text_style.clone(),
             )
             .ok();
@@ -3531,28 +3530,36 @@ impl Widget for TextArea {
         }
 
         if self.focused {
+            let text_style = self.resolved_text_style();
+            let caret_width = physical_pixels(ctx, metrics.caret_width);
+            let fallback_caret = Rect::new(
+                content.x(),
+                content.y(),
+                caret_width,
+                text_style.line_height.max(1.0),
+            );
             let caret = self
                 .input_layout
                 .as_ref()
-                .map(|layout| {
-                    layout
+                .and_then(|layout| {
+                    let caret = layout
                         .caret_rect(self.editor.display_selection().focus.utf8_offset)
-                        .translate(content.origin.to_vector())
+                        .translate(content.origin.to_vector());
+                    rect_is_finite(caret).then_some(caret)
                 })
-                .unwrap_or(Rect::new(
-                    content.x(),
-                    content.y(),
-                    metrics.caret_width,
-                    content.height(),
-                ));
-            let caret_width = physical_pixels(ctx, metrics.caret_width);
-            let caret = Rect::new(caret.x(), caret.y(), caret_width, caret.height().max(1.0));
+                .unwrap_or(fallback_caret);
+            let caret = Rect::new(
+                caret
+                    .x()
+                    .min((content.max_x() - caret_width).max(content.x()))
+                    .max(content.x()),
+                caret.y(),
+                caret_width,
+                caret.height().max(text_style.line_height).max(1.0),
+            );
             ctx.set_ime_composition_rect(caret);
             if self.caret_visible {
-                ctx.fill(
-                    rounded_rect_path(caret, caret_width * 0.5),
-                    palette.accent_text,
-                );
+                ctx.fill(rounded_rect_path(caret, caret_width * 0.5), palette.caret);
             }
         }
     }
@@ -4603,7 +4610,7 @@ impl Widget for TextInput {
             if self.caret_visible {
                 ctx.fill(
                     rounded_rect_path(caret_rect, caret_width * 0.5),
-                    palette.accent_text,
+                    palette.caret,
                 );
             }
         }
@@ -5172,6 +5179,13 @@ fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
     ctx.dpi().physical_pixels_to_logical(value)
 }
 
+fn rect_is_finite(rect: Rect) -> bool {
+    rect.x().is_finite()
+        && rect.y().is_finite()
+        && rect.width().is_finite()
+        && rect.height().is_finite()
+}
+
 fn centered_text_rect(
     ctx: &PaintCtx,
     bounds: Rect,
@@ -5253,6 +5267,7 @@ mod tests {
         Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, FOCUS_ANIMATION_SECONDS,
         HOVER_ANIMATION_SECONDS, Label, NumberInput, PRESS_ANIMATION_SECONDS, RadioButton,
         RadioGroup, Select, Slider, Switch, TOGGLE_ANIMATION_SECONDS, TextArea, TextInput,
+        rect_is_finite,
     };
     use crate::containers::SizedBox;
     use crate::{HdrThemeMode, SemanticColorToken, WidgetLuminanceRole, resolve_luminance_role};
@@ -5407,6 +5422,22 @@ mod tests {
                 _ => None,
             })
             .expect("text draw command present")
+    }
+
+    fn shaped_text_layout_for(output: &RenderOutput, text: &str) -> sui_text::TextLayout {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawShapedText(run) => run
+                    .resolve(output.frame.text_layout_registry.as_ref())
+                    .filter(|layout| layout.text() == text)
+                    .cloned(),
+                _ => None,
+            })
+            .expect("shaped text layout present")
     }
 
     fn visual_center(measurement: sui_text::TextMeasurement, optical_centering: bool) -> f32 {
@@ -5719,7 +5750,7 @@ mod tests {
             primary_pointer(PointerEventKind::Down, Point::new(20.0, 16.0), true),
         )?;
         let focused = runtime.render(window_id)?;
-        let caret_color = theme.palette.accent_text;
+        let caret_color = theme.palette.caret;
         let focused_caret_count = solid_fill_colors(&focused)
             .into_iter()
             .filter(|color| *color == caret_color)
@@ -5736,6 +5767,31 @@ mod tests {
             .count();
         assert!(blinked.ime_composition_rect.is_some());
         assert_eq!(blinked_caret_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_caret_uses_theme_palette_color() -> Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.palette.caret = Color::rgba(0.02, 0.18, 0.72, 1.0);
+        let caret_color = theme.palette.caret;
+        let accent_text = theme.palette.accent_text;
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .theme(theme)
+                .value("Visible caret on white"),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(80.0, 16.0), true),
+        )?;
+        let output = runtime.render(window_id)?;
+        let fill_colors = solid_fill_colors(&output);
+
+        assert!(fill_colors.iter().any(|color| *color == caret_color));
+        assert!(!fill_colors.iter().any(|color| *color == accent_text));
         Ok(())
     }
 
@@ -5779,7 +5835,7 @@ mod tests {
         runtime.tick(CARET_BLINK_PERIOD_SECONDS * 0.75);
         assert!(handle_ready_events(&mut runtime)? >= 1);
         let hidden = runtime.render(window_id)?;
-        let caret_color = theme.palette.accent_text;
+        let caret_color = theme.palette.caret;
         assert_eq!(
             solid_fill_colors(&hidden)
                 .into_iter()
@@ -5820,7 +5876,7 @@ mod tests {
         runtime.tick(CARET_BLINK_PERIOD_SECONDS * 0.75);
         assert!(handle_ready_events(&mut runtime)? >= 1);
         let hidden = runtime.render(window_id)?;
-        let caret_color = theme.palette.accent_text;
+        let caret_color = theme.palette.caret;
         assert_eq!(
             solid_fill_colors(&hidden)
                 .into_iter()
@@ -5843,6 +5899,29 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn text_area_shapes_multiline_value_with_finite_positions() {
+        let notes = "Pinned notes for inspector workflows.\nSupports multiline editing.";
+        let output = render(
+            SizedBox::new().width(420.0).with_child(
+                TextArea::new("Notes")
+                    .min_height(150.0)
+                    .value(notes)
+                    .placeholder("Write notes"),
+            ),
+        );
+        let layout = shaped_text_layout_for(&output, notes);
+
+        assert!(layout.box_size().height.is_finite());
+        assert!(layout.lines().iter().all(|line| rect_is_finite(line.rect)));
+        assert!(
+            layout
+                .glyphs()
+                .iter()
+                .all(|glyph| glyph.origin_x.is_finite() && glyph.origin_y.is_finite())
+        );
     }
 
     #[test]

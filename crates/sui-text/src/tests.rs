@@ -162,6 +162,7 @@ fn text_system_shapes_text_and_reports_geometry() {
     assert_eq!(layout.paragraphs().len(), 2);
     assert_eq!(layout.lines().len(), 2);
     assert_eq!(layout.runs().len(), 2);
+    assert!(layout.lines()[1].rect.y() > layout.lines()[0].rect.y());
     assert!(!layout.glyphs().is_empty());
     assert!(layout.measurement().width > 0.0);
     assert!(layout.measurement().height >= layout.style().font_size);
