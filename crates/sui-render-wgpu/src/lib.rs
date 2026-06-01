@@ -778,17 +778,27 @@ pub enum DebugCaptureArtifact {
 struct OutputTransformUniform {
     tone_mapping_mode: u32,
     encode_srgb: u32,
-    _padding0: [u32; 2],
+    output_primaries: u32,
+    _padding0: u32,
     sdr_content_scale: f32,
     _padding1: [u32; 3],
 }
 
 impl OutputTransformUniform {
-    const fn new(tone_mapping_mode: u32, encode_srgb: bool, sdr_content_scale: f32) -> Self {
+    const fn new(
+        tone_mapping_mode: u32,
+        encode_srgb: bool,
+        output_primaries: DisplayColorPrimaries,
+        sdr_content_scale: f32,
+    ) -> Self {
         Self {
             tone_mapping_mode,
             encode_srgb: encode_srgb as u32,
-            _padding0: [0; 2],
+            output_primaries: match output_primaries {
+                DisplayColorPrimaries::Srgb => 0,
+                DisplayColorPrimaries::DisplayP3 => 1,
+            },
+            _padding0: 0,
             sdr_content_scale,
             _padding1: [0; 3],
         }
@@ -2230,8 +2240,12 @@ impl WgpuRenderer {
                 ..
             }
         );
-        let uniform =
-            OutputTransformUniform::new(resolved_tone_mapping, encode_srgb, sdr_content_scale);
+        let uniform = OutputTransformUniform::new(
+            resolved_tone_mapping,
+            encode_srgb,
+            scene::output_primaries(strategy),
+            sdr_content_scale,
+        );
         let uniform_buffer = shared
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -4009,7 +4023,7 @@ struct VsOut {
 struct OutputUniform {
     tone_mapping_mode: u32,
     encode_srgb: u32,
-    _padding1: u32,
+    output_primaries: u32,
     _padding2: u32,
     sdr_content_scale: f32,
     _padding3: u32,
@@ -4050,6 +4064,17 @@ fn tone_map(color: vec3<f32>) -> vec3<f32> {
     }
 }
 
+fn linear_srgb_to_output_primaries(color: vec3<f32>) -> vec3<f32> {
+    if output_uniform.output_primaries == 1u {
+        return vec3<f32>(
+            0.82246196 * color.r + 0.17753802 * color.g,
+            0.0331942 * color.r + 0.96680576 * color.g,
+            0.01708263 * color.r + 0.07239743 * color.g + 0.91051996 * color.b,
+        );
+    }
+    return color;
+}
+
 fn linear_to_srgb_channel(channel: f32) -> f32 {
     let value = max(channel, 0.0);
     if value <= 0.0031308 {
@@ -4075,7 +4100,10 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let max_coord = vec2<i32>(max(vec2<u32>(1u), dims) - vec2<u32>(1u));
     let coords = clamp(vec2<i32>(position.xy), vec2<i32>(0), max_coord);
     let color = textureLoad(scene_texture, coords, 0);
-    return vec4<f32>(encode_for_output(tone_map(color.rgb)), clamp(color.a, 0.0, 1.0));
+    return vec4<f32>(
+        encode_for_output(linear_srgb_to_output_primaries(tone_map(color.rgb))),
+        clamp(color.a, 0.0, 1.0),
+    );
 }
 "#;
 
@@ -4860,7 +4888,7 @@ mod tests {
             DisplayCapabilities {
                 supports_wide_gamut: true,
                 supports_hdr: true,
-                preferred_primaries: DisplayColorPrimaries::DisplayP3,
+                preferred_primaries: DisplayColorPrimaries::Srgb,
                 preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
                 native_hdr_presentation_supported: true,
                 ..DisplayCapabilities::default()
@@ -4943,7 +4971,7 @@ mod tests {
                 supports_hdr: true,
                 preferred_primaries: DisplayColorPrimaries::DisplayP3,
                 preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
-                native_hdr_presentation_supported: true,
+                native_hdr_presentation_supported: false,
                 ..DisplayCapabilities::default()
             },
             ColorManagementMode {
@@ -5002,7 +5030,7 @@ mod tests {
             DisplayCapabilities {
                 supports_wide_gamut: true,
                 supports_hdr: true,
-                preferred_primaries: DisplayColorPrimaries::DisplayP3,
+                preferred_primaries: DisplayColorPrimaries::Srgb,
                 preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
                 native_hdr_presentation_supported: true,
                 ..DisplayCapabilities::default()
@@ -5045,6 +5073,16 @@ mod tests {
         assert!(!output_transform_requires_intermediate(
             OutputStrategy::SdrSurface {
                 format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            }
+        ));
+    }
+
+    #[test]
+    fn wide_gamut_output_transform_runs_even_for_srgb_surface_formats() {
+        assert!(output_transform_requires_intermediate(
+            OutputStrategy::WideGamutSurface {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::DisplayP3,
             }
         ));
     }
@@ -5135,6 +5173,26 @@ mod tests {
         assert!((transformed[0] - expected).abs() < 0.0001);
         assert!((transformed[1] - expected).abs() < 0.0001);
         assert!((transformed[2] - expected).abs() < 0.0001);
+        assert_eq!(transformed[3], 1.0);
+    }
+
+    #[test]
+    fn output_transform_maps_linear_srgb_to_display_p3_canvas_primaries() {
+        let transformed = apply_output_transform_for_testing(
+            [1.0, 0.55, 0.18, 1.0],
+            OutputStrategy::HdrNativeSurface {
+                format: wgpu::TextureFormat::Rgba16Float,
+                primaries: DisplayColorPrimaries::DisplayP3,
+                transfer: DisplayTransferFunction::Srgb,
+            },
+            RequestedToneMappingMode::Automatic,
+            80.0,
+            None,
+        );
+
+        assert!((transformed[0] - 0.920_107_84).abs() < 0.0001);
+        assert!((transformed[1] - 0.564_937_35).abs() < 0.0001);
+        assert!((transformed[2] - 0.220_794_81).abs() < 0.0001);
         assert_eq!(transformed[3], 1.0);
     }
 

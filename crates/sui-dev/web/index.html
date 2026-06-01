@@ -61,9 +61,13 @@
           queryValue("dynamic-range") === "standard" ||
           queryValue("canvas-format") === "rgba8unorm-srgb" ||
           queryValue("canvas-tone-mapping") === "standard";
+        const explicitSrgbCanvas =
+          queryValue("canvas-color-space") === "srgb" ||
+          queryValue("output-primaries") === "srgb";
 
         const wantsWideGamut =
           !forceSdr &&
+          !explicitSrgbCanvas &&
           (queryValue("canvas-color-space") === "display-p3" ||
             queryValue("output-primaries") === "display-p3" ||
             queryValue("output-primaries") === "p3" ||
@@ -84,11 +88,12 @@
             queryValue("color-management") === "prefer-hdr" ||
             mediaMatches("(dynamic-range: high)"));
 
-        if (!wantsWideGamut && !wantsHdr) {
-          return;
-        }
+        window.__suiWebGpuCanvasPreferences = {
+          wantsWideGamut,
+          wantsHdr,
+        };
 
-        const patchConfigure = (context) => {
+        const patchConfigure = (context, ownerWindow) => {
           if (!context || context.__suiColorConfigurePatched) {
             return context;
           }
@@ -103,6 +108,10 @@
           });
 
           context.configure = function (configuration) {
+            const preferences = ownerWindow.__suiWebGpuCanvasPreferences || {
+              wantsWideGamut: false,
+              wantsHdr: false,
+            };
             const next = {
               device: configuration.device,
               format: configuration.format,
@@ -111,17 +120,17 @@
               viewFormats: configuration.viewFormats,
             };
 
-            if (wantsWideGamut) {
+            if (preferences.wantsWideGamut && !preferences.wantsHdr) {
               next.colorSpace = "display-p3";
             }
 
-            if (wantsHdr && configuration.format === "rgba16float") {
+            if (preferences.wantsHdr && configuration.format === "rgba16float") {
               next.toneMapping = { mode: "extended" };
             }
 
-            window.__suiWebGpuCanvasConfiguration = next;
-            if (!window.__suiLoggedWebGpuCanvasConfiguration) {
-              window.__suiLoggedWebGpuCanvasConfiguration = true;
+            ownerWindow.__suiWebGpuCanvasConfiguration = next;
+            if (!ownerWindow.__suiLoggedWebGpuCanvasConfiguration) {
+              ownerWindow.__suiLoggedWebGpuCanvasConfiguration = true;
               console.log(
                 "SUI_WEBGPU_CANVAS_CONFIGURATION " +
                   JSON.stringify({
@@ -137,7 +146,7 @@
             try {
               return configure.call(this, next);
             } catch (error) {
-              window.__suiWebGpuCanvasConfigurationError = String(error);
+              ownerWindow.__suiWebGpuCanvasConfigurationError = String(error);
               console.warn(
                 "SUI_WEBGPU_CANVAS_CONFIGURATION_ERROR " + String(error),
               );
@@ -148,8 +157,12 @@
           return context;
         };
 
+        const patchVersion = 2;
         const patchCanvas = (prototype) => {
-          if (!prototype || prototype.__suiWebGpuGetContextPatched) {
+          if (
+            !prototype ||
+            prototype.__suiWebGpuGetContextPatchVersion === patchVersion
+          ) {
             return;
           }
 
@@ -158,13 +171,22 @@
             return;
           }
 
-          Object.defineProperty(prototype, "__suiWebGpuGetContextPatched", {
-            value: true,
+          if (!prototype.__suiWebGpuGetContextPatched) {
+            Object.defineProperty(prototype, "__suiWebGpuGetContextPatched", {
+              value: true,
+            });
+          }
+          Object.defineProperty(prototype, "__suiWebGpuGetContextPatchVersion", {
+            value: patchVersion,
+            configurable: true,
           });
 
           prototype.getContext = function (contextId, ...args) {
             const context = getContext.call(this, contextId, ...args);
-            return contextId === "webgpu" ? patchConfigure(context) : context;
+            const ownerWindow = this.ownerDocument?.defaultView || window;
+            return contextId === "webgpu"
+              ? patchConfigure(context, ownerWindow)
+              : context;
           };
         };
 

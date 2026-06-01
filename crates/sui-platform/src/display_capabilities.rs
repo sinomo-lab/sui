@@ -214,9 +214,9 @@ fn display_capabilities_from_web_signals(
             sui_render_wgpu::DynamicRangeMode::StandardDynamicRange
         },
         sdr_white_nits: hints.sdr_white_nits,
-        native_hdr_presentation_supported: media_hdr,
+        native_hdr_presentation_supported: false,
         notes: format!(
-            "Web output on {monitor_name}: query hints -> force_sdr={} float16_canvas={} display_p3={} extended_tone_mapping={} hdr={} sdr_white_nits={:?}; media queries -> wide_gamut={} hdr={}. Browser APIs do not expose the OS SDR content brightness slider, so auto SDR brightness uses this explicit hint when present and otherwise falls back to the configured value.",
+            "Web output on {monitor_name}: query hints -> force_sdr={} float16_canvas={} display_p3={} extended_tone_mapping={} hdr={} sdr_white_nits={:?}; media queries -> wide_gamut={} hdr={}. WebGPU HDR canvas values are browser color-managed rather than native scRGB presentation. Browser APIs do not expose the OS SDR content brightness slider, so auto SDR brightness uses this explicit hint when present and otherwise falls back to the configured value.",
             hints.force_sdr,
             hints.float16_canvas,
             hints.display_p3,
@@ -571,12 +571,13 @@ mod tests {
 
         assert!(capabilities.supports_wide_gamut);
         assert!(capabilities.supports_hdr);
-        assert!(capabilities.native_hdr_presentation_supported);
+        assert!(!capabilities.native_hdr_presentation_supported);
         assert_eq!(capabilities.sdr_white_nits, None);
         assert_eq!(
             capabilities.preferred_dynamic_range,
             DynamicRangeMode::HighDynamicRange
         );
+        assert!(capabilities.notes.contains("browser color-managed"));
     }
 
     #[test]

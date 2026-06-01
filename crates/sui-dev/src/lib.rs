@@ -2774,6 +2774,11 @@ fn parse_web_launch_mode(query: &str) -> WebLaunchMode {
         }
     }
 
+    if web_uses_hdr_canvas(&mode) {
+        mode.canvas_color_space = WebCanvasColorSpacePreference::Srgb;
+        mode.output_primaries = WindowOutputColorPrimaries::Srgb;
+    }
+
     mode
 }
 
@@ -2824,6 +2829,27 @@ fn web_canvas_color_space_slug(color_space: WebCanvasColorSpacePreference) -> &'
     }
 }
 
+fn web_uses_hdr_canvas(mode: &WebLaunchMode) -> bool {
+    matches!(mode.canvas_format, WebCanvasFormatPreference::Rgba16Float)
+        || matches!(
+            mode.canvas_tone_mapping,
+            WebCanvasToneMappingPreference::Extended
+        )
+        || matches!(
+            mode.color_management_mode,
+            WindowColorManagementMode::PreferHdr
+        )
+        || matches!(mode.dynamic_range, WindowDynamicRangeMode::HighDynamicRange)
+}
+
+fn web_canvas_color_space_slug_for_mode(mode: &WebLaunchMode) -> &'static str {
+    if web_uses_hdr_canvas(mode) {
+        "srgb"
+    } else {
+        web_canvas_color_space_slug(mode.canvas_color_space)
+    }
+}
+
 fn web_canvas_tone_mapping_slug(tone_mapping: WebCanvasToneMappingPreference) -> &'static str {
     match tone_mapping {
         WebCanvasToneMappingPreference::Auto => "auto",
@@ -2847,6 +2873,18 @@ fn web_output_primaries_slug(primaries: WindowOutputColorPrimaries) -> &'static 
         WindowOutputColorPrimaries::Srgb => "srgb",
         WindowOutputColorPrimaries::DisplayP3 => "display-p3",
     }
+}
+
+fn web_output_primaries_for_mode(mode: &WebLaunchMode) -> WindowOutputColorPrimaries {
+    if web_uses_hdr_canvas(mode) {
+        WindowOutputColorPrimaries::Srgb
+    } else {
+        mode.output_primaries
+    }
+}
+
+fn web_output_primaries_slug_for_mode(mode: &WebLaunchMode) -> &'static str {
+    web_output_primaries_slug(web_output_primaries_for_mode(mode))
 }
 
 fn web_dynamic_range_slug(dynamic_range: WindowDynamicRangeMode) -> &'static str {
@@ -2926,10 +2964,10 @@ fn web_validation_query(mode: &WebLaunchMode) -> String {
         mode.frames,
         mode.warmup_frames,
         web_canvas_format_slug(mode.canvas_format),
-        web_canvas_color_space_slug(mode.canvas_color_space),
+        web_canvas_color_space_slug_for_mode(mode),
         web_canvas_tone_mapping_slug(mode.canvas_tone_mapping),
         web_color_management_slug(mode.color_management_mode),
-        web_output_primaries_slug(mode.output_primaries),
+        web_output_primaries_slug_for_mode(mode),
         web_dynamic_range_slug(mode.dynamic_range),
         web_tone_mapping_slug(mode.tone_mapping),
         mode.sdr_content_brightness_nits,
@@ -2943,10 +2981,10 @@ fn web_validation_report(mode: &WebLaunchMode) -> String {
         "route={}; canvas_format={}; canvas_color_space={}; canvas_tone_mapping={}; color_management={}; output_primaries={}; dynamic_range={}; tone_mapping={}; sdr_content_brightness={:.0}; use_system_sdr_brightness={}; query=?{}",
         web_benchmark_slug(mode.benchmark),
         web_canvas_format_slug(mode.canvas_format),
-        web_canvas_color_space_slug(mode.canvas_color_space),
+        web_canvas_color_space_slug_for_mode(mode),
         web_canvas_tone_mapping_slug(mode.canvas_tone_mapping),
         web_color_management_slug(mode.color_management_mode),
-        web_output_primaries_slug(mode.output_primaries),
+        web_output_primaries_slug_for_mode(mode),
         web_dynamic_range_slug(mode.dynamic_range),
         web_tone_mapping_slug(mode.tone_mapping),
         mode.sdr_content_brightness_nits,
@@ -2959,7 +2997,7 @@ fn web_validation_report(mode: &WebLaunchMode) -> String {
 fn web_window_render_options(mode: &WebLaunchMode) -> WindowRenderOptions {
     WindowRenderOptions::new(true, 1.0)
         .with_color_management_mode(mode.color_management_mode)
-        .with_output_color_primaries(mode.output_primaries)
+        .with_output_color_primaries(web_output_primaries_for_mode(mode))
         .with_dynamic_range_mode(mode.dynamic_range)
         .with_tone_mapping_mode(mode.tone_mapping)
         .with_sdr_content_brightness_nits(mode.sdr_content_brightness_nits)
@@ -3262,10 +3300,7 @@ mod tests {
         );
         assert_eq!(mode.benchmark, Some(WebBenchmarkKind::ColorValidation));
         assert_eq!(mode.canvas_format, WebCanvasFormatPreference::Rgba16Float);
-        assert_eq!(
-            mode.canvas_color_space,
-            WebCanvasColorSpacePreference::DisplayP3
-        );
+        assert_eq!(mode.canvas_color_space, WebCanvasColorSpacePreference::Srgb);
         assert_eq!(
             mode.canvas_tone_mapping,
             WebCanvasToneMappingPreference::Extended
@@ -3274,7 +3309,7 @@ mod tests {
             mode.color_management_mode,
             WindowColorManagementMode::PreferHdr
         );
-        assert_eq!(mode.output_primaries, WindowOutputColorPrimaries::DisplayP3);
+        assert_eq!(mode.output_primaries, WindowOutputColorPrimaries::Srgb);
         assert_eq!(mode.dynamic_range, WindowDynamicRangeMode::HighDynamicRange);
         assert_eq!(mode.tone_mapping, WindowToneMappingMode::Reinhard);
         assert_eq!(mode.sdr_content_brightness_nits, 260.0);
@@ -3294,7 +3329,7 @@ mod tests {
         );
         assert_eq!(
             options.output_color_primaries,
-            WindowOutputColorPrimaries::DisplayP3
+            WindowOutputColorPrimaries::Srgb
         );
         assert_eq!(
             options.dynamic_range_mode,
@@ -3313,7 +3348,7 @@ mod tests {
 
         assert_eq!(
             web_validation_query(&mode),
-            "benchmark=color-validation&frames=240&warmup=24&canvas-format=rgba16float&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard&sdr-content-brightness=80&use-system-sdr-brightness=true"
+            "benchmark=color-validation&frames=240&warmup=24&canvas-format=rgba16float&canvas-color-space=srgb&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=srgb&dynamic-range=hdr&tone-mapping=reinhard&sdr-content-brightness=80&use-system-sdr-brightness=true"
         );
     }
 
@@ -3346,10 +3381,10 @@ mod tests {
 
         assert!(report.contains("route=color-validation"));
         assert!(report.contains("canvas_format=rgba16float"));
-        assert!(report.contains("canvas_color_space=display-p3"));
+        assert!(report.contains("canvas_color_space=srgb"));
         assert!(report.contains("canvas_tone_mapping=extended"));
         assert!(report.contains("color_management=prefer-wide-gamut"));
-        assert!(report.contains("output_primaries=display-p3"));
+        assert!(report.contains("output_primaries=srgb"));
         assert!(report.contains("dynamic_range=hdr"));
         assert!(report.contains("tone_mapping=clamp"));
         assert!(report.contains("sdr_content_brightness=80"));

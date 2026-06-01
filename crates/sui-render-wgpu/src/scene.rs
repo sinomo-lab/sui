@@ -4033,9 +4033,19 @@ pub(crate) fn output_transform_requires_intermediate(strategy: OutputStrategy) -
     match strategy {
         OutputStrategy::HdrNativeSurface { .. }
         | OutputStrategy::HdrIntermediateThenToneMap { .. } => true,
-        OutputStrategy::SdrSurface { format } | OutputStrategy::WideGamutSurface { format, .. } => {
-            !format.is_srgb()
+        OutputStrategy::WideGamutSurface { format, primaries } => {
+            !format.is_srgb() || !matches!(primaries, DisplayColorPrimaries::Srgb)
         }
+        OutputStrategy::SdrSurface { format } => !format.is_srgb(),
+    }
+}
+
+pub(crate) fn output_primaries(strategy: OutputStrategy) -> DisplayColorPrimaries {
+    match strategy {
+        OutputStrategy::SdrSurface { .. } => DisplayColorPrimaries::Srgb,
+        OutputStrategy::WideGamutSurface { primaries, .. }
+        | OutputStrategy::HdrNativeSurface { primaries, .. }
+        | OutputStrategy::HdrIntermediateThenToneMap { primaries, .. } => primaries,
     }
 }
 
@@ -4077,7 +4087,7 @@ pub(crate) fn apply_output_transform_for_testing(
         color[3],
     ];
 
-    match strategy {
+    let transformed = match strategy {
         OutputStrategy::HdrNativeSurface { .. } => [scaled[0], scaled[1], scaled[2], scaled[3]],
         _ => match mode {
             RequestedToneMappingMode::Automatic => match strategy {
@@ -4096,6 +4106,25 @@ pub(crate) fn apply_output_transform_for_testing(
                 tone_map_linear_color(scaled, RequestedToneMappingMode::Reinhard)
             }
         },
+    };
+
+    let [red, green, blue] =
+        linear_srgb_to_output_primaries([transformed[0], transformed[1], transformed[2]], strategy);
+    [red, green, blue, transformed[3]]
+}
+
+#[cfg(test)]
+pub(crate) fn linear_srgb_to_output_primaries(
+    color: [f32; 3],
+    strategy: OutputStrategy,
+) -> [f32; 3] {
+    match output_primaries(strategy) {
+        DisplayColorPrimaries::Srgb => color,
+        DisplayColorPrimaries::DisplayP3 => [
+            (0.822_461_96 * color[0]) + (0.177_538_02 * color[1]),
+            (0.033_194_2 * color[0]) + (0.966_805_76 * color[1]),
+            (0.017_082_63 * color[0]) + (0.072_397_43 * color[1]) + (0.910_519_96 * color[2]),
+        ],
     }
 }
 
@@ -4189,7 +4218,12 @@ pub(crate) fn select_output_strategy(
     if wants_hdr {
         if capabilities.supports_hdr || native_hdr_available {
             if let Some(format) = native_hdr_format {
-                let transfer = if capabilities.native_hdr_presentation_supported {
+                let uses_linear_sc_rgb = capabilities.native_hdr_presentation_supported
+                    && matches!(
+                        capabilities.preferred_primaries,
+                        DisplayColorPrimaries::Srgb
+                    );
+                let transfer = if uses_linear_sc_rgb {
                     DisplayTransferFunction::LinearExtended
                 } else {
                     DisplayTransferFunction::Srgb
