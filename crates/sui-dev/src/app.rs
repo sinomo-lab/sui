@@ -2091,18 +2091,18 @@ impl RenderSettingsTab {
                                     .optical_vertical_text_alignment_enabled = checked;
                             }),
                     )
-                    .with_child(
-                        SizedBox::new().width(220.0).with_child(
-                            NumberInput::new(FEATHER_WIDTH_NAME)
-                                .range(0.0, 8.0)
-                                .step(0.05)
-                                .precision(2)
-                                .value(initial.feather_width as f64)
-                                .on_change(move |value| {
-                                    width_state.borrow_mut().feather_width = value.max(0.0) as f32;
-                                }),
-                        ),
-                    )
+                    .with_child(labeled_settings_control(
+                        FEATHER_WIDTH_NAME,
+                        220.0,
+                        NumberInput::new(FEATHER_WIDTH_NAME)
+                            .range(0.0, 8.0)
+                            .step(0.05)
+                            .precision(2)
+                            .value(initial.feather_width as f64)
+                            .on_change(move |value| {
+                                width_state.borrow_mut().feather_width = value.max(0.0) as f32;
+                            }),
+                    ))
                     .with_child(
                         Checkbox::new(TEXT_HINTING_TOGGLE_LABEL)
                             .checked(!matches!(initial.text_hinting, WindowTextHinting::None))
@@ -2122,23 +2122,23 @@ impl RenderSettingsTab {
                                 };
                             }),
                     )
-                    .with_child(
-                        SizedBox::new().width(220.0).with_child(
-                            NumberInput::new(TEXT_HINTING_MAX_PPEM_NAME)
-                                .range(1.0, 64.0)
-                                .step(0.5)
-                                .precision(1)
-                                .value(match initial.text_hinting.normalized() {
-                                    WindowTextHinting::Slight { max_ppem } => max_ppem as f64,
-                                    WindowTextHinting::None => 18.0,
-                                })
-                                .on_change(move |value| {
-                                    let max_ppem = value.clamp(1.0, 64.0) as f32;
-                                    hinting_max_ppem_state.borrow_mut().text_hinting =
-                                        WindowTextHinting::Slight { max_ppem };
-                                }),
-                        ),
-                    )
+                    .with_child(labeled_settings_control(
+                        TEXT_HINTING_MAX_PPEM_NAME,
+                        220.0,
+                        NumberInput::new(TEXT_HINTING_MAX_PPEM_NAME)
+                            .range(1.0, 64.0)
+                            .step(0.5)
+                            .precision(1)
+                            .value(match initial.text_hinting.normalized() {
+                                WindowTextHinting::Slight { max_ppem } => max_ppem as f64,
+                                WindowTextHinting::None => 18.0,
+                            })
+                            .on_change(move |value| {
+                                let max_ppem = value.clamp(1.0, 64.0) as f32;
+                                hinting_max_ppem_state.borrow_mut().text_hinting =
+                                    WindowTextHinting::Slight { max_ppem };
+                            }),
+                    ))
                     .with_child(
                         Checkbox::new(STEM_DARKENING_TOGGLE_LABEL)
                             .checked(!matches!(initial.stem_darkening, WindowStemDarkening::None))
@@ -2161,56 +2161,56 @@ impl RenderSettingsTab {
                                 };
                             }),
                     )
-                    .with_child(
-                        SizedBox::new().width(220.0).with_child(
-                            NumberInput::new(STEM_DARKENING_AMOUNT_NAME)
-                                .range(0.0, 1.0)
-                                .step(0.01)
-                                .precision(2)
-                                .value(match initial.stem_darkening.normalized() {
-                                    WindowStemDarkening::Enabled { amount, .. } => amount as f64,
-                                    WindowStemDarkening::None => 0.08,
-                                })
-                                .on_change(move |value| {
-                                    let amount = value.clamp(0.0, 1.0) as f32;
-                                    let max_ppem = match stem_darkening_amount_state
-                                        .borrow()
-                                        .stem_darkening
-                                        .normalized()
-                                    {
-                                        WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem,
-                                        WindowStemDarkening::None => 18.0,
-                                    };
-                                    stem_darkening_amount_state.borrow_mut().stem_darkening =
-                                        WindowStemDarkening::Enabled { max_ppem, amount };
-                                }),
-                        ),
-                    )
-                    .with_child(
-                        SizedBox::new().width(220.0).with_child(
-                            NumberInput::new(STEM_DARKENING_MAX_PPEM_NAME)
-                                .range(1.0, 64.0)
-                                .step(0.5)
-                                .precision(1)
-                                .value(match initial.stem_darkening.normalized() {
-                                    WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem as f64,
+                    .with_child(labeled_settings_control(
+                        STEM_DARKENING_AMOUNT_NAME,
+                        220.0,
+                        NumberInput::new(STEM_DARKENING_AMOUNT_NAME)
+                            .range(0.0, 1.0)
+                            .step(0.01)
+                            .precision(2)
+                            .value(match initial.stem_darkening.normalized() {
+                                WindowStemDarkening::Enabled { amount, .. } => amount as f64,
+                                WindowStemDarkening::None => 0.08,
+                            })
+                            .on_change(move |value| {
+                                let amount = value.clamp(0.0, 1.0) as f32;
+                                let max_ppem = match stem_darkening_amount_state
+                                    .borrow()
+                                    .stem_darkening
+                                    .normalized()
+                                {
+                                    WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem,
                                     WindowStemDarkening::None => 18.0,
-                                })
-                                .on_change(move |value| {
-                                    let max_ppem = value.clamp(1.0, 64.0) as f32;
-                                    let amount = match stem_darkening_max_ppem_state
-                                        .borrow()
-                                        .stem_darkening
-                                        .normalized()
-                                    {
-                                        WindowStemDarkening::Enabled { amount, .. } => amount,
-                                        WindowStemDarkening::None => 0.08,
-                                    };
-                                    stem_darkening_max_ppem_state.borrow_mut().stem_darkening =
-                                        WindowStemDarkening::Enabled { max_ppem, amount };
-                                }),
-                        ),
-                    )
+                                };
+                                stem_darkening_amount_state.borrow_mut().stem_darkening =
+                                    WindowStemDarkening::Enabled { max_ppem, amount };
+                            }),
+                    ))
+                    .with_child(labeled_settings_control(
+                        STEM_DARKENING_MAX_PPEM_NAME,
+                        220.0,
+                        NumberInput::new(STEM_DARKENING_MAX_PPEM_NAME)
+                            .range(1.0, 64.0)
+                            .step(0.5)
+                            .precision(1)
+                            .value(match initial.stem_darkening.normalized() {
+                                WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem as f64,
+                                WindowStemDarkening::None => 18.0,
+                            })
+                            .on_change(move |value| {
+                                let max_ppem = value.clamp(1.0, 64.0) as f32;
+                                let amount = match stem_darkening_max_ppem_state
+                                    .borrow()
+                                    .stem_darkening
+                                    .normalized()
+                                {
+                                    WindowStemDarkening::Enabled { amount, .. } => amount,
+                                    WindowStemDarkening::None => 0.08,
+                                };
+                                stem_darkening_max_ppem_state.borrow_mut().stem_darkening =
+                                    WindowStemDarkening::Enabled { max_ppem, amount };
+                            }),
+                    ))
                     .with_child(labeled_settings_control(
                         COLOR_MANAGEMENT_MODE_NAME,
                         280.0,

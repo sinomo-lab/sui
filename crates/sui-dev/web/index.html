@@ -28,26 +28,6 @@
         display: block;
       }
 
-      #benchmark-results {
-        position: fixed;
-        top: 16px;
-        right: 16px;
-        z-index: 1000;
-        min-width: 320px;
-        max-width: min(420px, calc(100vw - 32px));
-        padding: 12px 14px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 12px;
-        background: rgba(10, 15, 24, 0.92);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-        backdrop-filter: blur(10px);
-        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        white-space: pre-wrap;
-      }
-
-      #benchmark-results:empty {
-        display: none;
-      }
     </style>
     <script>
       (() => {
@@ -218,11 +198,6 @@
             return SemanticDomMode.Off;
           }
 
-          const debug = params.get("sui-debug");
-          if (debug && !falsy(debug)) {
-            return SemanticDomMode.Debug;
-          }
-
           const raw =
             params.get("semantic-dom") ?? params.get("sui-semantic-dom");
           if (raw == null || raw === "") {
@@ -238,15 +213,21 @@
         };
 
         const mode = parseMode();
+        const debugRequested = truthy(params.get("sui-debug"));
         window.SemanticDomMode = SemanticDomMode;
         window.__suiSemanticDomMode = mode;
+        window.__suiDebugEnabled = debugRequested;
 
         if (mode === SemanticDomMode.Off) {
           return;
         }
 
         const automationEnabled =
-          mode === SemanticDomMode.Automation || mode === SemanticDomMode.Debug;
+          debugRequested ||
+          mode === SemanticDomMode.Automation ||
+          mode === SemanticDomMode.Debug;
+        const domPointerForwardingEnabled =
+          mode === SemanticDomMode.Automation;
         const debugEnabled = mode === SemanticDomMode.Debug;
         const state = {
           mode,
@@ -259,6 +240,7 @@
           commands: [],
           waiters: [],
           elements: new Map(),
+          labels: new Map(),
           mirror: null,
           pendingMirrorUpdate: false,
           mirrorUpdateCount: 0,
@@ -270,8 +252,24 @@
 
         const clone = (value) =>
           value == null ? value : JSON.parse(JSON.stringify(value));
-        const valueText = (node) =>
-          node?.value?.kind === "text" ? node.value.text || "" : "";
+        const formatValueNumber = (value) =>
+          Number.isFinite(Number(value)) ? String(Number(value)) : "";
+        const valueText = (node) => {
+          if (node?.value?.kind === "text") {
+            return node.value.text || "";
+          }
+          if (node?.value?.kind === "number") {
+            return formatValueNumber(node.value.number);
+          }
+          if (node?.value?.kind === "range") {
+            return formatValueNumber(node.value.value);
+          }
+          return "";
+        };
+        const valueNumber = (node) =>
+          node?.value?.kind === "number" && Number.isFinite(Number(node.value.number))
+            ? Number(node.value.number)
+            : null;
         const valueRange = (node) =>
           node?.value?.kind === "range" ? node.value : null;
         const nodeLabel = (node) =>
@@ -500,6 +498,150 @@
             element.textContent = value;
           }
         };
+        const valueIsVisibleControlContent = (node) =>
+          ["ComboBox", "SpinBox", "Slider", "ProgressBar", "TextInput"].includes(
+            node.role,
+          );
+        const exposesAriaValue = (node) =>
+          ["ComboBox", "SpinBox", "Slider", "ProgressBar"].includes(node.role);
+        const visibleContentText = (node, label) =>
+          valueIsVisibleControlContent(node) ? valueText(node) : label;
+        const elementId = (nodeId) => `sui-semantic-dom-node-${nodeId}`;
+        const labelId = (nodeId) => `sui-semantic-dom-label-${nodeId}`;
+        const needsAssociatedLabel = (node) =>
+          [
+            "CheckBox",
+            "Switch",
+            "RadioButton",
+            "Slider",
+            "TextInput",
+            "SpinBox",
+            "ComboBox",
+            "ColorPicker",
+          ].includes(node.role);
+        const configureHiddenLabel = (labelElement) => {
+          labelElement.hidden = true;
+          Object.assign(labelElement.style, {
+            display: "none",
+          });
+        };
+        const ensureAssociatedLabel = (mirror, key, element, node, label) => {
+          const shouldLabel = needsAssociatedLabel(node) && label;
+          let labelElement = state.labels.get(key);
+          if (!shouldLabel) {
+            labelElement?.remove();
+            state.labels.delete(key);
+            setAttribute(element, "aria-labelledby", null);
+            return;
+          }
+
+          if (!labelElement || !labelElement.isConnected) {
+            labelElement = document.createElement("label");
+            configureHiddenLabel(labelElement);
+            state.labels.set(key, labelElement);
+          }
+
+          const id = elementId(key);
+          element.id = id;
+          labelElement.id = labelId(key);
+          labelElement.htmlFor = id;
+          setTextContent(labelElement, label);
+          setAttribute(element, "aria-labelledby", labelElement.id);
+          setAttribute(element, "aria-label", null);
+          if (labelElement.parentNode !== mirror) {
+            mirror.appendChild(labelElement);
+          }
+        };
+        const clonePointerEventInit = (event) => ({
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerId: event.pointerId,
+          pointerType: event.pointerType,
+          isPrimary: event.isPrimary,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          screenX: event.screenX,
+          screenY: event.screenY,
+          button: event.button,
+          buttons: event.buttons,
+          pressure: event.pressure,
+          tangentialPressure: event.tangentialPressure,
+          tiltX: event.tiltX,
+          tiltY: event.tiltY,
+          twist: event.twist,
+          width: event.width,
+          height: event.height,
+          altKey: event.altKey,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          shiftKey: event.shiftKey,
+        });
+        const forwardPointerEventToCanvas = (event) => {
+          const canvas = document.getElementById("sui-main-canvas");
+          if (!canvas) {
+            return false;
+          }
+          try {
+            canvas.dispatchEvent(
+              new PointerEvent(event.type, clonePointerEventInit(event)),
+            );
+            return true;
+          } catch (_) {
+            try {
+              canvas.dispatchEvent(
+                new MouseEvent(event.type.replace(/^pointer/, "mouse"), {
+                  bubbles: true,
+                  cancelable: true,
+                  composed: true,
+                  clientX: event.clientX,
+                  clientY: event.clientY,
+                  screenX: event.screenX,
+                  screenY: event.screenY,
+                  button: event.button,
+                  buttons: event.buttons,
+                  altKey: event.altKey,
+                  ctrlKey: event.ctrlKey,
+                  metaKey: event.metaKey,
+                  shiftKey: event.shiftKey,
+                }),
+              );
+              return true;
+            } catch (_) {
+              return false;
+            }
+          }
+        };
+        const forwardWheelEventToCanvas = (event) => {
+          const canvas = document.getElementById("sui-main-canvas");
+          if (!canvas) {
+            return false;
+          }
+          try {
+            canvas.dispatchEvent(
+              new WheelEvent("wheel", {
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                clientX: event.clientX,
+                clientY: event.clientY,
+                screenX: event.screenX,
+                screenY: event.screenY,
+                deltaX: event.deltaX,
+                deltaY: event.deltaY,
+                deltaZ: event.deltaZ,
+                deltaMode: event.deltaMode,
+                altKey: event.altKey,
+                ctrlKey: event.ctrlKey,
+                metaKey: event.metaKey,
+                shiftKey: event.shiftKey,
+              }),
+            );
+            return true;
+          } catch (_) {
+            return false;
+          }
+        };
 
         const ensureMirror = () => {
           if (state.mirror?.isConnected) {
@@ -558,9 +700,21 @@
             overflow: "hidden",
             resize: "none",
           });
-          element.addEventListener("pointerdown", () => {
-            element.__suiLastPointerAt = performance.now();
-          });
+          for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) {
+            element.addEventListener(
+              type,
+              (event) => {
+                if (type === "pointerdown") {
+                  element.__suiLastPointerAt = performance.now();
+                }
+                if (forwardPointerEventToCanvas(event)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }
+              },
+              { passive: false },
+            );
+          }
           element.addEventListener("focus", () => {
             const pointerAge = performance.now() - (element.__suiLastPointerAt || 0);
             if (pointerAge > 200 && isInteractive({ role: element.__suiRole })) {
@@ -570,6 +724,10 @@
           element.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
+            const pointerAge = performance.now() - (element.__suiLastPointerAt || 0);
+            if (pointerAge <= 700) {
+              return;
+            }
             window.__suiEnqueueCommand?.(command("click", { id: element.__suiNodeId }));
           });
           element.addEventListener("keydown", (event) => {
@@ -600,19 +758,22 @@
             "wheel",
             (event) => {
               event.preventDefault();
-              window.__suiEnqueueCommand?.(
-                command("scroll", { id: element.__suiNodeId }, {
-                  deltaX: event.deltaX,
-                  deltaY: event.deltaY,
-                }),
-              );
+              event.stopPropagation();
+              if (!forwardWheelEventToCanvas(event)) {
+                window.__suiEnqueueCommand?.(
+                  command("scroll", { id: element.__suiNodeId }, {
+                    deltaX: event.deltaX,
+                    deltaY: event.deltaY,
+                  }),
+                );
+              }
             },
             { passive: false },
           );
           return element;
         };
 
-        const configureElement = (element, node, canvasRect) => {
+        const configureElement = (mirror, key, element, node, canvasRect) => {
           const bounds = node.bounds || { x: 0, y: 0, width: 0, height: 0 };
           const label = nodeLabel(node);
           const role = ariaRole(node, element);
@@ -621,12 +782,14 @@
           const checked = node.state?.checked;
           const expanded = node.state?.expanded;
           const selected = Boolean(node.state?.selected);
+          const number = valueNumber(node);
           const range = valueRange(node);
+          const value = valueText(node);
 
           element.__suiNodeId = Number(node.id);
           element.__suiRole = node.role;
           element.__suiName = label;
-          element.__suiValue = valueText(node);
+          element.__suiValue = value;
           element.hidden = hidden;
           if ("disabled" in element) {
             element.disabled = disabled;
@@ -642,16 +805,22 @@
           setStyle(element, "top", `${canvasRect.top + bounds.y}px`);
           setStyle(element, "width", `${Math.max(1, bounds.width)}px`);
           setStyle(element, "height", `${Math.max(1, bounds.height)}px`);
-          setStyle(element, "pointerEvents", isInteractive(node) ? "auto" : "none");
+          setStyle(
+            element,
+            "pointerEvents",
+            domPointerForwardingEnabled && isInteractive(node) ? "auto" : "none",
+          );
 
           if (automationEnabled) {
             element.dataset.suiId = String(node.id);
             element.dataset.suiRole = node.role;
             element.dataset.suiName = label;
+            element.dataset.suiValue = value;
           } else {
             delete element.dataset.suiId;
             delete element.dataset.suiRole;
             delete element.dataset.suiName;
+            delete element.dataset.suiValue;
           }
 
           if (role) {
@@ -660,6 +829,7 @@
             setAttribute(element, "role", null);
           }
           setAttribute(element, "aria-label", label);
+          ensureAssociatedLabel(mirror, key, element, node, label);
           setAttribute(element, "title", node.description);
           if (checked) {
             setAttribute(element, "aria-checked", checked === "checked" ? "true" : checked);
@@ -675,6 +845,27 @@
             setAttribute(element, "aria-selected", "true");
           } else {
             setAttribute(element, "aria-selected", null);
+          }
+          if (exposesAriaValue(node) && range) {
+            setAttribute(element, "aria-valuemin", range.min);
+            setAttribute(element, "aria-valuemax", range.max);
+            setAttribute(element, "aria-valuenow", range.value);
+            setAttribute(element, "aria-valuetext", value);
+          } else if (exposesAriaValue(node) && number != null) {
+            setAttribute(element, "aria-valuemin", null);
+            setAttribute(element, "aria-valuemax", null);
+            setAttribute(element, "aria-valuenow", number);
+            setAttribute(element, "aria-valuetext", value);
+          } else if (exposesAriaValue(node) && value) {
+            setAttribute(element, "aria-valuemin", null);
+            setAttribute(element, "aria-valuemax", null);
+            setAttribute(element, "aria-valuenow", null);
+            setAttribute(element, "aria-valuetext", value);
+          } else {
+            setAttribute(element, "aria-valuemin", null);
+            setAttribute(element, "aria-valuemax", null);
+            setAttribute(element, "aria-valuenow", null);
+            setAttribute(element, "aria-valuetext", null);
           }
 
           if (element.localName === "input") {
@@ -696,27 +887,25 @@
             if (node.role === "Slider" && range) {
               element.min = String(range.min);
               element.max = String(range.max);
-              element.value = String(range.value);
+              element.value = value;
             }
             if (node.role === "TextInput") {
-              const text = valueText(node);
-              if (element.value !== text) {
-                element.value = text;
+              if (element.value !== value) {
+                element.value = value;
               }
               element.readOnly = Boolean(node.editableText?.readonly);
             }
           } else if (element.localName === "textarea") {
-            const text = valueText(node);
-            if (element.value !== text) {
-              element.value = text;
+            if (element.value !== value) {
+              element.value = value;
             }
             element.readOnly = Boolean(node.editableText?.readonly);
           } else if (element.localName === "a") {
-            const href = /^https?:\/\//.test(valueText(node)) ? valueText(node) : "#";
+            const href = /^https?:\/\//.test(value) ? value : "#";
             element.href = href;
             setTextContent(element, label);
           } else {
-            setTextContent(element, label);
+            setTextContent(element, visibleContentText(node, label));
           }
 
           if (isInteractive(node)) {
@@ -746,7 +935,7 @@
               element = createElement(node);
               state.elements.set(key, element);
             }
-            configureElement(element, node, canvasRect);
+            configureElement(mirror, key, element, node, canvasRect);
             if (element.parentNode !== mirror) {
               mirror.appendChild(element);
             }
@@ -756,6 +945,12 @@
             if (!activeIds.has(key)) {
               element.remove();
               state.elements.delete(key);
+            }
+          }
+          for (const [key, label] of state.labels) {
+            if (!activeIds.has(key)) {
+              label.remove();
+              state.labels.delete(key);
             }
           }
           state.mirrorUpdateCount += 1;
@@ -880,12 +1075,6 @@
 
         const warmupFrames = clamp(params.get("warmup"), 0, 2000, 60);
         const measuredFrames = clamp(params.get("frames"), 1, 10000, 180);
-        const output = document.createElement("pre");
-        output.id = "benchmark-results";
-        output.textContent = `Preparing benchmark ${benchmark}...`;
-        document.addEventListener("DOMContentLoaded", () => {
-          document.body.appendChild(output);
-        });
 
         const percentile = (values, ratio) => {
           if (!values.length) return 0;
@@ -934,7 +1123,6 @@
             canvasConfiguration,
           };
           window.__suiBenchmarkResult = result;
-          output.textContent = JSON.stringify(result, null, 2);
           console.log("SUI_BENCHMARK_RESULT " + JSON.stringify(result));
         };
 
