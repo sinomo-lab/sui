@@ -63,6 +63,7 @@ const DEV_SHELL_TOOLBAR_HEIGHT: f32 = 44.0;
 const DEV_SHELL_LOGO_BUTTON_SIZE: f32 = 32.0;
 const DEV_SHELL_TAB_HEIGHT: f32 = 32.0;
 const DEV_SHELL_TAB_GAP: f32 = 6.0;
+const DEV_SHELL_TAB_CLOSE_BUTTON_SIZE: f32 = 22.0;
 const DEV_SHELL_PLUS_BUTTON_SIZE: f32 = 30.0;
 const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 92.0;
 const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
@@ -169,6 +170,26 @@ impl DevShellState {
         }
     }
 
+    fn close_tab(&self, index: usize) {
+        let mut inner = self.inner.borrow_mut();
+        let Some(position) = inner.open_tabs.iter().position(|tab| *tab == index) else {
+            return;
+        };
+
+        inner.open_tabs.remove(position);
+        if inner.open_tabs.is_empty() {
+            inner.active_tab = None;
+            inner.picker_open = true;
+            return;
+        }
+
+        if inner.active_tab == Some(index) {
+            let next_position = position.min(inner.open_tabs.len() - 1);
+            inner.active_tab = Some(inner.open_tabs[next_position]);
+            inner.picker_open = false;
+        }
+    }
+
     fn show_picker(&self) {
         let mut inner = self.inner.borrow_mut();
         inner.active_tab = None;
@@ -216,6 +237,7 @@ struct DevBrowserShell {
     state: DevShellState,
     demos: Vec<DevDemo>,
     demo_buttons: WidgetChildren,
+    close_buttons: WidgetChildren,
     main_menu: SingleChild,
     plus_button: SingleChild,
     theme_toggle: SingleChild,
@@ -243,6 +265,7 @@ impl DevBrowserShell {
         }
 
         let mut demo_buttons = WidgetChildren::with_capacity(demos.len());
+        let mut close_buttons = WidgetChildren::with_capacity(demos.len());
         for (index, demo) in demos.iter().enumerate() {
             let button_state = state.clone();
             demo_buttons.push(
@@ -254,6 +277,11 @@ impl DevBrowserShell {
                         request_window_refresh(ctx, true);
                     }),
             );
+            close_buttons.push(DevTabCloseButton::new(
+                state.clone(),
+                index,
+                format!("Close {}", demo.title),
+            ));
         }
 
         let picker_state = state.clone();
@@ -279,6 +307,7 @@ impl DevBrowserShell {
             state: state.clone(),
             demos,
             demo_buttons,
+            close_buttons,
             main_menu: SingleChild::new(main_menu),
             plus_button: SingleChild::new(plus_button),
             theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
@@ -368,6 +397,15 @@ impl DevBrowserShell {
         )
     }
 
+    fn tab_close_rect(tab: Rect) -> Rect {
+        Rect::new(
+            tab.max_x() - DEV_SHELL_TAB_CLOSE_BUTTON_SIZE - 5.0,
+            tab.y() + ((tab.height() - DEV_SHELL_TAB_CLOSE_BUTTON_SIZE) * 0.5),
+            DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
+            DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
+        )
+    }
+
     fn picker_grid_rect(content: Rect) -> Rect {
         Rect::new(
             content.x() + 32.0,
@@ -448,8 +486,14 @@ impl DevBrowserShell {
             }
 
             let label = self.demos[*demo_index].title;
+            let close_reserve = DEV_SHELL_TAB_CLOSE_BUTTON_SIZE + 16.0;
             ctx.draw_text(
-                Rect::new(rect.x() + 14.0, rect.y() + 8.0, rect.width() - 28.0, 20.0),
+                Rect::new(
+                    rect.x() + 14.0,
+                    rect.y() + 8.0,
+                    (rect.width() - 14.0 - close_reserve).max(0.0),
+                    20.0,
+                ),
                 label,
                 TextStyle {
                     font_size: 13.0,
@@ -464,12 +508,14 @@ impl DevBrowserShell {
             );
 
             if selected {
+                let indicator_width =
+                    (rect.width() - DEV_SHELL_TAB_CLOSE_BUTTON_SIZE - 28.0).max(0.0);
                 ctx.fill(
                     Path::rounded_rect(
                         Rect::new(
-                            rect.x() + 12.0,
+                            rect.x() + ((rect.width() - indicator_width).max(0.0) * 0.5),
                             rect.max_y() - 3.0,
-                            rect.width() - 24.0,
+                            indicator_width,
                             3.0,
                         ),
                         1.5,
@@ -650,11 +696,22 @@ impl Widget for DevBrowserShell {
             .map(|index| {
                 ctx.layout()
                     .measure_text(self.demos[*index].title, label_style.clone())
-                    .map(|measurement| measurement.width + 36.0)
-                    .unwrap_or(132.0)
-                    .clamp(118.0, 220.0)
+                    .map(|measurement| measurement.width + DEV_SHELL_TAB_CLOSE_BUTTON_SIZE + 50.0)
+                    .unwrap_or(148.0)
+                    .clamp(132.0, 248.0)
             })
             .collect();
+
+        for index in 0..self.close_buttons.len() {
+            self.close_buttons.measure_child(
+                index,
+                ctx,
+                Constraints::tight(Size::new(
+                    DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
+                    DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
+                )),
+            );
+        }
 
         self.main_menu.measure(ctx, constraints.loosen());
         self.plus_button.measure(
@@ -698,6 +755,13 @@ impl Widget for DevBrowserShell {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let plus_rect = self.arrange_tab_strip(bounds);
+        for index in 0..self.close_buttons.len() {
+            self.close_buttons.arrange_child(index, ctx, Rect::ZERO);
+        }
+        for (demo_index, rect) in self.tab_rects.iter().copied() {
+            self.close_buttons
+                .arrange_child(demo_index, ctx, Self::tab_close_rect(rect));
+        }
         self.plus_button.arrange(ctx, plus_rect);
         self.theme_toggle.arrange(ctx, Self::theme_rect(bounds));
         let menu_origin = Self::logo_rect(bounds).origin;
@@ -776,6 +840,7 @@ impl Widget for DevBrowserShell {
         }
 
         self.paint_toolbar(ctx, &theme);
+        self.close_buttons.paint(ctx);
         self.plus_button.paint(ctx);
         self.theme_toggle.paint(ctx);
         self.settings_window.paint(ctx);
@@ -807,6 +872,12 @@ impl Widget for DevBrowserShell {
             ctx.push(tab);
         }
 
+        for (demo_index, _) in &self.tab_rects {
+            if let Some(button) = self.close_buttons.as_slice().get(*demo_index) {
+                button.semantics(ctx);
+            }
+        }
+
         self.plus_button.semantics(ctx);
         self.theme_toggle.semantics(ctx);
         if self.state.picker_visible() {
@@ -828,6 +899,7 @@ impl Widget for DevBrowserShell {
         } else if let Some(active) = self.state.active_tab() {
             visitor.visit(&self.demos[active].child);
         }
+        self.close_buttons.visit_children(visitor);
         self.plus_button.visit_children(visitor);
         self.theme_toggle.visit_children(visitor);
         if self.state.settings_visible() {
@@ -842,6 +914,7 @@ impl Widget for DevBrowserShell {
         } else if let Some(active) = self.state.active_tab() {
             visitor.visit(&mut self.demos[active].child);
         }
+        self.close_buttons.visit_children_mut(visitor);
         self.plus_button.visit_children_mut(visitor);
         self.theme_toggle.visit_children_mut(visitor);
         if self.state.settings_visible() {
@@ -1076,6 +1149,151 @@ impl Widget for ThemeToggleButton {
 
     fn accepts_focus(&self) -> bool {
         true
+    }
+}
+
+struct DevTabCloseButton {
+    state: DevShellState,
+    demo_index: usize,
+    label: String,
+    hovered: bool,
+    pressed: bool,
+}
+
+impl DevTabCloseButton {
+    fn new(state: DevShellState, demo_index: usize, label: String) -> Self {
+        Self {
+            state,
+            demo_index,
+            label,
+            hovered: false,
+            pressed: false,
+        }
+    }
+
+    fn activate(&self, ctx: &mut EventCtx) {
+        self.state.close_tab(self.demo_index);
+        request_window_refresh(ctx, true);
+    }
+}
+
+impl Widget for DevTabCloseButton {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = ctx.bounds().contains(pointer.position);
+                if self.hovered != hovered {
+                    self.hovered = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                self.hovered = false;
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                self.pressed = true;
+                self.hovered = true;
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.request_focus();
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let activate = self.pressed && ctx.bounds().contains(pointer.position);
+                self.pressed = false;
+                self.hovered = ctx.bounds().contains(pointer.position);
+                ctx.release_pointer_capture(pointer.pointer_id);
+                if activate {
+                    self.activate(ctx);
+                } else {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed {
+                    self.pressed = false;
+                    self.hovered = false;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && matches!(key.key.as_str(), "Enter" | " ") =>
+            {
+                self.activate(ctx);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(
+            DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
+            DEV_SHELL_TAB_CLOSE_BUTTON_SIZE,
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds();
+        if bounds.is_empty() {
+            return;
+        }
+
+        let theme = self.state.theme();
+        let palette = theme.palette;
+        let selected = self.state.active_tab() == Some(self.demo_index);
+        if self.hovered || self.pressed || ctx.is_focused() {
+            let fill = if self.pressed {
+                palette.surface_pressed
+            } else if self.hovered {
+                palette.surface_hover
+            } else {
+                palette.surface
+            };
+            ctx.fill(Path::rounded_rect(bounds, 6.0), fill.with_alpha(0.86));
+        }
+
+        let icon_color = if selected {
+            palette.border_focus
+        } else {
+            palette.text.with_alpha(0.72)
+        };
+        ctx.stroke(close_icon_path(bounds), icon_color, StrokeStyle::new(1.45));
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+        node.name = Some(self.label.clone());
+        node.state.focused = ctx.is_focused();
+        node.state.hovered = self.hovered;
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        ctx.push(node);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
     }
 }
 
@@ -1507,7 +1725,7 @@ fn draw_logo_wave(ctx: &mut PaintCtx, bounds: Rect, top_fraction: f32, color: Co
 
 fn close_icon_path(bounds: Rect) -> Path {
     let mut path = PathBuilder::new();
-    let inset = 9.0;
+    let inset = (bounds.width().min(bounds.height()) * 0.30).max(4.0);
     path.move_to(Point::new(bounds.x() + inset, bounds.y() + inset));
     path.line_to(Point::new(bounds.max_x() - inset, bounds.max_y() - inset));
     path.move_to(Point::new(bounds.max_x() - inset, bounds.y() + inset));
@@ -3024,6 +3242,57 @@ mod tests {
             }),
             "expected the tab zone to expose the demo picker + button"
         );
+    }
+
+    #[test]
+    fn dev_shell_open_tabs_can_be_closed() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+
+        open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name("Open demo")
+            .click()?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(BUTTON_GRID_TAB_LABEL)
+            .click()?;
+        assert_dev_shell_active_tab(&window, BUTTON_GRID_TAB_LABEL)?;
+
+        let close_button_grid = format!("Close {BUTTON_GRID_TAB_LABEL}");
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(close_button_grid.as_str())
+            .click()?;
+        assert_dev_shell_active_tab(&window, WIDGET_BOOK_TAB_LABEL)?;
+        let snapshot = window.snapshot()?;
+        assert!(
+            snapshot
+                .accessibility
+                .nodes
+                .iter()
+                .all(|node| node.name.as_deref() != Some(close_button_grid.as_str())),
+            "closed tab should remove its close button semantics"
+        );
+
+        let close_widget_book = format!("Close {WIDGET_BOOK_TAB_LABEL}");
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(close_widget_book.as_str())
+            .click()?;
+        let snapshot = window.snapshot()?;
+        let shell = find_named_node(&snapshot, SemanticsRole::Tabs, "SUI dev browser");
+        assert_eq!(shell.value, None);
+        assert!(
+            snapshot.accessibility.nodes.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some(WIDGET_BOOK_TAB_LABEL)
+            }),
+            "closing the last tab should return to the demo picker"
+        );
+
+        Ok(())
     }
 
     #[test]

@@ -131,14 +131,36 @@ fn menu_item_semantics_node(
 pub struct TabBar {
     theme: Box<DefaultTheme>,
     name: String,
-    tabs: Vec<String>,
+    tabs: Vec<TabHeader>,
+    header_children: WidgetChildren,
     selected: usize,
     hovered: Option<usize>,
     pressed: Option<usize>,
     gap: f32,
-    label_measurements: Vec<TextMeasurement>,
+    label_measurements: Vec<Option<TextMeasurement>>,
     widths: Vec<f32>,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
+}
+
+struct TabHeader {
+    label: String,
+    child: Option<usize>,
+}
+
+impl TabHeader {
+    fn label(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            child: None,
+        }
+    }
+
+    fn child(label: impl Into<String>, child: usize) -> Self {
+        Self {
+            label: label.into(),
+            child: Some(child),
+        }
+    }
 }
 
 impl TabBar {
@@ -147,6 +169,7 @@ impl TabBar {
             theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             tabs: Vec::new(),
+            header_children: WidgetChildren::new(),
             selected: 0,
             hovered: None,
             pressed: None,
@@ -163,7 +186,17 @@ impl TabBar {
     }
 
     pub fn tab(mut self, label: impl Into<String>) -> Self {
-        self.tabs.push(label.into());
+        self.tabs.push(TabHeader::label(label));
+        self
+    }
+
+    pub fn tab_widget<W>(mut self, label: impl Into<String>, header: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        let child_index = self.header_children.len();
+        self.header_children.push(header);
+        self.tabs.push(TabHeader::child(label, child_index));
         self
     }
 
@@ -172,7 +205,7 @@ impl TabBar {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.tabs.extend(labels.into_iter().map(Into::into));
+        self.tabs.extend(labels.into_iter().map(TabHeader::label));
         self
     }
 
@@ -201,7 +234,7 @@ impl TabBar {
     pub fn current_tab(&self) -> Option<&str> {
         self.tabs
             .get(self.normalized_selected())
-            .map(String::as_str)
+            .map(|tab| tab.label.as_str())
     }
 
     fn normalized_selected(&self) -> usize {
@@ -221,7 +254,7 @@ impl TabBar {
         if self.selected != index {
             self.selected = index;
             if let Some(on_change) = &mut self.on_change {
-                on_change(index, self.tabs[index].clone());
+                on_change(index, self.tabs[index].label.clone());
             }
         }
     }
@@ -278,6 +311,10 @@ impl TabBar {
         let next = (selected + delta).clamp(0, last) as usize;
         self.activate(next);
         self.hovered = Some(next);
+    }
+
+    fn tab_child_rect(&self, rect: Rect) -> Rect {
+        rect.inflate(-10.0, -4.0)
     }
 }
 
@@ -357,20 +394,44 @@ impl Widget for TabBar {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let style = self.theme.body_text_style();
-        self.label_measurements = self
-            .tabs
-            .iter()
-            .map(|tab| measure_text(ctx, tab, &style))
-            .collect();
-        self.widths = self
-            .label_measurements
-            .iter()
-            .map(|measurement| (measurement.width + 28.0).max(96.0))
-            .collect();
+        self.label_measurements.clear();
+        self.widths.clear();
+        for tab in &self.tabs {
+            if let Some(child_index) = tab.child {
+                let size = self.header_children.measure_child(
+                    child_index,
+                    ctx,
+                    Constraints::new(Size::ZERO, Size::new(f32::INFINITY, self.tab_height())),
+                );
+                self.label_measurements.push(None);
+                self.widths.push((size.width + 20.0).max(96.0));
+            } else {
+                let measurement = measure_text(ctx, &tab.label, &style);
+                self.label_measurements.push(Some(measurement));
+                self.widths.push((measurement.width + 28.0).max(96.0));
+            }
+        }
 
         let width =
             self.widths.iter().sum::<f32>() + (self.gap * self.tabs.len().saturating_sub(1) as f32);
         constraints.clamp(Size::new(width.max(160.0), self.tab_height()))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let child_rects: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| {
+                let child_index = tab.child?;
+                let rect = self.tab_rect(bounds, index)?;
+                Some((child_index, self.tab_child_rect(rect)))
+            })
+            .collect();
+
+        for (child_index, rect) in child_rects {
+            self.header_children.arrange_child(child_index, ctx, rect);
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -417,25 +478,31 @@ impl Widget for TabBar {
                 );
             }
 
-            ctx.draw_text(
-                centered_text_rect(
-                    ctx,
-                    rect,
-                    Insets::all(10.0),
-                    self.label_measurements.get(index).copied(),
+            if let Some(child_index) = tab.child {
+                if let Some(child) = self.header_children.as_slice().get(child_index) {
+                    child.paint(ctx);
+                }
+            } else {
+                ctx.draw_text(
+                    centered_text_rect(
+                        ctx,
+                        rect,
+                        Insets::all(10.0),
+                        self.label_measurements.get(index).copied().flatten(),
+                        if selected {
+                            self.theme.text_style(palette.border_focus).line_height
+                        } else {
+                            self.theme.body_text_style().line_height
+                        },
+                    ),
+                    tab.label.clone(),
                     if selected {
-                        self.theme.text_style(palette.border_focus).line_height
+                        self.theme.text_style(palette.border_focus)
                     } else {
-                        self.theme.body_text_style().line_height
+                        self.theme.body_text_style()
                     },
-                ),
-                tab.clone(),
-                if selected {
-                    self.theme.text_style(palette.border_focus)
-                } else {
-                    self.theme.body_text_style()
-                },
-            );
+                );
+            }
 
             if selected {
                 let accent = Rect::new(
@@ -458,6 +525,7 @@ impl Widget for TabBar {
         node.state.focused = ctx.is_focused();
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
+        self.header_children.semantics(ctx);
     }
 
     fn accepts_focus(&self) -> bool {
@@ -468,17 +536,26 @@ impl Widget for TabBar {
         ctx.request_paint();
         ctx.request_semantics();
     }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.header_children.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.header_children.visit_children_mut(visitor);
+    }
 }
 
 pub struct Tabs {
     theme: Box<DefaultTheme>,
     name: String,
-    labels: Vec<String>,
+    tabs: Vec<TabHeader>,
+    header_children: WidgetChildren,
     panels: WidgetChildren,
     selected: usize,
     hovered: Option<usize>,
     pressed: Option<usize>,
-    label_measurements: Vec<TextMeasurement>,
+    label_measurements: Vec<Option<TextMeasurement>>,
     widths: Vec<f32>,
     gap: f32,
     panel_gap: f32,
@@ -491,7 +568,8 @@ impl Tabs {
         Self {
             theme: Box::new(DefaultTheme::default()),
             name: name.into(),
-            labels: Vec::new(),
+            tabs: Vec::new(),
+            header_children: WidgetChildren::new(),
             panels: WidgetChildren::new(),
             selected: 0,
             hovered: None,
@@ -527,7 +605,19 @@ impl Tabs {
     where
         W: Widget + 'static,
     {
-        self.labels.push(label.into());
+        self.tabs.push(TabHeader::label(label));
+        self.panels.push(panel);
+        self
+    }
+
+    pub fn tab_with_header<H, W>(mut self, label: impl Into<String>, header: H, panel: W) -> Self
+    where
+        H: Widget + 'static,
+        W: Widget + 'static,
+    {
+        let child_index = self.header_children.len();
+        self.header_children.push(header);
+        self.tabs.push(TabHeader::child(label, child_index));
         self.panels.push(panel);
         self
     }
@@ -537,16 +627,16 @@ impl Tabs {
     }
 
     pub fn current_tab(&self) -> Option<&str> {
-        self.labels
+        self.tabs
             .get(self.normalized_selected())
-            .map(String::as_str)
+            .map(|tab| tab.label.as_str())
     }
 
     fn normalized_selected(&self) -> usize {
-        if self.labels.is_empty() {
+        if self.tabs.is_empty() {
             0
         } else {
-            self.selected.min(self.labels.len() - 1)
+            self.selected.min(self.tabs.len() - 1)
         }
     }
 
@@ -559,15 +649,15 @@ impl Tabs {
     }
 
     fn tab_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
-        if index >= self.labels.len() || self.widths.len() != self.labels.len() {
+        if index >= self.tabs.len() || self.widths.len() != self.tabs.len() {
             return None;
         }
 
         let header = self.header_rect(bounds);
-        let base_total = self.widths.iter().sum::<f32>()
-            + (self.gap * self.labels.len().saturating_sub(1) as f32);
-        let extra_per_tab = if header.width() > base_total && !self.labels.is_empty() {
-            (header.width() - base_total) / self.labels.len() as f32
+        let base_total =
+            self.widths.iter().sum::<f32>() + (self.gap * self.tabs.len().saturating_sub(1) as f32);
+        let extra_per_tab = if header.width() > base_total && !self.tabs.is_empty() {
+            (header.width() - base_total) / self.tabs.len() as f32
         } else {
             0.0
         };
@@ -585,7 +675,7 @@ impl Tabs {
     }
 
     fn tab_at(&self, bounds: Rect, position: Point) -> Option<usize> {
-        self.labels.iter().enumerate().find_map(|(index, _)| {
+        self.tabs.iter().enumerate().find_map(|(index, _)| {
             self.tab_rect(bounds, index)
                 .filter(|rect| rect.contains(position))
                 .map(|_| index)
@@ -593,28 +683,32 @@ impl Tabs {
     }
 
     fn select(&mut self, index: usize) {
-        if self.labels.is_empty() {
+        if self.tabs.is_empty() {
             return;
         }
 
-        let index = index.min(self.labels.len() - 1);
+        let index = index.min(self.tabs.len() - 1);
         if self.selected != index {
             self.selected = index;
             if let Some(on_change) = &mut self.on_change {
-                on_change(index, self.labels[index].clone());
+                on_change(index, self.tabs[index].label.clone());
             }
         }
     }
 
     fn move_selection(&mut self, delta: isize) {
-        if self.labels.is_empty() {
+        if self.tabs.is_empty() {
             return;
         }
 
         let next = (self.normalized_selected() as isize + delta)
-            .clamp(0, self.labels.len() as isize - 1) as usize;
+            .clamp(0, self.tabs.len() as isize - 1) as usize;
         self.hovered = Some(next);
         self.select(next);
+    }
+
+    fn header_child_rect(&self, rect: Rect) -> Rect {
+        rect.inflate(-10.0, -4.0)
     }
 
     fn selected_panel(&self) -> Option<&sui_runtime::WidgetPod> {
@@ -694,7 +788,7 @@ impl Widget for Tabs {
                     "ArrowLeft" | "ArrowUp" => self.move_selection(-1),
                     "ArrowRight" | "ArrowDown" => self.move_selection(1),
                     "Home" => self.select(0),
-                    "End" if !self.labels.is_empty() => self.select(self.labels.len() - 1),
+                    "End" if !self.tabs.is_empty() => self.select(self.tabs.len() - 1),
                     _ => return,
                 }
                 ctx.request_measure();
@@ -708,19 +802,26 @@ impl Widget for Tabs {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text_style = self.theme.body_text_style();
-        self.label_measurements = self
-            .labels
-            .iter()
-            .map(|label| measure_text(ctx, label, &text_style))
-            .collect();
-        self.widths = self
-            .label_measurements
-            .iter()
-            .map(|measurement| (measurement.width + 28.0).max(96.0))
-            .collect();
+        self.label_measurements.clear();
+        self.widths.clear();
+        for tab in &self.tabs {
+            if let Some(child_index) = tab.child {
+                let size = self.header_children.measure_child(
+                    child_index,
+                    ctx,
+                    Constraints::new(Size::ZERO, Size::new(f32::INFINITY, self.header_height())),
+                );
+                self.label_measurements.push(None);
+                self.widths.push((size.width + 20.0).max(96.0));
+            } else {
+                let measurement = measure_text(ctx, &tab.label, &text_style);
+                self.label_measurements.push(Some(measurement));
+                self.widths.push((measurement.width + 28.0).max(96.0));
+            }
+        }
 
-        let header_width = self.widths.iter().sum::<f32>()
-            + (self.gap * self.labels.len().saturating_sub(1) as f32);
+        let header_width =
+            self.widths.iter().sum::<f32>() + (self.gap * self.tabs.len().saturating_sub(1) as f32);
         let available_width = if constraints.max.width.is_finite() {
             constraints.max.width.max(header_width)
         } else {
@@ -768,6 +869,20 @@ impl Widget for Tabs {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let child_rects: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| {
+                let child_index = tab.child?;
+                let rect = self.tab_rect(bounds, index)?;
+                Some((child_index, self.header_child_rect(rect)))
+            })
+            .collect();
+        for (child_index, rect) in child_rects {
+            self.header_children.arrange_child(child_index, ctx, rect);
+        }
+
         let header_height = self.header_height();
         let padding = Insets::all(16.0);
         let panel_gap = self.panel_gap;
@@ -795,7 +910,7 @@ impl Widget for Tabs {
             Color::rgba(0.93, 0.95, 0.98, 1.0),
         );
 
-        for (index, label) in self.labels.iter().enumerate() {
+        for (index, tab) in self.tabs.iter().enumerate() {
             let Some(rect) = self.tab_rect(ctx.bounds(), index) else {
                 continue;
             };
@@ -824,25 +939,31 @@ impl Widget for Tabs {
                 );
             }
 
-            ctx.draw_text(
-                centered_text_rect(
-                    ctx,
-                    rect,
-                    Insets::all(10.0),
-                    self.label_measurements.get(index).copied(),
+            if let Some(child_index) = tab.child {
+                if let Some(child) = self.header_children.as_slice().get(child_index) {
+                    child.paint(ctx);
+                }
+            } else {
+                ctx.draw_text(
+                    centered_text_rect(
+                        ctx,
+                        rect,
+                        Insets::all(10.0),
+                        self.label_measurements.get(index).copied().flatten(),
+                        if selected {
+                            self.theme.text_style(palette.border_focus).line_height
+                        } else {
+                            self.theme.body_text_style().line_height
+                        },
+                    ),
+                    tab.label.clone(),
                     if selected {
-                        self.theme.text_style(palette.border_focus).line_height
+                        self.theme.text_style(palette.border_focus)
                     } else {
-                        self.theme.body_text_style().line_height
+                        self.theme.body_text_style()
                     },
-                ),
-                label.clone(),
-                if selected {
-                    self.theme.text_style(palette.border_focus)
-                } else {
-                    self.theme.body_text_style()
-                },
-            );
+                );
+            }
         }
 
         let content = self.panel_frame.translate(ctx.bounds().origin.to_vector());
@@ -869,6 +990,7 @@ impl Widget for Tabs {
         node.state.focused = ctx.is_focused();
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
+        self.header_children.semantics(ctx);
         if let Some(panel) = self.selected_panel() {
             panel.semantics(ctx);
         }
@@ -884,12 +1006,14 @@ impl Widget for Tabs {
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.header_children.visit_children(visitor);
         if let Some(panel) = self.selected_panel() {
             visitor.visit(panel);
         }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.header_children.visit_children_mut(visitor);
         if let Some(panel) = self.selected_panel_mut() {
             visitor.visit(panel);
         }
@@ -3647,6 +3771,29 @@ mod tests {
     }
 
     #[test]
+    fn tab_bar_custom_header_child_participates_in_widget_lifecycle() {
+        let header = Rc::new(RefCell::new(PanelCounters::default()));
+        let output = render(
+            TabBar::new("Main tabs")
+                .tab_widget("Custom", SpyPanel::new("custom-header", Rc::clone(&header))),
+        );
+
+        assert_eq!(
+            *header.borrow(),
+            PanelCounters {
+                measure: 1,
+                arrange: 1,
+                paint: 1,
+                semantics: 1
+            }
+        );
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some("custom-header")
+        }));
+    }
+
+    #[test]
     fn tabs_render_only_the_active_panel_after_switching() {
         let first = Rc::new(RefCell::new(PanelCounters::default()));
         let second = Rc::new(RefCell::new(PanelCounters::default()));
@@ -3723,6 +3870,44 @@ mod tests {
                 .iter()
                 .any(|node| node.name.as_deref() == Some("second-panel"))
         );
+    }
+
+    #[test]
+    fn tabs_custom_header_child_participates_in_widget_lifecycle() {
+        let header = Rc::new(RefCell::new(PanelCounters::default()));
+        let panel = Rc::new(RefCell::new(PanelCounters::default()));
+        let output = render(Tabs::new("Main tabs").tab_with_header(
+            "Custom",
+            SpyPanel::new("custom-header", Rc::clone(&header)),
+            SpyPanel::new("custom-panel", Rc::clone(&panel)),
+        ));
+
+        assert_eq!(
+            *header.borrow(),
+            PanelCounters {
+                measure: 1,
+                arrange: 1,
+                paint: 1,
+                semantics: 1
+            }
+        );
+        assert_eq!(
+            *panel.borrow(),
+            PanelCounters {
+                measure: 1,
+                arrange: 1,
+                paint: 1,
+                semantics: 1
+            }
+        );
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some("custom-header")
+        }));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some("custom-panel")
+        }));
     }
 
     #[test]
