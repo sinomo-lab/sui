@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::{AsyncWakeToken, Point, Size, TimerToken, Vector};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -207,8 +209,13 @@ fn keyboard_text_for_key(key: &str, state: KeyState) -> Option<String> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImeEvent {
     CompositionStart,
-    CompositionUpdate { text: String },
-    CompositionCommit { text: String },
+    CompositionUpdate {
+        text: String,
+        cursor_range: Option<Range<usize>>,
+    },
+    CompositionCommit {
+        text: String,
+    },
     CompositionEnd,
 }
 

@@ -1,12 +1,13 @@
 use crate::{
     Blink, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, Interpolate, ResolvedEffectStyle,
     ResolvedHdrStyle, Transition, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole,
+    editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
     resolve_luminance_role, resolve_widget_hdr_style,
 };
 use sui_core::{
-    Color, Event, ImeEvent, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind,
-    Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken,
-    ToggleState,
+    Color, EditableTextSemantics, Event, ImeEvent, KeyState, Path, PathBuilder, Point,
+    PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
+    SemanticsTextRange, SemanticsValue, Size, TimerToken, ToggleState,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_runtime::{
@@ -3091,9 +3092,9 @@ impl Widget for NumberInput {
 pub struct TextArea {
     theme: Box<DefaultTheme>,
     name: String,
-    value: String,
+    editor: EditorState,
+    clipboard: String,
     placeholder: String,
-    composition: String,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     min_width: Option<f32>,
@@ -3114,9 +3115,9 @@ impl TextArea {
         Self {
             theme: Box::new(DefaultTheme::default()),
             name: name.into(),
-            value: String::new(),
+            editor: EditorState::new(),
+            clipboard: String::new(),
             placeholder: String::new(),
-            composition: String::new(),
             text_style: None,
             padding: None,
             min_width: None,
@@ -3164,17 +3165,16 @@ impl TextArea {
     }
 
     pub fn value(mut self, value: impl Into<String>) -> Self {
-        self.value = value.into();
+        self.editor.set_text(value);
         self
     }
 
     pub fn current_value(&self) -> &str {
-        &self.value
+        self.editor.document().text()
     }
 
     pub fn set_value(&mut self, value: impl Into<String>) {
-        self.value = value.into();
-        self.composition.clear();
+        self.editor.set_text(value);
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -3186,9 +3186,7 @@ impl TextArea {
     }
 
     fn input_text(&self) -> String {
-        let mut text = self.value.clone();
-        text.push_str(&self.composition);
-        text
+        self.editor.display_text()
     }
 
     fn display_text(&self) -> String {
@@ -3221,26 +3219,60 @@ impl TextArea {
     }
 
     fn commit_text_change(&mut self) {
+        let value = self.current_value().to_string();
         if let Some(on_change) = &mut self.on_change {
-            on_change(self.value.clone());
+            on_change(value);
         }
     }
 
-    fn insert_text(&mut self, text: &str, ctx: &mut EventCtx) {
-        if text.is_empty() {
-            return;
+    fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
+        if let Some(text) = result.clipboard_text.take() {
+            self.clipboard = text;
         }
+        if result.text_changed {
+            self.commit_text_change();
+        }
+        if result.layout_changed() {
+            ctx.request_measure();
+            ctx.request_paint();
+        } else if result.overlay_changed() {
+            ctx.request_paint();
+        }
+        if result.text_changed || result.selection_changed || result.composition_changed {
+            ctx.request_semantics();
+        }
+        if result.handled {
+            if self.focused {
+                self.reset_caret_blink(ctx);
+            }
+            ctx.set_handled();
+        }
+    }
 
-        self.value.push_str(text);
-        self.composition.clear();
-        self.commit_text_change();
-        if self.focused {
-            self.reset_caret_blink(ctx);
-        }
-        ctx.request_measure();
-        ctx.request_paint();
-        ctx.request_semantics();
-        ctx.set_handled();
+    fn execute_editor_command(&mut self, ctx: &mut EventCtx, command: EditorCommand) {
+        let result = self.editor.execute(command);
+        self.apply_editor_result(ctx, result);
+    }
+
+    fn set_caret_from_position(&mut self, bounds: Rect, position: Point, ctx: &mut EventCtx) {
+        let content = inset_rect(bounds, self.resolved_padding());
+        let offset = self
+            .input_layout
+            .as_ref()
+            .map(|layout| {
+                layout
+                    .hit_test_point(Point::new(
+                        position.x - content.x(),
+                        position.y - content.y(),
+                    ))
+                    .utf8_offset
+            })
+            .unwrap_or(self.editor.document().len());
+        let result = self.editor.execute(EditorCommand::MoveTo {
+            offset,
+            extend: false,
+        });
+        self.apply_editor_result(ctx, result);
     }
 
     fn caret_blink_delay(&self) -> f64 {
@@ -3286,60 +3318,94 @@ impl Widget for TextArea {
                 if self.focused {
                     self.reset_caret_blink(ctx);
                 }
+                self.set_caret_from_position(ctx.bounds(), pointer.position, ctx);
                 ctx.request_focus();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
-                self.composition.clear();
-                self.reset_caret_blink(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+                self.execute_editor_command(ctx, EditorCommand::StartComposition);
             }
-            Event::Ime(ImeEvent::CompositionUpdate { text }) if ctx.is_focused() => {
-                self.composition = text.clone();
-                self.reset_caret_blink(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+            Event::Ime(ImeEvent::CompositionUpdate { text, cursor_range }) if ctx.is_focused() => {
+                self.execute_editor_command(
+                    ctx,
+                    EditorCommand::UpdateComposition {
+                        text: text.clone(),
+                        cursor_range: cursor_range.clone(),
+                    },
+                );
             }
             Event::Ime(ImeEvent::CompositionCommit { text }) if ctx.is_focused() => {
-                self.insert_text(text, ctx);
+                self.execute_editor_command(ctx, EditorCommand::CommitComposition(text.clone()));
             }
             Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() => {
-                self.composition.clear();
-                self.reset_caret_blink(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+                self.execute_editor_command(ctx, EditorCommand::EndComposition);
             }
             Event::Keyboard(key)
                 if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Backspace" =>
             {
-                if !self.composition.is_empty() {
-                    self.composition.clear();
-                } else if self.value.pop().is_some() {
-                    self.commit_text_change();
-                }
-                self.reset_caret_blink(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+                self.execute_editor_command(ctx, EditorCommand::DeleteBackward);
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Delete" =>
+            {
+                self.execute_editor_command(ctx, EditorCommand::DeleteForward);
             }
             Event::Keyboard(key)
                 if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Enter" =>
             {
-                self.insert_text("\n", ctx);
+                self.execute_editor_command(ctx, EditorCommand::InsertText("\n".to_string()));
             }
-            Event::Keyboard(key) if ctx.is_focused() && self.composition.is_empty() => {
-                if let Some(text) = keyboard_text(key) {
-                    self.insert_text(text, ctx);
+            Event::Keyboard(key) if key.state == KeyState::Pressed && ctx.is_focused() => {
+                let command_modifier = key.modifiers.control || key.modifiers.meta;
+                let command = match key.key.as_str() {
+                    "a" | "A" if command_modifier => EditorCommand::SelectAll,
+                    "c" | "C" if command_modifier => EditorCommand::Copy,
+                    "x" | "X" if command_modifier => EditorCommand::Cut,
+                    "v" | "V" if command_modifier => EditorCommand::Paste(self.clipboard.clone()),
+                    "z" | "Z" if command_modifier && key.modifiers.shift => EditorCommand::Redo,
+                    "z" | "Z" if command_modifier => EditorCommand::Undo,
+                    "y" | "Y" if command_modifier => EditorCommand::Redo,
+                    "ArrowLeft" if command_modifier => EditorCommand::MoveWordLeft {
+                        extend: key.modifiers.shift,
+                    },
+                    "ArrowRight" if command_modifier => EditorCommand::MoveWordRight {
+                        extend: key.modifiers.shift,
+                    },
+                    "ArrowLeft" => EditorCommand::MoveLeft {
+                        extend: key.modifiers.shift,
+                    },
+                    "ArrowRight" => EditorCommand::MoveRight {
+                        extend: key.modifiers.shift,
+                    },
+                    "ArrowUp" => EditorCommand::MoveUp {
+                        extend: key.modifiers.shift,
+                    },
+                    "ArrowDown" => EditorCommand::MoveDown {
+                        extend: key.modifiers.shift,
+                    },
+                    "Home" => EditorCommand::MoveLineStart {
+                        extend: key.modifiers.shift,
+                    },
+                    "End" => EditorCommand::MoveLineEnd {
+                        extend: key.modifiers.shift,
+                    },
+                    "PageUp" => EditorCommand::PageUp {
+                        extend: key.modifiers.shift,
+                        lines: 8,
+                    },
+                    "PageDown" => EditorCommand::PageDown {
+                        extend: key.modifiers.shift,
+                        lines: 8,
+                    },
+                    _ if self.editor.composition().is_none() => keyboard_text(key)
+                        .map(|text| EditorCommand::InsertText(text.to_string()))
+                        .unwrap_or(EditorCommand::Noop),
+                    _ => EditorCommand::Noop,
+                };
+                if !matches!(command, EditorCommand::Noop) {
+                    self.execute_editor_command(ctx, command);
                 }
             }
             Event::Wake(sui_core::WakeEvent::Timer { token, .. })
@@ -3470,7 +3536,7 @@ impl Widget for TextArea {
                 .as_ref()
                 .map(|layout| {
                     layout
-                        .caret_rect(self.input_text().len())
+                        .caret_rect(self.editor.display_selection().focus.utf8_offset)
                         .translate(content.origin.to_vector())
                 })
                 .unwrap_or(Rect::new(
@@ -3493,11 +3559,34 @@ impl Widget for TextArea {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::TextInput, ctx.bounds());
+        let display_text = self.input_text();
+        let display_selection = self.editor.display_selection();
+        let selection = selection_range(&display_selection, display_text.len());
         node.name = Some(self.name.clone());
-        node.value = Some(SemanticsValue::Text(self.input_text()));
+        node.value = Some(SemanticsValue::Text(display_text));
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        node.editable_text = Some(EditableTextSemantics {
+            caret_offset: display_selection.focus.utf8_offset,
+            selection: SemanticsTextRange::new(selection.start, selection.end),
+            multiline: true,
+            readonly: false,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+        });
+        node.actions = vec![
+            SemanticsAction::Focus,
+            SemanticsAction::SetValue,
+            SemanticsAction::SetSelection,
+            SemanticsAction::InsertText,
+            SemanticsAction::DeleteBackward,
+            SemanticsAction::DeleteForward,
+            SemanticsAction::Copy,
+            SemanticsAction::Cut,
+            SemanticsAction::Paste,
+            SemanticsAction::Undo,
+            SemanticsAction::Redo,
+        ];
         ctx.push(node);
     }
 
@@ -3507,9 +3596,11 @@ impl Widget for TextArea {
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         self.focused = focused;
-        if !focused && !self.composition.is_empty() {
-            self.composition.clear();
-            ctx.request_measure();
+        if !focused {
+            let result = self.editor.execute(EditorCommand::ClearComposition);
+            if result.layout_changed() {
+                ctx.request_measure();
+            }
         }
         if focused {
             self.reset_caret_blink(ctx);
@@ -3972,9 +4063,9 @@ pub type ComboBox = Select;
 pub struct TextInput {
     theme: Box<DefaultTheme>,
     name: String,
-    value: String,
+    editor: EditorState,
+    clipboard: String,
     placeholder: String,
-    composition: String,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     min_width: Option<f32>,
@@ -3987,6 +4078,8 @@ pub struct TextInput {
     caret_visible: bool,
     visible_measurement: Option<TextMeasurement>,
     input_measurement: Option<TextMeasurement>,
+    display_layout: Option<PersistentTextLayout>,
+    input_layout: Option<PersistentTextLayout>,
     on_change: Option<Box<dyn FnMut(String)>>,
 }
 
@@ -3995,9 +4088,9 @@ impl TextInput {
         Self {
             theme: Box::new(DefaultTheme::default()),
             name: name.into(),
-            value: String::new(),
+            editor: EditorState::new(),
+            clipboard: String::new(),
             placeholder: String::new(),
-            composition: String::new(),
             text_style: None,
             padding: None,
             min_width: None,
@@ -4010,6 +4103,8 @@ impl TextInput {
             caret_visible: true,
             visible_measurement: None,
             input_measurement: None,
+            display_layout: None,
+            input_layout: None,
             on_change: None,
         }
     }
@@ -4049,17 +4144,16 @@ impl TextInput {
     }
 
     pub fn value(mut self, value: impl Into<String>) -> Self {
-        self.value = value.into();
+        self.editor.set_text(single_line_text(value.into()));
         self
     }
 
     pub fn current_value(&self) -> &str {
-        &self.value
+        self.editor.document().text()
     }
 
     pub fn set_value(&mut self, value: impl Into<String>) {
-        self.value = value.into();
-        self.composition.clear();
+        self.editor.set_text(single_line_text(value.into()));
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -4071,9 +4165,11 @@ impl TextInput {
     }
 
     fn input_text(&self) -> String {
-        let mut text = self.value.clone();
-        text.push_str(&self.composition);
-        text
+        self.editor.display_text()
+    }
+
+    fn display_caret_offset(&self) -> usize {
+        self.editor.display_selection().focus.utf8_offset
     }
 
     fn visible_text(&self) -> String {
@@ -4086,26 +4182,61 @@ impl TextInput {
     }
 
     fn commit_text_change(&mut self) {
+        let value = self.current_value().to_string();
         if let Some(on_change) = &mut self.on_change {
-            on_change(self.value.clone());
+            on_change(value);
         }
     }
 
-    fn insert_text(&mut self, text: &str, ctx: &mut EventCtx) {
-        if text.is_empty() {
-            return;
+    fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
+        if let Some(text) = result.clipboard_text.take() {
+            self.clipboard = text;
         }
+        if result.text_changed {
+            self.commit_text_change();
+        }
+        if result.layout_changed() {
+            ctx.request_measure();
+            ctx.request_paint();
+        } else if result.overlay_changed() {
+            ctx.request_paint();
+        }
+        if result.text_changed || result.selection_changed || result.composition_changed {
+            ctx.request_semantics();
+        }
+        if result.handled {
+            if self.focused {
+                self.reset_caret_blink(ctx);
+            }
+            ctx.set_handled();
+        }
+    }
 
-        self.value.push_str(text);
-        self.composition.clear();
-        self.commit_text_change();
-        if self.focused {
-            self.reset_caret_blink(ctx);
-        }
-        ctx.request_measure();
-        ctx.request_paint();
-        ctx.request_semantics();
-        ctx.set_handled();
+    fn execute_editor_command(&mut self, ctx: &mut EventCtx, command: EditorCommand) {
+        let result = self.editor.execute(command);
+        self.apply_editor_result(ctx, result);
+    }
+
+    fn set_caret_from_position(&mut self, bounds: Rect, position: Point, ctx: &mut EventCtx) {
+        let content = inset_rect(bounds, self.resolved_padding());
+        let offset = self
+            .input_layout
+            .as_ref()
+            .map(|layout| {
+                layout
+                    .hit_test_point(Point::new(
+                        position.x - content.x(),
+                        position.y - content.y(),
+                    ))
+                    .utf8_offset
+            })
+            .unwrap_or(self.editor.document().len());
+        let result = self.editor.execute(EditorCommand::MoveTo {
+            offset,
+            extend: false,
+        });
+        self.apply_editor_result(ctx, result);
+        self.reset_caret_blink(ctx);
     }
 
     fn caret_blink_delay(&self) -> f64 {
@@ -4176,60 +4307,114 @@ impl Widget for TextInput {
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 self.hovered = true;
-                if self.focused {
-                    self.reset_caret_blink(ctx);
-                }
+                self.set_caret_from_position(ctx.bounds(), pointer.position, ctx);
                 ctx.request_focus();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
-                self.composition.clear();
-                self.reset_caret_blink(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+                self.execute_editor_command(ctx, EditorCommand::StartComposition);
             }
-            Event::Ime(ImeEvent::CompositionUpdate { text }) if ctx.is_focused() => {
-                self.composition = text.clone();
-                self.reset_caret_blink(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+            Event::Ime(ImeEvent::CompositionUpdate { text, cursor_range }) if ctx.is_focused() => {
+                self.execute_editor_command(
+                    ctx,
+                    EditorCommand::UpdateComposition {
+                        text: single_line_text(text.clone()),
+                        cursor_range: cursor_range.clone(),
+                    },
+                );
             }
             Event::Ime(ImeEvent::CompositionCommit { text }) if ctx.is_focused() => {
-                self.insert_text(text, ctx);
+                self.execute_editor_command(
+                    ctx,
+                    EditorCommand::CommitComposition(single_line_text(text.clone())),
+                );
             }
             Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() => {
-                if !self.composition.is_empty() {
-                    self.composition.clear();
-                    self.reset_caret_blink(ctx);
-                    ctx.request_measure();
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
-                ctx.set_handled();
+                self.execute_editor_command(ctx, EditorCommand::EndComposition);
             }
             Event::Keyboard(key)
                 if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Backspace" =>
             {
-                if !self.composition.is_empty() {
-                    self.composition.clear();
-                } else if self.value.pop().is_some() {
-                    self.commit_text_change();
-                }
-                self.reset_caret_blink(ctx);
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+                self.execute_editor_command(ctx, EditorCommand::DeleteBackward);
             }
-            Event::Keyboard(key) if ctx.is_focused() && self.composition.is_empty() => {
-                if let Some(text) = keyboard_text(key) {
-                    self.insert_text(text, ctx);
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Delete" =>
+            {
+                self.execute_editor_command(ctx, EditorCommand::DeleteForward);
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "ArrowLeft" =>
+            {
+                self.execute_editor_command(
+                    ctx,
+                    if key.modifiers.control || key.modifiers.meta {
+                        EditorCommand::MoveWordLeft {
+                            extend: key.modifiers.shift,
+                        }
+                    } else {
+                        EditorCommand::MoveLeft {
+                            extend: key.modifiers.shift,
+                        }
+                    },
+                );
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && key.key == "ArrowRight" =>
+            {
+                self.execute_editor_command(
+                    ctx,
+                    if key.modifiers.control || key.modifiers.meta {
+                        EditorCommand::MoveWordRight {
+                            extend: key.modifiers.shift,
+                        }
+                    } else {
+                        EditorCommand::MoveRight {
+                            extend: key.modifiers.shift,
+                        }
+                    },
+                );
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Home" =>
+            {
+                self.execute_editor_command(
+                    ctx,
+                    EditorCommand::MoveLineStart {
+                        extend: key.modifiers.shift,
+                    },
+                );
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "End" =>
+            {
+                self.execute_editor_command(
+                    ctx,
+                    EditorCommand::MoveLineEnd {
+                        extend: key.modifiers.shift,
+                    },
+                );
+            }
+            Event::Keyboard(key) if key.state == KeyState::Pressed && ctx.is_focused() => {
+                let command_modifier = key.modifiers.control || key.modifiers.meta;
+                let command = match key.key.as_str() {
+                    "a" | "A" if command_modifier => EditorCommand::SelectAll,
+                    "c" | "C" if command_modifier => EditorCommand::Copy,
+                    "x" | "X" if command_modifier => EditorCommand::Cut,
+                    "v" | "V" if command_modifier => EditorCommand::Paste(self.clipboard.clone()),
+                    "z" | "Z" if command_modifier && key.modifiers.shift => EditorCommand::Redo,
+                    "z" | "Z" if command_modifier => EditorCommand::Undo,
+                    "y" | "Y" if command_modifier => EditorCommand::Redo,
+                    _ if self.editor.composition().is_none() => keyboard_text(key)
+                        .map(|text| EditorCommand::InsertText(single_line_text(text)))
+                        .unwrap_or(EditorCommand::Noop),
+                    _ => EditorCommand::Noop,
+                };
+                if !matches!(command, EditorCommand::Noop) {
+                    self.execute_editor_command(ctx, command);
                 }
             }
             Event::Wake(sui_core::WakeEvent::Timer { token, .. })
@@ -4264,22 +4449,57 @@ impl Widget for TextInput {
         let min_size = self.resolved_min_size();
         let visible_text = self.visible_text();
         let input_text = self.input_text();
-        let visible_measurement = measure_text(ctx, &visible_text, &text_style);
-        let input_measurement = if input_text.is_empty() {
-            TextMeasurement {
-                width: 0.0,
-                height: visible_measurement.height,
-                bounds: Rect::new(0.0, 0.0, 0.0, visible_measurement.height),
-                ascent: visible_measurement.ascent,
-                descent: visible_measurement.descent,
-                cap_height: visible_measurement.cap_height,
-            }
+        let display_style = if input_text.is_empty() {
+            self.theme.placeholder_text_style()
         } else {
-            measure_text(ctx, &input_text, &text_style)
+            text_style.clone()
         };
+        let line_box = Size::new(f32::INFINITY, text_style.line_height.max(1.0));
+        let display_layout = ctx
+            .layout()
+            .shape_text_persistent(
+                self.display_layout.as_ref().map(|layout| layout.handle()),
+                visible_text.clone(),
+                line_box,
+                display_style,
+            )
+            .ok();
+        let input_layout = ctx
+            .layout()
+            .shape_text_persistent(
+                self.input_layout.as_ref().map(|layout| layout.handle()),
+                input_text.clone(),
+                line_box,
+                text_style.clone(),
+            )
+            .ok();
+
+        let visible_measurement = display_layout
+            .as_ref()
+            .map(|layout| layout.measurement())
+            .unwrap_or_else(|| measure_text(ctx, &visible_text, &text_style));
+        let input_measurement = input_layout
+            .as_ref()
+            .map(|layout| layout.measurement())
+            .unwrap_or_else(|| {
+                if input_text.is_empty() {
+                    TextMeasurement {
+                        width: 0.0,
+                        height: visible_measurement.height,
+                        bounds: Rect::new(0.0, 0.0, 0.0, visible_measurement.height),
+                        ascent: visible_measurement.ascent,
+                        descent: visible_measurement.descent,
+                        cap_height: visible_measurement.cap_height,
+                    }
+                } else {
+                    measure_text(ctx, &input_text, &text_style)
+                }
+            });
 
         self.visible_measurement = Some(visible_measurement);
         self.input_measurement = Some(input_measurement);
+        self.display_layout = display_layout;
+        self.input_layout = input_layout;
 
         let width = (visible_measurement.width + padding.left + padding.right).max(min_size.width);
         let height =
@@ -4330,28 +4550,54 @@ impl Widget for TextInput {
                     .with_alpha(palette.focus_ring.alpha * focus_progress),
             ),
         );
-        ctx.draw_text(
-            content_rect,
-            display_text,
-            if placeholder {
-                self.theme.placeholder_text_style()
-            } else {
-                text_style.clone()
-            },
-        );
+        ctx.push_clip_rect(content_rect);
+        if let Some(layout) = &self.display_layout {
+            let layout_bounds = layout.measurement().bounds;
+            ctx.draw_persistent_text_layout(
+                Point::new(content_rect.x() - layout_bounds.x(), content_rect.y()),
+                layout,
+            );
+        } else {
+            ctx.draw_text(
+                content_rect,
+                display_text,
+                if placeholder {
+                    self.theme.placeholder_text_style()
+                } else {
+                    text_style.clone()
+                },
+            );
+        }
+        ctx.pop_clip();
 
         if self.focused {
             let caret_width = physical_pixels(ctx, metrics.caret_width);
-            let caret_x = content_rect.x()
-                + self
-                    .input_measurement
-                    .map(|measurement| measurement.width)
-                    .unwrap_or(0.0);
+            let caret_rect = self
+                .input_layout
+                .as_ref()
+                .map(|layout| {
+                    layout
+                        .caret_rect(self.display_caret_offset())
+                        .translate(content_rect.origin.to_vector())
+                })
+                .unwrap_or(Rect::new(
+                    content_rect.x()
+                        + self
+                            .input_measurement
+                            .map(|measurement| measurement.width)
+                            .unwrap_or(0.0),
+                    content_rect.y(),
+                    caret_width,
+                    content_rect.height().max(text_style.line_height),
+                ));
             let caret_rect = Rect::new(
-                caret_x.min((content_rect.max_x() - caret_width).max(content_rect.x())),
-                content_rect.y(),
+                caret_rect
+                    .x()
+                    .min((content_rect.max_x() - caret_width).max(content_rect.x()))
+                    .max(content_rect.x()),
+                caret_rect.y(),
                 caret_width,
-                content_rect.height().max(text_style.line_height),
+                caret_rect.height().max(text_style.line_height),
             );
             ctx.set_ime_composition_rect(caret_rect);
             if self.caret_visible {
@@ -4365,11 +4611,34 @@ impl Widget for TextInput {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::TextInput, ctx.bounds());
+        let display_text = self.input_text();
+        let display_selection = self.editor.display_selection();
+        let selection = selection_range(&display_selection, display_text.len());
         node.name = Some(self.name.clone());
-        node.value = Some(SemanticsValue::Text(self.input_text()));
+        node.value = Some(SemanticsValue::Text(display_text));
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        node.editable_text = Some(EditableTextSemantics {
+            caret_offset: display_selection.focus.utf8_offset,
+            selection: SemanticsTextRange::new(selection.start, selection.end),
+            multiline: false,
+            readonly: false,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+        });
+        node.actions = vec![
+            SemanticsAction::Focus,
+            SemanticsAction::SetValue,
+            SemanticsAction::SetSelection,
+            SemanticsAction::InsertText,
+            SemanticsAction::DeleteBackward,
+            SemanticsAction::DeleteForward,
+            SemanticsAction::Copy,
+            SemanticsAction::Cut,
+            SemanticsAction::Paste,
+            SemanticsAction::Undo,
+            SemanticsAction::Redo,
+        ];
         ctx.push(node);
     }
 
@@ -4379,9 +4648,11 @@ impl Widget for TextInput {
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         self.focused = focused;
-        if !focused && !self.composition.is_empty() {
-            self.composition.clear();
-            ctx.request_measure();
+        if !focused {
+            let result = self.editor.execute(EditorCommand::ClearComposition);
+            if result.layout_changed() {
+                ctx.request_measure();
+            }
         }
         if focused {
             self.reset_caret_blink(ctx);
@@ -4425,6 +4696,13 @@ fn paint_text_measurement(ctx: &PaintCtx, text: &str, style: &TextStyle) -> Text
             descent: 0.0,
             cap_height: Some(style.font_size),
         })
+}
+
+fn single_line_text(text: impl Into<String>) -> String {
+    text.into()
+        .chars()
+        .filter(|ch| *ch != '\r' && *ch != '\n')
+        .collect()
 }
 
 fn keyboard_text(event: &sui_core::KeyboardEvent) -> Option<&str> {
@@ -4981,7 +5259,7 @@ mod tests {
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsRole,
-        SemanticsValue, Size, Vector, WidgetId, WindowEvent,
+        SemanticsTextRange, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
@@ -5181,6 +5459,12 @@ mod tests {
             pointer_kind: PointerKind::Mouse,
             is_primary: true,
         })
+    }
+
+    fn command_key(key: &str) -> Event {
+        let mut event = KeyboardEvent::new(key, KeyState::Pressed);
+        event.modifiers.control = true;
+        Event::Keyboard(event)
     }
 
     fn handle_ready_events(runtime: &mut Runtime) -> Result<usize> {
@@ -5463,7 +5747,7 @@ mod tests {
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(20.0, 16.0), true),
+            primary_pointer(PointerEventKind::Down, Point::new(100.0, 16.0), true),
         )?;
         let _ = runtime.render(window_id)?;
 
@@ -5634,6 +5918,153 @@ mod tests {
             Some(sui_core::SemanticsValue::Text("Ad".to_string()))
         );
         assert!(output.ime_composition_rect.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_edits_at_caret_with_keyboard_navigation() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("Ada")
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(100.0, 16.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("ArrowLeft", KeyState::Pressed)),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit {
+                text: "m".to_string(),
+            }),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Backspace", KeyState::Pressed)),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("ArrowLeft", KeyState::Pressed)),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Delete", KeyState::Pressed)),
+        )?;
+
+        assert_eq!(
+            changes.borrow().as_slice(),
+            &["Adma".to_string(), "Ada".to_string(), "Aa".to_string()]
+        );
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .unwrap();
+        assert_eq!(
+            input.value,
+            Some(sui_core::SemanticsValue::Text("Aa".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_uses_shared_editor_commands_and_editable_semantics() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("hello world")
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(100.0, 16.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.handle_event(window_id, command_key("x"))?;
+        runtime.handle_event(window_id, command_key("v"))?;
+        runtime.handle_event(window_id, command_key("z"))?;
+        runtime.handle_event(window_id, command_key("y"))?;
+        runtime.handle_event(
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit {
+                text: "\n!".to_string(),
+            }),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .unwrap();
+        assert_eq!(
+            input.value,
+            Some(sui_core::SemanticsValue::Text("hello world!".to_string()))
+        );
+        let editable = input
+            .editable_text
+            .as_ref()
+            .expect("text input should expose editable semantics");
+        assert!(!editable.multiline);
+        assert_eq!(editable.caret_offset, "hello world!".len());
+        assert_eq!(
+            editable.selection,
+            SemanticsTextRange::new("hello world!".len(), "hello world!".len())
+        );
+        assert_eq!(
+            changes.borrow().last().map(String::as_str),
+            Some("hello world!")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_click_positions_caret_for_insertion() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("Ada")
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(1.0, 16.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit {
+                text: "Lady ".to_string(),
+            }),
+        )?;
+
+        assert_eq!(changes.borrow().as_slice(), &["Lady Ada".to_string()]);
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .unwrap();
+        assert_eq!(
+            input.value,
+            Some(sui_core::SemanticsValue::Text("Lady Ada".to_string()))
+        );
         Ok(())
     }
 
@@ -6385,6 +6816,52 @@ mod tests {
             input.value,
             Some(SemanticsValue::Text("Line 1\nLine 2".to_string()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn text_area_uses_shared_editor_commands_and_semantics() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextArea::new("Notes")
+                .value("alpha\nbeta")
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(18.0, 18.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.handle_event(
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit {
+                text: "gamma".to_string(),
+            }),
+        )?;
+        runtime.handle_event(window_id, command_key("z"))?;
+        runtime.handle_event(window_id, command_key("y"))?;
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text area semantics present");
+        assert_eq!(input.value, Some(SemanticsValue::Text("gamma".to_string())));
+        let editable = input
+            .editable_text
+            .as_ref()
+            .expect("text area should expose editable semantics");
+        assert!(editable.multiline);
+        assert_eq!(editable.caret_offset, "gamma".len());
+        assert_eq!(
+            editable.selection,
+            SemanticsTextRange::new("gamma".len(), "gamma".len())
+        );
+        assert_eq!(changes.borrow().last().map(String::as_str), Some("gamma"));
         Ok(())
     }
 

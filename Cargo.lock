@@ -2917,6 +2917,7 @@ dependencies = [
  "sui-runtime",
  "sui-scene",
  "sui-text",
+ "unicode-segmentation",
 ]
 
 [[package]]

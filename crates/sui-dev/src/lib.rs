@@ -2546,6 +2546,7 @@ fn fill_tui_node(window: &TestWindow, node: &SemanticsNode, text: &str) -> sui::
         window,
         Event::Ime(ImeEvent::CompositionUpdate {
             text: text.to_string(),
+            cursor_range: None,
         }),
     )?;
     dispatch_tui_event(

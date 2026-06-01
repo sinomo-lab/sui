@@ -89,9 +89,15 @@ enum HostInputEvent {
     MouseWheel {
         delta: ScrollKind,
     },
+    ImeStart,
+    ImePreedit {
+        text: String,
+        cursor_range: Option<(usize, usize)>,
+    },
     ImeCommit {
         text: String,
     },
+    ImeEnd,
 }
 
 enum HarnessCommand {
@@ -891,7 +897,12 @@ impl DesktopHarnessApp {
                 },
                 phase: TouchPhase::Moved,
             },
+            HostInputEvent::ImeStart => WinitWindowEvent::Ime(Ime::Enabled),
+            HostInputEvent::ImePreedit { text, cursor_range } => {
+                WinitWindowEvent::Ime(Ime::Preedit(text, cursor_range))
+            }
             HostInputEvent::ImeCommit { text } => WinitWindowEvent::Ime(Ime::Commit(text)),
+            HostInputEvent::ImeEnd => WinitWindowEvent::Ime(Ime::Disabled),
         };
 
         Ok(event)
@@ -1153,7 +1164,10 @@ fn remove_pointer_button(buttons: PointerButtons, removed: PointerButton) -> Poi
 fn map_ime_event(event: Ime) -> Option<ImeEvent> {
     match event {
         Ime::Enabled => Some(ImeEvent::CompositionStart),
-        Ime::Preedit(text, _) => Some(ImeEvent::CompositionUpdate { text }),
+        Ime::Preedit(text, cursor_range) => Some(ImeEvent::CompositionUpdate {
+            text,
+            cursor_range: cursor_range.map(|(start, end)| start..end),
+        }),
         Ime::Commit(text) => Some(ImeEvent::CompositionCommit { text }),
         Ime::Disabled => Some(ImeEvent::CompositionEnd),
     }
@@ -3196,6 +3210,11 @@ fn run_text_editing_benchmark() -> Result<()> {
         "\nlet scroll_budget_ms = 16.67;",
         "\ncommit_overlay_sample(frame_index);",
     ];
+    const IME_PREEDIT_UPDATES: [(&str, Option<(usize, usize)>); 3] = [
+        ("候", Some((0, 1))),
+        ("候補", Some((1, 2))),
+        ("候補を", Some((2, 3))),
+    ];
     const SELECTION_STEPS: usize = 8;
     const EDITOR_SCROLL_FRAMES: usize = 18;
     const SYNTAX_SCROLL_FRAMES: usize = 28;
@@ -3251,6 +3270,26 @@ fn run_text_editing_benchmark() -> Result<()> {
     };
 
     click_at(&harness, window_id, editor_point)?;
+
+    harness.dispatch(window_id, HostInputEvent::ImeStart)?;
+    for (step, (text, cursor_range)) in IME_PREEDIT_UPDATES.iter().enumerate() {
+        harness.dispatch(
+            window_id,
+            HostInputEvent::ImePreedit {
+                text: (*text).to_string(),
+                cursor_range: *cursor_range,
+            },
+        )?;
+        record_frame("composition preedit", step)?;
+    }
+    harness.dispatch(
+        window_id,
+        HostInputEvent::ImeCommit {
+            text: "候補を".to_string(),
+        },
+    )?;
+    record_frame("composition commit", IME_PREEDIT_UPDATES.len())?;
+    harness.dispatch(window_id, HostInputEvent::ImeEnd)?;
 
     for (step, text) in EDIT_COMMITS.iter().enumerate() {
         harness.dispatch(
@@ -3371,7 +3410,12 @@ fn run_text_editing_benchmark() -> Result<()> {
     assert_eq!(initial_snapshot.title, TEXT_EDITING_BENCHMARK_TITLE);
     assert_eq!(
         valid_count,
-        EDIT_COMMITS.len() + SELECTION_STEPS + EDITOR_SCROLL_FRAMES + SYNTAX_SCROLL_FRAMES,
+        IME_PREEDIT_UPDATES.len()
+            + 1
+            + EDIT_COMMITS.len()
+            + SELECTION_STEPS
+            + EDITOR_SCROLL_FRAMES
+            + SYNTAX_SCROLL_FRAMES,
     );
 
     println!("\n=== Text Editing Benchmark ===");

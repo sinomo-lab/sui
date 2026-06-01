@@ -80,12 +80,13 @@ pub use sui_widgets::{
     HdrPolicyTokens, HdrThemeMode, HdrThemeTokens, Image, ImageFit, ListItem, ListView,
     MaterialToken, PathBar, PixelCanvas, ResizablePane, ResolvedEffectStyle, ResolvedHdrStyle,
     ResolvedMaterialStyle, SemanticColorToken, SplitView, Table, TableColumn, TableColumnAlignment,
-    TableRow, TextSurface, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme,
-    ThemeColors, ThemeContainers, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
-    ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken,
-    ThemeTracking, TreeItem, TreeView, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole,
-    WidgetMaterialRole, resolve_effect_role, resolve_luminance_role, resolve_material_role,
-    resolve_semantic_color, resolve_widget_hdr_style,
+    TableRow, TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,
+    ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,
+    ThemeContainers, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading,
+    ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
+    TreeItem, TreeView, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
+    resolve_effect_role, resolve_luminance_role, resolve_material_role, resolve_semantic_color,
+    resolve_widget_hdr_style,
 };
 
 pub trait ThemeExtension: Any + Send + Sync {}

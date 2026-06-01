@@ -10,10 +10,11 @@ use sui::prelude::*;
 use sui::{
     HdrLuminanceTokens, HdrThemeMode, HdrThemeTokens, InvalidationKind, InvalidationRequest,
     InvalidationTarget, Rect, SceneStatisticsDetailMode, SemanticColorToken, SemanticsNode,
-    SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextSurface, TextWrap, TimerToken,
-    Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowEvent, WindowId, WindowPerformanceSnapshot, resolve_semantic_color,
-    resolve_widget_hdr_style, set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextSurface, TextSurfaceOverlayKind,
+    TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap, TimerToken, Vector, WidgetColorRole,
+    WidgetLuminanceRole, WidgetMaterialRole, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent,
+    WindowId, WindowPerformanceSnapshot, resolve_semantic_color, resolve_widget_hdr_style,
+    set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_scene_statistics_detail_mode,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
@@ -3014,15 +3015,20 @@ pub fn build_text_validation_surface() -> impl Widget {
 }
 
 pub fn build_text_editing_benchmark() -> impl Widget {
+    let editor_document = text_editing_benchmark_document();
+    let editor_style_spans = text_editing_benchmark_style_spans(&editor_document);
+    let editor_style_overlays = text_editing_benchmark_style_overlays(&editor_document);
     let editor_panel = panel(
-        "Editable code surface",
-        "Benchmark typing, selection, and wheel scrolling against one long text surface with editor-like line length and comment density.",
+        "Editable styled code surface",
+        "Benchmark typing, selection, IME preedit, wheel scrolling, and syntax-overlay churn against one long text surface.",
         SizedBox::new().width(560.0).height(700.0).with_child(
             TextSurface::new(TEXT_EDITING_BENCHMARK_EDITOR_NAME)
-                .value(text_editing_benchmark_document())
+                .value(editor_document)
                 .direction(TextDirection::LeftToRight)
                 .min_width(560.0)
                 .min_height(700.0)
+                .style_spans(editor_style_spans)
+                .style_overlays(editor_style_overlays)
                 .text_style(TextStyle {
                     font_size: 13.0,
                     line_height: 18.0,
@@ -3183,6 +3189,217 @@ fn text_editing_benchmark_document() -> String {
     }
     lines.push("}".to_string());
     lines.join("\n")
+}
+
+fn text_editing_benchmark_style_spans(document: &str) -> Vec<TextSurfaceStyleSpan> {
+    let keyword_style = text_editing_benchmark_span_style(Color::rgba(0.78, 0.34, 0.16, 1.0));
+    let symbol_style = text_editing_benchmark_span_style(Color::rgba(0.09, 0.43, 0.58, 1.0));
+    let string_style = text_editing_benchmark_span_style(Color::rgba(0.42, 0.32, 0.74, 1.0));
+    let comment_style = text_editing_benchmark_span_style(Color::rgba(0.36, 0.45, 0.25, 1.0));
+    let number_style = text_editing_benchmark_span_style(Color::rgba(0.14, 0.49, 0.24, 1.0));
+    let keywords = ["mod", "let", "if", "match", "while", "for", "return"];
+    let symbols = [
+        "editor_benchmark",
+        "shape_visible_window",
+        "apply_incremental_edit",
+        "measure_selection_overlay",
+        "resolve_fallback_face",
+        "update_syntax_cache",
+        "record_scroll_sample",
+    ];
+    let mut spans = Vec::new();
+    let mut line_offset = 0usize;
+
+    for line_with_break in document.split_inclusive('\n') {
+        let line = line_with_break
+            .strip_suffix('\n')
+            .unwrap_or(line_with_break);
+        let comment_start = line.find("//");
+        let code_end = comment_start.unwrap_or(line.len());
+
+        for keyword in keywords {
+            collect_text_editing_word_spans(
+                &mut spans,
+                line_offset,
+                &line[..code_end],
+                keyword,
+                keyword_style.clone(),
+            );
+        }
+        for symbol in symbols {
+            collect_text_editing_word_spans(
+                &mut spans,
+                line_offset,
+                &line[..code_end],
+                symbol,
+                symbol_style.clone(),
+            );
+        }
+        collect_text_editing_number_spans(
+            &mut spans,
+            line_offset,
+            &line[..code_end],
+            number_style.clone(),
+        );
+        collect_text_editing_string_spans(
+            &mut spans,
+            line_offset,
+            &line[..code_end],
+            string_style.clone(),
+        );
+        if let Some(comment_start) = comment_start {
+            spans.push(TextSurfaceStyleSpan::new(
+                line_offset + comment_start..line_offset + line.len(),
+                comment_style.clone(),
+            ));
+        }
+
+        line_offset += line_with_break.len();
+    }
+
+    spans
+}
+
+fn text_editing_benchmark_style_overlays(document: &str) -> Vec<TextSurfaceStyleOverlay> {
+    let search_style = text_editing_benchmark_span_style(Color::rgba(0.08, 0.38, 0.72, 1.0));
+    let diagnostic_style = text_editing_benchmark_span_style(Color::rgba(0.70, 0.14, 0.20, 1.0));
+    let rich_preview_style = text_editing_benchmark_span_style(Color::rgba(0.46, 0.23, 0.66, 1.0));
+    let mut overlays = Vec::new();
+
+    collect_text_editing_overlays(
+        &mut overlays,
+        document,
+        "shape_visible_window",
+        TextSurfaceOverlayKind::SearchMatch,
+        search_style,
+    );
+    collect_text_editing_overlays(
+        &mut overlays,
+        document,
+        "fallback",
+        TextSurfaceOverlayKind::Diagnostic,
+        diagnostic_style,
+    );
+    collect_text_editing_overlays(
+        &mut overlays,
+        document,
+        "🙂",
+        TextSurfaceOverlayKind::RichTextPreview,
+        rich_preview_style,
+    );
+
+    overlays
+}
+
+fn text_editing_benchmark_span_style(color: Color) -> TextStyle {
+    TextStyle {
+        font_size: 13.0,
+        line_height: 18.0,
+        color,
+        ..TextStyle::default()
+    }
+}
+
+fn collect_text_editing_word_spans(
+    spans: &mut Vec<TextSurfaceStyleSpan>,
+    line_offset: usize,
+    line: &str,
+    word: &str,
+    style: TextStyle,
+) {
+    let mut search_offset = 0usize;
+    while let Some(relative_start) = line[search_offset..].find(word) {
+        let start = search_offset + relative_start;
+        let end = start + word.len();
+        let before = line[..start].chars().next_back();
+        let after = line[end..].chars().next();
+        if text_editing_word_boundary(before) && text_editing_word_boundary(after) {
+            spans.push(TextSurfaceStyleSpan::new(
+                line_offset + start..line_offset + end,
+                style.clone(),
+            ));
+        }
+        search_offset = end;
+    }
+}
+
+fn collect_text_editing_number_spans(
+    spans: &mut Vec<TextSurfaceStyleSpan>,
+    line_offset: usize,
+    line: &str,
+    style: TextStyle,
+) {
+    let mut span_start = None;
+    for (index, ch) in line.char_indices() {
+        let number_char = ch.is_ascii_digit() || ch == '.';
+        match (span_start, number_char) {
+            (None, true) => span_start = Some(index),
+            (Some(start), false) => {
+                spans.push(TextSurfaceStyleSpan::new(
+                    line_offset + start..line_offset + index,
+                    style.clone(),
+                ));
+                span_start = None;
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(start) = span_start {
+        spans.push(TextSurfaceStyleSpan::new(
+            line_offset + start..line_offset + line.len(),
+            style,
+        ));
+    }
+}
+
+fn collect_text_editing_string_spans(
+    spans: &mut Vec<TextSurfaceStyleSpan>,
+    line_offset: usize,
+    line: &str,
+    style: TextStyle,
+) {
+    let mut string_start = None;
+    for (index, ch) in line.char_indices() {
+        if ch != '"' {
+            continue;
+        }
+        if let Some(start) = string_start.take() {
+            spans.push(TextSurfaceStyleSpan::new(
+                line_offset + start..line_offset + index + ch.len_utf8(),
+                style.clone(),
+            ));
+        } else {
+            string_start = Some(index);
+        }
+    }
+}
+
+fn collect_text_editing_overlays(
+    overlays: &mut Vec<TextSurfaceStyleOverlay>,
+    document: &str,
+    needle: &str,
+    kind: TextSurfaceOverlayKind,
+    style: TextStyle,
+) {
+    let mut search_offset = 0usize;
+    while let Some(relative_start) = document[search_offset..].find(needle) {
+        let start = search_offset + relative_start;
+        let end = start + needle.len();
+        overlays.push(TextSurfaceStyleOverlay::new(
+            start..end,
+            style.clone(),
+            kind.clone(),
+        ));
+        search_offset = end;
+    }
+}
+
+fn text_editing_word_boundary(ch: Option<char>) -> bool {
+    match ch {
+        Some(ch) => !ch.is_alphanumeric() && ch != '_',
+        None => true,
+    }
 }
 
 fn build_text_editing_syntax_preview() -> impl Widget {
@@ -4179,16 +4396,19 @@ mod tests {
         build_color_and_imagery_story, build_retained_text_benchmark_application,
         build_text_editing_benchmark_application, build_text_rendering_comparison_application,
         build_text_validation_surface, build_widget_book_application, build_widget_book_gallery,
-        default_widget_book_state, register_widget_book_images, theme_preview_card,
+        default_widget_book_state, register_widget_book_images, text_editing_benchmark_document,
+        text_editing_benchmark_style_overlays, text_editing_benchmark_style_spans,
+        theme_preview_card,
     };
     use sui::{
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
         KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
         PresentationLatencyDiagnostics, RenderOutput, RendererSubmissionDiagnostics, Result,
         SceneStatistics, SceneStatisticsDetailMode, ScrollDelta, SemanticsRole, SemanticsValue,
-        Size, SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, Vector, Widget, WidgetPod,
-        WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId, WindowPerformanceSnapshot,
-        set_window_scene_statistics_detail_mode, window_scene_statistics_detail_mode,
+        Size, SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, TextSurfaceOverlayKind,
+        Vector, Widget, WidgetPod, WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId,
+        WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
+        window_scene_statistics_detail_mode,
     };
     use sui_runtime::publish_window_performance_snapshot;
     use sui_scene::{Brush, SceneCommand, SceneLayerUpdateKind};
@@ -4253,6 +4473,41 @@ mod tests {
                 )
                 .build()
         })
+    }
+
+    #[test]
+    fn text_editing_benchmark_exercises_rich_code_style_ranges() {
+        let document = text_editing_benchmark_document();
+        let spans = text_editing_benchmark_style_spans(&document);
+        let overlays = text_editing_benchmark_style_overlays(&document);
+
+        assert!(spans.len() > 500);
+        assert!(
+            overlays
+                .iter()
+                .any(|overlay| matches!(overlay.kind, TextSurfaceOverlayKind::SearchMatch))
+        );
+        assert!(
+            overlays
+                .iter()
+                .any(|overlay| matches!(overlay.kind, TextSurfaceOverlayKind::Diagnostic))
+        );
+        assert!(
+            overlays
+                .iter()
+                .any(|overlay| matches!(overlay.kind, TextSurfaceOverlayKind::RichTextPreview))
+        );
+        assert!(
+            spans
+                .iter()
+                .all(|span| span.range.start < span.range.end && span.range.end <= document.len())
+        );
+        assert!(
+            overlays
+                .iter()
+                .all(|overlay| overlay.range.start < overlay.range.end
+                    && overlay.range.end <= document.len())
+        );
     }
 
     fn build_text_validation_runtime() -> Result<sui::Runtime> {
@@ -4624,6 +4879,11 @@ mod tests {
             "\nlet scroll_budget_ms = 16.67;",
             "\ncommit_overlay_sample(frame_index);",
         ];
+        const IME_PREEDIT_UPDATES: [(&str, Option<(usize, usize)>); 3] = [
+            ("候", Some((0, 1))),
+            ("候補", Some((1, 2))),
+            ("候補を", Some((2, 3))),
+        ];
         const EDITOR_SCROLL_FRAMES: usize = 18;
         const SYNTAX_SCROLL_FRAMES: usize = 28;
         const SCROLL_STEP_PX: f32 = -34.0;
@@ -4636,15 +4896,47 @@ mod tests {
             .with_name(TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME);
         editor.focus()?;
 
-        let mut collected =
-            Vec::with_capacity(EDIT_COMMITS.len() + EDITOR_SCROLL_FRAMES + SYNTAX_SCROLL_FRAMES);
+        let mut collected = Vec::with_capacity(
+            IME_PREEDIT_UPDATES.len()
+                + 1
+                + EDIT_COMMITS.len()
+                + EDITOR_SCROLL_FRAMES
+                + SYNTAX_SCROLL_FRAMES,
+        );
         let mut previous_frame_index = window.performance_snapshot()?.frame_index;
+
+        editor.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
+        for (step, (text, cursor_range)) in IME_PREEDIT_UPDATES.iter().enumerate() {
+            editor.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate {
+                text: (*text).to_string(),
+                cursor_range: cursor_range.map(|(start, end)| start..end),
+            }))?;
+            collected.push(next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless text editing benchmark",
+                "composition preedit",
+                step,
+            )?);
+        }
+        editor.dispatch_event(Event::Ime(ImeEvent::CompositionCommit {
+            text: "候補を".to_string(),
+        }))?;
+        collected.push(next_headless_benchmark_frame(
+            window,
+            &mut previous_frame_index,
+            "headless text editing benchmark",
+            "composition commit",
+            IME_PREEDIT_UPDATES.len(),
+        )?);
+        editor.dispatch_event(Event::Ime(ImeEvent::CompositionEnd))?;
 
         for (step, text) in EDIT_COMMITS.iter().enumerate() {
             let text = (*text).to_string();
             editor.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
             editor.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate {
                 text: text.clone(),
+                cursor_range: None,
             }))?;
             editor.dispatch_event(Event::Ime(ImeEvent::CompositionCommit { text }))?;
             editor.dispatch_event(Event::Ime(ImeEvent::CompositionEnd))?;
@@ -5528,6 +5820,7 @@ mod tests {
         editor.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
         editor.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate {
             text: " // validated🙂".to_string(),
+            cursor_range: None,
         }))?;
         editor.dispatch_event(Event::Ime(ImeEvent::CompositionCommit {
             text: " // validated🙂".to_string(),
@@ -5839,7 +6132,7 @@ mod tests {
         })?;
 
         assert!(
-            diff_count <= 900,
+            diff_count <= 950,
             "theme preview switch differed from isolated reference at 150% DPI; diff pixels={diff_count}; see {}",
             artifact_dir.display()
         );

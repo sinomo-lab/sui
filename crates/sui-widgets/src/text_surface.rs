@@ -1,9 +1,9 @@
 use std::ops::Range;
 
 use sui_core::{
-    Color, Event, ImeEvent, KeyState, KeyboardEvent, Path, Point, PointerButton, PointerEventKind,
-    Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector,
-    WindowEvent,
+    Color, EditableTextSemantics, Event, ImeEvent, KeyState, KeyboardEvent, Path, Point,
+    PointerButton, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode,
+    SemanticsRole, SemanticsTextRange, SemanticsValue, Size, Vector, WindowEvent,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
@@ -12,37 +12,77 @@ use sui_runtime::{
 };
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{
-    PersistentTextLayout, TextCursor, TextDirection, TextSelection, TextStyle, TextWrap,
+    PersistentTextLayout, TextCursor, TextDirection, TextDocument, TextLayoutRequest,
+    TextParagraph, TextSelection, TextSpan, TextStyle, TextWrap,
 };
 
-use crate::{DefaultTheme, ThemeColorScheme};
+use crate::{
+    DefaultTheme, ThemeColorScheme,
+    editor::{
+        EditorCommand, EditorCommandResult, EditorState, clamp_to_grapheme_boundary,
+        selection_range,
+    },
+};
 
-struct CompositionState {
-    text: String,
-    replacement_range: Range<usize>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextSurfaceStyleSpan {
+    pub range: Range<usize>,
+    pub style: TextStyle,
+}
+
+impl TextSurfaceStyleSpan {
+    pub fn new(range: Range<usize>, style: TextStyle) -> Self {
+        Self { range, style }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextSurfaceOverlayKind {
+    Syntax,
+    Diagnostic,
+    SearchMatch,
+    CurrentLine,
+    RichTextPreview,
+    Custom(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextSurfaceStyleOverlay {
+    pub range: Range<usize>,
+    pub style: TextStyle,
+    pub kind: TextSurfaceOverlayKind,
+}
+
+impl TextSurfaceStyleOverlay {
+    pub fn new(range: Range<usize>, style: TextStyle, kind: TextSurfaceOverlayKind) -> Self {
+        Self { range, style, kind }
+    }
 }
 
 pub struct TextSurface {
     theme: Box<DefaultTheme>,
     name: String,
-    value: String,
-    composition: Option<CompositionState>,
+    editor: EditorState,
+    clipboard: String,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     min_width: Option<f32>,
     min_height: Option<f32>,
     wrap: TextWrap,
     direction: TextDirection,
-    selection: TextSelection,
-    preferred_x: Option<f32>,
+    style_spans: Vec<TextSurfaceStyleSpan>,
+    style_overlays: Vec<TextSurfaceStyleOverlay>,
+    style_revision: u64,
     hovered: bool,
     dragging_selection: bool,
-    scroll_x: f32,
-    scroll_y: f32,
     layout: Option<PersistentTextLayout>,
     line_layouts: Vec<PersistentTextLayout>,
     line_offsets: Vec<usize>,
     line_lengths: Vec<usize>,
+    line_layout_box_size: Option<Size>,
+    line_layout_style: Option<TextStyle>,
+    line_layout_revision: u64,
+    line_layout_style_revision: u64,
     on_change: Option<Box<dyn FnMut(String)>>,
 }
 
@@ -51,24 +91,27 @@ impl TextSurface {
         Self {
             theme: Box::new(DefaultTheme::default()),
             name: name.into(),
-            value: String::new(),
-            composition: None,
+            editor: EditorState::new(),
+            clipboard: String::new(),
             text_style: None,
             padding: None,
             min_width: None,
             min_height: None,
             wrap: TextWrap::NoWrap,
             direction: TextDirection::Auto,
-            selection: TextSelection::new(TextCursor::new(0), TextCursor::new(0)),
-            preferred_x: None,
+            style_spans: Vec::new(),
+            style_overlays: Vec::new(),
+            style_revision: 0,
             hovered: false,
             dragging_selection: false,
-            scroll_x: 0.0,
-            scroll_y: 0.0,
             layout: None,
             line_layouts: Vec::new(),
             line_offsets: Vec::new(),
             line_lengths: Vec::new(),
+            line_layout_box_size: None,
+            line_layout_style: None,
+            line_layout_revision: u64::MAX,
+            line_layout_style_revision: u64::MAX,
             on_change: None,
         }
     }
@@ -101,14 +144,43 @@ impl TextSurface {
     pub fn wrap(mut self, wrap: TextWrap) -> Self {
         self.wrap = wrap;
         if self.wrap != TextWrap::NoWrap {
-            self.scroll_x = 0.0;
+            self.editor.set_scroll(0.0, self.editor.scroll_y());
         }
         self
     }
 
     pub fn direction(mut self, direction: TextDirection) -> Self {
         self.direction = direction;
+        self.invalidate_line_layouts();
         self
+    }
+
+    pub fn style_spans(mut self, spans: Vec<TextSurfaceStyleSpan>) -> Self {
+        self.set_style_spans(spans);
+        self
+    }
+
+    pub fn set_style_spans(&mut self, spans: Vec<TextSurfaceStyleSpan>) {
+        self.style_spans = spans;
+        self.bump_style_revision();
+    }
+
+    pub fn current_style_spans(&self) -> &[TextSurfaceStyleSpan] {
+        &self.style_spans
+    }
+
+    pub fn style_overlays(mut self, overlays: Vec<TextSurfaceStyleOverlay>) -> Self {
+        self.set_style_overlays(overlays);
+        self
+    }
+
+    pub fn set_style_overlays(&mut self, overlays: Vec<TextSurfaceStyleOverlay>) {
+        self.style_overlays = overlays;
+        self.bump_style_revision();
+    }
+
+    pub fn current_style_overlays(&self) -> &[TextSurfaceStyleOverlay] {
+        &self.style_overlays
     }
 
     pub fn value(mut self, value: impl Into<String>) -> Self {
@@ -117,15 +189,12 @@ impl TextSurface {
     }
 
     pub fn current_value(&self) -> &str {
-        &self.value
+        self.editor.document().text()
     }
 
     pub fn set_value(&mut self, value: impl Into<String>) {
-        self.value = value.into();
-        let cursor = TextCursor::new(self.value.len());
-        self.selection = TextSelection::new(cursor, cursor);
-        self.preferred_x = None;
-        self.composition = None;
+        self.editor.set_text(value);
+        self.invalidate_line_layouts();
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -156,36 +225,32 @@ impl TextSurface {
         )
     }
 
-    fn selection_is_collapsed(&self) -> bool {
-        self.selection.anchor.utf8_offset == self.selection.focus.utf8_offset
+    fn bump_style_revision(&mut self) {
+        self.style_revision = self.style_revision.saturating_add(1);
+        self.invalidate_line_layouts();
+    }
+
+    fn invalidate_line_layouts(&mut self) {
+        self.layout = None;
+        self.line_layouts.clear();
+        self.line_offsets.clear();
+        self.line_lengths.clear();
+        self.line_layout_box_size = None;
+        self.line_layout_style = None;
+        self.line_layout_revision = u64::MAX;
+        self.line_layout_style_revision = u64::MAX;
     }
 
     fn selection_range(&self) -> Range<usize> {
-        let start = self.selection.anchor.utf8_offset.min(self.value.len());
-        let end = self.selection.focus.utf8_offset.min(self.value.len());
-        if start <= end { start..end } else { end..start }
+        self.editor.selection_range()
     }
 
     fn display_text(&self) -> String {
-        let Some(composition) = &self.composition else {
-            return self.value.clone();
-        };
-
-        let mut text = self.value.clone();
-        let range = composition.replacement_range.start.min(text.len())
-            ..composition.replacement_range.end.min(text.len());
-        text.replace_range(range, &composition.text);
-        text
+        self.editor.display_text()
     }
 
     fn display_selection(&self) -> TextSelection {
-        if let Some(composition) = &self.composition {
-            let offset = composition.replacement_range.start + composition.text.len();
-            let cursor = TextCursor::new(offset);
-            TextSelection::new(cursor, cursor)
-        } else {
-            self.selection.clone()
-        }
+        self.editor.display_selection()
     }
 
     fn layout_box_size(&self, available_width: f32) -> Size {
@@ -210,146 +275,138 @@ impl TextSurface {
     }
 
     fn commit_text_change(&mut self) {
+        let value = self.current_value().to_string();
         if let Some(on_change) = &mut self.on_change {
-            on_change(self.value.clone());
+            on_change(value);
         }
     }
 
-    fn clear_composition(&mut self) -> bool {
-        let had_composition = self.composition.is_some();
-        self.composition = None;
-        had_composition
-    }
-
-    fn replace_selected_text(&mut self, replacement: &str) {
-        let range = self.selection_range();
-        self.value.replace_range(range.clone(), replacement);
-        let offset = range.start + replacement.len();
-        let cursor = TextCursor::new(offset);
-        self.selection = TextSelection::new(cursor, cursor);
-        self.preferred_x = None;
-        self.commit_text_change();
-    }
-
-    fn backspace(&mut self) -> bool {
-        if !self.selection_is_collapsed() {
-            self.replace_selected_text("");
-            return true;
+    fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
+        if let Some(text) = result.clipboard_text.take() {
+            self.clipboard = text;
         }
-
-        let focus = clamp_offset_to_boundary(&self.value, self.selection.focus.utf8_offset);
-        let previous = previous_boundary(&self.value, focus);
-        if previous == focus {
-            return false;
+        if result.text_changed {
+            self.commit_text_change();
         }
-
-        self.selection = TextSelection::new(TextCursor::new(previous), TextCursor::new(focus));
-        self.replace_selected_text("");
-        true
-    }
-
-    fn delete_forward(&mut self) -> bool {
-        if !self.selection_is_collapsed() {
-            self.replace_selected_text("");
-            return true;
+        if result.layout_changed() {
+            ctx.request_measure();
+            ctx.request_text();
+        } else if result.overlay_changed() {
+            self.request_after_overlay_change(ctx);
         }
-
-        let focus = clamp_offset_to_boundary(&self.value, self.selection.focus.utf8_offset);
-        let next = next_boundary(&self.value, focus);
-        if next == focus {
-            return false;
+        if result.text_changed || result.selection_changed || result.composition_changed {
+            ctx.request_semantics();
         }
-
-        self.selection = TextSelection::new(TextCursor::new(focus), TextCursor::new(next));
-        self.replace_selected_text("");
-        true
-    }
-
-    fn insert_text(&mut self, text: &str) -> bool {
-        if text.is_empty() {
-            return false;
+        if result.handled {
+            ctx.set_handled();
         }
-
-        self.replace_selected_text(text);
-        true
     }
 
-    fn set_collapsed_cursor(&mut self, offset: usize) {
-        let offset = clamp_offset_to_boundary(&self.value, offset);
-        let cursor = TextCursor::new(offset);
-        self.selection = TextSelection::new(cursor, cursor);
-        self.preferred_x = None;
+    fn execute_editor_command(
+        &mut self,
+        ctx: &mut EventCtx,
+        command: EditorCommand,
+    ) -> EditorCommandResult {
+        let result = self.editor.execute(command);
+        self.apply_editor_result(ctx, result.clone());
+        result
     }
 
-    fn set_selection(&mut self, anchor: usize, focus: usize) {
-        self.selection = TextSelection::new(
-            TextCursor::new(clamp_offset_to_boundary(&self.value, anchor)),
-            TextCursor::new(clamp_offset_to_boundary(&self.value, focus)),
-        );
-    }
-
-    fn move_horizontal(&mut self, backward: bool, extend: bool) -> bool {
-        let range = self.selection_range();
-        let current_focus = clamp_offset_to_boundary(&self.value, self.selection.focus.utf8_offset);
-        let next = if !extend && range.start != range.end {
-            if backward { range.start } else { range.end }
-        } else if backward {
-            previous_boundary(&self.value, current_focus)
-        } else {
-            next_boundary(&self.value, current_focus)
-        };
-
-        if extend {
-            self.set_selection(self.selection.anchor.utf8_offset, next);
-        } else {
-            self.set_collapsed_cursor(next);
-        }
-        true
-    }
-
-    fn move_line_boundary(&mut self, to_start: bool, extend: bool) -> bool {
-        let Some(layout) = self.layout.as_ref() else {
-            return false;
-        };
-
+    fn move_line_boundary(&mut self, to_start: bool, extend: bool) -> EditorCommandResult {
         let focus = if extend {
-            self.selection.focus.utf8_offset
+            self.editor.selection().focus.utf8_offset
         } else {
             self.selection_range().end
         };
-        let caret = layout.caret(TextCursor::new(focus));
-        let line = &layout.lines()[caret.line_index];
-        let target = if to_start {
-            line.byte_range.start
+
+        let target = if !self.line_layouts.is_empty() {
+            let line_index = self.line_index_for_offset(focus);
+            if to_start {
+                self.line_offsets[line_index]
+            } else {
+                self.line_offsets[line_index] + self.line_lengths[line_index]
+            }
+        } else if let Some(layout) = self.layout.as_ref() {
+            let caret = layout.caret(TextCursor::new(focus));
+            let line = &layout.lines()[caret.line_index];
+            if to_start {
+                line.byte_range.start
+            } else {
+                line.byte_range.end
+            }
         } else {
-            line.byte_range.end
+            return self.editor.execute(if to_start {
+                EditorCommand::MoveLineStart { extend }
+            } else {
+                EditorCommand::MoveLineEnd { extend }
+            });
         };
 
-        if extend {
-            self.set_selection(self.selection.anchor.utf8_offset, target);
-        } else {
-            self.set_collapsed_cursor(target);
-        }
-        self.preferred_x = None;
-        true
+        self.editor.execute(EditorCommand::MoveTo {
+            offset: target,
+            extend,
+        })
     }
 
-    fn move_vertical(&mut self, delta_lines: isize, extend: bool, viewport_height: f32) -> bool {
-        let Some(layout) = self.layout.as_ref() else {
-            return false;
+    fn move_vertical(
+        &mut self,
+        delta_lines: isize,
+        extend: bool,
+        _viewport_height: f32,
+    ) -> EditorCommandResult {
+        let focus = if extend {
+            self.editor.selection().focus.utf8_offset
+        } else {
+            self.selection_range().end
         };
 
+        if !self.line_layouts.is_empty() {
+            let Some(caret) = self.caret_rect_for_cursor(TextCursor::new(focus)) else {
+                return EditorCommandResult::default();
+            };
+            let preferred_x = self.editor.preferred_x().unwrap_or(caret.x());
+            let line_index = self.line_index_for_offset(focus) as isize + delta_lines;
+            let target_line =
+                line_index.clamp(0, self.line_layouts.len().saturating_sub(1) as isize) as usize;
+            let Some(layout) = self.line_layouts.get(target_line) else {
+                return EditorCommandResult::default();
+            };
+            let Some(line) = layout.lines().first() else {
+                return EditorCommandResult::default();
+            };
+            let local = layout.hit_test_point(Point::new(
+                preferred_x,
+                line.rect.y() + (line.rect.height() * 0.5),
+            ));
+            let target = self.line_offsets[target_line]
+                + local.utf8_offset.min(self.line_lengths[target_line]);
+            let result = self.editor.execute(EditorCommand::MoveTo {
+                offset: target,
+                extend,
+            });
+            self.editor.set_preferred_x(Some(preferred_x));
+            return result;
+        }
+
+        let Some(layout) = self.layout.as_ref() else {
+            let lines = delta_lines.unsigned_abs().max(1);
+            return self.editor.execute(if delta_lines < 0 {
+                if lines == 1 {
+                    EditorCommand::MoveUp { extend }
+                } else {
+                    EditorCommand::PageUp { extend, lines }
+                }
+            } else if lines == 1 {
+                EditorCommand::MoveDown { extend }
+            } else {
+                EditorCommand::PageDown { extend, lines }
+            });
+        };
         if layout.lines().is_empty() {
-            return false;
+            return EditorCommandResult::default();
         }
-
-        let focus = if extend {
-            self.selection.focus.utf8_offset
-        } else {
-            self.selection_range().end
-        };
         let caret = layout.caret(TextCursor::new(focus));
-        let preferred_x = self.preferred_x.unwrap_or(caret.rect.x());
+        let preferred_x = self.editor.preferred_x().unwrap_or(caret.rect.x());
         let line_index = caret.line_index as isize + delta_lines;
         let target_line =
             line_index.clamp(0, layout.lines().len().saturating_sub(1) as isize) as usize;
@@ -358,20 +415,114 @@ impl TextSurface {
             preferred_x,
             line.rect.y() + (line.rect.height() * 0.5),
         ));
-
-        if extend {
-            self.set_selection(self.selection.anchor.utf8_offset, target.utf8_offset);
-        } else {
-            self.set_collapsed_cursor(target.utf8_offset);
-        }
-        self.preferred_x = Some(preferred_x);
-
-        if viewport_height > 0.0 { true } else { false }
+        let result = self.editor.execute(EditorCommand::MoveTo {
+            offset: target.utf8_offset,
+            extend,
+        });
+        self.editor.set_preferred_x(Some(preferred_x));
+        result
     }
 
-    fn select_all(&mut self) {
-        self.selection = TextSelection::new(TextCursor::new(0), TextCursor::new(self.value.len()));
-        self.preferred_x = None;
+    fn shape_line_layout(
+        &self,
+        ctx: &mut MeasureCtx,
+        handle: Option<sui_text::TextLayoutHandle>,
+        line_text: &str,
+        line_range: Range<usize>,
+        line_box_size: Size,
+        base_style: TextStyle,
+    ) -> sui_core::Result<PersistentTextLayout> {
+        if self.style_spans.is_empty() && self.style_overlays.is_empty() {
+            return ctx.layout().shape_text_persistent(
+                handle,
+                line_text.to_string(),
+                line_box_size,
+                base_style,
+            );
+        }
+
+        let spans = self.line_text_spans(line_text, line_range, base_style);
+        let mut paragraph = TextParagraph::from_spans(spans);
+        paragraph.style.direction = self.direction;
+        paragraph.style.wrap = self.wrap;
+        ctx.layout().layout_document_persistent(
+            handle,
+            TextLayoutRequest::new(TextDocument {
+                paragraphs: vec![paragraph],
+            })
+            .with_box_size(line_box_size),
+        )
+    }
+
+    fn line_text_spans(
+        &self,
+        line_text: &str,
+        line_range: Range<usize>,
+        base_style: TextStyle,
+    ) -> Vec<TextSpan> {
+        let mut breaks = vec![0, line_text.len()];
+        self.collect_style_breaks(&self.style_spans, &line_range, line_text, &mut breaks);
+        let overlays_as_spans = self
+            .style_overlays
+            .iter()
+            .map(|overlay| TextSurfaceStyleSpan {
+                range: overlay.range.clone(),
+                style: overlay.style.clone(),
+            })
+            .collect::<Vec<_>>();
+        self.collect_style_breaks(&overlays_as_spans, &line_range, line_text, &mut breaks);
+
+        breaks.sort_unstable();
+        breaks.dedup();
+
+        let mut spans = Vec::new();
+        for pair in breaks.windows(2) {
+            let start = pair[0];
+            let end = pair[1];
+            if start >= end {
+                continue;
+            }
+            let global_range = line_range.start + start..line_range.start + end;
+            let mut style = base_style.clone();
+            for span in &self.style_spans {
+                if ranges_intersect(&global_range, &span.range) {
+                    style = span.style.clone();
+                }
+            }
+            for overlay in &self.style_overlays {
+                if ranges_intersect(&global_range, &overlay.range) {
+                    style = overlay.style.clone();
+                }
+            }
+            spans.push(TextSpan::new(line_text[start..end].to_string(), style));
+        }
+
+        if spans.is_empty() {
+            spans.push(TextSpan::new(String::new(), base_style));
+        }
+        spans
+    }
+
+    fn collect_style_breaks(
+        &self,
+        spans: &[TextSurfaceStyleSpan],
+        line_range: &Range<usize>,
+        line_text: &str,
+        breaks: &mut Vec<usize>,
+    ) {
+        for span in spans {
+            if !ranges_intersect(line_range, &span.range) {
+                continue;
+            }
+            let local_start = span.range.start.saturating_sub(line_range.start);
+            let local_end = span
+                .range
+                .end
+                .min(line_range.end)
+                .saturating_sub(line_range.start);
+            breaks.push(clamp_to_grapheme_boundary(line_text, local_start));
+            breaks.push(clamp_to_grapheme_boundary(line_text, local_end));
+        }
     }
 
     fn update_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
@@ -389,8 +540,8 @@ impl TextSurface {
         }
 
         if !self.line_layouts.is_empty() {
-            let local_x = position.x - content.x() + self.scroll_x;
-            let local_y = position.y - content.y() + self.scroll_y;
+            let local_x = position.x - content.x() + self.editor.scroll_x();
+            let local_y = position.y - content.y() + self.editor.scroll_y();
             let line_index = self.line_index_for_y(local_y);
             let layout = self.line_layouts.get(line_index)?;
             let line = layout.lines().first()?;
@@ -407,8 +558,8 @@ impl TextSurface {
         let layout = self.layout.as_ref()?;
 
         let local = Point::new(
-            position.x - content.x() + self.scroll_x,
-            position.y - content.y() + self.scroll_y,
+            position.x - content.x() + self.editor.scroll_x(),
+            position.y - content.y() + self.editor.scroll_y(),
         );
         Some(layout.hit_test_point(local))
     }
@@ -421,8 +572,8 @@ impl TextSurface {
 
             let line_height = self.line_height().max(1.0);
             let overdraw = viewport_height * 0.5;
-            let visible_top = (self.scroll_y - overdraw).max(0.0);
-            let visible_bottom = self.scroll_y + viewport_height + overdraw;
+            let visible_top = (self.editor.scroll_y() - overdraw).max(0.0);
+            let visible_bottom = self.editor.scroll_y() + viewport_height + overdraw;
             let start = (visible_top / line_height).floor() as usize;
             let end = ((visible_bottom / line_height).ceil() as usize + 1)
                 .min(self.line_layouts.len())
@@ -438,8 +589,8 @@ impl TextSurface {
         }
 
         let overdraw = viewport_height * 0.5;
-        let visible_top = (self.scroll_y - overdraw).max(0.0);
-        let visible_bottom = self.scroll_y + viewport_height + overdraw;
+        let visible_top = (self.editor.scroll_y() - overdraw).max(0.0);
+        let visible_bottom = self.editor.scroll_y() + viewport_height + overdraw;
         let mut start = 0usize;
         while start < layout.lines().len() {
             if layout.lines()[start].rect.max_y() >= visible_top {
@@ -460,14 +611,13 @@ impl TextSurface {
     }
 
     fn clamp_scroll_to_bounds(&mut self, viewport_size: Size) -> bool {
-        let previous = (self.scroll_x, self.scroll_y);
+        let previous = (self.editor.scroll_x(), self.editor.scroll_y());
         let content_size = if !self.line_layouts.is_empty() {
             self.multi_line_content_size()
         } else if let Some(layout) = self.layout.as_ref() {
             layout_content_size(layout)
         } else {
-            self.scroll_x = 0.0;
-            self.scroll_y = 0.0;
+            self.editor.set_scroll(0.0, 0.0);
             return previous != (0.0, 0.0);
         };
 
@@ -477,9 +627,11 @@ impl TextSurface {
             0.0
         };
         let max_y = (content_size.height - viewport_size.height).max(0.0);
-        self.scroll_x = self.scroll_x.clamp(0.0, max_x);
-        self.scroll_y = self.scroll_y.clamp(0.0, max_y);
-        previous != (self.scroll_x, self.scroll_y)
+        self.editor.set_scroll(
+            self.editor.scroll_x().clamp(0.0, max_x),
+            self.editor.scroll_y().clamp(0.0, max_y),
+        );
+        previous != (self.editor.scroll_x(), self.editor.scroll_y())
     }
 
     fn ensure_caret_visible(&mut self, bounds: Rect) -> bool {
@@ -488,36 +640,42 @@ impl TextSurface {
             return false;
         }
 
-        let previous = (self.scroll_x, self.scroll_y);
+        let previous = (self.editor.scroll_x(), self.editor.scroll_y());
         let Some(caret) = self.caret_rect_for_cursor(self.display_selection().focus) else {
             return false;
         };
+        let mut scroll_x = self.editor.scroll_x();
+        let mut scroll_y = self.editor.scroll_y();
         if self.wrap == TextWrap::NoWrap {
-            if caret.x() < self.scroll_x {
-                self.scroll_x = caret.x().max(0.0);
-            } else if caret.max_x() > self.scroll_x + viewport.width {
-                self.scroll_x = (caret.max_x() - viewport.width).max(0.0);
+            if caret.x() < scroll_x {
+                scroll_x = caret.x().max(0.0);
+            } else if caret.max_x() > scroll_x + viewport.width {
+                scroll_x = (caret.max_x() - viewport.width).max(0.0);
             }
         } else {
-            self.scroll_x = 0.0;
+            scroll_x = 0.0;
         }
-        if caret.y() < self.scroll_y {
-            self.scroll_y = caret.y().max(0.0);
-        } else if caret.max_y() > self.scroll_y + viewport.height {
-            self.scroll_y = (caret.max_y() - viewport.height).max(0.0);
+        if caret.y() < scroll_y {
+            scroll_y = caret.y().max(0.0);
+        } else if caret.max_y() > scroll_y + viewport.height {
+            scroll_y = (caret.max_y() - viewport.height).max(0.0);
         }
+        self.editor.set_scroll(scroll_x, scroll_y);
         let _ = self.clamp_scroll_to_bounds(viewport);
-        previous != (self.scroll_x, self.scroll_y)
+        previous != (self.editor.scroll_x(), self.editor.scroll_y())
     }
 
     fn scroll_by(&mut self, bounds: Rect, delta: Vector) -> bool {
-        let previous = (self.scroll_x, self.scroll_y);
+        let previous = (self.editor.scroll_x(), self.editor.scroll_y());
+        let mut scroll_x = self.editor.scroll_x();
+        let mut scroll_y = self.editor.scroll_y();
         if self.wrap == TextWrap::NoWrap {
-            self.scroll_x += delta.x;
+            scroll_x += delta.x;
         }
-        self.scroll_y += delta.y;
+        scroll_y += delta.y;
+        self.editor.set_scroll(scroll_x, scroll_y);
         let _ = self.clamp_scroll_to_bounds(self.content_viewport_size(bounds));
-        previous != (self.scroll_x, self.scroll_y)
+        previous != (self.editor.scroll_x(), self.editor.scroll_y())
     }
 
     fn request_after_overlay_change(&mut self, ctx: &mut EventCtx) {
@@ -577,7 +735,7 @@ impl TextSurface {
     fn selection_rects_for_display(&self, selection: &TextSelection) -> Vec<Rect> {
         if !self.line_layouts.is_empty() {
             let mut rects = Vec::new();
-            let range = selection_sorted_range(selection, self.display_text().len());
+            let range = selection_range(selection, self.display_text().len());
             for (line_index, layout) in self.line_layouts.iter().enumerate() {
                 let line_start = self.line_offsets[line_index];
                 let line_end = line_start + self.line_lengths[line_index];
@@ -624,12 +782,14 @@ impl Widget for TextSurface {
                 if self.dragging_selection
                     && ctx.phase() != EventPhase::Capture
                     && pointer.buttons.contains(PointerButton::Primary)
+                    && let Some(cursor) = self.point_to_cursor(ctx.bounds(), pointer.position)
                 {
-                    if let Some(cursor) = self.point_to_cursor(ctx.bounds(), pointer.position) {
-                        self.set_selection(self.selection.anchor.utf8_offset, cursor.utf8_offset);
-                        self.request_after_overlay_change(ctx);
-                        ctx.set_handled();
-                    }
+                    let anchor = self.editor.selection().anchor.utf8_offset;
+                    let result = self.editor.execute(EditorCommand::SetSelection {
+                        anchor,
+                        focus: cursor.utf8_offset,
+                    });
+                    self.apply_editor_result(ctx, result);
                 }
             }
             Event::Pointer(pointer)
@@ -639,16 +799,22 @@ impl Widget for TextSurface {
                     && ctx.bounds().contains(pointer.position) =>
             {
                 self.hovered = true;
-                if self.clear_composition() {
-                    ctx.request_measure();
-                    ctx.request_text();
-                }
+                let clear_result = self.editor.execute(EditorCommand::ClearComposition);
+                self.apply_editor_result(ctx, clear_result);
                 if let Some(cursor) = self.point_to_cursor(ctx.bounds(), pointer.position) {
-                    if pointer.modifiers.shift {
-                        self.set_selection(self.selection.anchor.utf8_offset, cursor.utf8_offset);
+                    let command = if pointer.modifiers.shift {
+                        EditorCommand::SetSelection {
+                            anchor: self.editor.selection().anchor.utf8_offset,
+                            focus: cursor.utf8_offset,
+                        }
                     } else {
-                        self.set_collapsed_cursor(cursor.utf8_offset);
-                    }
+                        EditorCommand::MoveTo {
+                            offset: cursor.utf8_offset,
+                            extend: false,
+                        }
+                    };
+                    let result = self.editor.execute(command);
+                    self.apply_editor_result(ctx, result);
                 }
                 self.dragging_selection = true;
                 ctx.request_focus();
@@ -690,179 +856,107 @@ impl Widget for TextSurface {
                 }
             }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
-                self.composition = Some(CompositionState {
-                    text: String::new(),
-                    replacement_range: self.selection_range(),
-                });
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
+                self.execute_editor_command(ctx, EditorCommand::StartComposition);
             }
-            Event::Ime(ImeEvent::CompositionUpdate { text }) if ctx.is_focused() => {
-                let range = self.selection_range();
-                self.composition = Some(CompositionState {
-                    text: text.clone(),
-                    replacement_range: range,
-                });
-                ctx.request_measure();
-                ctx.request_text();
-                ctx.request_semantics();
-                ctx.set_handled();
+            Event::Ime(ImeEvent::CompositionUpdate { text, cursor_range }) if ctx.is_focused() => {
+                self.execute_editor_command(
+                    ctx,
+                    EditorCommand::UpdateComposition {
+                        text: text.clone(),
+                        cursor_range: cursor_range.clone(),
+                    },
+                );
             }
             Event::Ime(ImeEvent::CompositionCommit { text }) if ctx.is_focused() => {
-                if let Some(composition) = &self.composition {
-                    self.set_selection(
-                        composition.replacement_range.start,
-                        composition.replacement_range.end,
-                    );
-                }
-                self.composition = None;
-                if self.insert_text(text) {
-                    ctx.request_measure();
-                    ctx.request_text();
-                    ctx.request_semantics();
-                    ctx.set_handled();
-                }
+                self.execute_editor_command(ctx, EditorCommand::CommitComposition(text.clone()));
             }
             Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() => {
-                if self.clear_composition() {
-                    ctx.request_measure();
-                    ctx.request_text();
-                    ctx.request_semantics();
-                }
-                ctx.set_handled();
+                self.execute_editor_command(ctx, EditorCommand::EndComposition);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
-                let mut text_changed = false;
-                let mut overlay_changed = false;
-                let mut semantics_changed = false;
-
-                match key.key.as_str() {
-                    "a" | "A" if key.modifiers.control => {
-                        let _ = self.clear_composition();
-                        self.select_all();
-                        overlay_changed = true;
+                let command_modifier = key.modifiers.control || key.modifiers.meta;
+                let result = match key.key.as_str() {
+                    "a" | "A" if command_modifier => self.editor.execute(EditorCommand::SelectAll),
+                    "c" | "C" if command_modifier => self.editor.execute(EditorCommand::Copy),
+                    "x" | "X" if command_modifier => self.editor.execute(EditorCommand::Cut),
+                    "v" | "V" if command_modifier => self
+                        .editor
+                        .execute(EditorCommand::Paste(self.clipboard.clone())),
+                    "z" | "Z" if command_modifier && key.modifiers.shift => {
+                        self.editor.execute(EditorCommand::Redo)
                     }
-                    "ArrowLeft" => {
-                        let had_composition = self.clear_composition();
-                        overlay_changed = self.move_horizontal(true, key.modifiers.shift);
-                        text_changed |= had_composition;
+                    "z" | "Z" if command_modifier => self.editor.execute(EditorCommand::Undo),
+                    "y" | "Y" if command_modifier => self.editor.execute(EditorCommand::Redo),
+                    "ArrowLeft" if command_modifier => {
+                        self.editor.execute(EditorCommand::MoveWordLeft {
+                            extend: key.modifiers.shift,
+                        })
                     }
-                    "ArrowRight" => {
-                        let had_composition = self.clear_composition();
-                        overlay_changed = self.move_horizontal(false, key.modifiers.shift);
-                        text_changed |= had_composition;
+                    "ArrowRight" if command_modifier => {
+                        self.editor.execute(EditorCommand::MoveWordRight {
+                            extend: key.modifiers.shift,
+                        })
                     }
-                    "ArrowUp" => {
-                        let had_composition = self.clear_composition();
-                        let viewport_height = self.content_viewport_size(ctx.bounds()).height;
-                        overlay_changed =
-                            self.move_vertical(-1, key.modifiers.shift, viewport_height);
-                        text_changed |= had_composition;
-                    }
-                    "ArrowDown" => {
-                        let had_composition = self.clear_composition();
-                        let viewport_height = self.content_viewport_size(ctx.bounds()).height;
-                        overlay_changed =
-                            self.move_vertical(1, key.modifiers.shift, viewport_height);
-                        text_changed |= had_composition;
-                    }
-                    "Home" => {
-                        let had_composition = self.clear_composition();
-                        overlay_changed = self.move_line_boundary(true, key.modifiers.shift);
-                        text_changed |= had_composition;
-                    }
-                    "End" => {
-                        let had_composition = self.clear_composition();
-                        overlay_changed = self.move_line_boundary(false, key.modifiers.shift);
-                        text_changed |= had_composition;
-                    }
+                    "ArrowLeft" => self.editor.execute(EditorCommand::MoveLeft {
+                        extend: key.modifiers.shift,
+                    }),
+                    "ArrowRight" => self.editor.execute(EditorCommand::MoveRight {
+                        extend: key.modifiers.shift,
+                    }),
+                    "ArrowUp" => self.move_vertical(
+                        -1,
+                        key.modifiers.shift,
+                        self.content_viewport_size(ctx.bounds()).height,
+                    ),
+                    "ArrowDown" => self.move_vertical(
+                        1,
+                        key.modifiers.shift,
+                        self.content_viewport_size(ctx.bounds()).height,
+                    ),
+                    "Home" => self.move_line_boundary(true, key.modifiers.shift),
+                    "End" => self.move_line_boundary(false, key.modifiers.shift),
                     "PageUp" => {
-                        let had_composition = self.clear_composition();
-                        let layout = self.layout.as_ref();
-                        if let Some(layout) = layout {
-                            let line_height = layout
-                                .lines()
-                                .get(layout.caret(self.selection.focus).line_index)
-                                .map(|line| line.rect.height())
-                                .unwrap_or(self.resolved_text_style().line_height)
-                                .max(1.0);
-                            let delta = (self.content_viewport_size(ctx.bounds()).height
-                                / line_height)
-                                .floor()
-                                .max(1.0) as isize;
-                            overlay_changed = self.move_vertical(
-                                -delta,
-                                key.modifiers.shift,
-                                self.content_viewport_size(ctx.bounds()).height,
-                            );
-                        }
-                        text_changed |= had_composition;
+                        let line_height = self.line_height().max(1.0);
+                        let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
+                            .floor()
+                            .max(1.0) as isize;
+                        self.move_vertical(
+                            -delta,
+                            key.modifiers.shift,
+                            self.content_viewport_size(ctx.bounds()).height,
+                        )
                     }
                     "PageDown" => {
-                        let had_composition = self.clear_composition();
-                        let layout = self.layout.as_ref();
-                        if let Some(layout) = layout {
-                            let line_height = layout
-                                .lines()
-                                .get(layout.caret(self.selection.focus).line_index)
-                                .map(|line| line.rect.height())
-                                .unwrap_or(self.resolved_text_style().line_height)
-                                .max(1.0);
-                            let delta = (self.content_viewport_size(ctx.bounds()).height
-                                / line_height)
-                                .floor()
-                                .max(1.0) as isize;
-                            overlay_changed = self.move_vertical(
-                                delta,
-                                key.modifiers.shift,
-                                self.content_viewport_size(ctx.bounds()).height,
-                            );
-                        }
-                        text_changed |= had_composition;
+                        let line_height = self.line_height().max(1.0);
+                        let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
+                            .floor()
+                            .max(1.0) as isize;
+                        self.move_vertical(
+                            delta,
+                            key.modifiers.shift,
+                            self.content_viewport_size(ctx.bounds()).height,
+                        )
                     }
-                    "Backspace" => {
-                        let had_composition = self.clear_composition();
-                        text_changed = self.backspace() || had_composition;
-                        semantics_changed = text_changed;
-                    }
-                    "Delete" => {
-                        let had_composition = self.clear_composition();
-                        text_changed = self.delete_forward() || had_composition;
-                        semantics_changed = text_changed;
-                    }
-                    "Enter" => {
-                        let _ = self.clear_composition();
-                        text_changed = self.insert_text("\n");
-                        semantics_changed = text_changed;
-                    }
-                    _ if self.composition.is_none() => {
+                    "Backspace" => self.editor.execute(EditorCommand::DeleteBackward),
+                    "Delete" => self.editor.execute(EditorCommand::DeleteForward),
+                    "Enter" => self
+                        .editor
+                        .execute(EditorCommand::InsertText("\n".to_string())),
+                    _ if self.editor.composition().is_none() => {
                         if let Some(text) = keyboard_text(key) {
-                            text_changed = self.insert_text(text);
-                            semantics_changed = text_changed;
+                            self.editor
+                                .execute(EditorCommand::InsertText(text.to_string()))
+                        } else {
+                            self.editor.execute(EditorCommand::Noop)
                         }
                     }
-                    _ => {}
-                }
-
-                if text_changed {
-                    ctx.request_measure();
-                    ctx.request_text();
-                } else if overlay_changed {
-                    self.request_after_overlay_change(ctx);
-                }
-                if semantics_changed {
-                    ctx.request_semantics();
-                }
-                if text_changed || overlay_changed {
-                    ctx.set_handled();
-                }
+                    _ => self.editor.execute(EditorCommand::Noop),
+                };
+                self.apply_editor_result(ctx, result);
             }
             Event::Window(WindowEvent::Focused(false)) => {
-                if self.clear_composition() {
-                    ctx.request_measure();
-                    ctx.request_text();
-                }
+                let result = self.editor.execute(EditorCommand::ClearComposition);
+                self.apply_editor_result(ctx, result);
             }
             _ => {}
         }
@@ -878,48 +972,144 @@ impl Widget for TextSurface {
         };
 
         let display_text = self.display_text();
-        let (line_texts, line_offsets, line_lengths) = split_lines_with_offsets(&display_text);
         let line_box_size = Size::new(
             self.layout_box_size(available_width).width,
             self.resolved_text_style().line_height.max(1.0),
         );
-        let mut next_line_layouts: Vec<PersistentTextLayout> = Vec::with_capacity(line_texts.len());
+        let line_style = self.resolved_text_style();
         let mut line_layout_failed = false;
-        for (index, line) in line_texts.iter().enumerate() {
-            match ctx.layout().shape_text_persistent(
-                self.line_layouts.get(index).map(|layout| layout.handle()),
-                line.clone(),
-                line_box_size,
-                self.resolved_text_style(),
-            ) {
-                Ok(layout) => next_line_layouts.push(layout),
-                Err(_) => {
-                    line_layout_failed = true;
-                    break;
+
+        if self.editor.composition().is_none() {
+            let document = self.editor.document();
+            let line_count = document.line_count();
+            let can_reuse_lines = self.line_layout_revision != u64::MAX
+                && self.line_layout_box_size == Some(line_box_size)
+                && self.line_layout_style.as_ref() == Some(&line_style)
+                && self.line_layout_style_revision == self.style_revision
+                && self.line_layouts.len() == line_count
+                && self.line_offsets.len() == line_count
+                && self.line_lengths.len() == line_count;
+
+            if can_reuse_lines {
+                let dirty = document.dirty_line_range();
+                for index in dirty {
+                    if index >= line_count {
+                        continue;
+                    }
+                    let line_range = document.line_range(index);
+                    match self.shape_line_layout(
+                        ctx,
+                        self.line_layouts.get(index).map(|layout| layout.handle()),
+                        document.line_text(index),
+                        line_range.clone(),
+                        line_box_size,
+                        line_style.clone(),
+                    ) {
+                        Ok(layout) => {
+                            self.line_layouts[index] = layout;
+                            self.line_offsets[index] = line_range.start;
+                            self.line_lengths[index] = line_range.len();
+                        }
+                        Err(_) => {
+                            line_layout_failed = true;
+                            break;
+                        }
+                    }
                 }
+            } else {
+                let mut next_line_layouts: Vec<PersistentTextLayout> =
+                    Vec::with_capacity(line_count);
+                let mut next_line_offsets = Vec::with_capacity(line_count);
+                let mut next_line_lengths = Vec::with_capacity(line_count);
+                for index in 0..line_count {
+                    let line_range = document.line_range(index);
+                    match self.shape_line_layout(
+                        ctx,
+                        self.line_layouts.get(index).map(|layout| layout.handle()),
+                        document.line_text(index),
+                        line_range.clone(),
+                        line_box_size,
+                        line_style.clone(),
+                    ) {
+                        Ok(layout) => {
+                            next_line_layouts.push(layout);
+                            next_line_offsets.push(line_range.start);
+                            next_line_lengths.push(line_range.len());
+                        }
+                        Err(_) => {
+                            line_layout_failed = true;
+                            break;
+                        }
+                    }
+                }
+                if !line_layout_failed {
+                    self.line_layouts = next_line_layouts;
+                    self.line_offsets = next_line_offsets;
+                    self.line_lengths = next_line_lengths;
+                }
+            }
+
+            if !line_layout_failed {
+                self.line_layout_box_size = Some(line_box_size);
+                self.line_layout_style = Some(line_style.clone());
+                self.line_layout_revision = document.revision();
+                self.line_layout_style_revision = self.style_revision;
+                self.editor.clear_document_dirty();
+            }
+        } else {
+            let (line_texts, line_offsets, line_lengths) = split_lines_with_offsets(&display_text);
+            let mut next_line_layouts: Vec<PersistentTextLayout> =
+                Vec::with_capacity(line_texts.len());
+            for (index, line) in line_texts.iter().enumerate() {
+                let line_range = line_offsets[index]..line_offsets[index] + line_lengths[index];
+                match self.shape_line_layout(
+                    ctx,
+                    self.line_layouts.get(index).map(|layout| layout.handle()),
+                    line,
+                    line_range,
+                    line_box_size,
+                    line_style.clone(),
+                ) {
+                    Ok(layout) => next_line_layouts.push(layout),
+                    Err(_) => {
+                        line_layout_failed = true;
+                        break;
+                    }
+                }
+            }
+            if !line_layout_failed {
+                self.line_layouts = next_line_layouts;
+                self.line_offsets = line_offsets;
+                self.line_lengths = line_lengths;
+                self.line_layout_box_size = Some(line_box_size);
+                self.line_layout_style = Some(line_style.clone());
+                self.line_layout_revision = u64::MAX;
+                self.line_layout_style_revision = self.style_revision;
             }
         }
 
-        if !line_layout_failed {
-            self.line_layouts = next_line_layouts;
-            self.line_offsets = line_offsets;
-            self.line_lengths = line_lengths;
-        } else {
+        if line_layout_failed {
             self.line_layouts.clear();
             self.line_offsets.clear();
             self.line_lengths.clear();
+            self.line_layout_box_size = None;
+            self.line_layout_style = None;
+            self.line_layout_revision = u64::MAX;
+            self.line_layout_style_revision = u64::MAX;
         }
 
-        let layout = ctx
-            .layout()
-            .shape_text_persistent(
-                self.layout.as_ref().map(|layout| layout.handle()),
-                display_text,
-                self.layout_box_size(available_width),
-                self.resolved_text_style(),
-            )
-            .ok();
-        self.layout = (self.line_layouts.len() <= 1).then_some(layout).flatten();
+        self.layout = if self.line_layouts.len() <= 1 {
+            ctx.layout()
+                .shape_text_persistent(
+                    self.layout.as_ref().map(|layout| layout.handle()),
+                    display_text,
+                    self.layout_box_size(available_width),
+                    self.resolved_text_style(),
+                )
+                .ok()
+        } else {
+            None
+        };
 
         let natural_content_size = if !self.line_layouts.is_empty() {
             self.multi_line_content_size()
@@ -993,7 +1183,10 @@ impl Widget for TextSurface {
         }
 
         let display_selection = self.display_selection();
-        let origin = Point::new(content.x() - self.scroll_x, content.y() - self.scroll_y);
+        let origin = Point::new(
+            content.x() - self.editor.scroll_x(),
+            content.y() - self.editor.scroll_y(),
+        );
         let line_range = self.visible_line_range(content.height());
         let selection_rects = self.selection_rects_for_display(&display_selection);
         let current_caret = self.caret_rect_for_cursor(display_selection.focus);
@@ -1071,11 +1264,34 @@ impl Widget for TextSurface {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::TextInput, ctx.bounds());
+        let display_text = self.display_text();
+        let display_selection = self.display_selection();
+        let selection = selection_range(&display_selection, display_text.len());
         node.name = Some(self.name.clone());
-        node.value = Some(SemanticsValue::Text(self.display_text()));
+        node.value = Some(SemanticsValue::Text(display_text));
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        node.editable_text = Some(EditableTextSemantics {
+            caret_offset: display_selection.focus.utf8_offset,
+            selection: SemanticsTextRange::new(selection.start, selection.end),
+            multiline: true,
+            readonly: false,
+            scroll_x: self.editor.scroll_x(),
+            scroll_y: self.editor.scroll_y(),
+        });
+        node.actions = vec![
+            SemanticsAction::Focus,
+            SemanticsAction::SetValue,
+            SemanticsAction::SetSelection,
+            SemanticsAction::InsertText,
+            SemanticsAction::DeleteBackward,
+            SemanticsAction::DeleteForward,
+            SemanticsAction::Copy,
+            SemanticsAction::Cut,
+            SemanticsAction::Paste,
+            SemanticsAction::Undo,
+            SemanticsAction::Redo,
+        ];
         ctx.push(node);
     }
 
@@ -1084,47 +1300,16 @@ impl Widget for TextSurface {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
-        if !focused && self.clear_composition() {
-            ctx.request_measure();
-            ctx.request_text();
+        if !focused {
+            let result = self.editor.execute(EditorCommand::ClearComposition);
+            if result.layout_changed() {
+                ctx.request_measure();
+                ctx.request_text();
+            }
         }
         ctx.request_paint();
         ctx.request_semantics();
     }
-}
-
-fn clamp_offset_to_boundary(text: &str, offset: usize) -> usize {
-    let mut offset = offset.min(text.len());
-    while offset > 0 && !text.is_char_boundary(offset) {
-        offset -= 1;
-    }
-    offset
-}
-
-fn previous_boundary(text: &str, offset: usize) -> usize {
-    let offset = clamp_offset_to_boundary(text, offset);
-    if offset == 0 {
-        return 0;
-    }
-
-    text[..offset]
-        .char_indices()
-        .last()
-        .map(|(index, _)| index)
-        .unwrap_or(0)
-}
-
-fn next_boundary(text: &str, offset: usize) -> usize {
-    let offset = clamp_offset_to_boundary(text, offset);
-    if offset >= text.len() {
-        return text.len();
-    }
-
-    text[offset..]
-        .chars()
-        .next()
-        .map(|ch| offset + ch.len_utf8())
-        .unwrap_or(text.len())
 }
 
 fn inset_rect(rect: Rect, padding: Insets) -> Rect {
@@ -1211,6 +1396,10 @@ fn layout_content_size(layout: &PersistentTextLayout) -> Size {
     Size::new(layout.measurement().width, line_height)
 }
 
+fn ranges_intersect(left: &Range<usize>, right: &Range<usize>) -> bool {
+    left.start < right.end && right.start < left.end
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1252,6 +1441,24 @@ mod tests {
             pointer_kind: PointerKind::Mouse,
             is_primary: true,
         })
+    }
+
+    fn key_event(key: &str) -> Event {
+        Event::Keyboard(KeyboardEvent::new(key, KeyState::Pressed))
+    }
+
+    fn command_key_event(key: &str) -> Event {
+        let mut event = KeyboardEvent::new(key, KeyState::Pressed);
+        event.modifiers.control = true;
+        Event::Keyboard(event)
+    }
+
+    fn text_input_node(output: &RenderOutput) -> &SemanticsNode {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text input semantics node should exist")
     }
 
     fn shaped_text_commands(output: &RenderOutput) -> Vec<sui_text::ShapedText> {
@@ -1396,12 +1603,208 @@ mod tests {
             Some(SemanticsValue::Text("hello".to_string()))
         );
     }
-}
 
-fn selection_sorted_range(selection: &TextSelection, text_len: usize) -> Range<usize> {
-    let start = selection.anchor.utf8_offset.min(text_len);
-    let end = selection.focus.utf8_offset.min(text_len);
-    if start <= end { start..end } else { end..start }
+    #[test]
+    fn text_surface_shortcuts_use_editor_command_layer() {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextSurface::new("Editor").on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        runtime
+            .render(window_id)
+            .expect("initial render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(24.0, 24.0), true),
+            )
+            .expect("focus click should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                Event::Ime(ImeEvent::CompositionCommit {
+                    text: "hello world".to_string(),
+                }),
+            )
+            .expect("initial edit should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("a"))
+            .expect("select all should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("x"))
+            .expect("cut should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("v"))
+            .expect("paste should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("z"))
+            .expect("undo should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("y"))
+            .expect("redo should succeed");
+
+        let output = runtime.render(window_id).expect("render should succeed");
+        assert_eq!(
+            text_input_node(&output).value,
+            Some(SemanticsValue::Text("hello world".to_string()))
+        );
+        assert_eq!(
+            changes.borrow().last().map(String::as_str),
+            Some("hello world")
+        );
+    }
+
+    #[test]
+    fn text_surface_deletes_grapheme_clusters() {
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 80.0))
+                .with_child(TextSurface::new("Editor").value("a🇯🇵e\u{301}z")),
+        );
+
+        runtime
+            .render(window_id)
+            .expect("initial render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(300.0, 24.0), true),
+            )
+            .expect("end click should succeed");
+        runtime
+            .handle_event(window_id, key_event("Backspace"))
+            .expect("delete z should succeed");
+        runtime
+            .handle_event(window_id, key_event("Backspace"))
+            .expect("delete combining grapheme should succeed");
+        runtime
+            .handle_event(window_id, key_event("Backspace"))
+            .expect("delete flag grapheme should succeed");
+
+        let output = runtime.render(window_id).expect("render should succeed");
+        assert_eq!(
+            text_input_node(&output).value,
+            Some(SemanticsValue::Text("a".to_string()))
+        );
+    }
+
+    #[test]
+    fn text_surface_ime_cursor_range_updates_editable_semantics() {
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 80.0))
+                .with_child(TextSurface::new("Editor").value("hello ")),
+        );
+
+        runtime
+            .render(window_id)
+            .expect("initial render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(300.0, 24.0), true),
+            )
+            .expect("end click should succeed");
+        runtime
+            .handle_event(window_id, Event::Ime(ImeEvent::CompositionStart))
+            .expect("composition start should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                Event::Ime(ImeEvent::CompositionUpdate {
+                    text: "世界".to_string(),
+                    cursor_range: Some(0.."世".len()),
+                }),
+            )
+            .expect("composition update should succeed");
+
+        let output = runtime.render(window_id).expect("render should succeed");
+        let node = text_input_node(&output);
+        assert_eq!(
+            node.value,
+            Some(SemanticsValue::Text("hello 世界".to_string()))
+        );
+        let editable = node
+            .editable_text
+            .as_ref()
+            .expect("editable text semantics should be present");
+        assert_eq!(editable.caret_offset, "hello 世".len());
+        assert_eq!(
+            editable.selection,
+            SemanticsTextRange::new("hello 世".len(), "hello 世".len())
+        );
+    }
+
+    #[test]
+    fn text_surface_semantics_expose_editable_text_actions() {
+        let (mut runtime, window_id) = build_runtime(TextSurface::new("Editor").value("one\ntwo"));
+        let output = runtime.render(window_id).expect("render should succeed");
+        let node = text_input_node(&output);
+        let editable = node
+            .editable_text
+            .as_ref()
+            .expect("editable text semantics should be present");
+
+        assert!(editable.multiline);
+        assert!(!editable.readonly);
+        assert_eq!(editable.caret_offset, "one\ntwo".len());
+        assert_eq!(
+            editable.selection,
+            SemanticsTextRange::new("one\ntwo".len(), "one\ntwo".len())
+        );
+        for action in [
+            SemanticsAction::SetSelection,
+            SemanticsAction::InsertText,
+            SemanticsAction::DeleteBackward,
+            SemanticsAction::DeleteForward,
+            SemanticsAction::Copy,
+            SemanticsAction::Cut,
+            SemanticsAction::Paste,
+            SemanticsAction::Undo,
+            SemanticsAction::Redo,
+        ] {
+            assert!(
+                node.actions.contains(&action),
+                "missing editable text action {action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_surface_style_overlays_do_not_mutate_source_text() {
+        let syntax_style = TextStyle::new(Color::BLACK);
+        let (mut runtime, window_id) = build_runtime(
+            TextSurface::new("Editor")
+                .value("let value = 1")
+                .style_overlays(vec![TextSurfaceStyleOverlay::new(
+                    0..3,
+                    syntax_style.clone(),
+                    TextSurfaceOverlayKind::Syntax,
+                )]),
+        );
+
+        let output = runtime.render(window_id).expect("render should succeed");
+        let node = text_input_node(&output);
+        assert_eq!(
+            node.value,
+            Some(SemanticsValue::Text("let value = 1".to_string()))
+        );
+
+        let shaped = shaped_text_commands(&output);
+        let layout = shaped
+            .first()
+            .and_then(|text| text.resolve(output.frame.text_layout_registry.as_ref()))
+            .expect("styled text layout should resolve");
+        assert_eq!(layout.text(), "let value = 1");
+        assert!(
+            layout
+                .run_views()
+                .any(|run| run.style.color == syntax_style.color && run.run.byte_range == (0..3)),
+            "syntax overlay should style the keyword without changing the source text"
+        );
+    }
 }
 
 fn split_lines_with_offsets(text: &str) -> (Vec<String>, Vec<usize>, Vec<usize>) {

@@ -12,6 +12,7 @@ sui-layout = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
 sui-text = { workspace = true }
+unicode-segmentation = { workspace = true }
 
 [dev-dependencies]
 sui-render-wgpu = { workspace = true }
