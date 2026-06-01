@@ -2333,7 +2333,7 @@ fn build_color_and_imagery_story() -> impl Widget {
                 Stack::horizontal()
                     .spacing(16.0)
                     .alignment(Alignment::Start)
-                    .with_child(SizedBox::new().width(360.0).height(420.0).with_child(
+                    .with_child(SizedBox::new().width(434.0).height(448.0).with_child(
                         ColorPicker::from_color(
                             COLOR_PICKER_NAME,
                             Color::new(sui::ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0),
@@ -5993,8 +5993,8 @@ mod tests {
             })
             .expect("widget book gallery should expose the color picker story");
 
-        assert!(picker.bounds.width() >= 320.0);
-        assert!(picker.bounds.height() >= 280.0);
+        assert!(picker.bounds.width() >= 420.0);
+        assert!(picker.bounds.height() >= 424.0);
         Ok(())
     }
 

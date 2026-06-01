@@ -1,6 +1,7 @@
 use sui_core::{
     Color, ColorSpace, Event, ImageHandle, KeyState, Path, PathBuilder, Point, PointerButton,
     PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
+    WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
@@ -336,9 +337,28 @@ enum ActiveChannel {
     Value,
     Alpha,
     EncodingSelector,
+    EncodingOption(usize),
     RgbRed,
     RgbGreen,
     RgbBlue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorPickerSemanticPart {
+    CurrentColor,
+    PreviousColor,
+    ColorRange,
+    ColorRangeMenu,
+    ColorRangeOption(usize),
+    SaturationValue,
+    Hue,
+    Saturation,
+    Value,
+    Alpha,
+    Red,
+    Green,
+    Blue,
+    Hex,
 }
 
 pub struct ColorPicker {
@@ -351,6 +371,7 @@ pub struct ColorPicker {
     alpha: f32,
     previous_color: Color,
     show_alpha: bool,
+    encoding_dropdown_open: bool,
     active: Option<ActiveChannel>,
     on_change: Option<Box<dyn FnMut(Color)>>,
 }
@@ -360,10 +381,17 @@ impl ColorPicker {
     const PANEL_GAP: f32 = 14.0;
     const TOP_BAR_HEIGHT: f32 = 52.0;
     const WHEEL_SIZE: f32 = 166.0;
-    const MAP_SIZE: f32 = 166.0;
-    const ROW_HEIGHT: f32 = 20.0;
+    const MAP_SIZE: f32 = 210.0;
+    const ROW_HEIGHT: f32 = 24.0;
     const ROW_GAP: f32 = 8.0;
-    const RIGHT_PANEL_WIDTH: f32 = 188.0;
+    const RIGHT_PANEL_WIDTH: f32 = 226.0;
+    const ENCODING_MENU_ROW_HEIGHT: f32 = 28.0;
+    const ENCODING_OPTIONS: [ColorSpace; 4] = [
+        ColorSpace::Srgb,
+        ColorSpace::LinearSrgb,
+        ColorSpace::DisplayP3,
+        ColorSpace::LinearDisplayP3,
+    ];
 
     pub fn new(name: impl Into<String>) -> Self {
         Self::from_color(name, Color::rgba(0.11, 0.43, 0.92, 1.0))
@@ -381,6 +409,7 @@ impl ColorPicker {
             alpha: color.alpha,
             previous_color: color,
             show_alpha: true,
+            encoding_dropdown_open: false,
             active: None,
             on_change: None,
         }
@@ -440,10 +469,20 @@ impl ColorPicker {
         )
     }
 
+    fn current_swatch_rect(&self, bounds: Rect) -> Rect {
+        let header = self.header_rect(bounds);
+        Rect::new(header.x(), header.y(), 96.0, header.height())
+    }
+
+    fn previous_swatch_rect(&self, bounds: Rect) -> Rect {
+        let current = self.current_swatch_rect(bounds);
+        Rect::new(current.max_x() + 10.0, current.y(), 96.0, current.height())
+    }
+
     fn left_column_rect(&self, bounds: Rect) -> Rect {
         let content = self.content_rect(bounds);
         let y = self.header_rect(bounds).max_y() + Self::PANEL_GAP;
-        let width = (content.width() - Self::PANEL_GAP - Self::RIGHT_PANEL_WIDTH).max(220.0);
+        let width = Self::WHEEL_SIZE.min(content.width());
         Rect::new(content.x(), y, width, content.max_y() - y)
     }
 
@@ -480,23 +519,64 @@ impl ColorPicker {
     }
 
     fn encoding_rect(&self, bounds: Rect) -> Rect {
-        let map = self.saturation_value_rect(bounds);
-        Rect::new(map.x(), map.max_y() + 12.0, map.width(), 28.0)
+        let header = self.header_rect(bounds);
+        let selector_x = header.x() + 96.0 + 10.0 + 96.0 + 14.0;
+        Rect::new(
+            selector_x,
+            header.y() + ((header.height() - 30.0) * 0.5),
+            (header.max_x() - selector_x).max(0.0),
+            30.0,
+        )
+    }
+
+    fn encoding_menu_rect(&self, bounds: Rect) -> Rect {
+        let encoding = self.encoding_rect(bounds);
+        Rect::new(
+            encoding.x(),
+            encoding.max_y() + 4.0,
+            encoding.width(),
+            Self::ENCODING_MENU_ROW_HEIGHT * Self::ENCODING_OPTIONS.len() as f32,
+        )
+    }
+
+    fn encoding_option_rect(&self, bounds: Rect, index: usize) -> Rect {
+        let menu = self.encoding_menu_rect(bounds);
+        Rect::new(
+            menu.x(),
+            menu.y() + index as f32 * Self::ENCODING_MENU_ROW_HEIGHT,
+            menu.width(),
+            Self::ENCODING_MENU_ROW_HEIGHT,
+        )
+    }
+
+    fn encoding_option_at(&self, bounds: Rect, position: Point) -> Option<usize> {
+        if !self.encoding_dropdown_open || !self.encoding_menu_rect(bounds).contains(position) {
+            return None;
+        }
+
+        Self::ENCODING_OPTIONS
+            .iter()
+            .enumerate()
+            .find_map(|(index, _)| {
+                self.encoding_option_rect(bounds, index)
+                    .contains(position)
+                    .then_some(index)
+            })
     }
 
     fn rgb_row_rect(&self, bounds: Rect, index: usize) -> Rect {
-        let encoding = self.encoding_rect(bounds);
-        let y = encoding.max_y() + 10.0 + index as f32 * (Self::ROW_HEIGHT + 6.0);
-        Rect::new(encoding.x(), y, encoding.width(), Self::ROW_HEIGHT)
+        let map = self.saturation_value_rect(bounds);
+        let y = map.max_y() + 14.0 + index as f32 * (Self::ROW_HEIGHT + Self::ROW_GAP);
+        Rect::new(map.x(), y, map.width(), Self::ROW_HEIGHT)
     }
 
     fn hex_rect(&self, bounds: Rect) -> Rect {
         let last_row = self.rgb_row_rect(bounds, 2);
         Rect::new(
             last_row.x(),
-            last_row.max_y() + 10.0,
+            last_row.max_y() + 12.0,
             last_row.width(),
-            28.0,
+            30.0,
         )
     }
 
@@ -517,8 +597,12 @@ impl ColorPicker {
             ActiveChannel::SaturationValue => {
                 let rect = self.saturation_value_rect(bounds);
                 self.saturation = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
-                let value_t = (1.0 - ((position.y - rect.y()) / rect.height())).clamp(0.0, 1.0);
-                self.value = self.max_channel_value() * value_t;
+                let t = (1.0 - ((position.y - rect.y()) / rect.height())).clamp(0.0, 1.0);
+                self.value = if self.hdr_capable() {
+                    hdr_slider_to_value(t)
+                } else {
+                    t
+                };
                 self.emit_change();
             }
             ActiveChannel::Hue => {
@@ -546,7 +630,7 @@ impl ColorPicker {
                 self.alpha = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
                 self.emit_change();
             }
-            ActiveChannel::EncodingSelector => self.cycle_editing_space(),
+            ActiveChannel::EncodingSelector | ActiveChannel::EncodingOption(_) => {}
             ActiveChannel::RgbRed => self.update_rgb_channel_from_position(bounds, 0, position),
             ActiveChannel::RgbGreen => self.update_rgb_channel_from_position(bounds, 1, position),
             ActiveChannel::RgbBlue => self.update_rgb_channel_from_position(bounds, 2, position),
@@ -569,13 +653,11 @@ impl ColorPicker {
         self.alpha = color.alpha;
     }
 
-    fn cycle_editing_space(&mut self) {
-        let next_space = match self.editing_space {
-            ColorSpace::LinearSrgb => ColorSpace::DisplayP3,
-            ColorSpace::DisplayP3 => ColorSpace::LinearDisplayP3,
-            ColorSpace::LinearDisplayP3 => ColorSpace::Srgb,
-            ColorSpace::Srgb => ColorSpace::LinearSrgb,
-        };
+    fn set_editing_space(&mut self, next_space: ColorSpace) {
+        if self.editing_space == next_space {
+            return;
+        }
+
         let current = self.color();
         self.apply_color(Color::new(
             next_space,
@@ -632,6 +714,271 @@ impl ColorPicker {
             None
         }
     }
+
+    fn color_semantics_text(&self, color: Color) -> String {
+        if self.hdr_capable() && is_hdr_color(color) {
+            format!(
+                "R {:.3} G {:.3} B {:.3} A {:.3}",
+                color.red, color.green, color.blue, color.alpha
+            )
+        } else {
+            format_color(color)
+        }
+    }
+
+    fn push_color_swatch_semantics(
+        &self,
+        ctx: &mut SemanticsCtx,
+        part: ColorPickerSemanticPart,
+        name: &'static str,
+        bounds: Rect,
+        color: Color,
+    ) {
+        let mut node = color_picker_child_semantics_node(
+            ctx.widget_id(),
+            part,
+            SemanticsRole::ColorSwatch,
+            bounds,
+            name,
+        );
+        node.value = Some(SemanticsValue::Text(self.color_semantics_text(color)));
+        ctx.push(node);
+    }
+
+    fn push_slider_semantics(
+        &self,
+        ctx: &mut SemanticsCtx,
+        part: ColorPickerSemanticPart,
+        name: &'static str,
+        bounds: Rect,
+        value: f32,
+        min: f32,
+        max: f32,
+    ) {
+        let mut node = color_picker_child_semantics_node(
+            ctx.widget_id(),
+            part,
+            SemanticsRole::Slider,
+            bounds,
+            name,
+        );
+        node.value = Some(SemanticsValue::Range {
+            value: value as f64,
+            min: min as f64,
+            max: max as f64,
+        });
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(node);
+    }
+
+    fn push_component_semantics(&self, ctx: &mut SemanticsCtx, current: Color) {
+        let bounds = ctx.bounds();
+        self.push_color_swatch_semantics(
+            ctx,
+            ColorPickerSemanticPart::CurrentColor,
+            "Current color",
+            self.current_swatch_rect(bounds),
+            current,
+        );
+        self.push_color_swatch_semantics(
+            ctx,
+            ColorPickerSemanticPart::PreviousColor,
+            "Previous color",
+            self.previous_swatch_rect(bounds),
+            self.previous_color,
+        );
+
+        let mut range = color_picker_child_semantics_node(
+            ctx.widget_id(),
+            ColorPickerSemanticPart::ColorRange,
+            SemanticsRole::ComboBox,
+            self.encoding_rect(bounds),
+            "Color range",
+        );
+        range.value = Some(SemanticsValue::Text(
+            editing_space_label(self.editing_space).to_string(),
+        ));
+        range.state.expanded = Some(self.encoding_dropdown_open);
+        range.actions = vec![
+            SemanticsAction::Focus,
+            if self.encoding_dropdown_open {
+                SemanticsAction::Collapse
+            } else {
+                SemanticsAction::Expand
+            },
+            SemanticsAction::SetValue,
+        ];
+        ctx.push(range);
+
+        let mut saturation_value = color_picker_child_semantics_node(
+            ctx.widget_id(),
+            ColorPickerSemanticPart::SaturationValue,
+            SemanticsRole::Slider,
+            self.saturation_value_rect(bounds),
+            "Saturation and value",
+        );
+        saturation_value.description = Some(format!(
+            "Saturation {:.1}%, value {:.3}",
+            self.saturation * 100.0,
+            self.value
+        ));
+        saturation_value.value = Some(SemanticsValue::Range {
+            value: self.value as f64,
+            min: 0.0,
+            max: self.max_channel_value() as f64,
+        });
+        saturation_value.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(saturation_value);
+
+        self.push_slider_semantics(
+            ctx,
+            ColorPickerSemanticPart::Hue,
+            "Hue",
+            self.left_slider_rect(bounds, 0),
+            self.hue * 360.0,
+            0.0,
+            360.0,
+        );
+        self.push_slider_semantics(
+            ctx,
+            ColorPickerSemanticPart::Saturation,
+            "Saturation",
+            self.left_slider_rect(bounds, 1),
+            self.saturation * 100.0,
+            0.0,
+            100.0,
+        );
+        self.push_slider_semantics(
+            ctx,
+            ColorPickerSemanticPart::Value,
+            "Value",
+            self.left_slider_rect(bounds, 2),
+            self.value,
+            0.0,
+            self.max_channel_value(),
+        );
+        if self.show_alpha {
+            self.push_slider_semantics(
+                ctx,
+                ColorPickerSemanticPart::Alpha,
+                "Alpha",
+                self.left_slider_rect(bounds, 3),
+                self.alpha * 100.0,
+                0.0,
+                100.0,
+            );
+        }
+
+        let rgb = current.to_array();
+        for (index, (part, name)) in [
+            (ColorPickerSemanticPart::Red, "Red"),
+            (ColorPickerSemanticPart::Green, "Green"),
+            (ColorPickerSemanticPart::Blue, "Blue"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            self.push_slider_semantics(
+                ctx,
+                part,
+                name,
+                self.rgb_row_rect(bounds, index),
+                rgb[index],
+                0.0,
+                self.max_channel_value(),
+            );
+        }
+
+        let hex_name = if self.hdr_capable() && is_hdr_color(current) {
+            "HDR hex unavailable".to_string()
+        } else {
+            format!("Hex color {}", format_color(current))
+        };
+        let hex = color_picker_child_semantics_node(
+            ctx.widget_id(),
+            ColorPickerSemanticPart::Hex,
+            SemanticsRole::Text,
+            self.hex_rect(bounds),
+            hex_name,
+        );
+        ctx.push(hex);
+
+        if self.encoding_dropdown_open {
+            let menu_id = color_picker_child_semantics_id(
+                ctx.widget_id(),
+                ColorPickerSemanticPart::ColorRangeMenu,
+            );
+            let mut menu = color_picker_child_semantics_node(
+                ctx.widget_id(),
+                ColorPickerSemanticPart::ColorRangeMenu,
+                SemanticsRole::Menu,
+                self.encoding_menu_rect(bounds),
+                "Color range options",
+            );
+            menu.state.expanded = Some(true);
+            ctx.push(menu);
+
+            for (index, space) in Self::ENCODING_OPTIONS.iter().copied().enumerate() {
+                let mut item = color_picker_child_semantics_node_with_parent(
+                    ctx.widget_id(),
+                    menu_id,
+                    ColorPickerSemanticPart::ColorRangeOption(index),
+                    SemanticsRole::MenuItem,
+                    self.encoding_option_rect(bounds, index),
+                    editing_space_label(space),
+                );
+                item.state.selected = space == self.editing_space;
+                item.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+                ctx.push(item);
+            }
+        }
+    }
+}
+
+fn color_picker_child_semantics_id(parent: WidgetId, part: ColorPickerSemanticPart) -> WidgetId {
+    let slot = match part {
+        ColorPickerSemanticPart::CurrentColor => 1,
+        ColorPickerSemanticPart::PreviousColor => 2,
+        ColorPickerSemanticPart::ColorRange => 3,
+        ColorPickerSemanticPart::ColorRangeMenu => 4,
+        ColorPickerSemanticPart::ColorRangeOption(index) => 32 + index as u64,
+        ColorPickerSemanticPart::SaturationValue => 5,
+        ColorPickerSemanticPart::Hue => 6,
+        ColorPickerSemanticPart::Saturation => 7,
+        ColorPickerSemanticPart::Value => 8,
+        ColorPickerSemanticPart::Alpha => 9,
+        ColorPickerSemanticPart::Red => 10,
+        ColorPickerSemanticPart::Green => 11,
+        ColorPickerSemanticPart::Blue => 12,
+        ColorPickerSemanticPart::Hex => 13,
+    };
+    const TAG: u64 = 3_u64 << 51;
+    const LOW_MASK: u64 = (1_u64 << 51) - 1;
+    WidgetId::new(TAG | (parent.get().wrapping_mul(397).wrapping_add(slot) & LOW_MASK))
+}
+
+fn color_picker_child_semantics_node(
+    parent: WidgetId,
+    part: ColorPickerSemanticPart,
+    role: SemanticsRole,
+    bounds: Rect,
+    name: impl Into<String>,
+) -> SemanticsNode {
+    color_picker_child_semantics_node_with_parent(parent, parent, part, role, bounds, name)
+}
+
+fn color_picker_child_semantics_node_with_parent(
+    owner: WidgetId,
+    parent: WidgetId,
+    part: ColorPickerSemanticPart,
+    role: SemanticsRole,
+    bounds: Rect,
+    name: impl Into<String>,
+) -> SemanticsNode {
+    let mut node = SemanticsNode::new(color_picker_child_semantics_id(owner, part), role, bounds);
+    node.parent = Some(parent);
+    node.name = Some(name.into());
+    node
 }
 
 impl Widget for ColorPicker {
@@ -649,22 +996,50 @@ impl Widget for ColorPicker {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                let active = self.hit_channel(ctx.bounds(), pointer.position);
-                if let Some(active) = active {
-                    self.active = Some(active);
-                    self.update_from_position(ctx.bounds(), active, pointer.position);
+                if let Some(option) = self.encoding_option_at(ctx.bounds(), pointer.position) {
+                    self.active = Some(ActiveChannel::EncodingOption(option));
                     ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
+                    return;
+                }
+
+                let active = self.hit_channel(ctx.bounds(), pointer.position);
+                if let Some(active) = active {
+                    self.active = Some(active);
+                    if active == ActiveChannel::EncodingSelector {
+                        self.encoding_dropdown_open = !self.encoding_dropdown_open;
+                    } else {
+                        self.encoding_dropdown_open = false;
+                        self.update_from_position(ctx.bounds(), active, pointer.position);
+                    }
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                } else if self.encoding_dropdown_open {
+                    self.encoding_dropdown_open = false;
+                    ctx.request_paint();
+                    ctx.request_semantics();
                 }
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                if self.active.take().is_some() {
+                if let Some(active) = self.active.take() {
+                    if let ActiveChannel::EncodingOption(index) = active {
+                        if self
+                            .encoding_option_rect(ctx.bounds(), index)
+                            .contains(pointer.position)
+                        {
+                            self.set_editing_space(Self::ENCODING_OPTIONS[index]);
+                        }
+                        self.encoding_dropdown_open = false;
+                    }
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -673,6 +1048,7 @@ impl Widget for ColorPicker {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.active.take().is_some() {
+                    self.encoding_dropdown_open = false;
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -707,7 +1083,8 @@ impl Widget for ColorPicker {
     }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let desired = Size::new(520.0, if self.show_alpha { 420.0 } else { 392.0 });
+        let desired_width = 28.0 + Self::WHEEL_SIZE + Self::PANEL_GAP + Self::RIGHT_PANEL_WIDTH;
+        let desired = Size::new(desired_width, 448.0);
         constraints.clamp(desired)
     }
 
@@ -724,9 +1101,14 @@ impl Widget for ColorPicker {
             ctx,
             header,
             self.theme.as_ref(),
-            &self.name,
             self.previous_color,
             current,
+        );
+        paint_dropdown(
+            ctx,
+            encoding,
+            self.theme.as_ref(),
+            editing_space_label(self.editing_space),
         );
 
         paint_color_wheel(ctx, wheel);
@@ -742,7 +1124,13 @@ impl Widget for ColorPicker {
         let marker = Point::new(
             map.x() + self.saturation * map.width(),
             map.y()
-                + (1.0 - (self.value / self.max_channel_value()).clamp(0.0, 1.0)) * map.height(),
+                + (1.0
+                    - if self.hdr_capable() {
+                        hdr_value_to_slider(self.value)
+                    } else {
+                        self.value.clamp(0.0, 1.0)
+                    })
+                    * map.height(),
         );
         paint_marker(ctx, marker, contrast_color(current));
 
@@ -800,13 +1188,6 @@ impl Widget for ColorPicker {
             );
         }
 
-        paint_dropdown(
-            ctx,
-            encoding,
-            self.theme.as_ref(),
-            editing_space_label(self.editing_space),
-        );
-
         let rgb = current.to_array();
         let channel_labels = ["R", "G", "B"];
         for (index, label) in channel_labels.into_iter().enumerate() {
@@ -844,20 +1225,14 @@ impl Widget for ColorPicker {
             );
         }
 
-        ctx.draw_text(
-            Rect::new(encoding.x(), encoding.y() - 20.0, encoding.width(), 16.0),
-            if is_hdr_color(current) {
-                format!("{} • HDR", self.name)
-            } else {
-                format!("{} • SDR", self.name)
-            },
-            TextStyle {
-                font_size: 12.0,
-                line_height: 16.0,
-                color: palette.placeholder,
-                ..TextStyle::default()
-            },
-        );
+        if self.encoding_dropdown_open {
+            paint_encoding_menu(
+                ctx,
+                self.encoding_menu_rect(ctx.bounds()),
+                self.theme.as_ref(),
+                self.editing_space,
+            );
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -871,18 +1246,10 @@ impl Widget for ColorPicker {
             if self.hdr_capable() { "HDR" } else { "SDR" }
         ));
         node.state.focused = ctx.is_focused();
-        node.value = Some(SemanticsValue::Text(
-            if self.hdr_capable() && is_hdr_color(current) {
-                format!(
-                    "R {:.3} G {:.3} B {:.3} A {:.3}",
-                    current.red, current.green, current.blue, current.alpha
-                )
-            } else {
-                format_color(current)
-            },
-        ));
+        node.value = Some(SemanticsValue::Text(self.color_semantics_text(current)));
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
+        self.push_component_semantics(ctx, current);
     }
 
     fn accepts_focus(&self) -> bool {
@@ -899,7 +1266,6 @@ fn paint_picker_header(
     ctx: &mut PaintCtx,
     rect: Rect,
     theme: &DefaultTheme,
-    name: &str,
     previous: Color,
     current: Color,
 ) {
@@ -919,36 +1285,6 @@ fn paint_picker_header(
         rounded_rect_path(previous_rect, 8.0),
         palette.border,
         StrokeStyle::new(1.0),
-    );
-    let text_x = previous_rect.max_x() + 14.0;
-    ctx.draw_text(
-        Rect::new(text_x, rect.y() + 2.0, rect.max_x() - text_x, 18.0),
-        name.to_string(),
-        theme.body_text_style(),
-    );
-    ctx.draw_text(
-        Rect::new(text_x, rect.y() + 22.0, rect.max_x() - text_x, 16.0),
-        if is_hdr_color(current) {
-            "HDR working color".to_string()
-        } else {
-            "SDR working color".to_string()
-        },
-        TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            color: palette.placeholder,
-            ..TextStyle::default()
-        },
-    );
-    ctx.draw_text(
-        Rect::new(rect.max_x() - 68.0, rect.y() + 4.0, 64.0, 16.0),
-        "⌖  ↺".to_string(),
-        TextStyle {
-            font_size: 14.0,
-            line_height: 16.0,
-            color: palette.placeholder,
-            ..TextStyle::default()
-        },
     );
 }
 
@@ -1010,7 +1346,14 @@ fn paint_saturation_value_plane(
     );
     let sdr_marker = Rect::new(
         rect.x(),
-        rect.y() + rect.height() * (1.0 - (1.0 / max_value).clamp(0.0, 1.0)),
+        rect.y()
+            + rect.height()
+                * (1.0
+                    - if max_value <= 1.0001 {
+                        1.0
+                    } else {
+                        hdr_value_to_slider(1.0)
+                    }),
         rect.width(),
         1.0,
     );
@@ -1104,7 +1447,12 @@ fn paint_labeled_row_text(
     value_color: Color,
 ) {
     ctx.draw_text(
-        Rect::new(rect.x() + 6.0, rect.y() + 2.0, 22.0, rect.height()),
+        Rect::new(
+            rect.x() + 6.0,
+            rect.y() + ((rect.height() - 16.0) * 0.5),
+            22.0,
+            16.0,
+        ),
         label.to_string(),
         TextStyle {
             font_size: 12.0,
@@ -1114,7 +1462,12 @@ fn paint_labeled_row_text(
         },
     );
     ctx.draw_text(
-        Rect::new(rect.max_x() - 72.0, rect.y() + 2.0, 68.0, rect.height()),
+        Rect::new(
+            rect.max_x() - 74.0,
+            rect.y() + ((rect.height() - 16.0) * 0.5),
+            70.0,
+            16.0,
+        ),
         value_text.to_string(),
         TextStyle {
             font_size: 11.0,
@@ -1136,7 +1489,12 @@ fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &
         StrokeStyle::new(1.0),
     );
     ctx.draw_text(
-        Rect::new(rect.x() + 10.0, rect.y() + 6.0, rect.width() - 26.0, 16.0),
+        Rect::new(
+            rect.x() + 10.0,
+            rect.y() + ((rect.height() - 16.0) * 0.5),
+            rect.width() - 32.0,
+            16.0,
+        ),
         label.to_string(),
         TextStyle {
             font_size: 12.0,
@@ -1145,16 +1503,78 @@ fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &
             ..TextStyle::default()
         },
     );
-    ctx.draw_text(
-        Rect::new(rect.max_x() - 16.0, rect.y() + 6.0, 12.0, 16.0),
-        "▾".to_string(),
-        TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            color: theme.palette.placeholder,
-            ..TextStyle::default()
-        },
+    ctx.stroke(
+        dropdown_chevron_path(rect),
+        theme.palette.placeholder,
+        StrokeStyle::new(1.4),
     );
+}
+
+fn paint_encoding_menu(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, selected: ColorSpace) {
+    ctx.fill(
+        rounded_rect_path(rect, 8.0),
+        Color::rgba(0.08, 0.105, 0.145, 1.0),
+    );
+    ctx.stroke(
+        rounded_rect_path(rect, 8.0),
+        theme.palette.border_focus,
+        StrokeStyle::new(1.0),
+    );
+
+    for (index, space) in ColorPicker::ENCODING_OPTIONS.iter().copied().enumerate() {
+        let row = Rect::new(
+            rect.x(),
+            rect.y() + index as f32 * ColorPicker::ENCODING_MENU_ROW_HEIGHT,
+            rect.width(),
+            ColorPicker::ENCODING_MENU_ROW_HEIGHT,
+        );
+        if space == selected {
+            ctx.fill(
+                rounded_rect_path(
+                    inset_rect(
+                        row,
+                        Insets {
+                            left: 4.0,
+                            top: 3.0,
+                            right: 4.0,
+                            bottom: 3.0,
+                        },
+                    ),
+                    6.0,
+                ),
+                theme.palette.border_focus.with_alpha(0.22),
+            );
+            ctx.fill_rect(
+                Rect::new(row.x() + 6.0, row.y() + 7.0, 3.0, row.height() - 14.0),
+                theme.palette.border_focus,
+            );
+        }
+        ctx.draw_text(
+            Rect::new(row.x() + 14.0, row.y() + 6.0, row.width() - 22.0, 16.0),
+            editing_space_label(space),
+            TextStyle {
+                font_size: 12.0,
+                line_height: 16.0,
+                color: if space == selected {
+                    Color::rgba(0.93, 0.97, 1.0, 1.0)
+                } else {
+                    Color::rgba(0.78, 0.84, 0.91, 1.0)
+                },
+                ..TextStyle::default()
+            },
+        );
+    }
+}
+
+fn dropdown_chevron_path(rect: Rect) -> Path {
+    let center = Point::new(rect.max_x() - 14.0, rect.y() + rect.height() * 0.5 + 1.0);
+    let half_width = 4.0;
+    let half_height = 2.5;
+    let mut path = PathBuilder::new();
+    path.move_to(Point::new(center.x - half_width, center.y - half_height));
+    path.line_to(Point::new(center.x, center.y + half_height));
+    path.line_to(Point::new(center.x + half_width, center.y - half_height));
+    path.build()
 }
 
 fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: &str) {
@@ -1168,7 +1588,12 @@ fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: 
         StrokeStyle::new(1.0),
     );
     ctx.draw_text(
-        Rect::new(rect.x() + 10.0, rect.y() + 6.0, rect.width() - 16.0, 16.0),
+        Rect::new(
+            rect.x() + 10.0,
+            rect.y() + ((rect.height() - 16.0) * 0.5),
+            rect.width() - 16.0,
+            16.0,
+        ),
         value.to_string(),
         TextStyle {
             font_size: 12.0,
@@ -1190,7 +1615,12 @@ fn paint_disabled_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, va
         StrokeStyle::new(1.0),
     );
     ctx.draw_text(
-        Rect::new(rect.x() + 10.0, rect.y() + 6.0, rect.width() - 16.0, 16.0),
+        Rect::new(
+            rect.x() + 10.0,
+            rect.y() + ((rect.height() - 16.0) * 0.5),
+            rect.width() - 16.0,
+            16.0,
+        ),
         value.to_string(),
         TextStyle {
             font_size: 12.0,
@@ -1401,12 +1831,16 @@ fn inset_rect(rect: Rect, padding: Insets) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
-    use super::{ColorPicker, ColorSwatch, Image, format_color, hsv_to_rgb, rgb_to_hsv};
+    use super::{
+        ActiveChannel, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image,
+        color_picker_child_semantics_id, format_color, hsv_to_rgb, rgb_to_hsv,
+    };
     use sui_core::{
         Color, ColorSpace, Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent,
-        PointerEventKind, Result, SemanticsRole, SemanticsValue, Size, Vector,
+        PointerEventKind, Rect, Result, SemanticsAction, SemanticsRole, SemanticsValue, Size,
+        Vector, WidgetId,
     };
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
     use sui_scene::RegisteredImage;
@@ -1534,11 +1968,11 @@ mod tests {
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Move, Point::new(476.0, 152.0), true),
+            primary_pointer(PointerEventKind::Move, Point::new(390.0, 152.0), true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Up, Point::new(476.0, 152.0), false),
+            primary_pointer(PointerEventKind::Up, Point::new(390.0, 152.0), false),
         )?;
 
         let changed_color = *changes
@@ -1594,6 +2028,151 @@ mod tests {
     }
 
     #[test]
+    fn color_picker_semantics_expose_accessible_components() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(ColorPicker::from_color(
+            "Accent picker",
+            Color::new(ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0),
+        ));
+
+        let output = runtime.render(window_id)?;
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ColorPicker)
+            .expect("color picker semantics present");
+        let picker_id = picker.id;
+
+        let child = |role: SemanticsRole, name: &str| {
+            output.semantics.iter().find(|node| {
+                node.parent == Some(picker_id)
+                    && node.role == role
+                    && node.name.as_deref() == Some(name)
+            })
+        };
+
+        assert!(child(SemanticsRole::ColorSwatch, "Current color").is_some());
+        assert!(child(SemanticsRole::ColorSwatch, "Previous color").is_some());
+
+        let range = child(SemanticsRole::ComboBox, "Color range")
+            .expect("color range selector semantics present");
+        assert_eq!(
+            range.value,
+            Some(SemanticsValue::Text("BT709 Linear".to_string()))
+        );
+        assert_eq!(range.state.expanded, Some(false));
+
+        for name in [
+            "Saturation and value",
+            "Hue",
+            "Saturation",
+            "Value",
+            "Alpha",
+            "Red",
+            "Green",
+            "Blue",
+        ] {
+            let slider = child(SemanticsRole::Slider, name)
+                .unwrap_or_else(|| panic!("{name} slider semantics present"));
+            assert!(
+                matches!(slider.value, Some(SemanticsValue::Range { .. })),
+                "{name} slider should expose a range value"
+            );
+        }
+
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.parent == Some(picker_id)
+                    && node.role == SemanticsRole::Text
+                    && node
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| name.starts_with("HDR hex unavailable"))
+            }),
+            "HDR hex field semantics present"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_synthetic_semantics_ids_are_javascript_safe_and_distinct() {
+        let parent = WidgetId::new(402);
+        let parts = [
+            ColorPickerSemanticPart::CurrentColor,
+            ColorPickerSemanticPart::PreviousColor,
+            ColorPickerSemanticPart::ColorRange,
+            ColorPickerSemanticPart::ColorRangeMenu,
+            ColorPickerSemanticPart::ColorRangeOption(0),
+            ColorPickerSemanticPart::ColorRangeOption(1),
+            ColorPickerSemanticPart::ColorRangeOption(2),
+            ColorPickerSemanticPart::ColorRangeOption(3),
+            ColorPickerSemanticPart::SaturationValue,
+            ColorPickerSemanticPart::Hue,
+            ColorPickerSemanticPart::Saturation,
+            ColorPickerSemanticPart::Value,
+            ColorPickerSemanticPart::Alpha,
+            ColorPickerSemanticPart::Red,
+            ColorPickerSemanticPart::Green,
+            ColorPickerSemanticPart::Blue,
+            ColorPickerSemanticPart::Hex,
+        ];
+        let mut ids = BTreeSet::new();
+        for part in parts {
+            let id = color_picker_child_semantics_id(parent, part).get();
+            assert!(id <= (1_u64 << 53) - 1, "{id} should be JS-safe");
+            assert!(ids.insert(id), "{id} should be unique");
+        }
+    }
+
+    #[test]
+    fn color_picker_columns_are_compact() {
+        let picker = ColorPicker::new("Accent picker");
+        let bounds = Rect::new(0.0, 0.0, 434.0, 448.0);
+        let wheel = picker.color_wheel_rect(bounds);
+        let map = picker.saturation_value_rect(bounds);
+
+        assert_eq!(map.x() - wheel.max_x(), ColorPicker::PANEL_GAP);
+        assert_eq!(map.width(), ColorPicker::MAP_SIZE);
+        assert_eq!(map.y(), wheel.y());
+    }
+
+    #[test]
+    fn color_picker_header_contains_encoding_selector() {
+        let picker = ColorPicker::new("Accent picker");
+        let bounds = Rect::new(0.0, 0.0, 434.0, 448.0);
+        let header = picker.header_rect(bounds);
+        let encoding = picker.encoding_rect(bounds);
+        let map = picker.saturation_value_rect(bounds);
+        let rgb = picker.rgb_row_rect(bounds, 0);
+
+        assert!(header.contains(encoding.origin));
+        assert!(header.contains(Point::new(encoding.max_x(), encoding.max_y())));
+        assert!(encoding.x() > bounds.x() + 200.0);
+        assert!(rgb.y() > map.max_y());
+    }
+
+    #[test]
+    fn color_picker_saturation_value_plane_uses_hdr_slider_curve() {
+        let mut picker = ColorPicker::from_color(
+            "Accent picker",
+            Color::new(ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0),
+        );
+        let bounds = Rect::new(0.0, 0.0, 434.0, 448.0);
+        let map = picker.saturation_value_rect(bounds);
+
+        picker.update_from_position(
+            bounds,
+            ActiveChannel::SaturationValue,
+            Point::new(map.x() + map.width() * 0.5, map.y() + map.height() * 0.25),
+        );
+
+        assert!(
+            picker.value > 3.0 && picker.value < 4.0,
+            "75% HDR slider position should map logarithmically above 1.0, got {}",
+            picker.value
+        );
+    }
+
+    #[test]
     fn color_picker_rgb_row_drag_updates_color_channels() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
@@ -1608,15 +2187,15 @@ mod tests {
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(426.0, 306.0), true),
+            primary_pointer(PointerEventKind::Down, Point::new(250.0, 316.0), true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Move, Point::new(526.0, 306.0), true),
+            primary_pointer(PointerEventKind::Move, Point::new(380.0, 316.0), true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Up, Point::new(526.0, 306.0), false),
+            primary_pointer(PointerEventKind::Up, Point::new(380.0, 316.0), false),
         )?;
 
         let changed_color = *changes.borrow().last().expect("rgb row emitted change");
@@ -1630,7 +2209,7 @@ mod tests {
     }
 
     #[test]
-    fn color_picker_encoding_selector_cycles_editing_space() -> Result<()> {
+    fn color_picker_encoding_selector_uses_dropdown_options() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
         let (mut runtime, window_id) = build_runtime(
@@ -1644,11 +2223,48 @@ mod tests {
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(424.0, 272.0), true),
+            primary_pointer(PointerEventKind::Down, Point::new(300.0, 40.0), true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Up, Point::new(424.0, 272.0), false),
+            primary_pointer(PointerEventKind::Up, Point::new(300.0, 40.0), false),
+        )?;
+        assert!(
+            changes.borrow().is_empty(),
+            "opening the encoding dropdown should not change color space"
+        );
+        let output = runtime.render(window_id)?;
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ColorPicker)
+            .expect("color picker semantics present after opening encoding dropdown");
+        let range = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.parent == Some(picker.id)
+                    && node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some("Color range")
+            })
+            .expect("color range selector semantics present after opening dropdown");
+        assert_eq!(range.state.expanded, Some(true));
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::MenuItem
+                    && node.name.as_deref() == Some("Display P3")
+                    && node.actions.contains(&SemanticsAction::Activate)
+            }),
+            "open color range dropdown should expose Display P3 option"
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(300.0, 129.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(300.0, 129.0), false),
         )?;
 
         let changed_color = *changes
