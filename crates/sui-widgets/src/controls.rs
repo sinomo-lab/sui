@@ -32,6 +32,14 @@ pub enum IconGlyph {
     MoreHorizontal,
     MoreVertical,
     Search,
+    Undo,
+    Redo,
+    Brush,
+    Eraser,
+    PaintBucket,
+    Hand,
+    Trash,
+    Download,
 }
 
 pub struct Separator {
@@ -302,6 +310,10 @@ pub struct IconButton {
     label: String,
     size: Option<f32>,
     icon_size: Option<f32>,
+    selected: bool,
+    selected_reader: Option<Box<dyn Fn() -> bool>>,
+    enabled: bool,
+    enabled_reader: Option<Box<dyn Fn() -> bool>>,
     hovered: bool,
     pressed: bool,
     hover_animation: AnimatedScalar,
@@ -318,6 +330,10 @@ impl IconButton {
             label: label.into(),
             size: None,
             icon_size: None,
+            selected: false,
+            selected_reader: None,
+            enabled: true,
+            enabled_reader: None,
             hovered: false,
             pressed: false,
             hover_animation: AnimatedScalar::new(0.0),
@@ -339,6 +355,34 @@ impl IconButton {
 
     pub fn icon_size(mut self, icon_size: f32) -> Self {
         self.icon_size = Some(icon_size.max(0.0));
+        self
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self.enabled_reader = None;
+        self
+    }
+
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled_reader = Some(Box::new(enabled));
         self
     }
 
@@ -368,7 +412,24 @@ impl IconButton {
         self.icon_size.unwrap_or(self.theme.metrics.icon_size)
     }
 
+    fn is_selected(&self) -> bool {
+        self.selected_reader
+            .as_ref()
+            .map(|selected| selected())
+            .unwrap_or(self.selected)
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled_reader
+            .as_ref()
+            .map(|enabled| enabled())
+            .unwrap_or(self.enabled)
+    }
+
     fn activate(&mut self, ctx: &mut EventCtx) {
+        if !self.is_enabled() {
+            return;
+        }
         if let Some(on_press) = &mut self.on_press {
             on_press();
         }
@@ -398,6 +459,18 @@ impl IconButton {
 
 impl Widget for IconButton {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.is_enabled() {
+            if self.hovered || self.pressed {
+                self.hovered = false;
+                self.pressed = false;
+                set_animation_target(&mut self.hover_animation, 0.0, HOVER_ANIMATION_SECONDS, ctx);
+                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            return;
+        }
+
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -495,17 +568,51 @@ impl Widget for IconButton {
     fn paint(&self, ctx: &mut PaintCtx) {
         let palette = self.theme.palette;
         let metrics = self.theme.metrics;
-        let hover_progress = self.hover_animation.value;
-        let press_progress = self.press_animation.value;
+        let selected = self.is_selected();
+        let enabled = self.is_enabled();
+        let hover_progress = if enabled {
+            self.hover_animation.value
+        } else {
+            0.0
+        };
+        let press_progress = if enabled {
+            self.press_animation.value
+        } else {
+            0.0
+        };
+        let base_background = if selected {
+            mix_color(palette.surface, palette.accent, 0.18)
+        } else {
+            palette.surface
+        };
+        let hover_background = if selected {
+            mix_color(base_background, palette.accent_hover, 0.18)
+        } else {
+            palette.surface_hover
+        };
+        let press_background = if selected {
+            mix_color(base_background, palette.surface_pressed, 0.45)
+        } else {
+            palette.surface_pressed
+        };
         let background = mix_color(
-            mix_color(palette.surface, palette.surface_hover, hover_progress),
-            palette.surface_pressed,
+            mix_color(base_background, hover_background, hover_progress),
+            press_background,
             press_progress,
         );
-        let border = if ctx.is_focused() {
+        let border = if !enabled {
+            palette.border.with_alpha(0.55)
+        } else if ctx.is_focused() {
             palette.border_focus
+        } else if selected {
+            mix_color(palette.accent_border, palette.border_hover, hover_progress)
         } else {
             mix_color(palette.border, palette.border_hover, hover_progress)
+        };
+        let background = if enabled {
+            background
+        } else {
+            mix_color(background, palette.surface, 0.72).with_alpha(0.82)
         };
 
         draw_control_frame(
@@ -521,7 +628,13 @@ impl Widget for IconButton {
             ctx,
             self.icon,
             center_square(ctx.bounds(), self.resolved_icon_size()),
-            palette.text,
+            if !enabled {
+                palette.text.with_alpha(0.38)
+            } else if selected {
+                palette.accent
+            } else {
+                palette.text
+            },
         );
     }
 
@@ -529,13 +642,19 @@ impl Widget for IconButton {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
         node.name = Some(self.label.clone());
         node.state.focused = ctx.is_focused();
-        node.state.hovered = self.hovered;
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        node.state.hovered = self.hovered && self.is_enabled();
+        node.state.selected = self.is_selected();
+        node.state.disabled = !self.is_enabled();
+        node.actions = if self.is_enabled() {
+            vec![SemanticsAction::Focus, SemanticsAction::Activate]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.is_enabled()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
@@ -634,6 +753,9 @@ pub struct Button {
     theme: Box<DefaultTheme>,
     label: String,
     text_style: Option<TextStyle>,
+    icon: Option<IconGlyph>,
+    icon_size: Option<f32>,
+    icon_gap: Option<f32>,
     padding: Option<Insets>,
     min_width: Option<f32>,
     min_height: Option<f32>,
@@ -643,6 +765,8 @@ pub struct Button {
     press_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     label_layout: Option<PersistentTextLayout>,
+    enabled: bool,
+    enabled_reader: Option<Box<dyn Fn() -> bool>>,
     on_press: Option<Box<dyn FnMut()>>,
     on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
 }
@@ -663,6 +787,9 @@ impl Button {
             theme: Box::new(DefaultTheme::default()),
             label: label.into(),
             text_style: None,
+            icon: None,
+            icon_size: None,
+            icon_gap: None,
             padding: None,
             min_width: None,
             min_height: None,
@@ -672,6 +799,8 @@ impl Button {
             press_animation: AnimatedScalar::new(0.0),
             label_measurement: None,
             label_layout: None,
+            enabled: true,
+            enabled_reader: None,
             on_press: None,
             on_press_with_ctx: None,
         }
@@ -695,6 +824,26 @@ impl Button {
         self
     }
 
+    pub fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn without_icon(mut self) -> Self {
+        self.icon = None;
+        self
+    }
+
+    pub fn icon_size(mut self, icon_size: f32) -> Self {
+        self.icon_size = Some(icon_size.max(0.0));
+        self
+    }
+
+    pub fn icon_gap(mut self, icon_gap: f32) -> Self {
+        self.icon_gap = Some(icon_gap.max(0.0));
+        self
+    }
+
     pub fn min_width(mut self, width: f32) -> Self {
         self.min_width = Some(width.max(0.0));
         self
@@ -707,6 +856,20 @@ impl Button {
 
     pub fn padding(mut self, padding: Insets) -> Self {
         self.padding = Some(padding);
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self.enabled_reader = None;
+        self
+    }
+
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled_reader = Some(Box::new(enabled));
         self
     }
 
@@ -727,6 +890,9 @@ impl Button {
     }
 
     fn activate(&mut self, ctx: &mut EventCtx) {
+        if !self.is_enabled() {
+            return;
+        }
         if let Some(on_press) = &mut self.on_press {
             on_press();
         }
@@ -753,6 +919,13 @@ impl Button {
         self.hover_animation.advance(time) | self.press_animation.advance(time)
     }
 
+    fn is_enabled(&self) -> bool {
+        self.enabled_reader
+            .as_ref()
+            .map(|enabled| enabled())
+            .unwrap_or(self.enabled)
+    }
+
     fn resolved_text_style(&self) -> TextStyle {
         self.text_style
             .clone()
@@ -761,6 +934,30 @@ impl Button {
 
     fn resolved_padding(&self) -> Insets {
         self.padding.unwrap_or(self.theme.metrics.button_padding)
+    }
+
+    fn resolved_icon_size(&self) -> f32 {
+        self.icon_size
+            .unwrap_or(self.theme.metrics.icon_size)
+            .max(0.0)
+    }
+
+    fn resolved_icon_gap(&self) -> f32 {
+        self.icon_gap
+            .unwrap_or(self.theme.metrics.checkbox_gap)
+            .max(0.0)
+    }
+
+    fn icon_extent(&self) -> Option<(f32, f32)> {
+        self.icon.map(|_| {
+            let icon_size = self.resolved_icon_size();
+            let gap = if self.label.is_empty() {
+                0.0
+            } else {
+                self.resolved_icon_gap()
+            };
+            (icon_size, gap)
+        })
     }
 
     fn resolved_min_size(&self) -> Size {
@@ -773,23 +970,47 @@ impl Button {
 
     fn resolved_visuals(&self, focused: bool) -> ButtonVisuals {
         let palette = self.theme.palette;
-        let background = if self.pressed {
-            palette.accent_pressed
-        } else if self.hovered {
-            palette.accent_hover
+        let enabled = self.is_enabled();
+        let hover_progress = if enabled {
+            self.hover_animation.value
         } else {
-            palette.accent
+            0.0
         };
-        let border = if focused {
-            palette.accent_border_focus
-        } else if self.hovered {
-            palette.accent_border_hover
+        let press_progress = if enabled {
+            self.press_animation.value
         } else {
-            palette.accent_border
+            0.0
+        };
+        let background = if !enabled {
+            mix_color(palette.surface, palette.accent, 0.08).with_alpha(0.82)
+        } else {
+            mix_color(
+                mix_color(palette.accent, palette.accent_hover, hover_progress),
+                palette.accent_pressed,
+                press_progress,
+            )
+        };
+        let border = if !enabled {
+            palette.accent_border.with_alpha(0.45)
+        } else if focused {
+            palette.accent_border_focus
+        } else {
+            mix_color(
+                palette.accent_border,
+                palette.accent_border_hover,
+                hover_progress,
+            )
         };
         let label_peak_lift =
             resolve_luminance_role(&self.theme.hdr, WidgetLuminanceRole::Standard);
-        let label_color = apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift);
+        let label_color = if enabled {
+            apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift)
+        } else {
+            apply_hdr_policy_cap(
+                self.resolved_text_style().color.with_alpha(0.45),
+                label_peak_lift,
+            )
+        };
 
         if matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) {
             return ButtonVisuals {
@@ -816,32 +1037,99 @@ impl Button {
             WidgetMaterialRole::Flat,
             None,
         ));
+        let hdr_background = if !enabled {
+            background
+        } else {
+            mix_color(
+                mix_color(chrome_style.color, palette.accent_hover, hover_progress),
+                palette.accent_pressed,
+                press_progress,
+            )
+        };
+        let hdr_border = if !enabled {
+            border
+        } else if focused {
+            focus_style.color
+        } else {
+            mix_color(
+                palette.accent_border,
+                palette.accent_border_hover,
+                hover_progress,
+            )
+        };
 
         ButtonVisuals {
-            background: if self.pressed {
-                palette.accent_pressed
-            } else if self.hovered {
-                palette.accent_hover
-            } else {
-                chrome_style.color
-            },
-            border: if focused {
-                focus_style.color
-            } else if self.hovered {
-                palette.accent_border_hover
-            } else {
-                palette.accent_border
-            },
+            background: hdr_background,
+            border: hdr_border,
             focus_ring: focused.then_some(focus_style.color.with_alpha(palette.focus_ring.alpha)),
             label_color,
             label_peak_lift,
             chrome_style: Some(chrome_style),
         }
     }
+
+    fn button_content_rects(
+        &self,
+        ctx: &PaintCtx,
+        bounds: Rect,
+        padding: Insets,
+        line_height: f32,
+    ) -> (Option<Rect>, Rect) {
+        let content = inset_rect(bounds, padding);
+        let Some((icon_size, icon_gap)) = self.icon_extent() else {
+            return (
+                None,
+                centered_text_rect(ctx, bounds, padding, self.label_measurement, line_height),
+            );
+        };
+
+        let measurement = self.label_measurement;
+        let natural_label_width = measurement.map(|value| value.width).unwrap_or(0.0);
+        let icon_size = icon_size
+            .min(content.width())
+            .min(content.height())
+            .max(0.0);
+        let gap = if icon_size > 0.0 && natural_label_width > 0.0 {
+            icon_gap.min(content.width())
+        } else {
+            0.0
+        };
+        let label_width = natural_label_width.min((content.width() - icon_size - gap).max(0.0));
+        let group_width = icon_size + gap + label_width;
+        let start_x = content.x() + ((content.width() - group_width).max(0.0) * 0.5);
+        let icon_rect = Rect::new(
+            start_x,
+            content.y() + ((content.height() - icon_size) * 0.5),
+            icon_size,
+            icon_size,
+        );
+        let label_base = Rect::new(
+            start_x + icon_size + gap,
+            content.y(),
+            label_width,
+            content.height(),
+        );
+        (
+            Some(icon_rect),
+            vertically_centered_text_rect(ctx, label_base, measurement, line_height),
+        )
+    }
 }
 
 impl Widget for Button {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.is_enabled() {
+            if self.hovered || self.pressed {
+                self.hovered = false;
+                self.pressed = false;
+                set_animation_target(&mut self.hover_animation, 0.0, HOVER_ANIMATION_SECONDS, ctx);
+                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            return;
+        }
+
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -951,54 +1239,41 @@ impl Widget for Button {
         self.label_measurement = Some(measurement);
         self.label_layout = label_layout;
 
-        let width = (measurement.width + padding.left + padding.right).max(min_size.width);
-        let height =
-            (measurement.height.max(text_style.line_height) + padding.top + padding.bottom)
-                .max(min_size.height);
+        let (icon_size, icon_gap) = self.icon_extent().unwrap_or((0.0, 0.0));
+        let content_width = icon_size + icon_gap + measurement.width;
+        let content_height = measurement
+            .height
+            .max(text_style.line_height)
+            .max(icon_size);
+        let width = (content_width + padding.left + padding.right).max(min_size.width);
+        let height = (content_height + padding.top + padding.bottom).max(min_size.height);
 
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let metrics = self.theme.metrics;
-        let palette = self.theme.palette;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let visuals = self.resolved_visuals(ctx.is_focused());
-        let hover_progress = self.hover_animation.value;
-        let press_progress = self.press_animation.value;
-        let background = mix_color(
-            mix_color(palette.accent, palette.accent_hover, hover_progress),
-            palette.accent_pressed,
-            press_progress,
-        );
-        let border = if ctx.is_focused() {
-            palette.accent_border_focus
-        } else {
-            mix_color(
-                palette.accent_border,
-                palette.accent_border_hover,
-                hover_progress,
-            )
-        };
 
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            background,
-            border,
+            visuals.background,
+            visuals.border,
             visuals.focus_ring,
         );
-        let label_rect = centered_text_rect(
-            ctx,
-            ctx.bounds(),
-            padding,
-            self.label_measurement,
-            text_style.line_height,
-        );
-        if let Some(layout) = &self.label_layout {
+        let (icon_rect, label_rect) =
+            self.button_content_rects(ctx, ctx.bounds(), padding, text_style.line_height);
+        if let (Some(icon), Some(icon_rect)) = (self.icon, icon_rect) {
+            draw_icon_glyph(ctx, icon, icon_rect, visuals.label_color);
+        }
+        if self.is_enabled()
+            && let Some(layout) = &self.label_layout
+        {
             let layout_bounds = layout.measurement().bounds;
             ctx.push_clip_rect(label_rect);
             ctx.draw_persistent_text_layout(
@@ -1006,29 +1281,34 @@ impl Widget for Button {
                 layout,
             );
             ctx.pop_clip();
-        } else {
-            ctx.draw_text(
-                label_rect,
-                self.label.clone(),
-                TextStyle {
-                    color: visuals.label_color,
-                    ..text_style
-                },
-            );
+            return;
         }
+        ctx.draw_text(
+            label_rect,
+            self.label.clone(),
+            TextStyle {
+                color: visuals.label_color,
+                ..text_style
+            },
+        );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
         node.name = Some(self.label.clone());
         node.state.focused = ctx.is_focused();
-        node.state.hovered = self.hovered;
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        node.state.hovered = self.hovered && self.is_enabled();
+        node.state.disabled = !self.is_enabled();
+        node.actions = if self.is_enabled() {
+            vec![SemanticsAction::Focus, SemanticsAction::Activate]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.is_enabled()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
@@ -4826,9 +5106,24 @@ fn measure_text_width_estimate(text: &str, font_size: f32) -> f32 {
 
 fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
     let stroke = StrokeStyle::new(physical_pixels(ctx, 1.8).max(1.0));
+    let inset_ratio = if matches!(
+        glyph,
+        IconGlyph::Undo
+            | IconGlyph::Redo
+            | IconGlyph::Brush
+            | IconGlyph::Eraser
+            | IconGlyph::PaintBucket
+            | IconGlyph::Hand
+            | IconGlyph::Trash
+            | IconGlyph::Download
+    ) {
+        0.08
+    } else {
+        0.2
+    };
     let inset = bounds.inflate(
-        -((bounds.width() * 0.2) + (stroke.width * 0.5)),
-        -((bounds.height() * 0.2) + (stroke.width * 0.5)),
+        -((bounds.width() * inset_ratio) + (stroke.width * 0.5)),
+        -((bounds.height() * inset_ratio) + (stroke.width * 0.5)),
     );
 
     match glyph {
@@ -4963,6 +5258,66 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
                 stroke,
             );
         }
+        IconGlyph::Undo => {
+            ctx.stroke(history_arrow_path(inset, -1.0), color, stroke.clone());
+            ctx.stroke(history_arrow_head_path(inset, -1.0), color, stroke);
+        }
+        IconGlyph::Redo => {
+            ctx.stroke(history_arrow_path(inset, 1.0), color, stroke.clone());
+            ctx.stroke(history_arrow_head_path(inset, 1.0), color, stroke);
+        }
+        IconGlyph::Brush => {
+            ctx.stroke(brush_handle_path(inset), color, stroke.clone());
+            ctx.fill(brush_tip_path(inset), color);
+        }
+        IconGlyph::Eraser => {
+            ctx.stroke(eraser_path(inset), color, stroke.clone());
+            ctx.stroke(
+                line_path(
+                    Point::new(inset.x() + inset.width() * 0.18, inset.max_y()),
+                    Point::new(inset.max_x(), inset.max_y()),
+                ),
+                color,
+                stroke,
+            );
+        }
+        IconGlyph::PaintBucket => {
+            ctx.stroke(paint_bucket_path(inset), color, stroke.clone());
+            ctx.fill(paint_drop_path(inset), color);
+        }
+        IconGlyph::Hand => {
+            ctx.stroke(hand_path(inset), color, stroke);
+        }
+        IconGlyph::Trash => {
+            ctx.stroke(trash_can_path(inset), color, stroke.clone());
+            ctx.stroke(
+                line_path(
+                    Point::new(inset.x() + inset.width() * 0.28, inset.y()),
+                    Point::new(inset.max_x() - inset.width() * 0.28, inset.y()),
+                ),
+                color,
+                stroke,
+            );
+        }
+        IconGlyph::Download => {
+            ctx.stroke(
+                line_path(
+                    Point::new(rect_center(inset).x, inset.y()),
+                    Point::new(rect_center(inset).x, inset.max_y() - inset.height() * 0.28),
+                ),
+                color,
+                stroke.clone(),
+            );
+            ctx.stroke(download_arrow_head_path(inset), color, stroke.clone());
+            ctx.stroke(
+                line_path(
+                    Point::new(inset.x(), inset.max_y()),
+                    Point::new(inset.max_x(), inset.max_y()),
+                ),
+                color,
+                stroke,
+            );
+        }
     }
 }
 
@@ -5043,6 +5398,305 @@ fn maximize_path(rect: Rect) -> Path {
         .move_to(Point::new(rect.x() + corner, rect.max_y()))
         .line_to(Point::new(rect.x(), rect.max_y()))
         .line_to(Point::new(rect.x(), rect.max_y() - corner));
+    builder.build()
+}
+
+fn history_arrow_path(rect: Rect, direction: f32) -> Path {
+    let mut builder = PathBuilder::new();
+    if direction.is_sign_positive() {
+        builder.move_to(Point::new(
+            rect.x() + rect.width() * 0.20,
+            rect.y() + rect.height() * 0.72,
+        ));
+        builder.cubic_to(
+            Point::new(
+                rect.x() + rect.width() * 0.48,
+                rect.y() + rect.height() * 0.72,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.67,
+                rect.y() + rect.height() * 0.58,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.67,
+                rect.y() + rect.height() * 0.43,
+            ),
+        );
+    } else {
+        builder.move_to(Point::new(
+            rect.x() + rect.width() * 0.80,
+            rect.y() + rect.height() * 0.72,
+        ));
+        builder.cubic_to(
+            Point::new(
+                rect.x() + rect.width() * 0.52,
+                rect.y() + rect.height() * 0.72,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.33,
+                rect.y() + rect.height() * 0.58,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.33,
+                rect.y() + rect.height() * 0.43,
+            ),
+        );
+    }
+    builder.build()
+}
+
+fn history_arrow_head_path(rect: Rect, direction: f32) -> Path {
+    let mut builder = PathBuilder::new();
+    if direction.is_sign_positive() {
+        let tip = Point::new(
+            rect.x() + rect.width() * 0.67,
+            rect.y() + rect.height() * 0.43,
+        );
+        builder
+            .move_to(Point::new(
+                rect.x() + rect.width() * 0.52,
+                rect.y() + rect.height() * 0.27,
+            ))
+            .line_to(tip)
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.52,
+                rect.y() + rect.height() * 0.57,
+            ));
+    } else {
+        let tip = Point::new(
+            rect.x() + rect.width() * 0.33,
+            rect.y() + rect.height() * 0.43,
+        );
+        builder
+            .move_to(Point::new(
+                rect.x() + rect.width() * 0.48,
+                rect.y() + rect.height() * 0.27,
+            ))
+            .line_to(tip)
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.48,
+                rect.y() + rect.height() * 0.57,
+            ));
+    }
+    builder.build()
+}
+
+fn brush_handle_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.68,
+            rect.y() + rect.height() * 0.14,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.36,
+            rect.y() + rect.height() * 0.56,
+        ));
+    builder.build()
+}
+
+fn brush_tip_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.30,
+            rect.y() + rect.height() * 0.56,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.45,
+            rect.y() + rect.height() * 0.70,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.22,
+            rect.y() + rect.height() * 0.92,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.16,
+            rect.y() + rect.height() * 0.78,
+        ))
+        .close();
+    builder.build()
+}
+
+fn eraser_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.24,
+            rect.y() + rect.height() * 0.66,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.56,
+            rect.y() + rect.height() * 0.24,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.82,
+            rect.y() + rect.height() * 0.44,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.50,
+            rect.y() + rect.height() * 0.86,
+        ))
+        .close()
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.38,
+            rect.y() + rect.height() * 0.52,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.64,
+            rect.y() + rect.height() * 0.72,
+        ));
+    builder.build()
+}
+
+fn paint_bucket_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.28,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.66,
+            rect.y() + rect.height() * 0.18,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.86,
+            rect.y() + rect.height() * 0.52,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.44,
+            rect.y() + rect.height() * 0.74,
+        ))
+        .close()
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.40,
+            rect.y() + rect.height() * 0.24,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.66,
+            rect.y() + rect.height() * 0.58,
+        ));
+    builder.build()
+}
+
+fn paint_drop_path(rect: Rect) -> Path {
+    Path::circle(
+        Point::new(
+            rect.x() + rect.width() * 0.76,
+            rect.y() + rect.height() * 0.82,
+        ),
+        rect.width().min(rect.height()) * 0.08,
+    )
+}
+
+fn hand_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.50,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.30,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.38,
+            rect.y() + rect.height() * 0.30,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.38,
+            rect.y() + rect.height() * 0.18,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.48,
+            rect.y() + rect.height() * 0.18,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.48,
+            rect.y() + rect.height() * 0.32,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.58,
+            rect.y() + rect.height() * 0.32,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.58,
+            rect.y() + rect.height() * 0.40,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.70,
+            rect.y() + rect.height() * 0.40,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.70,
+            rect.y() + rect.height() * 0.68,
+        ))
+        .cubic_to(
+            Point::new(
+                rect.x() + rect.width() * 0.70,
+                rect.y() + rect.height() * 0.88,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.52,
+                rect.y() + rect.height() * 0.94,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.38,
+                rect.y() + rect.height() * 0.82,
+            ),
+        )
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.22,
+            rect.y() + rect.height() * 0.62,
+        ));
+    builder.build()
+}
+
+fn trash_can_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.22,
+            rect.y() + rect.height() * 0.24,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.92,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.72,
+            rect.y() + rect.height() * 0.92,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.78,
+            rect.y() + rect.height() * 0.24,
+        ))
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.42,
+            rect.y() + rect.height() * 0.14,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.58,
+            rect.y() + rect.height() * 0.14,
+        ));
+    builder.build()
+}
+
+fn download_arrow_head_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    let tip = Point::new(rect_center(rect).x, rect.y() + rect.height() * 0.72);
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.48,
+        ))
+        .line_to(tip)
+        .line_to(Point::new(
+            rect.max_x() - rect.width() * 0.28,
+            rect.y() + rect.height() * 0.48,
+        ));
     builder.build()
 }
 
@@ -5265,9 +5919,9 @@ mod tests {
 
     use super::{
         Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, FOCUS_ANIMATION_SECONDS,
-        HOVER_ANIMATION_SECONDS, Label, NumberInput, PRESS_ANIMATION_SECONDS, RadioButton,
-        RadioGroup, Select, Slider, Switch, TOGGLE_ANIMATION_SECONDS, TextArea, TextInput,
-        rect_is_finite,
+        HOVER_ANIMATION_SECONDS, IconButton, IconGlyph, Label, NumberInput,
+        PRESS_ANIMATION_SECONDS, RadioButton, RadioGroup, Select, Slider, Switch,
+        TOGGLE_ANIMATION_SECONDS, TextArea, TextInput, rect_is_finite,
     };
     use crate::containers::SizedBox;
     use crate::{HdrThemeMode, SemanticColorToken, WidgetLuminanceRole, resolve_luminance_role};
@@ -5560,6 +6214,91 @@ mod tests {
     }
 
     #[test]
+    fn disabled_button_exposes_semantics_and_ignores_activation() -> Result<()> {
+        let activations = Rc::new(RefCell::new(0usize));
+        let on_press = Rc::clone(&activations);
+        let (mut runtime, window_id) = build_runtime(
+            Button::new("Save")
+                .enabled(false)
+                .on_press(move || *on_press.borrow_mut() += 1),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false),
+        )?;
+
+        assert_eq!(*activations.borrow(), 0);
+        let output = runtime.render(window_id)?;
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("button semantics should be present");
+        assert!(button.state.disabled);
+        assert!(button.actions.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn button_with_icon_keeps_label_semantics_and_paints_icon() {
+        let plain = render(Button::new("Export").min_width(96.0));
+        let with_icon = render(
+            Button::new("Export")
+                .icon(IconGlyph::Download)
+                .min_width(96.0),
+        );
+
+        let button = with_icon
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("button semantics should exist");
+        assert_eq!(button.name.as_deref(), Some("Export"));
+        assert!(
+            with_icon.frame.scene.commands().len() > plain.frame.scene.commands().len(),
+            "icon button should add visible icon ink"
+        );
+    }
+
+    #[test]
+    fn disabled_icon_button_exposes_semantics_and_ignores_activation() -> Result<()> {
+        let activations = Rc::new(RefCell::new(0usize));
+        let on_press = Rc::clone(&activations);
+        let (mut runtime, window_id) = build_runtime(
+            IconButton::new(IconGlyph::Add, "Add")
+                .enabled(false)
+                .on_press(move || *on_press.borrow_mut() += 1),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false),
+        )?;
+
+        assert_eq!(*activations.borrow(), 0);
+        let output = runtime.render(window_id)?;
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("icon button semantics should be present");
+        assert!(button.state.disabled);
+        assert!(button.actions.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn button_hover_animation_advances_over_multiple_frames() -> Result<()> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(Button::new("Hover"));
@@ -5671,6 +6410,40 @@ mod tests {
         assert!(!end_fills.contains(&theme.palette.surface_pressed));
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
+    }
+
+    #[test]
+    fn icon_button_selected_state_is_exposed_to_semantics() {
+        let output =
+            render(super::IconButton::new(super::IconGlyph::Check, "Brush tool").selected(true));
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("icon button semantics should exist");
+
+        assert_eq!(button.name.as_deref(), Some("Brush tool"));
+        assert!(button.state.selected);
+    }
+
+    #[test]
+    fn editor_icon_glyphs_paint_visible_ink() {
+        for glyph in [
+            IconGlyph::Undo,
+            IconGlyph::Redo,
+            IconGlyph::Brush,
+            IconGlyph::Eraser,
+            IconGlyph::PaintBucket,
+            IconGlyph::Hand,
+            IconGlyph::Trash,
+            IconGlyph::Download,
+        ] {
+            let output = render(IconButton::new(glyph, "Editor command"));
+            assert!(
+                output.frame.scene.commands().len() > 2,
+                "{glyph:?} should paint more than the button frame"
+            );
+        }
     }
 
     #[test]

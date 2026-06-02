@@ -60,11 +60,14 @@ impl Widget for Padding {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let child_size = self.child.child().measured_size();
-        self.child.arrange(
-            ctx,
-            Rect::from_origin_size(bounds.origin + self.insets.offset().to_vector(), child_size),
+        let content = inset_rect(bounds, self.insets);
+        let measured = self.child.child().measured_size();
+        let child_size = Size::new(
+            measured.width.min(content.width()),
+            measured.height.min(content.height()),
         );
+        self.child
+            .arrange(ctx, Rect::from_origin_size(content.origin, child_size));
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -283,10 +286,12 @@ impl Widget for SizedBox {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         if let Some(child) = &mut self.child {
-            child.arrange(
-                ctx,
-                Rect::from_origin_size(bounds.origin, child.child().measured_size()),
+            let measured = child.child().measured_size();
+            let child_size = Size::new(
+                measured.width.min(bounds.width()),
+                measured.height.min(bounds.height()),
             );
+            child.arrange(ctx, Rect::from_origin_size(bounds.origin, child_size));
         }
     }
 
@@ -404,7 +409,12 @@ impl Widget for Stack {
                 main_offset += self.spacing;
             }
 
-            let child_size = child.measured_size();
+            let child_size = stack_arranged_child_size(
+                self.axis,
+                self.alignment,
+                child.measured_size(),
+                cross_available,
+            );
             let cross_offset = aligned_offset(
                 self.alignment,
                 cross_available - axis_cross(self.axis, child_size),
@@ -1654,11 +1664,24 @@ impl Widget for ScrollView {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.sync_state(ctx, bounds.size);
+        let measured = self.child.child().measured_size();
+        let child_size = Size::new(
+            if self.overflow_x == Overflow::Clip {
+                bounds.width()
+            } else {
+                measured.width
+            },
+            if self.overflow_y == Overflow::Clip {
+                bounds.height()
+            } else {
+                measured.height
+            },
+        );
         self.child.arrange(
             ctx,
             Rect::from_origin_size(
                 Point::new(bounds.x() - self.offset.x, bounds.y() - self.offset.y),
-                self.child.child().measured_size(),
+                child_size,
             ),
         );
     }
@@ -2154,6 +2177,22 @@ fn axis_size(axis: Axis, main: f32, cross: f32) -> Size {
         Axis::Horizontal => Size::new(main, cross),
         Axis::Vertical => Size::new(cross, main),
     }
+}
+
+fn stack_arranged_child_size(
+    axis: Axis,
+    alignment: Alignment,
+    measured: Size,
+    cross_available: f32,
+) -> Size {
+    let main = axis_main(axis, measured);
+    let measured_cross = axis_cross(axis, measured);
+    let cross = if alignment == Alignment::Stretch {
+        cross_available
+    } else {
+        measured_cross.min(cross_available)
+    };
+    axis_size(axis, main, cross)
 }
 
 fn axis_point(axis: Axis, main: f32, cross: f32) -> Point {
@@ -2892,6 +2931,41 @@ mod tests {
         assert_eq!(constraints.max.width, 120.0);
         assert!(constraints.max.height.is_infinite());
         assert_eq!(output.frame.viewport, Size::new(120.0, 60.0));
+    }
+
+    #[test]
+    fn vertical_scroll_view_clamps_cross_axis_after_split_arrange() {
+        let (_, graph) = render_root(
+            SizedBox::new().size(Size::new(240.0, 80.0)).with_child(
+                SplitView::horizontal(
+                    FixedBox::new(Size::new(40.0, 80.0), Color::rgba(0.1, 0.2, 0.3, 1.0)),
+                    ScrollView::vertical(Padding::all(
+                        8.0,
+                        Stack::vertical()
+                            .alignment(Alignment::Stretch)
+                            .with_child(FixedBox::new(
+                                Size::new(400.0, 32.0),
+                                Color::rgba(0.4, 0.5, 0.6, 1.0),
+                            )),
+                    )),
+                )
+                .ratio(0.5)
+                .min_first(40.0)
+                .min_second(40.0)
+                .divider_thickness(8.0),
+            ),
+        );
+
+        let content = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                (node.bounds.x() - 132.0).abs() < 0.001
+                    && (node.bounds.y() - 8.0).abs() < 0.001
+                    && (node.bounds.height() - 32.0).abs() < 0.001
+            })
+            .expect("scroll content child should be arranged inside the narrow pane");
+        assert_eq!(content.bounds.width(), 100.0);
     }
 
     #[test]

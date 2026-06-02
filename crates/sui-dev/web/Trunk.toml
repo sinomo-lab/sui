@@ -11,8 +11,37 @@ no_default_features = true
 features = ["web"]
 
 [watch]
-watch = ["..", "../../", "../../../"]
-ignore = ["dist", "../../../target"]
+watch = [
+  "index.html",
+  "Trunk.toml",
+  "../Cargo.toml",
+  "../src",
+  "../../sui/Cargo.toml",
+  "../../sui/src",
+  "../../sui-core/Cargo.toml",
+  "../../sui-core/src",
+  "../../sui-layout/Cargo.toml",
+  "../../sui-layout/src",
+  "../../sui-platform/Cargo.toml",
+  "../../sui-platform/src",
+  "../../sui-render-wgpu/Cargo.toml",
+  "../../sui-render-wgpu/src",
+  "../../sui-runtime/Cargo.toml",
+  "../../sui-runtime/src",
+  "../../sui-runtime/assets",
+  "../../sui-scene/Cargo.toml",
+  "../../sui-scene/src",
+  "../../sui-text/Cargo.toml",
+  "../../sui-text/src",
+  "../../sui-text/assets",
+  "../../sui-widget-book/Cargo.toml",
+  "../../sui-widget-book/src",
+  "../../sui-widgets/Cargo.toml",
+  "../../sui-widgets/src",
+  "../../../Cargo.lock",
+  "../../../Cargo.toml",
+]
+ignore = ["dist"]
 
 [serve]
 addresses = ["127.0.0.1"]

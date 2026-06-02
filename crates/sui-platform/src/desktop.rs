@@ -263,6 +263,50 @@ impl DesktopApp {
     }
 
     #[cfg(target_arch = "wasm32")]
+    fn web_element_is_document_sizing_root(element: &web_sys::Element) -> bool {
+        matches!(
+            element.tag_name().to_ascii_lowercase().as_str(),
+            "body" | "html"
+        )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn web_find_resize_container(element: &web_sys::Element) -> Option<web_sys::Element> {
+        let mut current = Some(element.clone());
+        while let Some(candidate) = current {
+            if candidate.has_attribute("data-sui-resize-container") {
+                return Some(candidate);
+            }
+            current = candidate.parent_element();
+        }
+        None
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn web_canvas_sizing_element(canvas: &web_sys::HtmlCanvasElement) -> Option<web_sys::Element> {
+        let canvas_element = canvas.clone().dyn_into::<web_sys::Element>().ok()?;
+        if let Some(container) = Self::web_find_resize_container(&canvas_element) {
+            return Some(container);
+        }
+
+        let root = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.get_element_by_id("sui-root"));
+
+        if let Some(root) = root {
+            if let Some(parent) = root.parent_element()
+                && !Self::web_element_is_document_sizing_root(&parent)
+                && Self::web_element_logical_size(&parent).is_some()
+            {
+                return Some(parent);
+            }
+            return Some(root);
+        }
+
+        canvas.parent_element().or(Some(canvas_element))
+    }
+
+    #[cfg(target_arch = "wasm32")]
     fn web_canvas_logical_size(
         canvas: Option<&web_sys::HtmlCanvasElement>,
     ) -> Option<LogicalSize<f64>> {
@@ -274,12 +318,16 @@ impl DesktopApp {
         })?;
         let canvas_element: &web_sys::Element = canvas.as_ref();
 
-        Self::web_element_logical_size(canvas_element).or_else(|| {
-            canvas
-                .parent_element()
-                .as_ref()
-                .and_then(Self::web_element_logical_size)
-        })
+        Self::web_canvas_sizing_element(&canvas)
+            .as_ref()
+            .and_then(Self::web_element_logical_size)
+            .or_else(|| Self::web_element_logical_size(canvas_element))
+            .or_else(|| {
+                canvas
+                    .parent_element()
+                    .as_ref()
+                    .and_then(Self::web_element_logical_size)
+            })
     }
 
     #[cfg(target_arch = "wasm32")]

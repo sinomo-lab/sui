@@ -14,10 +14,14 @@ pub mod text_surface;
 pub mod theme;
 
 pub use animation::{Blink, Easing, Interpolate, Pulse, SpringF32, Transition};
-pub use canvas::{Canvas, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas};
+pub use canvas::{
+    Canvas, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas, PixelCanvasBlendMode,
+    PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool,
+};
 pub use composites::{
-    BusyIndicator, ContextMenu, Dialog, Menu, MenuItem, Modal, Popover, ProgressBar, Spinner,
-    TabBar, Tabs, Tooltip, TooltipPlacement,
+    BusyIndicator, ContextMenu, Dialog, Menu, MenuItem, Modal, PanelSection, Popover, ProgressBar,
+    PropertyRow, PropertyRowLayout, Spinner, StatusBar, StatusBarHost, StatusBarSegment, TabBar,
+    Tabs, Toolbar, Tooltip, TooltipPlacement,
 };
 pub use containers::{
     Align, Background, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox,

@@ -371,6 +371,7 @@ pub struct ColorPicker {
     alpha: f32,
     previous_color: Color,
     show_alpha: bool,
+    compact: bool,
     encoding_dropdown_open: bool,
     active: Option<ActiveChannel>,
     on_change: Option<Box<dyn FnMut(Color)>>,
@@ -379,12 +380,17 @@ pub struct ColorPicker {
 impl ColorPicker {
     const MAX_HDR_VALUE: f32 = 12.0;
     const PANEL_GAP: f32 = 14.0;
+    const COMPACT_PANEL_GAP: f32 = 10.0;
     const TOP_BAR_HEIGHT: f32 = 52.0;
+    const COMPACT_TOP_BAR_HEIGHT: f32 = 40.0;
     const WHEEL_SIZE: f32 = 166.0;
+    const COMPACT_WHEEL_SIZE: f32 = 128.0;
     const MAP_SIZE: f32 = 210.0;
+    const COMPACT_MAP_SIZE: f32 = 132.0;
     const ROW_HEIGHT: f32 = 24.0;
     const ROW_GAP: f32 = 8.0;
     const RIGHT_PANEL_WIDTH: f32 = 226.0;
+    const COMPACT_RIGHT_PANEL_WIDTH: f32 = 150.0;
     const ENCODING_MENU_ROW_HEIGHT: f32 = 28.0;
     const ENCODING_OPTIONS: [ColorSpace; 4] = [
         ColorSpace::Srgb,
@@ -409,6 +415,7 @@ impl ColorPicker {
             alpha: color.alpha,
             previous_color: color,
             show_alpha: true,
+            compact: false,
             encoding_dropdown_open: false,
             active: None,
             on_change: None,
@@ -422,6 +429,11 @@ impl ColorPicker {
 
     pub fn show_alpha(mut self, show_alpha: bool) -> Self {
         self.show_alpha = show_alpha;
+        self
+    }
+
+    pub fn compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
         self
     }
 
@@ -455,8 +467,78 @@ impl ColorPicker {
         }
     }
 
+    fn content_inset(&self) -> f32 {
+        if self.compact { 12.0 } else { 14.0 }
+    }
+
+    fn panel_gap(&self) -> f32 {
+        if self.compact {
+            Self::COMPACT_PANEL_GAP
+        } else {
+            Self::PANEL_GAP
+        }
+    }
+
+    fn top_bar_height(&self) -> f32 {
+        if self.compact {
+            Self::COMPACT_TOP_BAR_HEIGHT
+        } else {
+            Self::TOP_BAR_HEIGHT
+        }
+    }
+
+    fn swatch_width(&self) -> f32 {
+        if self.compact { 64.0 } else { 96.0 }
+    }
+
+    fn swatch_gap(&self) -> f32 {
+        if self.compact { 8.0 } else { 10.0 }
+    }
+
+    fn wheel_size(&self) -> f32 {
+        if self.compact {
+            Self::COMPACT_WHEEL_SIZE
+        } else {
+            Self::WHEEL_SIZE
+        }
+    }
+
+    fn map_size(&self) -> f32 {
+        if self.compact {
+            Self::COMPACT_MAP_SIZE
+        } else {
+            Self::MAP_SIZE
+        }
+    }
+
+    fn right_panel_width(&self) -> f32 {
+        if self.compact {
+            Self::COMPACT_RIGHT_PANEL_WIDTH
+        } else {
+            Self::RIGHT_PANEL_WIDTH
+        }
+    }
+
+    fn channel_slider_count(&self) -> usize {
+        if self.show_alpha { 4 } else { 3 }
+    }
+
+    fn desired_size(&self) -> Size {
+        let inset = self.content_inset();
+        let left_height = self.wheel_size()
+            + 14.0
+            + self.channel_slider_count() as f32 * Self::ROW_HEIGHT
+            + self.channel_slider_count().saturating_sub(1) as f32 * Self::ROW_GAP;
+        let right_height =
+            self.map_size() + 14.0 + 3.0 * Self::ROW_HEIGHT + 2.0 * Self::ROW_GAP + 12.0 + 30.0;
+        Size::new(
+            inset * 2.0 + self.wheel_size() + self.panel_gap() + self.right_panel_width(),
+            inset * 2.0 + self.top_bar_height() + self.panel_gap() + left_height.max(right_height),
+        )
+    }
+
     fn content_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, Insets::all(14.0))
+        inset_rect(bounds, Insets::all(self.content_inset()))
     }
 
     fn header_rect(&self, bounds: Rect) -> Rect {
@@ -465,24 +547,29 @@ impl ColorPicker {
             content.x(),
             content.y(),
             content.width(),
-            Self::TOP_BAR_HEIGHT,
+            self.top_bar_height(),
         )
     }
 
     fn current_swatch_rect(&self, bounds: Rect) -> Rect {
         let header = self.header_rect(bounds);
-        Rect::new(header.x(), header.y(), 96.0, header.height())
+        Rect::new(header.x(), header.y(), self.swatch_width(), header.height())
     }
 
     fn previous_swatch_rect(&self, bounds: Rect) -> Rect {
         let current = self.current_swatch_rect(bounds);
-        Rect::new(current.max_x() + 10.0, current.y(), 96.0, current.height())
+        Rect::new(
+            current.max_x() + self.swatch_gap(),
+            current.y(),
+            self.swatch_width(),
+            current.height(),
+        )
     }
 
     fn left_column_rect(&self, bounds: Rect) -> Rect {
         let content = self.content_rect(bounds);
-        let y = self.header_rect(bounds).max_y() + Self::PANEL_GAP;
-        let width = Self::WHEEL_SIZE.min(content.width());
+        let y = self.header_rect(bounds).max_y() + self.panel_gap();
+        let width = self.wheel_size().min(content.width());
         Rect::new(content.x(), y, width, content.max_y() - y)
     }
 
@@ -490,16 +577,16 @@ impl ColorPicker {
         let content = self.content_rect(bounds);
         let left = self.left_column_rect(bounds);
         Rect::new(
-            left.max_x() + Self::PANEL_GAP,
+            left.max_x() + self.panel_gap(),
             left.y(),
-            content.max_x() - (left.max_x() + Self::PANEL_GAP),
+            content.max_x() - (left.max_x() + self.panel_gap()),
             content.max_y() - left.y(),
         )
     }
 
     fn color_wheel_rect(&self, bounds: Rect) -> Rect {
         let left = self.left_column_rect(bounds);
-        Rect::new(left.x(), left.y(), Self::WHEEL_SIZE, Self::WHEEL_SIZE)
+        Rect::new(left.x(), left.y(), self.wheel_size(), self.wheel_size())
     }
 
     fn saturation_value_rect(&self, bounds: Rect) -> Rect {
@@ -507,8 +594,8 @@ impl ColorPicker {
         Rect::new(
             right.x(),
             right.y(),
-            right.width().min(Self::MAP_SIZE),
-            Self::MAP_SIZE,
+            right.width().min(self.map_size()),
+            self.map_size(),
         )
     }
 
@@ -520,7 +607,11 @@ impl ColorPicker {
 
     fn encoding_rect(&self, bounds: Rect) -> Rect {
         let header = self.header_rect(bounds);
-        let selector_x = header.x() + 96.0 + 10.0 + 96.0 + 14.0;
+        let selector_x = header.x()
+            + self.swatch_width()
+            + self.swatch_gap()
+            + self.swatch_width()
+            + self.panel_gap();
         Rect::new(
             selector_x,
             header.y() + ((header.height() - 30.0) * 0.5),
@@ -1083,9 +1174,7 @@ impl Widget for ColorPicker {
     }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let desired_width = 28.0 + Self::WHEEL_SIZE + Self::PANEL_GAP + Self::RIGHT_PANEL_WIDTH;
-        let desired = Size::new(desired_width, 448.0);
-        constraints.clamp(desired)
+        constraints.clamp(self.desired_size())
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -2133,6 +2222,25 @@ mod tests {
         assert_eq!(map.x() - wheel.max_x(), ColorPicker::PANEL_GAP);
         assert_eq!(map.width(), ColorPicker::MAP_SIZE);
         assert_eq!(map.y(), wheel.y());
+    }
+
+    #[test]
+    fn color_picker_compact_mode_uses_smaller_measurement() {
+        let regular = ColorPicker::new("Accent picker").desired_size();
+        let compact = ColorPicker::new("Accent picker")
+            .compact(true)
+            .show_alpha(false)
+            .desired_size();
+
+        assert_eq!(
+            compact.width,
+            ColorPicker::COMPACT_WHEEL_SIZE
+                + ColorPicker::COMPACT_PANEL_GAP
+                + ColorPicker::COMPACT_RIGHT_PANEL_WIDTH
+                + 24.0
+        );
+        assert!(compact.width < regular.width);
+        assert!(compact.height < regular.height);
     }
 
     #[test]

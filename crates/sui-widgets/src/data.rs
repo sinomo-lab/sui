@@ -1,6 +1,6 @@
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
-    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector,
+    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
@@ -177,6 +177,15 @@ impl ListView {
                     (index as f32 * row_height, row_height)
                 })
             })
+    }
+
+    fn visible_row_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        let viewport = self.viewport_rect(bounds);
+        let (top, row_height) = self.row_metrics(index)?;
+        let y = viewport.y() + top - self.scroll_y;
+        Rect::new(viewport.x(), y, viewport.width(), row_height)
+            .intersection(viewport)
+            .filter(|rect| !rect.is_empty())
     }
 
     fn row_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
@@ -554,7 +563,28 @@ impl Widget for ListView {
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
 
-        for item in &self.items {
+        for (index, item) in self.items.iter().enumerate() {
+            if let Some(bounds) = self.visible_row_rect(ctx.bounds(), index) {
+                let mut row = SemanticsNode::new(
+                    list_view_row_id(ctx.widget_id(), index),
+                    SemanticsRole::ListItem,
+                    bounds,
+                );
+                row.parent = Some(ctx.widget_id());
+                row.name = Some(item.label.clone());
+                row.description = item.detail.clone();
+                row.value = Some(SemanticsValue::Text(
+                    item.detail.clone().unwrap_or_else(|| item.label.clone()),
+                ));
+                row.state.disabled = item.disabled;
+                row.state.hovered = self.hovered == Some(index);
+                row.state.selected = self.selected == Some(index);
+                if !item.disabled && item.content.is_none() {
+                    row.actions = vec![SemanticsAction::Activate];
+                }
+                ctx.push(row);
+            }
+
             if let Some(content) = &item.content {
                 content.semantics(ctx);
             }
@@ -2173,6 +2203,19 @@ fn row_highlight_rect(row: Rect, viewport: Rect) -> Option<Rect> {
         .filter(|rect| !rect.is_empty())
 }
 
+fn list_view_row_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 5_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(359)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
+}
+
 fn inset_rect(rect: Rect, padding: Insets) -> Rect {
     Rect::new(
         rect.x() + padding.left,
@@ -2200,8 +2243,8 @@ mod tests {
     use crate::{Button, Label, ScrollView, SizedBox, Stack};
     use sui_core::{
         Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsRole,
-        SemanticsValue, Size, Vector,
+        PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsAction,
+        SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
     use sui_scene::{Brush, SceneCommand};
@@ -2379,7 +2422,93 @@ mod tests {
             .find(|node| node.role == SemanticsRole::List)
             .expect("list semantics present");
         assert_eq!(list.value, Some(SemanticsValue::Text("Second".to_string())));
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Second")
+            })
+            .expect("selected row semantics present");
+        assert_eq!(row.parent, Some(list.id));
+        assert!(row.state.selected);
+        assert!(row.actions.contains(&SemanticsAction::Activate));
         Ok(())
+    }
+
+    #[test]
+    fn list_view_exposes_visible_row_semantics() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(260.0).height(132.0).with_child(
+                ListView::new("Layers")
+                    .items([
+                        ListItem::new("Paint").detail("Normal / 100%"),
+                        ListItem::new("Paper").detail("Background"),
+                        ListItem::new("Locked").detail("Read only").disabled(),
+                    ])
+                    .selected(0),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let list = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::List)
+            .expect("list semantics present");
+        let rows = output
+            .semantics
+            .iter()
+            .filter(|node| node.role == SemanticsRole::ListItem)
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 3);
+        let paint = rows
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Paint"))
+            .expect("paint row semantics present");
+        assert_eq!(paint.parent, Some(list.id));
+        assert_eq!(paint.description.as_deref(), Some("Normal / 100%"));
+        assert_eq!(
+            paint.value,
+            Some(SemanticsValue::Text("Normal / 100%".to_string()))
+        );
+        assert!(paint.state.selected);
+        assert!(!paint.state.disabled);
+        assert!(paint.actions.contains(&SemanticsAction::Activate));
+
+        let paper = rows
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Paper"))
+            .expect("paper row semantics present");
+        assert_eq!(paper.parent, Some(list.id));
+        assert_eq!(paper.description.as_deref(), Some("Background"));
+        assert_eq!(
+            paper.value,
+            Some(SemanticsValue::Text("Background".to_string()))
+        );
+        assert!(!paper.state.selected);
+
+        let locked = rows
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Locked"))
+            .expect("locked row semantics present");
+        assert!(locked.state.disabled);
+        assert!(locked.actions.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn list_view_row_ids_are_javascript_safe_and_distinct() {
+        let parent = WidgetId::new(402);
+        let mut ids = (0..8)
+            .map(|index| super::list_view_row_id(parent, index).get())
+            .collect::<Vec<_>>();
+
+        assert!(ids.iter().all(|id| *id <= ((1_u64 << 53) - 1)));
+        assert!(ids.iter().all(|id| *id != parent.get()));
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 8);
     }
 
     #[test]

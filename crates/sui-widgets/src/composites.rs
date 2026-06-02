@@ -5,7 +5,7 @@ use sui_core::{
     PathBuilder, Point, PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode,
     SemanticsRole, SemanticsState, SemanticsValue, Size, TimerToken, Vector, WakeEvent, WidgetId,
 };
-use sui_layout::{Constraints, Padding as Insets};
+use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_runtime::{
     ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
     SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor,
@@ -126,6 +126,1052 @@ fn menu_item_semantics_node(
         node.actions = vec![SemanticsAction::Activate];
     }
     node
+}
+
+const TOOLBAR_EXTENT: f32 = 52.0;
+const TOOLBAR_PADDING: f32 = 8.0;
+const TOOLBAR_SPACING: f32 = 8.0;
+
+pub struct Toolbar {
+    theme: Box<DefaultTheme>,
+    axis: Axis,
+    name: Option<String>,
+    extent: f32,
+    padding: Insets,
+    spacing: f32,
+    background: Option<Color>,
+    divider: bool,
+    children: WidgetChildren,
+}
+
+impl Toolbar {
+    pub fn horizontal() -> Self {
+        Self::new(Axis::Horizontal)
+    }
+
+    pub fn vertical() -> Self {
+        Self::new(Axis::Vertical)
+    }
+
+    pub fn new(axis: Axis) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            axis,
+            name: None,
+            extent: TOOLBAR_EXTENT,
+            padding: Insets::all(TOOLBAR_PADDING),
+            spacing: TOOLBAR_SPACING,
+            background: None,
+            divider: true,
+            children: WidgetChildren::new(),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn extent(mut self, extent: f32) -> Self {
+        self.extent = extent.max(0.0);
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing.max(0.0);
+        self
+    }
+
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self
+    }
+
+    pub fn divider(mut self, divider: bool) -> Self {
+        self.divider = divider;
+        self
+    }
+
+    pub fn with_child<W>(mut self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self
+    }
+
+    pub fn push<W>(&mut self, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+    }
+
+    pub fn children(&self) -> &[sui_runtime::WidgetPod] {
+        self.children.as_slice()
+    }
+
+    pub fn children_mut(&mut self) -> &mut [sui_runtime::WidgetPod] {
+        self.children.as_mut_slice()
+    }
+
+    fn content_bounds(&self, bounds: Rect) -> Rect {
+        Rect::new(
+            bounds.x() + self.padding.left,
+            bounds.y() + self.padding.top,
+            (bounds.width() - self.padding.left - self.padding.right).max(0.0),
+            (bounds.height() - self.padding.top - self.padding.bottom).max(0.0),
+        )
+    }
+}
+
+impl Default for Toolbar {
+    fn default() -> Self {
+        Self::horizontal()
+    }
+}
+
+impl Widget for Toolbar {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let content_cross = match self.axis {
+            Axis::Horizontal => (self.extent - self.padding.top - self.padding.bottom).max(0.0),
+            Axis::Vertical => (self.extent - self.padding.left - self.padding.right).max(0.0),
+        };
+        let child_constraints = match self.axis {
+            Axis::Horizontal => {
+                Constraints::new(Size::ZERO, Size::new(f32::INFINITY, content_cross))
+            }
+            Axis::Vertical => Constraints::new(Size::ZERO, Size::new(content_cross, f32::INFINITY)),
+        };
+
+        let mut main: f32 = 0.0;
+        let mut cross: f32 = 0.0;
+        for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
+            let child_size = child.measure(ctx, child_constraints);
+            if index > 0 {
+                main += self.spacing;
+            }
+            main += toolbar_main(self.axis, child_size);
+            cross = cross.max(toolbar_cross(self.axis, child_size));
+        }
+
+        let natural = match self.axis {
+            Axis::Horizontal => Size::new(
+                main + self.padding.left + self.padding.right,
+                self.extent
+                    .max(cross + self.padding.top + self.padding.bottom),
+            ),
+            Axis::Vertical => Size::new(
+                self.extent
+                    .max(cross + self.padding.left + self.padding.right),
+                main + self.padding.top + self.padding.bottom,
+            ),
+        };
+        let filled = match self.axis {
+            Axis::Horizontal => Size::new(
+                if constraints.max.width.is_finite() {
+                    constraints.max.width
+                } else {
+                    natural.width
+                },
+                self.extent,
+            ),
+            Axis::Vertical => Size::new(
+                self.extent,
+                if constraints.max.height.is_finite() {
+                    constraints.max.height
+                } else {
+                    natural.height
+                },
+            ),
+        };
+
+        constraints.clamp(filled)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let content = self.content_bounds(bounds);
+        let content_main = toolbar_main(self.axis, content.size);
+        let content_cross = toolbar_cross(self.axis, content.size);
+        let mut main_offset = 0.0;
+
+        for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
+            if index > 0 {
+                main_offset += self.spacing;
+            }
+
+            let measured = child.measured_size();
+            let remaining = (content_main - main_offset).max(0.0);
+            let child_main = toolbar_main(self.axis, measured).min(remaining);
+            let child_cross = toolbar_cross(self.axis, measured).min(content_cross);
+            let cross_offset = ((content_cross - child_cross) * 0.5).max(0.0);
+            let origin = match self.axis {
+                Axis::Horizontal => {
+                    Point::new(content.x() + main_offset, content.y() + cross_offset)
+                }
+                Axis::Vertical => Point::new(content.x() + cross_offset, content.y() + main_offset),
+            };
+            child.arrange(
+                ctx,
+                Rect::from_origin_size(origin, toolbar_size(self.axis, child_main, child_cross)),
+            );
+            main_offset += child_main;
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = self.theme.palette;
+        let bounds = ctx.bounds();
+        ctx.fill_bounds(self.background.unwrap_or(palette.surface));
+        if self.divider {
+            let divider = match self.axis {
+                Axis::Horizontal => {
+                    Rect::new(bounds.x(), bounds.max_y() - 1.0, bounds.width(), 1.0)
+                }
+                Axis::Vertical => Rect::new(bounds.max_x() - 1.0, bounds.y(), 1.0, bounds.height()),
+            };
+            ctx.stroke_rect(
+                divider,
+                palette.border.with_alpha(0.85),
+                StrokeStyle::new(1.0),
+            );
+        }
+        self.children.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if let Some(name) = &self.name {
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
+            node.name = Some(name.clone());
+            ctx.push(node);
+        }
+        self.children.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.children.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.children.visit_children_mut(visitor);
+    }
+}
+
+fn toolbar_main(axis: Axis, size: Size) -> f32 {
+    match axis {
+        Axis::Horizontal => size.width,
+        Axis::Vertical => size.height,
+    }
+}
+
+fn toolbar_cross(axis: Axis, size: Size) -> f32 {
+    match axis {
+        Axis::Horizontal => size.height,
+        Axis::Vertical => size.width,
+    }
+}
+
+fn toolbar_size(axis: Axis, main: f32, cross: f32) -> Size {
+    match axis {
+        Axis::Horizontal => Size::new(main, cross),
+        Axis::Vertical => Size::new(cross, main),
+    }
+}
+
+const PROPERTY_ROW_LABEL_WIDTH: f32 = 112.0;
+const PROPERTY_ROW_GAP: f32 = 8.0;
+const PROPERTY_ROW_STACKED_GAP: f32 = 6.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropertyRowLayout {
+    Stacked,
+    Inline,
+}
+
+pub struct PropertyRow {
+    theme: Box<DefaultTheme>,
+    label: String,
+    layout: PropertyRowLayout,
+    label_width: f32,
+    control_width: Option<f32>,
+    gap: f32,
+    label_style: Option<TextStyle>,
+    child: SingleChild,
+    label_measurement: Option<TextMeasurement>,
+}
+
+impl PropertyRow {
+    pub fn new<W>(label: impl Into<String>, control: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            label: label.into(),
+            layout: PropertyRowLayout::Stacked,
+            label_width: PROPERTY_ROW_LABEL_WIDTH,
+            control_width: None,
+            gap: PROPERTY_ROW_STACKED_GAP,
+            label_style: None,
+            child: SingleChild::new(control),
+            label_measurement: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn layout(mut self, layout: PropertyRowLayout) -> Self {
+        self.layout = layout;
+        if matches!(layout, PropertyRowLayout::Inline) && self.gap == PROPERTY_ROW_STACKED_GAP {
+            self.gap = PROPERTY_ROW_GAP;
+        }
+        self
+    }
+
+    pub fn stacked(self) -> Self {
+        self.layout(PropertyRowLayout::Stacked)
+    }
+
+    pub fn inline(self) -> Self {
+        self.layout(PropertyRowLayout::Inline)
+    }
+
+    pub fn label_width(mut self, width: f32) -> Self {
+        self.label_width = width.max(0.0);
+        self
+    }
+
+    pub fn control_width(mut self, width: f32) -> Self {
+        self.control_width = Some(width.max(0.0));
+        self
+    }
+
+    pub fn auto_control_width(mut self) -> Self {
+        self.control_width = None;
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = gap.max(0.0);
+        self
+    }
+
+    pub fn label_style(mut self, style: TextStyle) -> Self {
+        self.label_style = Some(style);
+        self
+    }
+
+    pub fn child(&self) -> &sui_runtime::WidgetPod {
+        self.child.child()
+    }
+
+    pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {
+        self.child.child_mut()
+    }
+
+    fn resolved_label_style(&self) -> TextStyle {
+        self.label_style.clone().unwrap_or_else(|| TextStyle {
+            font_size: 13.0,
+            line_height: 18.0,
+            color: Color::rgba(0.20, 0.27, 0.35, 1.0),
+            ..self.theme.body_text_style()
+        })
+    }
+
+    fn label_height(&self, style: &TextStyle) -> f32 {
+        self.label_measurement
+            .map(|measurement| measurement.height)
+            .unwrap_or(style.line_height)
+            .max(style.line_height)
+    }
+
+    fn child_constraints(&self, constraints: Constraints, label_extent: f32) -> Constraints {
+        let max_width = constraints.max.width;
+        let available = match self.layout {
+            PropertyRowLayout::Stacked => max_width,
+            PropertyRowLayout::Inline => {
+                if max_width.is_finite() {
+                    (max_width - label_extent - self.gap).max(0.0)
+                } else {
+                    f32::INFINITY
+                }
+            }
+        };
+        let width = self
+            .control_width
+            .map(|width| width.min(available).max(0.0));
+
+        match width {
+            Some(width) => Constraints::new(
+                Size::new(width, 0.0),
+                Size::new(width, constraints.max.height),
+            ),
+            None => Constraints::new(Size::ZERO, Size::new(available, constraints.max.height)),
+        }
+    }
+
+    fn child_width_for_bounds(&self, bounds: Rect, label_extent: f32) -> f32 {
+        let available = match self.layout {
+            PropertyRowLayout::Stacked => bounds.width(),
+            PropertyRowLayout::Inline => (bounds.width() - label_extent - self.gap).max(0.0),
+        };
+        self.control_width
+            .unwrap_or(available)
+            .min(available)
+            .max(0.0)
+    }
+}
+
+impl Widget for PropertyRow {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let label_style = self.resolved_label_style();
+        let label_measurement = measure_text(ctx, &self.label, &label_style);
+        self.label_measurement = Some(label_measurement);
+        let label_height = self.label_height(&label_style);
+        let label_extent = match self.layout {
+            PropertyRowLayout::Stacked => label_measurement.width,
+            PropertyRowLayout::Inline => self.label_width.max(label_measurement.width),
+        };
+        let child_size = self
+            .child
+            .measure(ctx, self.child_constraints(constraints, label_extent));
+        let natural = match self.layout {
+            PropertyRowLayout::Stacked => Size::new(
+                label_measurement.width.max(child_size.width),
+                label_height + self.gap + child_size.height,
+            ),
+            PropertyRowLayout::Inline => Size::new(
+                label_extent + self.gap + child_size.width,
+                label_height.max(child_size.height),
+            ),
+        };
+
+        constraints.clamp(natural)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let label_style = self.resolved_label_style();
+        let label_height = self.label_height(&label_style);
+        let label_width = match self.layout {
+            PropertyRowLayout::Stacked => bounds.width(),
+            PropertyRowLayout::Inline => self.label_width.min(bounds.width()).max(0.0),
+        };
+        let child_measured = self.child.child().measured_size();
+        let child_width = self.child_width_for_bounds(bounds, label_width);
+        let child_height = child_measured.height.min(bounds.height()).max(0.0);
+
+        let child_bounds = match self.layout {
+            PropertyRowLayout::Stacked => Rect::new(
+                bounds.x(),
+                bounds.y() + label_height + self.gap,
+                child_width,
+                child_height.min((bounds.height() - label_height - self.gap).max(0.0)),
+            ),
+            PropertyRowLayout::Inline => Rect::new(
+                bounds.x() + label_width + self.gap,
+                bounds.y() + ((bounds.height() - child_height) * 0.5).max(0.0),
+                child_width,
+                child_height,
+            ),
+        };
+        self.child.arrange(ctx, child_bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let label_style = self.resolved_label_style();
+        let label_height = self.label_height(&label_style);
+        let bounds = ctx.bounds();
+        let label_rect = match self.layout {
+            PropertyRowLayout::Stacked => {
+                Rect::new(bounds.x(), bounds.y(), bounds.width(), label_height)
+            }
+            PropertyRowLayout::Inline => Rect::new(
+                bounds.x(),
+                bounds.y() + ((bounds.height() - label_height) * 0.5).max(0.0),
+                self.label_width.min(bounds.width()).max(0.0),
+                label_height,
+            ),
+        };
+        ctx.push_clip_rect(label_rect);
+        ctx.draw_text(label_rect, self.label.clone(), label_style);
+        ctx.pop_clip();
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut row = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        row.name = Some(self.label.clone());
+        ctx.push(row);
+
+        let label_style = self.resolved_label_style();
+        let label_height = self.label_height(&label_style);
+        let label_bounds = match self.layout {
+            PropertyRowLayout::Stacked => Rect::new(
+                ctx.bounds().x(),
+                ctx.bounds().y(),
+                ctx.bounds().width(),
+                label_height,
+            ),
+            PropertyRowLayout::Inline => Rect::new(
+                ctx.bounds().x(),
+                ctx.bounds().y() + ((ctx.bounds().height() - label_height) * 0.5).max(0.0),
+                self.label_width.min(ctx.bounds().width()).max(0.0),
+                label_height,
+            ),
+        };
+        let mut label = SemanticsNode::new(
+            property_row_label_id(ctx.widget_id()),
+            SemanticsRole::Text,
+            label_bounds,
+        );
+        label.parent = Some(ctx.widget_id());
+        label.name = Some(self.label.clone());
+        label.value = Some(SemanticsValue::Text(self.label.clone()));
+        ctx.push(label);
+
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+fn property_row_label_id(parent: WidgetId) -> WidgetId {
+    const TAG: u64 = 1_u64 << 51;
+    const LOW_MASK: u64 = (1_u64 << 51) - 1;
+
+    WidgetId::new(TAG | (parent.get().wrapping_mul(271).wrapping_add(1) & LOW_MASK))
+}
+
+const PANEL_SECTION_GAP: f32 = 8.0;
+
+pub struct PanelSection {
+    theme: Box<DefaultTheme>,
+    title: String,
+    gap: f32,
+    title_style: Option<TextStyle>,
+    child: SingleChild,
+    title_measurement: Option<TextMeasurement>,
+}
+
+impl PanelSection {
+    pub fn new<W>(title: impl Into<String>, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            title: title.into(),
+            gap: PANEL_SECTION_GAP,
+            title_style: None,
+            child: SingleChild::new(child),
+            title_measurement: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = gap.max(0.0);
+        self
+    }
+
+    pub fn title_style(mut self, style: TextStyle) -> Self {
+        self.title_style = Some(style);
+        self
+    }
+
+    pub fn child(&self) -> &sui_runtime::WidgetPod {
+        self.child.child()
+    }
+
+    pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {
+        self.child.child_mut()
+    }
+
+    fn resolved_title_style(&self) -> TextStyle {
+        self.title_style.clone().unwrap_or_else(|| TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: Color::rgba(0.31, 0.37, 0.45, 1.0),
+            ..self.theme.body_text_style()
+        })
+    }
+
+    fn title_height(&self, style: &TextStyle) -> f32 {
+        self.title_measurement
+            .map(|measurement| measurement.height)
+            .unwrap_or(style.line_height)
+            .max(style.line_height)
+    }
+}
+
+impl Widget for PanelSection {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let title_style = self.resolved_title_style();
+        let title_measurement = measure_text(ctx, &self.title, &title_style);
+        self.title_measurement = Some(title_measurement);
+        let title_height = self.title_height(&title_style);
+        let child_size = self.child.measure(ctx, constraints);
+        let natural = Size::new(
+            title_measurement.width.max(child_size.width),
+            title_height + self.gap + child_size.height,
+        );
+
+        constraints.clamp(natural)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let title_style = self.resolved_title_style();
+        let title_height = self.title_height(&title_style);
+        let child_size = self.child.child().measured_size();
+        let child_height = child_size
+            .height
+            .min((bounds.height() - title_height - self.gap).max(0.0));
+        self.child.arrange(
+            ctx,
+            Rect::new(
+                bounds.x(),
+                bounds.y() + title_height + self.gap,
+                bounds.width().min(child_size.width).max(0.0),
+                child_height,
+            ),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let title_style = self.resolved_title_style();
+        let title_height = self.title_height(&title_style);
+        let title_rect = Rect::new(
+            ctx.bounds().x(),
+            ctx.bounds().y(),
+            ctx.bounds().width(),
+            title_height,
+        );
+        ctx.push_clip_rect(title_rect);
+        ctx.draw_text(title_rect, self.title.clone(), title_style);
+        ctx.pop_clip();
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut section = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        section.name = Some(self.title.clone());
+        ctx.push(section);
+
+        let title_style = self.resolved_title_style();
+        let title_height = self.title_height(&title_style);
+        let mut title = SemanticsNode::new(
+            panel_section_title_id(ctx.widget_id()),
+            SemanticsRole::Text,
+            Rect::new(
+                ctx.bounds().x(),
+                ctx.bounds().y(),
+                ctx.bounds().width(),
+                title_height,
+            ),
+        );
+        title.parent = Some(ctx.widget_id());
+        title.name = Some(self.title.clone());
+        title.value = Some(SemanticsValue::Text(self.title.clone()));
+        ctx.push(title);
+
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+fn panel_section_title_id(parent: WidgetId) -> WidgetId {
+    const TAG: u64 = 3_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(TAG | (parent.get().wrapping_mul(431).wrapping_add(7) & LOW_MASK))
+}
+
+const STATUS_BAR_HEIGHT: f32 = 28.0;
+const STATUS_BAR_SEGMENT_PADDING: f32 = 10.0;
+const STATUS_BAR_SEGMENT_MIN_WIDTH: f32 = 86.0;
+
+pub struct StatusBarSegment {
+    text: String,
+    reader: Option<Box<dyn Fn() -> String>>,
+    min_width: f32,
+    expand: bool,
+}
+
+impl StatusBarSegment {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            reader: None,
+            min_width: STATUS_BAR_SEGMENT_MIN_WIDTH,
+            expand: false,
+        }
+    }
+
+    pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        Self {
+            text: fallback.into(),
+            reader: Some(Box::new(reader)),
+            min_width: STATUS_BAR_SEGMENT_MIN_WIDTH,
+            expand: false,
+        }
+    }
+
+    pub fn min_width(mut self, min_width: f32) -> Self {
+        self.min_width = min_width.max(0.0);
+        self
+    }
+
+    pub fn expand(mut self, expand: bool) -> Self {
+        self.expand = expand;
+        self
+    }
+
+    fn text(&self) -> String {
+        self.reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.text.clone())
+    }
+}
+
+pub struct StatusBar {
+    theme: Box<DefaultTheme>,
+    name: Option<String>,
+    height: f32,
+    segments: Vec<StatusBarSegment>,
+}
+
+impl StatusBar {
+    pub fn new() -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            name: None,
+            height: STATUS_BAR_HEIGHT,
+            segments: Vec::new(),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = height.max(18.0);
+        self
+    }
+
+    pub fn segment(mut self, segment: StatusBarSegment) -> Self {
+        self.segments.push(segment);
+        self
+    }
+
+    pub fn text_segment(self, text: impl Into<String>) -> Self {
+        self.segment(StatusBarSegment::new(text))
+    }
+
+    pub fn dynamic_segment<F>(self, fallback: impl Into<String>, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.segment(StatusBarSegment::dynamic(fallback, reader))
+    }
+
+    fn segment_rects(&self, bounds: Rect) -> Vec<Rect> {
+        let mut widths: Vec<f32> = self
+            .segments
+            .iter()
+            .map(|segment| segment.min_width)
+            .collect();
+        let expandable = self
+            .segments
+            .iter()
+            .filter(|segment| segment.expand)
+            .count();
+        if expandable > 0 {
+            let fixed: f32 = widths.iter().sum();
+            let extra = (bounds.width() - fixed).max(0.0) / expandable as f32;
+            for (index, segment) in self.segments.iter().enumerate() {
+                if segment.expand {
+                    widths[index] += extra;
+                }
+            }
+        }
+
+        let mut x = bounds.x();
+        widths
+            .into_iter()
+            .map(|width| {
+                let available = (bounds.max_x() - x).max(0.0);
+                let rect = Rect::new(x, bounds.y(), width.min(available), bounds.height());
+                x = rect.max_x();
+                rect
+            })
+            .collect()
+    }
+}
+
+impl Default for StatusBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct StatusBarHost {
+    content: SingleChild,
+    status_bar: SingleChild,
+}
+
+impl StatusBarHost {
+    pub fn new<C, S>(content: C, status_bar: S) -> Self
+    where
+        C: Widget + 'static,
+        S: Widget + 'static,
+    {
+        Self {
+            content: SingleChild::new(content),
+            status_bar: SingleChild::new(status_bar),
+        }
+    }
+
+    pub fn content(&self) -> &sui_runtime::WidgetPod {
+        self.content.child()
+    }
+
+    pub fn content_mut(&mut self) -> &mut sui_runtime::WidgetPod {
+        self.content.child_mut()
+    }
+
+    pub fn status_bar(&self) -> &sui_runtime::WidgetPod {
+        self.status_bar.child()
+    }
+
+    pub fn status_bar_mut(&mut self) -> &mut sui_runtime::WidgetPod {
+        self.status_bar.child_mut()
+    }
+}
+
+impl Widget for StatusBarHost {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let max = constraints.max;
+        let status_size = self.status_bar.measure(
+            ctx,
+            Constraints::new(Size::ZERO, Size::new(max.width, max.height)),
+        );
+        let content_max_height = if max.height.is_finite() {
+            (max.height - status_size.height).max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        let content_size = self.content.measure(
+            ctx,
+            Constraints::new(Size::ZERO, Size::new(max.width, content_max_height)),
+        );
+
+        constraints.clamp(Size::new(
+            content_size.width.max(status_size.width),
+            content_size.height + status_size.height,
+        ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let status_height = self
+            .status_bar
+            .child()
+            .measured_size()
+            .height
+            .min(bounds.height())
+            .max(0.0);
+        let content_height = (bounds.height() - status_height).max(0.0);
+
+        self.content.arrange(
+            ctx,
+            Rect::new(bounds.x(), bounds.y(), bounds.width(), content_height),
+        );
+        self.status_bar.arrange(
+            ctx,
+            Rect::new(
+                bounds.x(),
+                bounds.y() + content_height,
+                bounds.width(),
+                status_height,
+            ),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.content.paint(ctx);
+        self.status_bar.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.content.semantics(ctx);
+        self.status_bar.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.content.visit_children(visitor);
+        self.status_bar.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.content.visit_children_mut(visitor);
+        self.status_bar.visit_children_mut(visitor);
+    }
+}
+
+impl Widget for StatusBar {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let natural_width: f32 = self.segments.iter().map(|segment| segment.min_width).sum();
+        constraints.clamp(Size::new(
+            if constraints.max.width.is_finite() {
+                constraints.max.width
+            } else {
+                natural_width
+            },
+            self.height,
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = self.theme.palette;
+        let bounds = ctx.bounds();
+        ctx.fill_bounds(palette.surface);
+        ctx.stroke_rect(
+            Rect::new(bounds.x(), bounds.y(), bounds.width(), 1.0),
+            palette.border,
+            StrokeStyle::new(self.theme.metrics.border_width.max(1.0)),
+        );
+
+        let text_style = TextStyle {
+            font_size: 12.0,
+            line_height: 18.0,
+            color: palette.placeholder,
+            ..self.theme.body_text_style()
+        };
+        for (index, (segment, rect)) in self
+            .segments
+            .iter()
+            .zip(self.segment_rects(bounds))
+            .enumerate()
+        {
+            if rect.is_empty() {
+                continue;
+            }
+            if index > 0 {
+                ctx.stroke_rect(
+                    Rect::new(
+                        rect.x(),
+                        rect.y() + 6.0,
+                        1.0,
+                        (rect.height() - 12.0).max(0.0),
+                    ),
+                    palette.border.with_alpha(0.7),
+                    StrokeStyle::new(1.0),
+                );
+            }
+            let text_rect = Rect::new(
+                rect.x() + STATUS_BAR_SEGMENT_PADDING,
+                rect.y() + ((rect.height() - text_style.line_height) * 0.5),
+                (rect.width() - STATUS_BAR_SEGMENT_PADDING * 2.0).max(0.0),
+                text_style.line_height,
+            );
+            ctx.push_clip_rect(text_rect);
+            ctx.draw_text(text_rect, segment.text(), text_style.clone());
+            ctx.pop_clip();
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = self.name.clone();
+        ctx.push(node);
+
+        for (index, (segment, rect)) in self
+            .segments
+            .iter()
+            .zip(self.segment_rects(ctx.bounds()))
+            .enumerate()
+        {
+            let text = segment.text();
+            let mut child = SemanticsNode::new(
+                status_bar_segment_id(ctx.widget_id(), index),
+                SemanticsRole::Text,
+                rect,
+            );
+            child.parent = Some(ctx.widget_id());
+            child.name = Some(text.clone());
+            child.value = Some(SemanticsValue::Text(text));
+            ctx.push(child);
+        }
+    }
+}
+
+fn status_bar_segment_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 2_u64 << 51;
+    const LOW_MASK: u64 = (1_u64 << 51) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(263)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
 }
 
 pub struct TabBar {
@@ -3412,8 +4458,9 @@ mod tests {
 
     use super::Tabs;
     use super::{
-        ContextMenu, Dialog, MENU_VERTICAL_PADDING, Menu, MenuItem, Popover, ProgressBar, Spinner,
-        TabBar,
+        ContextMenu, Dialog, MENU_VERTICAL_PADDING, Menu, MenuItem, PanelSection, Popover,
+        ProgressBar, PropertyRow, PropertyRowLayout, Spinner, StatusBar, StatusBarHost,
+        StatusBarSegment, TabBar, Toolbar,
     };
     use crate::FloatingStack;
     use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken};
@@ -3447,6 +4494,272 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).unwrap()
+    }
+
+    #[test]
+    fn status_bar_exposes_dynamic_segment_semantics() {
+        let zoom = Rc::new(RefCell::new("Zoom 35%".to_string()));
+        let zoom_reader = Rc::clone(&zoom);
+        let output = render(
+            StatusBar::new()
+                .name("Editor status")
+                .segment(StatusBarSegment::new("Ready").min_width(80.0))
+                .segment(
+                    StatusBarSegment::dynamic("Zoom --", move || zoom_reader.borrow().clone())
+                        .min_width(120.0),
+                ),
+        );
+
+        let status = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Editor status")
+            })
+            .expect("status bar container semantics should exist");
+        assert_eq!(status.bounds.height(), 28.0);
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Zoom 35%")
+        }));
+    }
+
+    #[test]
+    fn horizontal_toolbar_centers_children_and_exposes_group_semantics() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 52.0))
+                .with_child(
+                    Toolbar::horizontal()
+                        .name("Editor toolbar")
+                        .with_child(crate::Button::new("Fit").min_width(48.0).min_height(32.0))
+                        .with_child(
+                            crate::Button::new("Export")
+                                .min_width(72.0)
+                                .min_height(32.0),
+                        ),
+                ),
+        );
+
+        let toolbar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Editor toolbar")
+            })
+            .expect("toolbar semantics should exist");
+        assert_eq!(toolbar.bounds, Rect::new(0.0, 0.0, 320.0, 52.0));
+
+        let fit = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some("Fit"))
+            .expect("toolbar child button should exist");
+        assert!(fit.bounds.y() > 0.0);
+        assert!(fit.bounds.max_y() < toolbar.bounds.max_y());
+    }
+
+    #[test]
+    fn vertical_toolbar_uses_fixed_extent_and_centers_children() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(80.0, 180.0))
+                .with_child(
+                    Toolbar::vertical()
+                        .name("Paint tools")
+                        .extent(60.0)
+                        .with_child(
+                            crate::IconButton::new(crate::IconGlyph::Brush, "Brush tool")
+                                .size(44.0),
+                        )
+                        .with_child(
+                            crate::IconButton::new(crate::IconGlyph::Eraser, "Eraser tool")
+                                .size(44.0),
+                        ),
+                ),
+        );
+
+        let toolbar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Paint tools")
+            })
+            .expect("vertical toolbar semantics should exist");
+        assert_eq!(toolbar.bounds, Rect::new(0.0, 0.0, 80.0, 180.0));
+
+        let brush = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Brush tool")
+            })
+            .expect("toolbar child button should exist");
+        assert_eq!(brush.bounds.width(), 44.0);
+        assert!((brush.bounds.x() - 18.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn property_row_stacked_exposes_label_and_control_semantics() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 72.0))
+                .with_child(
+                    PropertyRow::new("Brush size", crate::NumberInput::new("Brush size"))
+                        .control_width(120.0),
+                ),
+        );
+
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Brush size")
+            })
+            .expect("property row semantics should exist");
+        assert_eq!(row.bounds, Rect::new(0.0, 0.0, 320.0, 72.0));
+
+        let label = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Brush size")
+            })
+            .expect("property label semantics should exist");
+        let control = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::SpinBox && node.name.as_deref() == Some("Brush size")
+            })
+            .expect("property control semantics should exist");
+        assert_eq!(control.bounds.width(), 120.0);
+        assert!(control.bounds.y() > label.bounds.y());
+    }
+
+    #[test]
+    fn property_row_inline_arranges_control_after_label() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 36.0))
+                .with_child(
+                    PropertyRow::new("Opacity", crate::Slider::new("Opacity"))
+                        .layout(PropertyRowLayout::Inline)
+                        .label_width(96.0),
+                ),
+        );
+
+        let label = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Opacity")
+            })
+            .expect("inline property label semantics should exist");
+        let control = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider && node.name.as_deref() == Some("Opacity")
+            })
+            .expect("inline property control semantics should exist");
+        assert!(control.bounds.x() > label.bounds.max_x());
+        assert_eq!(control.bounds.width(), 216.0);
+    }
+
+    #[test]
+    fn property_row_label_id_is_javascript_safe() {
+        let id = super::property_row_label_id(WidgetId::new(402)).get();
+
+        assert!(id < (1_u64 << 53));
+    }
+
+    #[test]
+    fn panel_section_exposes_group_title_and_child_semantics() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 92.0))
+                .with_child(PanelSection::new("Brush", crate::Label::new("Opacity"))),
+        );
+
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Brush")
+            })
+            .expect("panel section group semantics should exist");
+        let title = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.parent == Some(section.id)
+                    && node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Brush")
+            })
+            .expect("panel section title semantics should exist");
+        let child = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Opacity")
+            })
+            .expect("panel section child semantics should exist");
+
+        assert!(child.bounds.y() > title.bounds.max_y());
+    }
+
+    #[test]
+    fn panel_section_title_id_is_javascript_safe() {
+        let id = super::panel_section_title_id(WidgetId::new(402)).get();
+
+        assert!(id < (1_u64 << 53));
+    }
+
+    #[test]
+    fn status_bar_host_reserves_footer_height() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 160.0))
+                .with_child(StatusBarHost::new(
+                    crate::Label::new("Canvas content"),
+                    StatusBar::new()
+                        .name("Editor status")
+                        .segment(StatusBarSegment::new("Ready").min_width(80.0)),
+                )),
+        );
+
+        let status = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Editor status")
+            })
+            .expect("status bar container semantics should exist");
+
+        assert_eq!(status.bounds, Rect::new(0.0, 132.0, 320.0, 28.0));
+    }
+
+    #[test]
+    fn status_bar_segment_ids_are_javascript_safe_and_distinct() {
+        let parent = WidgetId::new(402);
+        let ids = (0..6)
+            .map(|index| super::status_bar_segment_id(parent, index).get())
+            .collect::<Vec<_>>();
+
+        for id in &ids {
+            assert!(*id < (1_u64 << 53));
+        }
+        for (left_index, left) in ids.iter().enumerate() {
+            for right in ids.iter().skip(left_index + 1) {
+                assert_ne!(left, right);
+            }
+        }
     }
 
     fn first_text_run(output: &RenderOutput) -> sui_text::TextRun {

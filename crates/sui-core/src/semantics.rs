@@ -7,6 +7,7 @@ pub enum SemanticsRole {
     GenericContainer,
     Separator,
     List,
+    ListItem,
     Tree,
     Table,
     Splitter,

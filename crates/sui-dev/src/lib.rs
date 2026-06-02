@@ -1,4 +1,5 @@
 mod app;
+mod paint_demo;
 
 #[cfg(not(target_arch = "wasm32"))]
 use app::{DesktopAutomationMode, build_dev_application_with_automation};
@@ -34,7 +35,7 @@ use ratatui::{
         Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap, block::Title,
     },
 };
-use sui::{Application, Rect};
+use sui::Application;
 #[cfg(not(target_arch = "wasm32"))]
 use sui::{
     DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, SceneStatisticsDetailMode,
@@ -2131,6 +2132,7 @@ fn tui_spatial_map_node(node: &SemanticsNode, selected_id: Option<sui::WidgetId>
                 | SemanticsRole::Root
                 | SemanticsRole::Separator
                 | SemanticsRole::List
+                | SemanticsRole::ListItem
                 | SemanticsRole::Tree
                 | SemanticsRole::Table
                 | SemanticsRole::Splitter
@@ -2178,6 +2180,7 @@ fn tui_label_node(node: &SemanticsNode) -> bool {
                 | SemanticsRole::Root
                 | SemanticsRole::Splitter
                 | SemanticsRole::List
+                | SemanticsRole::ListItem
                 | SemanticsRole::Dialog
                 | SemanticsRole::Popover
                 | SemanticsRole::ScrollView
@@ -2266,6 +2269,7 @@ fn tui_range_fill_width(node: &SemanticsNode, width: u16) -> u16 {
 fn tui_compact_label(node: &SemanticsNode) -> String {
     let role = match node.role {
         SemanticsRole::GenericContainer => "Group",
+        SemanticsRole::ListItem => "Item",
         SemanticsRole::TextInput => "Input",
         SemanticsRole::ScrollView => "Scroll",
         SemanticsRole::Splitter => "Split",
@@ -2366,6 +2370,7 @@ fn tui_role_label(role: &SemanticsRole) -> &'static str {
         SemanticsRole::GenericContainer => "Group",
         SemanticsRole::Separator => "Separator",
         SemanticsRole::List => "List",
+        SemanticsRole::ListItem => "ListItem",
         SemanticsRole::Tree => "Tree",
         SemanticsRole::Table => "Table",
         SemanticsRole::Splitter => "Splitter",
@@ -2620,6 +2625,7 @@ enum WebCanvasToneMappingPreference {
 #[derive(Debug, Clone, PartialEq)]
 struct WebLaunchMode {
     benchmark: Option<WebBenchmarkKind>,
+    dev_initial_demo: Option<String>,
     frames: usize,
     warmup_frames: usize,
     canvas_format: WebCanvasFormatPreference,
@@ -2637,6 +2643,7 @@ impl Default for WebLaunchMode {
     fn default() -> Self {
         Self {
             benchmark: None,
+            dev_initial_demo: None,
             frames: 180,
             warmup_frames: 60,
             canvas_format: WebCanvasFormatPreference::Auto,
@@ -2697,6 +2704,12 @@ fn parse_web_launch_mode(query: &str) -> WebLaunchMode {
                     "dev" | "workspace" => Some(WebBenchmarkKind::DevWorkspace),
                     _ => None,
                 };
+            }
+            "demo" | "dev-demo" => {
+                let slug = value.to_ascii_lowercase();
+                if app::dev_demo_label_for_slug(&slug).is_some() {
+                    mode.dev_initial_demo = Some(slug);
+                }
             }
             "frames" => {
                 mode.frames = value
@@ -2958,7 +2971,7 @@ fn web_browser_probe_report(mode: &WebLaunchMode, probe: &WebBrowserProbe) -> St
 
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 fn web_validation_query(mode: &WebLaunchMode) -> String {
-    format!(
+    let mut query = format!(
         "benchmark={}&frames={}&warmup={}&canvas-format={}&canvas-color-space={}&canvas-tone-mapping={}&color-management={}&output-primaries={}&dynamic-range={}&tone-mapping={}&sdr-content-brightness={:.0}&use-system-sdr-brightness={}",
         web_benchmark_slug(mode.benchmark),
         mode.frames,
@@ -2972,7 +2985,12 @@ fn web_validation_query(mode: &WebLaunchMode) -> String {
         web_tone_mapping_slug(mode.tone_mapping),
         mode.sdr_content_brightness_nits,
         mode.use_system_sdr_content_brightness,
-    )
+    );
+    if let Some(demo) = mode.dev_initial_demo.as_deref() {
+        query.push_str("&demo=");
+        query.push_str(demo);
+    }
+    query
 }
 
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
@@ -3017,8 +3035,12 @@ fn build_application_for_web_mode(mode: &WebLaunchMode) -> Application {
             build_widget_book_application(default_widget_book_state())
         }
         Some(WebBenchmarkKind::DevWorkspace) | None => {
-            app::build_dev_application_with_widget_book_bounds_and_render_options(
-                Rect::new(24.0, 24.0, 680.0, 760.0),
+            let initial_demo = mode
+                .dev_initial_demo
+                .as_deref()
+                .and_then(app::dev_demo_label_for_slug);
+            app::build_dev_application_with_initial_demo_and_render_options(
+                initial_demo,
                 render_options,
             )
         }
@@ -3280,6 +3302,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_dev_workspace_initial_demo_slug() {
+        let mode = parse_web_launch_mode("benchmark=dev&demo=paint");
+
+        assert_eq!(mode.benchmark, Some(WebBenchmarkKind::DevWorkspace));
+        assert_eq!(mode.dev_initial_demo.as_deref(), Some("paint"));
+    }
+
+    #[test]
     fn parses_text_comparison_web_benchmark_mode() {
         let mode = parse_web_launch_mode("benchmark=text-comparison&frames=240&warmup=30");
         assert_eq!(mode.benchmark, Some(WebBenchmarkKind::TextComparison));
@@ -3350,6 +3380,13 @@ mod tests {
             web_validation_query(&mode),
             "benchmark=color-validation&frames=240&warmup=24&canvas-format=rgba16float&canvas-color-space=srgb&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=srgb&dynamic-range=hdr&tone-mapping=reinhard&sdr-content-brightness=80&use-system-sdr-brightness=true"
         );
+    }
+
+    #[test]
+    fn web_validation_query_preserves_dev_demo_slug() {
+        let mode = parse_web_launch_mode("benchmark=dev&demo=paint&frames=5&warmup=1");
+
+        assert!(web_validation_query(&mode).contains("&demo=paint"));
     }
 
     #[test]
