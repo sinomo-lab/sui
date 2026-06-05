@@ -20,7 +20,7 @@ pub use canvas::{
     PixelCanvasTool,
 };
 pub use composites::{
-    BusyIndicator, CommandGroup, ContextMenu, Dialog, DockPanel, Menu, MenuItem, Modal,
+    ActionCard, BusyIndicator, CommandGroup, ContextMenu, Dialog, DockPanel, Menu, MenuItem, Modal,
     PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, Spinner,
     StatusBar, StatusBarHost, StatusBarSegment, TabBar, Tabs, ToolPalette, ToolPaletteItem,
     Toolbar, Tooltip, TooltipPlacement,

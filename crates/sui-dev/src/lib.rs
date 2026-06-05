@@ -1,5 +1,6 @@
 mod app;
 mod paint_demo;
+mod vector_demo;
 
 #[cfg(not(target_arch = "wasm32"))]
 use app::{DesktopAutomationMode, build_dev_application_with_automation};

@@ -18,6 +18,12 @@ use sui_widget_book::{
 };
 
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo};
+#[cfg(test)]
+use crate::vector_demo::{
+    VECTOR_DOCUMENT_WIDTH, VECTOR_FILL_RULE_NAME, VECTOR_MIN_OBJECT_SIZE, VECTOR_OPACITY_NAME,
+    VECTOR_ROTATION_NAME, VECTOR_STROKE_WIDTH_NAME, VECTOR_WIDTH_NAME,
+};
+use crate::vector_demo::{VECTOR_EDITOR_TAB_LABEL, build_vector_editor_demo};
 
 const WINDOW_TITLE: &str = "SUI Dev";
 const WINDOW_DESCRIPTION: &str =
@@ -30,7 +36,6 @@ const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
 const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
 const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
-const VECTOR_EDITOR_TAB_LABEL: &str = "Vector editor";
 const SETTINGS_TAB_LABEL: &str = "Settings";
 const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
 const FEATHER_WIDTH_NAME: &str = "Feather width";
@@ -61,7 +66,6 @@ const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
     "Constrained HDR",
     "Full HDR",
 ];
-
 const DEV_SHELL_TOOLBAR_HEIGHT: f32 = 44.0;
 const DEV_SHELL_LOGO_BUTTON_SIZE: f32 = 32.0;
 const DEV_SHELL_LOGO_IMAGE_HANDLE: ImageHandle = ImageHandle::new(0x5355_4900_0000_0001);
@@ -73,7 +77,7 @@ const DEV_SHELL_TAB_CLOSE_MARGIN: f32 = 7.0;
 const DEV_SHELL_PLUS_BUTTON_SIZE: f32 = 30.0;
 const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 92.0;
 const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
-const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 72.0;
+const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 104.0;
 const DEV_SHELL_SETTINGS_TITLE_HEIGHT: f32 = 38.0;
 const DEV_SHELL_SETTINGS_RESIZE_HANDLE: f32 = 18.0;
 const DEV_SHELL_MIN_SETTINGS_WIDTH: f32 = 320.0;
@@ -82,7 +86,7 @@ const DEV_SHELL_DEFAULT_SETTINGS_WIDTH: f32 = 460.0;
 const DEV_SHELL_DEFAULT_SETTINGS_HEIGHT: f32 = 380.0;
 const DEV_SHELL_DEFAULT_SETTINGS_X: f32 = 420.0;
 const DEV_SHELL_DEFAULT_SETTINGS_Y: f32 = 96.0;
-const DEV_SHELL_PICKER_TITLE: &str = "Open a demo";
+const DEV_SHELL_PICKER_TITLE: &str = "SUI Dev";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(not(target_arch = "wasm32"))]
 pub enum DesktopAutomationMode {
@@ -234,6 +238,8 @@ impl DevShellState {
 struct DevDemo {
     title: &'static str,
     description: &'static str,
+    icon: IconGlyph,
+    accent: Color,
     child: WidgetPod,
 }
 
@@ -271,13 +277,17 @@ impl DevBrowserShell {
 
         let mut demo_buttons = WidgetChildren::with_capacity(demos.len());
         for (index, demo) in demos.iter().enumerate() {
-            let button_state = state.clone();
+            let open_state = state.clone();
+            let theme_state = state.clone();
             demo_buttons.push(
-                Button::new(demo.title)
-                    .min_width(180.0)
+                ActionCard::new(demo.title, demo.description)
+                    .theme_when(move || theme_state.theme())
+                    .icon(demo.icon)
+                    .accent(demo.accent)
+                    .min_width(220.0)
                     .min_height(DEV_SHELL_PICKER_TILE_HEIGHT)
                     .on_press_with_ctx(move |ctx| {
-                        button_state.open_demo(index);
+                        open_state.open_demo(index);
                         request_window_refresh(ctx, true);
                     }),
             );
@@ -427,11 +437,13 @@ impl DevBrowserShell {
     }
 
     fn picker_grid_rect(content: Rect) -> Rect {
+        let width = (content.width() - 64.0).clamp(0.0, 1120.0);
+        let x = content.x() + ((content.width() - width) * 0.5);
         Rect::new(
-            content.x() + 32.0,
-            content.y() + 82.0,
-            (content.width() - 64.0).max(0.0),
-            (content.height() - 114.0).max(0.0),
+            x,
+            content.y() + 104.0,
+            width,
+            (content.height() - 136.0).max(0.0),
         )
     }
 
@@ -566,11 +578,13 @@ impl DevBrowserShell {
         let content = self.content_bounds;
         let palette = theme.palette;
         ctx.fill_rect(content, palette.surface);
+        let header = Rect::new(content.x(), content.y(), content.width(), 96.0);
+        ctx.fill_rect(header, palette.surface_hover.with_alpha(0.45));
         ctx.draw_text(
             Rect::new(
-                content.x() + 32.0,
-                content.y() + 28.0,
-                content.width() - 64.0,
+                content.x() + 40.0,
+                content.y() + 24.0,
+                content.width() - 80.0,
                 32.0,
             ),
             DEV_SHELL_PICKER_TITLE,
@@ -583,12 +597,12 @@ impl DevBrowserShell {
         );
         ctx.draw_text(
             Rect::new(
-                content.x() + 32.0,
-                content.y() + 58.0,
-                content.width() - 64.0,
+                content.x() + 40.0,
+                content.y() + 56.0,
+                content.width() - 80.0,
                 20.0,
             ),
-            "Choose a demo to open it as a tab.",
+            "Renderer, text, color, editor, and widget surfaces.",
             TextStyle {
                 font_size: 13.0,
                 line_height: 18.0,
@@ -596,29 +610,6 @@ impl DevBrowserShell {
                 ..TextStyle::default()
             },
         );
-    }
-
-    fn paint_picker_descriptions(&self, ctx: &mut PaintCtx, theme: &DefaultTheme) {
-        let palette = theme.palette;
-        for (index, demo) in self.demos.iter().enumerate() {
-            let Some(tile) = self.demo_buttons.as_slice().get(index) else {
-                continue;
-            };
-            let rect = tile.bounds();
-            if rect.is_empty() {
-                continue;
-            }
-            ctx.draw_text(
-                Rect::new(rect.x() + 16.0, rect.y() + 46.0, rect.width() - 32.0, 18.0),
-                demo.description,
-                TextStyle {
-                    font_size: 11.0,
-                    line_height: 15.0,
-                    color: palette.accent_text.with_alpha(0.82),
-                    ..TextStyle::default()
-                },
-            );
-        }
     }
 }
 
@@ -805,8 +796,8 @@ impl Widget for DevBrowserShell {
                     index,
                     ctx,
                     Constraints::new(
-                        Size::new(160.0, DEV_SHELL_PICKER_TILE_HEIGHT),
-                        Size::new(260.0, DEV_SHELL_PICKER_TILE_HEIGHT),
+                        Size::new(220.0, DEV_SHELL_PICKER_TILE_HEIGHT),
+                        Size::new(360.0, DEV_SHELL_PICKER_TILE_HEIGHT),
                     ),
                 );
             }
@@ -897,7 +888,6 @@ impl Widget for DevBrowserShell {
         if self.state.picker_visible() {
             self.paint_picker(ctx, &theme);
             self.demo_buttons.paint(ctx);
-            self.paint_picker_descriptions(ctx, &theme);
         } else if let Some(active) = self.state.active_tab() {
             self.demos[active].child.paint(ctx);
         }
@@ -1542,51 +1532,71 @@ fn build_dev_demo_entries() -> Vec<DevDemo> {
         DevDemo {
             title: WIDGET_BOOK_TAB_LABEL,
             description: "Catalog of controls, containers, media, and text surfaces.",
+            icon: IconGlyph::MoreHorizontal,
+            accent: Color::rgba(0.16, 0.48, 0.86, 1.0),
             child: WidgetPod::new(build_widget_book_gallery(default_widget_book_state())),
         },
         DevDemo {
             title: THEMES_TAB_LABEL,
             description: "Theme previews and HDR theme mode comparisons.",
+            icon: IconGlyph::PaintBucket,
+            accent: Color::rgba(0.62, 0.28, 0.78, 1.0),
             child: WidgetPod::new(build_theme_demo_surface(default_widget_book_state())),
         },
         DevDemo {
             title: BUTTON_GRID_TAB_LABEL,
             description: "Dense button grid used for interaction and resizing performance checks.",
+            icon: IconGlyph::Check,
+            accent: Color::rgba(0.08, 0.58, 0.42, 1.0),
             child: WidgetPod::new(build_button_grid_benchmark()),
         },
         DevDemo {
             title: RETAINED_TEXT_TAB_LABEL,
             description: "Retained text layout and redraw benchmark.",
+            icon: IconGlyph::Search,
+            accent: Color::rgba(0.75, 0.42, 0.12, 1.0),
             child: WidgetPod::new(build_retained_text_benchmark()),
         },
         DevDemo {
             title: TEXT_RENDERING_COMPARISON_TAB_LABEL,
             description: "Side-by-side text rendering comparison surface.",
+            icon: IconGlyph::FitView,
+            accent: Color::rgba(0.20, 0.50, 0.62, 1.0),
             child: WidgetPod::new(build_text_rendering_comparison_surface()),
         },
         DevDemo {
             title: TEXT_VALIDATION_TAB_LABEL,
             description: "Validation surface for text metrics, alignment, and rasterization.",
+            icon: IconGlyph::ActualSize,
+            accent: Color::rgba(0.68, 0.26, 0.32, 1.0),
             child: WidgetPod::new(build_text_validation_surface()),
         },
         DevDemo {
             title: TEXT_EDITING_TAB_LABEL,
             description: "Single-line and multi-line text editing demos.",
+            icon: IconGlyph::Restore,
+            accent: Color::rgba(0.35, 0.38, 0.82, 1.0),
             child: WidgetPod::new(build_text_editing_benchmark()),
         },
         DevDemo {
             title: HDR_VALIDATION_TAB_LABEL,
             description: "HDR, color-management, and tone-mapping validation surface.",
+            icon: IconGlyph::Maximize,
+            accent: Color::rgba(0.82, 0.52, 0.10, 1.0),
             child: WidgetPod::new(build_color_validation_surface()),
         },
         DevDemo {
             title: PAINT_TAB_LABEL,
             description: "Pixel canvas painting workspace with editor-style panels.",
+            icon: IconGlyph::Brush,
+            accent: Color::rgba(0.80, 0.22, 0.44, 1.0),
             child: WidgetPod::new(build_paint_demo()),
         },
         DevDemo {
             title: VECTOR_EDITOR_TAB_LABEL,
             description: "Vector canvas drawing and editing demo.",
+            icon: IconGlyph::ChevronRight,
+            accent: Color::rgba(0.12, 0.56, 0.76, 1.0),
             child: WidgetPod::new(build_vector_editor_demo()),
         },
     ]
@@ -2508,37 +2518,6 @@ impl Widget for RenderSettingsTab {
 
 fn build_render_settings_tab_with_options(options: WindowRenderOptions) -> impl Widget {
     RenderSettingsTab::with_initial_options(options)
-}
-
-fn build_vector_editor_demo() -> Canvas {
-    let mut curve = PathBuilder::new();
-    curve.move_to(Point::new(-160.0, 72.0)).cubic_to(
-        Point::new(-96.0, -96.0),
-        Point::new(88.0, 124.0),
-        Point::new(160.0, -64.0),
-    );
-
-    Canvas::new(VECTOR_EDITOR_TAB_LABEL)
-        .viewport(CanvasViewport::new().zoom(1.05))
-        .draw_stroke(CanvasStroke::new(Color::rgba(0.12, 0.28, 0.84, 1.0), 3.0))
-        .shape(CanvasShape::rect(
-            Rect::new(-180.0, -110.0, 360.0, 220.0),
-            Some(Color::rgba(1.0, 1.0, 1.0, 0.82)),
-            Some(CanvasStroke::new(Color::rgba(0.12, 0.16, 0.22, 1.0), 2.0)),
-        ))
-        .shape(CanvasShape::circle(
-            Point::new(-72.0, -28.0),
-            46.0,
-            Some(Color::rgba(0.18, 0.54, 0.86, 0.78)),
-            Some(CanvasStroke::new(Color::rgba(0.08, 0.22, 0.42, 1.0), 2.0)),
-        ))
-        .shape(CanvasShape::circle(
-            Point::new(82.0, 34.0),
-            58.0,
-            Some(Color::rgba(0.94, 0.58, 0.16, 0.72)),
-            Some(CanvasStroke::new(Color::rgba(0.42, 0.22, 0.06, 1.0), 2.0)),
-        ))
-        .shape(CanvasShape::path(curve.build()))
 }
 
 pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
@@ -6036,6 +6015,109 @@ final_max_luminance={final_max_luminance}
                 "expected browser-style demo picker to expose {title:?}"
             );
         }
+
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(VECTOR_EDITOR_TAB_LABEL),
+        ))
+        .build()
+        .expect("vector editor demo should build");
+        let window_id = runtime.window_ids()[0];
+        runtime.render(window_id)?;
+        let semantics = runtime.semantics(window_id)?;
+
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Canvas
+                    && node.name.as_deref() == Some(VECTOR_EDITOR_TAB_LABEL)
+            }),
+            "expected vector editor to expose its canvas"
+        );
+        assert!(
+            !semantics
+                .iter()
+                .any(|node| node.name.as_deref() == Some("Vector toolbar")
+                    || node.name.as_deref() == Some("Select tool")),
+            "expected vector editor to omit non-functional toolbar controls"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ListItem
+                    && node.name.as_deref() == Some("Blue ellipse")
+                    && node.value
+                        == Some(SemanticsValue::Text(
+                            "124 x 96 px / 78% fill; Visible; Unlocked".to_string(),
+                        ))
+            }),
+            "expected vector object list to expose object values"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(VECTOR_WIDTH_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: 124.0,
+                            min: f64::from(VECTOR_MIN_OBJECT_SIZE),
+                            max: f64::from(VECTOR_DOCUMENT_WIDTH),
+                        })
+            }),
+            "expected selected width slider"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(VECTOR_ROTATION_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: -12.0,
+                            min: -180.0,
+                            max: 180.0,
+                        })
+            }),
+            "expected selected rotation slider"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(VECTOR_STROKE_WIDTH_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: 3.0,
+                            min: 0.5,
+                            max: 24.0,
+                        })
+            }),
+            "expected stroke width slider"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(VECTOR_OPACITY_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: 0.78,
+                            min: 0.0,
+                            max: 1.0,
+                        })
+            }),
+            "expected opacity slider"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(VECTOR_FILL_RULE_NAME)
+                    && node.value == Some(SemanticsValue::Text("Nonzero".to_string()))
+            }),
+            "expected fill rule combo box"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Object Blue ellipse")
+            }),
+            "expected vector status bar to expose selected object"
+        );
 
         Ok(())
     }

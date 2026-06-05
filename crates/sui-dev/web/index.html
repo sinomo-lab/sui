@@ -973,8 +973,13 @@
             if (node.role === "RadioButton" && element.type !== "radio") {
               element.type = "radio";
             }
-            if (node.role === "Slider" && element.type !== "range") {
-              element.type = "range";
+            if (node.role === "Slider") {
+              if (element.type !== "range") {
+                element.type = "range";
+              }
+              element.step = "any";
+            } else {
+              setAttribute(element, "step", null);
             }
             if (node.role === "TextInput" && element.type !== "text") {
               element.type = "text";
@@ -985,7 +990,7 @@
             if (node.role === "Slider" && range) {
               element.min = String(range.min);
               element.max = String(range.max);
-              element.value = value;
+              element.value = String(range.value);
             }
             if (node.role === "TextInput") {
               if (element.value !== value) {

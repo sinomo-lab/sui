@@ -12,7 +12,7 @@ use sui_runtime::{
     WidgetPodVisitor, window_render_options,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
-use sui_text::{TextMeasurement, TextStyle};
+use sui_text::{FontWeight, TextMeasurement, TextStyle};
 
 use crate::{
     Button, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, IconGlyph, ResolvedEffectStyle,
@@ -1119,6 +1119,573 @@ fn tool_palette_item_id(parent: WidgetId, index: usize) -> WidgetId {
             .wrapping_add(index as u64 + 1)
             & LOW_MASK),
     )
+}
+
+const ACTION_CARD_DEFAULT_WIDTH: f32 = 280.0;
+const ACTION_CARD_DEFAULT_HEIGHT: f32 = 104.0;
+const ACTION_CARD_PADDING: Insets = Insets {
+    left: 16.0,
+    top: 14.0,
+    right: 14.0,
+    bottom: 14.0,
+};
+const ACTION_CARD_ICON_BOX_SIZE: f32 = 38.0;
+const ACTION_CARD_ICON_SIZE: f32 = 20.0;
+const ACTION_CARD_TEXT_GAP: f32 = 5.0;
+const ACTION_CARD_HOVER_ANIMATION_SECONDS: f64 = 1.0 / 8.0;
+const ACTION_CARD_PRESS_ANIMATION_SECONDS: f64 = 1.0 / 12.0;
+
+pub struct ActionCard {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    title: String,
+    description: String,
+    icon: Option<IconGlyph>,
+    accent: Option<Color>,
+    padding: Insets,
+    min_width: f32,
+    min_height: f32,
+    hovered: bool,
+    pressed: bool,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
+    title_measurement: Option<TextMeasurement>,
+    description_measurement: Option<TextMeasurement>,
+    enabled: bool,
+    enabled_reader: Option<Box<dyn Fn() -> bool>>,
+    on_press: Option<Box<dyn FnMut()>>,
+    on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
+}
+
+impl ActionCard {
+    pub fn new(title: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            title: title.into(),
+            description: description.into(),
+            icon: None,
+            accent: None,
+            padding: ACTION_CARD_PADDING,
+            min_width: ACTION_CARD_DEFAULT_WIDTH,
+            min_height: ACTION_CARD_DEFAULT_HEIGHT,
+            hovered: false,
+            pressed: false,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
+            title_measurement: None,
+            description_measurement: None,
+            enabled: true,
+            enabled_reader: None,
+            on_press: None,
+            on_press_with_ctx: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn without_icon(mut self) -> Self {
+        self.icon = None;
+        self
+    }
+
+    pub fn accent(mut self, accent: Color) -> Self {
+        self.accent = Some(accent);
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width.max(0.0);
+        self
+    }
+
+    pub fn min_height(mut self, height: f32) -> Self {
+        self.min_height = height.max(0.0);
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self.enabled_reader = None;
+        self
+    }
+
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled_reader = Some(Box::new(enabled));
+        self
+    }
+
+    pub fn on_press<F>(mut self, on_press: F) -> Self
+    where
+        F: FnMut() + 'static,
+    {
+        self.on_press = Some(Box::new(on_press));
+        self
+    }
+
+    pub fn on_press_with_ctx<F>(mut self, on_press: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.on_press_with_ctx = Some(Box::new(on_press));
+        self
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled_reader
+            .as_ref()
+            .map(|enabled| enabled())
+            .unwrap_or(self.enabled)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn activate(&mut self, ctx: &mut EventCtx) {
+        if !self.is_enabled() {
+            return;
+        }
+        if let Some(on_press) = &mut self.on_press {
+            on_press();
+        }
+        if let Some(on_press) = &mut self.on_press_with_ctx {
+            on_press(ctx);
+        }
+    }
+
+    fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+        self.hovered = hovered;
+        set_action_card_animation_target(
+            &mut self.hover_animation,
+            hovered as u8 as f32,
+            ACTION_CARD_HOVER_ANIMATION_SECONDS,
+            ctx,
+        );
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        self.hover_animation.advance(time) | self.press_animation.advance(time)
+    }
+
+    fn title_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
+        TextStyle {
+            font_size: 14.0,
+            line_height: 18.0,
+            color: theme.palette.text,
+            weight: FontWeight::SEMIBOLD,
+            ..theme.body_text_style()
+        }
+    }
+
+    fn description_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
+        TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: theme.palette.placeholder,
+            ..theme.body_text_style()
+        }
+    }
+
+    fn content_rect(&self, bounds: Rect) -> Rect {
+        inset_rect(bounds, self.padding)
+    }
+
+    fn text_bounds(&self, bounds: Rect) -> Rect {
+        let content = self.content_rect(bounds);
+        let icon_extent = self
+            .icon
+            .map(|_| ACTION_CARD_ICON_BOX_SIZE + 12.0)
+            .unwrap_or(0.0);
+        let trailing = 22.0;
+        Rect::new(
+            content.x() + icon_extent,
+            content.y(),
+            (content.width() - icon_extent - trailing).max(0.0),
+            content.height(),
+        )
+    }
+}
+
+impl Widget for ActionCard {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.is_enabled() {
+            if self.hovered || self.pressed {
+                self.hovered = false;
+                self.pressed = false;
+                set_action_card_animation_target(
+                    &mut self.hover_animation,
+                    0.0,
+                    ACTION_CARD_HOVER_ANIMATION_SECONDS,
+                    ctx,
+                );
+                set_action_card_animation_target(
+                    &mut self.press_animation,
+                    0.0,
+                    ACTION_CARD_PRESS_ANIMATION_SECONDS,
+                    ctx,
+                );
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            return;
+        }
+
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Enter => {
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                self.set_hovered(false, ctx);
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                self.pressed = true;
+                self.hovered = true;
+                set_action_card_animation_target(
+                    &mut self.hover_animation,
+                    1.0,
+                    ACTION_CARD_HOVER_ANIMATION_SECONDS,
+                    ctx,
+                );
+                set_action_card_animation_target(
+                    &mut self.press_animation,
+                    1.0,
+                    ACTION_CARD_PRESS_ANIMATION_SECONDS,
+                    ctx,
+                );
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.request_focus();
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let hovered = ctx.bounds().contains(pointer.position);
+                let activate = self.pressed && hovered;
+                self.pressed = false;
+                self.hovered = hovered;
+                set_action_card_animation_target(
+                    &mut self.hover_animation,
+                    hovered as u8 as f32,
+                    ACTION_CARD_HOVER_ANIMATION_SECONDS,
+                    ctx,
+                );
+                set_action_card_animation_target(
+                    &mut self.press_animation,
+                    0.0,
+                    ACTION_CARD_PRESS_ANIMATION_SECONDS,
+                    ctx,
+                );
+                ctx.release_pointer_capture(pointer.pointer_id);
+                if activate {
+                    self.activate(ctx);
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed {
+                    self.pressed = false;
+                    self.hovered = false;
+                    set_action_card_animation_target(
+                        &mut self.hover_animation,
+                        0.0,
+                        ACTION_CARD_HOVER_ANIMATION_SECONDS,
+                        ctx,
+                    );
+                    set_action_card_animation_target(
+                        &mut self.press_animation,
+                        0.0,
+                        ACTION_CARD_PRESS_ANIMATION_SECONDS,
+                        ctx,
+                    );
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && matches!(key.key.as_str(), "Enter" | " ") =>
+            {
+                self.activate(ctx);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let title_style = self.title_style();
+        let description_style = self.description_style();
+        let title = measure_text(ctx, &self.title, &title_style);
+        let description = measure_text(ctx, &self.description, &description_style);
+        self.title_measurement = Some(title);
+        self.description_measurement = Some(description);
+
+        let icon_extent = self
+            .icon
+            .map(|_| ACTION_CARD_ICON_BOX_SIZE + 12.0)
+            .unwrap_or(0.0);
+        let text_width = title.width.max(description.width).min(320.0);
+        let natural = Size::new(
+            self.min_width
+                .max(self.padding.left + icon_extent + text_width + 22.0 + self.padding.right),
+            self.min_height.max(
+                self.padding.top
+                    + title.height.max(title_style.line_height)
+                    + ACTION_CARD_TEXT_GAP
+                    + description.height.max(description_style.line_height)
+                    + self.padding.bottom,
+            ),
+        );
+        constraints.clamp(natural)
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
+        let enabled = self.is_enabled();
+        let hover = if enabled {
+            self.hover_animation.value
+        } else {
+            0.0
+        };
+        let press = if enabled {
+            self.press_animation.value
+        } else {
+            0.0
+        };
+        let accent = self.accent.unwrap_or(palette.accent);
+        let mut background = mix_color(palette.surface, palette.surface_hover, hover);
+        background = mix_color(background, palette.surface_pressed, press * 0.55);
+        if !enabled {
+            background = mix_color(background, palette.surface, 0.68).with_alpha(0.82);
+        }
+        let border = if !enabled {
+            palette.border.with_alpha(0.55)
+        } else if ctx.is_focused() {
+            palette.border_focus
+        } else {
+            mix_color(palette.border, palette.border_hover, hover)
+        };
+
+        draw_control_frame(
+            ctx,
+            ctx.bounds(),
+            metrics.corner_radius,
+            metrics,
+            background,
+            border,
+            (ctx.is_focused() && enabled).then_some(palette.focus_ring),
+        );
+
+        let bounds = ctx.bounds();
+        let content = self.content_rect(bounds);
+        let accent_rail = Rect::new(bounds.x(), bounds.y() + 10.0, 3.0, bounds.height() - 20.0);
+        ctx.fill(rounded_rect_path(accent_rail, 1.5), accent.with_alpha(0.78));
+
+        if let Some(icon) = self.icon {
+            let icon_box_size = ACTION_CARD_ICON_BOX_SIZE
+                .min(content.width())
+                .min(content.height())
+                .max(0.0);
+            let icon_box = Rect::new(
+                content.x(),
+                content.y() + ((content.height() - icon_box_size) * 0.5),
+                icon_box_size,
+                icon_box_size,
+            );
+            ctx.fill(
+                rounded_rect_path(icon_box, metrics.corner_radius),
+                mix_color(background, accent, 0.14),
+            );
+            ctx.stroke(
+                rounded_rect_path(icon_box, metrics.corner_radius),
+                accent.with_alpha(if enabled { 0.42 } else { 0.22 }),
+                StrokeStyle::new(physical_pixels(ctx, 1.0)),
+            );
+            let icon_size = ACTION_CARD_ICON_SIZE
+                .min(icon_box.width())
+                .min(icon_box.height())
+                .max(0.0);
+            let icon_rect = Rect::new(
+                icon_box.x() + ((icon_box.width() - icon_size) * 0.5),
+                icon_box.y() + ((icon_box.height() - icon_size) * 0.5),
+                icon_size,
+                icon_size,
+            );
+            draw_icon_glyph(
+                ctx,
+                icon,
+                icon_rect,
+                if enabled {
+                    accent
+                } else {
+                    palette.text.with_alpha(0.34)
+                },
+            );
+        }
+
+        let text_bounds = self.text_bounds(bounds);
+        let title_style = self.title_style();
+        let description_style = self.description_style();
+        let title_height = title_style.line_height.max(
+            self.title_measurement
+                .map(|measurement| measurement.height)
+                .unwrap_or(title_style.line_height),
+        );
+        let description_height = (text_bounds.height() - title_height - ACTION_CARD_TEXT_GAP)
+            .max(description_style.line_height)
+            .min(description_style.line_height * 2.0);
+        let text_block_height = title_height + ACTION_CARD_TEXT_GAP + description_height;
+        let text_y = text_bounds.y() + ((text_bounds.height() - text_block_height) * 0.5).max(0.0);
+        let title_rect = Rect::new(text_bounds.x(), text_y, text_bounds.width(), title_height);
+        let description_rect = Rect::new(
+            text_bounds.x(),
+            title_rect.max_y() + ACTION_CARD_TEXT_GAP,
+            text_bounds.width(),
+            description_height,
+        );
+        ctx.push_clip_rect(title_rect);
+        ctx.draw_text(
+            title_rect,
+            self.title.clone(),
+            TextStyle {
+                color: if enabled {
+                    palette.text
+                } else {
+                    palette.text.with_alpha(0.45)
+                },
+                ..title_style
+            },
+        );
+        ctx.pop_clip();
+        ctx.push_clip_rect(description_rect);
+        ctx.draw_text(
+            description_rect,
+            self.description.clone(),
+            TextStyle {
+                color: if enabled {
+                    palette.placeholder
+                } else {
+                    palette.placeholder.with_alpha(0.45)
+                },
+                ..description_style
+            },
+        );
+        ctx.pop_clip();
+
+        let chevron_size = 16.0_f32.min(content.width()).min(content.height()).max(0.0);
+        let chevron = Rect::new(
+            content.max_x() - chevron_size,
+            content.y() + ((content.height() - chevron_size) * 0.5),
+            chevron_size,
+            chevron_size,
+        );
+        draw_icon_glyph(
+            ctx,
+            IconGlyph::ChevronRight,
+            chevron,
+            if enabled {
+                mix_color(palette.placeholder, accent, hover * 0.45).with_alpha(0.74)
+            } else {
+                palette.placeholder.with_alpha(0.32)
+            },
+        );
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+        node.name = Some(self.title.clone());
+        node.description = Some(self.description.clone());
+        node.value = Some(SemanticsValue::Text(self.description.clone()));
+        node.state.focused = ctx.is_focused();
+        node.state.hovered = self.hovered && self.is_enabled();
+        node.state.disabled = !self.is_enabled();
+        node.actions = if self.is_enabled() {
+            vec![SemanticsAction::Focus, SemanticsAction::Activate]
+        } else {
+            Vec::new()
+        };
+        ctx.push(node);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.is_enabled()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
+fn set_action_card_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    duration: f64,
+    ctx: &mut EventCtx,
+) {
+    if animation.set_target(target, ctx.current_time(), duration) {
+        ctx.request_animation_frame();
+    }
 }
 
 const PROPERTY_ROW_LABEL_WIDTH: f32 = 112.0;
@@ -6155,9 +6722,10 @@ mod tests {
 
     use super::Tabs;
     use super::{
-        CommandGroup, ContextMenu, Dialog, DockPanel, MENU_VERTICAL_PADDING, Menu, MenuItem,
-        PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, Spinner,
-        StatusBar, StatusBarHost, StatusBarSegment, TabBar, ToolPalette, ToolPaletteItem, Toolbar,
+        ActionCard, CommandGroup, ContextMenu, Dialog, DockPanel, MENU_VERTICAL_PADDING, Menu,
+        MenuItem, PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout,
+        Spinner, StatusBar, StatusBarHost, StatusBarSegment, TabBar, ToolPalette, ToolPaletteItem,
+        Toolbar,
     };
     use crate::FloatingStack;
     use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken};
@@ -6192,6 +6760,41 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).unwrap()
+    }
+
+    #[test]
+    fn action_card_exposes_accessible_description() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 104.0))
+                .with_child(
+                    ActionCard::new(
+                        "Paint",
+                        "Pixel canvas painting workspace with editor-style panels.",
+                    )
+                    .icon(crate::IconGlyph::Brush)
+                    .accent(Color::rgba(0.80, 0.22, 0.44, 1.0)),
+                ),
+        );
+
+        let card = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("action card should expose button semantics");
+        assert_eq!(card.name.as_deref(), Some("Paint"));
+        assert_eq!(
+            card.description.as_deref(),
+            Some("Pixel canvas painting workspace with editor-style panels.")
+        );
+        assert_eq!(
+            card.value,
+            Some(SemanticsValue::Text(
+                "Pixel canvas painting workspace with editor-style panels.".to_string()
+            ))
+        );
+        assert!(card.actions.contains(&SemanticsAction::Focus));
+        assert!(card.actions.contains(&SemanticsAction::Activate));
     }
 
     #[test]
