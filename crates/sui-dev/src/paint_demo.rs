@@ -409,12 +409,10 @@ fn build_paint_status_bar(
             })
             .min_width(132.0),
         )
-        .segment(
-            StatusBarSegment::dynamic("Layer Paint / Normal / 100% / Unlocked", move || {
-                paint_layer_status_text(&layer_state)
-            })
-            .min_width(260.0),
-        )
+        .segment(StatusBarSegment::dynamic(
+            "Layer Paint / Normal / 100% / Unlocked",
+            move || paint_layer_status_text(&layer_state),
+        ))
         .segment(
             StatusBarSegment::new(format!(
                 "Document {} x {} px",

@@ -2557,6 +2557,7 @@ pub struct StatusBar {
     name: Option<String>,
     height: f32,
     segments: Vec<StatusBarSegment>,
+    measured_widths: Vec<f32>,
 }
 
 impl StatusBar {
@@ -2566,6 +2567,7 @@ impl StatusBar {
             name: None,
             height: STATUS_BAR_HEIGHT,
             segments: Vec::new(),
+            measured_widths: Vec::new(),
         }
     }
 
@@ -2600,12 +2602,28 @@ impl StatusBar {
         self.segment(StatusBarSegment::dynamic(fallback, reader))
     }
 
+    fn text_style(&self) -> TextStyle {
+        TextStyle {
+            font_size: 12.0,
+            line_height: 18.0,
+            color: self.theme.palette.placeholder,
+            ..self.theme.body_text_style()
+        }
+    }
+
+    fn segment_widths(&self) -> Vec<f32> {
+        if self.measured_widths.len() == self.segments.len() {
+            self.measured_widths.clone()
+        } else {
+            self.segments
+                .iter()
+                .map(|segment| segment.min_width)
+                .collect()
+        }
+    }
+
     fn segment_rects(&self, bounds: Rect) -> Vec<Rect> {
-        let mut widths: Vec<f32> = self
-            .segments
-            .iter()
-            .map(|segment| segment.min_width)
-            .collect();
+        let mut widths = self.segment_widths();
         let expandable = self
             .segments
             .iter()
@@ -2744,8 +2762,19 @@ impl Widget for StatusBarHost {
 }
 
 impl Widget for StatusBar {
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let natural_width: f32 = self.segments.iter().map(|segment| segment.min_width).sum();
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let text_style = self.text_style();
+        self.measured_widths = self
+            .segments
+            .iter()
+            .map(|segment| {
+                let text = segment.text();
+                let measured =
+                    measure_text(ctx, &text, &text_style).width + STATUS_BAR_SEGMENT_PADDING * 2.0;
+                segment.min_width.max(measured.ceil())
+            })
+            .collect();
+        let natural_width: f32 = self.measured_widths.iter().sum();
         constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
@@ -2766,12 +2795,7 @@ impl Widget for StatusBar {
             StrokeStyle::new(self.theme.metrics.border_width.max(1.0)),
         );
 
-        let text_style = TextStyle {
-            font_size: 12.0,
-            line_height: 18.0,
-            color: palette.placeholder,
-            ..self.theme.body_text_style()
-        };
+        let text_style = self.text_style();
         for (index, (segment, rect)) in self
             .segments
             .iter()
@@ -6284,6 +6308,32 @@ mod tests {
         assert!(output.semantics.iter().any(|node| {
             node.role == SemanticsRole::Text && node.name.as_deref() == Some("Zoom 35%")
         }));
+    }
+
+    #[test]
+    fn status_bar_sizes_segments_from_measured_text() {
+        let output = render(
+            StatusBar::new()
+                .name("Editor status")
+                .segment(StatusBarSegment::new(
+                    "Layer Paint / Normal / 100% / Unlocked",
+                ))
+                .segment(StatusBarSegment::new("Cursor --").expand(true)),
+        );
+
+        let layer = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layer Paint / Normal / 100% / Unlocked")
+            })
+            .expect("long status segment should expose text semantics");
+        assert!(
+            layer.bounds.width() > 220.0,
+            "expected status segment width to grow from text measurement, got {:?}",
+            layer.bounds
+        );
     }
 
     #[test]
