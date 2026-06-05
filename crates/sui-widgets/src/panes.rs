@@ -1235,6 +1235,16 @@ impl Widget for SplitView {
             },
         ));
 
+        let total_main = axis_main(self.axis, size);
+        let cross = axis_cross(self.axis, size);
+        let divider_offset = self.divider_main_offset(Rect::from_origin_size(Point::ZERO, size));
+        let first_main = divider_offset.max(0.0);
+        let second_main = (total_main - divider - first_main).max(0.0);
+        self.first
+            .measure(ctx, split_child_constraints(self.axis, first_main, cross));
+        self.second
+            .measure(ctx, split_child_constraints(self.axis, second_main, cross));
+
         size
     }
 
@@ -1963,6 +1973,49 @@ mod tests {
         let output = runtime.render(window_id)?;
 
         assert_eq!(output.frame.viewport, Size::new(664.0, 360.0));
+        Ok(())
+    }
+
+    #[test]
+    fn split_view_measures_children_with_resolved_pane_constraints() -> Result<()> {
+        let first_constraints = Rc::new(RefCell::new(Vec::new()));
+        let second_constraints = Rc::new(RefCell::new(Vec::new()));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(240.0).height(100.0).with_child(
+                SplitView::new(
+                    Axis::Horizontal,
+                    ConstraintProbe::new(
+                        "First pane",
+                        Size::new(400.0, 100.0),
+                        Color::rgba(0.22, 0.48, 0.72, 1.0),
+                        Rc::clone(&first_constraints),
+                    ),
+                    ConstraintProbe::new(
+                        "Second pane",
+                        Size::new(400.0, 100.0),
+                        Color::rgba(0.72, 0.48, 0.22, 1.0),
+                        Rc::clone(&second_constraints),
+                    ),
+                )
+                .min_first(40.0)
+                .min_second(40.0)
+                .divider_thickness(8.0),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+
+        let expected = Constraints::tight(Size::new(116.0, 100.0));
+        assert_eq!(
+            first_constraints.borrow().last(),
+            Some(&expected),
+            "first pane should be remeasured with the resolved pane width"
+        );
+        assert_eq!(
+            second_constraints.borrow().last(),
+            Some(&expected),
+            "second pane should be remeasured with the resolved pane width"
+        );
         Ok(())
     }
 

@@ -29,6 +29,7 @@ pub struct Image {
     source_rect: Option<Rect>,
     tint: Option<Color>,
     background: Option<Color>,
+    show_border: bool,
     corner_radius: f32,
     resolved_source_size: Size,
 }
@@ -46,6 +47,7 @@ impl Image {
             source_rect: None,
             tint: None,
             background: None,
+            show_border: true,
             corner_radius: 10.0,
             resolved_source_size: Size::new(96.0, 96.0),
         }
@@ -102,6 +104,11 @@ impl Image {
         self
     }
 
+    pub fn without_border(mut self) -> Self {
+        self.show_border = false;
+        self
+    }
+
     pub fn corner_radius(mut self, corner_radius: f32) -> Self {
         self.corner_radius = corner_radius.max(0.0);
         self
@@ -151,11 +158,13 @@ impl Widget for Image {
         ctx.draw_image_source(image_rect, source);
         ctx.pop_clip();
 
-        ctx.stroke(
-            rounded_rect_path(bounds, self.corner_radius),
-            self.theme.palette.border,
-            StrokeStyle::new(self.theme.metrics.border_width.max(1.0)),
-        );
+        if self.show_border {
+            ctx.stroke(
+                rounded_rect_path(bounds, self.corner_radius),
+                self.theme.palette.border,
+                StrokeStyle::new(self.theme.metrics.border_width.max(1.0)),
+            );
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -169,10 +178,12 @@ pub struct ColorSwatch {
     theme: Box<DefaultTheme>,
     name: String,
     color: Color,
+    color_reader: Option<Box<dyn Fn() -> Color>>,
     width: f32,
     height: f32,
     hovered: bool,
     pressed: bool,
+    read_only: bool,
     on_press: Option<Box<dyn FnMut(Color)>>,
 }
 
@@ -182,10 +193,12 @@ impl ColorSwatch {
             theme: Box::new(DefaultTheme::default()),
             name: name.into(),
             color,
+            color_reader: None,
             width: 56.0,
             height: 32.0,
             hovered: false,
             pressed: false,
+            read_only: false,
             on_press: None,
         }
     }
@@ -201,6 +214,19 @@ impl ColorSwatch {
         self
     }
 
+    pub fn color_when<F>(mut self, color: F) -> Self
+    where
+        F: Fn() -> Color + 'static,
+    {
+        self.color_reader = Some(Box::new(color));
+        self
+    }
+
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
     pub fn on_press<F>(mut self, on_press: F) -> Self
     where
         F: FnMut(Color) + 'static,
@@ -209,15 +235,40 @@ impl ColorSwatch {
         self
     }
 
+    fn current_color(&self) -> Color {
+        self.color_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.color)
+    }
+
     fn activate(&mut self) {
+        let color = self.current_color();
         if let Some(on_press) = &mut self.on_press {
-            on_press(self.color);
+            on_press(color);
         }
     }
 }
 
 impl Widget for ColorSwatch {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.read_only {
+            if matches!(
+                event,
+                Event::Pointer(pointer)
+                    if matches!(
+                        pointer.kind,
+                        PointerEventKind::Move
+                            | PointerEventKind::Leave
+                            | PointerEventKind::Cancel
+                    )
+            ) {
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            return;
+        }
+
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = ctx.bounds().contains(pointer.position);
@@ -292,10 +343,11 @@ impl Widget for ColorSwatch {
     fn paint(&self, ctx: &mut PaintCtx) {
         let outer_radius = self.theme.metrics.corner_radius;
         let inner_radius = (outer_radius - 1.0).max(0.0);
+        let color = self.current_color();
         draw_checkerboard(ctx, ctx.bounds(), 6.0);
         ctx.fill(
             rounded_rect_path(inset_rect(ctx.bounds(), Insets::all(1.0)), inner_radius),
-            self.color,
+            color,
         );
         ctx.stroke(
             rounded_rect_path(ctx.bounds(), outer_radius),
@@ -313,18 +365,652 @@ impl Widget for ColorSwatch {
             SemanticsNode::new(ctx.widget_id(), SemanticsRole::ColorSwatch, ctx.bounds());
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
-        node.value = Some(SemanticsValue::Text(format_color(self.color)));
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        node.value = Some(SemanticsValue::Text(format_color(self.current_color())));
+        if !self.read_only {
+            node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        }
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        !self.read_only
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
         ctx.request_paint();
         ctx.request_semantics();
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColorPaletteSwatch {
+    name: String,
+    color: Color,
+}
+
+impl ColorPaletteSwatch {
+    pub fn new(name: impl Into<String>, color: Color) -> Self {
+        Self {
+            name: name.into(),
+            color,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn color(&self) -> Color {
+        self.color
+    }
+}
+
+const COLOR_PALETTE_SWATCH_SIZE: f32 = 28.0;
+const COLOR_PALETTE_GAP: f32 = 6.0;
+
+pub struct ColorPalette {
+    theme: Box<DefaultTheme>,
+    name: String,
+    swatches: Vec<ColorPaletteSwatch>,
+    selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
+    hovered: Option<usize>,
+    pressed: Option<usize>,
+    columns: usize,
+    swatch_size: f32,
+    gap: f32,
+    on_change: Option<Box<dyn FnMut(usize, String, Color)>>,
+}
+
+impl ColorPalette {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            name: name.into(),
+            swatches: Vec::new(),
+            selected: None,
+            selected_reader: None,
+            hovered: None,
+            pressed: None,
+            columns: 8,
+            swatch_size: COLOR_PALETTE_SWATCH_SIZE,
+            gap: COLOR_PALETTE_GAP,
+            on_change: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn swatch(mut self, swatch: ColorPaletteSwatch) -> Self {
+        self.swatches.push(swatch);
+        self
+    }
+
+    pub fn swatches<I>(mut self, swatches: I) -> Self
+    where
+        I: IntoIterator<Item = ColorPaletteSwatch>,
+    {
+        self.swatches.extend(swatches);
+        self
+    }
+
+    pub fn selected(mut self, selected: usize) -> Self {
+        self.selected = Some(selected);
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
+    }
+
+    pub fn columns(mut self, columns: usize) -> Self {
+        self.columns = columns.max(1);
+        self
+    }
+
+    pub fn swatch_size(mut self, size: f32) -> Self {
+        self.swatch_size = size.max(18.0);
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = gap.max(0.0);
+        self
+    }
+
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(usize, String, Color) + 'static,
+    {
+        self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.current_selected()
+    }
+
+    fn current_selected(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .map(|selected| selected())
+            .unwrap_or(self.selected)
+            .filter(|index| *index < self.swatches.len())
+    }
+
+    fn grid_columns(&self) -> usize {
+        self.columns.max(1).min(self.swatches.len().max(1))
+    }
+
+    fn grid_rows(&self) -> usize {
+        if self.swatches.is_empty() {
+            1
+        } else {
+            self.swatches.len().div_ceil(self.grid_columns())
+        }
+    }
+
+    fn swatch_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        if index >= self.swatches.len() {
+            return None;
+        }
+
+        let columns = self.grid_columns();
+        let column = index % columns;
+        let row = index / columns;
+        let x = bounds.x() + column as f32 * (self.swatch_size + self.gap);
+        let y = bounds.y() + row as f32 * (self.swatch_size + self.gap);
+        let available_width = (bounds.max_x() - x).max(0.0);
+        let available_height = (bounds.max_y() - y).max(0.0);
+        let rect = Rect::new(
+            x,
+            y,
+            self.swatch_size.min(available_width),
+            self.swatch_size.min(available_height),
+        );
+        (!rect.is_empty()).then_some(rect)
+    }
+
+    fn swatch_at(&self, bounds: Rect, position: Point) -> Option<usize> {
+        self.swatches.iter().enumerate().find_map(|(index, _)| {
+            self.swatch_rect(bounds, index)
+                .filter(|rect| rect.contains(position))
+                .map(|_| index)
+        })
+    }
+
+    fn activate(&mut self, index: usize) {
+        if self.swatches.is_empty() {
+            return;
+        }
+
+        let index = index.min(self.swatches.len() - 1);
+        self.selected = Some(index);
+        if let Some(on_change) = &mut self.on_change {
+            let swatch = &self.swatches[index];
+            on_change(index, swatch.name.clone(), swatch.color);
+        }
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        if self.swatches.is_empty() {
+            return;
+        }
+
+        let current = self.current_selected().unwrap_or(0) as isize;
+        let last = self.swatches.len() as isize - 1;
+        let next = (current + delta).clamp(0, last) as usize;
+        self.hovered = Some(next);
+        self.activate(next);
+    }
+
+    fn selected_value(&self) -> Option<String> {
+        self.current_selected()
+            .and_then(|index| self.swatches.get(index))
+            .map(|swatch| format!("{} {}", swatch.name, format_color(swatch.color)))
+    }
+}
+
+impl Widget for ColorPalette {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = self.swatch_at(ctx.bounds(), pointer.position);
+                if hovered != self.hovered {
+                    self.hovered = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
+                if self.hovered.take().is_some() {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                self.hovered = self.swatch_at(ctx.bounds(), pointer.position);
+                self.pressed = self.hovered;
+                if self.hovered.is_some() {
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let hovered = self.swatch_at(ctx.bounds(), pointer.position);
+                if let Some(index) = self
+                    .pressed
+                    .zip(hovered)
+                    .filter(|(left, right)| left == right)
+                    .map(|(index, _)| index)
+                {
+                    self.activate(index);
+                }
+                self.hovered = hovered;
+                self.pressed = None;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed.take().is_some() {
+                    self.hovered = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                let columns = self.grid_columns() as isize;
+                match key.key.as_str() {
+                    "ArrowLeft" => self.move_selection(-1),
+                    "ArrowRight" => self.move_selection(1),
+                    "ArrowUp" => self.move_selection(-columns),
+                    "ArrowDown" => self.move_selection(columns),
+                    "Home" => self.activate(0),
+                    "End" if !self.swatches.is_empty() => self.activate(self.swatches.len() - 1),
+                    "Enter" | " " => {
+                        if let Some(selected) = self.current_selected().or(Some(0)) {
+                            self.activate(selected);
+                        }
+                    }
+                    _ => return,
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let columns = self.grid_columns() as f32;
+        let rows = self.grid_rows() as f32;
+        constraints.clamp(Size::new(
+            columns * self.swatch_size + (columns - 1.0).max(0.0) * self.gap,
+            rows * self.swatch_size + (rows - 1.0).max(0.0) * self.gap,
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = self.theme.palette;
+        let radius = self
+            .theme
+            .metrics
+            .corner_radius
+            .min(self.swatch_size * 0.25);
+        let selected = self.current_selected();
+
+        if ctx.is_focused() {
+            ctx.stroke(
+                rounded_rect_path(ctx.bounds().inflate(2.0, 2.0), radius + 2.0),
+                palette.focus_ring,
+                StrokeStyle::new(self.theme.metrics.focus_ring_width.max(1.0)),
+            );
+        }
+
+        for (index, swatch) in self.swatches.iter().enumerate() {
+            let Some(rect) = self.swatch_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let selected = selected == Some(index);
+            let hovered = self.hovered == Some(index);
+            let pressed = self.pressed == Some(index);
+            let ring = if selected {
+                palette.accent_border
+            } else if hovered {
+                palette.border_focus
+            } else {
+                palette.border
+            };
+            let ring_width = if selected { 2.0 } else { 1.0 };
+            let fill_rect = inset_rect(rect, Insets::all(if selected { 3.0 } else { 2.0 }));
+
+            if pressed {
+                ctx.fill(rounded_rect_path(rect, radius), palette.surface_pressed);
+            }
+            draw_checkerboard(ctx, fill_rect, 5.0);
+            ctx.fill(
+                rounded_rect_path(fill_rect, (radius - 2.0).max(0.0)),
+                swatch.color,
+            );
+            ctx.stroke(
+                rounded_rect_path(rect, radius),
+                ring,
+                StrokeStyle::new(ring_width),
+            );
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(self.name.clone());
+        node.value = self.selected_value().map(SemanticsValue::Text);
+        node.state.focused = ctx.is_focused();
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(node);
+
+        let selected = self.current_selected();
+        for (index, swatch) in self.swatches.iter().enumerate() {
+            let Some(rect) = self.swatch_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let mut node = SemanticsNode::new(
+                color_palette_swatch_id(ctx.widget_id(), index),
+                SemanticsRole::ColorSwatch,
+                rect,
+            );
+            node.parent = Some(ctx.widget_id());
+            node.name = Some(swatch.name.clone());
+            node.value = Some(SemanticsValue::Text(format_color(swatch.color)));
+            node.state.hovered = self.hovered == Some(index);
+            node.state.selected = selected == Some(index);
+            node.actions = vec![SemanticsAction::Activate];
+            ctx.push(node);
+        }
+    }
+
+    fn accepts_focus(&self) -> bool {
+        !self.swatches.is_empty()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
+fn color_palette_swatch_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 7_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(509)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrushPreviewShape {
+    Round,
+    Square,
+}
+
+impl BrushPreviewShape {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Round => "Round",
+            Self::Square => "Square",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BrushPreviewSpec {
+    pub color: Color,
+    pub size: f32,
+    pub opacity: f32,
+    pub shape: BrushPreviewShape,
+}
+
+impl BrushPreviewSpec {
+    pub fn new(color: Color, size: f32, opacity: f32, shape: BrushPreviewShape) -> Self {
+        Self {
+            color,
+            size: size.max(1.0),
+            opacity: opacity.clamp(0.0, 1.0),
+            shape,
+        }
+    }
+}
+
+pub struct BrushPreview {
+    theme: Box<DefaultTheme>,
+    name: String,
+    kind: String,
+    spec: BrushPreviewSpec,
+    spec_reader: Option<Box<dyn Fn() -> BrushPreviewSpec>>,
+    width: f32,
+    height: f32,
+}
+
+impl BrushPreview {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            name: name.into(),
+            kind: "brush".to_string(),
+            spec: BrushPreviewSpec::new(
+                Color::rgba(0.12, 0.28, 0.88, 1.0),
+                18.0,
+                1.0,
+                BrushPreviewShape::Round,
+            ),
+            spec_reader: None,
+            width: 260.0,
+            height: 70.0,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn spec(mut self, spec: BrushPreviewSpec) -> Self {
+        self.spec = spec;
+        self.spec_reader = None;
+        self
+    }
+
+    pub fn spec_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> BrushPreviewSpec + 'static,
+    {
+        self.spec_reader = Some(Box::new(reader));
+        self
+    }
+
+    pub fn kind(mut self, kind: impl Into<String>) -> Self {
+        self.kind = kind.into();
+        self
+    }
+
+    pub fn size(mut self, size: Size) -> Self {
+        self.width = size.width.max(80.0);
+        self.height = size.height.max(44.0);
+        self
+    }
+
+    fn current_spec(&self) -> BrushPreviewSpec {
+        self.spec_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.spec)
+    }
+
+    fn value_text(kind: &str, spec: BrushPreviewSpec) -> String {
+        format!(
+            "{} {}, {:.0} px, {:.0}% opacity",
+            spec.shape.label(),
+            kind,
+            spec.size,
+            spec.opacity * 100.0
+        )
+    }
+}
+
+impl Widget for BrushPreview {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(self.width, self.height))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds();
+        let palette = self.theme.palette;
+        let spec = self.current_spec();
+        let content = inset_rect(bounds, Insets::all(8.0));
+        let swatch = Rect::new(content.x(), content.y(), 54.0, content.height());
+        let sample = Rect::new(
+            swatch.max_x() + 10.0,
+            content.y(),
+            (content.max_x() - swatch.max_x() - 10.0).max(0.0),
+            content.height(),
+        );
+        let preview_color = spec
+            .color
+            .with_alpha((spec.color.alpha * spec.opacity).clamp(0.0, 1.0));
+
+        ctx.fill(rounded_rect_path(bounds, 6.0), palette.surface);
+        ctx.stroke(
+            rounded_rect_path(bounds, 6.0),
+            palette.border,
+            StrokeStyle::new(self.theme.metrics.border_width.max(1.0)),
+        );
+        draw_checkerboard(ctx, swatch, 8.0);
+        ctx.stroke(
+            rounded_rect_path(swatch, 4.0),
+            palette.border.with_alpha(0.70),
+            StrokeStyle::new(1.0),
+        );
+        paint_brush_preview_mark(ctx, swatch, spec, preview_color);
+
+        let track = Rect::new(
+            sample.x(),
+            sample.y() + sample.height() * 0.44,
+            sample.width(),
+            sample.height() * 0.24,
+        );
+        draw_checkerboard(ctx, track, 6.0);
+        paint_brush_preview_stroke(ctx, track, spec, preview_color);
+
+        let text_rect = Rect::new(sample.x(), sample.max_y() - 18.0, sample.width(), 16.0);
+        ctx.push_clip_rect(text_rect);
+        ctx.draw_text(
+            text_rect,
+            Self::value_text(&self.kind, spec),
+            TextStyle {
+                font_size: 11.0,
+                line_height: 14.0,
+                color: palette.text.with_alpha(0.72),
+                ..self.theme.body_text_style()
+            },
+        );
+        ctx.pop_clip();
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let spec = self.current_spec();
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Image, ctx.bounds());
+        node.name = Some(self.name.clone());
+        node.value = Some(SemanticsValue::Text(Self::value_text(&self.kind, spec)));
+        ctx.push(node);
+    }
+}
+
+fn paint_brush_preview_mark(ctx: &mut PaintCtx, rect: Rect, spec: BrushPreviewSpec, color: Color) {
+    let diameter = spec
+        .size
+        .min(rect.width().min(rect.height()) - 10.0)
+        .max(6.0);
+    let center = Point::new(
+        rect.x() + rect.width() * 0.5,
+        rect.y() + rect.height() * 0.5,
+    );
+    let mark = Rect::new(
+        center.x - diameter * 0.5,
+        center.y - diameter * 0.5,
+        diameter,
+        diameter,
+    );
+    match spec.shape {
+        BrushPreviewShape::Round => ctx.fill(Path::circle(center, diameter * 0.5), color),
+        BrushPreviewShape::Square => ctx.fill(rounded_rect_path(mark, 2.0), color),
+    }
+}
+
+fn paint_brush_preview_stroke(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    spec: BrushPreviewSpec,
+    color: Color,
+) {
+    let dot_count = 7;
+    let diameter = (spec.size * 0.62).clamp(4.0, rect.height().max(4.0));
+    for index in 0..dot_count {
+        let t = if dot_count <= 1 {
+            0.0
+        } else {
+            index as f32 / (dot_count - 1) as f32
+        };
+        let center = Point::new(
+            rect.x() + diameter * 0.5 + t * (rect.width() - diameter).max(0.0),
+            rect.y() + rect.height() * 0.5,
+        );
+        let alpha = 0.35 + t * 0.65;
+        let color = color.with_alpha((color.alpha * alpha).clamp(0.0, 1.0));
+        match spec.shape {
+            BrushPreviewShape::Round => ctx.fill(Path::circle(center, diameter * 0.5), color),
+            BrushPreviewShape::Square => ctx.fill(
+                rounded_rect_path(
+                    Rect::new(
+                        center.x - diameter * 0.5,
+                        center.y - diameter * 0.5,
+                        diameter,
+                        diameter,
+                    ),
+                    1.5,
+                ),
+                color,
+            ),
+        }
     }
 }
 
@@ -374,7 +1060,20 @@ pub struct ColorPicker {
     compact: bool,
     encoding_dropdown_open: bool,
     active: Option<ActiveChannel>,
+    color_reader: Option<Box<dyn Fn() -> Color>>,
     on_change: Option<Box<dyn FnMut(Color)>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ColorPickerResolvedState {
+    color: Color,
+    editing_space: ColorSpace,
+    hue: f32,
+    saturation: f32,
+    value: f32,
+    alpha: f32,
+    hdr_capable: bool,
+    max_channel_value: f32,
 }
 
 impl ColorPicker {
@@ -418,6 +1117,7 @@ impl ColorPicker {
             compact: false,
             encoding_dropdown_open: false,
             active: None,
+            color_reader: None,
             on_change: None,
         }
     }
@@ -445,6 +1145,14 @@ impl ColorPicker {
         self
     }
 
+    pub fn color_when<F>(mut self, color: F) -> Self
+    where
+        F: Fn() -> Color + 'static,
+    {
+        self.color_reader = Some(Box::new(color));
+        self
+    }
+
     pub fn color(&self) -> Color {
         hsv_to_color(
             self.editing_space,
@@ -456,7 +1164,7 @@ impl ColorPicker {
     }
 
     fn hdr_capable(&self) -> bool {
-        self.editing_space.is_linear() || matches!(self.editing_space, ColorSpace::DisplayP3)
+        color_space_hdr_capable(self.editing_space)
     }
 
     fn max_channel_value(&self) -> f32 {
@@ -465,6 +1173,57 @@ impl ColorPicker {
         } else {
             1.0
         }
+    }
+
+    fn external_color(&self) -> Option<Color> {
+        if self.active.is_none() && !self.encoding_dropdown_open {
+            self.color_reader.as_ref().map(|reader| reader())
+        } else {
+            None
+        }
+    }
+
+    fn resolved_state(&self) -> ColorPickerResolvedState {
+        if let Some(color) = self.external_color() {
+            let (hue, saturation, value) = rgb_to_hsv(color);
+            let hdr_capable = color_space_hdr_capable(color.space);
+            return ColorPickerResolvedState {
+                color,
+                editing_space: color.space,
+                hue,
+                saturation,
+                value,
+                alpha: color.alpha,
+                hdr_capable,
+                max_channel_value: if hdr_capable {
+                    Self::MAX_HDR_VALUE
+                } else {
+                    1.0
+                },
+            };
+        }
+
+        ColorPickerResolvedState {
+            color: self.color(),
+            editing_space: self.editing_space,
+            hue: self.hue,
+            saturation: self.saturation,
+            value: self.value,
+            alpha: self.alpha,
+            hdr_capable: self.hdr_capable(),
+            max_channel_value: self.max_channel_value(),
+        }
+    }
+
+    fn sync_external_color(&mut self) -> bool {
+        let Some(color) = self.external_color() else {
+            return false;
+        };
+        if !colors_close(self.color(), color) {
+            self.apply_color(color);
+            return true;
+        }
+        false
     }
 
     fn content_inset(&self) -> f32 {
@@ -806,8 +1565,8 @@ impl ColorPicker {
         }
     }
 
-    fn color_semantics_text(&self, color: Color) -> String {
-        if self.hdr_capable() && is_hdr_color(color) {
+    fn color_semantics_text(&self, color: Color, hdr_capable: bool) -> String {
+        if hdr_capable && is_hdr_color(color) {
             format!(
                 "R {:.3} G {:.3} B {:.3} A {:.3}",
                 color.red, color.green, color.blue, color.alpha
@@ -824,6 +1583,7 @@ impl ColorPicker {
         name: &'static str,
         bounds: Rect,
         color: Color,
+        hdr_capable: bool,
     ) {
         let mut node = color_picker_child_semantics_node(
             ctx.widget_id(),
@@ -832,7 +1592,9 @@ impl ColorPicker {
             bounds,
             name,
         );
-        node.value = Some(SemanticsValue::Text(self.color_semantics_text(color)));
+        node.value = Some(SemanticsValue::Text(
+            self.color_semantics_text(color, hdr_capable),
+        ));
         ctx.push(node);
     }
 
@@ -862,14 +1624,16 @@ impl ColorPicker {
         ctx.push(node);
     }
 
-    fn push_component_semantics(&self, ctx: &mut SemanticsCtx, current: Color) {
+    fn push_component_semantics(&self, ctx: &mut SemanticsCtx, resolved: ColorPickerResolvedState) {
         let bounds = ctx.bounds();
+        let current = resolved.color;
         self.push_color_swatch_semantics(
             ctx,
             ColorPickerSemanticPart::CurrentColor,
             "Current color",
             self.current_swatch_rect(bounds),
             current,
+            resolved.hdr_capable,
         );
         self.push_color_swatch_semantics(
             ctx,
@@ -877,6 +1641,7 @@ impl ColorPicker {
             "Previous color",
             self.previous_swatch_rect(bounds),
             self.previous_color,
+            color_space_hdr_capable(self.previous_color.space),
         );
 
         let mut range = color_picker_child_semantics_node(
@@ -887,7 +1652,7 @@ impl ColorPicker {
             "Color range",
         );
         range.value = Some(SemanticsValue::Text(
-            editing_space_label(self.editing_space).to_string(),
+            editing_space_label(resolved.editing_space).to_string(),
         ));
         range.state.expanded = Some(self.encoding_dropdown_open);
         range.actions = vec![
@@ -910,13 +1675,13 @@ impl ColorPicker {
         );
         saturation_value.description = Some(format!(
             "Saturation {:.1}%, value {:.3}",
-            self.saturation * 100.0,
-            self.value
+            resolved.saturation * 100.0,
+            resolved.value
         ));
         saturation_value.value = Some(SemanticsValue::Range {
-            value: self.value as f64,
+            value: resolved.value as f64,
             min: 0.0,
-            max: self.max_channel_value() as f64,
+            max: resolved.max_channel_value as f64,
         });
         saturation_value.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(saturation_value);
@@ -926,7 +1691,7 @@ impl ColorPicker {
             ColorPickerSemanticPart::Hue,
             "Hue",
             self.left_slider_rect(bounds, 0),
-            self.hue * 360.0,
+            resolved.hue * 360.0,
             0.0,
             360.0,
         );
@@ -935,7 +1700,7 @@ impl ColorPicker {
             ColorPickerSemanticPart::Saturation,
             "Saturation",
             self.left_slider_rect(bounds, 1),
-            self.saturation * 100.0,
+            resolved.saturation * 100.0,
             0.0,
             100.0,
         );
@@ -944,9 +1709,9 @@ impl ColorPicker {
             ColorPickerSemanticPart::Value,
             "Value",
             self.left_slider_rect(bounds, 2),
-            self.value,
+            resolved.value,
             0.0,
-            self.max_channel_value(),
+            resolved.max_channel_value,
         );
         if self.show_alpha {
             self.push_slider_semantics(
@@ -954,7 +1719,7 @@ impl ColorPicker {
                 ColorPickerSemanticPart::Alpha,
                 "Alpha",
                 self.left_slider_rect(bounds, 3),
-                self.alpha * 100.0,
+                resolved.alpha * 100.0,
                 0.0,
                 100.0,
             );
@@ -976,11 +1741,11 @@ impl ColorPicker {
                 self.rgb_row_rect(bounds, index),
                 rgb[index],
                 0.0,
-                self.max_channel_value(),
+                resolved.max_channel_value,
             );
         }
 
-        let hex_name = if self.hdr_capable() && is_hdr_color(current) {
+        let hex_name = if resolved.hdr_capable && is_hdr_color(current) {
             "HDR hex unavailable".to_string()
         } else {
             format!("Hex color {}", format_color(current))
@@ -1018,7 +1783,7 @@ impl ColorPicker {
                     self.encoding_option_rect(bounds, index),
                     editing_space_label(space),
                 );
-                item.state.selected = space == self.editing_space;
+                item.state.selected = space == resolved.editing_space;
                 item.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
                 ctx.push(item);
             }
@@ -1074,6 +1839,10 @@ fn color_picker_child_semantics_node_with_parent(
 
 impl Widget for ColorPicker {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.sync_external_color() {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 if let Some(active) = self.active {
@@ -1174,12 +1943,14 @@ impl Widget for ColorPicker {
     }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_external_color();
         constraints.clamp(self.desired_size())
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let palette = self.theme.palette;
-        let current = self.color();
+        let resolved = self.resolved_state();
+        let current = resolved.color;
         let header = self.header_rect(ctx.bounds());
         let wheel = self.color_wheel_rect(ctx.bounds());
         let map = self.saturation_value_rect(ctx.bounds());
@@ -1197,37 +1968,37 @@ impl Widget for ColorPicker {
             ctx,
             encoding,
             self.theme.as_ref(),
-            editing_space_label(self.editing_space),
+            editing_space_label(resolved.editing_space),
         );
 
         paint_color_wheel(ctx, wheel);
-        paint_wheel_marker(ctx, wheel, self.hue);
+        paint_wheel_marker(ctx, wheel, resolved.hue);
 
         paint_saturation_value_plane(
             ctx,
             map,
-            self.editing_space,
-            self.hue,
-            self.max_channel_value(),
+            resolved.editing_space,
+            resolved.hue,
+            resolved.max_channel_value,
         );
         let marker = Point::new(
-            map.x() + self.saturation * map.width(),
+            map.x() + resolved.saturation * map.width(),
             map.y()
                 + (1.0
-                    - if self.hdr_capable() {
-                        hdr_value_to_slider(self.value)
+                    - if resolved.hdr_capable {
+                        hdr_value_to_slider(resolved.value)
                     } else {
-                        self.value.clamp(0.0, 1.0)
+                        resolved.value.clamp(0.0, 1.0)
                     })
                     * map.height(),
         );
         paint_marker(ctx, marker, contrast_color(current));
 
         let rows = [
-            ("H", format!("{:.2}", self.hue * 360.0)),
-            ("S", format!("{:.2}", self.saturation * 100.0)),
-            ("V", format!("{:.3}", self.value)),
-            ("A", format!("{:.1}", self.alpha * 100.0)),
+            ("H", format!("{:.2}", resolved.hue * 360.0)),
+            ("S", format!("{:.2}", resolved.saturation * 100.0)),
+            ("V", format!("{:.3}", resolved.value)),
+            ("A", format!("{:.1}", resolved.alpha * 100.0)),
         ];
         for (index, (label, value_text)) in rows.into_iter().enumerate() {
             if index == 3 && !self.show_alpha {
@@ -1239,17 +2010,17 @@ impl Widget for ColorPicker {
                 1 => paint_saturation_bar(
                     ctx,
                     rect,
-                    self.editing_space,
-                    self.hue,
-                    self.value.max(1.0),
+                    resolved.editing_space,
+                    resolved.hue,
+                    resolved.value.max(1.0),
                 ),
                 2 => paint_value_bar(
                     ctx,
                     rect,
-                    self.editing_space,
-                    self.hue,
-                    self.saturation,
-                    self.hdr_capable(),
+                    resolved.editing_space,
+                    resolved.hue,
+                    resolved.saturation,
+                    resolved.hdr_capable,
                 ),
                 _ => {
                     draw_checkerboard(ctx, rect, 4.0);
@@ -1258,17 +2029,17 @@ impl Widget for ColorPicker {
             }
             paint_labeled_row_text(ctx, rect, label, &value_text, palette.placeholder);
             let marker_x = match index {
-                0 => rect.x() + self.hue * rect.width(),
-                1 => rect.x() + self.saturation * rect.width(),
+                0 => rect.x() + resolved.hue * rect.width(),
+                1 => rect.x() + resolved.saturation * rect.width(),
                 2 => {
                     rect.x()
-                        + if self.hdr_capable() {
-                            hdr_value_to_slider(self.value) * rect.width()
+                        + if resolved.hdr_capable {
+                            hdr_value_to_slider(resolved.value) * rect.width()
                         } else {
-                            self.value.clamp(0.0, 1.0) * rect.width()
+                            resolved.value.clamp(0.0, 1.0) * rect.width()
                         }
                 }
-                _ => rect.x() + self.alpha * rect.width(),
+                _ => rect.x() + resolved.alpha * rect.width(),
             };
             paint_marker(
                 ctx,
@@ -1281,7 +2052,7 @@ impl Widget for ColorPicker {
         let channel_labels = ["R", "G", "B"];
         for (index, label) in channel_labels.into_iter().enumerate() {
             let rect = self.rgb_row_rect(ctx.bounds(), index);
-            paint_rgb_channel_bar(ctx, rect, current, index, self.max_channel_value());
+            paint_rgb_channel_bar(ctx, rect, current, index, resolved.max_channel_value);
             paint_labeled_row_text(
                 ctx,
                 rect,
@@ -1290,7 +2061,7 @@ impl Widget for ColorPicker {
                 palette.placeholder,
             );
             let marker_x =
-                rect.x() + (rgb[index] / self.max_channel_value()).clamp(0.0, 1.0) * rect.width();
+                rect.x() + (rgb[index] / resolved.max_channel_value).clamp(0.0, 1.0) * rect.width();
             paint_marker(
                 ctx,
                 Point::new(marker_x, rect.y() + rect.height() * 0.5),
@@ -1298,7 +2069,7 @@ impl Widget for ColorPicker {
             );
         }
 
-        if self.hdr_capable() && is_hdr_color(current) {
+        if resolved.hdr_capable && is_hdr_color(current) {
             paint_disabled_field(
                 ctx,
                 self.hex_rect(ctx.bounds()),
@@ -1319,26 +2090,29 @@ impl Widget for ColorPicker {
                 ctx,
                 self.encoding_menu_rect(ctx.bounds()),
                 self.theme.as_ref(),
-                self.editing_space,
+                resolved.editing_space,
             );
         }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let current = self.color();
+        let resolved = self.resolved_state();
+        let current = resolved.color;
         let mut node =
             SemanticsNode::new(ctx.widget_id(), SemanticsRole::ColorPicker, ctx.bounds());
         node.name = Some(self.name.clone());
         node.description = Some(format!(
             "{} editing space; {} range available",
-            editing_space_label(self.editing_space),
-            if self.hdr_capable() { "HDR" } else { "SDR" }
+            editing_space_label(resolved.editing_space),
+            if resolved.hdr_capable { "HDR" } else { "SDR" }
         ));
         node.state.focused = ctx.is_focused();
-        node.value = Some(SemanticsValue::Text(self.color_semantics_text(current)));
+        node.value = Some(SemanticsValue::Text(
+            self.color_semantics_text(current, resolved.hdr_capable),
+        ));
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
-        self.push_component_semantics(ctx, current);
+        self.push_component_semantics(ctx, resolved);
     }
 
     fn accepts_focus(&self) -> bool {
@@ -1847,6 +2621,18 @@ fn format_color(color: Color) -> String {
     )
 }
 
+fn color_space_hdr_capable(space: ColorSpace) -> bool {
+    space.is_linear() || matches!(space, ColorSpace::DisplayP3)
+}
+
+fn colors_close(left: Color, right: Color) -> bool {
+    left.space == right.space
+        && (left.red - right.red).abs() < 0.0001
+        && (left.green - right.green).abs() < 0.0001
+        && (left.blue - right.blue).abs() < 0.0001
+        && (left.alpha - right.alpha).abs() < 0.0001
+}
+
 fn contrast_color(color: Color) -> Color {
     if perceived_luminance(color) > 0.55 {
         Color::BLACK.with_alpha(0.85)
@@ -1923,7 +2709,8 @@ mod tests {
     use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
     use super::{
-        ActiveChannel, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image,
+        ActiveChannel, BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette,
+        ColorPaletteSwatch, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image,
         color_picker_child_semantics_id, format_color, hsv_to_rgb, rgb_to_hsv,
     };
     use sui_core::{
@@ -1932,7 +2719,7 @@ mod tests {
         Vector, WidgetId,
     };
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
-    use sui_scene::RegisteredImage;
+    use sui_scene::{RegisteredImage, SceneCommand};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -2007,6 +2794,44 @@ mod tests {
     }
 
     #[test]
+    fn image_without_border_omits_frame_stroke() -> Result<()> {
+        let handle = ImageHandle::new(8);
+        let mut application = Application::new();
+        application.register_image(
+            handle,
+            RegisteredImage::from_rgba8(32, 32, vec![255; 32 * 32 * 4])?,
+        )?;
+        let mut runtime = application
+            .window(
+                WindowBuilder::new()
+                    .title("Image")
+                    .root(Image::new(handle).without_border()),
+            )
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+
+        let output = runtime.render(window_id)?;
+        let mut image_draws = 0;
+        let mut frame_strokes = 0;
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::DrawImage { source, .. } if source.image == handle => {
+                    image_draws += 1;
+                }
+                SceneCommand::StrokeRect { .. } | SceneCommand::StrokePath { .. } => {
+                    frame_strokes += 1;
+                }
+                _ => {}
+            });
+
+        assert_eq!(image_draws, 1);
+        assert_eq!(frame_strokes, 0);
+        Ok(())
+    }
+
+    #[test]
     fn color_swatch_click_invokes_callback() -> Result<()> {
         let presses = Rc::new(RefCell::new(Vec::new()));
         let on_press = Rc::clone(&presses);
@@ -2038,6 +2863,185 @@ mod tests {
             swatch.value,
             Some(SemanticsValue::Text("#3366CCFF".to_string()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn color_swatch_read_only_color_when_syncs_external_value() -> Result<()> {
+        let color = Rc::new(RefCell::new(Color::rgba(0.08, 0.22, 0.78, 1.0)));
+        let color_reader = Rc::clone(&color);
+        let (mut runtime, window_id) = build_runtime(
+            ColorSwatch::new("Current brush color", *color.borrow())
+                .color_when(move || *color_reader.borrow())
+                .read_only(),
+        );
+
+        let output = runtime.render(window_id)?;
+        let swatch = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorSwatch
+                    && node.name.as_deref() == Some("Current brush color")
+            })
+            .expect("current color swatch semantics present");
+        assert_eq!(
+            swatch.value,
+            Some(SemanticsValue::Text("#1438C7FF".to_string()))
+        );
+        assert!(swatch.actions.is_empty());
+
+        *color.borrow_mut() = Color::rgba(0.90, 0.32, 0.18, 1.0);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(8.0, 8.0), false),
+        )?;
+        let output = runtime.render(window_id)?;
+        let swatch = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorSwatch
+                    && node.name.as_deref() == Some("Current brush color")
+            })
+            .expect("current color swatch semantics still present");
+        assert_eq!(
+            swatch.value,
+            Some(SemanticsValue::Text("#E6522EFF".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_palette_exposes_selected_swatch_semantics() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            ColorPalette::new("Brush palette")
+                .swatches([
+                    ColorPaletteSwatch::new("Ink", Color::rgba(0.08, 0.10, 0.15, 1.0)),
+                    ColorPaletteSwatch::new("Ocean", Color::rgba(0.08, 0.22, 0.78, 1.0)),
+                    ColorPaletteSwatch::new("Mint", Color::rgba(0.28, 0.78, 0.58, 1.0)),
+                ])
+                .selected(1),
+        );
+        let output = runtime.render(window_id)?;
+
+        let palette = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Brush palette")
+            })
+            .expect("palette semantics present");
+        assert_eq!(
+            palette.value,
+            Some(SemanticsValue::Text("Ocean #1438C7FF".to_string()))
+        );
+
+        let selected = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some("Ocean")
+            })
+            .expect("selected swatch semantics present");
+        assert!(selected.state.selected);
+        assert_eq!(
+            selected.value,
+            Some(SemanticsValue::Text("#1438C7FF".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_palette_click_invokes_callback_and_selects_swatch() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let changes_writer = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            ColorPalette::new("Brush palette")
+                .swatches([
+                    ColorPaletteSwatch::new("Ink", Color::rgba(0.08, 0.10, 0.15, 1.0)),
+                    ColorPaletteSwatch::new("Ocean", Color::rgba(0.08, 0.22, 0.78, 1.0)),
+                    ColorPaletteSwatch::new("Mint", Color::rgba(0.28, 0.78, 0.58, 1.0)),
+                ])
+                .selected(0)
+                .on_change(move |index, name, color| {
+                    changes_writer.borrow_mut().push((index, name, color));
+                }),
+        );
+        let output = runtime.render(window_id)?;
+        let mint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some("Mint")
+            })
+            .expect("target swatch semantics present");
+        let position = Point::new(
+            mint.bounds.x() + mint.bounds.width() * 0.5,
+            mint.bounds.y() + mint.bounds.height() * 0.5,
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+
+        assert_eq!(
+            changes.borrow().as_slice(),
+            &[(2, "Mint".to_string(), Color::rgba(0.28, 0.78, 0.58, 1.0))]
+        );
+        let output = runtime.render(window_id)?;
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::ColorSwatch
+                && node.name.as_deref() == Some("Mint")
+                && node.state.selected
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn brush_preview_exposes_current_brush_semantics_and_paints_sample() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            BrushPreview::new("Brush preview")
+                .spec(BrushPreviewSpec::new(
+                    Color::rgba(0.10, 0.30, 0.90, 1.0),
+                    22.0,
+                    0.75,
+                    BrushPreviewShape::Square,
+                ))
+                .size(Size::new(220.0, 64.0)),
+        );
+
+        let output = runtime.render(window_id)?;
+        let preview = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Image && node.name.as_deref() == Some("Brush preview")
+            })
+            .expect("brush preview semantics present");
+        assert_eq!(
+            preview.value,
+            Some(SemanticsValue::Text(
+                "Square brush, 22 px, 75% opacity".to_string(),
+            ))
+        );
+
+        let mut fill_count = 0;
+        output.frame.scene.visit_commands(&mut |command| {
+            if matches!(
+                command,
+                SceneCommand::FillRect { .. } | SceneCommand::FillPath { .. }
+            ) {
+                fill_count += 1;
+            }
+        });
+        assert!(fill_count > 3);
         Ok(())
     }
 
@@ -2077,6 +3081,44 @@ mod tests {
         assert_eq!(
             picker.value,
             Some(SemanticsValue::Text(format_color(changed_color)))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_color_when_syncs_external_color() -> Result<()> {
+        let color = Rc::new(RefCell::new(Color::rgba(0.08, 0.22, 0.78, 1.0)));
+        let color_reader = Rc::clone(&color);
+        let (mut runtime, window_id) = build_runtime(
+            ColorPicker::from_color("Brush color", *color.borrow())
+                .color_when(move || *color_reader.borrow()),
+        );
+
+        let output = runtime.render(window_id)?;
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ColorPicker)
+            .expect("color picker semantics present");
+        assert_eq!(
+            picker.value,
+            Some(SemanticsValue::Text("#1438C7FF".to_string()))
+        );
+
+        *color.borrow_mut() = Color::rgba(0.90, 0.32, 0.18, 1.0);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(8.0, 8.0), false),
+        )?;
+        let output = runtime.render(window_id)?;
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ColorPicker)
+            .expect("color picker semantics still present");
+        assert_eq!(
+            picker.value,
+            Some(SemanticsValue::Text("#E6522EFF".to_string()))
         );
         Ok(())
     }

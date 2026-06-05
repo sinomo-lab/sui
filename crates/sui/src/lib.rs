@@ -12,13 +12,14 @@ pub mod containers;
 pub mod controls;
 
 pub use composites::{
-    BusyIndicator, ContextMenu, Dialog, Menu, MenuItem, Modal, PanelSection, Popover, ProgressBar,
-    PropertyRow, PropertyRowLayout, Spinner, StatusBar, StatusBarHost, StatusBarSegment, TabBar,
-    Tabs, Toolbar, Tooltip, TooltipPlacement,
+    BusyIndicator, CommandGroup, ContextMenu, Dialog, DockPanel, Menu, MenuItem, Modal,
+    PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, Spinner,
+    StatusBar, StatusBarHost, StatusBarSegment, TabBar, Tabs, ToolPalette, ToolPaletteItem,
+    Toolbar, Tooltip, TooltipPlacement,
 };
 pub use containers::{
     Align, Background, Overflow, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox, Stack,
-    VirtualScrollView,
+    SwitchView, VirtualScrollView,
 };
 pub use controls::{
     Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput,
@@ -46,19 +47,20 @@ pub use sui_render_wgpu::{
     WgpuRenderer,
 };
 pub use sui_runtime::{
-    Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta, EventCtx,
-    EventPhase, FocusState, FramePhase, FramePhaseSample, FrameSchedule, MeasureCtx, PaintCtx,
-    PresentationLatencyDiagnostics, RenderDiagnostics, RenderOutput, RendererSubmissionDiagnostics,
-    RetainedPacketRebuildDiagnostics, Runtime, SceneStatistics, SceneStatisticsDetailMode,
-    SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions,
-    TextCacheDeltaDiagnostics, TextCacheDiagnostics, Widget, WidgetChildren,
-    WidgetGeometrySnapshot, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPod,
+    Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta,
+    DEFAULT_SUI_LOGO_SVG, EventCtx, EventPhase, FocusState, FramePhase, FramePhaseSample,
+    FrameSchedule, MeasureCtx, PaintCtx, PresentationLatencyDiagnostics, RenderDiagnostics,
+    RenderOutput, RendererSubmissionDiagnostics, RetainedPacketRebuildDiagnostics, Runtime,
+    SceneStatistics, SceneStatisticsDetailMode, SemanticsCtx, SingleChild, StackHostOptions,
+    StackOrderPolicy, StackSurfaceOptions, TextCacheDeltaDiagnostics, TextCacheDiagnostics, Widget,
+    WidgetChildren, WidgetGeometrySnapshot, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPod,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowColorManagementMode,
     WindowDynamicRangeMode, WindowIcon, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
     WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening, WindowTextHinting,
-    WindowToneMappingMode, clear_window_render_options, set_window_render_options,
-    set_window_scene_statistics_detail_mode, window_performance_snapshot,
-    window_performance_summary, window_render_options, window_scene_statistics_detail_mode,
+    WindowToneMappingMode, clear_window_render_options, default_sui_logo_image,
+    set_window_render_options, set_window_scene_statistics_detail_mode,
+    window_performance_snapshot, window_performance_summary, window_render_options,
+    window_scene_statistics_detail_mode,
 };
 pub use sui_scene::{
     Brush, ImageRegistry, ImageSource, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand,
@@ -74,21 +76,22 @@ pub use sui_text::{
     TextSpanId, TextStyle, TextWrap, TextWritingMode,
 };
 pub use sui_widgets::{
-    Breadcrumb, BreadcrumbItem, Canvas, CanvasShape, CanvasStroke, CanvasViewport, ColorPicker,
-    ColorSwatch, ControlMetrics, ControlPalette, ControlTypography, DataGrid, DefaultTheme,
-    EffectToken, FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
-    FloatingWorkspaceState, HdrColorRoles, HdrEffectTokens, HdrLuminanceTokens, HdrMaterialTokens,
-    HdrPolicyTokens, HdrThemeMode, HdrThemeTokens, Image, ImageFit, ListItem, ListView,
-    MaterialToken, PathBar, PixelCanvas, PixelCanvasBlendMode, PixelCanvasBrushShape,
-    PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool, ResizablePane,
-    ResolvedEffectStyle, ResolvedHdrStyle, ResolvedMaterialStyle, SemanticColorToken, SplitView,
-    Table, TableColumn, TableColumnAlignment, TableRow, TextSurface, TextSurfaceOverlayKind,
-    TextSurfaceStyleOverlay, TextSurfaceStyleSpan, ThemeAspectRatios, ThemeBlurScale,
-    ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeFontFamilies,
-    ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadows,
-    ThemeTextScale, ThemeTextToken, ThemeTracking, TreeItem, TreeView, WidgetColorRole,
-    WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole, resolve_effect_role,
-    resolve_luminance_role, resolve_material_role, resolve_semantic_color,
+    Breadcrumb, BreadcrumbItem, BrushPreview, BrushPreviewShape, BrushPreviewSpec, Canvas,
+    CanvasRuler, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasViewport, ColorPalette,
+    ColorPaletteSwatch, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette,
+    ControlTypography, DataGrid, DefaultTheme, EffectToken, FloatingStack, FloatingViewConfig,
+    FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState, HdrColorRoles,
+    HdrEffectTokens, HdrLuminanceTokens, HdrMaterialTokens, HdrPolicyTokens, HdrThemeMode,
+    HdrThemeTokens, Image, ImageFit, LayerList, LayerListItem, ListItem, ListView, MaterialToken,
+    PathBar, PixelCanvas, PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot,
+    PixelCanvasState, PixelCanvasTool, ResizablePane, ResolvedEffectStyle, ResolvedHdrStyle,
+    ResolvedMaterialStyle, SemanticColorToken, SplitView, Table, TableColumn, TableColumnAlignment,
+    TableRow, TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,
+    ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,
+    ThemeContainers, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading,
+    ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
+    TreeItem, TreeView, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
+    resolve_effect_role, resolve_luminance_role, resolve_material_role, resolve_semantic_color,
     resolve_widget_hdr_style,
 };
 
@@ -324,6 +327,38 @@ impl Application {
         self.inner.register_rgba_image(width, height, data)
     }
 
+    pub fn register_svg_image(&mut self, data: impl AsRef<[u8]>) -> Result<ImageHandle> {
+        self.inner.register_svg_image(data)
+    }
+
+    pub fn register_svg_image_with_handle(
+        &mut self,
+        handle: ImageHandle,
+        data: impl AsRef<[u8]>,
+    ) -> Result<()> {
+        self.inner.register_svg_image_with_handle(handle, data)
+    }
+
+    pub fn register_svg_image_at_size(
+        &mut self,
+        width: u32,
+        height: u32,
+        data: impl AsRef<[u8]>,
+    ) -> Result<ImageHandle> {
+        self.inner.register_svg_image_at_size(width, height, data)
+    }
+
+    pub fn register_svg_image_at_size_with_handle(
+        &mut self,
+        handle: ImageHandle,
+        width: u32,
+        height: u32,
+        data: impl AsRef<[u8]>,
+    ) -> Result<()> {
+        self.inner
+            .register_svg_image_at_size_with_handle(handle, width, height, data)
+    }
+
     pub fn build(self) -> Result<Runtime> {
         self.inner.build()
     }
@@ -375,25 +410,27 @@ impl Default for Style {
 pub mod prelude {
     pub use crate::{
         Align, Alignment, Application, ArrangeCtx, AsyncWakeToken, Axis, Background, Breadcrumb,
-        BreadcrumbItem, Brush, BusyIndicator, Button, Canvas, CanvasShape, CanvasStroke,
-        CanvasViewport, Checkbox, Color, ColorPicker, ColorSwatch, ComboBox, Constraints,
-        ContextMenu, ControlMetrics, ControlPalette, ControlTypography, DataGrid, DefaultTheme,
-        Dialog, Divider, Event, EventCtx, FloatingViewConfig, FloatingViewSnapshot,
-        FloatingWorkspace, FloatingWorkspaceState, FontHandle, Icon, IconButton, IconGlyph, Image,
-        ImageFit, ImageHandle, ImeEvent, Insets, KeyboardEvent, Label, ListItem, ListView,
-        MeasureCtx, Menu, MenuItem, Modal, MultilineTextInput, NumberInput, Overflow, PaintCtx,
-        PanelSection, Path, PathBar, PathBuilder, PixelCanvas, PixelCanvasBlendMode,
-        PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool, Point,
-        PointerEvent, Popover, ProgressBar, PropertyRow, PropertyRowLayout, RadioButton,
-        RadioGroup, Rect, RegisteredFont, RegisteredImage, ResizablePane, Result, ScrollAxes,
-        ScrollBar, ScrollState, ScrollView, Select, SemanticsCtx, Separator, ShapedText,
-        SingleChild, Size, SizedBox, Slider, SpinBox, Spinner, SplitView, Stack, StatusBar,
-        StatusBarHost, StatusBarSegment, StrokeStyle, Style, Switch, TabBar, Table, TableColumn,
-        TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextLayout, TextMeasurement,
-        TextStyle, Theme, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme,
-        ThemeColors, ThemeContainers, ThemeExtension, ThemeExtensions, ThemeFontFamilies,
-        ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadows,
-        ThemeTextScale, ThemeTextToken, ThemeTracking, TimerToken, Toolbar, Tooltip,
+        BreadcrumbItem, Brush, BrushPreview, BrushPreviewShape, BrushPreviewSpec, BusyIndicator,
+        Button, Canvas, CanvasRuler, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasViewport,
+        Checkbox, Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSwatch, ComboBox,
+        CommandGroup, Constraints, ContextMenu, ControlMetrics, ControlPalette, ControlTypography,
+        DataGrid, DefaultTheme, Dialog, Divider, DockPanel, Event, EventCtx, FloatingViewConfig,
+        FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState, FontHandle, Icon,
+        IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImeEvent, Insets, KeyboardEvent,
+        Label, LayerList, LayerListItem, ListItem, ListView, MeasureCtx, Menu, MenuItem, Modal,
+        MultilineTextInput, NumberInput, Overflow, PaintCtx, PanelSection, Path, PathBar,
+        PathBuilder, PixelCanvas, PixelCanvasBlendMode, PixelCanvasBrushShape,
+        PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool, Point, PointerEvent, Popover,
+        PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, RadioButton, RadioGroup, Rect,
+        RegisteredFont, RegisteredImage, ResizablePane, Result, ScrollAxes, ScrollBar, ScrollState,
+        ScrollView, Select, SemanticsCtx, Separator, ShapedText, SingleChild, Size, SizedBox,
+        Slider, SpinBox, Spinner, SplitView, Stack, StatusBar, StatusBarHost, StatusBarSegment,
+        StrokeStyle, Style, Switch, SwitchView, TabBar, Table, TableColumn, TableColumnAlignment,
+        TableRow, Tabs, TextArea, TextInput, TextLayout, TextMeasurement, TextStyle, Theme,
+        ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,
+        ThemeContainers, ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack,
+        ThemeFontWeights, ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadows, ThemeTextScale,
+        ThemeTextToken, ThemeTracking, TimerToken, ToolPalette, ToolPaletteItem, Toolbar, Tooltip,
         TooltipPlacement, Transform, TreeItem, TreeView, VirtualScrollView, WakeEvent, Widget,
         WidgetChildren, WidgetPod, WidgetShader, WindowBuilder, WindowRenderOptions,
         containers::Padding, set_window_render_options,

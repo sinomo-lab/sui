@@ -2378,7 +2378,7 @@ fn build_color_and_imagery_story() -> impl Widget {
                     ),
             )
             .with_child(
-                Stack::horizontal()
+                Stack::vertical()
                     .spacing(16.0)
                     .alignment(Alignment::Start)
                     .with_child(SizedBox::new().width(434.0).height(448.0).with_child(

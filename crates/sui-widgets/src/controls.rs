@@ -29,6 +29,8 @@ pub enum IconGlyph {
     Close,
     Maximize,
     Restore,
+    FitView,
+    ActualSize,
     MoreHorizontal,
     MoreVertical,
     Search,
@@ -38,6 +40,8 @@ pub enum IconGlyph {
     Eraser,
     PaintBucket,
     Hand,
+    Lock,
+    Unlock,
     Trash,
     Download,
 }
@@ -665,6 +669,8 @@ impl Widget for IconButton {
 
 pub struct Label {
     text: String,
+    text_reader: Option<Box<dyn Fn() -> String>>,
+    semantic_name: Option<String>,
     style: TextStyle,
     measurement: Option<TextMeasurement>,
 }
@@ -673,9 +679,31 @@ impl Label {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            text_reader: None,
+            semantic_name: None,
             style: DefaultTheme::default().body_text_style(),
             measurement: None,
         }
+    }
+
+    pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        Self::new(fallback).text_when(reader)
+    }
+
+    pub fn text_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.text_reader = Some(Box::new(reader));
+        self
+    }
+
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
+        self
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -689,6 +717,7 @@ impl Label {
 
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.text = text.into();
+        self.text_reader = None;
     }
 
     pub fn color(mut self, color: Color) -> Self {
@@ -710,18 +739,26 @@ impl Label {
         self.style = style;
         self
     }
+
+    fn current_text(&self) -> String {
+        self.text_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.text.clone())
+    }
 }
 
 impl Widget for Label {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let natural_measurement = measure_text(ctx, &self.text, &self.style);
+        let text = self.current_text();
+        let natural_measurement = measure_text(ctx, &text, &self.style);
         let (measured_width, measurement) = if constraints.max.width.is_finite()
             && natural_measurement.width > constraints.max.width
         {
             let wrapped_measurement = ctx
                 .layout()
                 .shape_text(
-                    self.text.clone(),
+                    text,
                     Size::new(constraints.max.width.max(1.0), f32::INFINITY),
                     self.style.clone(),
                 )
@@ -739,12 +776,16 @@ impl Widget for Label {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.draw_text(ctx.bounds(), self.text.clone(), self.style.clone());
+        ctx.draw_text(ctx.bounds(), self.current_text(), self.style.clone());
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let text = self.current_text();
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Text, ctx.bounds());
-        node.name = Some(self.text.clone());
+        node.name = Some(self.semantic_name.clone().unwrap_or_else(|| text.clone()));
+        if self.semantic_name.is_some() {
+            node.value = Some(SemanticsValue::Text(text));
+        }
         ctx.push(node);
     }
 }
@@ -2735,11 +2776,13 @@ pub struct Slider {
     max: f64,
     step: f64,
     value: f64,
+    value_reader: Option<Box<dyn Fn() -> f64>>,
     hovered: bool,
     dragging: bool,
     hover_animation: AnimatedScalar,
     drag_animation: AnimatedScalar,
     on_change: Option<Box<dyn FnMut(f64)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, f64)>>,
 }
 
 impl Slider {
@@ -2751,11 +2794,13 @@ impl Slider {
             max: 1.0,
             step: 0.01,
             value: 0.0,
+            value_reader: None,
             hovered: false,
             dragging: false,
             hover_animation: AnimatedScalar::new(0.0),
             drag_animation: AnimatedScalar::new(0.0),
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -2779,6 +2824,15 @@ impl Slider {
 
     pub fn value(mut self, value: f64) -> Self {
         self.value = clamp_and_snap_value(value, self.min, self.max, self.step);
+        self.value_reader = None;
+        self
+    }
+
+    pub fn value_when<F>(mut self, value: F) -> Self
+    where
+        F: Fn() -> f64 + 'static,
+    {
+        self.value_reader = Some(Box::new(value));
         self
     }
 
@@ -2794,12 +2848,30 @@ impl Slider {
         self
     }
 
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, f64) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     fn fraction(&self) -> f32 {
         if (self.max - self.min).abs() <= f64::EPSILON {
             return 0.0;
         }
 
         ((self.value - self.min) / (self.max - self.min)).clamp(0.0, 1.0) as f32
+    }
+
+    fn sync_external_value(&mut self) {
+        if self.dragging {
+            return;
+        }
+        let Some(reader) = &self.value_reader else {
+            return;
+        };
+        self.value = clamp_and_snap_value(reader(), self.min, self.max, self.step);
     }
 
     fn track_rect(&self, bounds: Rect) -> Rect {
@@ -2824,7 +2896,16 @@ impl Slider {
         )
     }
 
-    fn set_from_position(&mut self, bounds: Rect, position: Point) {
+    fn emit_change(&mut self, ctx: &mut EventCtx) {
+        if let Some(on_change) = &mut self.on_change {
+            on_change(self.value);
+        }
+        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
+            on_change_with_ctx(ctx, self.value);
+        }
+    }
+
+    fn set_from_position(&mut self, ctx: &mut EventCtx, bounds: Rect, position: Point) {
         let track = self.track_rect(bounds);
         if track.width() <= 0.0 {
             return;
@@ -2835,9 +2916,7 @@ impl Slider {
         let next = clamp_and_snap_value(raw, self.min, self.max, self.step);
         if (next - self.value).abs() > f64::EPSILON {
             self.value = next;
-            if let Some(on_change) = &mut self.on_change {
-                on_change(self.value);
-            }
+            self.emit_change(ctx);
         }
     }
 
@@ -2862,13 +2941,15 @@ impl Slider {
 
 impl Widget for Slider {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_external_value();
+
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = ctx.bounds().contains(pointer.position);
                 self.set_hovered(hovered, ctx);
                 if self.dragging {
                     let previous = self.value;
-                    self.set_from_position(ctx.bounds(), pointer.position);
+                    self.set_from_position(ctx, ctx.bounds(), pointer.position);
                     if (self.value - previous).abs() > f64::EPSILON {
                         ctx.request_paint();
                         ctx.request_semantics();
@@ -2889,7 +2970,7 @@ impl Widget for Slider {
                 self.hovered = true;
                 set_animation_target(&mut self.hover_animation, 1.0, HOVER_ANIMATION_SECONDS, ctx);
                 set_animation_target(&mut self.drag_animation, 1.0, PRESS_ANIMATION_SECONDS, ctx);
-                self.set_from_position(ctx.bounds(), pointer.position);
+                self.set_from_position(ctx, ctx.bounds(), pointer.position);
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
@@ -2909,7 +2990,7 @@ impl Widget for Slider {
                     ctx,
                 );
                 set_animation_target(&mut self.drag_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
-                self.set_from_position(ctx.bounds(), pointer.position);
+                self.set_from_position(ctx, ctx.bounds(), pointer.position);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -2950,9 +3031,7 @@ impl Widget for Slider {
                     let clamped = clamp_and_snap_value(next, self.min, self.max, self.step);
                     if (clamped - self.value).abs() > f64::EPSILON {
                         self.value = clamped;
-                        if let Some(on_change) = &mut self.on_change {
-                            on_change(self.value);
-                        }
+                        self.emit_change(ctx);
                     }
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -2970,6 +3049,8 @@ impl Widget for Slider {
     }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_external_value();
+
         constraints.clamp(Size::new(
             self.theme.metrics.slider_min_width,
             self.theme.metrics.min_height,
@@ -3069,6 +3150,8 @@ pub struct NumberInput {
     precision: usize,
     buffer: String,
     hovered: bool,
+    editing: bool,
+    value_reader: Option<Box<dyn Fn() -> f64>>,
     on_change: Option<Box<dyn FnMut(f64)>>,
 }
 
@@ -3085,6 +3168,8 @@ impl NumberInput {
             precision: 2,
             buffer: format_number(value, 2),
             hovered: false,
+            editing: false,
+            value_reader: None,
             on_change: None,
         }
     }
@@ -3118,6 +3203,15 @@ impl NumberInput {
     pub fn value(mut self, value: f64) -> Self {
         self.value = clamp_and_snap_value(value, self.min, self.max, self.step);
         self.buffer = format_number(self.value, self.precision);
+        self.value_reader = None;
+        self
+    }
+
+    pub fn value_when<F>(mut self, value: F) -> Self
+    where
+        F: Fn() -> f64 + 'static,
+    {
+        self.value_reader = Some(Box::new(value));
         self
     }
 
@@ -3135,6 +3229,38 @@ impl NumberInput {
 
     fn text_style(&self) -> TextStyle {
         self.theme.body_text_style()
+    }
+
+    fn sync_external_value(&mut self) {
+        if self.editing {
+            return;
+        }
+        let Some(reader) = &self.value_reader else {
+            return;
+        };
+        let next = clamp_and_snap_value(reader(), self.min, self.max, self.step);
+        if (next - self.value).abs() > f64::EPSILON {
+            self.value = next;
+            self.buffer = format_number(self.value, self.precision);
+        }
+    }
+
+    fn resolved_value(&self) -> f64 {
+        if !self.editing
+            && let Some(reader) = &self.value_reader
+        {
+            return clamp_and_snap_value(reader(), self.min, self.max, self.step);
+        }
+
+        self.value
+    }
+
+    fn display_buffer(&self) -> String {
+        if !self.editing && self.value_reader.is_some() {
+            format_number(self.resolved_value(), self.precision)
+        } else {
+            self.buffer.clone()
+        }
     }
 
     fn commit_buffer(&mut self) {
@@ -3187,6 +3313,7 @@ impl NumberInput {
 
 impl Widget for NumberInput {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_external_value();
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -3245,7 +3372,9 @@ impl Widget for NumberInput {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let measurement = measure_text(ctx, &self.buffer, &self.text_style());
+        self.sync_external_value();
+        let buffer = self.display_buffer();
+        let measurement = measure_text(ctx, &buffer, &self.text_style());
         let padding = self.theme.metrics.text_input_padding;
         constraints.clamp(Size::new(
             (measurement.width
@@ -3263,7 +3392,8 @@ impl Widget for NumberInput {
         let content = number_input_text_rect(ctx.bounds(), metrics);
         let stepper = number_input_stepper_rect(ctx.bounds(), metrics);
         let text_style = self.text_style();
-        let measurement = paint_text_measurement(ctx, &self.buffer, &text_style);
+        let buffer = self.display_buffer();
+        let measurement = paint_text_measurement(ctx, &buffer, &text_style);
 
         draw_control_frame(
             ctx,
@@ -3289,7 +3419,7 @@ impl Widget for NumberInput {
 
         ctx.draw_text(
             vertically_centered_text_rect(ctx, content, Some(measurement), text_style.line_height),
-            self.buffer.clone(),
+            buffer.clone(),
             text_style,
         );
         ctx.stroke(
@@ -3325,7 +3455,7 @@ impl Widget for NumberInput {
 
         if ctx.is_focused() {
             let caret_x = content.x()
-                + measure_text_width_estimate(&self.buffer, self.text_style().font_size.max(1.0));
+                + measure_text_width_estimate(&buffer, self.text_style().font_size.max(1.0));
             let caret_width = physical_pixels(ctx, metrics.caret_width);
             let caret = Rect::new(
                 caret_x.min((content.max_x() - caret_width).max(content.x())),
@@ -3341,7 +3471,7 @@ impl Widget for NumberInput {
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::SpinBox, ctx.bounds());
         node.name = Some(self.name.clone());
-        node.value = Some(SemanticsValue::Number(self.value));
+        node.value = Some(SemanticsValue::Number(self.resolved_value()));
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
         node.actions = vec![
@@ -3358,8 +3488,13 @@ impl Widget for NumberInput {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        if focused {
+            self.sync_external_value();
+        }
+        self.editing = focused;
         if !focused {
             self.commit_buffer();
+            self.sync_external_value();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -3913,12 +4048,14 @@ pub struct Select {
     name: String,
     options: Vec<String>,
     selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     placeholder: String,
     expanded: bool,
     hovered_option: Option<usize>,
     hovered_header: bool,
     pressed_header: bool,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
 }
 
 impl Select {
@@ -3928,12 +4065,14 @@ impl Select {
             name: name.into(),
             options: Vec::new(),
             selected: None,
+            selected_reader: None,
             placeholder: String::new(),
             expanded: false,
             hovered_option: None,
             hovered_header: false,
             pressed_header: false,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -3963,6 +4102,15 @@ impl Select {
 
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = Some(index);
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
         self
     }
 
@@ -3971,7 +4119,7 @@ impl Select {
     }
 
     pub fn current_value(&self) -> Option<&str> {
-        self.selected
+        self.current_selected_index()
             .and_then(|index| self.options.get(index).map(String::as_str))
     }
 
@@ -3983,6 +4131,14 @@ impl Select {
         self
     }
 
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     fn header_height(&self) -> f32 {
         self.theme.metrics.min_height
     }
@@ -3991,6 +4147,14 @@ impl Select {
         self.current_value()
             .map(str::to_string)
             .unwrap_or_else(|| self.placeholder.clone())
+    }
+
+    fn current_selected_index(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.selected)
+            .filter(|index| *index < self.options.len())
     }
 
     fn header_rect(&self, bounds: Rect) -> Rect {
@@ -4029,11 +4193,18 @@ impl Select {
         })
     }
 
-    fn select_index(&mut self, index: usize) {
+    fn select_index(&mut self, ctx: &mut EventCtx, index: usize) {
+        if self.options.is_empty() {
+            return;
+        }
         let index = index.min(self.options.len().saturating_sub(1));
         self.selected = Some(index);
+        let value = self.options[index].clone();
         if let Some(on_change) = &mut self.on_change {
-            on_change(index, self.options[index].clone());
+            on_change(index, value.clone());
+        }
+        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
+            on_change_with_ctx(ctx, index, value);
         }
     }
 
@@ -4095,10 +4266,10 @@ impl Widget for Select {
                 if self.pressed_header && hovered_header {
                     self.expanded = !self.expanded;
                     if self.expanded {
-                        self.hovered_option = self.selected.or(Some(0));
+                        self.hovered_option = self.current_selected_index().or(Some(0));
                     }
                 } else if let Some(index) = hovered_option {
-                    self.select_index(index);
+                    self.select_index(ctx, index);
                     self.expanded = false;
                 } else {
                     self.expanded = false;
@@ -4135,13 +4306,16 @@ impl Widget for Select {
                 match key.key.as_str() {
                     "Enter" | " " => {
                         if self.expanded {
-                            if let Some(index) = self.hovered_option.or(self.selected) {
-                                self.select_index(index);
+                            if let Some(index) = self
+                                .hovered_option
+                                .or_else(|| self.current_selected_index())
+                            {
+                                self.select_index(ctx, index);
                             }
                             self.expanded = false;
                         } else {
                             self.expanded = true;
-                            self.hovered_option = self.selected.or(Some(0));
+                            self.hovered_option = self.current_selected_index().or(Some(0));
                         }
                     }
                     "Escape" => self.expanded = false,
@@ -4149,33 +4323,33 @@ impl Widget for Select {
                         if self.expanded {
                             let next = self
                                 .hovered_option
-                                .unwrap_or_else(|| self.selected.unwrap_or(0))
+                                .unwrap_or_else(|| self.current_selected_index().unwrap_or(0))
                                 .saturating_add(1)
                                 .min(self.options.len() - 1);
                             self.hovered_option = Some(next);
                         } else {
                             let next = self
-                                .selected
+                                .current_selected_index()
                                 .unwrap_or(0)
                                 .saturating_add(1)
                                 .min(self.options.len() - 1);
-                            self.select_index(next);
+                            self.select_index(ctx, next);
                         }
                     }
                     "ArrowUp" => {
                         if self.expanded {
                             let next = self
                                 .hovered_option
-                                .unwrap_or_else(|| self.selected.unwrap_or(0))
+                                .unwrap_or_else(|| self.current_selected_index().unwrap_or(0))
                                 .saturating_sub(1);
                             self.hovered_option = Some(next);
                         } else {
-                            let next = self.selected.unwrap_or(0).saturating_sub(1);
-                            self.select_index(next);
+                            let next = self.current_selected_index().unwrap_or(0).saturating_sub(1);
+                            self.select_index(ctx, next);
                         }
                     }
-                    "Home" => self.select_index(0),
-                    "End" => self.select_index(self.options.len() - 1),
+                    "Home" => self.select_index(ctx, 0),
+                    "End" => self.select_index(ctx, self.options.len() - 1),
                     _ => {}
                 }
 
@@ -4257,6 +4431,7 @@ impl Widget for Select {
 
         if self.expanded {
             let menu = self.menu_rect(ctx.bounds());
+            let current_selected = self.current_selected_index();
             draw_control_shape(
                 ctx,
                 menu,
@@ -4267,7 +4442,7 @@ impl Widget for Select {
             );
             for (index, option) in self.options.iter().enumerate() {
                 let row = self.option_rect(ctx.bounds(), index);
-                let selected = self.selected == Some(index);
+                let selected = current_selected == Some(index);
                 let hovered = self.hovered_option == Some(index);
                 let text_style = self.theme.body_text_style();
                 let text_measurement = paint_text_measurement(ctx, option, &text_style);
@@ -5104,7 +5279,7 @@ fn measure_text_width_estimate(text: &str, font_size: f32) -> f32 {
     text.chars().count() as f32 * font_size * 0.62
 }
 
-fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
+pub(crate) fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
     let stroke = StrokeStyle::new(physical_pixels(ctx, 1.8).max(1.0));
     let inset_ratio = if matches!(
         glyph,
@@ -5114,8 +5289,12 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
             | IconGlyph::Eraser
             | IconGlyph::PaintBucket
             | IconGlyph::Hand
+            | IconGlyph::Lock
+            | IconGlyph::Unlock
             | IconGlyph::Trash
             | IconGlyph::Download
+            | IconGlyph::FitView
+            | IconGlyph::ActualSize
     ) {
         0.08
     } else {
@@ -5212,6 +5391,23 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
             );
             ctx.stroke(rounded_rect_path(front, stroke.width * 1.5), color, stroke);
         }
+        IconGlyph::FitView => {
+            ctx.stroke(fit_view_frame_path(inset), color, stroke.clone());
+            ctx.stroke(
+                fit_view_arrow_path(inset, -1.0, -1.0),
+                color,
+                stroke.clone(),
+            );
+            ctx.stroke(fit_view_arrow_path(inset, 1.0, -1.0), color, stroke.clone());
+            ctx.stroke(fit_view_arrow_path(inset, -1.0, 1.0), color, stroke.clone());
+            ctx.stroke(fit_view_arrow_path(inset, 1.0, 1.0), color, stroke);
+        }
+        IconGlyph::ActualSize => {
+            ctx.stroke(actual_size_frame_path(inset), color, stroke.clone());
+            for pixel in actual_size_pixel_rects(inset) {
+                ctx.fill(rounded_rect_path(pixel, stroke.width * 0.7), color);
+            }
+        }
         IconGlyph::MoreHorizontal => {
             for offset in [0.2_f32, 0.5, 0.8] {
                 ctx.fill(
@@ -5287,6 +5483,22 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
         }
         IconGlyph::Hand => {
             ctx.stroke(hand_path(inset), color, stroke);
+        }
+        IconGlyph::Lock => {
+            ctx.stroke(lock_shackle_path(inset, true), color, stroke.clone());
+            ctx.stroke(
+                rounded_rect_path(lock_body_rect(inset), stroke.width * 1.2),
+                color,
+                stroke,
+            );
+        }
+        IconGlyph::Unlock => {
+            ctx.stroke(lock_shackle_path(inset, false), color, stroke.clone());
+            ctx.stroke(
+                rounded_rect_path(lock_body_rect(inset), stroke.width * 1.2),
+                color,
+                stroke,
+            );
         }
         IconGlyph::Trash => {
             ctx.stroke(trash_can_path(inset), color, stroke.clone());
@@ -5399,6 +5611,76 @@ fn maximize_path(rect: Rect) -> Path {
         .line_to(Point::new(rect.x(), rect.max_y()))
         .line_to(Point::new(rect.x(), rect.max_y() - corner));
     builder.build()
+}
+
+fn fit_view_frame_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    let corner = rect.width().min(rect.height()) * 0.22;
+    builder
+        .move_to(Point::new(rect.x(), rect.y() + corner))
+        .line_to(Point::new(rect.x(), rect.y()))
+        .line_to(Point::new(rect.x() + corner, rect.y()))
+        .move_to(Point::new(rect.max_x() - corner, rect.y()))
+        .line_to(Point::new(rect.max_x(), rect.y()))
+        .line_to(Point::new(rect.max_x(), rect.y() + corner))
+        .move_to(Point::new(rect.max_x(), rect.max_y() - corner))
+        .line_to(Point::new(rect.max_x(), rect.max_y()))
+        .line_to(Point::new(rect.max_x() - corner, rect.max_y()))
+        .move_to(Point::new(rect.x() + corner, rect.max_y()))
+        .line_to(Point::new(rect.x(), rect.max_y()))
+        .line_to(Point::new(rect.x(), rect.max_y() - corner));
+    builder.build()
+}
+
+fn fit_view_arrow_path(rect: Rect, x_direction: f32, y_direction: f32) -> Path {
+    let center = rect_center(rect);
+    let target = Point::new(
+        center.x + x_direction * rect.width() * 0.22,
+        center.y + y_direction * rect.height() * 0.22,
+    );
+    let tail = Point::new(
+        center.x + x_direction * rect.width() * 0.02,
+        center.y + y_direction * rect.height() * 0.02,
+    );
+    let wing_x = -x_direction * rect.width() * 0.12;
+    let wing_y = -y_direction * rect.height() * 0.12;
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(tail)
+        .line_to(target)
+        .move_to(target)
+        .line_to(Point::new(target.x + wing_x, target.y))
+        .move_to(target)
+        .line_to(Point::new(target.x, target.y + wing_y));
+    builder.build()
+}
+
+fn actual_size_frame_path(rect: Rect) -> Path {
+    rounded_rect_path(
+        Rect::new(
+            rect.x() + rect.width() * 0.16,
+            rect.y() + rect.height() * 0.16,
+            rect.width() * 0.68,
+            rect.height() * 0.68,
+        ),
+        rect.width().min(rect.height()) * 0.08,
+    )
+}
+
+fn actual_size_pixel_rects(rect: Rect) -> [Rect; 4] {
+    let frame = Rect::new(
+        rect.x() + rect.width() * 0.28,
+        rect.y() + rect.height() * 0.28,
+        rect.width() * 0.44,
+        rect.height() * 0.44,
+    );
+    let size = rect.width().min(rect.height()) * 0.12;
+    [
+        Rect::new(frame.x(), frame.y(), size, size),
+        Rect::new(frame.max_x() - size, frame.y(), size, size),
+        Rect::new(frame.x(), frame.max_y() - size, size, size),
+        Rect::new(frame.max_x() - size, frame.max_y() - size, size, size),
+    ]
 }
 
 fn history_arrow_path(rect: Rect, direction: f32) -> Path {
@@ -5651,6 +5933,69 @@ fn hand_path(rect: Rect) -> Path {
             rect.x() + rect.width() * 0.22,
             rect.y() + rect.height() * 0.62,
         ));
+    builder.build()
+}
+
+fn lock_body_rect(rect: Rect) -> Rect {
+    Rect::new(
+        rect.x() + rect.width() * 0.20,
+        rect.y() + rect.height() * 0.46,
+        rect.width() * 0.60,
+        rect.height() * 0.42,
+    )
+}
+
+fn lock_shackle_path(rect: Rect, locked: bool) -> Path {
+    let body = lock_body_rect(rect);
+    let mut builder = PathBuilder::new();
+    if locked {
+        builder
+            .move_to(Point::new(rect.x() + rect.width() * 0.30, body.y()))
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.30,
+                rect.y() + rect.height() * 0.34,
+            ))
+            .cubic_to(
+                Point::new(
+                    rect.x() + rect.width() * 0.30,
+                    rect.y() + rect.height() * 0.14,
+                ),
+                Point::new(
+                    rect.x() + rect.width() * 0.70,
+                    rect.y() + rect.height() * 0.14,
+                ),
+                Point::new(
+                    rect.x() + rect.width() * 0.70,
+                    rect.y() + rect.height() * 0.34,
+                ),
+            )
+            .line_to(Point::new(rect.x() + rect.width() * 0.70, body.y()));
+    } else {
+        builder
+            .move_to(Point::new(rect.x() + rect.width() * 0.30, body.y()))
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.30,
+                rect.y() + rect.height() * 0.34,
+            ))
+            .cubic_to(
+                Point::new(
+                    rect.x() + rect.width() * 0.30,
+                    rect.y() + rect.height() * 0.14,
+                ),
+                Point::new(
+                    rect.x() + rect.width() * 0.66,
+                    rect.y() + rect.height() * 0.14,
+                ),
+                Point::new(
+                    rect.x() + rect.width() * 0.66,
+                    rect.y() + rect.height() * 0.34,
+                ),
+            )
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.86,
+                rect.y() + rect.height() * 0.34,
+            ));
+    }
     builder.build()
 }
 
@@ -6175,6 +6520,36 @@ mod tests {
     }
 
     #[test]
+    fn label_dynamic_text_updates_named_semantic_value() -> Result<()> {
+        let text = Rc::new(RefCell::new("Zoom 25%".to_string()));
+        let text_reader = Rc::clone(&text);
+        let (mut runtime, window_id) = build_runtime(
+            Label::dynamic("Zoom --", move || text_reader.borrow().clone())
+                .semantic_name("Zoom level"),
+        );
+
+        let output = runtime.render(window_id)?;
+        assert_eq!(output.semantics[0].role, SemanticsRole::Text);
+        assert_eq!(output.semantics[0].name.as_deref(), Some("Zoom level"));
+        assert_eq!(
+            output.semantics[0].value,
+            Some(SemanticsValue::Text("Zoom 25%".to_string()))
+        );
+
+        *text.borrow_mut() = "Zoom 50%".to_string();
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(320.0, 80.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        assert_eq!(
+            output.semantics[0].value,
+            Some(SemanticsValue::Text("Zoom 50%".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn label_measures_wrapped_height_when_width_is_constrained() {
         let output = render(SizedBox::new().width(96.0).with_child(Label::new(
             "This label should wrap onto multiple lines when its layout width is constrained.",
@@ -6435,8 +6810,12 @@ mod tests {
             IconGlyph::Eraser,
             IconGlyph::PaintBucket,
             IconGlyph::Hand,
+            IconGlyph::Lock,
+            IconGlyph::Unlock,
             IconGlyph::Trash,
             IconGlyph::Download,
+            IconGlyph::FitView,
+            IconGlyph::ActualSize,
         ] {
             let output = render(IconButton::new(glyph, "Editor command"));
             assert!(
@@ -7426,6 +7805,98 @@ mod tests {
     }
 
     #[test]
+    fn slider_value_when_syncs_external_value() -> Result<()> {
+        let value = Rc::new(RefCell::new(0.25));
+        let value_reader = Rc::clone(&value);
+        let (mut runtime, window_id) = build_runtime(
+            Slider::new("Opacity")
+                .range(0.0, 1.0)
+                .step(0.01)
+                .value_when(move || *value_reader.borrow()),
+        );
+
+        let output = runtime.render(window_id)?;
+        let slider = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider)
+            .expect("slider semantics present");
+        assert_eq!(
+            slider.value,
+            Some(SemanticsValue::Range {
+                value: 0.25,
+                min: 0.0,
+                max: 1.0,
+            })
+        );
+
+        *value.borrow_mut() = 0.75;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(200.0, 32.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let slider = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider)
+            .expect("slider semantics present after external update");
+        assert_eq!(
+            slider.value,
+            Some(SemanticsValue::Range {
+                value: 0.75,
+                min: 0.0,
+                max: 1.0,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn slider_on_change_with_ctx_receives_value() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(200.0).height(32.0).with_child(
+                Slider::new("Opacity")
+                    .range(0.0, 1.0)
+                    .step(0.01)
+                    .on_change_with_ctx(move |ctx, value| {
+                        on_change.borrow_mut().push(value);
+                        ctx.request_semantics();
+                    }),
+            ),
+        );
+        let output = runtime.render(window_id)?;
+        let slider = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider)
+            .expect("slider semantics present");
+        let position = Point::new(
+            slider.bounds.x() + (slider.bounds.width() * 0.5),
+            slider.bounds.y() + (slider.bounds.height() * 0.5),
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+
+        assert!(
+            changes
+                .borrow()
+                .last()
+                .is_some_and(|value| (*value - 0.5).abs() < 1e-6)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn slider_clears_hover_state_after_pointer_moves_off_control() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(crate::Padding::all(
             12.0,
@@ -7624,6 +8095,49 @@ mod tests {
     }
 
     #[test]
+    fn number_input_value_when_syncs_unfocused_external_value() {
+        let value = Rc::new(RefCell::new(12.0));
+        let value_reader = Rc::clone(&value);
+        let (mut runtime, window_id) = build_runtime(
+            NumberInput::new("Count")
+                .range(0.0, 96.0)
+                .precision(0)
+                .value_when(move || *value_reader.borrow()),
+        );
+
+        let output = runtime.render(window_id).unwrap();
+        let count = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::SpinBox && node.name.as_deref() == Some("Count")
+            })
+            .expect("number input semantics should exist");
+        assert_eq!(count.value, Some(SemanticsValue::Number(12.0)));
+
+        *value.borrow_mut() = 36.0;
+        let position = Point::new(
+            count.bounds.x() + (count.bounds.width() * 0.5),
+            count.bounds.y() + (count.bounds.height() * 0.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime
+            .handle_event(window_id, Event::Pointer(move_event))
+            .unwrap();
+        let output = runtime.render(window_id).unwrap();
+        let count = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::SpinBox && node.name.as_deref() == Some("Count")
+            })
+            .expect("number input semantics should still exist");
+        assert_eq!(count.value, Some(SemanticsValue::Number(36.0)));
+        text_run_for(&output, "36");
+    }
+
+    #[test]
     fn text_area_supports_multiline_input() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
@@ -7757,6 +8271,62 @@ mod tests {
         assert_eq!(
             select.value,
             Some(SemanticsValue::Text("Final".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn select_selected_when_reads_external_selection() -> Result<()> {
+        let selected = Rc::new(RefCell::new(Some(1usize)));
+        let selected_reader = Rc::clone(&selected);
+        let (mut runtime, window_id) = build_runtime(
+            Select::new("Mode")
+                .placeholder("Choose mode")
+                .options(["Draft", "Final", "Review"])
+                .selected_when(move || *selected_reader.borrow()),
+        );
+
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present");
+        assert_eq!(
+            select.value,
+            Some(SemanticsValue::Text("Final".to_string()))
+        );
+
+        *selected.borrow_mut() = Some(2);
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(320.0, 80.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after external selection changes");
+        assert_eq!(
+            select.value,
+            Some(SemanticsValue::Text("Review".to_string()))
+        );
+
+        *selected.borrow_mut() = None;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(320.0, 80.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after external selection clears");
+        assert_eq!(
+            select.value,
+            Some(SemanticsValue::Text("Choose mode".to_string()))
         );
         Ok(())
     }

@@ -499,6 +499,48 @@
         const isInteractive = (node) =>
           node.dom?.interactive ??
           (interactiveRoles.includes(node.role) || hasInteractiveAction(node));
+        const semanticNodeKey = (id) => (id == null ? null : String(id));
+        const computeSemanticNodeDepths = (nodes) => {
+          const byId = new Map();
+          const depths = new Map();
+          const visiting = new Set();
+
+          for (const node of nodes) {
+            byId.set(semanticNodeKey(node.id), node);
+          }
+
+          const depthFor = (node) => {
+            const key = semanticNodeKey(node.id);
+            if (depths.has(key)) {
+              return depths.get(key);
+            }
+            if (visiting.has(key)) {
+              return 0;
+            }
+
+            visiting.add(key);
+            const parent = byId.get(semanticNodeKey(node.parent));
+            const depth = parent ? depthFor(parent) + 1 : 0;
+            visiting.delete(key);
+            depths.set(key, depth);
+            return depth;
+          };
+
+          for (const node of nodes) {
+            depthFor(node);
+          }
+
+          return depths;
+        };
+        const semanticStackIndex = (node, index, depths) => {
+          const depth = depths.get(semanticNodeKey(node.id)) || 0;
+          return depth * 100000 + index;
+        };
+        const pointerTransparentRoles = new Set(["Text"]);
+        const receivesDomPointerEvents = (node) =>
+          domPointerForwardingEnabled &&
+          !Boolean(node.state?.hidden) &&
+          !pointerTransparentRoles.has(node.role);
         const setStyle = (element, property, value) => {
           if (element.style[property] !== value) {
             element.style[property] = value;
@@ -821,7 +863,14 @@
           return element;
         };
 
-        const configureElement = (mirror, key, element, node, canvasRect) => {
+        const configureElement = (
+          mirror,
+          key,
+          element,
+          node,
+          canvasRect,
+          stackIndex,
+        ) => {
           const bounds = node.bounds || { x: 0, y: 0, width: 0, height: 0 };
           const label = nodeLabel(node);
           const role = ariaRole(node, element);
@@ -856,8 +905,9 @@
           setStyle(
             element,
             "pointerEvents",
-            domPointerForwardingEnabled && isInteractive(node) ? "auto" : "none",
+            receivesDomPointerEvents(node) ? "auto" : "none",
           );
+          setStyle(element, "zIndex", String(stackIndex));
 
           if (automationEnabled) {
             element.dataset.suiId = String(node.id);
@@ -972,8 +1022,10 @@
           }
 
           const canvasRect = canvas.getBoundingClientRect();
+          const nodes = snapshot.nodes || [];
+          const stackDepths = computeSemanticNodeDepths(nodes);
           const activeIds = new Set();
-          for (const node of snapshot.nodes || []) {
+          for (const [index, node] of nodes.entries()) {
             const key = String(node.id);
             activeIds.add(key);
             let element = state.elements.get(key);
@@ -983,7 +1035,14 @@
               element = createElement(node);
               state.elements.set(key, element);
             }
-            configureElement(mirror, key, element, node, canvasRect);
+            configureElement(
+              mirror,
+              key,
+              element,
+              node,
+              canvasRect,
+              semanticStackIndex(node, index, stackDepths),
+            );
             if (element.parentNode !== mirror) {
               mirror.appendChild(element);
             }

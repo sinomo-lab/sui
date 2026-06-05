@@ -15,10 +15,10 @@ use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{TextMeasurement, TextStyle};
 
 use crate::{
-    Button, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, ResolvedEffectStyle,
+    Button, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, IconGlyph, ResolvedEffectStyle,
     ResolvedHdrStyle, Transition, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole,
     WidgetMaterialRole,
-    controls::{apply_hdr_policy_cap, cap_resolved_hdr_style},
+    controls::{apply_hdr_policy_cap, cap_resolved_hdr_style, draw_icon_glyph},
     resolve_widget_hdr_style,
 };
 
@@ -371,6 +371,209 @@ impl Widget for Toolbar {
     }
 }
 
+const COMMAND_GROUP_SPACING: f32 = 3.0;
+const COMMAND_GROUP_RADIUS: f32 = 6.0;
+
+pub struct CommandGroup {
+    theme: Box<DefaultTheme>,
+    axis: Axis,
+    name: Option<String>,
+    padding: Insets,
+    spacing: f32,
+    corner_radius: f32,
+    background: Option<Color>,
+    border: Option<Color>,
+    children: WidgetChildren,
+}
+
+impl CommandGroup {
+    pub fn horizontal(name: impl Into<String>) -> Self {
+        Self::new(Axis::Horizontal, name)
+    }
+
+    pub fn vertical(name: impl Into<String>) -> Self {
+        Self::new(Axis::Vertical, name)
+    }
+
+    pub fn new(axis: Axis, name: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            axis,
+            name: Some(name.into()),
+            padding: Insets::all(2.0),
+            spacing: COMMAND_GROUP_SPACING,
+            corner_radius: COMMAND_GROUP_RADIUS,
+            background: None,
+            border: None,
+            children: WidgetChildren::new(),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn unnamed(mut self) -> Self {
+        self.name = None;
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing.max(0.0);
+        self
+    }
+
+    pub fn corner_radius(mut self, corner_radius: f32) -> Self {
+        self.corner_radius = corner_radius.max(0.0);
+        self
+    }
+
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self
+    }
+
+    pub fn border(mut self, color: Color) -> Self {
+        self.border = Some(color);
+        self
+    }
+
+    pub fn with_child<W>(mut self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self
+    }
+
+    pub fn push<W>(&mut self, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+    }
+
+    pub fn children(&self) -> &[sui_runtime::WidgetPod] {
+        self.children.as_slice()
+    }
+
+    pub fn children_mut(&mut self) -> &mut [sui_runtime::WidgetPod] {
+        self.children.as_mut_slice()
+    }
+
+    fn content_bounds(&self, bounds: Rect) -> Rect {
+        inset_rect(bounds, self.padding)
+    }
+}
+
+impl Widget for CommandGroup {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let max_width = if constraints.max.width.is_finite() {
+            (constraints.max.width - self.padding.left - self.padding.right).max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        let max_height = if constraints.max.height.is_finite() {
+            (constraints.max.height - self.padding.top - self.padding.bottom).max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        let child_constraints = Constraints::new(Size::ZERO, Size::new(max_width, max_height));
+
+        let mut main: f32 = 0.0;
+        let mut cross: f32 = 0.0;
+        for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
+            let child_size = child.measure(ctx, child_constraints);
+            if index > 0 {
+                main += self.spacing;
+            }
+            main += toolbar_main(self.axis, child_size);
+            cross = cross.max(toolbar_cross(self.axis, child_size));
+        }
+
+        let natural = match self.axis {
+            Axis::Horizontal => Size::new(
+                main + self.padding.left + self.padding.right,
+                cross + self.padding.top + self.padding.bottom,
+            ),
+            Axis::Vertical => Size::new(
+                cross + self.padding.left + self.padding.right,
+                main + self.padding.top + self.padding.bottom,
+            ),
+        };
+        constraints.clamp(natural)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let content = self.content_bounds(bounds);
+        let content_main = toolbar_main(self.axis, content.size);
+        let content_cross = toolbar_cross(self.axis, content.size);
+        let mut main_offset = 0.0;
+
+        for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
+            if index > 0 {
+                main_offset += self.spacing;
+            }
+
+            let measured = child.measured_size();
+            let remaining = (content_main - main_offset).max(0.0);
+            let child_main = toolbar_main(self.axis, measured).min(remaining);
+            let child_cross = toolbar_cross(self.axis, measured).min(content_cross);
+            let cross_offset = ((content_cross - child_cross) * 0.5).max(0.0);
+            let origin = match self.axis {
+                Axis::Horizontal => {
+                    Point::new(content.x() + main_offset, content.y() + cross_offset)
+                }
+                Axis::Vertical => Point::new(content.x() + cross_offset, content.y() + main_offset),
+            };
+            child.arrange(
+                ctx,
+                Rect::from_origin_size(origin, toolbar_size(self.axis, child_main, child_cross)),
+            );
+            main_offset += child_main;
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let radius = self
+            .corner_radius
+            .min(ctx.bounds().width().min(ctx.bounds().height()) * 0.5);
+        let background = self.background.unwrap_or(self.theme.palette.surface_hover);
+        let border = self.border.unwrap_or(self.theme.palette.border);
+        let shape = rounded_rect_path(ctx.bounds(), radius);
+        ctx.fill(shape.clone(), background);
+        ctx.stroke(shape, border, StrokeStyle::new(physical_pixels(ctx, 1.0)));
+        self.children.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if let Some(name) = &self.name {
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
+            node.name = Some(name.clone());
+            ctx.push(node);
+        }
+        self.children.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.children.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.children.visit_children_mut(visitor);
+    }
+}
+
 fn toolbar_main(axis: Axis, size: Size) -> f32 {
     match axis {
         Axis::Horizontal => size.width,
@@ -390,6 +593,532 @@ fn toolbar_size(axis: Axis, main: f32, cross: f32) -> Size {
         Axis::Horizontal => Size::new(main, cross),
         Axis::Vertical => Size::new(cross, main),
     }
+}
+
+const TOOL_PALETTE_ITEM_SIZE: f32 = 40.0;
+const TOOL_PALETTE_ICON_SIZE: f32 = 20.0;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolPaletteItem {
+    icon: IconGlyph,
+    label: String,
+    enabled: bool,
+}
+
+impl ToolPaletteItem {
+    pub fn new(icon: IconGlyph, label: impl Into<String>) -> Self {
+        Self {
+            icon,
+            label: label.into(),
+            enabled: true,
+        }
+    }
+
+    pub fn disabled(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
+pub struct ToolPalette {
+    theme: Box<DefaultTheme>,
+    axis: Axis,
+    name: String,
+    items: Vec<ToolPaletteItem>,
+    selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
+    hovered: Option<usize>,
+    pressed: Option<usize>,
+    extent: f32,
+    padding: Insets,
+    spacing: f32,
+    item_size: f32,
+    icon_size: f32,
+    background: Option<Color>,
+    divider: bool,
+    on_change: Option<Box<dyn FnMut(usize, String)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
+}
+
+impl ToolPalette {
+    pub fn vertical(name: impl Into<String>) -> Self {
+        Self::new(Axis::Vertical, name)
+    }
+
+    pub fn horizontal(name: impl Into<String>) -> Self {
+        Self::new(Axis::Horizontal, name)
+    }
+
+    pub fn new(axis: Axis, name: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            axis,
+            name: name.into(),
+            items: Vec::new(),
+            selected: None,
+            selected_reader: None,
+            hovered: None,
+            pressed: None,
+            extent: TOOLBAR_EXTENT,
+            padding: Insets::all(TOOLBAR_PADDING),
+            spacing: TOOLBAR_SPACING,
+            item_size: TOOL_PALETTE_ITEM_SIZE,
+            icon_size: TOOL_PALETTE_ICON_SIZE,
+            background: None,
+            divider: true,
+            on_change: None,
+            on_change_with_ctx: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn item(mut self, item: ToolPaletteItem) -> Self {
+        self.items.push(item);
+        self
+    }
+
+    pub fn items<I>(mut self, items: I) -> Self
+    where
+        I: IntoIterator<Item = ToolPaletteItem>,
+    {
+        self.items.extend(items);
+        self
+    }
+
+    pub fn selected(mut self, selected: usize) -> Self {
+        self.selected = Some(selected);
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
+    }
+
+    pub fn extent(mut self, extent: f32) -> Self {
+        self.extent = extent.max(0.0);
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing.max(0.0);
+        self
+    }
+
+    pub fn item_size(mut self, item_size: f32) -> Self {
+        self.item_size = item_size.max(0.0);
+        self
+    }
+
+    pub fn icon_size(mut self, icon_size: f32) -> Self {
+        self.icon_size = icon_size.max(0.0);
+        self
+    }
+
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self
+    }
+
+    pub fn divider(mut self, divider: bool) -> Self {
+        self.divider = divider;
+        self
+    }
+
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(usize, String) + 'static,
+    {
+        self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.current_selected()
+    }
+
+    fn current_selected(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .map(|selected| selected())
+            .unwrap_or(self.selected)
+            .filter(|index| *index < self.items.len())
+    }
+
+    fn content_bounds(&self, bounds: Rect) -> Rect {
+        Rect::new(
+            bounds.x() + self.padding.left,
+            bounds.y() + self.padding.top,
+            (bounds.width() - self.padding.left - self.padding.right).max(0.0),
+            (bounds.height() - self.padding.top - self.padding.bottom).max(0.0),
+        )
+    }
+
+    fn item_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        if index >= self.items.len() {
+            return None;
+        }
+
+        let content = self.content_bounds(bounds);
+        let content_main = toolbar_main(self.axis, content.size);
+        let content_cross = toolbar_cross(self.axis, content.size);
+        let item_main = self.item_size.min(content_main);
+        let item_cross = self.item_size.min(content_cross);
+        let main_offset = index as f32 * (self.item_size + self.spacing);
+        if main_offset >= content_main {
+            return None;
+        }
+        let cross_offset = ((content_cross - item_cross) * 0.5).max(0.0);
+        let origin = match self.axis {
+            Axis::Horizontal => Point::new(content.x() + main_offset, content.y() + cross_offset),
+            Axis::Vertical => Point::new(content.x() + cross_offset, content.y() + main_offset),
+        };
+        Some(Rect::from_origin_size(
+            origin,
+            toolbar_size(self.axis, item_main, item_cross),
+        ))
+    }
+
+    fn hit_at(&self, bounds: Rect, position: Point) -> Option<usize> {
+        (0..self.items.len()).find(|index| {
+            self.items[*index].enabled
+                && self
+                    .item_rect(bounds, *index)
+                    .is_some_and(|rect| rect.contains(position))
+        })
+    }
+
+    fn select(&mut self, ctx: &mut EventCtx, index: usize) {
+        let Some(item) = self.items.get(index) else {
+            return;
+        };
+        if !item.enabled {
+            return;
+        }
+
+        self.selected = Some(index);
+        if let Some(on_change) = &mut self.on_change {
+            on_change(index, item.label.clone());
+        }
+        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
+            on_change_with_ctx(ctx, index, item.label.clone());
+        }
+    }
+
+    fn move_selection(&mut self, ctx: &mut EventCtx, delta: isize) {
+        if self.items.is_empty() {
+            return;
+        }
+
+        let start = self.current_selected().unwrap_or(0);
+        let mut index = start as isize;
+        let last = self.items.len() as isize - 1;
+        for _ in 0..self.items.len() {
+            index = (index + delta).clamp(0, last);
+            if self
+                .items
+                .get(index as usize)
+                .is_some_and(|item| item.enabled)
+            {
+                self.select(ctx, index as usize);
+                return;
+            }
+            if index == 0 || index == last {
+                return;
+            }
+        }
+    }
+}
+
+impl Widget for ToolPalette {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = self.hit_at(ctx.bounds(), pointer.position);
+                if hovered != self.hovered {
+                    self.hovered = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                self.hovered = self.hit_at(ctx.bounds(), pointer.position);
+                self.pressed = self.hovered;
+                if self.pressed.is_some() {
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let hovered = self.hit_at(ctx.bounds(), pointer.position);
+                if let Some(index) = self
+                    .pressed
+                    .zip(hovered)
+                    .filter(|(left, right)| left == right)
+                    .map(|(index, _)| index)
+                {
+                    self.select(ctx, index);
+                }
+                self.hovered = hovered;
+                self.pressed = None;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                if self.hovered.take().is_some() {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed.take().is_some() {
+                    self.hovered = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                match key.key.as_str() {
+                    "ArrowUp" if self.axis == Axis::Vertical => self.move_selection(ctx, -1),
+                    "ArrowDown" if self.axis == Axis::Vertical => self.move_selection(ctx, 1),
+                    "ArrowLeft" if self.axis == Axis::Horizontal => self.move_selection(ctx, -1),
+                    "ArrowRight" if self.axis == Axis::Horizontal => self.move_selection(ctx, 1),
+                    "Home" => {
+                        if let Some(index) = self.items.iter().position(|item| item.enabled) {
+                            self.select(ctx, index);
+                        }
+                    }
+                    "End" => {
+                        if let Some(index) = self.items.iter().rposition(|item| item.enabled) {
+                            self.select(ctx, index);
+                        }
+                    }
+                    "Enter" | " " => {
+                        if let Some(index) = self.current_selected() {
+                            self.select(ctx, index);
+                        }
+                    }
+                    _ => return,
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let item_count = self.items.len();
+        let main = if item_count == 0 {
+            0.0
+        } else {
+            (self.item_size * item_count as f32) + (self.spacing * (item_count - 1) as f32)
+        };
+        let natural = match self.axis {
+            Axis::Horizontal => {
+                Size::new(main + self.padding.left + self.padding.right, self.extent)
+            }
+            Axis::Vertical => Size::new(self.extent, main + self.padding.top + self.padding.bottom),
+        };
+        let filled = match self.axis {
+            Axis::Horizontal => Size::new(
+                if constraints.max.width.is_finite() {
+                    constraints.max.width
+                } else {
+                    natural.width
+                },
+                natural.height,
+            ),
+            Axis::Vertical => Size::new(
+                natural.width,
+                if constraints.max.height.is_finite() {
+                    constraints.max.height
+                } else {
+                    natural.height
+                },
+            ),
+        };
+
+        constraints.clamp(filled)
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = self.theme.palette;
+        let metrics = self.theme.metrics;
+        let bounds = ctx.bounds();
+        ctx.fill_bounds(self.background.unwrap_or(palette.surface));
+        if self.divider {
+            let divider = match self.axis {
+                Axis::Horizontal => {
+                    Rect::new(bounds.x(), bounds.max_y() - 1.0, bounds.width(), 1.0)
+                }
+                Axis::Vertical => Rect::new(bounds.max_x() - 1.0, bounds.y(), 1.0, bounds.height()),
+            };
+            ctx.stroke_rect(
+                divider,
+                palette.border.with_alpha(0.85),
+                StrokeStyle::new(1.0),
+            );
+        }
+
+        let selected = self.current_selected();
+        for (index, item) in self.items.iter().enumerate() {
+            let Some(rect) = self.item_rect(bounds, index) else {
+                continue;
+            };
+            let selected_item = selected == Some(index);
+            let hovered = self.hovered == Some(index);
+            let pressed = self.pressed == Some(index);
+            let enabled = item.enabled;
+            let base_background = if selected_item {
+                mix_color(palette.surface, palette.accent, 0.18)
+            } else {
+                palette.surface
+            };
+            let background = if !enabled {
+                mix_color(base_background, palette.surface, 0.72).with_alpha(0.82)
+            } else if pressed {
+                palette.surface_pressed
+            } else if hovered {
+                palette.surface_hover
+            } else {
+                base_background
+            };
+            let border = if !enabled {
+                palette.border.with_alpha(0.55)
+            } else if ctx.is_focused() && selected_item {
+                palette.border_focus
+            } else if selected_item {
+                palette.accent_border
+            } else if hovered {
+                palette.border_hover
+            } else {
+                palette.border
+            };
+            draw_control_frame(
+                ctx,
+                rect,
+                metrics.corner_radius,
+                metrics,
+                background,
+                border,
+                (ctx.is_focused() && selected_item).then_some(palette.focus_ring),
+            );
+            let center = rect_center(rect);
+            let side = self.icon_size.min(rect.width().min(rect.height())).max(0.0);
+            let icon_rect = Rect::new(center.x - side * 0.5, center.y - side * 0.5, side, side);
+            draw_icon_glyph(
+                ctx,
+                item.icon,
+                icon_rect,
+                if !enabled {
+                    palette.text.with_alpha(0.38)
+                } else if selected_item {
+                    palette.accent
+                } else {
+                    palette.text
+                },
+            );
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let selected = self.current_selected();
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(self.name.clone());
+        node.value = selected
+            .and_then(|index| self.items.get(index))
+            .map(|item| SemanticsValue::Text(item.label.clone()));
+        node.state.focused = ctx.is_focused();
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(node);
+
+        for (index, item) in self.items.iter().enumerate() {
+            let Some(rect) = self.item_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let mut item_node = SemanticsNode::new(
+                tool_palette_item_id(ctx.widget_id(), index),
+                SemanticsRole::Button,
+                rect,
+            );
+            item_node.parent = Some(ctx.widget_id());
+            item_node.name = Some(item.label.clone());
+            item_node.value = Some(SemanticsValue::Text(item.label.clone()));
+            item_node.state.disabled = !item.enabled;
+            item_node.state.hovered = self.hovered == Some(index);
+            item_node.state.selected = selected == Some(index);
+            if item.enabled {
+                item_node.actions = vec![SemanticsAction::Activate];
+            }
+            ctx.push(item_node);
+        }
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.items.iter().any(|item| item.enabled)
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
+fn tool_palette_item_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 4_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(397)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
 }
 
 const PROPERTY_ROW_LABEL_WIDTH: f32 = 112.0;
@@ -675,9 +1404,15 @@ pub struct PanelSection {
     theme: Box<DefaultTheme>,
     title: String,
     gap: f32,
+    action_gap: f32,
     title_style: Option<TextStyle>,
+    header_action: Option<SingleChild>,
     child: SingleChild,
     title_measurement: Option<TextMeasurement>,
+    collapsible: bool,
+    expanded: bool,
+    hovered_header: bool,
+    pressed_header: bool,
 }
 
 impl PanelSection {
@@ -689,9 +1424,15 @@ impl PanelSection {
             theme: Box::new(DefaultTheme::default()),
             title: title.into(),
             gap: PANEL_SECTION_GAP,
+            action_gap: 6.0,
             title_style: None,
+            header_action: None,
             child: SingleChild::new(child),
             title_measurement: None,
+            collapsible: false,
+            expanded: true,
+            hovered_header: false,
+            pressed_header: false,
         }
     }
 
@@ -707,6 +1448,34 @@ impl PanelSection {
 
     pub fn title_style(mut self, style: TextStyle) -> Self {
         self.title_style = Some(style);
+        self
+    }
+
+    pub fn header_action<W>(mut self, action: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.header_action = Some(SingleChild::new(action));
+        self
+    }
+
+    pub fn action_gap(mut self, gap: f32) -> Self {
+        self.action_gap = gap.max(0.0);
+        self
+    }
+
+    pub fn collapsible(mut self, collapsible: bool) -> Self {
+        self.collapsible = collapsible;
+        self
+    }
+
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = expanded;
+        self
+    }
+
+    pub fn collapsed(mut self) -> Self {
+        self.expanded = false;
         self
     }
 
@@ -733,18 +1502,188 @@ impl PanelSection {
             .unwrap_or(style.line_height)
             .max(style.line_height)
     }
+
+    fn header_height(&self, title_style: &TextStyle) -> f32 {
+        let action_height = self
+            .header_action
+            .as_ref()
+            .map(|action| action.child().measured_size().height)
+            .unwrap_or(0.0);
+        self.title_height(title_style).max(action_height)
+    }
+
+    fn is_expanded(&self) -> bool {
+        !self.collapsible || self.expanded
+    }
+
+    fn disclosure_width(&self) -> f32 {
+        if self.collapsible { 16.0 } else { 0.0 }
+    }
+
+    fn title_rect(&self, bounds: Rect, header_height: f32, title_height: f32) -> Rect {
+        let action_width = self
+            .header_action
+            .as_ref()
+            .map(|action| action.child().measured_size().width + self.action_gap)
+            .unwrap_or(0.0)
+            .min(bounds.width());
+        let disclosure_width = self.disclosure_width();
+        Rect::new(
+            bounds.x() + disclosure_width,
+            bounds.y() + ((header_height - title_height) * 0.5).max(0.0),
+            (bounds.width() - action_width - disclosure_width).max(0.0),
+            title_height,
+        )
+    }
+
+    fn header_rect(&self, bounds: Rect) -> Rect {
+        let title_style = self.resolved_title_style();
+        let header_height = self.header_height(&title_style);
+        Rect::new(bounds.x(), bounds.y(), bounds.width(), header_height)
+    }
+
+    fn header_hit_rect(&self, bounds: Rect) -> Rect {
+        let header = self.header_rect(bounds);
+        let action_width = self
+            .header_action
+            .as_ref()
+            .map(|action| action.child().measured_size().width + self.action_gap)
+            .unwrap_or(0.0)
+            .min(header.width());
+        Rect::new(
+            header.x(),
+            header.y(),
+            (header.width() - action_width).max(0.0),
+            header.height(),
+        )
+    }
+
+    fn toggle(&mut self, ctx: &mut EventCtx) {
+        if !self.collapsible {
+            return;
+        }
+
+        self.expanded = !self.expanded;
+        self.pressed_header = false;
+        ctx.request_measure();
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
 }
 
 impl Widget for PanelSection {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.collapsible {
+            return;
+        }
+
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = self
+                    .header_hit_rect(ctx.bounds())
+                    .contains(pointer.position);
+                if hovered != self.hovered_header {
+                    self.hovered_header = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self
+                        .header_hit_rect(ctx.bounds())
+                        .contains(pointer.position) =>
+            {
+                self.hovered_header = true;
+                self.pressed_header = true;
+                ctx.request_focus();
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self.pressed_header =>
+            {
+                let hovered = self
+                    .header_hit_rect(ctx.bounds())
+                    .contains(pointer.position);
+                if hovered {
+                    self.toggle(ctx);
+                }
+                self.hovered_header = hovered;
+                self.pressed_header = false;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                if self.hovered_header {
+                    self.hovered_header = false;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed_header || self.hovered_header {
+                    self.hovered_header = false;
+                    self.pressed_header = false;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                match key.key.as_str() {
+                    "Enter" | " " => {
+                        self.toggle(ctx);
+                        ctx.set_handled();
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let title_style = self.resolved_title_style();
         let title_measurement = measure_text(ctx, &self.title, &title_style);
         self.title_measurement = Some(title_measurement);
-        let title_height = self.title_height(&title_style);
-        let child_size = self.child.measure(ctx, constraints);
+        let action_size = self
+            .header_action
+            .as_mut()
+            .map(|action| {
+                action.measure(
+                    ctx,
+                    Constraints::new(Size::ZERO, Size::new(constraints.max.width, f32::INFINITY)),
+                )
+            })
+            .unwrap_or(Size::ZERO);
+        let header_height = self.title_height(&title_style).max(action_size.height);
+        let child_size = if self.is_expanded() {
+            self.child.measure(ctx, constraints)
+        } else {
+            Size::ZERO
+        };
+        let header_width = if self.header_action.is_some() {
+            self.disclosure_width() + title_measurement.width + self.action_gap + action_size.width
+        } else {
+            self.disclosure_width() + title_measurement.width
+        };
         let natural = Size::new(
-            title_measurement.width.max(child_size.width),
-            title_height + self.gap + child_size.height,
+            header_width.max(child_size.width),
+            header_height
+                + if self.is_expanded() && child_size.height > 0.0 {
+                    self.gap + child_size.height
+                } else {
+                    0.0
+                },
         );
 
         constraints.clamp(natural)
@@ -752,16 +1691,36 @@ impl Widget for PanelSection {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let title_style = self.resolved_title_style();
-        let title_height = self.title_height(&title_style);
-        let child_size = self.child.child().measured_size();
-        let child_height = child_size
-            .height
-            .min((bounds.height() - title_height - self.gap).max(0.0));
+        let header_height = self.header_height(&title_style);
+        if let Some(action) = &mut self.header_action {
+            let action_size = action.child().measured_size();
+            action.arrange(
+                ctx,
+                Rect::new(
+                    bounds.max_x() - action_size.width.min(bounds.width()),
+                    bounds.y() + ((header_height - action_size.height) * 0.5).max(0.0),
+                    action_size.width.min(bounds.width()).max(0.0),
+                    action_size.height,
+                ),
+            );
+        }
+        let child_size = if self.is_expanded() {
+            self.child.child().measured_size()
+        } else {
+            Size::ZERO
+        };
+        let child_height = if self.is_expanded() {
+            child_size
+                .height
+                .min((bounds.height() - header_height - self.gap).max(0.0))
+        } else {
+            0.0
+        };
         self.child.arrange(
             ctx,
             Rect::new(
                 bounds.x(),
-                bounds.y() + title_height + self.gap,
+                bounds.y() + header_height + self.gap,
                 bounds.width().min(child_size.width).max(0.0),
                 child_height,
             ),
@@ -771,16 +1730,36 @@ impl Widget for PanelSection {
     fn paint(&self, ctx: &mut PaintCtx) {
         let title_style = self.resolved_title_style();
         let title_height = self.title_height(&title_style);
-        let title_rect = Rect::new(
-            ctx.bounds().x(),
-            ctx.bounds().y(),
-            ctx.bounds().width(),
-            title_height,
-        );
+        let header_height = self.header_height(&title_style);
+        let title_rect = self.title_rect(ctx.bounds(), header_height, title_height);
+        if self.collapsible {
+            let header_hit = self.header_hit_rect(ctx.bounds());
+            let header_fill = if self.pressed_header {
+                self.theme.palette.accent.with_alpha(0.10)
+            } else if self.hovered_header {
+                self.theme.palette.accent.with_alpha(0.06)
+            } else {
+                self.theme.palette.surface.with_alpha(0.001)
+            };
+            ctx.fill(rounded_rect_path(header_hit, 4.0), header_fill);
+            paint_panel_section_disclosure(
+                ctx,
+                self.header_rect(ctx.bounds()),
+                self.expanded,
+                self.hovered_header,
+                self.pressed_header,
+                self.theme.as_ref(),
+            );
+        }
         ctx.push_clip_rect(title_rect);
         ctx.draw_text(title_rect, self.title.clone(), title_style);
         ctx.pop_clip();
-        self.child.paint(ctx);
+        if let Some(action) = &self.header_action {
+            action.paint(ctx);
+        }
+        if self.is_expanded() {
+            self.child.paint(ctx);
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -790,17 +1769,307 @@ impl Widget for PanelSection {
             ctx.bounds(),
         );
         section.name = Some(self.title.clone());
+        section.state.focused = ctx.is_focused();
+        section.state.hovered = self.hovered_header;
+        if self.collapsible {
+            section.state.expanded = Some(self.expanded);
+            section.actions = vec![
+                SemanticsAction::Focus,
+                SemanticsAction::Expand,
+                SemanticsAction::Collapse,
+            ];
+        }
         ctx.push(section);
 
         let title_style = self.resolved_title_style();
         let title_height = self.title_height(&title_style);
+        let header_height = self.header_height(&title_style);
         let mut title = SemanticsNode::new(
             panel_section_title_id(ctx.widget_id()),
             SemanticsRole::Text,
+            self.title_rect(ctx.bounds(), header_height, title_height),
+        );
+        title.parent = Some(ctx.widget_id());
+        title.name = Some(self.title.clone());
+        title.value = Some(SemanticsValue::Text(self.title.clone()));
+        ctx.push(title);
+
+        if let Some(action) = &self.header_action {
+            action.semantics(ctx);
+        }
+        if self.is_expanded() {
+            self.child.semantics(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if let Some(action) = &self.header_action {
+            action.visit_children(visitor);
+        }
+        if self.is_expanded() {
+            self.child.visit_children(visitor);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if let Some(action) = &mut self.header_action {
+            action.visit_children_mut(visitor);
+        }
+        if self.is_expanded() {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.collapsible
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        if self.collapsible {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+}
+
+fn panel_section_title_id(parent: WidgetId) -> WidgetId {
+    const TAG: u64 = 3_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(TAG | (parent.get().wrapping_mul(431).wrapping_add(7) & LOW_MASK))
+}
+
+fn paint_panel_section_disclosure(
+    ctx: &mut PaintCtx,
+    header: Rect,
+    expanded: bool,
+    hovered: bool,
+    pressed: bool,
+    theme: &DefaultTheme,
+) {
+    let palette = theme.palette;
+    let center = Point::new(header.x() + 7.0, header.y() + header.height() * 0.5);
+    let color = if pressed {
+        palette.accent
+    } else if hovered {
+        palette.text
+    } else {
+        palette.text.with_alpha(0.68)
+    };
+    let mut builder = PathBuilder::new();
+    if expanded {
+        builder
+            .move_to(Point::new(center.x - 4.0, center.y - 2.0))
+            .line_to(Point::new(center.x + 4.0, center.y - 2.0))
+            .line_to(Point::new(center.x, center.y + 3.5));
+    } else {
+        builder
+            .move_to(Point::new(center.x - 2.0, center.y - 4.0))
+            .line_to(Point::new(center.x + 3.5, center.y))
+            .line_to(Point::new(center.x - 2.0, center.y + 4.0));
+    }
+    ctx.fill(builder.build(), color);
+}
+
+const DOCK_PANEL_HEADER_HEIGHT: f32 = 34.0;
+const DOCK_PANEL_HORIZONTAL_PADDING: f32 = 10.0;
+const DOCK_PANEL_VERTICAL_PADDING: f32 = 8.0;
+
+pub struct DockPanel {
+    theme: Box<DefaultTheme>,
+    name: Option<String>,
+    title: String,
+    header_height: f32,
+    padding: Insets,
+    background: Option<Color>,
+    header_background: Option<Color>,
+    child: SingleChild,
+    title_measurement: Option<TextMeasurement>,
+}
+
+impl DockPanel {
+    pub fn new<W>(title: impl Into<String>, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            name: None,
+            title: title.into(),
+            header_height: DOCK_PANEL_HEADER_HEIGHT,
+            padding: Insets {
+                left: DOCK_PANEL_HORIZONTAL_PADDING,
+                top: DOCK_PANEL_VERTICAL_PADDING,
+                right: DOCK_PANEL_HORIZONTAL_PADDING,
+                bottom: DOCK_PANEL_VERTICAL_PADDING,
+            },
+            background: None,
+            header_background: None,
+            child: SingleChild::new(child),
+            title_measurement: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn header_height(mut self, height: f32) -> Self {
+        self.header_height = height.max(0.0);
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self
+    }
+
+    pub fn header_background(mut self, color: Color) -> Self {
+        self.header_background = Some(color);
+        self
+    }
+
+    pub fn child(&self) -> &sui_runtime::WidgetPod {
+        self.child.child()
+    }
+
+    pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {
+        self.child.child_mut()
+    }
+
+    fn resolved_title_style(&self) -> TextStyle {
+        TextStyle {
+            font_size: 13.0,
+            line_height: 18.0,
+            color: self.theme.palette.text,
+            ..self.theme.body_text_style()
+        }
+    }
+
+    fn title_height(&self, style: &TextStyle) -> f32 {
+        self.title_measurement
+            .map(|measurement| measurement.height)
+            .unwrap_or(style.line_height)
+            .max(style.line_height)
+    }
+
+    fn header_rect(&self, bounds: Rect) -> Rect {
+        Rect::new(bounds.x(), bounds.y(), bounds.width(), self.header_height)
+    }
+
+    fn content_rect(&self, bounds: Rect) -> Rect {
+        inset_rect(
             Rect::new(
-                ctx.bounds().x(),
-                ctx.bounds().y(),
-                ctx.bounds().width(),
+                bounds.x(),
+                bounds.y() + self.header_height,
+                bounds.width(),
+                (bounds.height() - self.header_height).max(0.0),
+            ),
+            self.padding,
+        )
+    }
+
+    fn child_constraints(&self, constraints: Constraints) -> Constraints {
+        let width = if constraints.max.width.is_finite() {
+            (constraints.max.width - self.padding.left - self.padding.right).max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        let height = if constraints.max.height.is_finite() {
+            (constraints.max.height - self.header_height - self.padding.top - self.padding.bottom)
+                .max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        Constraints::new(Size::ZERO, Size::new(width, height))
+    }
+}
+
+impl Widget for DockPanel {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let title_style = self.resolved_title_style();
+        let title_measurement = measure_text(ctx, &self.title, &title_style);
+        self.title_measurement = Some(title_measurement);
+        let child_size = self.child.measure(ctx, self.child_constraints(constraints));
+        let natural = Size::new(
+            (title_measurement.width + 2.0 * DOCK_PANEL_HORIZONTAL_PADDING)
+                .max(child_size.width + self.padding.left + self.padding.right),
+            self.header_height + self.padding.top + child_size.height + self.padding.bottom,
+        );
+
+        constraints.clamp(natural)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, self.content_rect(bounds));
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = self.theme.palette;
+        let bounds = ctx.bounds();
+        let header = self.header_rect(bounds);
+        let title_style = self.resolved_title_style();
+        let title_height = self.title_height(&title_style);
+        let title_rect = Rect::new(
+            header.x() + DOCK_PANEL_HORIZONTAL_PADDING,
+            header.y() + ((header.height() - title_height) * 0.5).max(0.0),
+            (header.width() - 2.0 * DOCK_PANEL_HORIZONTAL_PADDING).max(0.0),
+            title_height,
+        );
+        let divider_height = physical_pixels(ctx, 1.0);
+
+        ctx.fill_rect(bounds, self.background.unwrap_or(palette.surface));
+        ctx.fill_rect(
+            header,
+            self.header_background
+                .unwrap_or_else(|| palette.surface_hover.with_alpha(0.55)),
+        );
+        ctx.fill_rect(
+            Rect::new(
+                header.x(),
+                header.max_y() - divider_height,
+                header.width(),
+                divider_height,
+            ),
+            palette.border,
+        );
+        ctx.push_clip_rect(title_rect);
+        ctx.draw_text(title_rect, self.title.clone(), title_style);
+        ctx.pop_clip();
+
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut panel = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        panel.name = Some(self.name.clone().unwrap_or_else(|| self.title.clone()));
+        ctx.push(panel);
+
+        let title_style = self.resolved_title_style();
+        let title_height = self.title_height(&title_style);
+        let header = self.header_rect(ctx.bounds());
+        let mut title = SemanticsNode::new(
+            dock_panel_title_id(ctx.widget_id()),
+            SemanticsRole::Text,
+            Rect::new(
+                header.x() + DOCK_PANEL_HORIZONTAL_PADDING,
+                header.y() + ((header.height() - title_height) * 0.5).max(0.0),
+                (header.width() - 2.0 * DOCK_PANEL_HORIZONTAL_PADDING).max(0.0),
                 title_height,
             ),
         );
@@ -821,11 +2090,415 @@ impl Widget for PanelSection {
     }
 }
 
-fn panel_section_title_id(parent: WidgetId) -> WidgetId {
-    const TAG: u64 = 3_u64 << 50;
+fn dock_panel_title_id(parent: WidgetId) -> WidgetId {
+    const TAG: u64 = 5_u64 << 50;
     const LOW_MASK: u64 = (1_u64 << 50) - 1;
 
-    WidgetId::new(TAG | (parent.get().wrapping_mul(431).wrapping_add(7) & LOW_MASK))
+    WidgetId::new(TAG | (parent.get().wrapping_mul(467).wrapping_add(11) & LOW_MASK))
+}
+
+const PRESET_STRIP_ITEM_HEIGHT: f32 = 28.0;
+const PRESET_STRIP_ITEM_MIN_WIDTH: f32 = 44.0;
+const PRESET_STRIP_ITEM_HORIZONTAL_PADDING: f32 = 12.0;
+const PRESET_STRIP_GAP: f32 = 6.0;
+
+pub struct PresetStrip {
+    theme: Box<DefaultTheme>,
+    name: String,
+    presets: Vec<String>,
+    selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
+    hovered: Option<usize>,
+    pressed: Option<usize>,
+    item_width: Option<f32>,
+    item_height: f32,
+    gap: f32,
+    label_measurements: Vec<TextMeasurement>,
+    item_widths: Vec<f32>,
+    on_change: Option<Box<dyn FnMut(usize, String)>>,
+}
+
+impl PresetStrip {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            name: name.into(),
+            presets: Vec::new(),
+            selected: None,
+            selected_reader: None,
+            hovered: None,
+            pressed: None,
+            item_width: None,
+            item_height: PRESET_STRIP_ITEM_HEIGHT,
+            gap: PRESET_STRIP_GAP,
+            label_measurements: Vec::new(),
+            item_widths: Vec::new(),
+            on_change: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self
+    }
+
+    pub fn preset(mut self, preset: impl Into<String>) -> Self {
+        self.presets.push(preset.into());
+        self
+    }
+
+    pub fn presets<I, S>(mut self, presets: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.presets.extend(presets.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn selected(mut self, selected: usize) -> Self {
+        self.selected = Some(selected);
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
+    }
+
+    pub fn item_width(mut self, width: f32) -> Self {
+        self.item_width = Some(width.max(0.0));
+        self
+    }
+
+    pub fn item_height(mut self, height: f32) -> Self {
+        self.item_height = height.max(20.0);
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = gap.max(0.0);
+        self
+    }
+
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(usize, String) + 'static,
+    {
+        self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.current_selected()
+    }
+
+    fn current_selected(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .map(|selected| selected())
+            .unwrap_or(self.selected)
+            .filter(|index| *index < self.presets.len())
+    }
+
+    fn item_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        if index >= self.presets.len() || self.item_widths.len() != self.presets.len() {
+            return None;
+        }
+
+        let mut x = bounds.x();
+        for (current, width) in self.item_widths.iter().enumerate() {
+            let available = (bounds.max_x() - x).max(0.0);
+            let rect = Rect::new(x, bounds.y(), width.min(available), self.item_height);
+            if current == index {
+                return (!rect.is_empty()).then_some(rect);
+            }
+            x += *width + self.gap;
+        }
+
+        None
+    }
+
+    fn item_at(&self, bounds: Rect, position: Point) -> Option<usize> {
+        self.presets.iter().enumerate().find_map(|(index, _)| {
+            self.item_rect(bounds, index)
+                .filter(|rect| rect.contains(position))
+                .map(|_| index)
+        })
+    }
+
+    fn activate(&mut self, index: usize) {
+        if self.presets.is_empty() {
+            return;
+        }
+
+        let index = index.min(self.presets.len() - 1);
+        self.selected = Some(index);
+        if let Some(on_change) = &mut self.on_change {
+            on_change(index, self.presets[index].clone());
+        }
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        if self.presets.is_empty() {
+            return;
+        }
+
+        let current = self.current_selected().unwrap_or(0) as isize;
+        let last = self.presets.len() as isize - 1;
+        let next = (current + delta).clamp(0, last) as usize;
+        self.hovered = Some(next);
+        self.activate(next);
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        self.current_selected()
+            .and_then(|index| self.presets.get(index).cloned())
+    }
+}
+
+impl Widget for PresetStrip {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = self.item_at(ctx.bounds(), pointer.position);
+                if hovered != self.hovered {
+                    self.hovered = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
+                if self.hovered.take().is_some() {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                self.hovered = self.item_at(ctx.bounds(), pointer.position);
+                self.pressed = self.hovered;
+                if self.hovered.is_some() {
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let hovered = self.item_at(ctx.bounds(), pointer.position);
+                if let Some(index) = self
+                    .pressed
+                    .zip(hovered)
+                    .filter(|(left, right)| left == right)
+                    .map(|(index, _)| index)
+                {
+                    self.activate(index);
+                }
+                self.hovered = hovered;
+                self.pressed = None;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed.take().is_some() {
+                    self.hovered = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                match key.key.as_str() {
+                    "ArrowLeft" | "ArrowUp" => self.move_selection(-1),
+                    "ArrowRight" | "ArrowDown" => self.move_selection(1),
+                    "Home" => self.activate(0),
+                    "End" if !self.presets.is_empty() => self.activate(self.presets.len() - 1),
+                    "Enter" | " " => {
+                        if let Some(selected) = self.current_selected().or(Some(0)) {
+                            self.activate(selected);
+                        }
+                    }
+                    _ => return,
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let style = TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            ..self.theme.body_text_style()
+        };
+        self.label_measurements = self
+            .presets
+            .iter()
+            .map(|preset| measure_text(ctx, preset, &style))
+            .collect();
+        self.item_widths = self
+            .label_measurements
+            .iter()
+            .map(|measurement| {
+                self.item_width.unwrap_or(
+                    (measurement.width + PRESET_STRIP_ITEM_HORIZONTAL_PADDING * 2.0)
+                        .max(PRESET_STRIP_ITEM_MIN_WIDTH),
+                )
+            })
+            .collect();
+
+        let width = self.item_widths.iter().sum::<f32>()
+            + (self.gap * self.presets.len().saturating_sub(1) as f32);
+        constraints.clamp(Size::new(width, self.item_height))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let palette = self.theme.palette;
+        let metrics = self.theme.metrics;
+        let selected = self.current_selected();
+        let style = TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: palette.text,
+            ..self.theme.body_text_style()
+        };
+
+        if ctx.is_focused() {
+            ctx.stroke(
+                rounded_rect_path(ctx.bounds().inflate(2.0, 2.0), metrics.corner_radius + 2.0),
+                palette.focus_ring,
+                StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
+            );
+        }
+
+        for (index, preset) in self.presets.iter().enumerate() {
+            let Some(rect) = self.item_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let is_selected = selected == Some(index);
+            let is_pressed = self.pressed == Some(index);
+            let is_hovered = self.hovered == Some(index);
+            let background = if is_selected {
+                palette.accent
+            } else if is_pressed {
+                palette.surface_pressed
+            } else if is_hovered {
+                palette.surface_hover
+            } else {
+                palette.surface
+            };
+            let border = if is_selected {
+                palette.accent_border
+            } else if is_hovered {
+                palette.border_hover
+            } else {
+                palette.border
+            };
+            let text_color = if is_selected {
+                palette.accent_text
+            } else {
+                palette.text
+            };
+
+            draw_control_shape(
+                ctx,
+                rect,
+                metrics.corner_radius,
+                physical_pixels(ctx, metrics.border_width),
+                background,
+                border,
+            );
+
+            let text_rect = centered_text_rect(
+                ctx,
+                rect,
+                Insets::all(4.0),
+                self.label_measurements.get(index).copied(),
+                style.line_height,
+            );
+            ctx.push_clip_rect(text_rect);
+            ctx.draw_text(
+                text_rect,
+                preset.clone(),
+                TextStyle {
+                    color: text_color,
+                    ..style.clone()
+                },
+            );
+            ctx.pop_clip();
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(self.name.clone());
+        node.value = self.selected_text().map(SemanticsValue::Text);
+        node.state.focused = ctx.is_focused();
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(node);
+
+        let selected = self.current_selected();
+        for (index, preset) in self.presets.iter().enumerate() {
+            let Some(rect) = self.item_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let mut item = SemanticsNode::new(
+                preset_strip_item_id(ctx.widget_id(), index),
+                SemanticsRole::Button,
+                rect,
+            );
+            item.parent = Some(ctx.widget_id());
+            item.name = Some(preset.clone());
+            item.value = Some(SemanticsValue::Text(preset.clone()));
+            item.state.hovered = self.hovered == Some(index);
+            item.state.selected = selected == Some(index);
+            item.actions = vec![SemanticsAction::Activate];
+            ctx.push(item);
+        }
+    }
+
+    fn accepts_focus(&self) -> bool {
+        !self.presets.is_empty()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
+fn preset_strip_item_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 6_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(487)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
 }
 
 const STATUS_BAR_HEIGHT: f32 = 28.0;
@@ -4458,15 +6131,16 @@ mod tests {
 
     use super::Tabs;
     use super::{
-        ContextMenu, Dialog, MENU_VERTICAL_PADDING, Menu, MenuItem, PanelSection, Popover,
-        ProgressBar, PropertyRow, PropertyRowLayout, Spinner, StatusBar, StatusBarHost,
-        StatusBarSegment, TabBar, Toolbar,
+        CommandGroup, ContextMenu, Dialog, DockPanel, MENU_VERTICAL_PADDING, Menu, MenuItem,
+        PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, Spinner,
+        StatusBar, StatusBarHost, StatusBarSegment, TabBar, ToolPalette, ToolPaletteItem, Toolbar,
     };
     use crate::FloatingStack;
     use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken};
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
-        PointerEventKind, Rect, SemanticsNode, SemanticsRole, SemanticsValue, Size, WidgetId,
+        PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
+        Size, WidgetId,
     };
     use sui_layout::Constraints;
     use sui_runtime::{
@@ -4494,6 +6168,94 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).unwrap()
+    }
+
+    #[test]
+    fn preset_strip_exposes_selected_preset_semantics() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(220.0, 32.0))
+                .with_child(
+                    PresetStrip::new("Brush presets")
+                        .presets(["8 px", "18 px", "36 px"])
+                        .selected(1),
+                ),
+        );
+
+        let strip = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Brush presets")
+            })
+            .expect("preset strip container semantics should exist");
+        assert_eq!(strip.value, Some(SemanticsValue::Text("18 px".to_string())));
+        assert!(strip.actions.contains(&SemanticsAction::SetValue));
+
+        let selected = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("18 px")
+            })
+            .expect("selected preset button semantics should exist");
+        assert!(selected.state.selected);
+        assert_eq!(
+            selected.value,
+            Some(SemanticsValue::Text("18 px".to_string()))
+        );
+    }
+
+    #[test]
+    fn preset_strip_pointer_activation_updates_selection() -> sui_core::Result<()> {
+        let chosen = Rc::new(RefCell::new(None));
+        let chosen_writer = Rc::clone(&chosen);
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(220.0, 32.0))
+                .with_child(
+                    PresetStrip::new("Brush presets")
+                        .presets(["8 px", "18 px", "36 px"])
+                        .selected(0)
+                        .on_change(move |index, label| {
+                            *chosen_writer.borrow_mut() = Some((index, label));
+                        }),
+                ),
+        );
+        let output = runtime.render(window_id)?;
+        let preset = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("36 px")
+            })
+            .expect("target preset button should exist");
+        let position = super::rect_center(preset.bounds);
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        assert_eq!(*chosen.borrow(), Some((2, "36 px".to_string())));
+        let output = runtime.render(window_id)?;
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some("36 px")
+                && node.state.selected
+        }));
+        Ok(())
     }
 
     #[test]
@@ -4561,6 +6323,53 @@ mod tests {
     }
 
     #[test]
+    fn command_group_keeps_natural_size_and_exposes_group_semantics() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 48.0))
+                .with_child(
+                    Toolbar::horizontal()
+                        .name("Editor toolbar")
+                        .padding(sui_layout::Padding::all(4.0))
+                        .with_child(
+                            CommandGroup::horizontal("History commands")
+                                .with_child(
+                                    crate::IconButton::new(crate::IconGlyph::Undo, "Undo")
+                                        .size(28.0),
+                                )
+                                .with_child(
+                                    crate::IconButton::new(crate::IconGlyph::Redo, "Redo")
+                                        .size(28.0),
+                                ),
+                        ),
+                ),
+        );
+
+        let group = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("History commands")
+            })
+            .expect("command group semantics should exist");
+        assert_eq!(group.bounds.width(), 63.0);
+        assert_eq!(group.bounds.height(), 32.0);
+
+        for name in ["Undo", "Redo"] {
+            let button = output
+                .semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::Button && node.name.as_deref() == Some(name)
+                })
+                .expect("command button should exist");
+            assert!(button.bounds.x() >= group.bounds.x());
+            assert!(button.bounds.max_x() <= group.bounds.max_x());
+        }
+    }
+
+    #[test]
     fn vertical_toolbar_uses_fixed_extent_and_centers_children() {
         let output = render(
             crate::SizedBox::new()
@@ -4599,6 +6408,153 @@ mod tests {
             .expect("toolbar child button should exist");
         assert_eq!(brush.bounds.width(), 44.0);
         assert!((brush.bounds.x() - 18.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn tool_palette_exposes_selected_tool_semantics() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(64.0, 180.0))
+                .with_child(
+                    ToolPalette::vertical("Paint tools")
+                        .items([
+                            ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
+                            ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
+                            ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
+                        ])
+                        .selected(1),
+                ),
+        );
+
+        let palette = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Paint tools")
+            })
+            .expect("tool palette container semantics should exist");
+        assert_eq!(
+            palette.value,
+            Some(SemanticsValue::Text("Eraser tool".to_string()))
+        );
+        assert!(palette.actions.contains(&SemanticsAction::Focus));
+        assert!(palette.actions.contains(&SemanticsAction::SetValue));
+
+        let selected = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Eraser tool")
+            })
+            .expect("selected tool button semantics should exist");
+        assert!(selected.state.selected);
+        assert!(selected.actions.contains(&SemanticsAction::Activate));
+    }
+
+    #[test]
+    fn tool_palette_pointer_activation_updates_selection() -> sui_core::Result<()> {
+        let chosen = Rc::new(RefCell::new(None));
+        let chosen_writer = Rc::clone(&chosen);
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(64.0, 180.0))
+                .with_child(
+                    ToolPalette::vertical("Paint tools")
+                        .items([
+                            ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
+                            ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
+                            ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
+                        ])
+                        .selected(0)
+                        .on_change(move |index, label| {
+                            *chosen_writer.borrow_mut() = Some((index, label));
+                        }),
+                ),
+        );
+        let output = runtime.render(window_id)?;
+        let fill = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Fill tool")
+            })
+            .expect("fill tool button semantics should exist");
+        let position = super::rect_center(fill.bounds);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+
+        assert_eq!(*chosen.borrow(), Some((2, "Fill tool".to_string())));
+        let output = runtime.render(window_id)?;
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some("Fill tool")
+                && node.state.selected
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn tool_palette_keyboard_moves_between_tools() -> sui_core::Result<()> {
+        let chosen = Rc::new(RefCell::new(Vec::new()));
+        let chosen_writer = Rc::clone(&chosen);
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(64.0, 180.0))
+                .with_child(
+                    ToolPalette::vertical("Paint tools")
+                        .items([
+                            ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
+                            ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
+                            ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
+                        ])
+                        .selected(0)
+                        .on_change(move |index, label| {
+                            chosen_writer.borrow_mut().push((index, label));
+                        }),
+                ),
+        );
+        let output = runtime.render(window_id)?;
+        let brush = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Brush tool")
+            })
+            .expect("brush tool button semantics should exist");
+        let position = super::rect_center(brush.bounds);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("ArrowDown", KeyState::Pressed)),
+        )?;
+
+        assert_eq!(
+            chosen.borrow().last(),
+            Some(&(1, "Eraser tool".to_string()))
+        );
+        let output = runtime.render(window_id)?;
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some("Eraser tool")
+                && node.state.selected
+        }));
+        Ok(())
     }
 
     #[test]
@@ -4714,8 +6670,192 @@ mod tests {
     }
 
     #[test]
+    fn panel_section_header_action_is_arranged_after_title() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 92.0))
+                .with_child(
+                    PanelSection::new("Layers", crate::Label::new("Paint"))
+                        .header_action(crate::IconButton::new(crate::IconGlyph::Add, "Add layer")),
+                ),
+        );
+
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Layers")
+            })
+            .expect("panel section group semantics should exist");
+        let title = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.parent == Some(section.id)
+                    && node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layers")
+            })
+            .expect("panel section title semantics should exist");
+        let action = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Add layer")
+            })
+            .expect("panel section header action semantics should exist");
+        let child = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Text && node.name.as_deref() == Some("Paint"))
+            .expect("panel section child semantics should exist");
+
+        assert!(action.bounds.x() > title.bounds.x());
+        assert!(child.bounds.y() > action.bounds.max_y());
+    }
+
+    #[test]
+    fn collapsible_panel_section_hides_collapsed_child_semantics() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 92.0))
+                .with_child(
+                    PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
+                        .collapsible(true)
+                        .collapsed(),
+                ),
+        );
+
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Advanced color")
+            })
+            .expect("collapsible panel section semantics should exist");
+        assert_eq!(section.state.expanded, Some(false));
+        assert!(section.actions.contains(&SemanticsAction::Expand));
+        assert!(
+            !output
+                .semantics
+                .iter()
+                .any(|node| node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("RGB sliders")),
+            "collapsed section should not expose hidden child semantics"
+        );
+    }
+
+    #[test]
+    fn collapsible_panel_section_pointer_toggle_exposes_child() -> sui_core::Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 120.0))
+                .with_child(
+                    PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
+                        .collapsible(true)
+                        .collapsed(),
+                ),
+        );
+        let output = runtime.render(window_id)?;
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Advanced color")
+            })
+            .expect("collapsible panel section semantics should exist");
+        let position = Point::new(section.bounds.x() + 20.0, section.bounds.y() + 8.0);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, position, false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Advanced color")
+            })
+            .expect("collapsible panel section semantics should still exist");
+        assert_eq!(section.state.expanded, Some(true));
+        assert!(
+            output
+                .semantics
+                .iter()
+                .any(|node| node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("RGB sliders")),
+            "expanded section should expose child semantics"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn panel_section_title_id_is_javascript_safe() {
         let id = super::panel_section_title_id(WidgetId::new(402)).get();
+
+        assert!(id < (1_u64 << 53));
+    }
+
+    #[test]
+    fn dock_panel_exposes_title_and_arranges_child_below_header() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(280.0, 160.0))
+                .with_child(
+                    DockPanel::new("Tool properties", crate::Label::new("Brush size"))
+                        .name("Inspector")
+                        .padding(sui_layout::Padding::all(8.0)),
+                ),
+        );
+
+        let panel = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Inspector")
+            })
+            .expect("dock panel semantics should exist");
+        assert_eq!(panel.bounds, Rect::new(0.0, 0.0, 280.0, 160.0));
+
+        let title = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.parent == Some(panel.id)
+                    && node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Tool properties")
+            })
+            .expect("dock panel title semantics should exist");
+        let child = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Brush size")
+            })
+            .expect("dock panel child semantics should exist");
+
+        assert!(title.bounds.max_y() <= 34.0);
+        assert!(child.bounds.y() >= 42.0);
+    }
+
+    #[test]
+    fn dock_panel_title_id_is_javascript_safe() {
+        let id = super::dock_panel_title_id(WidgetId::new(402)).get();
 
         assert!(id < (1_u64 << 53));
     }

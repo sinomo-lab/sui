@@ -2,20 +2,64 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui::prelude::*;
 
-use crate::app::{labeled_settings_control, request_window_refresh};
+use crate::app::request_window_refresh;
 
 pub(crate) const PAINT_TAB_LABEL: &str = "Paint";
 pub(crate) const PAINT_DOCUMENT_WIDTH: usize = 1920;
 pub(crate) const PAINT_DOCUMENT_HEIGHT: usize = 1080;
 pub(crate) const PAINT_INITIAL_BRUSH_SIZE: f32 = 18.0;
 pub(crate) const PAINT_BRUSH_COLOR_NAME: &str = "Brush color";
+pub(crate) const PAINT_BRUSH_PREVIEW_NAME: &str = "Brush preview";
+pub(crate) const PAINT_ERASER_PREVIEW_NAME: &str = "Eraser preview";
+pub(crate) const PAINT_BRUSH_SIZE_PRESETS_NAME: &str = "Brush size presets";
 pub(crate) const PAINT_BRUSH_SIZE_NAME: &str = "Brush size";
 pub(crate) const PAINT_BRUSH_OPACITY_NAME: &str = "Brush opacity";
 pub(crate) const PAINT_BRUSH_SHAPE_NAME: &str = "Brush shape";
 pub(crate) const PAINT_BLEND_MODE_NAME: &str = "Blend mode";
+pub(crate) const PAINT_FILL_OPACITY_NAME: &str = "Fill opacity";
+pub(crate) const PAINT_FILL_BLEND_MODE_NAME: &str = "Fill blend mode";
+pub(crate) const PAINT_FIT_VIEW_NAME: &str = "Fit view";
+pub(crate) const PAINT_ACTUAL_SIZE_NAME: &str = "Actual size";
+pub(crate) const PAINT_COLOR_PRESETS_NAME: &str = "Color presets";
+pub(crate) const PAINT_COLOR_EDITOR_NAME: &str = "Color editor";
 pub(crate) const PAINT_LAYERS_NAME: &str = "Layers";
+pub(crate) const PAINT_LAYER_OPACITY_NAME: &str = "Layer opacity";
+pub(crate) const PAINT_LAYER_BLEND_MODE_NAME: &str = "Layer blend mode";
+pub(crate) const PAINT_SELECT_LAYER_ABOVE_NAME: &str = "Select layer above";
+pub(crate) const PAINT_SELECT_LAYER_BELOW_NAME: &str = "Select layer below";
 pub(crate) const PAINT_SCROLL_NAME: &str = "Paint controls";
+pub(crate) const PAINT_PROPERTIES_NAME: &str = "Tool properties";
+pub(crate) const PAINT_DOCUMENT_BAR_NAME: &str = "Document bar";
+pub(crate) const PAINT_DOCUMENT_VIEW_COMMANDS_NAME: &str = "Document view controls";
+pub(crate) const PAINT_ZOOM_OUT_NAME: &str = "Zoom out";
+pub(crate) const PAINT_ZOOM_READOUT_NAME: &str = "Zoom level";
+pub(crate) const PAINT_ZOOM_IN_NAME: &str = "Zoom in";
+pub(crate) const PAINT_HISTORY_COMMANDS_NAME: &str = "History commands";
+pub(crate) const PAINT_VIEW_COMMANDS_NAME: &str = "View commands";
+pub(crate) const PAINT_DOCUMENT_COMMANDS_NAME: &str = "Document commands";
+pub(crate) const PAINT_HORIZONTAL_RULER_NAME: &str = "Horizontal ruler";
+pub(crate) const PAINT_VERTICAL_RULER_NAME: &str = "Vertical ruler";
+pub(crate) const PAINT_DOCUMENT_NAME: &str = "Untitled.sui";
 pub(crate) const PAINT_LAYER_NAMES: [&str; 2] = ["Paint", "Paper"];
+
+const PAINT_RULER_EXTENT: f32 = 30.0;
+const PAINT_TOOLS: [PixelCanvasTool; 4] = [
+    PixelCanvasTool::Brush,
+    PixelCanvasTool::Eraser,
+    PixelCanvasTool::Fill,
+    PixelCanvasTool::Pan,
+];
+const PAINT_BRUSH_SIZE_PRESETS: [f32; 4] = [8.0, 18.0, 36.0, 72.0];
+const PAINT_COLOR_PRESETS: [(&str, Color); 8] = [
+    ("Ink", Color::rgba(0.08, 0.10, 0.15, 1.0)),
+    ("Ocean", Color::rgba(0.08, 0.22, 0.78, 1.0)),
+    ("Sky", Color::rgba(0.16, 0.58, 0.92, 1.0)),
+    ("Mint", Color::rgba(0.28, 0.78, 0.58, 1.0)),
+    ("Leaf", Color::rgba(0.38, 0.68, 0.22, 1.0)),
+    ("Amber", Color::rgba(0.96, 0.66, 0.18, 1.0)),
+    ("Coral", Color::rgba(0.90, 0.32, 0.18, 1.0)),
+    ("Violet", Color::rgba(0.54, 0.30, 0.84, 1.0)),
+];
 
 #[derive(Clone)]
 struct PaintDemoState {
@@ -24,12 +68,22 @@ struct PaintDemoState {
 
 struct PaintDemoStateInner {
     selected_layer: usize,
+    layer_visible: [bool; PAINT_LAYER_NAMES.len()],
+    layer_locked: [bool; PAINT_LAYER_NAMES.len()],
+    layer_opacity: [f32; PAINT_LAYER_NAMES.len()],
+    layer_blend_mode: [PixelCanvasBlendMode; PAINT_LAYER_NAMES.len()],
 }
 
 impl PaintDemoState {
     fn new() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(PaintDemoStateInner { selected_layer: 0 })),
+            inner: Rc::new(RefCell::new(PaintDemoStateInner {
+                selected_layer: 0,
+                layer_visible: [true; PAINT_LAYER_NAMES.len()],
+                layer_locked: [false, true],
+                layer_opacity: [1.0; PAINT_LAYER_NAMES.len()],
+                layer_blend_mode: [PixelCanvasBlendMode::Normal; PAINT_LAYER_NAMES.len()],
+            })),
         }
     }
 
@@ -46,13 +100,131 @@ impl PaintDemoState {
             self.inner.borrow_mut().selected_layer = selected_layer;
         }
     }
+
+    fn layer_visible(&self, index: usize) -> bool {
+        self.inner
+            .borrow()
+            .layer_visible
+            .get(index)
+            .copied()
+            .unwrap_or(true)
+    }
+
+    fn set_layer_visible(&self, index: usize, visible: bool) {
+        if let Some(layer_visible) = self.inner.borrow_mut().layer_visible.get_mut(index) {
+            *layer_visible = visible;
+        }
+    }
+
+    fn layer_locked(&self, index: usize) -> bool {
+        self.inner
+            .borrow()
+            .layer_locked
+            .get(index)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn selected_layer_locked(&self) -> bool {
+        self.layer_locked(self.selected_layer())
+    }
+
+    fn set_layer_locked(&self, index: usize, locked: bool) {
+        if let Some(layer_locked) = self.inner.borrow_mut().layer_locked.get_mut(index) {
+            *layer_locked = locked;
+        }
+    }
+
+    fn sync_canvas_editable(&self, paint_state: &PixelCanvasState) {
+        paint_state.set_editable(!self.selected_layer_locked());
+    }
+
+    fn sync_canvas_layers(&self, paint_state: &PixelCanvasState) {
+        paint_state.set_display_visible(self.layer_visible(0));
+        paint_state.set_display_opacity(self.layer_opacity(0));
+        paint_state.set_display_blend_mode(self.layer_blend_mode(0));
+        paint_state.set_paper_visible(self.layer_visible(1));
+        paint_state.set_paper_opacity(self.layer_opacity(1));
+    }
+
+    fn layer_opacity(&self, index: usize) -> f32 {
+        self.inner
+            .borrow()
+            .layer_opacity
+            .get(index)
+            .copied()
+            .unwrap_or(1.0)
+    }
+
+    fn selected_layer_opacity(&self) -> f32 {
+        self.layer_opacity(self.selected_layer())
+    }
+
+    fn set_layer_opacity(&self, index: usize, opacity: f32) {
+        if let Some(layer_opacity) = self.inner.borrow_mut().layer_opacity.get_mut(index) {
+            *layer_opacity = opacity.clamp(0.0, 1.0);
+        }
+    }
+
+    fn set_selected_layer_opacity(&self, opacity: f32) {
+        self.set_layer_opacity(self.selected_layer(), opacity);
+    }
+
+    fn layer_blend_mode(&self, index: usize) -> PixelCanvasBlendMode {
+        self.inner
+            .borrow()
+            .layer_blend_mode
+            .get(index)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn selected_layer_blend_mode(&self) -> PixelCanvasBlendMode {
+        self.layer_blend_mode(self.selected_layer())
+    }
+
+    fn set_layer_blend_mode(&self, index: usize, mode: PixelCanvasBlendMode) {
+        if let Some(layer_blend_mode) = self.inner.borrow_mut().layer_blend_mode.get_mut(index) {
+            *layer_blend_mode = mode;
+        }
+    }
+
+    fn set_selected_layer_blend_mode(&self, mode: PixelCanvasBlendMode) {
+        self.set_layer_blend_mode(self.selected_layer(), mode);
+    }
+
+    fn can_select_layer_above(&self) -> bool {
+        self.selected_layer() > 0
+    }
+
+    fn can_select_layer_below(&self) -> bool {
+        self.selected_layer() + 1 < PAINT_LAYER_NAMES.len()
+    }
+
+    fn select_layer_above(&self) {
+        if self.can_select_layer_above() {
+            self.set_selected_layer(self.selected_layer() - 1);
+        }
+    }
+
+    fn select_layer_below(&self) {
+        if self.can_select_layer_below() {
+            self.set_selected_layer(self.selected_layer() + 1);
+        }
+    }
 }
 
 pub(crate) fn build_paint_demo() -> impl Widget {
     let paint_state = PixelCanvasState::new();
+    build_paint_demo_with_state(paint_state)
+}
+
+pub(crate) fn build_paint_demo_with_state(paint_state: PixelCanvasState) -> impl Widget {
     let demo_state = PaintDemoState::new();
     paint_state.set_brush_color(Color::rgba(0.08, 0.22, 0.78, 1.0));
     paint_state.set_brush_size(PAINT_INITIAL_BRUSH_SIZE);
+    demo_state.sync_canvas_editable(&paint_state);
+    demo_state.sync_canvas_layers(&paint_state);
 
     Background::new(
         Color::rgba(0.925, 0.94, 0.96, 1.0),
@@ -65,12 +237,12 @@ pub(crate) fn build_paint_demo() -> impl Widget {
                         build_paint_tool_rail(paint_state.clone()),
                         SplitView::horizontal(
                             build_paint_canvas_stage(paint_state.clone()),
-                            build_paint_inspector(paint_state.clone(), demo_state.clone()),
+                            build_paint_properties_panel(paint_state.clone(), demo_state.clone()),
                         )
-                        .name("Canvas and inspector")
-                        .ratio(0.76)
+                        .name("Canvas and properties")
+                        .ratio(0.79)
                         .min_first(420.0)
-                        .min_second(336.0)
+                        .min_second(304.0)
                         .divider_thickness(4.0),
                     )
                     .name("Paint workspace")
@@ -97,127 +269,107 @@ fn build_paint_toolbar(paint_state: PixelCanvasState) -> impl Widget {
     Toolbar::horizontal()
         .name("Paint toolbar")
         .extent(44.0)
-        .background(Color::rgba(0.97, 0.978, 0.988, 1.0))
+        .background(Color::rgba(0.982, 0.986, 0.992, 1.0))
         .padding(Insets::all(6.0))
-        .spacing(7.0)
+        .spacing(8.0)
         .with_child(
             Label::new("SUI Paint")
                 .font_size(15.0)
                 .line_height(20.0)
                 .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
         )
-        .with_child(Separator::vertical().length(24.0))
         .with_child(
-            IconButton::new(IconGlyph::Undo, "Undo")
-                .size(30.0)
-                .icon_size(14.0)
-                .enabled_when(move || undo_enabled_state.can_undo())
-                .on_press_with_ctx(move |ctx| {
-                    undo_state.request_undo();
-                    request_window_refresh(ctx, true);
-                }),
+            paint_command_group(PAINT_HISTORY_COMMANDS_NAME)
+                .with_child(
+                    IconButton::new(IconGlyph::Undo, "Undo")
+                        .size(28.0)
+                        .icon_size(14.0)
+                        .enabled_when(move || undo_enabled_state.can_undo())
+                        .on_press_with_ctx(move |ctx| {
+                            undo_state.request_undo();
+                            request_window_refresh(ctx, true);
+                        }),
+                )
+                .with_child(
+                    IconButton::new(IconGlyph::Redo, "Redo")
+                        .size(28.0)
+                        .icon_size(14.0)
+                        .enabled_when(move || redo_enabled_state.can_redo())
+                        .on_press_with_ctx(move |ctx| {
+                            redo_state.request_redo();
+                            request_window_refresh(ctx, true);
+                        }),
+                ),
         )
         .with_child(
-            IconButton::new(IconGlyph::Redo, "Redo")
-                .size(30.0)
-                .icon_size(14.0)
-                .enabled_when(move || redo_enabled_state.can_redo())
-                .on_press_with_ctx(move |ctx| {
-                    redo_state.request_redo();
-                    request_window_refresh(ctx, true);
-                }),
-        )
-        .with_child(Separator::vertical().length(24.0))
-        .with_child(
-            Button::new("Fit")
-                .min_width(48.0)
-                .min_height(30.0)
-                .on_press_with_ctx(move |ctx| {
-                    fit_state.request_fit_view();
-                    request_window_refresh(ctx, true);
-                }),
-        )
-        .with_child(
-            Button::new("100%")
-                .min_width(54.0)
-                .min_height(30.0)
-                .on_press_with_ctx(move |ctx| {
-                    actual_size_state.request_actual_size_view();
-                    request_window_refresh(ctx, true);
-                }),
+            paint_command_group(PAINT_VIEW_COMMANDS_NAME)
+                .with_child(
+                    IconButton::new(IconGlyph::FitView, PAINT_FIT_VIEW_NAME)
+                        .size(28.0)
+                        .icon_size(15.0)
+                        .on_press_with_ctx(move |ctx| {
+                            fit_state.request_fit_view();
+                            request_window_refresh(ctx, true);
+                        }),
+                )
+                .with_child(
+                    IconButton::new(IconGlyph::ActualSize, PAINT_ACTUAL_SIZE_NAME)
+                        .size(28.0)
+                        .icon_size(15.0)
+                        .on_press_with_ctx(move |ctx| {
+                            actual_size_state.request_actual_size_view();
+                            request_window_refresh(ctx, true);
+                        }),
+                ),
         )
         .with_child(
-            Button::new("Clear")
-                .icon(IconGlyph::Trash)
-                .icon_size(14.0)
-                .min_width(62.0)
-                .min_height(30.0)
-                .enabled_when(move || clear_enabled_state.can_clear())
-                .on_press_with_ctx(move |ctx| {
-                    clear_state.request_clear();
-                    request_window_refresh(ctx, true);
-                }),
-        )
-        .with_child(
-            Button::new("Export")
-                .icon(IconGlyph::Download)
-                .icon_size(14.0)
-                .min_width(70.0)
-                .min_height(30.0)
-                .on_press_with_ctx(move |ctx| {
-                    export_state.request_export_snapshot();
-                    request_window_refresh(ctx, true);
-                }),
+            paint_command_group(PAINT_DOCUMENT_COMMANDS_NAME)
+                .with_child(
+                    IconButton::new(IconGlyph::Trash, "Clear")
+                        .size(28.0)
+                        .icon_size(14.0)
+                        .enabled_when(move || clear_enabled_state.can_clear())
+                        .on_press_with_ctx(move |ctx| {
+                            clear_state.request_clear();
+                            request_window_refresh(ctx, true);
+                        }),
+                )
+                .with_child(
+                    IconButton::new(IconGlyph::Download, "Export")
+                        .size(28.0)
+                        .icon_size(14.0)
+                        .on_press_with_ctx(move |ctx| {
+                            export_state.request_export_snapshot();
+                            request_window_refresh(ctx, true);
+                        }),
+                ),
         )
 }
 
+fn paint_command_group(name: &'static str) -> CommandGroup {
+    CommandGroup::horizontal(name)
+        .padding(Insets::all(2.0))
+        .spacing(2.0)
+        .corner_radius(6.0)
+        .background(Color::rgba(0.952, 0.960, 0.974, 1.0))
+        .border(Color::rgba(0.79, 0.82, 0.87, 1.0))
+}
+
 fn build_paint_tool_rail(paint_state: PixelCanvasState) -> impl Widget {
-    Toolbar::vertical()
-        .name("Paint tools")
+    let selected_state = paint_state.clone();
+    ToolPalette::vertical("Paint tools")
         .extent(52.0)
         .background(Color::rgba(0.955, 0.965, 0.978, 1.0))
         .padding(Insets::all(6.0))
         .spacing(6.0)
-        .with_child(paint_tool_button(
-            paint_state.clone(),
-            PixelCanvasTool::Brush,
-            IconGlyph::Brush,
-            "Brush tool",
-        ))
-        .with_child(paint_tool_button(
-            paint_state.clone(),
-            PixelCanvasTool::Eraser,
-            IconGlyph::Eraser,
-            "Eraser tool",
-        ))
-        .with_child(paint_tool_button(
-            paint_state.clone(),
-            PixelCanvasTool::Fill,
-            IconGlyph::PaintBucket,
-            "Fill tool",
-        ))
-        .with_child(paint_tool_button(
-            paint_state,
-            PixelCanvasTool::Pan,
-            IconGlyph::Hand,
-            "Pan tool",
-        ))
-}
-
-fn paint_tool_button(
-    paint_state: PixelCanvasState,
-    tool: PixelCanvasTool,
-    icon: IconGlyph,
-    label: &'static str,
-) -> impl Widget {
-    let selected_state = paint_state.clone();
-    IconButton::new(icon, label)
-        .size(40.0)
-        .icon_size(20.0)
-        .selected_when(move || selected_state.tool() == tool)
-        .on_press_with_ctx(move |ctx| {
-            paint_state.set_tool(tool);
-            request_window_refresh(ctx, true);
+        .items(paint_tool_palette_items())
+        .selected(paint_tool_selected_index(paint_state.tool()))
+        .selected_when(move || Some(paint_tool_selected_index(selected_state.tool())))
+        .on_change_with_ctx(move |ctx, index, _| {
+            if let Some(tool) = paint_tool_at(index) {
+                paint_state.set_tool(tool);
+                request_window_refresh(ctx, true);
+            }
         })
 }
 
@@ -229,7 +381,7 @@ fn build_paint_status_bar(
     let zoom_state = paint_state.clone();
     let brush_state = paint_state.clone();
     let blend_state = paint_state.clone();
-    let export_state = paint_state;
+    let cursor_state = paint_state;
     let layer_state = demo_state;
 
     StatusBar::new()
@@ -247,11 +399,7 @@ fn build_paint_status_bar(
         )
         .segment(
             StatusBarSegment::dynamic("Brush 18 px", move || {
-                format!(
-                    "Brush {:.0} px / {:.0}%",
-                    brush_state.brush_size(),
-                    brush_state.brush_opacity() * 100.0
-                )
+                paint_tool_parameter_status_text(&brush_state)
             })
             .min_width(150.0),
         )
@@ -262,10 +410,10 @@ fn build_paint_status_bar(
             .min_width(132.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Layer Paint", move || {
-                format!("Layer {}", layer_state.selected_layer_name())
+            StatusBarSegment::dynamic("Layer Paint / Normal / 100% / Unlocked", move || {
+                paint_layer_status_text(&layer_state)
             })
-            .min_width(112.0),
+            .min_width(260.0),
         )
         .segment(
             StatusBarSegment::new(format!(
@@ -275,10 +423,27 @@ fn build_paint_status_bar(
             .min_width(180.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Ready", move || paint_export_status_text(&export_state))
-                .min_width(220.0)
+            StatusBarSegment::dynamic("Cursor --", move || paint_cursor_status_text(&cursor_state))
+                .min_width(140.0)
                 .expand(true),
         )
+}
+
+fn paint_tool_parameter_status_text(state: &PixelCanvasState) -> String {
+    match state.tool() {
+        PixelCanvasTool::Brush => format!(
+            "Brush {:.0} px / {:.0}%",
+            state.brush_size(),
+            state.brush_opacity() * 100.0
+        ),
+        PixelCanvasTool::Eraser => format!(
+            "Eraser {:.0} px / {:.0}%",
+            state.brush_size(),
+            state.brush_opacity() * 100.0
+        ),
+        PixelCanvasTool::Fill => format!("Fill {:.0}%", state.brush_opacity() * 100.0),
+        PixelCanvasTool::Pan => "Pan view".to_string(),
+    }
 }
 
 fn paint_zoom_status_text(state: &PixelCanvasState) -> String {
@@ -291,142 +456,663 @@ fn paint_zoom_status_text(state: &PixelCanvasState) -> String {
     }
 }
 
-fn build_paint_canvas_stage(paint_state: PixelCanvasState) -> impl Widget {
-    Background::new(
-        Color::rgba(0.875, 0.89, 0.91, 1.0),
-        Padding::all(
-            10.0,
-            Stack::vertical().alignment(Alignment::Stretch).with_child(
-                PixelCanvas::from_fn(
-                    PAINT_TAB_LABEL,
-                    PAINT_DOCUMENT_WIDTH,
-                    PAINT_DOCUMENT_HEIGHT,
-                    |x, y| {
-                        let u = x as f32 / (PAINT_DOCUMENT_WIDTH - 1) as f32;
-                        let v = y as f32 / (PAINT_DOCUMENT_HEIGHT - 1) as f32;
-                        seeded_paint_color(u, v)
-                    },
-                )
-                .state(paint_state)
-                .desired_size(Size::new(960.0, 620.0))
-                .fit_on_first_layout(),
-            ),
-        ),
+fn paint_cursor_status_text(state: &PixelCanvasState) -> String {
+    match state.cursor_position() {
+        Some(point) => format!("Cursor {:.0}, {:.0}", point.x, point.y),
+        None => "Cursor --".to_string(),
+    }
+}
+
+fn paint_layer_status_text(state: &PaintDemoState) -> String {
+    format!(
+        "Layer {} / {} / {} / {}",
+        state.selected_layer_name(),
+        state.selected_layer_blend_mode().label(),
+        paint_layer_opacity_text(state.selected_layer_opacity()),
+        if state.selected_layer_locked() {
+            "Locked"
+        } else {
+            "Unlocked"
+        }
     )
 }
 
-fn build_paint_inspector(paint_state: PixelCanvasState, demo_state: PaintDemoState) -> impl Widget {
-    let color_state = paint_state.clone();
+fn paint_layer_detail(state: &PaintDemoState, index: usize) -> String {
+    format!(
+        "{} / {}",
+        state.layer_blend_mode(index).label(),
+        paint_layer_opacity_text(state.layer_opacity(index))
+    )
+}
+
+fn paint_layer_opacity_text(opacity: f32) -> String {
+    format!("{:.0}%", opacity.clamp(0.0, 1.0) * 100.0)
+}
+
+fn build_paint_canvas_stage(paint_state: PixelCanvasState) -> impl Widget {
+    let horizontal_ruler_state = paint_state.clone();
+    let vertical_ruler_state = paint_state.clone();
+    let document_size = paint_document_size();
+    Background::new(
+        Color::rgba(0.89, 0.905, 0.925, 1.0),
+        Stack::vertical()
+            .alignment(Alignment::Stretch)
+            .with_child(build_paint_document_bar(paint_state.clone()))
+            .with_child(Padding::all(
+                12.0,
+                Stack::vertical()
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Stack::horizontal()
+                            .with_child(paint_ruler_corner())
+                            .with_child(
+                                CanvasRuler::horizontal(PAINT_HORIZONTAL_RULER_NAME, document_size)
+                                    .extent(PAINT_RULER_EXTENT)
+                                    .viewport_when(move || {
+                                        (
+                                            horizontal_ruler_state.viewport(),
+                                            horizontal_ruler_state.viewport_size(),
+                                        )
+                                    }),
+                            ),
+                    )
+                    .with_child(
+                        Stack::horizontal()
+                            .alignment(Alignment::Stretch)
+                            .with_child(
+                                CanvasRuler::vertical(PAINT_VERTICAL_RULER_NAME, document_size)
+                                    .extent(PAINT_RULER_EXTENT)
+                                    .viewport_when(move || {
+                                        (
+                                            vertical_ruler_state.viewport(),
+                                            vertical_ruler_state.viewport_size(),
+                                        )
+                                    }),
+                            )
+                            .with_child(
+                                PixelCanvas::from_fn(
+                                    PAINT_TAB_LABEL,
+                                    PAINT_DOCUMENT_WIDTH,
+                                    PAINT_DOCUMENT_HEIGHT,
+                                    |x, y| {
+                                        let u = x as f32 / (PAINT_DOCUMENT_WIDTH - 1) as f32;
+                                        let v = y as f32 / (PAINT_DOCUMENT_HEIGHT - 1) as f32;
+                                        seeded_paint_color(u, v)
+                                    },
+                                )
+                                .state(paint_state)
+                                .desired_size(Size::new(960.0, 620.0))
+                                .fit_on_first_layout(),
+                            ),
+                    ),
+            )),
+    )
+}
+
+fn paint_document_size() -> Size {
+    Size::new(PAINT_DOCUMENT_WIDTH as f32, PAINT_DOCUMENT_HEIGHT as f32)
+}
+
+fn paint_ruler_corner() -> impl Widget {
+    Background::new(
+        Color::rgba(0.925, 0.936, 0.950, 1.0),
+        SizedBox::new()
+            .width(PAINT_RULER_EXTENT)
+            .height(PAINT_RULER_EXTENT),
+    )
+}
+
+fn build_paint_document_bar(paint_state: PixelCanvasState) -> impl Widget {
+    let zoom_out_state = paint_state.clone();
+    let zoom_state = paint_state.clone();
+    let zoom_in_state = paint_state;
+    Toolbar::horizontal()
+        .name(PAINT_DOCUMENT_BAR_NAME)
+        .extent(34.0)
+        .background(Color::rgba(0.946, 0.954, 0.966, 1.0))
+        .padding(Insets::all(6.0))
+        .spacing(8.0)
+        .with_child(
+            Label::new(PAINT_DOCUMENT_NAME)
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.10, 0.13, 0.18, 1.0)),
+        )
+        .with_child(Separator::vertical().length(18.0))
+        .with_child(
+            Label::new(format!(
+                "{} x {} px",
+                PAINT_DOCUMENT_WIDTH, PAINT_DOCUMENT_HEIGHT
+            ))
+            .font_size(12.0)
+            .line_height(18.0)
+            .color(Color::rgba(0.38, 0.43, 0.50, 1.0)),
+        )
+        .with_child(
+            Label::new("RGB / 8-bit")
+                .font_size(12.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.38, 0.43, 0.50, 1.0)),
+        )
+        .with_child(Separator::vertical().length(18.0))
+        .with_child(
+            paint_command_group(PAINT_DOCUMENT_VIEW_COMMANDS_NAME)
+                .padding(Insets::all(2.0))
+                .spacing(3.0)
+                .with_child(
+                    IconButton::new(IconGlyph::Remove, PAINT_ZOOM_OUT_NAME)
+                        .size(24.0)
+                        .icon_size(12.0)
+                        .on_press_with_ctx(move |ctx| {
+                            zoom_out_state.request_zoom_out();
+                            request_window_refresh(ctx, true);
+                        }),
+                )
+                .with_child(
+                    SizedBox::new().width(78.0).with_child(
+                        Label::dynamic("Zoom --", move || paint_zoom_status_text(&zoom_state))
+                            .semantic_name(PAINT_ZOOM_READOUT_NAME)
+                            .font_size(12.0)
+                            .line_height(18.0)
+                            .color(Color::rgba(0.22, 0.27, 0.34, 1.0)),
+                    ),
+                )
+                .with_child(
+                    IconButton::new(IconGlyph::Add, PAINT_ZOOM_IN_NAME)
+                        .size(24.0)
+                        .icon_size(12.0)
+                        .on_press_with_ctx(move |ctx| {
+                            zoom_in_state.request_zoom_in();
+                            request_window_refresh(ctx, true);
+                        }),
+                ),
+        )
+}
+
+fn build_paint_properties_panel(
+    paint_state: PixelCanvasState,
+    demo_state: PaintDemoState,
+) -> impl Widget {
+    let picker_reader_state = paint_state.clone();
+    let picker_change_state = paint_state.clone();
+
+    DockPanel::new(
+        PAINT_PROPERTIES_NAME,
+        ScrollView::vertical(Padding::all(
+            8.0,
+            Stack::vertical()
+                .spacing(8.0)
+                .alignment(Alignment::Stretch)
+                .with_child(PanelSection::new(
+                    "Tool options",
+                    build_paint_tool_options_panel(paint_state.clone()),
+                ))
+                .with_child(
+                    PanelSection::new(
+                        PAINT_LAYERS_NAME,
+                        build_paint_layers_panel(demo_state.clone(), paint_state.clone()),
+                    )
+                    .header_action(build_paint_layer_actions(demo_state, paint_state.clone())),
+                )
+                .with_child(PanelSection::new(
+                    "Color",
+                    build_paint_color_panel(paint_state.clone()),
+                ))
+                .with_child(
+                    PanelSection::new(
+                        PAINT_COLOR_EDITOR_NAME,
+                        SizedBox::new().width(284.0).height(336.0).with_child(
+                            ColorPicker::from_color(
+                                PAINT_BRUSH_COLOR_NAME,
+                                paint_state.brush_color(),
+                            )
+                            .color_when(move || picker_reader_state.brush_color())
+                            .compact(true)
+                            .show_alpha(false)
+                            .on_change(move |color| {
+                                picker_change_state.set_brush_color(color);
+                            }),
+                        ),
+                    )
+                    .collapsible(true)
+                    .collapsed(),
+                ),
+        ))
+        .name(PAINT_SCROLL_NAME),
+    )
+    .name(PAINT_PROPERTIES_NAME)
+    .padding(Insets::ZERO)
+    .background(Color::rgba(0.974, 0.979, 0.987, 1.0))
+    .header_background(Color::rgba(0.956, 0.964, 0.976, 1.0))
+}
+
+fn build_paint_color_panel(paint_state: PixelCanvasState) -> impl Widget {
+    let swatch_reader_state = paint_state.clone();
+    let palette_reader_state = paint_state.clone();
+    let palette_change_state = paint_state;
+
+    Stack::vertical()
+        .spacing(8.0)
+        .alignment(Alignment::Stretch)
+        .with_child(paint_property_row_with_width(
+            PAINT_BRUSH_COLOR_NAME,
+            104.0,
+            ColorSwatch::new(PAINT_BRUSH_COLOR_NAME, swatch_reader_state.brush_color())
+                .size(Size::new(104.0, 32.0))
+                .color_when(move || swatch_reader_state.brush_color())
+                .read_only(),
+        ))
+        .with_child(
+            ColorPalette::new(PAINT_COLOR_PRESETS_NAME)
+                .swatches(paint_color_palette_swatches())
+                .selected_when(move || {
+                    paint_color_preset_selected_index(palette_reader_state.brush_color())
+                })
+                .columns(8)
+                .swatch_size(27.0)
+                .on_change(move |_index, _name, color| {
+                    palette_change_state.set_brush_color(color);
+                }),
+        )
+}
+
+fn build_paint_tool_options_panel(paint_state: PixelCanvasState) -> impl Widget {
+    let selected_state = paint_state.clone();
+    SwitchView::new()
+        .selected(paint_tool_selected_index(paint_state.tool()))
+        .selected_when(move || paint_tool_selected_index(selected_state.tool()))
+        .with_child(build_paint_brush_options(paint_state.clone()))
+        .with_child(build_paint_eraser_options(paint_state.clone()))
+        .with_child(build_paint_fill_options(paint_state.clone()))
+        .with_child(build_paint_pan_options(paint_state))
+}
+
+fn build_paint_brush_options(paint_state: PixelCanvasState) -> impl Widget {
+    let preview_state = paint_state.clone();
+    let preset_reader_state = paint_state.clone();
+    let preset_change_state = paint_state.clone();
+    let size_reader_state = paint_state.clone();
     let size_state = paint_state.clone();
+    let opacity_reader_state = paint_state.clone();
     let opacity_state = paint_state.clone();
     let shape_state = paint_state.clone();
     let blend_mode_state = paint_state.clone();
 
-    Background::new(
-        Color::rgba(0.965, 0.972, 0.982, 1.0),
-        ScrollView::vertical(Padding::all(
-            10.0,
-            Stack::vertical()
-                .spacing(10.0)
-                .alignment(Alignment::Stretch)
-                .with_child(PanelSection::new(
-                    "Brush",
-                    Stack::vertical()
-                        .spacing(8.0)
-                        .alignment(Alignment::Stretch)
-                        .with_child(labeled_settings_control(
-                            PAINT_BRUSH_SIZE_NAME,
-                            96.0,
-                            NumberInput::new(PAINT_BRUSH_SIZE_NAME)
-                                .range(1.0, 96.0)
-                                .step(1.0)
-                                .precision(0)
-                                .value(paint_state.brush_size() as f64)
-                                .on_change(move |value| {
-                                    size_state.set_brush_size(value as f32);
-                                }),
-                        ))
-                        .with_child(labeled_settings_control(
-                            PAINT_BRUSH_OPACITY_NAME,
-                            188.0,
-                            Slider::new(PAINT_BRUSH_OPACITY_NAME)
-                                .range(0.0, 1.0)
-                                .step(0.01)
-                                .value(paint_state.brush_opacity() as f64)
-                                .on_change(move |value| {
-                                    opacity_state.set_brush_opacity(value as f32);
-                                }),
-                        ))
-                        .with_child(labeled_settings_control(
-                            PAINT_BRUSH_SHAPE_NAME,
-                            188.0,
-                            Select::new(PAINT_BRUSH_SHAPE_NAME)
-                                .options(
-                                    PixelCanvasBrushShape::ALL.map(PixelCanvasBrushShape::label),
-                                )
-                                .selected(paint_brush_shape_selected_index(
-                                    paint_state.brush_shape(),
-                                ))
-                                .on_change(move |index, _| {
-                                    if let Some(shape) =
-                                        PixelCanvasBrushShape::ALL.get(index).copied()
-                                    {
-                                        shape_state.set_brush_shape(shape);
-                                    }
-                                }),
-                        ))
-                        .with_child(labeled_settings_control(
-                            PAINT_BLEND_MODE_NAME,
-                            188.0,
-                            Select::new(PAINT_BLEND_MODE_NAME)
-                                .options(PixelCanvasBlendMode::ALL.map(PixelCanvasBlendMode::label))
-                                .selected(paint_blend_mode_selected_index(paint_state.blend_mode()))
-                                .on_change(move |index, _| {
-                                    if let Some(mode) =
-                                        PixelCanvasBlendMode::ALL.get(index).copied()
-                                    {
-                                        blend_mode_state.set_blend_mode(mode);
-                                    }
-                                }),
-                        )),
-                ))
-                .with_child(PanelSection::new(
-                    PAINT_LAYERS_NAME,
-                    build_paint_layers_panel(demo_state),
-                ))
-                .with_child(PanelSection::new(
-                    "Color",
-                    SizedBox::new().width(312.0).height(350.0).with_child(
-                        ColorPicker::from_color(PAINT_BRUSH_COLOR_NAME, paint_state.brush_color())
-                            .compact(true)
-                            .show_alpha(false)
-                            .on_change(move |color| {
-                                color_state.set_brush_color(color);
-                            }),
-                    ),
-                )),
+    Stack::vertical()
+        .spacing(6.0)
+        .alignment(Alignment::Stretch)
+        .with_child(
+            BrushPreview::new(PAINT_BRUSH_PREVIEW_NAME)
+                .size(Size::new(268.0, 68.0))
+                .spec_when(move || {
+                    BrushPreviewSpec::new(
+                        preview_state.brush_color(),
+                        preview_state.brush_size(),
+                        preview_state.brush_opacity(),
+                        paint_brush_preview_shape(preview_state.brush_shape()),
+                    )
+                }),
+        )
+        .with_child(build_brush_size_presets(
+            preset_reader_state,
+            preset_change_state,
         ))
-        .name(PAINT_SCROLL_NAME),
+        .with_child(build_brush_size_row(size_reader_state, size_state))
+        .with_child(paint_property_row(
+            PAINT_BRUSH_OPACITY_NAME,
+            Slider::new(PAINT_BRUSH_OPACITY_NAME)
+                .range(0.0, 1.0)
+                .step(0.01)
+                .value(paint_state.brush_opacity() as f64)
+                .value_when(move || opacity_reader_state.brush_opacity() as f64)
+                .on_change_with_ctx(move |ctx, value| {
+                    opacity_state.set_brush_opacity(value as f32);
+                    request_window_refresh(ctx, true);
+                }),
+        ))
+        .with_child(build_brush_shape_row(paint_state.clone(), shape_state))
+        .with_child(build_blend_mode_row(
+            PAINT_BLEND_MODE_NAME,
+            paint_state,
+            blend_mode_state,
+        ))
+}
+
+fn build_paint_eraser_options(paint_state: PixelCanvasState) -> impl Widget {
+    let preview_state = paint_state.clone();
+    let preset_reader_state = paint_state.clone();
+    let preset_change_state = paint_state.clone();
+    let size_reader_state = paint_state.clone();
+    let size_state = paint_state.clone();
+    let opacity_reader_state = paint_state.clone();
+    let opacity_state = paint_state.clone();
+    let shape_state = paint_state.clone();
+
+    Stack::vertical()
+        .spacing(6.0)
+        .alignment(Alignment::Stretch)
+        .with_child(
+            BrushPreview::new(PAINT_ERASER_PREVIEW_NAME)
+                .kind("eraser")
+                .size(Size::new(268.0, 68.0))
+                .spec_when(move || {
+                    BrushPreviewSpec::new(
+                        Color::rgba(0.98, 0.99, 1.0, 1.0),
+                        preview_state.brush_size(),
+                        preview_state.brush_opacity(),
+                        paint_brush_preview_shape(preview_state.brush_shape()),
+                    )
+                }),
+        )
+        .with_child(build_brush_size_presets(
+            preset_reader_state,
+            preset_change_state,
+        ))
+        .with_child(build_brush_size_row(size_reader_state, size_state))
+        .with_child(paint_property_row(
+            PAINT_BRUSH_OPACITY_NAME,
+            Slider::new(PAINT_BRUSH_OPACITY_NAME)
+                .range(0.0, 1.0)
+                .step(0.01)
+                .value(paint_state.brush_opacity() as f64)
+                .value_when(move || opacity_reader_state.brush_opacity() as f64)
+                .on_change_with_ctx(move |ctx, value| {
+                    opacity_state.set_brush_opacity(value as f32);
+                    request_window_refresh(ctx, true);
+                }),
+        ))
+        .with_child(build_brush_shape_row(paint_state, shape_state))
+}
+
+fn build_paint_fill_options(paint_state: PixelCanvasState) -> impl Widget {
+    let opacity_reader_state = paint_state.clone();
+    let opacity_state = paint_state.clone();
+    let blend_mode_state = paint_state.clone();
+
+    Stack::vertical()
+        .spacing(6.0)
+        .alignment(Alignment::Stretch)
+        .with_child(paint_property_row(
+            PAINT_FILL_OPACITY_NAME,
+            Slider::new(PAINT_FILL_OPACITY_NAME)
+                .range(0.0, 1.0)
+                .step(0.01)
+                .value(paint_state.brush_opacity() as f64)
+                .value_when(move || opacity_reader_state.brush_opacity() as f64)
+                .on_change_with_ctx(move |ctx, value| {
+                    opacity_state.set_brush_opacity(value as f32);
+                    request_window_refresh(ctx, true);
+                }),
+        ))
+        .with_child(build_blend_mode_row(
+            PAINT_FILL_BLEND_MODE_NAME,
+            paint_state,
+            blend_mode_state,
+        ))
+}
+
+fn build_paint_pan_options(paint_state: PixelCanvasState) -> impl Widget {
+    let fit_state = paint_state.clone();
+    let actual_size_state = paint_state;
+
+    Stack::horizontal()
+        .spacing(6.0)
+        .alignment(Alignment::Start)
+        .with_child(
+            IconButton::new(IconGlyph::FitView, PAINT_FIT_VIEW_NAME)
+                .size(28.0)
+                .icon_size(15.0)
+                .on_press_with_ctx(move |ctx| {
+                    fit_state.request_fit_view();
+                    request_window_refresh(ctx, true);
+                }),
+        )
+        .with_child(
+            IconButton::new(IconGlyph::ActualSize, PAINT_ACTUAL_SIZE_NAME)
+                .size(28.0)
+                .icon_size(15.0)
+                .on_press_with_ctx(move |ctx| {
+                    actual_size_state.request_actual_size_view();
+                    request_window_refresh(ctx, true);
+                }),
+        )
+}
+
+fn build_brush_size_presets(
+    reader_state: PixelCanvasState,
+    change_state: PixelCanvasState,
+) -> impl Widget {
+    PresetStrip::new(PAINT_BRUSH_SIZE_PRESETS_NAME)
+        .presets(PAINT_BRUSH_SIZE_PRESETS.map(paint_brush_size_preset_label))
+        .selected_when(move || paint_brush_size_preset_selected_index(reader_state.brush_size()))
+        .item_width(54.0)
+        .on_change(move |index, _| {
+            if let Some(size) = PAINT_BRUSH_SIZE_PRESETS.get(index).copied() {
+                change_state.set_brush_size(size);
+            }
+        })
+}
+
+fn build_brush_size_row(
+    reader_state: PixelCanvasState,
+    change_state: PixelCanvasState,
+) -> PropertyRow {
+    paint_property_row_with_width(
+        PAINT_BRUSH_SIZE_NAME,
+        96.0,
+        NumberInput::new(PAINT_BRUSH_SIZE_NAME)
+            .range(1.0, 96.0)
+            .step(1.0)
+            .precision(0)
+            .value(reader_state.brush_size() as f64)
+            .value_when(move || reader_state.brush_size() as f64)
+            .on_change(move |value| {
+                change_state.set_brush_size(value as f32);
+            }),
     )
 }
 
-fn build_paint_layers_panel(state: PaintDemoState) -> impl Widget {
-    let selected_layer = state.selected_layer();
-    let selection_state = state;
-    SizedBox::new().width(312.0).height(104.0).with_child(
-        ListView::new(PAINT_LAYERS_NAME)
-            .items([
-                ListItem::new("Paint")
-                    .detail("Normal / 100%")
-                    .accent(Color::rgba(0.16, 0.31, 0.88, 1.0)),
-                ListItem::new("Paper")
-                    .detail("Background")
-                    .accent(Color::rgba(0.89, 0.91, 0.94, 1.0)),
-            ])
-            .selected(selected_layer)
-            .row_height(30.0)
-            .on_change(move |index, _| selection_state.set_selected_layer(index)),
+fn build_brush_shape_row(
+    reader_state: PixelCanvasState,
+    change_state: PixelCanvasState,
+) -> PropertyRow {
+    paint_property_row(
+        PAINT_BRUSH_SHAPE_NAME,
+        Select::new(PAINT_BRUSH_SHAPE_NAME)
+            .options(PixelCanvasBrushShape::ALL.map(PixelCanvasBrushShape::label))
+            .selected(paint_brush_shape_selected_index(reader_state.brush_shape()))
+            .on_change(move |index, _| {
+                if let Some(shape) = PixelCanvasBrushShape::ALL.get(index).copied() {
+                    change_state.set_brush_shape(shape);
+                }
+            }),
     )
+}
+
+fn build_blend_mode_row(
+    label: &'static str,
+    reader_state: PixelCanvasState,
+    change_state: PixelCanvasState,
+) -> PropertyRow {
+    let selected_state = reader_state.clone();
+    paint_property_row(
+        label,
+        Select::new(label)
+            .options(PixelCanvasBlendMode::ALL.map(PixelCanvasBlendMode::label))
+            .selected(paint_blend_mode_selected_index(reader_state.blend_mode()))
+            .selected_when(move || {
+                Some(paint_blend_mode_selected_index(selected_state.blend_mode()))
+            })
+            .on_change_with_ctx(move |ctx, index, _| {
+                if let Some(mode) = PixelCanvasBlendMode::ALL.get(index).copied() {
+                    change_state.set_blend_mode(mode);
+                    request_window_refresh(ctx, true);
+                }
+            }),
+    )
+}
+
+fn paint_property_row<W>(label: &'static str, control: W) -> PropertyRow
+where
+    W: Widget + 'static,
+{
+    PropertyRow::new(label, control).inline().label_width(92.0)
+}
+
+fn paint_property_row_with_width<W>(label: &'static str, width: f32, control: W) -> PropertyRow
+where
+    W: Widget + 'static,
+{
+    paint_property_row(label, control).control_width(width)
+}
+
+fn paint_property_row_with_label_width<W>(
+    label: &'static str,
+    label_width: f32,
+    control: W,
+) -> PropertyRow
+where
+    W: Widget + 'static,
+{
+    PropertyRow::new(label, control)
+        .inline()
+        .label_width(label_width)
+}
+
+fn build_paint_layers_panel(state: PaintDemoState, paint_state: PixelCanvasState) -> impl Widget {
+    let selected_layer = state.selected_layer();
+    let selected_state = state.clone();
+    let selection_state = state.clone();
+    let selection_paint_state = paint_state.clone();
+    let visibility_change_state = state.clone();
+    let visibility_paint_state = paint_state.clone();
+    let lock_change_state = state.clone();
+    let lock_change_paint_state = paint_state.clone();
+    let opacity_paint_state = paint_state.clone();
+    let blend_paint_state = paint_state;
+    let paint_detail_state = state.clone();
+    let paper_detail_state = state.clone();
+    let paint_visibility_state = state.clone();
+    let paper_visibility_state = state.clone();
+    let paint_lock_state = state.clone();
+    let paper_lock_state = state.clone();
+    let opacity_reader_state = state.clone();
+    let opacity_change_state = state.clone();
+    let blend_initial = paint_blend_mode_selected_index(state.selected_layer_blend_mode());
+    let blend_reader_state = state.clone();
+    let blend_change_state = state;
+
+    Stack::vertical()
+        .spacing(8.0)
+        .alignment(Alignment::Stretch)
+        .with_child(
+            SizedBox::new().width(284.0).height(112.0).with_child(
+                LayerList::new(PAINT_LAYERS_NAME)
+                    .layers([
+                        LayerListItem::new("Paint")
+                            .detail_when(move || paint_layer_detail(&paint_detail_state, 0))
+                            .thumbnail(Color::rgba(0.16, 0.31, 0.88, 1.0))
+                            .visible_when(move || paint_visibility_state.layer_visible(0))
+                            .locked_when(move || paint_lock_state.layer_locked(0)),
+                        LayerListItem::new("Paper")
+                            .detail_when(move || paint_layer_detail(&paper_detail_state, 1))
+                            .thumbnail(Color::rgba(0.89, 0.91, 0.94, 1.0))
+                            .visible_when(move || paper_visibility_state.layer_visible(1))
+                            .locked_when(move || paper_lock_state.layer_locked(1)),
+                    ])
+                    .selected(selected_layer)
+                    .selected_when(move || Some(selected_state.selected_layer()))
+                    .row_height(46.0)
+                    .on_select_with_ctx(move |ctx, index, _| {
+                        selection_state.set_selected_layer(index);
+                        selection_state.sync_canvas_editable(&selection_paint_state);
+                        request_window_refresh(ctx, true);
+                    })
+                    .on_visibility_change_with_ctx(move |ctx, index, visible| {
+                        visibility_change_state.set_layer_visible(index, visible);
+                        if index <= 1 {
+                            visibility_change_state.sync_canvas_layers(&visibility_paint_state);
+                        }
+                        request_window_refresh(ctx, true);
+                    })
+                    .on_lock_change_with_ctx(move |ctx, index, locked| {
+                        lock_change_state.set_layer_locked(index, locked);
+                        if lock_change_state.selected_layer() == index {
+                            lock_change_state.sync_canvas_editable(&lock_change_paint_state);
+                        }
+                        request_window_refresh(ctx, true);
+                    }),
+            ),
+        )
+        .with_child(paint_property_row(
+            PAINT_LAYER_OPACITY_NAME,
+            Slider::new(PAINT_LAYER_OPACITY_NAME)
+                .range(0.0, 1.0)
+                .step(0.01)
+                .value(opacity_reader_state.selected_layer_opacity() as f64)
+                .value_when(move || opacity_reader_state.selected_layer_opacity() as f64)
+                .on_change_with_ctx(move |ctx, value| {
+                    opacity_change_state.set_selected_layer_opacity(value as f32);
+                    if opacity_change_state.selected_layer() <= 1 {
+                        opacity_change_state.sync_canvas_layers(&opacity_paint_state);
+                    }
+                    request_window_refresh(ctx, true);
+                }),
+        ))
+        .with_child(paint_property_row_with_label_width(
+            PAINT_LAYER_BLEND_MODE_NAME,
+            116.0,
+            Select::new(PAINT_LAYER_BLEND_MODE_NAME)
+                .options(PixelCanvasBlendMode::ALL.map(PixelCanvasBlendMode::label))
+                .selected(blend_initial)
+                .selected_when(move || {
+                    Some(paint_blend_mode_selected_index(
+                        blend_reader_state.selected_layer_blend_mode(),
+                    ))
+                })
+                .on_change_with_ctx(move |ctx, index, _| {
+                    if let Some(mode) = PixelCanvasBlendMode::ALL.get(index).copied() {
+                        blend_change_state.set_selected_layer_blend_mode(mode);
+                        if blend_change_state.selected_layer() == 0 {
+                            blend_change_state.sync_canvas_layers(&blend_paint_state);
+                        }
+                        request_window_refresh(ctx, true);
+                    }
+                }),
+        ))
+}
+
+fn build_paint_layer_actions(state: PaintDemoState, paint_state: PixelCanvasState) -> impl Widget {
+    let above_enabled = state.clone();
+    let above_state = state.clone();
+    let above_paint_state = paint_state.clone();
+    let below_enabled = state.clone();
+    let below_state = state;
+    let below_paint_state = paint_state;
+    Stack::horizontal()
+        .spacing(4.0)
+        .with_child(
+            IconButton::new(IconGlyph::ChevronUp, PAINT_SELECT_LAYER_ABOVE_NAME)
+                .size(24.0)
+                .icon_size(12.0)
+                .enabled_when(move || above_enabled.can_select_layer_above())
+                .on_press_with_ctx(move |ctx| {
+                    above_state.select_layer_above();
+                    above_state.sync_canvas_editable(&above_paint_state);
+                    request_window_refresh(ctx, true);
+                }),
+        )
+        .with_child(
+            IconButton::new(IconGlyph::ChevronDown, PAINT_SELECT_LAYER_BELOW_NAME)
+                .size(24.0)
+                .icon_size(12.0)
+                .enabled_when(move || below_enabled.can_select_layer_below())
+                .on_press_with_ctx(move |ctx| {
+                    below_state.select_layer_below();
+                    below_state.sync_canvas_editable(&below_paint_state);
+                    request_window_refresh(ctx, true);
+                }),
+        )
 }
 
 fn paint_layer_name(index: usize) -> &'static str {
@@ -436,11 +1122,69 @@ fn paint_layer_name(index: usize) -> &'static str {
         .unwrap_or(PAINT_LAYER_NAMES[0])
 }
 
+fn paint_tool_palette_items() -> [ToolPaletteItem; PAINT_TOOLS.len()] {
+    PAINT_TOOLS.map(|tool| {
+        let (icon, label) = match tool {
+            PixelCanvasTool::Brush => (IconGlyph::Brush, "Brush tool"),
+            PixelCanvasTool::Eraser => (IconGlyph::Eraser, "Eraser tool"),
+            PixelCanvasTool::Fill => (IconGlyph::PaintBucket, "Fill tool"),
+            PixelCanvasTool::Pan => (IconGlyph::Hand, "Pan tool"),
+        };
+        ToolPaletteItem::new(icon, label)
+    })
+}
+
+fn paint_tool_at(index: usize) -> Option<PixelCanvasTool> {
+    PAINT_TOOLS.get(index).copied()
+}
+
+fn paint_tool_selected_index(tool: PixelCanvasTool) -> usize {
+    PAINT_TOOLS
+        .iter()
+        .position(|candidate| *candidate == tool)
+        .unwrap_or(0)
+}
+
 fn paint_brush_shape_selected_index(shape: PixelCanvasBrushShape) -> usize {
     PixelCanvasBrushShape::ALL
         .iter()
         .position(|candidate| *candidate == shape)
         .unwrap_or(0)
+}
+
+fn paint_brush_size_preset_label(size: f32) -> String {
+    format!("{} px", size.round() as u32)
+}
+
+fn paint_brush_size_preset_selected_index(size: f32) -> Option<usize> {
+    PAINT_BRUSH_SIZE_PRESETS
+        .iter()
+        .position(|preset| (size - *preset).abs() < 0.001)
+}
+
+fn paint_color_palette_swatches() -> [ColorPaletteSwatch; 8] {
+    PAINT_COLOR_PRESETS.map(|(name, color)| ColorPaletteSwatch::new(name, color))
+}
+
+fn paint_color_preset_selected_index(color: Color) -> Option<usize> {
+    PAINT_COLOR_PRESETS
+        .iter()
+        .position(|(_, preset)| paint_colors_close(color, *preset))
+}
+
+fn paint_colors_close(left: Color, right: Color) -> bool {
+    left.space == right.space
+        && (left.red - right.red).abs() < 0.0001
+        && (left.green - right.green).abs() < 0.0001
+        && (left.blue - right.blue).abs() < 0.0001
+        && (left.alpha - right.alpha).abs() < 0.0001
+}
+
+fn paint_brush_preview_shape(shape: PixelCanvasBrushShape) -> BrushPreviewShape {
+    match shape {
+        PixelCanvasBrushShape::Square => BrushPreviewShape::Square,
+        PixelCanvasBrushShape::Round => BrushPreviewShape::Round,
+    }
 }
 
 fn paint_blend_mode_selected_index(mode: PixelCanvasBlendMode) -> usize {
@@ -450,37 +1194,124 @@ fn paint_blend_mode_selected_index(mode: PixelCanvasBlendMode) -> usize {
         .unwrap_or(0)
 }
 
-fn paint_export_status_text(state: &PixelCanvasState) -> String {
-    match state.latest_export_snapshot() {
-        Some(snapshot) => format!(
-            "Exported {} x {} px RGBA8, {}",
-            snapshot.width(),
-            snapshot.height(),
-            format_export_bytes(snapshot.byte_len())
-        ),
-        None => "Ready".to_string(),
-    }
-}
-
-fn format_export_bytes(bytes: usize) -> String {
-    if bytes >= 1024 * 1024 {
-        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
-    } else if bytes >= 1024 {
-        format!("{:.1} KiB", bytes as f64 / 1024.0)
-    } else {
-        format!("{bytes} bytes")
-    }
-}
-
 fn seeded_paint_color(u: f32, v: f32) -> Color {
-    let dx = u - 0.5;
-    let dy = v - 0.5;
-    let vignette = (1.0 - ((dx * dx + dy * dy).sqrt() * 1.45)).clamp(0.0, 1.0);
-    let wave = ((u * 18.0).sin() * (v * 11.0).cos() * 0.5) + 0.5;
-    Color::rgba(
-        0.08 + (0.58 * u) + (0.18 * vignette),
-        0.18 + (0.42 * v) + (0.14 * wave),
-        0.38 + (0.36 * (1.0 - u)) + (0.20 * vignette),
-        1.0,
+    let mut color = Color::rgba(0.0, 0.0, 0.0, 0.0);
+    color = paint_over(
+        color,
+        Color::rgba(0.06, 0.62, 0.72, 0.58),
+        stroke_coverage(u, v, (0.16, 0.66), (0.86, 0.38), 0.120, 0.035),
+    );
+    color = paint_over(
+        color,
+        Color::rgba(0.08, 0.22, 0.78, 0.86),
+        stroke_coverage(u, v, (0.17, 0.34), (0.72, 0.27), 0.074, 0.024),
+    );
+    color = paint_over(
+        color,
+        Color::rgba(0.54, 0.30, 0.84, 0.68),
+        stroke_coverage(u, v, (0.34, 0.50), (0.88, 0.64), 0.088, 0.028),
+    );
+    color = paint_over(
+        color,
+        Color::rgba(0.96, 0.66, 0.18, 0.90),
+        circle_coverage(u, v, (0.24, 0.26), 0.060, 0.020),
+    );
+    color = paint_over(
+        color,
+        Color::rgba(0.96, 0.98, 1.00, 0.38),
+        stroke_coverage(u, v, (0.28, 0.60), (0.74, 0.44), 0.030, 0.016),
+    );
+    paint_over(
+        color,
+        Color::rgba(0.06, 0.08, 0.14, 0.88),
+        stroke_coverage(u, v, (0.42, 0.72), (0.72, 0.57), 0.024, 0.012),
     )
+}
+
+fn paint_over(destination: Color, source: Color, coverage: f32) -> Color {
+    let coverage = coverage.clamp(0.0, 1.0);
+    if coverage <= 0.0 {
+        return destination;
+    }
+
+    let source_alpha = (source.alpha * coverage).clamp(0.0, 1.0);
+    let destination_alpha = destination.alpha.clamp(0.0, 1.0);
+    let output_alpha = source_alpha + (destination_alpha * (1.0 - source_alpha));
+    if output_alpha <= 0.0 {
+        return Color::rgba(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let destination_weight = destination_alpha * (1.0 - source_alpha);
+    Color::rgba(
+        ((source.red * source_alpha) + (destination.red * destination_weight)) / output_alpha,
+        ((source.green * source_alpha) + (destination.green * destination_weight)) / output_alpha,
+        ((source.blue * source_alpha) + (destination.blue * destination_weight)) / output_alpha,
+        output_alpha,
+    )
+}
+
+fn stroke_coverage(
+    u: f32,
+    v: f32,
+    start: (f32, f32),
+    end: (f32, f32),
+    radius: f32,
+    feather: f32,
+) -> f32 {
+    let distance = distance_to_segment(u, v, start, end);
+    soft_coverage(distance, radius, feather)
+}
+
+fn circle_coverage(u: f32, v: f32, center: (f32, f32), radius: f32, feather: f32) -> f32 {
+    let dx = u - center.0;
+    let dy = v - center.1;
+    soft_coverage((dx * dx + dy * dy).sqrt(), radius, feather)
+}
+
+fn distance_to_segment(u: f32, v: f32, start: (f32, f32), end: (f32, f32)) -> f32 {
+    let ab_x = end.0 - start.0;
+    let ab_y = end.1 - start.1;
+    let length_squared = (ab_x * ab_x) + (ab_y * ab_y);
+    if length_squared <= f32::EPSILON {
+        let dx = u - start.0;
+        let dy = v - start.1;
+        return (dx * dx + dy * dy).sqrt();
+    }
+
+    let ap_x = u - start.0;
+    let ap_y = v - start.1;
+    let t = ((ap_x * ab_x) + (ap_y * ab_y)) / length_squared;
+    let t = t.clamp(0.0, 1.0);
+    let closest_x = start.0 + (ab_x * t);
+    let closest_y = start.1 + (ab_y * t);
+    let dx = u - closest_x;
+    let dy = v - closest_y;
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn soft_coverage(distance: f32, radius: f32, feather: f32) -> f32 {
+    if distance <= radius {
+        1.0
+    } else if feather <= 0.0 {
+        0.0
+    } else {
+        1.0 - ((distance - radius) / feather).clamp(0.0, 1.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::seeded_paint_color;
+
+    #[test]
+    fn seeded_paint_starter_artwork_keeps_paper_visible() {
+        let transparent_corner = seeded_paint_color(0.02, 0.02);
+        let cyan_stroke = seeded_paint_color(0.50, 0.50);
+        let ink_stroke = seeded_paint_color(0.58, 0.63);
+
+        assert_eq!(transparent_corner.alpha, 0.0);
+        assert!(cyan_stroke.alpha > 0.2);
+        assert!(ink_stroke.alpha > cyan_stroke.alpha);
+        assert_ne!(cyan_stroke.red, ink_stroke.red);
+    }
 }

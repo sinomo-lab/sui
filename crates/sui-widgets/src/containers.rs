@@ -448,6 +448,118 @@ impl Widget for Stack {
     }
 }
 
+pub struct SwitchView {
+    selected: usize,
+    selected_reader: Option<Box<dyn Fn() -> usize>>,
+    children: WidgetChildren,
+}
+
+impl SwitchView {
+    pub fn new() -> Self {
+        Self {
+            selected: 0,
+            selected_reader: None,
+            children: WidgetChildren::new(),
+        }
+    }
+
+    pub fn selected(mut self, selected: usize) -> Self {
+        self.selected = selected;
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> usize + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
+    }
+
+    pub fn with_child<W>(mut self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self
+    }
+
+    pub fn push<W>(&mut self, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.active_index()
+    }
+
+    pub fn children(&self) -> &[WidgetPod] {
+        self.children.as_slice()
+    }
+
+    pub fn children_mut(&mut self) -> &mut [WidgetPod] {
+        self.children.as_mut_slice()
+    }
+
+    fn active_index(&self) -> Option<usize> {
+        let selected = self
+            .selected_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.selected);
+        (selected < self.children.as_slice().len()).then_some(selected)
+    }
+}
+
+impl Default for SwitchView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Widget for SwitchView {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let Some(index) = self.active_index() else {
+            return constraints.clamp(Size::ZERO);
+        };
+
+        self.children.as_mut_slice()[index].measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        if let Some(index) = self.active_index() {
+            self.children.as_mut_slice()[index].arrange(ctx, bounds);
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        if let Some(index) = self.active_index() {
+            self.children.as_slice()[index].paint(ctx);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if let Some(index) = self.active_index() {
+            self.children.as_slice()[index].semantics(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if let Some(index) = self.active_index() {
+            visitor.visit(&self.children.as_slice()[index]);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if let Some(index) = self.active_index() {
+            visitor.visit(&mut self.children.as_mut_slice()[index]);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollAxes {
     None,
@@ -2228,7 +2340,7 @@ mod tests {
 
     use super::{
         Align, Background, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView,
-        SizedBox, Stack, VirtualScrollView,
+        SizedBox, Stack, SwitchView, VirtualScrollView,
     };
     use crate::SplitView;
     use sui_core::{
@@ -2682,6 +2794,65 @@ mod tests {
             .unwrap();
         let window_id = runtime.window_ids()[0];
         (runtime, window_id)
+    }
+
+    #[test]
+    fn switch_view_only_exposes_selected_child_semantics() {
+        let (output, _) = render_root(
+            SwitchView::new()
+                .selected(1)
+                .with_child(crate::Label::new("Brush options"))
+                .with_child(crate::Label::new("Pan options")),
+        );
+
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Pan options")
+        }));
+        assert!(!output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Brush options")
+        }));
+    }
+
+    #[test]
+    fn switch_view_selected_when_updates_active_child() -> sui_core::Result<()> {
+        let selected = Rc::new(RefCell::new(0_usize));
+        let selected_reader = Rc::clone(&selected);
+        let (mut runtime, window_id) = build_runtime(
+            SwitchView::new()
+                .selected_when(move || *selected_reader.borrow())
+                .with_child(
+                    SizedBox::new()
+                        .size(Size::new(80.0, 24.0))
+                        .with_child(crate::Label::new("Brush options")),
+                )
+                .with_child(
+                    SizedBox::new()
+                        .size(Size::new(120.0, 36.0))
+                        .with_child(crate::Label::new("Fill options")),
+                ),
+        );
+
+        let output = runtime.render(window_id)?;
+        assert_eq!(output.frame.viewport, Size::new(80.0, 24.0));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Brush options")
+        }));
+
+        *selected.borrow_mut() = 1;
+        runtime.handle_event(
+            window_id,
+            Event::Window(sui_core::WindowEvent::Resized(Size::new(120.0, 36.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+
+        assert_eq!(output.frame.viewport, Size::new(120.0, 36.0));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Fill options")
+        }));
+        assert!(!output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Brush options")
+        }));
+        Ok(())
     }
 
     #[test]
