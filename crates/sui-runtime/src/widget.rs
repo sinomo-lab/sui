@@ -409,6 +409,7 @@ impl WidgetPod {
             parent_ctx.dpi(),
             Arc::clone(&parent_ctx.text_system),
             Arc::clone(&parent_ctx.font_registry),
+            Arc::clone(&parent_ctx.image_registry),
         );
         let started = Instant::now();
         self.widget.paint(&mut child_ctx);
@@ -1309,6 +1310,7 @@ pub struct PaintCtx {
     dpi_info: DpiInfo,
     text_system: Arc<TextSystem>,
     font_registry: Arc<FontRegistry>,
+    image_registry: Arc<ImageRegistry>,
     scene: Scene,
     images: Vec<(ImageHandle, RegisteredImage)>,
     widget_paint_bounds: HashMap<WidgetId, Rect>,
@@ -1325,6 +1327,7 @@ impl PaintCtx {
         dpi_info: DpiInfo,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
     ) -> Self {
         Self {
             window_id,
@@ -1334,6 +1337,7 @@ impl PaintCtx {
             dpi_info,
             text_system,
             font_registry,
+            image_registry,
             scene: Scene::new(),
             images: Vec::new(),
             widget_paint_bounds: HashMap::new(),
@@ -1472,6 +1476,11 @@ impl PaintCtx {
             rect,
             source: ImageSource::new(image),
         });
+    }
+
+    pub fn image_registered(&self, image: ImageHandle) -> bool {
+        self.image_registry.contains(image)
+            || self.images.iter().any(|(handle, _)| *handle == image)
     }
 
     pub fn draw_image_source(&mut self, rect: Rect, source: ImageSource) {
@@ -1812,6 +1821,7 @@ mod tests {
             dpi,
             Arc::new(TextSystem::new()),
             Arc::new(FontRegistry::new()),
+            Arc::new(ImageRegistry::new()),
         );
 
         assert_eq!(measure.dpi(), dpi);
@@ -2014,6 +2024,7 @@ mod tests {
             DpiInfo::default(),
             Arc::new(TextSystem::new()),
             Arc::new(FontRegistry::new()),
+            Arc::new(ImageRegistry::new()),
         );
         pod.paint(&mut paint);
 
@@ -2101,6 +2112,7 @@ mod tests {
             DpiInfo::default(),
             Arc::new(TextSystem::new()),
             Arc::new(FontRegistry::new()),
+            Arc::new(ImageRegistry::new()),
         );
         children.paint(&mut paint);
 
@@ -2128,6 +2140,7 @@ mod tests {
             DpiInfo::default(),
             Arc::new(TextSystem::new()),
             Arc::new(FontRegistry::new()),
+            Arc::new(ImageRegistry::new()),
         );
 
         let mut path = sui_core::Path::builder();
@@ -2203,6 +2216,7 @@ mod tests {
             DpiInfo::default(),
             Arc::new(TextSystem::new()),
             Arc::new(FontRegistry::new()),
+            Arc::new(ImageRegistry::new()),
         );
         let origin = Point::new(8.0, 10.0);
         paint.draw_text_layout(origin, &layout);

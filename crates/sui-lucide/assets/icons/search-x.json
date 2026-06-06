@@ -1,0 +1,22 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "danielbayley"
+  ],
+  "use-cases": [],
+  "tags": [
+    "find",
+    "scan",
+    "magnifier",
+    "magnifying glass",
+    "stop",
+    "clear",
+    "cancel",
+    "abort",
+    "lens"
+  ],
+  "categories": [
+    "text",
+    "social"
+  ]
+}

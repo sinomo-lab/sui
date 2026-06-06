@@ -30,9 +30,9 @@ pub use containers::{
     Stack, SwitchView, VirtualScrollView,
 };
 pub use controls::{
-    Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput,
-    NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea,
-    TextInput,
+    BUILTIN_ICON_GLYPHS, Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label,
+    MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox,
+    Switch, TextArea, TextInput, register_builtin_icon_resources,
 };
 pub use data::{
     Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, ListItem, ListView, PathBar,

@@ -179,6 +179,55 @@ impl Default for WindowIcon {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmbeddedSvgImageResource {
+    handle: ImageHandle,
+    data: &'static [u8],
+    size: Option<(u32, u32)>,
+}
+
+impl EmbeddedSvgImageResource {
+    pub const fn new(handle: ImageHandle, data: &'static [u8]) -> Self {
+        Self {
+            handle,
+            data,
+            size: None,
+        }
+    }
+
+    pub const fn at_size(
+        handle: ImageHandle,
+        width: u32,
+        height: u32,
+        data: &'static [u8],
+    ) -> Self {
+        Self {
+            handle,
+            data,
+            size: Some((width, height)),
+        }
+    }
+
+    pub const fn handle(self) -> ImageHandle {
+        self.handle
+    }
+
+    pub const fn data(self) -> &'static [u8] {
+        self.data
+    }
+
+    pub const fn size(self) -> Option<(u32, u32)> {
+        self.size
+    }
+
+    pub fn registered_image(self) -> Result<RegisteredImage> {
+        match self.size {
+            Some((width, height)) => RegisteredImage::from_svg_at_size(width, height, self.data),
+            None => RegisteredImage::from_svg(self.data),
+        }
+    }
+}
+
 pub struct Application {
     windows: Vec<WindowBuilder>,
     next_font_id: u64,
@@ -287,6 +336,23 @@ impl Application {
             RegisteredImage::from_svg_at_size(width, height, data)?,
         )?;
         Ok(handle)
+    }
+
+    pub fn register_embedded_svg_image(
+        &mut self,
+        resource: EmbeddedSvgImageResource,
+    ) -> Result<()> {
+        self.register_image(resource.handle(), resource.registered_image()?)
+    }
+
+    pub fn register_embedded_svg_images(
+        &mut self,
+        resources: impl IntoIterator<Item = EmbeddedSvgImageResource>,
+    ) -> Result<()> {
+        for resource in resources {
+            self.register_embedded_svg_image(resource)?;
+        }
+        Ok(())
     }
 
     pub fn build(self) -> Result<Runtime> {
@@ -508,6 +574,23 @@ impl Runtime {
             RegisteredImage::from_svg_at_size(width, height, data)?,
         )?;
         Ok(handle)
+    }
+
+    pub fn register_embedded_svg_image(
+        &mut self,
+        resource: EmbeddedSvgImageResource,
+    ) -> Result<()> {
+        self.register_image(resource.handle(), resource.registered_image()?)
+    }
+
+    pub fn register_embedded_svg_images(
+        &mut self,
+        resources: impl IntoIterator<Item = EmbeddedSvgImageResource>,
+    ) -> Result<()> {
+        for resource in resources {
+            self.register_embedded_svg_image(resource)?;
+        }
+        Ok(())
     }
 
     pub fn font_registry(&self) -> &Arc<FontRegistry> {
@@ -1796,6 +1879,7 @@ impl WindowState {
                     dpi_info,
                     Arc::clone(&text_system),
                     Arc::clone(&font_registry),
+                    Arc::clone(&image_registry),
                 )
             } else if repaint_layers.is_empty() {
                 (
@@ -1815,6 +1899,7 @@ impl WindowState {
                     baseline_ime_composition_rect,
                     Arc::clone(&text_system),
                     Arc::clone(&font_registry),
+                    Arc::clone(&image_registry),
                 )
             };
             let mut scene = scene;
@@ -1960,6 +2045,7 @@ impl WindowState {
         dpi_info: DpiInfo,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
     ) -> (
         Scene,
         Vec<(ImageHandle, RegisteredImage)>,
@@ -1975,6 +2061,10 @@ impl WindowState {
             dpi_info,
             text_system,
             font_registry,
+            self.last_frame
+                .as_ref()
+                .map(|frame| Arc::clone(&frame.image_registry))
+                .unwrap_or(image_registry),
         );
         let _ = self
             .root
@@ -1989,6 +2079,7 @@ impl WindowState {
         baseline_ime_composition_rect: Option<Rect>,
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
     ) -> (
         Scene,
         Vec<(ImageHandle, RegisteredImage)>,
@@ -2012,7 +2103,7 @@ impl WindowState {
                 .node(widget_id)
                 .map(|node| node.geometry.layout_bounds)
             else {
-                return self.paint_full_scene(dpi_info, text_system, font_registry);
+                return self.paint_full_scene(dpi_info, text_system, font_registry, image_registry);
             };
 
             let mut paint_ctx = PaintCtx::new(
@@ -2023,12 +2114,16 @@ impl WindowState {
                 dpi_info,
                 Arc::clone(&text_system),
                 Arc::clone(&font_registry),
+                self.last_frame
+                    .as_ref()
+                    .map(|frame| Arc::clone(&frame.image_registry))
+                    .unwrap_or_else(|| Arc::clone(&image_registry)),
             );
             if !self
                 .root
                 .paint_layer_contents_for(widget_id, &mut paint_ctx)
             {
-                return self.paint_full_scene(dpi_info, text_system, font_registry);
+                return self.paint_full_scene(dpi_info, text_system, font_registry, image_registry);
             }
 
             let (
@@ -2039,7 +2134,7 @@ impl WindowState {
                 layer_ime_composition_rect,
             ) = paint_ctx.into_parts();
             let Some(descriptor) = self.root.layer_descriptor_for(widget_id, &layer_scene) else {
-                return self.paint_full_scene(dpi_info, text_system, font_registry);
+                return self.paint_full_scene(dpi_info, text_system, font_registry, image_registry);
             };
             if widget_id == self.root.id()
                 || !scene.replace_layer(
@@ -2047,7 +2142,7 @@ impl WindowState {
                     SceneLayer::from_descriptor(descriptor, layer_scene),
                 )
             {
-                return self.paint_full_scene(dpi_info, text_system, font_registry);
+                return self.paint_full_scene(dpi_info, text_system, font_registry, image_registry);
             }
 
             images.extend(layer_images);

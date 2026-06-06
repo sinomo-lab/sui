@@ -42,6 +42,7 @@ sui-debug = { path = "crates/sui-debug" }
 sui-core = { path = "crates/sui-core" }
 sui-dev = { path = "crates/sui-dev" }
 sui-layout = { path = "crates/sui-layout" }
+sui-lucide = { path = "crates/sui-lucide" }
 sui-platform = { path = "crates/sui-platform" }
 sui-text = { path = "crates/sui-text" }
 sui-testing = { path = "crates/sui-testing" }

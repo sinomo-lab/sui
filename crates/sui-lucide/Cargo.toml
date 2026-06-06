@@ -1,0 +1,15 @@
+[package]
+name = "sui-lucide"
+version = "1.17.0"
+description = "Embedded Lucide SVG icon resources for SUI."
+edition.workspace = true
+rust-version.workspace = true
+license = "ISC"
+build = "build.rs"
+
+[dependencies]
+sui-core = { workspace = true }
+sui-runtime = { workspace = true }
+
+[dev-dependencies]
+sui-layout = { workspace = true }

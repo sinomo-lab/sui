@@ -5,17 +5,19 @@ use crate::{
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
     resolve_luminance_role, resolve_widget_hdr_style,
 };
+use std::collections::BTreeSet;
 use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, KeyState, Path, PathBuilder, Point,
     PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
     SemanticsTextRange, SemanticsValue, Size, TimerToken, ToggleState,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
+use sui_lucide::LucideIcon;
 use sui_runtime::{
     EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
     StackSurfaceOptions, Widget, window_render_options,
 };
-use sui_scene::{LayerCompositionMode, StrokeStyle};
+use sui_scene::{ImageSource, LayerCompositionMode, StrokeStyle};
 use sui_text::{PersistentTextLayout, TextMeasurement, TextStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +47,80 @@ pub enum IconGlyph {
     Unlock,
     Trash,
     Download,
+}
+
+impl IconGlyph {
+    pub const fn lucide_icon(self) -> LucideIcon {
+        match self {
+            Self::Add => LucideIcon::Plus,
+            Self::Remove => LucideIcon::Minus,
+            Self::Check => LucideIcon::Check,
+            Self::ChevronDown => LucideIcon::ChevronDown,
+            Self::ChevronUp => LucideIcon::ChevronUp,
+            Self::ChevronLeft => LucideIcon::ChevronLeft,
+            Self::ChevronRight => LucideIcon::ChevronRight,
+            Self::Close => LucideIcon::X,
+            Self::Maximize => LucideIcon::Maximize,
+            Self::Restore => LucideIcon::Copy,
+            Self::FitView => LucideIcon::ScanSearch,
+            Self::ActualSize => LucideIcon::Scan,
+            Self::MoreHorizontal => LucideIcon::Ellipsis,
+            Self::MoreVertical => LucideIcon::EllipsisVertical,
+            Self::Search => LucideIcon::Search,
+            Self::Undo => LucideIcon::Undo2,
+            Self::Redo => LucideIcon::Redo2,
+            Self::Brush => LucideIcon::Brush,
+            Self::Eraser => LucideIcon::Eraser,
+            Self::PaintBucket => LucideIcon::PaintBucket,
+            Self::Hand => LucideIcon::Hand,
+            Self::Lock => LucideIcon::Lock,
+            Self::Unlock => LucideIcon::LockOpen,
+            Self::Trash => LucideIcon::Trash2,
+            Self::Download => LucideIcon::Download,
+        }
+    }
+}
+
+pub const BUILTIN_ICON_GLYPHS: &[IconGlyph] = &[
+    IconGlyph::Add,
+    IconGlyph::Remove,
+    IconGlyph::Check,
+    IconGlyph::ChevronDown,
+    IconGlyph::ChevronUp,
+    IconGlyph::ChevronLeft,
+    IconGlyph::ChevronRight,
+    IconGlyph::Close,
+    IconGlyph::Maximize,
+    IconGlyph::Restore,
+    IconGlyph::FitView,
+    IconGlyph::ActualSize,
+    IconGlyph::MoreHorizontal,
+    IconGlyph::MoreVertical,
+    IconGlyph::Search,
+    IconGlyph::Undo,
+    IconGlyph::Redo,
+    IconGlyph::Brush,
+    IconGlyph::Eraser,
+    IconGlyph::PaintBucket,
+    IconGlyph::Hand,
+    IconGlyph::Lock,
+    IconGlyph::Unlock,
+    IconGlyph::Trash,
+    IconGlyph::Download,
+];
+
+pub fn register_builtin_icon_resources(
+    application: &mut sui_runtime::Application,
+) -> sui_core::Result<()> {
+    let mut seen = BTreeSet::new();
+    sui_lucide::register_icons(
+        application,
+        BUILTIN_ICON_GLYPHS
+            .iter()
+            .copied()
+            .map(IconGlyph::lucide_icon)
+            .filter(|icon| seen.insert(*icon)),
+    )
 }
 
 pub struct Separator {
@@ -5536,769 +5612,17 @@ fn measure_text_width_estimate(text: &str, font_size: f32) -> f32 {
 }
 
 pub(crate) fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
-    let stroke = StrokeStyle::new(physical_pixels(ctx, 1.8).max(1.0));
-    let inset_ratio = if matches!(
-        glyph,
-        IconGlyph::Undo
-            | IconGlyph::Redo
-            | IconGlyph::Brush
-            | IconGlyph::Eraser
-            | IconGlyph::PaintBucket
-            | IconGlyph::Hand
-            | IconGlyph::Lock
-            | IconGlyph::Unlock
-            | IconGlyph::Trash
-            | IconGlyph::Download
-            | IconGlyph::FitView
-            | IconGlyph::ActualSize
-    ) {
-        0.08
-    } else {
-        0.2
-    };
-    let inset = bounds.inflate(
-        -((bounds.width() * inset_ratio) + (stroke.width * 0.5)),
-        -((bounds.height() * inset_ratio) + (stroke.width * 0.5)),
-    );
-
-    match glyph {
-        IconGlyph::Add => {
-            ctx.stroke(
-                line_path(
-                    Point::new(rect_center(inset).x, inset.y()),
-                    Point::new(rect_center(inset).x, inset.max_y()),
-                ),
-                color,
-                stroke.clone(),
-            );
-            ctx.stroke(
-                line_path(
-                    Point::new(inset.x(), rect_center(inset).y),
-                    Point::new(inset.max_x(), rect_center(inset).y),
-                ),
-                color,
-                stroke,
-            );
-        }
-        IconGlyph::Remove => {
-            ctx.stroke(
-                line_path(
-                    Point::new(inset.x(), rect_center(inset).y),
-                    Point::new(inset.max_x(), rect_center(inset).y),
-                ),
-                color,
-                stroke,
-            );
-        }
-        IconGlyph::Check => {
-            ctx.stroke(checkmark_path(inset), color, stroke);
-        }
-        IconGlyph::ChevronDown => {
-            ctx.stroke(chevron_path(inset, Axis::Vertical, 1.0), color, stroke);
-        }
-        IconGlyph::ChevronUp => {
-            ctx.stroke(chevron_path(inset, Axis::Vertical, -1.0), color, stroke);
-        }
-        IconGlyph::ChevronLeft => {
-            ctx.stroke(chevron_path(inset, Axis::Horizontal, -1.0), color, stroke);
-        }
-        IconGlyph::ChevronRight => {
-            ctx.stroke(chevron_path(inset, Axis::Horizontal, 1.0), color, stroke);
-        }
-        IconGlyph::Close => {
-            ctx.stroke(
-                line_path(
-                    Point::new(inset.x(), inset.y()),
-                    Point::new(inset.max_x(), inset.max_y()),
-                ),
-                color,
-                stroke.clone(),
-            );
-            ctx.stroke(
-                line_path(
-                    Point::new(inset.max_x(), inset.y()),
-                    Point::new(inset.x(), inset.max_y()),
-                ),
-                color,
-                stroke,
-            );
-        }
-        IconGlyph::Maximize => {
-            ctx.stroke(maximize_path(inset), color, stroke);
-        }
-        IconGlyph::Restore => {
-            let offset = inset.width().min(inset.height()) * 0.22;
-            let back = Rect::new(
-                inset.x(),
-                inset.y(),
-                inset.width() - offset,
-                inset.height() - offset,
-            );
-            let front = Rect::new(
-                inset.x() + offset,
-                inset.y() + offset,
-                inset.width() - offset,
-                inset.height() - offset,
-            );
-            ctx.stroke(
-                rounded_rect_path(back, stroke.width * 1.5),
-                color,
-                stroke.clone(),
-            );
-            ctx.stroke(rounded_rect_path(front, stroke.width * 1.5), color, stroke);
-        }
-        IconGlyph::FitView => {
-            ctx.stroke(fit_view_frame_path(inset), color, stroke.clone());
-            ctx.stroke(
-                fit_view_arrow_path(inset, -1.0, -1.0),
-                color,
-                stroke.clone(),
-            );
-            ctx.stroke(fit_view_arrow_path(inset, 1.0, -1.0), color, stroke.clone());
-            ctx.stroke(fit_view_arrow_path(inset, -1.0, 1.0), color, stroke.clone());
-            ctx.stroke(fit_view_arrow_path(inset, 1.0, 1.0), color, stroke);
-        }
-        IconGlyph::ActualSize => {
-            ctx.stroke(actual_size_frame_path(inset), color, stroke.clone());
-            for pixel in actual_size_pixel_rects(inset) {
-                ctx.fill(rounded_rect_path(pixel, stroke.width * 0.7), color);
-            }
-        }
-        IconGlyph::MoreHorizontal => {
-            for offset in [0.2_f32, 0.5, 0.8] {
-                ctx.fill(
-                    Path::circle(
-                        Point::new(inset.x() + (inset.width() * offset), rect_center(inset).y),
-                        inset.height() * 0.1,
-                    ),
-                    color,
-                );
-            }
-        }
-        IconGlyph::MoreVertical => {
-            for offset in [0.2_f32, 0.5, 0.8] {
-                ctx.fill(
-                    Path::circle(
-                        Point::new(rect_center(inset).x, inset.y() + (inset.height() * offset)),
-                        inset.width() * 0.1,
-                    ),
-                    color,
-                );
-            }
-        }
-        IconGlyph::Search => {
-            let lens = Rect::new(
-                inset.x(),
-                inset.y(),
-                inset.width() * 0.62,
-                inset.height() * 0.62,
-            );
-            ctx.stroke(
-                Path::circle(rect_center(lens), lens.width() * 0.4),
-                color,
-                stroke.clone(),
-            );
-            ctx.stroke(
-                line_path(
-                    Point::new(
-                        lens.max_x() - (lens.width() * 0.05),
-                        lens.max_y() - (lens.height() * 0.05),
-                    ),
-                    Point::new(inset.max_x(), inset.max_y()),
-                ),
-                color,
-                stroke,
-            );
-        }
-        IconGlyph::Undo => {
-            ctx.stroke(history_arrow_path(inset, -1.0), color, stroke.clone());
-            ctx.stroke(history_arrow_head_path(inset, -1.0), color, stroke);
-        }
-        IconGlyph::Redo => {
-            ctx.stroke(history_arrow_path(inset, 1.0), color, stroke.clone());
-            ctx.stroke(history_arrow_head_path(inset, 1.0), color, stroke);
-        }
-        IconGlyph::Brush => {
-            ctx.stroke(brush_handle_path(inset), color, stroke.clone());
-            ctx.fill(brush_tip_path(inset), color);
-        }
-        IconGlyph::Eraser => {
-            ctx.stroke(eraser_path(inset), color, stroke.clone());
-            ctx.stroke(
-                line_path(
-                    Point::new(inset.x() + inset.width() * 0.18, inset.max_y()),
-                    Point::new(inset.max_x(), inset.max_y()),
-                ),
-                color,
-                stroke,
-            );
-        }
-        IconGlyph::PaintBucket => {
-            ctx.stroke(paint_bucket_path(inset), color, stroke.clone());
-            ctx.fill(paint_drop_path(inset), color);
-        }
-        IconGlyph::Hand => {
-            ctx.stroke(hand_path(inset), color, stroke);
-        }
-        IconGlyph::Lock => {
-            ctx.stroke(lock_shackle_path(inset, true), color, stroke.clone());
-            ctx.stroke(
-                rounded_rect_path(lock_body_rect(inset), stroke.width * 1.2),
-                color,
-                stroke,
-            );
-        }
-        IconGlyph::Unlock => {
-            ctx.stroke(lock_shackle_path(inset, false), color, stroke.clone());
-            ctx.stroke(
-                rounded_rect_path(lock_body_rect(inset), stroke.width * 1.2),
-                color,
-                stroke,
-            );
-        }
-        IconGlyph::Trash => {
-            ctx.stroke(trash_can_path(inset), color, stroke.clone());
-            ctx.stroke(
-                line_path(
-                    Point::new(inset.x() + inset.width() * 0.28, inset.y()),
-                    Point::new(inset.max_x() - inset.width() * 0.28, inset.y()),
-                ),
-                color,
-                stroke,
-            );
-        }
-        IconGlyph::Download => {
-            ctx.stroke(
-                line_path(
-                    Point::new(rect_center(inset).x, inset.y()),
-                    Point::new(rect_center(inset).x, inset.max_y() - inset.height() * 0.28),
-                ),
-                color,
-                stroke.clone(),
-            );
-            ctx.stroke(download_arrow_head_path(inset), color, stroke.clone());
-            ctx.stroke(
-                line_path(
-                    Point::new(inset.x(), inset.max_y()),
-                    Point::new(inset.max_x(), inset.max_y()),
-                ),
-                color,
-                stroke,
-            );
+    let icon = glyph.lucide_icon();
+    let resource = icon.resource();
+    if !ctx.image_registered(resource.handle()) {
+        if let Ok(image) = resource.registered_image() {
+            ctx.register_image(resource.handle(), image);
         }
     }
-}
 
-fn chevron_path(bounds: Rect, axis: Axis, direction: f32) -> Path {
-    let mut builder = PathBuilder::new();
-    match (axis, direction.is_sign_positive()) {
-        (Axis::Vertical, true) => {
-            builder
-                .move_to(Point::new(bounds.x(), bounds.y() + (bounds.height() * 0.3)))
-                .line_to(Point::new(
-                    rect_center(bounds).x,
-                    bounds.max_y() - (bounds.height() * 0.3),
-                ))
-                .line_to(Point::new(
-                    bounds.max_x(),
-                    bounds.y() + (bounds.height() * 0.3),
-                ));
-        }
-        (Axis::Vertical, false) => {
-            builder
-                .move_to(Point::new(
-                    bounds.x(),
-                    bounds.max_y() - (bounds.height() * 0.3),
-                ))
-                .line_to(Point::new(
-                    rect_center(bounds).x,
-                    bounds.y() + (bounds.height() * 0.3),
-                ))
-                .line_to(Point::new(
-                    bounds.max_x(),
-                    bounds.max_y() - (bounds.height() * 0.3),
-                ));
-        }
-        (Axis::Horizontal, true) => {
-            builder
-                .move_to(Point::new(bounds.x() + (bounds.width() * 0.3), bounds.y()))
-                .line_to(Point::new(
-                    bounds.max_x() - (bounds.width() * 0.3),
-                    rect_center(bounds).y,
-                ))
-                .line_to(Point::new(
-                    bounds.x() + (bounds.width() * 0.3),
-                    bounds.max_y(),
-                ));
-        }
-        (Axis::Horizontal, false) => {
-            builder
-                .move_to(Point::new(
-                    bounds.max_x() - (bounds.width() * 0.3),
-                    bounds.y(),
-                ))
-                .line_to(Point::new(
-                    bounds.x() + (bounds.width() * 0.3),
-                    rect_center(bounds).y,
-                ))
-                .line_to(Point::new(
-                    bounds.max_x() - (bounds.width() * 0.3),
-                    bounds.max_y(),
-                ));
-        }
-    }
-    builder.build()
-}
-
-fn maximize_path(rect: Rect) -> Path {
-    let mut builder = PathBuilder::new();
-    let corner = rect.width().min(rect.height()) * 0.34;
-    builder
-        .move_to(Point::new(rect.x(), rect.y() + corner))
-        .line_to(Point::new(rect.x(), rect.y()))
-        .line_to(Point::new(rect.x() + corner, rect.y()))
-        .move_to(Point::new(rect.max_x() - corner, rect.y()))
-        .line_to(Point::new(rect.max_x(), rect.y()))
-        .line_to(Point::new(rect.max_x(), rect.y() + corner))
-        .move_to(Point::new(rect.max_x(), rect.max_y() - corner))
-        .line_to(Point::new(rect.max_x(), rect.max_y()))
-        .line_to(Point::new(rect.max_x() - corner, rect.max_y()))
-        .move_to(Point::new(rect.x() + corner, rect.max_y()))
-        .line_to(Point::new(rect.x(), rect.max_y()))
-        .line_to(Point::new(rect.x(), rect.max_y() - corner));
-    builder.build()
-}
-
-fn fit_view_frame_path(rect: Rect) -> Path {
-    let mut builder = PathBuilder::new();
-    let corner = rect.width().min(rect.height()) * 0.22;
-    builder
-        .move_to(Point::new(rect.x(), rect.y() + corner))
-        .line_to(Point::new(rect.x(), rect.y()))
-        .line_to(Point::new(rect.x() + corner, rect.y()))
-        .move_to(Point::new(rect.max_x() - corner, rect.y()))
-        .line_to(Point::new(rect.max_x(), rect.y()))
-        .line_to(Point::new(rect.max_x(), rect.y() + corner))
-        .move_to(Point::new(rect.max_x(), rect.max_y() - corner))
-        .line_to(Point::new(rect.max_x(), rect.max_y()))
-        .line_to(Point::new(rect.max_x() - corner, rect.max_y()))
-        .move_to(Point::new(rect.x() + corner, rect.max_y()))
-        .line_to(Point::new(rect.x(), rect.max_y()))
-        .line_to(Point::new(rect.x(), rect.max_y() - corner));
-    builder.build()
-}
-
-fn fit_view_arrow_path(rect: Rect, x_direction: f32, y_direction: f32) -> Path {
-    let center = rect_center(rect);
-    let target = Point::new(
-        center.x + x_direction * rect.width() * 0.22,
-        center.y + y_direction * rect.height() * 0.22,
-    );
-    let tail = Point::new(
-        center.x + x_direction * rect.width() * 0.02,
-        center.y + y_direction * rect.height() * 0.02,
-    );
-    let wing_x = -x_direction * rect.width() * 0.12;
-    let wing_y = -y_direction * rect.height() * 0.12;
-    let mut builder = PathBuilder::new();
-    builder
-        .move_to(tail)
-        .line_to(target)
-        .move_to(target)
-        .line_to(Point::new(target.x + wing_x, target.y))
-        .move_to(target)
-        .line_to(Point::new(target.x, target.y + wing_y));
-    builder.build()
-}
-
-fn actual_size_frame_path(rect: Rect) -> Path {
-    rounded_rect_path(
-        Rect::new(
-            rect.x() + rect.width() * 0.16,
-            rect.y() + rect.height() * 0.16,
-            rect.width() * 0.68,
-            rect.height() * 0.68,
-        ),
-        rect.width().min(rect.height()) * 0.08,
-    )
-}
-
-fn actual_size_pixel_rects(rect: Rect) -> [Rect; 4] {
-    let frame = Rect::new(
-        rect.x() + rect.width() * 0.28,
-        rect.y() + rect.height() * 0.28,
-        rect.width() * 0.44,
-        rect.height() * 0.44,
-    );
-    let size = rect.width().min(rect.height()) * 0.12;
-    [
-        Rect::new(frame.x(), frame.y(), size, size),
-        Rect::new(frame.max_x() - size, frame.y(), size, size),
-        Rect::new(frame.x(), frame.max_y() - size, size, size),
-        Rect::new(frame.max_x() - size, frame.max_y() - size, size, size),
-    ]
-}
-
-fn history_arrow_path(rect: Rect, direction: f32) -> Path {
-    let mut builder = PathBuilder::new();
-    if direction.is_sign_positive() {
-        builder.move_to(Point::new(
-            rect.x() + rect.width() * 0.20,
-            rect.y() + rect.height() * 0.72,
-        ));
-        builder.cubic_to(
-            Point::new(
-                rect.x() + rect.width() * 0.48,
-                rect.y() + rect.height() * 0.72,
-            ),
-            Point::new(
-                rect.x() + rect.width() * 0.67,
-                rect.y() + rect.height() * 0.58,
-            ),
-            Point::new(
-                rect.x() + rect.width() * 0.67,
-                rect.y() + rect.height() * 0.43,
-            ),
-        );
-    } else {
-        builder.move_to(Point::new(
-            rect.x() + rect.width() * 0.80,
-            rect.y() + rect.height() * 0.72,
-        ));
-        builder.cubic_to(
-            Point::new(
-                rect.x() + rect.width() * 0.52,
-                rect.y() + rect.height() * 0.72,
-            ),
-            Point::new(
-                rect.x() + rect.width() * 0.33,
-                rect.y() + rect.height() * 0.58,
-            ),
-            Point::new(
-                rect.x() + rect.width() * 0.33,
-                rect.y() + rect.height() * 0.43,
-            ),
-        );
-    }
-    builder.build()
-}
-
-fn history_arrow_head_path(rect: Rect, direction: f32) -> Path {
-    let mut builder = PathBuilder::new();
-    if direction.is_sign_positive() {
-        let tip = Point::new(
-            rect.x() + rect.width() * 0.67,
-            rect.y() + rect.height() * 0.43,
-        );
-        builder
-            .move_to(Point::new(
-                rect.x() + rect.width() * 0.52,
-                rect.y() + rect.height() * 0.27,
-            ))
-            .line_to(tip)
-            .line_to(Point::new(
-                rect.x() + rect.width() * 0.52,
-                rect.y() + rect.height() * 0.57,
-            ));
-    } else {
-        let tip = Point::new(
-            rect.x() + rect.width() * 0.33,
-            rect.y() + rect.height() * 0.43,
-        );
-        builder
-            .move_to(Point::new(
-                rect.x() + rect.width() * 0.48,
-                rect.y() + rect.height() * 0.27,
-            ))
-            .line_to(tip)
-            .line_to(Point::new(
-                rect.x() + rect.width() * 0.48,
-                rect.y() + rect.height() * 0.57,
-            ));
-    }
-    builder.build()
-}
-
-fn brush_handle_path(rect: Rect) -> Path {
-    let mut builder = PathBuilder::new();
-    builder
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.68,
-            rect.y() + rect.height() * 0.14,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.36,
-            rect.y() + rect.height() * 0.56,
-        ));
-    builder.build()
-}
-
-fn brush_tip_path(rect: Rect) -> Path {
-    let mut builder = PathBuilder::new();
-    builder
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.30,
-            rect.y() + rect.height() * 0.56,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.45,
-            rect.y() + rect.height() * 0.70,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.22,
-            rect.y() + rect.height() * 0.92,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.16,
-            rect.y() + rect.height() * 0.78,
-        ))
-        .close();
-    builder.build()
-}
-
-fn eraser_path(rect: Rect) -> Path {
-    let mut builder = PathBuilder::new();
-    builder
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.24,
-            rect.y() + rect.height() * 0.66,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.56,
-            rect.y() + rect.height() * 0.24,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.82,
-            rect.y() + rect.height() * 0.44,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.50,
-            rect.y() + rect.height() * 0.86,
-        ))
-        .close()
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.38,
-            rect.y() + rect.height() * 0.52,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.64,
-            rect.y() + rect.height() * 0.72,
-        ));
-    builder.build()
-}
-
-fn paint_bucket_path(rect: Rect) -> Path {
-    let mut builder = PathBuilder::new();
-    builder
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.28,
-            rect.y() + rect.height() * 0.28,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.66,
-            rect.y() + rect.height() * 0.18,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.86,
-            rect.y() + rect.height() * 0.52,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.44,
-            rect.y() + rect.height() * 0.74,
-        ))
-        .close()
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.40,
-            rect.y() + rect.height() * 0.24,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.66,
-            rect.y() + rect.height() * 0.58,
-        ));
-    builder.build()
-}
-
-fn paint_drop_path(rect: Rect) -> Path {
-    Path::circle(
-        Point::new(
-            rect.x() + rect.width() * 0.76,
-            rect.y() + rect.height() * 0.82,
-        ),
-        rect.width().min(rect.height()) * 0.08,
-    )
-}
-
-fn hand_path(rect: Rect) -> Path {
-    let mut builder = PathBuilder::new();
-    builder
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.28,
-            rect.y() + rect.height() * 0.50,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.28,
-            rect.y() + rect.height() * 0.30,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.38,
-            rect.y() + rect.height() * 0.30,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.38,
-            rect.y() + rect.height() * 0.18,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.48,
-            rect.y() + rect.height() * 0.18,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.48,
-            rect.y() + rect.height() * 0.32,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.58,
-            rect.y() + rect.height() * 0.32,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.58,
-            rect.y() + rect.height() * 0.40,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.70,
-            rect.y() + rect.height() * 0.40,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.70,
-            rect.y() + rect.height() * 0.68,
-        ))
-        .cubic_to(
-            Point::new(
-                rect.x() + rect.width() * 0.70,
-                rect.y() + rect.height() * 0.88,
-            ),
-            Point::new(
-                rect.x() + rect.width() * 0.52,
-                rect.y() + rect.height() * 0.94,
-            ),
-            Point::new(
-                rect.x() + rect.width() * 0.38,
-                rect.y() + rect.height() * 0.82,
-            ),
-        )
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.22,
-            rect.y() + rect.height() * 0.62,
-        ));
-    builder.build()
-}
-
-fn lock_body_rect(rect: Rect) -> Rect {
-    Rect::new(
-        rect.x() + rect.width() * 0.20,
-        rect.y() + rect.height() * 0.46,
-        rect.width() * 0.60,
-        rect.height() * 0.42,
-    )
-}
-
-fn lock_shackle_path(rect: Rect, locked: bool) -> Path {
-    let body = lock_body_rect(rect);
-    let mut builder = PathBuilder::new();
-    if locked {
-        builder
-            .move_to(Point::new(rect.x() + rect.width() * 0.30, body.y()))
-            .line_to(Point::new(
-                rect.x() + rect.width() * 0.30,
-                rect.y() + rect.height() * 0.34,
-            ))
-            .cubic_to(
-                Point::new(
-                    rect.x() + rect.width() * 0.30,
-                    rect.y() + rect.height() * 0.14,
-                ),
-                Point::new(
-                    rect.x() + rect.width() * 0.70,
-                    rect.y() + rect.height() * 0.14,
-                ),
-                Point::new(
-                    rect.x() + rect.width() * 0.70,
-                    rect.y() + rect.height() * 0.34,
-                ),
-            )
-            .line_to(Point::new(rect.x() + rect.width() * 0.70, body.y()));
-    } else {
-        builder
-            .move_to(Point::new(rect.x() + rect.width() * 0.30, body.y()))
-            .line_to(Point::new(
-                rect.x() + rect.width() * 0.30,
-                rect.y() + rect.height() * 0.34,
-            ))
-            .cubic_to(
-                Point::new(
-                    rect.x() + rect.width() * 0.30,
-                    rect.y() + rect.height() * 0.14,
-                ),
-                Point::new(
-                    rect.x() + rect.width() * 0.66,
-                    rect.y() + rect.height() * 0.14,
-                ),
-                Point::new(
-                    rect.x() + rect.width() * 0.66,
-                    rect.y() + rect.height() * 0.34,
-                ),
-            )
-            .line_to(Point::new(
-                rect.x() + rect.width() * 0.86,
-                rect.y() + rect.height() * 0.34,
-            ));
-    }
-    builder.build()
-}
-
-fn trash_can_path(rect: Rect) -> Path {
-    let mut builder = PathBuilder::new();
-    builder
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.22,
-            rect.y() + rect.height() * 0.24,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.28,
-            rect.y() + rect.height() * 0.92,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.72,
-            rect.y() + rect.height() * 0.92,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.78,
-            rect.y() + rect.height() * 0.24,
-        ))
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.42,
-            rect.y() + rect.height() * 0.14,
-        ))
-        .line_to(Point::new(
-            rect.x() + rect.width() * 0.58,
-            rect.y() + rect.height() * 0.14,
-        ));
-    builder.build()
-}
-
-fn download_arrow_head_path(rect: Rect) -> Path {
-    let mut builder = PathBuilder::new();
-    let tip = Point::new(rect_center(rect).x, rect.y() + rect.height() * 0.72);
-    builder
-        .move_to(Point::new(
-            rect.x() + rect.width() * 0.28,
-            rect.y() + rect.height() * 0.48,
-        ))
-        .line_to(tip)
-        .line_to(Point::new(
-            rect.max_x() - rect.width() * 0.28,
-            rect.y() + rect.height() * 0.48,
-        ));
-    builder.build()
+    let side = bounds.width().min(bounds.height());
+    let rect = center_square(bounds, side);
+    ctx.draw_image_source(rect, ImageSource::new(resource.handle()).with_tint(color));
 }
 
 fn line_path(start: Point, end: Point) -> Path {
@@ -7079,6 +6403,22 @@ mod tests {
                 "{glyph:?} should paint more than the button frame"
             );
         }
+    }
+
+    #[test]
+    fn icon_button_paints_lucide_svg_resource() {
+        let glyph = IconGlyph::Brush;
+        let handle = glyph.lucide_icon().handle();
+        let output = render(IconButton::new(glyph, "Brush tool"));
+
+        assert!(output.frame.image_registry.contains(handle));
+        assert!(
+            output.frame.scene.commands().iter().any(|command| matches!(
+                command,
+                SceneCommand::DrawImage { source, .. } if source.image == handle
+            )),
+            "{glyph:?} should paint its Lucide SVG image"
+        );
     }
 
     #[test]

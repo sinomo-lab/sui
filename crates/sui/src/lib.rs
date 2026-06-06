@@ -22,9 +22,9 @@ pub use containers::{
     SwitchView, VirtualScrollView,
 };
 pub use controls::{
-    Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput,
-    NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea,
-    TextInput,
+    BUILTIN_ICON_GLYPHS, Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label,
+    MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox,
+    Switch, TextArea, TextInput, register_builtin_icon_resources,
 };
 pub use sui_core::{
     AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, DpiInfo, Error, Event, FontHandle,
@@ -48,12 +48,13 @@ pub use sui_render_wgpu::{
 };
 pub use sui_runtime::{
     Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta,
-    DEFAULT_SUI_LOGO_SVG, EventCtx, EventPhase, FocusState, FramePhase, FramePhaseSample,
-    FrameSchedule, MeasureCtx, PaintCtx, PresentationLatencyDiagnostics, RenderDiagnostics,
-    RenderOutput, RendererSubmissionDiagnostics, RetainedPacketRebuildDiagnostics, Runtime,
-    SceneStatistics, SceneStatisticsDetailMode, SemanticsCtx, SingleChild, StackHostOptions,
-    StackOrderPolicy, StackSurfaceOptions, TextCacheDeltaDiagnostics, TextCacheDiagnostics, Widget,
-    WidgetChildren, WidgetGeometrySnapshot, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPod,
+    DEFAULT_SUI_LOGO_SVG, EmbeddedSvgImageResource, EventCtx, EventPhase, FocusState, FramePhase,
+    FramePhaseSample, FrameSchedule, MeasureCtx, PaintCtx, PresentationLatencyDiagnostics,
+    RenderDiagnostics, RenderOutput, RendererSubmissionDiagnostics,
+    RetainedPacketRebuildDiagnostics, Runtime, SceneStatistics, SceneStatisticsDetailMode,
+    SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions,
+    TextCacheDeltaDiagnostics, TextCacheDiagnostics, Widget, WidgetChildren,
+    WidgetGeometrySnapshot, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPod,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowColorManagementMode,
     WindowDynamicRangeMode, WindowIcon, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
     WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening, WindowTextHinting,
@@ -254,8 +255,11 @@ pub struct Application {
 
 impl Default for Application {
     fn default() -> Self {
+        let mut inner = RuntimeApplication::default();
+        sui_widgets::register_builtin_icon_resources(&mut inner)
+            .expect("built-in Lucide icon resources should be valid");
         Self {
-            inner: RuntimeApplication::default(),
+            inner,
             #[cfg(feature = "wgpu")]
             feathering_enabled: WgpuRenderer::new().feathering_enabled(),
             #[cfg(feature = "wgpu")]
@@ -359,6 +363,20 @@ impl Application {
             .register_svg_image_at_size_with_handle(handle, width, height, data)
     }
 
+    pub fn register_embedded_svg_image(
+        &mut self,
+        resource: EmbeddedSvgImageResource,
+    ) -> Result<()> {
+        self.inner.register_embedded_svg_image(resource)
+    }
+
+    pub fn register_embedded_svg_images(
+        &mut self,
+        resources: impl IntoIterator<Item = EmbeddedSvgImageResource>,
+    ) -> Result<()> {
+        self.inner.register_embedded_svg_images(resources)
+    }
+
     pub fn build(self) -> Result<Runtime> {
         self.inner.build()
     }
@@ -433,7 +451,8 @@ pub mod prelude {
         ThemeRadii, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking, TimerToken,
         ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement, Transform, TreeItem,
         TreeView, VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WidgetShader,
-        WindowBuilder, WindowRenderOptions, containers::Padding, set_window_render_options,
+        WindowBuilder, WindowRenderOptions, containers::Padding, register_builtin_icon_resources,
+        set_window_render_options,
     };
 }
 
