@@ -259,14 +259,12 @@ fn build_paint_demo_with_state_and_theme(
                         .name("Canvas and properties")
                         .ratio(0.79)
                         .min_first(420.0)
-                        .min_second(304.0)
-                        .divider_thickness(4.0),
+                        .min_second(304.0),
                     )
                     .name("Paint workspace")
                     .ratio(0.039)
                     .min_first(54.0)
-                    .min_second(640.0)
-                    .divider_thickness(4.0),
+                    .min_second(640.0),
                 ),
             build_paint_status_bar(paint_state, demo_state, Rc::clone(&theme_reader)),
         ),

@@ -5,9 +5,9 @@ use sui_core::{
 };
 use sui_layout::{Axis, Constraints};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    SingleChild, StackHostOptions, StackOrderPolicy, Widget, WidgetPod, WidgetPodMutVisitor,
-    WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
+    SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, Widget, WidgetPod,
+    WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 
@@ -18,6 +18,9 @@ use crate::{
 
 pub type ResizablePane = SplitView;
 const FLOATING_VIEW_SCROLL_BAR_THICKNESS: f32 = 12.0;
+const SPLIT_VIEW_DEFAULT_DIVIDER_THICKNESS: f32 = 1.0;
+const SPLIT_VIEW_MIN_DIVIDER_THICKNESS: f32 = 1.0;
+const SPLIT_VIEW_MIN_DRAG_TARGET_THICKNESS: f32 = 12.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FloatingViewConfig {
@@ -968,7 +971,7 @@ impl SplitView {
             ratio: 0.5,
             min_first: 120.0,
             min_second: 120.0,
-            divider_thickness: 10.0,
+            divider_thickness: SPLIT_VIEW_DEFAULT_DIVIDER_THICKNESS,
             first: SingleChild::new(first),
             second: SingleChild::new(second),
             hovered: false,
@@ -1020,7 +1023,7 @@ impl SplitView {
     }
 
     pub fn divider_thickness(mut self, divider_thickness: f32) -> Self {
-        self.divider_thickness = divider_thickness.max(4.0);
+        self.divider_thickness = divider_thickness.max(0.0);
         self
     }
 
@@ -1053,12 +1056,23 @@ impl SplitView {
     }
 
     fn resolved_divider_thickness(&self) -> f32 {
-        self.divider_thickness
-            .max(self.theme.metrics.border_width * 6.0)
+        self.divider_thickness.max(SPLIT_VIEW_MIN_DIVIDER_THICKNESS)
     }
 
     fn divider_rect(&self, bounds: Rect) -> Rect {
         self.divider_bounds.translate(bounds.origin.to_vector())
+    }
+
+    fn divider_hit_rect(&self, bounds: Rect) -> Rect {
+        let divider = self.divider_rect(bounds);
+        let target = SPLIT_VIEW_MIN_DRAG_TARGET_THICKNESS.max(self.resolved_divider_thickness());
+        let extra = ((target - axis_main(self.axis, divider.size)).max(0.0)) * 0.5;
+        let hit = match self.axis {
+            Axis::Horizontal => divider.inflate(extra, 0.0),
+            Axis::Vertical => divider.inflate(0.0, extra),
+        };
+
+        hit.intersection(bounds).unwrap_or(divider)
     }
 
     fn allowed_first_main_range(&self, available: f32) -> (f32, f32) {
@@ -1123,21 +1137,29 @@ impl Widget for SplitView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let divider = self.divider_rect(ctx.bounds());
                 if self.drag_pointer == Some(pointer.pointer_id) {
                     self.set_ratio_from_position(ctx.bounds(), pointer.position);
                     ctx.request_arrange();
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
+                } else if ctx.phase() != EventPhase::Capture {
+                    self.update_hover(
+                        self.divider_hit_rect(ctx.bounds())
+                            .contains(pointer.position),
+                        ctx,
+                    );
                 } else {
-                    self.update_hover(divider.contains(pointer.position), ctx);
+                    self.update_hover(false, ctx);
                 }
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
+                    && ctx.phase() != EventPhase::Capture
                     && pointer.button == Some(PointerButton::Primary)
-                    && self.divider_rect(ctx.bounds()).contains(pointer.position) =>
+                    && self
+                        .divider_hit_rect(ctx.bounds())
+                        .contains(pointer.position) =>
             {
                 self.drag_pointer = Some(pointer.pointer_id);
                 self.hovered = true;
@@ -1155,7 +1177,9 @@ impl Widget for SplitView {
                     && self.drag_pointer == Some(pointer.pointer_id) =>
             {
                 self.drag_pointer = None;
-                self.hovered = self.divider_rect(ctx.bounds()).contains(pointer.position);
+                self.hovered = self
+                    .divider_hit_rect(ctx.bounds())
+                    .contains(pointer.position);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -1282,42 +1306,20 @@ impl Widget for SplitView {
         let palette = self.theme.palette;
         let metrics = self.theme.metrics;
         let divider_bounds = self.divider_rect(ctx.bounds());
-        let divider_color = if self.drag_pointer.is_some() {
-            palette.accent.with_alpha(0.16)
-        } else if self.hovered {
-            palette.control_hover
-        } else {
-            palette.control
-        };
-        let border_color = if self.drag_pointer.is_some() || self.hovered || ctx.is_focused() {
+        let divider_color = if self.drag_pointer.is_some() || self.hovered || ctx.is_focused() {
             palette.border_focus
         } else {
             palette.border
         };
 
         ctx.fill_rect(divider_bounds, divider_color);
-        ctx.stroke_rect(
-            divider_bounds,
-            border_color,
-            StrokeStyle::new(metrics.border_width.max(1.0)),
-        );
-
-        let handle = if self.axis == Axis::Horizontal {
-            Rect::new(
-                divider_bounds.x() + ((divider_bounds.width() - 4.0) * 0.5),
-                divider_bounds.y() + ((divider_bounds.height() - 28.0) * 0.5),
-                4.0,
-                28.0,
-            )
-        } else {
-            Rect::new(
-                divider_bounds.x() + ((divider_bounds.width() - 28.0) * 0.5),
-                divider_bounds.y() + ((divider_bounds.height() - 4.0) * 0.5),
-                28.0,
-                4.0,
-            )
-        };
-        ctx.fill_rect(handle, border_color.with_alpha(0.9));
+        if self.resolved_divider_thickness() > metrics.border_width.max(1.0) {
+            ctx.stroke_rect(
+                divider_bounds,
+                divider_color.with_alpha(0.72),
+                StrokeStyle::new(metrics.border_width.max(1.0)),
+            );
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1761,7 +1763,8 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        FloatingStack, FloatingViewConfig, FloatingWorkspace, FloatingWorkspaceState, SplitView,
+        FloatingStack, FloatingViewConfig, FloatingWorkspace, FloatingWorkspaceState,
+        SPLIT_VIEW_DEFAULT_DIVIDER_THICKNESS, SplitView,
     };
     use crate::containers::SizedBox;
     use sui_core::{
@@ -1772,8 +1775,8 @@ mod tests {
     use sui_layout::{Axis, Constraints};
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
-        Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, StackOrderPolicy,
-        Widget, WindowBuilder,
+        Application, EventCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx,
+        StackOrderPolicy, Widget, WindowBuilder,
     };
     use sui_scene::{SceneCommand, SceneLayerUpdateKind};
 
@@ -1828,6 +1831,54 @@ mod tests {
 
         fn paint(&self, ctx: &mut PaintCtx) {
             ctx.fill_bounds(self.color);
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
+            node.name = Some(self.name.clone());
+            ctx.push(node);
+        }
+    }
+
+    struct PointerDownProbe {
+        name: String,
+        desired: Size,
+        seen: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl PointerDownProbe {
+        fn new(name: impl Into<String>, seen: Rc<RefCell<Vec<String>>>) -> Self {
+            Self {
+                name: name.into(),
+                desired: Size::new(100.0, 40.0),
+                seen,
+            }
+        }
+    }
+
+    impl Widget for PointerDownProbe {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if matches!(
+                event,
+                Event::Pointer(pointer)
+                    if pointer.kind == PointerEventKind::Down
+                        && pointer.button == Some(PointerButton::Primary)
+            ) {
+                self.seen.borrow_mut().push("down".to_string());
+                ctx.set_handled();
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(self.desired)
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::rgba(0.16, 0.36, 0.72, 1.0));
         }
 
         fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1977,6 +2028,41 @@ mod tests {
     }
 
     #[test]
+    fn split_view_default_divider_uses_thin_layout_gap() -> Result<()> {
+        let first_constraints = Rc::new(RefCell::new(Vec::new()));
+        let second_constraints = Rc::new(RefCell::new(Vec::new()));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(240.0).height(100.0).with_child(
+                SplitView::new(
+                    Axis::Horizontal,
+                    ConstraintProbe::new(
+                        "First pane",
+                        Size::new(400.0, 100.0),
+                        Color::rgba(0.22, 0.48, 0.72, 1.0),
+                        Rc::clone(&first_constraints),
+                    ),
+                    ConstraintProbe::new(
+                        "Second pane",
+                        Size::new(400.0, 100.0),
+                        Color::rgba(0.72, 0.48, 0.22, 1.0),
+                        Rc::clone(&second_constraints),
+                    ),
+                )
+                .min_first(40.0)
+                .min_second(40.0),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+
+        let pane_width = (240.0 - SPLIT_VIEW_DEFAULT_DIVIDER_THICKNESS) * 0.5;
+        let expected = Constraints::tight(Size::new(pane_width, 100.0));
+        assert_eq!(first_constraints.borrow().last(), Some(&expected));
+        assert_eq!(second_constraints.borrow().last(), Some(&expected));
+        Ok(())
+    }
+
+    #[test]
     fn split_view_measures_children_with_resolved_pane_constraints() -> Result<()> {
         let first_constraints = Rc::new(RefCell::new(Vec::new()));
         let second_constraints = Rc::new(RefCell::new(Vec::new()));
@@ -2015,6 +2101,44 @@ mod tests {
             second_constraints.borrow().last(),
             Some(&expected),
             "second pane should be remeasured with the resolved pane width"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn split_view_extra_drag_target_defers_to_child_hit() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let child_events = Rc::new(RefCell::new(Vec::new()));
+        let (mut runtime, window_id) = build_runtime(
+            SplitView::new(
+                Axis::Horizontal,
+                SizedBox::new().width(100.0).height(40.0),
+                PointerDownProbe::new("Second pane target", Rc::clone(&child_events)),
+            )
+            .min_first(40.0)
+            .min_second(40.0)
+            .on_change(move |ratio| on_change.borrow_mut().push(ratio)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(105.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(145.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(145.0, 20.0), false),
+        )?;
+
+        assert_eq!(child_events.borrow().as_slice(), ["down"]);
+        assert!(
+            changes.borrow().is_empty(),
+            "splitter should not drag when a child handles the enlarged hit area"
         );
         Ok(())
     }

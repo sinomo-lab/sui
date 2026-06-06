@@ -1,6 +1,7 @@
 use crate::{
     Blink, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, Interpolate, ResolvedEffectStyle,
-    ResolvedHdrStyle, Transition, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole,
+    ResolvedHdrStyle, ThemeColorScheme, Transition, WidgetColorRole, WidgetLuminanceRole,
+    WidgetMaterialRole,
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
     resolve_luminance_role, resolve_widget_hdr_style,
 };
@@ -2001,6 +2002,14 @@ impl Switch {
         } else {
             palette.border
         };
+        let thumb_color = if matches!(
+            theme.colors.scheme,
+            ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
+        ) {
+            palette.text
+        } else {
+            palette.accent_text
+        };
         let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
         let label_color = apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift);
 
@@ -2010,7 +2019,7 @@ impl Switch {
                 frame_border,
                 track_color: baseline_track_color,
                 track_border: baseline_track_border,
-                thumb_color: palette.accent_text,
+                thumb_color,
                 label_color,
                 label_peak_lift,
                 indicator_style: None,
@@ -2040,7 +2049,7 @@ impl Switch {
             } else {
                 palette.accent_border
             },
-            thumb_color: palette.accent_text,
+            thumb_color,
             label_color,
             label_peak_lift,
             indicator_style: Some(indicator_style),
@@ -7741,6 +7750,34 @@ mod tests {
         let control_center = output.frame.viewport.height * 0.5;
 
         assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn switch_thumb_uses_white_in_dark_theme_variants() {
+        let light = DefaultTheme::default();
+        assert_eq!(
+            Switch::new("Wifi")
+                .theme(light)
+                .resolved_visuals(false)
+                .thumb_color,
+            light.palette.accent_text
+        );
+
+        for theme in [DefaultTheme::dark(), DefaultTheme::high_contrast()] {
+            for on in [false, true] {
+                assert_eq!(
+                    Switch::new("Wifi")
+                        .on(on)
+                        .theme(theme)
+                        .resolved_visuals(false)
+                        .thumb_color,
+                    Color::WHITE
+                );
+            }
+
+            let fills = solid_fill_colors(&render(Switch::new("Wifi").theme(theme)));
+            assert!(fills.contains(&Color::WHITE));
+        }
     }
 
     #[test]

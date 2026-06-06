@@ -2366,7 +2366,7 @@ pub fn build_widget_book_gallery_with_theme(
                             ContextMenu::new(
                                 CONTEXT_MENU_NAME,
                                 Background::new(
-                                    DefaultTheme::default().palette.control,
+                                    theme_reader().palette.control,
                                     Padding::all(
                                         14.0,
                                         Label::new("Right-click this explicit surface")
@@ -2467,7 +2467,7 @@ pub fn build_widget_book_gallery_with_theme(
                 Rc::clone(&theme_reader),
                 "Live state",
                 "This summary reads state produced by reusable controls so screenshot stories can cover both isolated widgets and composed UI.",
-                WidgetBookSummary::new(state),
+                WidgetBookSummary::new(state, Rc::clone(&theme_reader)),
             ))
             .with_child(panel_with_theme(
                 Rc::clone(&theme_reader),
@@ -2505,6 +2505,7 @@ pub fn build_widget_book_gallery_with_theme(
                     .with_child(
                         SizedBox::new().width(360.0).height(220.0).with_child(
                             ListView::new(LIST_VIEW_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                 .items([
                                     ListItem::new("Hero texture").detail("2048 x 2048 RGBA").accent(Color::rgba(0.16, 0.54, 0.88, 1.0)),
                                     ListItem::new("Normals atlas").detail("Streaming mip chain"),
@@ -2518,6 +2519,7 @@ pub fn build_widget_book_gallery_with_theme(
                     .with_child(
                         SizedBox::new().width(420.0).height(240.0).with_child(
                             TreeView::new(TREE_VIEW_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                 .items([
                                     TreeItem::new("Scene")
                                         .expanded(true)
@@ -2540,6 +2542,7 @@ pub fn build_widget_book_gallery_with_theme(
                     .with_child(
                         SizedBox::new().width(720.0).height(250.0).with_child(
                             Table::new(TABLE_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                 .columns([
                                     TableColumn::new("Material"),
                                     TableColumn::new("Domain").width(120.0),
@@ -2568,6 +2571,7 @@ pub fn build_widget_book_gallery_with_theme(
                     .with_child(
                         SizedBox::new().width(620.0).with_child(
                             Breadcrumb::new(BREADCRUMB_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                 .items([
                                     BreadcrumbItem::new("Workspace"),
                                     BreadcrumbItem::new("Projects"),
@@ -2582,7 +2586,7 @@ pub fn build_widget_book_gallery_with_theme(
                         SizedBox::new().width(720.0).height(240.0).with_child(
                             SplitView::horizontal(
                                 Background::new(
-                                    DefaultTheme::default().palette.control,
+                                    theme_reader().palette.control,
                                     Padding::all(
                                         16.0,
                                         Stack::vertical()
@@ -2613,7 +2617,7 @@ pub fn build_widget_book_gallery_with_theme(
                                     |theme| theme.palette.control,
                                 )),
                                 Background::new(
-                                    DefaultTheme::default().palette.surface_raised,
+                                    theme_reader().palette.surface_raised,
                                     Padding::all(
                                         16.0,
                                         Stack::vertical()
@@ -3968,7 +3972,7 @@ where
     W: Widget + 'static,
 {
     Background::new(
-        DefaultTheme::default().palette.surface,
+        theme_reader().palette.surface,
         Padding::all(
             18.0,
             Stack::vertical()
@@ -4352,17 +4356,23 @@ impl Widget for ThemePreviewCardFrame {
 }
 
 struct WidgetBookSummary {
+    theme_reader: WidgetBookThemeReader,
     state: Rc<RefCell<WidgetBookState>>,
     last_seen_state: WidgetBookState,
 }
 
 impl WidgetBookSummary {
-    fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
+    fn new(state: Rc<RefCell<WidgetBookState>>, theme_reader: WidgetBookThemeReader) -> Self {
         let last_seen_state = state.borrow().clone();
         Self {
+            theme_reader,
             state,
             last_seen_state,
         }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        (self.theme_reader)()
     }
 }
 
@@ -4854,6 +4864,8 @@ impl Widget for WidgetBookSummary {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let state = self.state.borrow();
         let lines = [
             if state.name.trim().is_empty() {
@@ -4923,8 +4935,11 @@ impl Widget for WidgetBookSummary {
             format!("notes lines: {}", state.notes.lines().count().max(1)),
         ];
 
-        ctx.fill_bounds(Color::rgba(0.985, 0.99, 1.0, 1.0));
-        ctx.stroke_bounds(Color::rgba(0.80, 0.85, 0.91, 1.0), StrokeStyle::new(1.0));
+        ctx.fill_bounds(palette.surface_raised);
+        ctx.stroke_bounds(
+            palette.border,
+            StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+        );
         for (index, line) in lines.into_iter().enumerate() {
             ctx.label(
                 Rect::new(
@@ -4935,9 +4950,9 @@ impl Widget for WidgetBookSummary {
                 ),
                 line,
                 if index == 0 {
-                    Color::rgba(0.11, 0.15, 0.21, 1.0)
+                    palette.text
                 } else {
-                    Color::rgba(0.41, 0.49, 0.58, 1.0)
+                    palette.text_muted
                 },
             );
         }
@@ -5275,6 +5290,25 @@ mod tests {
                 _ => {}
             });
         max_channel
+    }
+
+    fn solid_fill_colors(output: &RenderOutput) -> Vec<sui::Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::FillPath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
     }
 
     fn build_overlay_placeholder_app() -> Result<TestApp> {
@@ -6548,6 +6582,27 @@ mod tests {
             "summary screenshot did not change after typing"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_summary_uses_live_dark_theme_tokens() -> Result<()> {
+        let theme = DefaultTheme::dark();
+        let theme_reader: super::WidgetBookThemeReader = Rc::new(move || theme);
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Widget book summary").root(
+                super::WidgetBookSummary::new(default_widget_book_state(), theme_reader),
+            ))
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let fills = solid_fill_colors(&output);
+
+        assert!(fills.contains(&theme.palette.surface_raised));
+        assert!(
+            !fills.contains(&sui::Color::rgba(0.985, 0.99, 1.0, 1.0)),
+            "dark live summary should not use the old hardcoded light panel fill"
+        );
         Ok(())
     }
 

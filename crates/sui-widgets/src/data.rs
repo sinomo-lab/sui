@@ -70,6 +70,7 @@ impl ListItem {
 
 pub struct ListView {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     items: Vec<ListItem>,
     selected: Option<usize>,
@@ -88,6 +89,7 @@ impl ListView {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             items: Vec::new(),
             selected: None,
@@ -105,6 +107,15 @@ impl ListView {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -171,14 +182,22 @@ impl ListView {
             .filter(|index| *index < self.items.len())
     }
 
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn resolved_row_height(&self) -> f32 {
+        let theme = self.resolved_theme();
         let base = self
             .row_height
-            .max((self.theme.metrics.min_height + 4.0).max(28.0));
+            .max((theme.metrics.min_height + 4.0).max(28.0));
         if self.items.iter().any(|item| item.detail.is_some()) {
             base.max(two_line_row_height(
-                self.theme.body_text_style().line_height,
-                caption_style(self.theme.as_ref()).line_height,
+                theme.body_text_style().line_height,
+                caption_style(&theme).line_height,
             ))
         } else {
             base
@@ -414,8 +433,9 @@ impl Widget for ListView {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.sync_selected();
-        let text_style = self.theme.body_text_style();
-        let detail_style = caption_style(self.theme.as_ref());
+        let theme = self.resolved_theme();
+        let text_style = theme.body_text_style();
+        let detail_style = caption_style(&theme);
         let base_row_height = self.resolved_row_height();
         let child_max_width = if constraints.max.width.is_finite() {
             (constraints.max.width - 36.0).max(0.0)
@@ -497,12 +517,13 @@ impl Widget for ListView {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let viewport = self.viewport_rect(ctx.bounds());
-        let label_style = self.theme.body_text_style();
-        let detail_style = caption_style(self.theme.as_ref());
+        let label_style = theme.body_text_style();
+        let detail_style = caption_style(&theme);
 
-        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
         ctx.push_clip_rect(viewport);
 
         for index in 0..self.items.len() {
@@ -572,9 +593,9 @@ impl Widget for ListView {
                 label_rect,
                 item.label.clone(),
                 if item.disabled {
-                    self.theme.text_style(palette.placeholder)
+                    theme.text_style(palette.placeholder)
                 } else if selected {
-                    self.theme.text_style(palette.border_focus)
+                    theme.text_style(palette.border_focus)
                 } else {
                     label_style.clone()
                 },
@@ -1258,7 +1279,7 @@ impl Widget for LayerList {
             paint_layer_visibility_button(
                 ctx,
                 self.visibility_rect(row),
-                self.theme.as_ref(),
+                &theme,
                 visible,
                 self.hovered == Some(LayerListHit::Visibility(index)),
                 self.pressed == Some(LayerListHit::Visibility(index)),
@@ -1266,7 +1287,7 @@ impl Widget for LayerList {
             paint_layer_lock_button(
                 ctx,
                 self.lock_rect(row),
-                self.theme.as_ref(),
+                &theme,
                 locked,
                 self.hovered == Some(LayerListHit::Lock(index)),
                 self.pressed == Some(LayerListHit::Lock(index)),
@@ -1274,7 +1295,7 @@ impl Widget for LayerList {
             paint_layer_thumbnail(
                 ctx,
                 self.thumbnail_rect(row),
-                self.theme.as_ref(),
+                &theme,
                 layer.thumbnail.unwrap_or(palette.control_hover),
                 visible,
             );
@@ -1299,8 +1320,7 @@ impl Widget for LayerList {
                 label_rect,
                 layer.label.clone(),
                 if selected {
-                    self.theme
-                        .text_style(palette.border_focus.with_alpha(text_alpha))
+                    theme.text_style(palette.border_focus.with_alpha(text_alpha))
                 } else {
                     TextStyle {
                         color: label_style.color.with_alpha(text_alpha),
@@ -1483,6 +1503,7 @@ impl TreeItem {
 
 pub struct TreeView {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     items: Vec<TreeItem>,
     selected: Option<Vec<usize>>,
@@ -1503,6 +1524,7 @@ impl TreeView {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             items: Vec::new(),
             selected: None,
@@ -1516,6 +1538,15 @@ impl TreeView {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -1545,14 +1576,22 @@ impl TreeView {
         self
     }
 
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn resolved_row_height(&self) -> f32 {
+        let theme = self.resolved_theme();
         let base = self
             .row_height
-            .max((self.theme.metrics.min_height + 4.0).max(28.0));
+            .max((theme.metrics.min_height + 4.0).max(28.0));
         if self.visible_rows().iter().any(|row| row.detail.is_some()) {
             base.max(two_line_row_height(
-                self.theme.body_text_style().line_height,
-                caption_style(self.theme.as_ref()).line_height,
+                theme.body_text_style().line_height,
+                caption_style(&theme).line_height,
             ))
         } else {
             base
@@ -1800,8 +1839,9 @@ impl Widget for TreeView {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let label_style = self.theme.body_text_style();
-        let detail_style = caption_style(self.theme.as_ref());
+        let theme = self.resolved_theme();
+        let label_style = theme.body_text_style();
+        let detail_style = caption_style(&theme);
         let width = self
             .visible_rows()
             .iter()
@@ -1834,12 +1874,13 @@ impl Widget for TreeView {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let viewport = self.viewport_rect(ctx.bounds());
         let row_height = self.resolved_row_height();
         let rows = self.visible_rows();
 
-        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
         ctx.push_clip_rect(viewport);
 
         let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
@@ -1887,8 +1928,8 @@ impl Widget for TreeView {
                 (row_rect.max_x() - label_x - 8.0).max(0.0),
                 row_rect.height(),
             );
-            let detail_style = caption_style(self.theme.as_ref());
-            let label_style = self.theme.body_text_style();
+            let detail_style = caption_style(&theme);
+            let label_style = theme.body_text_style();
             let label_measurement = paint_text_measurement(ctx, &row.label, &label_style);
             let detail_measurement = row
                 .detail
@@ -1906,9 +1947,9 @@ impl Widget for TreeView {
                 label_rect,
                 row.label.clone(),
                 if row.disabled {
-                    self.theme.text_style(palette.placeholder)
+                    theme.text_style(palette.placeholder)
                 } else if selected {
-                    self.theme.text_style(palette.border_focus)
+                    theme.text_style(palette.border_focus)
                 } else {
                     label_style
                 },
@@ -2015,6 +2056,7 @@ pub type DataGrid = Table;
 
 pub struct Table {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     columns: Vec<TableColumn>,
     rows: Vec<TableRow>,
@@ -2032,6 +2074,7 @@ impl Table {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             columns: Vec::new(),
             rows: Vec::new(),
@@ -2048,6 +2091,15 @@ impl Table {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -2090,14 +2142,23 @@ impl Table {
         self
     }
 
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn resolved_row_height(&self) -> f32 {
+        let theme = self.resolved_theme();
         self.row_height
-            .max((self.theme.metrics.min_height + 2.0).max(26.0))
+            .max((theme.metrics.min_height + 2.0).max(26.0))
     }
 
     fn resolved_header_height(&self) -> f32 {
+        let theme = self.resolved_theme();
         self.header_height
-            .max((self.theme.metrics.min_height + 4.0).max(28.0))
+            .max((theme.metrics.min_height + 4.0).max(28.0))
     }
 
     fn body_rect(&self, bounds: Rect) -> Rect {
@@ -2129,7 +2190,9 @@ impl Table {
     }
 
     fn resolve_column_widths(&mut self, ctx: &mut MeasureCtx, available_width: f32) {
-        let header_style = self.theme.text_style(self.theme.palette.placeholder);
+        let theme = self.resolved_theme();
+        let header_style = theme.text_style(theme.palette.placeholder);
+        let body_style = theme.body_text_style();
         self.column_widths = self
             .columns
             .iter()
@@ -2140,7 +2203,7 @@ impl Table {
                     .rows
                     .iter()
                     .filter_map(|row| row.cells.get(index))
-                    .map(|cell| measure_text(ctx, cell, &self.theme.body_text_style()).width)
+                    .map(|cell| measure_text(ctx, cell, &body_style).width)
                     .fold(0.0, f32::max);
                 column
                     .width
@@ -2287,8 +2350,11 @@ impl Widget for Table {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let header_style = self.theme.text_style(palette.placeholder);
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let header_style = theme.text_style(palette.placeholder);
+        let body_style = theme.body_text_style();
+        let selected_body_style = theme.text_style(palette.border_focus);
         let body = self.body_rect(ctx.bounds());
         let header = Rect::new(
             ctx.bounds().x() + 8.0,
@@ -2298,11 +2364,8 @@ impl Widget for Table {
         );
         let row_height = self.resolved_row_height();
 
-        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
-        ctx.fill(
-            rounded_rect_path(header, 6.0),
-            Color::rgba(0.95, 0.965, 0.985, 1.0),
-        );
+        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
+        ctx.fill(rounded_rect_path(header, 6.0), palette.control);
 
         let mut x = header.x();
         for (index, column) in self.columns.iter().enumerate() {
@@ -2367,9 +2430,9 @@ impl Widget for Table {
                         horizontal_inset_rect(cell_rect, 8.0),
                         value,
                         &if selected {
-                            self.theme.text_style(palette.border_focus)
+                            selected_body_style.clone()
                         } else {
-                            self.theme.body_text_style()
+                            body_style.clone()
                         },
                         column.alignment,
                     );
@@ -2429,6 +2492,7 @@ pub type PathBar = Breadcrumb;
 
 pub struct Breadcrumb {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     items: Vec<BreadcrumbItem>,
     current: usize,
@@ -2443,6 +2507,7 @@ impl Breadcrumb {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             items: Vec::new(),
             current: 0,
@@ -2456,6 +2521,15 @@ impl Breadcrumb {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -2492,6 +2566,13 @@ impl Breadcrumb {
         } else {
             self.current.min(self.items.len() - 1)
         }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn activate(&mut self, index: usize) {
@@ -2618,7 +2699,8 @@ impl Widget for Breadcrumb {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let text_style = self.theme.body_text_style();
+        let theme = self.resolved_theme();
+        let text_style = theme.body_text_style();
         self.measured_widths = self
             .items
             .iter()
@@ -2629,13 +2711,14 @@ impl Widget for Breadcrumb {
             + 20.0;
         constraints.clamp(Size::new(
             desired_width.max(180.0),
-            self.theme.metrics.min_height,
+            theme.metrics.min_height,
         ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
 
         for (index, item) in self.items.iter().enumerate() {
             let Some(rect) = self.item_rect(ctx.bounds(), index) else {
@@ -2648,7 +2731,7 @@ impl Widget for Breadcrumb {
 
             if current || hovered || pressed || focused {
                 ctx.fill(
-                    rounded_rect_path(rect, self.theme.metrics.corner_radius),
+                    rounded_rect_path(rect, theme.metrics.corner_radius),
                     if current {
                         palette.selection
                     } else if pressed {
@@ -2660,9 +2743,9 @@ impl Widget for Breadcrumb {
             }
 
             let style = if current {
-                self.theme.text_style(palette.border_focus)
+                theme.text_style(palette.border_focus)
             } else {
-                self.theme.body_text_style()
+                theme.body_text_style()
             };
             draw_aligned_text(
                 ctx,
@@ -3341,6 +3424,25 @@ mod tests {
                 _ => {}
             });
         rects
+    }
+
+    fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::FillPath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
     }
 
     fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
@@ -4033,6 +4135,65 @@ mod tests {
             .expect("table semantics present");
         assert_eq!(table.value, Some(SemanticsValue::Text("Water".to_string())));
         Ok(())
+    }
+
+    #[test]
+    fn collection_and_path_widgets_theme_when_paints_dark_tokens() {
+        let theme = DefaultTheme::dark();
+        let list = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                ListView::new("Assets")
+                    .theme_when(move || theme)
+                    .item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
+            ),
+        );
+        assert_eq!(
+            text_runs_for(&list, "Hero texture")[0].style.color,
+            theme.palette.text
+        );
+        assert!(solid_fill_colors(&list).contains(&theme.palette.surface));
+
+        let theme = DefaultTheme::dark();
+        let tree = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene")
+                    .theme_when(move || theme)
+                    .item(TreeItem::new("Environment").detail("Visible")),
+            ),
+        );
+        assert_eq!(
+            text_runs_for(&tree, "Environment")[0].style.color,
+            theme.palette.text
+        );
+        assert!(solid_fill_colors(&tree).contains(&theme.palette.surface));
+
+        let theme = DefaultTheme::dark();
+        let table = render(
+            SizedBox::new().width(320.0).height(140.0).with_child(
+                Table::new("Materials")
+                    .theme_when(move || theme)
+                    .columns([TableColumn::new("Name")])
+                    .rows([TableRow::new(["Glass"])]),
+            ),
+        );
+        let table_fills = solid_fill_colors(&table);
+        assert!(table_fills.contains(&theme.palette.surface));
+        assert!(table_fills.contains(&theme.palette.control));
+        assert!(
+            !table_fills.contains(&Color::rgba(0.95, 0.965, 0.985, 1.0)),
+            "dark table header should not use the old hardcoded light fill"
+        );
+
+        let theme = DefaultTheme::dark();
+        let breadcrumb = render(Breadcrumb::new("Path").theme_when(move || theme).items([
+            BreadcrumbItem::new("Workspace"),
+            BreadcrumbItem::new("Project"),
+        ]));
+        assert_eq!(
+            text_runs_for(&breadcrumb, "Workspace")[0].style.color,
+            theme.palette.border_focus
+        );
+        assert!(solid_fill_colors(&breadcrumb).contains(&theme.palette.surface));
     }
 
     #[test]
