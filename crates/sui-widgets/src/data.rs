@@ -1,6 +1,9 @@
+use std::{fmt, rc::Rc};
+
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
-    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector,
+    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState, Vector,
+    WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
@@ -9,7 +12,10 @@ use sui_runtime::{
 };
 use sui_text::{TextMeasurement, TextStyle};
 
-use crate::DefaultTheme;
+use crate::{
+    DefaultTheme,
+    controls::{IconGlyph, draw_icon_glyph},
+};
 
 pub struct ListItem {
     label: String,
@@ -67,6 +73,7 @@ pub struct ListView {
     name: String,
     items: Vec<ListItem>,
     selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<usize>,
     pressed: Option<usize>,
     row_height: f32,
@@ -84,6 +91,7 @@ impl ListView {
             name: name.into(),
             items: Vec::new(),
             selected: None,
+            selected_reader: None,
             hovered: None,
             pressed: None,
             row_height: 28.0,
@@ -115,6 +123,15 @@ impl ListView {
 
     pub fn selected(mut self, selected: usize) -> Self {
         self.selected = Some(selected);
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
         self
     }
 
@@ -132,7 +149,26 @@ impl ListView {
     }
 
     pub fn selected_index(&self) -> Option<usize> {
-        self.selected
+        self.current_selected()
+    }
+
+    fn sync_selected(&mut self) {
+        if self.selected_reader.is_some() {
+            self.selected = self.current_selected();
+        } else if self
+            .selected
+            .is_some_and(|selected| selected >= self.items.len())
+        {
+            self.selected = None;
+        }
+    }
+
+    fn current_selected(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .map(|selected| selected())
+            .unwrap_or(self.selected)
+            .filter(|index| *index < self.items.len())
     }
 
     fn resolved_row_height(&self) -> f32 {
@@ -177,6 +213,15 @@ impl ListView {
                     (index as f32 * row_height, row_height)
                 })
             })
+    }
+
+    fn visible_row_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        let viewport = self.viewport_rect(bounds);
+        let (top, row_height) = self.row_metrics(index)?;
+        let y = viewport.y() + top - self.scroll_y;
+        Rect::new(viewport.x(), y, viewport.width(), row_height)
+            .intersection(viewport)
+            .filter(|rect| !rect.is_empty())
     }
 
     fn row_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
@@ -237,6 +282,7 @@ impl ListView {
 
 impl Widget for ListView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_selected();
         let viewport = self.viewport_rect(ctx.bounds());
 
         match event {
@@ -367,6 +413,7 @@ impl Widget for ListView {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_selected();
         let text_style = self.theme.body_text_style();
         let detail_style = caption_style(self.theme.as_ref());
         let base_row_height = self.resolved_row_height();
@@ -424,6 +471,7 @@ impl Widget for ListView {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.sync_selected();
         let viewport = self.viewport_rect(bounds);
         for index in 0..self.items.len() {
             let Some((top, row_height)) = self.row_metrics(index) else {
@@ -466,7 +514,7 @@ impl Widget for ListView {
                 continue;
             }
             let row = Rect::new(viewport.x(), y, viewport.width(), row_height);
-            let selected = self.selected == Some(index);
+            let selected = self.current_selected() == Some(index);
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
 
@@ -475,11 +523,11 @@ impl Widget for ListView {
                     ctx.fill_rect(
                         highlight,
                         if selected {
-                            palette.accent.with_alpha(0.14)
+                            palette.selection
                         } else if pressed {
-                            palette.surface_pressed
+                            palette.control_active
                         } else {
-                            palette.surface_hover
+                            palette.control_hover
                         },
                     );
                 }
@@ -548,13 +596,34 @@ impl Widget for ListView {
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
         node.value = self
-            .selected
+            .current_selected()
             .and_then(|index| self.items.get(index))
             .map(|item| SemanticsValue::Text(item.label.clone()));
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
 
-        for item in &self.items {
+        for (index, item) in self.items.iter().enumerate() {
+            if let Some(bounds) = self.visible_row_rect(ctx.bounds(), index) {
+                let mut row = SemanticsNode::new(
+                    list_view_row_id(ctx.widget_id(), index),
+                    SemanticsRole::ListItem,
+                    bounds,
+                );
+                row.parent = Some(ctx.widget_id());
+                row.name = Some(item.label.clone());
+                row.description = item.detail.clone();
+                row.value = Some(SemanticsValue::Text(
+                    item.detail.clone().unwrap_or_else(|| item.label.clone()),
+                ));
+                row.state.disabled = item.disabled;
+                row.state.hovered = self.hovered == Some(index);
+                row.state.selected = self.current_selected() == Some(index);
+                if !item.disabled && item.content.is_none() {
+                    row.actions = vec![SemanticsAction::Activate];
+                }
+                ctx.push(row);
+            }
+
             if let Some(content) = &item.content {
                 content.semantics(ctx);
             }
@@ -584,6 +653,778 @@ impl Widget for ListView {
                 content.visit_children_mut(visitor);
             }
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct LayerListItem {
+    label: String,
+    detail: Option<String>,
+    detail_reader: Option<Rc<dyn Fn() -> String>>,
+    thumbnail: Option<Color>,
+    visible: bool,
+    visible_reader: Option<Rc<dyn Fn() -> bool>>,
+    locked: bool,
+    locked_reader: Option<Rc<dyn Fn() -> bool>>,
+    disabled: bool,
+}
+
+impl fmt::Debug for LayerListItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LayerListItem")
+            .field("label", &self.label)
+            .field("detail", &self.detail)
+            .field("thumbnail", &self.thumbnail)
+            .field("visible", &self.visible)
+            .field("locked", &self.locked)
+            .field("disabled", &self.disabled)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for LayerListItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.label == other.label
+            && self.detail == other.detail
+            && self.thumbnail == other.thumbnail
+            && self.visible == other.visible
+            && self.locked == other.locked
+            && self.disabled == other.disabled
+    }
+}
+
+impl LayerListItem {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            detail: None,
+            detail_reader: None,
+            thumbnail: None,
+            visible: true,
+            visible_reader: None,
+            locked: false,
+            locked_reader: None,
+            disabled: false,
+        }
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self.detail_reader = None;
+        self
+    }
+
+    pub fn detail_when<F>(mut self, detail: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.detail_reader = Some(Rc::new(detail));
+        self
+    }
+
+    pub fn thumbnail(mut self, color: Color) -> Self {
+        self.thumbnail = Some(color);
+        self
+    }
+
+    pub fn visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self.visible_reader = None;
+        self
+    }
+
+    pub fn visible_when<F>(mut self, visible: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.visible_reader = Some(Rc::new(visible));
+        self
+    }
+
+    pub fn locked(mut self, locked: bool) -> Self {
+        self.locked = locked;
+        self.locked_reader = None;
+        self
+    }
+
+    pub fn locked_when<F>(mut self, locked: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.locked_reader = Some(Rc::new(locked));
+        self
+    }
+
+    pub fn disabled(mut self) -> Self {
+        self.disabled = true;
+        self
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn current_detail(&self) -> Option<String> {
+        self.detail_reader
+            .as_ref()
+            .map(|reader| reader())
+            .or_else(|| self.detail.clone())
+    }
+
+    fn current_visible(&self) -> bool {
+        self.visible_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.visible)
+    }
+
+    fn current_locked(&self) -> bool {
+        self.locked_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.locked)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayerListHit {
+    Row(usize),
+    Visibility(usize),
+    Lock(usize),
+}
+
+pub struct LayerList {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    name: String,
+    layers: Vec<LayerListItem>,
+    selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
+    hovered: Option<LayerListHit>,
+    pressed: Option<LayerListHit>,
+    row_height: f32,
+    on_select: Option<Box<dyn FnMut(usize, String)>>,
+    on_select_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
+    on_visibility_change: Option<Box<dyn FnMut(usize, bool)>>,
+    on_visibility_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, bool)>>,
+    on_lock_change: Option<Box<dyn FnMut(usize, bool)>>,
+    on_lock_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, bool)>>,
+}
+
+impl LayerList {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            name: name.into(),
+            layers: Vec::new(),
+            selected: None,
+            selected_reader: None,
+            hovered: None,
+            pressed: None,
+            row_height: 46.0,
+            on_select: None,
+            on_select_with_ctx: None,
+            on_visibility_change: None,
+            on_visibility_change_with_ctx: None,
+            on_lock_change: None,
+            on_lock_change_with_ctx: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn layer(mut self, layer: LayerListItem) -> Self {
+        self.layers.push(layer);
+        self
+    }
+
+    pub fn layers<I>(mut self, layers: I) -> Self
+    where
+        I: IntoIterator<Item = LayerListItem>,
+    {
+        self.layers.extend(layers);
+        self
+    }
+
+    pub fn selected(mut self, selected: usize) -> Self {
+        self.selected = Some(selected);
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
+    }
+
+    pub fn row_height(mut self, row_height: f32) -> Self {
+        self.row_height = row_height.max(40.0);
+        self
+    }
+
+    pub fn on_select<F>(mut self, on_select: F) -> Self
+    where
+        F: FnMut(usize, String) + 'static,
+    {
+        self.on_select = Some(Box::new(on_select));
+        self
+    }
+
+    pub fn on_select_with_ctx<F>(mut self, on_select: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_select_with_ctx = Some(Box::new(on_select));
+        self
+    }
+
+    pub fn on_visibility_change<F>(mut self, on_visibility_change: F) -> Self
+    where
+        F: FnMut(usize, bool) + 'static,
+    {
+        self.on_visibility_change = Some(Box::new(on_visibility_change));
+        self
+    }
+
+    pub fn on_visibility_change_with_ctx<F>(mut self, on_visibility_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, bool) + 'static,
+    {
+        self.on_visibility_change_with_ctx = Some(Box::new(on_visibility_change));
+        self
+    }
+
+    pub fn on_lock_change<F>(mut self, on_lock_change: F) -> Self
+    where
+        F: FnMut(usize, bool) + 'static,
+    {
+        self.on_lock_change = Some(Box::new(on_lock_change));
+        self
+    }
+
+    pub fn on_lock_change_with_ctx<F>(mut self, on_lock_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, bool) + 'static,
+    {
+        self.on_lock_change_with_ctx = Some(Box::new(on_lock_change));
+        self
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.current_selected()
+    }
+
+    fn sync_selected(&mut self) {
+        if self.selected_reader.is_some() {
+            self.selected = self.current_selected();
+        } else if self
+            .selected
+            .is_some_and(|selected| selected >= self.layers.len())
+        {
+            self.selected = None;
+        }
+    }
+
+    fn current_selected(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .map(|selected| selected())
+            .unwrap_or(self.selected)
+            .filter(|index| *index < self.layers.len())
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn viewport_rect(&self, bounds: Rect) -> Rect {
+        inset_rect(bounds, Insets::all(8.0))
+    }
+
+    fn row_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        if index >= self.layers.len() {
+            return None;
+        }
+
+        let viewport = self.viewport_rect(bounds);
+        let y = viewport.y() + index as f32 * self.row_height;
+        Rect::new(viewport.x(), y, viewport.width(), self.row_height)
+            .intersection(viewport)
+            .filter(|rect| !rect.is_empty())
+    }
+
+    fn visibility_rect(&self, row: Rect) -> Rect {
+        let size = 26.0_f32.min(row.height()).max(18.0);
+        Rect::new(
+            row.x() + 4.0,
+            row.y() + ((row.height() - size) * 0.5),
+            size,
+            size,
+        )
+    }
+
+    fn thumbnail_rect(&self, row: Rect) -> Rect {
+        let size = (row.height() - 14.0).clamp(22.0, 34.0);
+        Rect::new(
+            row.x() + 36.0,
+            row.y() + ((row.height() - size) * 0.5),
+            size,
+            size,
+        )
+    }
+
+    fn lock_rect(&self, row: Rect) -> Rect {
+        let size = 26.0_f32.min(row.height()).max(18.0);
+        Rect::new(
+            row.max_x() - size - 4.0,
+            row.y() + ((row.height() - size) * 0.5),
+            size,
+            size,
+        )
+    }
+
+    fn text_rect(&self, row: Rect) -> Rect {
+        let thumb = self.thumbnail_rect(row);
+        let lock = self.lock_rect(row);
+        Rect::new(
+            thumb.max_x() + 8.0,
+            row.y(),
+            (lock.x() - thumb.max_x() - 12.0).max(0.0),
+            row.height(),
+        )
+    }
+
+    fn hit_at(&self, bounds: Rect, position: Point) -> Option<LayerListHit> {
+        let viewport = self.viewport_rect(bounds);
+        if !viewport.contains(position) {
+            return None;
+        }
+
+        (0..self.layers.len()).find_map(|index| {
+            let row = self.row_rect(bounds, index)?;
+            if self.visibility_rect(row).contains(position) {
+                return Some(LayerListHit::Visibility(index));
+            }
+            if self.lock_rect(row).contains(position) {
+                return Some(LayerListHit::Lock(index));
+            }
+            row.contains(position).then_some(LayerListHit::Row(index))
+        })
+    }
+
+    fn select(&mut self, ctx: &mut EventCtx, index: usize) {
+        let Some(layer) = self.layers.get(index) else {
+            return;
+        };
+        if layer.disabled {
+            return;
+        }
+        let label = layer.label.clone();
+
+        self.selected = Some(index);
+        if let Some(on_select) = &mut self.on_select {
+            on_select(index, label.clone());
+        }
+        if let Some(on_select) = &mut self.on_select_with_ctx {
+            on_select(ctx, index, label);
+        }
+    }
+
+    fn toggle_visibility(&mut self, ctx: &mut EventCtx, index: usize) {
+        let Some(layer) = self.layers.get_mut(index) else {
+            return;
+        };
+        if layer.disabled {
+            return;
+        }
+
+        layer.visible = !layer.current_visible();
+        if let Some(on_visibility_change) = &mut self.on_visibility_change {
+            on_visibility_change(index, layer.visible);
+        }
+        if let Some(on_visibility_change) = &mut self.on_visibility_change_with_ctx {
+            on_visibility_change(ctx, index, layer.visible);
+        }
+    }
+
+    fn toggle_lock(&mut self, ctx: &mut EventCtx, index: usize) {
+        let Some(layer) = self.layers.get_mut(index) else {
+            return;
+        };
+        if layer.disabled {
+            return;
+        }
+
+        layer.locked = !layer.current_locked();
+        if let Some(on_lock_change) = &mut self.on_lock_change {
+            on_lock_change(index, layer.locked);
+        }
+        if let Some(on_lock_change) = &mut self.on_lock_change_with_ctx {
+            on_lock_change(ctx, index, layer.locked);
+        }
+    }
+
+    fn move_selection(&mut self, ctx: &mut EventCtx, delta: isize) {
+        if self.layers.is_empty() {
+            return;
+        }
+
+        let current = self.current_selected().unwrap_or(0) as isize;
+        let last = self.layers.len() as isize - 1;
+        self.select(ctx, (current + delta).clamp(0, last) as usize);
+    }
+}
+
+impl Widget for LayerList {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_selected();
+
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = self.hit_at(ctx.bounds(), pointer.position);
+                if hovered != self.hovered {
+                    self.hovered = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                self.hovered = self.hit_at(ctx.bounds(), pointer.position);
+                self.pressed = self.hovered;
+                if self.pressed.is_some() {
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let hovered = self.hit_at(ctx.bounds(), pointer.position);
+                if let Some(hit) = self
+                    .pressed
+                    .zip(hovered)
+                    .filter(|(left, right)| left == right)
+                    .map(|(hit, _)| hit)
+                {
+                    match hit {
+                        LayerListHit::Row(index) => self.select(ctx, index),
+                        LayerListHit::Visibility(index) => self.toggle_visibility(ctx, index),
+                        LayerListHit::Lock(index) => self.toggle_lock(ctx, index),
+                    }
+                }
+                self.hovered = hovered;
+                self.pressed = None;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                if self.hovered.take().is_some() {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed.take().is_some() {
+                    self.hovered = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                match key.key.as_str() {
+                    "ArrowUp" => self.move_selection(ctx, -1),
+                    "ArrowDown" => self.move_selection(ctx, 1),
+                    "Home" => {
+                        if !self.layers.is_empty() {
+                            self.select(ctx, 0);
+                        }
+                    }
+                    "End" => {
+                        if !self.layers.is_empty() {
+                            self.select(ctx, self.layers.len() - 1);
+                        }
+                    }
+                    " " => {
+                        if let Some(index) = self.current_selected() {
+                            self.toggle_visibility(ctx, index);
+                        }
+                    }
+                    "l" | "L" => {
+                        if let Some(index) = self.current_selected() {
+                            self.toggle_lock(ctx, index);
+                        }
+                    }
+                    _ => return,
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_selected();
+        let theme = self.resolved_theme();
+        let text_style = theme.body_text_style();
+        let detail_style = caption_style(&theme);
+        let mut width: f32 = 260.0;
+        for layer in &self.layers {
+            let detail_width = layer
+                .detail
+                .as_deref()
+                .map(|detail| measure_text(ctx, detail, &detail_style).width)
+                .unwrap_or(0.0)
+                .min(80.0);
+            width = width
+                .max(124.0 + measure_text(ctx, &layer.label, &text_style).width + detail_width);
+        }
+        constraints.clamp(Size::new(
+            if constraints.max.width.is_finite() {
+                constraints.max.width
+            } else {
+                width + 16.0
+            },
+            self.layers.len().max(1) as f32 * self.row_height + 16.0,
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let viewport = self.viewport_rect(ctx.bounds());
+        let label_style = theme.body_text_style();
+        let detail_style = caption_style(&theme);
+
+        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
+        ctx.push_clip_rect(viewport);
+
+        for (index, layer) in self.layers.iter().enumerate() {
+            let Some(row) = self.row_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let visible = layer.current_visible();
+            let locked = layer.current_locked();
+            let detail = layer.current_detail();
+            let selected = self.current_selected() == Some(index);
+            let row_hovered = self.hovered == Some(LayerListHit::Row(index));
+            let row_pressed = self.pressed == Some(LayerListHit::Row(index));
+            if selected || row_hovered || row_pressed {
+                if let Some(highlight) = row_highlight_rect(row, viewport) {
+                    ctx.fill_rect(
+                        highlight,
+                        if selected {
+                            palette.selection
+                        } else if row_pressed {
+                            palette.control_active
+                        } else {
+                            palette.control_hover
+                        },
+                    );
+                }
+            }
+
+            paint_layer_visibility_button(
+                ctx,
+                self.visibility_rect(row),
+                self.theme.as_ref(),
+                visible,
+                self.hovered == Some(LayerListHit::Visibility(index)),
+                self.pressed == Some(LayerListHit::Visibility(index)),
+            );
+            paint_layer_lock_button(
+                ctx,
+                self.lock_rect(row),
+                self.theme.as_ref(),
+                locked,
+                self.hovered == Some(LayerListHit::Lock(index)),
+                self.pressed == Some(LayerListHit::Lock(index)),
+            );
+            paint_layer_thumbnail(
+                ctx,
+                self.thumbnail_rect(row),
+                self.theme.as_ref(),
+                layer.thumbnail.unwrap_or(palette.control_hover),
+                visible,
+            );
+
+            let text_rect = self.text_rect(row);
+            let label_measurement = paint_text_measurement(ctx, &layer.label, &label_style);
+            let detail_text =
+                detail
+                    .as_deref()
+                    .unwrap_or(if visible { "Visible" } else { "Hidden" });
+            let detail_measurement = paint_text_measurement(ctx, detail_text, &detail_style);
+            let (label_rect, detail_rect) = row_text_rects(
+                ctx,
+                text_rect,
+                label_measurement,
+                label_style.line_height,
+                Some(detail_measurement),
+                Some(detail_style.line_height),
+            );
+            let text_alpha = if visible { 1.0 } else { 0.58 };
+            ctx.draw_text(
+                label_rect,
+                layer.label.clone(),
+                if selected {
+                    self.theme
+                        .text_style(palette.border_focus.with_alpha(text_alpha))
+                } else {
+                    TextStyle {
+                        color: label_style.color.with_alpha(text_alpha),
+                        ..label_style.clone()
+                    }
+                },
+            );
+            if let Some(detail_rect) = detail_rect {
+                ctx.draw_text(
+                    detail_rect,
+                    detail_text.to_string(),
+                    TextStyle {
+                        color: detail_style.color.with_alpha(text_alpha),
+                        ..detail_style.clone()
+                    },
+                );
+            }
+        }
+
+        ctx.pop_clip();
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::List, ctx.bounds());
+        node.name = Some(self.name.clone());
+        node.state.focused = ctx.is_focused();
+        node.value = self
+            .current_selected()
+            .and_then(|index| self.layers.get(index))
+            .map(|layer| SemanticsValue::Text(layer.label.clone()));
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(node);
+
+        for (index, layer) in self.layers.iter().enumerate() {
+            let Some(row) = self.row_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let visible = layer.current_visible();
+            let locked = layer.current_locked();
+            let detail = layer.current_detail();
+            let row_id = layer_list_row_id(ctx.widget_id(), index);
+            let mut row_node = SemanticsNode::new(row_id, SemanticsRole::ListItem, row);
+            row_node.parent = Some(ctx.widget_id());
+            row_node.name = Some(layer.label.clone());
+            row_node.description = detail.clone();
+            row_node.value = Some(SemanticsValue::Text(format!(
+                "{}; {}; {}",
+                detail.as_deref().unwrap_or("Layer"),
+                if visible { "Visible" } else { "Hidden" },
+                if locked { "Locked" } else { "Unlocked" }
+            )));
+            row_node.state.disabled = layer.disabled;
+            row_node.state.hovered = self.hovered == Some(LayerListHit::Row(index));
+            row_node.state.selected = self.current_selected() == Some(index);
+            if !layer.disabled {
+                row_node.actions = vec![SemanticsAction::Activate];
+            }
+            ctx.push(row_node);
+
+            let mut visibility = SemanticsNode::new(
+                layer_list_visibility_id(ctx.widget_id(), index),
+                SemanticsRole::Button,
+                self.visibility_rect(row),
+            );
+            visibility.parent = Some(row_id);
+            visibility.name = Some(if visible {
+                format!("Hide {} layer", layer.label)
+            } else {
+                format!("Show {} layer", layer.label)
+            });
+            visibility.value = Some(SemanticsValue::Text(if visible {
+                "Visible".to_string()
+            } else {
+                "Hidden".to_string()
+            }));
+            visibility.state.disabled = layer.disabled;
+            visibility.state.hovered = self.hovered == Some(LayerListHit::Visibility(index));
+            visibility.state.checked = Some(if visible {
+                ToggleState::Checked
+            } else {
+                ToggleState::Unchecked
+            });
+            if !layer.disabled {
+                visibility.actions = vec![SemanticsAction::Activate];
+            }
+            ctx.push(visibility);
+
+            let mut lock = SemanticsNode::new(
+                layer_list_lock_id(ctx.widget_id(), index),
+                SemanticsRole::Button,
+                self.lock_rect(row),
+            );
+            lock.parent = Some(row_id);
+            lock.name = Some(if locked {
+                format!("Unlock {} layer", layer.label)
+            } else {
+                format!("Lock {} layer", layer.label)
+            });
+            lock.value = Some(SemanticsValue::Text(if locked {
+                "Locked".to_string()
+            } else {
+                "Unlocked".to_string()
+            }));
+            lock.state.disabled = layer.disabled;
+            lock.state.hovered = self.hovered == Some(LayerListHit::Lock(index));
+            lock.state.checked = Some(if locked {
+                ToggleState::Checked
+            } else {
+                ToggleState::Unchecked
+            });
+            if !layer.disabled {
+                lock.actions = vec![SemanticsAction::Activate];
+            }
+            ctx.push(lock);
+        }
+    }
+
+    fn accepts_focus(&self) -> bool {
+        !self.layers.is_empty()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
     }
 }
 
@@ -1018,11 +1859,11 @@ impl Widget for TreeView {
                     ctx.fill_rect(
                         highlight,
                         if selected {
-                            palette.accent.with_alpha(0.14)
+                            palette.selection
                         } else if pressed {
-                            palette.surface_pressed
+                            palette.control_active
                         } else {
-                            palette.surface_hover
+                            palette.control_hover
                         },
                     );
                 }
@@ -1496,15 +2337,15 @@ impl Widget for Table {
             let hovered = self.hovered == Some(row_index);
             let pressed = self.pressed == Some(row_index);
             let background = if selected {
-                palette.accent.with_alpha(0.14)
+                palette.selection
             } else if pressed {
-                palette.surface_pressed
+                palette.control_active
             } else if hovered {
-                palette.surface_hover
+                palette.control_hover
             } else if row_index % 2 == 0 {
                 palette.surface.with_alpha(0.88)
             } else {
-                Color::rgba(0.985, 0.989, 0.997, 1.0)
+                palette.surface_raised
             };
             ctx.fill_rect(row_rect, background);
             ctx.stroke_rect(
@@ -1809,11 +2650,11 @@ impl Widget for Breadcrumb {
                 ctx.fill(
                     rounded_rect_path(rect, self.theme.metrics.corner_radius),
                     if current {
-                        palette.accent.with_alpha(0.14)
+                        palette.selection
                     } else if pressed {
-                        palette.surface_pressed
+                        palette.control_active
                     } else {
-                        palette.surface_hover
+                        palette.control_hover
                     },
                 );
             }
@@ -2173,6 +3014,207 @@ fn row_highlight_rect(row: Rect, viewport: Rect) -> Option<Rect> {
         .filter(|rect| !rect.is_empty())
 }
 
+fn list_view_row_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 5_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(359)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
+}
+
+fn layer_list_row_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 6_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(383)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
+}
+
+fn layer_list_visibility_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 7_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(389)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
+}
+
+fn layer_list_lock_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 4_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(397)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
+}
+
+fn paint_layer_visibility_button(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    theme: &DefaultTheme,
+    visible: bool,
+    hovered: bool,
+    pressed: bool,
+) {
+    let palette = theme.palette;
+    if hovered || pressed {
+        ctx.fill(
+            rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
+            if pressed {
+                palette.control_active
+            } else {
+                palette.control_hover
+            },
+        );
+    }
+
+    let icon = inset_rect(rect, Insets::all(5.0));
+    let color = if visible {
+        palette.border_focus
+    } else {
+        palette.placeholder
+    };
+    ctx.stroke(
+        layer_visibility_eye_path(icon),
+        color,
+        sui_scene::StrokeStyle::new(1.4),
+    );
+    if visible {
+        ctx.fill(
+            Path::circle(
+                Point::new(
+                    icon.x() + icon.width() * 0.5,
+                    icon.y() + icon.height() * 0.5,
+                ),
+                icon.width().min(icon.height()) * 0.17,
+            ),
+            color,
+        );
+    } else {
+        ctx.stroke(
+            line_path(
+                Point::new(
+                    icon.x() + icon.width() * 0.1,
+                    icon.max_y() - icon.height() * 0.05,
+                ),
+                Point::new(
+                    icon.max_x() - icon.width() * 0.1,
+                    icon.y() + icon.height() * 0.05,
+                ),
+            ),
+            color,
+            sui_scene::StrokeStyle::new(1.6),
+        );
+    }
+}
+
+fn paint_layer_lock_button(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    theme: &DefaultTheme,
+    locked: bool,
+    hovered: bool,
+    pressed: bool,
+) {
+    let palette = theme.palette;
+    if hovered || pressed {
+        ctx.fill(
+            rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
+            if pressed {
+                palette.control_active
+            } else {
+                palette.control_hover
+            },
+        );
+    }
+
+    draw_icon_glyph(
+        ctx,
+        if locked {
+            IconGlyph::Lock
+        } else {
+            IconGlyph::Unlock
+        },
+        inset_rect(rect, Insets::all(4.0)),
+        if locked {
+            palette.border_focus
+        } else {
+            palette.placeholder
+        },
+    );
+}
+
+fn paint_layer_thumbnail(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    theme: &DefaultTheme,
+    color: Color,
+    visible: bool,
+) {
+    let palette = theme.palette;
+    let radius = theme.metrics.corner_radius.min(4.0);
+    ctx.fill(rounded_rect_path(rect, radius), palette.control_hover);
+    let fill = inset_rect(rect, Insets::all(2.0));
+    ctx.fill(
+        rounded_rect_path(fill, (radius - 1.0).max(0.0)),
+        if visible {
+            color
+        } else {
+            color.with_alpha(color.alpha * 0.36)
+        },
+    );
+    ctx.stroke(
+        rounded_rect_path(rect, radius),
+        palette.border.with_alpha(if visible { 1.0 } else { 0.55 }),
+        sui_scene::StrokeStyle::new(1.0),
+    );
+}
+
+fn layer_visibility_eye_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    let cx = rect.x() + rect.width() * 0.5;
+    let cy = rect.y() + rect.height() * 0.5;
+    builder
+        .move_to(Point::new(rect.x(), cy))
+        .cubic_to(
+            Point::new(rect.x() + rect.width() * 0.22, rect.y()),
+            Point::new(rect.x() + rect.width() * 0.78, rect.y()),
+            Point::new(rect.max_x(), cy),
+        )
+        .cubic_to(
+            Point::new(rect.x() + rect.width() * 0.78, rect.max_y()),
+            Point::new(rect.x() + rect.width() * 0.22, rect.max_y()),
+            Point::new(rect.x(), cy),
+        )
+        .close();
+    let _ = (cx, cy);
+    builder.build()
+}
+
+fn line_path(from: Point, to: Point) -> Path {
+    let mut builder = PathBuilder::new();
+    builder.move_to(from).line_to(to);
+    builder.build()
+}
+
 fn inset_rect(rect: Rect, padding: Insets) -> Rect {
     Rect::new(
         rect.x() + padding.left,
@@ -2194,14 +3236,14 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Breadcrumb, BreadcrumbItem, DefaultTheme, ListItem, ListView, TREE_DISCLOSURE_LABEL_GAP,
-        Table, TableColumn, TableRow, TreeItem, TreeView,
+        Breadcrumb, BreadcrumbItem, DefaultTheme, LayerList, LayerListItem, ListItem, ListView,
+        TREE_DISCLOSURE_LABEL_GAP, Table, TableColumn, TableRow, TreeItem, TreeView,
     };
     use crate::{Button, Label, ScrollView, SizedBox, Stack};
     use sui_core::{
-        Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsRole,
-        SemanticsValue, Size, Vector,
+        Color, Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
+        PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsAction,
+        SemanticsRole, SemanticsValue, Size, ToggleState, Vector, WidgetId, WindowEvent,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
     use sui_scene::{Brush, SceneCommand};
@@ -2284,7 +3326,7 @@ mod tests {
     }
 
     fn selected_highlight_rects(output: &RenderOutput) -> Vec<Rect> {
-        let selected_brush = Brush::Solid(DefaultTheme::default().palette.accent.with_alpha(0.14));
+        let selected_brush = Brush::Solid(DefaultTheme::default().palette.selection);
         let mut rects = Vec::new();
         output
             .frame
@@ -2379,7 +3421,497 @@ mod tests {
             .find(|node| node.role == SemanticsRole::List)
             .expect("list semantics present");
         assert_eq!(list.value, Some(SemanticsValue::Text("Second".to_string())));
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Second")
+            })
+            .expect("selected row semantics present");
+        assert_eq!(row.parent, Some(list.id));
+        assert!(row.state.selected);
+        assert!(row.actions.contains(&SemanticsAction::Activate));
         Ok(())
+    }
+
+    #[test]
+    fn list_view_exposes_visible_row_semantics() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(260.0).height(132.0).with_child(
+                ListView::new("Layers")
+                    .items([
+                        ListItem::new("Paint").detail("Normal / 100%"),
+                        ListItem::new("Paper").detail("Background"),
+                        ListItem::new("Locked").detail("Read only").disabled(),
+                    ])
+                    .selected(0),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let list = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::List)
+            .expect("list semantics present");
+        let rows = output
+            .semantics
+            .iter()
+            .filter(|node| node.role == SemanticsRole::ListItem)
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 3);
+        let paint = rows
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Paint"))
+            .expect("paint row semantics present");
+        assert_eq!(paint.parent, Some(list.id));
+        assert_eq!(paint.description.as_deref(), Some("Normal / 100%"));
+        assert_eq!(
+            paint.value,
+            Some(SemanticsValue::Text("Normal / 100%".to_string()))
+        );
+        assert!(paint.state.selected);
+        assert!(!paint.state.disabled);
+        assert!(paint.actions.contains(&SemanticsAction::Activate));
+
+        let paper = rows
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Paper"))
+            .expect("paper row semantics present");
+        assert_eq!(paper.parent, Some(list.id));
+        assert_eq!(paper.description.as_deref(), Some("Background"));
+        assert_eq!(
+            paper.value,
+            Some(SemanticsValue::Text("Background".to_string()))
+        );
+        assert!(!paper.state.selected);
+
+        let locked = rows
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Locked"))
+            .expect("locked row semantics present");
+        assert!(locked.state.disabled);
+        assert!(locked.actions.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn list_view_selected_when_reads_external_selection() -> Result<()> {
+        let selected = Rc::new(RefCell::new(0_usize));
+        let selected_reader = Rc::clone(&selected);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(260.0).height(132.0).with_child(
+                ListView::new("Layers")
+                    .items([
+                        ListItem::new("Paint").detail("Normal / 100%"),
+                        ListItem::new("Paper").detail("Background"),
+                    ])
+                    .selected_when(move || Some(*selected_reader.borrow())),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint row semantics present");
+        assert!(paint.state.selected);
+
+        *selected.borrow_mut() = 1;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(260.0, 132.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let list = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::List)
+            .expect("list semantics present");
+        assert_eq!(list.value, Some(SemanticsValue::Text("Paper".to_string())));
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper row semantics present");
+        assert!(paper.state.selected);
+        Ok(())
+    }
+
+    #[test]
+    fn list_view_row_ids_are_javascript_safe_and_distinct() {
+        let parent = WidgetId::new(402);
+        let mut ids = (0..8)
+            .map(|index| super::list_view_row_id(parent, index).get())
+            .collect::<Vec<_>>();
+
+        assert!(ids.iter().all(|id| *id <= ((1_u64 << 53) - 1)));
+        assert!(ids.iter().all(|id| *id != parent.get()));
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 8);
+    }
+
+    #[test]
+    fn layer_list_exposes_visibility_semantics() {
+        let output = render(
+            SizedBox::new().width(280.0).height(112.0).with_child(
+                LayerList::new("Layers")
+                    .layers([
+                        LayerListItem::new("Paint")
+                            .detail("Normal / 100%")
+                            .thumbnail(Color::rgba(0.16, 0.31, 0.88, 1.0)),
+                        LayerListItem::new("Paper")
+                            .detail("Background")
+                            .thumbnail(Color::rgba(0.89, 0.91, 0.94, 1.0)),
+                    ])
+                    .selected(0),
+            ),
+        );
+
+        let list = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::List)
+            .expect("layer list semantics present");
+        assert_eq!(list.name.as_deref(), Some("Layers"));
+        assert_eq!(list.value, Some(SemanticsValue::Text("Paint".to_string())));
+
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row semantics present");
+        assert_eq!(paint.parent, Some(list.id));
+        assert_eq!(paint.description.as_deref(), Some("Normal / 100%"));
+        assert_eq!(
+            paint.value,
+            Some(SemanticsValue::Text(
+                "Normal / 100%; Visible; Unlocked".to_string()
+            ))
+        );
+        assert!(paint.state.selected);
+
+        let visibility = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hide Paint layer")
+            })
+            .expect("paint layer visibility control semantics present");
+        assert_eq!(visibility.parent, Some(paint.id));
+        assert_eq!(
+            visibility.value,
+            Some(SemanticsValue::Text("Visible".to_string()))
+        );
+        assert_eq!(visibility.state.checked, Some(ToggleState::Checked));
+        assert!(visibility.actions.contains(&SemanticsAction::Activate));
+
+        let lock = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Lock Paint layer")
+            })
+            .expect("paint layer lock control semantics present");
+        assert_eq!(lock.parent, Some(paint.id));
+        assert_eq!(
+            lock.value,
+            Some(SemanticsValue::Text("Unlocked".to_string()))
+        );
+        assert_eq!(lock.state.checked, Some(ToggleState::Unchecked));
+        assert!(lock.actions.contains(&SemanticsAction::Activate));
+    }
+
+    #[test]
+    fn layer_list_item_dynamic_detail_and_visibility_update_semantics() -> Result<()> {
+        let detail = Rc::new(RefCell::new("Normal / 100%".to_string()));
+        let detail_reader = Rc::clone(&detail);
+        let visible = Rc::new(RefCell::new(true));
+        let visible_reader = Rc::clone(&visible);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(280.0).height(112.0).with_child(
+                LayerList::new("Layers")
+                    .layers([
+                        LayerListItem::new("Paint")
+                            .detail_when(move || detail_reader.borrow().clone())
+                            .thumbnail(Color::rgba(0.16, 0.31, 0.88, 1.0))
+                            .visible_when(move || *visible_reader.borrow()),
+                        LayerListItem::new("Paper")
+                            .detail("Background")
+                            .thumbnail(Color::rgba(0.89, 0.91, 0.94, 1.0)),
+                    ])
+                    .selected(0),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row semantics present");
+        assert_eq!(paint.description.as_deref(), Some("Normal / 100%"));
+        assert_eq!(
+            paint.value,
+            Some(SemanticsValue::Text(
+                "Normal / 100%; Visible; Unlocked".to_string()
+            ))
+        );
+
+        *detail.borrow_mut() = "Normal / 50%".to_string();
+        *visible.borrow_mut() = false;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(280.0, 112.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row semantics present");
+        assert_eq!(paint.description.as_deref(), Some("Normal / 50%"));
+        assert_eq!(
+            paint.value,
+            Some(SemanticsValue::Text(
+                "Normal / 50%; Hidden; Unlocked".to_string()
+            ))
+        );
+
+        let visibility = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Show Paint layer")
+            })
+            .expect("paint layer visibility control should update its label");
+        assert_eq!(
+            visibility.value,
+            Some(SemanticsValue::Text("Hidden".to_string()))
+        );
+        assert_eq!(visibility.state.checked, Some(ToggleState::Unchecked));
+        Ok(())
+    }
+
+    #[test]
+    fn layer_list_visibility_button_toggles_without_selecting_row() -> Result<()> {
+        let selections = Rc::new(RefCell::new(Vec::new()));
+        let on_select = Rc::clone(&selections);
+        let visibility_changes = Rc::new(RefCell::new(Vec::new()));
+        let on_visibility_change = Rc::clone(&visibility_changes);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(280.0).height(112.0).with_child(
+                LayerList::new("Layers")
+                    .layers([
+                        LayerListItem::new("Paint")
+                            .detail("Normal / 100%")
+                            .thumbnail(Color::rgba(0.16, 0.31, 0.88, 1.0)),
+                        LayerListItem::new("Paper")
+                            .detail("Background")
+                            .thumbnail(Color::rgba(0.89, 0.91, 0.94, 1.0)),
+                    ])
+                    .selected(0)
+                    .on_select(move |index, label| {
+                        on_select.borrow_mut().push((index, label));
+                    })
+                    .on_visibility_change(move |index, visible| {
+                        on_visibility_change.borrow_mut().push((index, visible));
+                    }),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let visibility = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hide Paper layer")
+            })
+            .expect("paper layer visibility control should exist");
+        let position = Point::new(
+            visibility.bounds.x() + (visibility.bounds.width() * 0.5),
+            visibility.bounds.y() + (visibility.bounds.height() * 0.5),
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+
+        assert!(selections.borrow().is_empty());
+        assert_eq!(visibility_changes.borrow().as_slice(), &[(1, false)]);
+
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row should still exist");
+        assert!(paint.state.selected);
+
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer row should still exist");
+        assert!(!paper.state.selected);
+        assert_eq!(
+            paper.value,
+            Some(SemanticsValue::Text(
+                "Background; Hidden; Unlocked".to_string()
+            ))
+        );
+
+        let visibility = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Show Paper layer")
+            })
+            .expect("paper layer visibility control should update its label");
+        assert_eq!(
+            visibility.value,
+            Some(SemanticsValue::Text("Hidden".to_string()))
+        );
+        assert_eq!(visibility.state.checked, Some(ToggleState::Unchecked));
+        Ok(())
+    }
+
+    #[test]
+    fn layer_list_lock_button_toggles_without_selecting_row() -> Result<()> {
+        let selections = Rc::new(RefCell::new(Vec::new()));
+        let on_select = Rc::clone(&selections);
+        let lock_changes = Rc::new(RefCell::new(Vec::new()));
+        let on_lock_change = Rc::clone(&lock_changes);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(280.0).height(112.0).with_child(
+                LayerList::new("Layers")
+                    .layers([
+                        LayerListItem::new("Paint")
+                            .detail("Normal / 100%")
+                            .thumbnail(Color::rgba(0.16, 0.31, 0.88, 1.0)),
+                        LayerListItem::new("Paper")
+                            .detail("Background")
+                            .thumbnail(Color::rgba(0.89, 0.91, 0.94, 1.0)),
+                    ])
+                    .selected(0)
+                    .on_select(move |index, label| {
+                        on_select.borrow_mut().push((index, label));
+                    })
+                    .on_lock_change(move |index, locked| {
+                        on_lock_change.borrow_mut().push((index, locked));
+                    }),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let lock = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Lock Paper layer")
+            })
+            .expect("paper layer lock control should exist");
+        let position = Point::new(
+            lock.bounds.x() + (lock.bounds.width() * 0.5),
+            lock.bounds.y() + (lock.bounds.height() * 0.5),
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+
+        assert!(selections.borrow().is_empty());
+        assert_eq!(lock_changes.borrow().as_slice(), &[(1, true)]);
+
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row should still exist");
+        assert!(paint.state.selected);
+
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer row should still exist");
+        assert!(!paper.state.selected);
+        assert_eq!(
+            paper.value,
+            Some(SemanticsValue::Text(
+                "Background; Visible; Locked".to_string()
+            ))
+        );
+
+        let lock = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Unlock Paper layer")
+            })
+            .expect("paper layer lock control should update its label");
+        assert_eq!(lock.value, Some(SemanticsValue::Text("Locked".to_string())));
+        assert_eq!(lock.state.checked, Some(ToggleState::Checked));
+        Ok(())
+    }
+
+    #[test]
+    fn layer_list_row_ids_are_javascript_safe_and_distinct() {
+        let parent = WidgetId::new(402);
+        let mut ids = (0..8)
+            .flat_map(|index| {
+                [
+                    super::layer_list_row_id(parent, index).get(),
+                    super::layer_list_visibility_id(parent, index).get(),
+                    super::layer_list_lock_id(parent, index).get(),
+                ]
+            })
+            .collect::<Vec<_>>();
+
+        assert!(ids.iter().all(|id| *id <= ((1_u64 << 53) - 1)));
+        assert!(ids.iter().all(|id| *id != parent.get()));
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 24);
     }
 
     #[test]

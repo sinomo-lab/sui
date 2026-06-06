@@ -363,6 +363,7 @@ fn canvas_node(node: &SemanticsNode) -> bool {
                 | SemanticsRole::Root
                 | SemanticsRole::GenericContainer
                 | SemanticsRole::List
+                | SemanticsRole::ListItem
                 | SemanticsRole::Tree
                 | SemanticsRole::Table
                 | SemanticsRole::TabBar
@@ -385,6 +386,7 @@ fn label_node(node: &SemanticsNode) -> bool {
             SemanticsRole::Window
                 | SemanticsRole::Root
                 | SemanticsRole::List
+                | SemanticsRole::ListItem
                 | SemanticsRole::Dialog
                 | SemanticsRole::Popover
                 | SemanticsRole::ScrollView
@@ -399,6 +401,7 @@ fn spatial_label(node: &SemanticsNode) -> String {
 fn compact_role_label(role: &SemanticsRole) -> &'static str {
     match role {
         SemanticsRole::GenericContainer => "Group",
+        SemanticsRole::ListItem => "Item",
         SemanticsRole::TextInput => "Input",
         SemanticsRole::ScrollView => "Scroll",
         SemanticsRole::ColorSwatch => "Swatch",
@@ -548,6 +551,7 @@ fn role_label(role: &SemanticsRole) -> &'static str {
         SemanticsRole::GenericContainer => "Group",
         SemanticsRole::Separator => "Separator",
         SemanticsRole::List => "List",
+        SemanticsRole::ListItem => "ListItem",
         SemanticsRole::Tree => "Tree",
         SemanticsRole::Table => "Table",
         SemanticsRole::Splitter => "Splitter",

@@ -364,7 +364,7 @@ fn serialize_dom_descriptor(json: &mut String, node: &SemanticsNode) {
         json.push_str("null");
     }
     json.push(',');
-    push_json_bool_field(json, "interactive", interactive_role(&node.role));
+    push_json_bool_field(json, "interactive", interactive_node(node));
     json.push('}');
 }
 
@@ -409,6 +409,7 @@ fn dom_aria_role(node: &SemanticsNode, tag: &str) -> Option<&'static str> {
         SemanticsRole::GenericContainer => Some("group"),
         SemanticsRole::Separator => Some("separator"),
         SemanticsRole::List => Some("list"),
+        SemanticsRole::ListItem => Some("listitem"),
         SemanticsRole::Tree => Some("tree"),
         SemanticsRole::Table => Some("table"),
         SemanticsRole::Splitter => Some("separator"),
@@ -437,6 +438,22 @@ fn dom_aria_role(node: &SemanticsNode, tag: &str) -> Option<&'static str> {
         | SemanticsRole::Text
         | SemanticsRole::TextInput => None,
     }
+}
+
+fn interactive_node(node: &SemanticsNode) -> bool {
+    interactive_role(&node.role)
+        || node.actions.iter().any(|action| {
+            matches!(
+                action,
+                SemanticsAction::Activate
+                    | SemanticsAction::SetValue
+                    | SemanticsAction::SetSelection
+                    | SemanticsAction::Increment
+                    | SemanticsAction::Decrement
+                    | SemanticsAction::InsertText
+                    | SemanticsAction::Custom(_)
+            )
+        })
 }
 
 fn interactive_role(role: &SemanticsRole) -> bool {
@@ -610,6 +627,7 @@ fn semantic_role_name(role: &SemanticsRole) -> &'static str {
         SemanticsRole::GenericContainer => "GenericContainer",
         SemanticsRole::Separator => "Separator",
         SemanticsRole::List => "List",
+        SemanticsRole::ListItem => "ListItem",
         SemanticsRole::Tree => "Tree",
         SemanticsRole::Table => "Table",
         SemanticsRole::Splitter => "Splitter",
@@ -787,6 +805,40 @@ mod tests {
         assert!(
             json.contains("\"dom\":{\"tag\":\"button\",\"role\":\"switch\",\"interactive\":true}")
         );
+    }
+
+    #[test]
+    fn serializes_list_item_dom_mapping_and_action_interactivity() {
+        let mut row = SemanticsNode::new(
+            WidgetId::new(11),
+            SemanticsRole::ListItem,
+            Rect::new(8.0, 12.0, 160.0, 32.0),
+        );
+        row.parent = Some(WidgetId::new(3));
+        row.name = Some("Paint".to_string());
+        row.description = Some("Normal / 100%".to_string());
+        row.value = Some(SemanticsValue::Text("Normal / 100%".to_string()));
+        row.state.selected = true;
+        row.actions.push(SemanticsAction::Activate);
+        let nodes = [row];
+
+        let json = serialize_snapshot(
+            WindowId::new(1),
+            1,
+            1.0,
+            Size::new(320.0, 240.0),
+            Some(&nodes),
+            None,
+            semantics_hash(&nodes),
+        );
+
+        assert!(json.contains("\"role\":\"ListItem\""));
+        assert!(
+            json.contains("\"dom\":{\"tag\":\"div\",\"role\":\"listitem\",\"interactive\":true}")
+        );
+        assert!(json.contains("\"description\":\"Normal / 100%\""));
+        assert!(json.contains("\"selected\":true"));
+        assert!(json.contains("\"actions\":[\"Activate\"]"));
     }
 
     #[test]

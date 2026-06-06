@@ -833,6 +833,17 @@ impl RegisteredImage {
         Self::from_pixels(width, height, RegisteredImageFormat::Rgba8, data)
     }
 
+    pub fn from_svg(svg: impl AsRef<[u8]>) -> Result<Self> {
+        let tree = parse_svg_image(svg.as_ref())?;
+        let size = tree.size().to_int_size();
+        Self::from_svg_tree_at_size(&tree, size.width(), size.height())
+    }
+
+    pub fn from_svg_at_size(width: u32, height: u32, svg: impl AsRef<[u8]>) -> Result<Self> {
+        let tree = parse_svg_image(svg.as_ref())?;
+        Self::from_svg_tree_at_size(&tree, width, height)
+    }
+
     pub fn from_pixels(
         width: u32,
         height: u32,
@@ -875,6 +886,41 @@ impl RegisteredImage {
     pub const fn format(&self) -> RegisteredImageFormat {
         self.format
     }
+
+    fn from_svg_tree_at_size(tree: &resvg::usvg::Tree, width: u32, height: u32) -> Result<Self> {
+        if width == 0 || height == 0 {
+            return Err(Error::new("SVG raster dimensions must be non-zero"));
+        }
+
+        let source_size = tree.size();
+        let scale_x = width as f32 / source_size.width();
+        let scale_y = height as f32 / source_size.height();
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
+            .ok_or_else(|| Error::new("failed to allocate SVG raster pixmap"))?;
+        resvg::render(
+            tree,
+            resvg::tiny_skia::Transform::from_scale(scale_x, scale_y),
+            &mut pixmap.as_mut(),
+        );
+
+        let mut data = Vec::with_capacity(width as usize * height as usize * 4);
+        for pixel in pixmap.pixels() {
+            if pixel.alpha() == 0 {
+                data.extend_from_slice(&[0, 0, 0, 0]);
+            } else {
+                let color = pixel.demultiply();
+                data.extend_from_slice(&[color.red(), color.green(), color.blue(), color.alpha()]);
+            }
+        }
+
+        Self::from_rgba8(width, height, data)
+    }
+}
+
+fn parse_svg_image(svg: &[u8]) -> Result<resvg::usvg::Tree> {
+    let options = resvg::usvg::Options::default();
+    resvg::usvg::Tree::from_data(svg, &options)
+        .map_err(|err| Error::new(format!("failed to parse SVG image: {err}")))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -951,8 +997,8 @@ impl SceneFrame {
 mod tests {
     use super::{
         Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, RegisteredImage,
-        Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId,
-        SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle, WidgetShader,
+        RegisteredImageFormat, Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor,
+        SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle, WidgetShader,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -1131,6 +1177,38 @@ mod tests {
                 .to_string()
                 .contains("image data length 3 does not match")
         );
+    }
+
+    #[test]
+    fn registered_image_rasterizes_svg_at_natural_size() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2" viewBox="0 0 4 2"><rect width="4" height="2" fill="#336699"/></svg>"##;
+
+        let image = RegisteredImage::from_svg(svg).unwrap();
+
+        assert_eq!(image.width(), 4);
+        assert_eq!(image.height(), 2);
+        assert_eq!(image.format(), RegisteredImageFormat::Rgba8);
+        assert_eq!(image.bytes().len(), 4 * 2 * 4);
+        assert_eq!(&image.bytes()[0..4], &[0x33, 0x66, 0x99, 0xff]);
+    }
+
+    #[test]
+    fn registered_image_rasterizes_svg_at_requested_size() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><circle cx="2" cy="2" r="2" fill="white"/></svg>"##;
+
+        let image = RegisteredImage::from_svg_at_size(16, 8, svg).unwrap();
+
+        assert_eq!(image.width(), 16);
+        assert_eq!(image.height(), 8);
+        assert_eq!(image.bytes().len(), 16 * 8 * 4);
+        assert!(image.bytes().chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn registered_image_rejects_invalid_svg() {
+        let error = RegisteredImage::from_svg(b"not svg").unwrap_err();
+
+        assert!(error.to_string().contains("failed to parse SVG image"));
     }
 
     #[test]

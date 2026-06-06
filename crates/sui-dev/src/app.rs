@@ -6,15 +6,26 @@ use sui::{
     TextHinting, ToggleState, WgpuRenderer, WidgetId, WidgetPodMutVisitor, WidgetPodVisitor,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
     WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
-    WindowTextHinting, WindowToneMappingMode, prelude::*, window_output_diagnostics,
+    WindowTextHinting, WindowToneMappingMode, default_sui_logo_image, prelude::*,
+    window_output_diagnostics,
 };
+#[cfg(test)]
+use sui_widget_book::build_widget_book_gallery;
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
     build_retained_text_benchmark, build_text_editing_benchmark,
     build_text_rendering_comparison_surface, build_text_validation_surface,
-    build_theme_demo_surface, build_widget_book_gallery, default_widget_book_state,
+    build_theme_demo_surface, build_widget_book_gallery_with_theme, default_widget_book_state,
     register_widget_book_images, set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
 };
+
+use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
+#[cfg(test)]
+use crate::vector_demo::{
+    VECTOR_DOCUMENT_WIDTH, VECTOR_FILL_RULE_NAME, VECTOR_MIN_OBJECT_SIZE, VECTOR_OPACITY_NAME,
+    VECTOR_ROTATION_NAME, VECTOR_STROKE_WIDTH_NAME, VECTOR_WIDTH_NAME,
+};
+use crate::vector_demo::{VECTOR_EDITOR_TAB_LABEL, build_vector_editor_demo_with_theme};
 
 const WINDOW_TITLE: &str = "SUI Dev";
 const WINDOW_DESCRIPTION: &str =
@@ -27,8 +38,6 @@ const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
 const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
 const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
-const PAINT_TAB_LABEL: &str = "Paint";
-const VECTOR_EDITOR_TAB_LABEL: &str = "Vector editor";
 const SETTINGS_TAB_LABEL: &str = "Settings";
 const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
 const FEATHER_WIDTH_NAME: &str = "Feather width";
@@ -59,9 +68,10 @@ const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
     "Constrained HDR",
     "Full HDR",
 ];
-
 const DEV_SHELL_TOOLBAR_HEIGHT: f32 = 44.0;
 const DEV_SHELL_LOGO_BUTTON_SIZE: f32 = 32.0;
+const DEV_SHELL_LOGO_IMAGE_HANDLE: ImageHandle = ImageHandle::new(0x5355_4900_0000_0001);
+const DEV_SHELL_LOGO_IMAGE_SIZE: u32 = 128;
 const DEV_SHELL_TAB_HEIGHT: f32 = 32.0;
 const DEV_SHELL_TAB_GAP: f32 = 6.0;
 const DEV_SHELL_TAB_CLOSE_SIZE: f32 = 18.0;
@@ -69,7 +79,7 @@ const DEV_SHELL_TAB_CLOSE_MARGIN: f32 = 7.0;
 const DEV_SHELL_PLUS_BUTTON_SIZE: f32 = 30.0;
 const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 92.0;
 const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
-const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 72.0;
+const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 104.0;
 const DEV_SHELL_SETTINGS_TITLE_HEIGHT: f32 = 38.0;
 const DEV_SHELL_SETTINGS_RESIZE_HANDLE: f32 = 18.0;
 const DEV_SHELL_MIN_SETTINGS_WIDTH: f32 = 320.0;
@@ -78,13 +88,37 @@ const DEV_SHELL_DEFAULT_SETTINGS_WIDTH: f32 = 460.0;
 const DEV_SHELL_DEFAULT_SETTINGS_HEIGHT: f32 = 380.0;
 const DEV_SHELL_DEFAULT_SETTINGS_X: f32 = 420.0;
 const DEV_SHELL_DEFAULT_SETTINGS_Y: f32 = 96.0;
-const DEV_SHELL_PICKER_TITLE: &str = "Open a demo";
-
+const DEV_SHELL_PICKER_TITLE: &str = "SUI Dev";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(not(target_arch = "wasm32"))]
 pub enum DesktopAutomationMode {
     ButtonGridResize,
     WidgetBookScroll,
+}
+
+pub(crate) type DevThemeReader = Rc<dyn Fn() -> DefaultTheme>;
+
+#[cfg(test)]
+pub(crate) fn default_dev_theme_reader() -> DevThemeReader {
+    Rc::new(DefaultTheme::default)
+}
+
+pub(crate) fn clone_dev_theme_reader(
+    theme_reader: &DevThemeReader,
+) -> impl Fn() -> DefaultTheme + 'static {
+    let theme_reader = Rc::clone(theme_reader);
+    move || theme_reader()
+}
+
+pub(crate) fn dev_theme_color<F>(
+    theme_reader: &DevThemeReader,
+    color: F,
+) -> impl Fn() -> Color + 'static
+where
+    F: Fn(DefaultTheme) -> Color + 'static,
+{
+    let theme_reader = Rc::clone(theme_reader);
+    move || color(theme_reader())
 }
 
 #[derive(Clone)]
@@ -128,6 +162,11 @@ impl DevShellState {
         } else {
             DefaultTheme::default()
         }
+    }
+
+    fn theme_reader(&self) -> DevThemeReader {
+        let state = self.clone();
+        Rc::new(move || state.theme())
     }
 
     fn is_dark(&self) -> bool {
@@ -231,6 +270,8 @@ impl DevShellState {
 struct DevDemo {
     title: &'static str,
     description: &'static str,
+    icon: IconGlyph,
+    accent: Color,
     child: WidgetPod,
 }
 
@@ -259,7 +300,8 @@ impl DevBrowserShell {
     fn with_initial_demo(render_options: WindowRenderOptions, initial_demo: Option<&str>) -> Self {
         set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
         let state = DevShellState::new();
-        let demos = build_dev_demo_entries();
+        let theme_reader = state.theme_reader();
+        let demos = build_dev_demo_entries(Rc::clone(&theme_reader));
         if let Some(index) =
             initial_demo.and_then(|title| demos.iter().position(|demo| demo.title == title))
         {
@@ -268,13 +310,17 @@ impl DevBrowserShell {
 
         let mut demo_buttons = WidgetChildren::with_capacity(demos.len());
         for (index, demo) in demos.iter().enumerate() {
-            let button_state = state.clone();
+            let open_state = state.clone();
+            let theme_state = state.clone();
             demo_buttons.push(
-                Button::new(demo.title)
-                    .min_width(180.0)
+                ActionCard::new(demo.title, demo.description)
+                    .theme_when(move || theme_state.theme())
+                    .icon(demo.icon)
+                    .accent(demo.accent)
+                    .min_width(220.0)
                     .min_height(DEV_SHELL_PICKER_TILE_HEIGHT)
                     .on_press_with_ctx(move |ctx| {
-                        button_state.open_demo(index);
+                        open_state.open_demo(index);
                         request_window_refresh(ctx, true);
                     }),
             );
@@ -282,6 +328,7 @@ impl DevBrowserShell {
 
         let picker_state = state.clone();
         let plus_button = IconButton::new(IconGlyph::Add, "Open demo")
+            .theme_when(clone_dev_theme_reader(&theme_reader))
             .size(DEV_SHELL_PLUS_BUTTON_SIZE)
             .icon_size(16.0)
             .on_press_with_ctx(move |ctx| {
@@ -290,7 +337,8 @@ impl DevBrowserShell {
             });
 
         let menu_state = state.clone();
-        let main_menu = ContextMenu::new("SUI menu", SuiLogoButton)
+        let main_menu = ContextMenu::new("SUI menu", SuiLogoButton::new())
+            .theme_when(clone_dev_theme_reader(&theme_reader))
             .activation_button(PointerButton::Primary)
             .item(MenuItem::new("Settings"))
             .on_activate_with_ctx(move |ctx, _, _| {
@@ -308,7 +356,7 @@ impl DevBrowserShell {
             theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
             settings_window: SingleChild::new(FloatingSettingsWindow::new(
                 state,
-                build_render_settings_tab_with_options(render_options),
+                build_render_settings_tab_with_options(render_options, Rc::clone(&theme_reader)),
             )),
             tab_widths: Vec::new(),
             tab_rects: Vec::new(),
@@ -424,11 +472,13 @@ impl DevBrowserShell {
     }
 
     fn picker_grid_rect(content: Rect) -> Rect {
+        let width = (content.width() - 64.0).clamp(0.0, 1120.0);
+        let x = content.x() + ((content.width() - width) * 0.5);
         Rect::new(
-            content.x() + 32.0,
-            content.y() + 82.0,
-            (content.width() - 64.0).max(0.0),
-            (content.height() - 114.0).max(0.0),
+            x,
+            content.y() + 104.0,
+            width,
+            (content.height() - 136.0).max(0.0),
         )
     }
 
@@ -563,11 +613,13 @@ impl DevBrowserShell {
         let content = self.content_bounds;
         let palette = theme.palette;
         ctx.fill_rect(content, palette.surface);
+        let header = Rect::new(content.x(), content.y(), content.width(), 96.0);
+        ctx.fill_rect(header, palette.surface_hover.with_alpha(0.45));
         ctx.draw_text(
             Rect::new(
-                content.x() + 32.0,
-                content.y() + 28.0,
-                content.width() - 64.0,
+                content.x() + 40.0,
+                content.y() + 24.0,
+                content.width() - 80.0,
                 32.0,
             ),
             DEV_SHELL_PICKER_TITLE,
@@ -580,12 +632,12 @@ impl DevBrowserShell {
         );
         ctx.draw_text(
             Rect::new(
-                content.x() + 32.0,
-                content.y() + 58.0,
-                content.width() - 64.0,
+                content.x() + 40.0,
+                content.y() + 56.0,
+                content.width() - 80.0,
                 20.0,
             ),
-            "Choose a demo to open it as a tab.",
+            "Renderer, text, color, editor, and widget surfaces.",
             TextStyle {
                 font_size: 13.0,
                 line_height: 18.0,
@@ -593,29 +645,6 @@ impl DevBrowserShell {
                 ..TextStyle::default()
             },
         );
-    }
-
-    fn paint_picker_descriptions(&self, ctx: &mut PaintCtx, theme: &DefaultTheme) {
-        let palette = theme.palette;
-        for (index, demo) in self.demos.iter().enumerate() {
-            let Some(tile) = self.demo_buttons.as_slice().get(index) else {
-                continue;
-            };
-            let rect = tile.bounds();
-            if rect.is_empty() {
-                continue;
-            }
-            ctx.draw_text(
-                Rect::new(rect.x() + 16.0, rect.y() + 46.0, rect.width() - 32.0, 18.0),
-                demo.description,
-                TextStyle {
-                    font_size: 11.0,
-                    line_height: 15.0,
-                    color: palette.accent_text.with_alpha(0.82),
-                    ..TextStyle::default()
-                },
-            );
-        }
     }
 }
 
@@ -802,8 +831,8 @@ impl Widget for DevBrowserShell {
                     index,
                     ctx,
                     Constraints::new(
-                        Size::new(160.0, DEV_SHELL_PICKER_TILE_HEIGHT),
-                        Size::new(260.0, DEV_SHELL_PICKER_TILE_HEIGHT),
+                        Size::new(220.0, DEV_SHELL_PICKER_TILE_HEIGHT),
+                        Size::new(360.0, DEV_SHELL_PICKER_TILE_HEIGHT),
                     ),
                 );
             }
@@ -894,7 +923,6 @@ impl Widget for DevBrowserShell {
         if self.state.picker_visible() {
             self.paint_picker(ctx, &theme);
             self.demo_buttons.paint(ctx);
-            self.paint_picker_descriptions(ctx, &theme);
         } else if let Some(active) = self.state.active_tab() {
             self.demos[active].child.paint(ctx);
         }
@@ -983,44 +1011,43 @@ impl Widget for DevBrowserShell {
     }
 }
 
-struct SuiLogoButton;
+struct SuiLogoButton {
+    image: SingleChild,
+}
+
+impl SuiLogoButton {
+    fn new() -> Self {
+        Self {
+            image: SingleChild::new(
+                Image::new(DEV_SHELL_LOGO_IMAGE_HANDLE)
+                    .fit(ImageFit::Contain)
+                    .size(Size::new(
+                        DEV_SHELL_LOGO_BUTTON_SIZE,
+                        DEV_SHELL_LOGO_BUTTON_SIZE,
+                    ))
+                    .without_border()
+                    .corner_radius(0.0),
+            ),
+        }
+    }
+}
 
 impl Widget for SuiLogoButton {
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let size = constraints.clamp(Size::new(
             DEV_SHELL_LOGO_BUTTON_SIZE,
             DEV_SHELL_LOGO_BUTTON_SIZE,
-        ))
+        ));
+        self.image.measure(ctx, Constraints::tight(size));
+        size
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.image.arrange(ctx, bounds);
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let bounds = ctx.bounds();
-        let center = Point::new(
-            bounds.x() + bounds.width() * 0.5,
-            bounds.y() + bounds.height() * 0.5,
-        );
-        let radius = bounds.width().min(bounds.height()) * 0.48;
-        ctx.fill(Path::circle(center, radius), Color::WHITE);
-        ctx.stroke(
-            Path::circle(center, radius - 0.5),
-            Color::rgba(0.08, 0.14, 0.20, 0.18),
-            StrokeStyle::new(1.0),
-        );
-
-        let inner_radius = radius - 3.6;
-        ctx.fill(
-            Path::circle(center, inner_radius),
-            Color::rgba(0.05, 0.52, 0.66, 1.0),
-        );
-        let wave_bounds = Rect::new(
-            center.x - inner_radius,
-            center.y - inner_radius,
-            inner_radius * 2.0,
-            inner_radius * 2.0,
-        );
-        draw_logo_wave(ctx, wave_bounds, 0.32, Color::rgba(0.48, 0.86, 0.93, 1.0));
-        draw_logo_wave(ctx, wave_bounds, 0.52, Color::rgba(0.14, 0.64, 0.76, 1.0));
-        draw_logo_wave(ctx, wave_bounds, 0.70, Color::rgba(0.02, 0.36, 0.50, 1.0));
+        self.image.paint(ctx);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1028,6 +1055,14 @@ impl Widget for SuiLogoButton {
         node.name = Some("SUI menu".to_string());
         node.actions = vec![SemanticsAction::Activate];
         ctx.push(node);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.image.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.image.visit_children_mut(visitor);
     }
 }
 
@@ -1416,7 +1451,7 @@ impl Widget for FloatingSettingsWindow {
         }
         let theme = self.state.theme();
         let palette = theme.palette;
-        let content_palette = DefaultTheme::default().palette;
+        let content_palette = palette;
         let bounds = ctx.bounds();
         if bounds.is_empty() {
             return;
@@ -1527,59 +1562,98 @@ impl Widget for FloatingSettingsWindow {
     }
 }
 
-fn build_dev_demo_entries() -> Vec<DevDemo> {
+fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
     vec![
         DevDemo {
             title: WIDGET_BOOK_TAB_LABEL,
             description: "Catalog of controls, containers, media, and text surfaces.",
-            child: WidgetPod::new(build_widget_book_gallery(default_widget_book_state())),
+            icon: IconGlyph::MoreHorizontal,
+            accent: Color::rgba(0.16, 0.48, 0.86, 1.0),
+            child: WidgetPod::new(build_widget_book_gallery_with_theme(
+                default_widget_book_state(),
+                Rc::clone(&theme_reader),
+            )),
         },
         DevDemo {
             title: THEMES_TAB_LABEL,
             description: "Theme previews and HDR theme mode comparisons.",
+            icon: IconGlyph::PaintBucket,
+            accent: Color::rgba(0.62, 0.28, 0.78, 1.0),
             child: WidgetPod::new(build_theme_demo_surface(default_widget_book_state())),
         },
         DevDemo {
             title: BUTTON_GRID_TAB_LABEL,
             description: "Dense button grid used for interaction and resizing performance checks.",
+            icon: IconGlyph::Check,
+            accent: Color::rgba(0.08, 0.58, 0.42, 1.0),
             child: WidgetPod::new(build_button_grid_benchmark()),
         },
         DevDemo {
             title: RETAINED_TEXT_TAB_LABEL,
             description: "Retained text layout and redraw benchmark.",
+            icon: IconGlyph::Search,
+            accent: Color::rgba(0.75, 0.42, 0.12, 1.0),
             child: WidgetPod::new(build_retained_text_benchmark()),
         },
         DevDemo {
             title: TEXT_RENDERING_COMPARISON_TAB_LABEL,
             description: "Side-by-side text rendering comparison surface.",
+            icon: IconGlyph::FitView,
+            accent: Color::rgba(0.20, 0.50, 0.62, 1.0),
             child: WidgetPod::new(build_text_rendering_comparison_surface()),
         },
         DevDemo {
             title: TEXT_VALIDATION_TAB_LABEL,
             description: "Validation surface for text metrics, alignment, and rasterization.",
+            icon: IconGlyph::ActualSize,
+            accent: Color::rgba(0.68, 0.26, 0.32, 1.0),
             child: WidgetPod::new(build_text_validation_surface()),
         },
         DevDemo {
             title: TEXT_EDITING_TAB_LABEL,
             description: "Single-line and multi-line text editing demos.",
+            icon: IconGlyph::Restore,
+            accent: Color::rgba(0.35, 0.38, 0.82, 1.0),
             child: WidgetPod::new(build_text_editing_benchmark()),
         },
         DevDemo {
             title: HDR_VALIDATION_TAB_LABEL,
             description: "HDR, color-management, and tone-mapping validation surface.",
+            icon: IconGlyph::Maximize,
+            accent: Color::rgba(0.82, 0.52, 0.10, 1.0),
             child: WidgetPod::new(build_color_validation_surface()),
         },
         DevDemo {
             title: PAINT_TAB_LABEL,
-            description: "Pixel canvas painting demo.",
-            child: WidgetPod::new(build_paint_demo()),
+            description: "Pixel canvas painting workspace with editor-style panels.",
+            icon: IconGlyph::Brush,
+            accent: Color::rgba(0.80, 0.22, 0.44, 1.0),
+            child: WidgetPod::new(build_paint_demo_with_theme(Rc::clone(&theme_reader))),
         },
         DevDemo {
             title: VECTOR_EDITOR_TAB_LABEL,
             description: "Vector canvas drawing and editing demo.",
-            child: WidgetPod::new(build_vector_editor_demo()),
+            icon: IconGlyph::ChevronRight,
+            accent: Color::rgba(0.12, 0.56, 0.76, 1.0),
+            child: WidgetPod::new(build_vector_editor_demo_with_theme(theme_reader)),
         },
     ]
+}
+
+pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
+    match slug {
+        "widget-book" | "widgets" => Some(WIDGET_BOOK_TAB_LABEL),
+        "themes" | "theme" => Some(THEMES_TAB_LABEL),
+        "button-grid" | "buttons" | "64-buttons" => Some(BUTTON_GRID_TAB_LABEL),
+        "retained-text" => Some(RETAINED_TEXT_TAB_LABEL),
+        "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
+        "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
+        "text-editing" => Some(TEXT_EDITING_TAB_LABEL),
+        "hdr-validation" | "color-validation" => Some(HDR_VALIDATION_TAB_LABEL),
+        "paint" | "sui-paint" => Some(PAINT_TAB_LABEL),
+        "vector-editor" | "vector" => Some(VECTOR_EDITOR_TAB_LABEL),
+        _ => None,
+    }
 }
 
 fn clamp_dev_shell_settings_bounds(host: Rect, bounds: Rect) -> Rect {
@@ -1611,37 +1685,6 @@ fn clamp_dev_shell_settings_bounds(host: Rect, bounds: Rect) -> Rect {
     )
 }
 
-fn draw_logo_wave(ctx: &mut PaintCtx, bounds: Rect, top_fraction: f32, color: Color) {
-    let radius = bounds.width().min(bounds.height()) * 0.5;
-    let center = Point::new(
-        bounds.x() + bounds.width() * 0.5,
-        bounds.y() + bounds.height() * 0.5,
-    );
-    let top = (bounds.y() + bounds.height() * top_fraction)
-        .clamp(center.y - radius + 0.5, center.y + radius - 0.5);
-    let chord_half_width = (radius * radius - (top - center.y).powi(2)).sqrt();
-    let left = center.x - chord_half_width;
-    let right = center.x + chord_half_width;
-    let width = right - left;
-    let amp = bounds.height() * 0.105;
-    let mut path = PathBuilder::new();
-    path.move_to(Point::new(left, top));
-    path.cubic_to(
-        Point::new(left + width * 0.18, top - amp),
-        Point::new(left + width * 0.30, top - amp),
-        Point::new(left + width * 0.50, top),
-    );
-    path.cubic_to(
-        Point::new(left + width * 0.70, top + amp),
-        Point::new(left + width * 0.82, top + amp),
-        Point::new(right, top),
-    );
-    path.line_to(Point::new(center.x, center.y + radius));
-    path.line_to(Point::new(left, top));
-    path.close();
-    ctx.fill(path.build(), color);
-}
-
 fn close_icon_path(bounds: Rect) -> Path {
     let mut path = PathBuilder::new();
     let inset = bounds.width().min(bounds.height()) * 0.34;
@@ -1659,7 +1702,7 @@ fn diagonal_handle_path(bounds: Rect, inset: f32, offset: f32) -> Path {
     path.build()
 }
 
-fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
+pub(crate) fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
     ctx.request(InvalidationRequest::new(
         InvalidationTarget::Window(ctx.window_id()),
         InvalidationKind::Measure,
@@ -1899,23 +1942,33 @@ fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
     ]
 }
 
-fn labeled_settings_control<W>(label: &'static str, width: f32, control: W) -> impl Widget
+pub(crate) fn labeled_settings_control<W>(
+    theme_reader: DevThemeReader,
+    label: &'static str,
+    width: f32,
+    control: W,
+) -> impl Widget
 where
     W: Widget + 'static,
 {
-    Stack::vertical()
-        .spacing(6.0)
-        .alignment(Alignment::Start)
-        .with_child(
-            Label::new(label)
-                .font_size(13.0)
-                .line_height(18.0)
-                .color(Color::rgba(0.20, 0.27, 0.35, 1.0)),
-        )
-        .with_child(SizedBox::new().width(width).with_child(control))
+    PropertyRow::new(label, control)
+        .theme_when(clone_dev_theme_reader(&theme_reader))
+        .control_width(width)
 }
 
-struct HdrThemeInspectionPanel;
+struct HdrThemeInspectionPanel {
+    theme_reader: DevThemeReader,
+}
+
+impl HdrThemeInspectionPanel {
+    fn new(theme_reader: DevThemeReader) -> Self {
+        Self { theme_reader }
+    }
+
+    fn theme(&self) -> DefaultTheme {
+        (self.theme_reader)()
+    }
+}
 
 impl Widget for HdrThemeInspectionPanel {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -1923,7 +1976,7 @@ impl Widget for HdrThemeInspectionPanel {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = DefaultTheme::default().palette;
+        let palette = self.theme().palette;
         let border = StrokeStyle::default();
         ctx.fill_rect(ctx.bounds(), palette.surface.with_alpha(0.35));
         ctx.stroke_rect(ctx.bounds(), palette.border.with_alpha(0.85), border);
@@ -1978,7 +2031,19 @@ impl Widget for HdrThemeInspectionPanel {
     }
 }
 
-struct OutputDiagnosticsPanel;
+struct OutputDiagnosticsPanel {
+    theme_reader: DevThemeReader,
+}
+
+impl OutputDiagnosticsPanel {
+    fn new(theme_reader: DevThemeReader) -> Self {
+        Self { theme_reader }
+    }
+
+    fn theme(&self) -> DefaultTheme {
+        (self.theme_reader)()
+    }
+}
 
 impl Widget for OutputDiagnosticsPanel {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -1993,7 +2058,7 @@ impl Widget for OutputDiagnosticsPanel {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = DefaultTheme::default().palette;
+        let palette = self.theme().palette;
         let border = StrokeStyle::default();
         ctx.fill_rect(ctx.bounds(), palette.surface.with_alpha(0.35));
         ctx.stroke_rect(ctx.bounds(), palette.border.with_alpha(0.85), border);
@@ -2035,7 +2100,19 @@ impl Widget for OutputDiagnosticsPanel {
     }
 }
 
-struct SdrContentBrightnessStatus;
+struct SdrContentBrightnessStatus {
+    theme_reader: DevThemeReader,
+}
+
+impl SdrContentBrightnessStatus {
+    fn new(theme_reader: DevThemeReader) -> Self {
+        Self { theme_reader }
+    }
+
+    fn theme(&self) -> DefaultTheme {
+        (self.theme_reader)()
+    }
+}
 
 impl Widget for SdrContentBrightnessStatus {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -2043,7 +2120,7 @@ impl Widget for SdrContentBrightnessStatus {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = DefaultTheme::default().palette;
+        let palette = self.theme().palette;
         let text = window_output_diagnostics(ctx.window_id())
             .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
             .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
@@ -2173,7 +2250,7 @@ impl RenderSettingsTab {
             ))
     }
 
-    fn with_initial_options(initial: WindowRenderOptions) -> Self {
+    fn with_initial_options(initial: WindowRenderOptions, theme_reader: DevThemeReader) -> Self {
         let state = Rc::new(RefCell::new(initial));
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
@@ -2202,7 +2279,7 @@ impl RenderSettingsTab {
                         Label::new("Renderer settings")
                             .font_size(24.0)
                             .line_height(30.0)
-                            .color(Color::rgba(0.14, 0.18, 0.24, 1.0)),
+                            .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
                     )
                     .with_child(
                         Label::new(
@@ -2210,10 +2287,11 @@ impl RenderSettingsTab {
                         )
                         .font_size(14.0)
                         .line_height(20.0)
-                        .color(Color::rgba(0.40, 0.47, 0.56, 1.0)),
+                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
                     )
                     .with_child(
                         Checkbox::new(FEATHERING_TOGGLE_LABEL)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .checked(initial.feathering_enabled)
                             .on_toggle(move |checked| {
                                 toggle_state.borrow_mut().feathering_enabled = checked;
@@ -2221,6 +2299,7 @@ impl RenderSettingsTab {
                     )
                     .with_child(
                         Checkbox::new(OPTICAL_TEXT_CENTERING_TOGGLE_LABEL)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .checked(initial.optical_vertical_text_alignment_enabled)
                             .on_toggle(move |checked| {
                                 text_centering_state
@@ -2229,9 +2308,11 @@ impl RenderSettingsTab {
                             }),
                     )
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         FEATHER_WIDTH_NAME,
                         220.0,
                         NumberInput::new(FEATHER_WIDTH_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .range(0.0, 8.0)
                             .step(0.05)
                             .precision(2)
@@ -2242,6 +2323,7 @@ impl RenderSettingsTab {
                     ))
                     .with_child(
                         Checkbox::new(TEXT_HINTING_TOGGLE_LABEL)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .checked(!matches!(initial.text_hinting, WindowTextHinting::None))
                             .on_toggle(move |checked| {
                                 let mut state = hinting_toggle_state.borrow_mut();
@@ -2260,9 +2342,11 @@ impl RenderSettingsTab {
                             }),
                     )
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         TEXT_HINTING_MAX_PPEM_NAME,
                         220.0,
                         NumberInput::new(TEXT_HINTING_MAX_PPEM_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .range(1.0, 64.0)
                             .step(0.5)
                             .precision(1)
@@ -2278,6 +2362,7 @@ impl RenderSettingsTab {
                     ))
                     .with_child(
                         Checkbox::new(STEM_DARKENING_TOGGLE_LABEL)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .checked(!matches!(initial.stem_darkening, WindowStemDarkening::None))
                             .on_toggle(move |checked| {
                                 let mut state = stem_darkening_toggle_state.borrow_mut();
@@ -2299,9 +2384,11 @@ impl RenderSettingsTab {
                             }),
                     )
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         STEM_DARKENING_AMOUNT_NAME,
                         220.0,
                         NumberInput::new(STEM_DARKENING_AMOUNT_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .range(0.0, 1.0)
                             .step(0.01)
                             .precision(2)
@@ -2324,9 +2411,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         STEM_DARKENING_MAX_PPEM_NAME,
                         220.0,
                         NumberInput::new(STEM_DARKENING_MAX_PPEM_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .range(1.0, 64.0)
                             .step(0.5)
                             .precision(1)
@@ -2349,9 +2438,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         COLOR_MANAGEMENT_MODE_NAME,
                         280.0,
                         Select::new(COLOR_MANAGEMENT_MODE_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(COLOR_MANAGEMENT_MODE_OPTIONS)
                             .selected(color_management_mode_selected_index(initial.color_management_mode))
                             .on_change(move |index, _| {
@@ -2360,9 +2451,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         OUTPUT_PRIMARIES_NAME,
                         240.0,
                         Select::new(OUTPUT_PRIMARIES_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(OUTPUT_PRIMARIES_OPTIONS)
                             .selected(output_primaries_selected_index(initial.output_color_primaries))
                             .on_change(move |index, _| {
@@ -2371,9 +2464,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         DYNAMIC_RANGE_MODE_NAME,
                         240.0,
                         Select::new(DYNAMIC_RANGE_MODE_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(DYNAMIC_RANGE_MODE_OPTIONS)
                             .selected(dynamic_range_mode_selected_index(initial.dynamic_range_mode))
                             .on_change(move |index, _| {
@@ -2382,9 +2477,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         TONE_MAPPING_MODE_NAME,
                         240.0,
                         Select::new(TONE_MAPPING_MODE_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(TONE_MAPPING_MODE_OPTIONS)
                             .selected(tone_mapping_mode_selected_index(initial.tone_mapping_mode))
                             .on_change(move |index, _| {
@@ -2393,6 +2490,7 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         SDR_CONTENT_BRIGHTNESS_NAME,
                         420.0,
                         Stack::vertical()
@@ -2400,6 +2498,7 @@ impl RenderSettingsTab {
                             .alignment(Alignment::Start)
                             .with_child(SizedBox::new().width(220.0).with_child(
                                 NumberInput::new(SDR_CONTENT_BRIGHTNESS_NAME)
+                                    .theme_when(clone_dev_theme_reader(&theme_reader))
                                     .range(48.0, 1000.0)
                                     .step(1.0)
                                     .precision(0)
@@ -2413,6 +2512,7 @@ impl RenderSettingsTab {
                             ))
                             .with_child(
                                 Checkbox::new(USE_SYSTEM_SDR_BRIGHTNESS_LABEL)
+                                    .theme_when(clone_dev_theme_reader(&theme_reader))
                                     .checked(initial.use_system_sdr_content_brightness)
                                     .on_toggle(move |checked| {
                                         system_sdr_content_brightness_state
@@ -2420,27 +2520,29 @@ impl RenderSettingsTab {
                                             .use_system_sdr_content_brightness = checked;
                                     }),
                             )
-                            .with_child(SdrContentBrightnessStatus),
+                            .with_child(SdrContentBrightnessStatus::new(Rc::clone(&theme_reader))),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         HDR_THEME_MODE_NAME,
                         280.0,
                         Select::new(HDR_THEME_MODE_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(HDR_THEME_MODE_OPTIONS)
                             .selected(hdr_theme_mode_selected_index(current_hdr_theme_mode))
                             .on_change(move |index, _| {
                                 set_widget_book_hdr_theme_mode(hdr_theme_mode_from_index(index));
                             }),
                     ))
-                    .with_child(HdrThemeInspectionPanel)
-                    .with_child(OutputDiagnosticsPanel)
+                    .with_child(HdrThemeInspectionPanel::new(Rc::clone(&theme_reader)))
+                    .with_child(OutputDiagnosticsPanel::new(Rc::clone(&theme_reader)))
                     .with_child(
                         Label::new(
                             "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)
-                        .color(Color::rgba(0.45, 0.52, 0.60, 1.0)),
+                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
                     ),
             ))
             .state(scroll_state.clone())
@@ -2516,60 +2618,11 @@ impl Widget for RenderSettingsTab {
     }
 }
 
-fn build_render_settings_tab_with_options(options: WindowRenderOptions) -> impl Widget {
-    RenderSettingsTab::with_initial_options(options)
-}
-
-fn build_paint_demo() -> PixelCanvas {
-    let width = 1920;
-    let height = 1080;
-    PixelCanvas::from_fn(PAINT_TAB_LABEL, width, height, |x, y| {
-        let u = x as f32 / (width - 1) as f32;
-        let v = y as f32 / (height - 1) as f32;
-        let dx = u - 0.5;
-        let dy = v - 0.5;
-        let vignette = (1.0 - ((dx * dx + dy * dy).sqrt() * 1.45)).clamp(0.0, 1.0);
-        let wave = ((u * 18.0).sin() * (v * 11.0).cos() * 0.5) + 0.5;
-        Color::rgba(
-            0.08 + (0.58 * u) + (0.18 * vignette),
-            0.18 + (0.42 * v) + (0.14 * wave),
-            0.38 + (0.36 * (1.0 - u)) + (0.20 * vignette),
-            1.0,
-        )
-    })
-    .brush_color(Color::rgba(0.08, 0.22, 0.78, 1.0))
-    .viewport(CanvasViewport::new().zoom(0.28))
-}
-
-fn build_vector_editor_demo() -> Canvas {
-    let mut curve = PathBuilder::new();
-    curve.move_to(Point::new(-160.0, 72.0)).cubic_to(
-        Point::new(-96.0, -96.0),
-        Point::new(88.0, 124.0),
-        Point::new(160.0, -64.0),
-    );
-
-    Canvas::new(VECTOR_EDITOR_TAB_LABEL)
-        .viewport(CanvasViewport::new().zoom(1.05))
-        .draw_stroke(CanvasStroke::new(Color::rgba(0.12, 0.28, 0.84, 1.0), 3.0))
-        .shape(CanvasShape::rect(
-            Rect::new(-180.0, -110.0, 360.0, 220.0),
-            Some(Color::rgba(1.0, 1.0, 1.0, 0.82)),
-            Some(CanvasStroke::new(Color::rgba(0.12, 0.16, 0.22, 1.0), 2.0)),
-        ))
-        .shape(CanvasShape::circle(
-            Point::new(-72.0, -28.0),
-            46.0,
-            Some(Color::rgba(0.18, 0.54, 0.86, 0.78)),
-            Some(CanvasStroke::new(Color::rgba(0.08, 0.22, 0.42, 1.0), 2.0)),
-        ))
-        .shape(CanvasShape::circle(
-            Point::new(82.0, 34.0),
-            58.0,
-            Some(Color::rgba(0.94, 0.58, 0.16, 0.72)),
-            Some(CanvasStroke::new(Color::rgba(0.42, 0.22, 0.06, 1.0), 2.0)),
-        ))
-        .shape(CanvasShape::path(curve.build()))
+fn build_render_settings_tab_with_options(
+    options: WindowRenderOptions,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
+    RenderSettingsTab::with_initial_options(options, theme_reader)
 }
 
 pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
@@ -2577,6 +2630,16 @@ pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
     render_options: WindowRenderOptions,
 ) -> Application {
     finish_dev_application(DevBrowserShell::new(render_options))
+}
+
+pub(crate) fn build_dev_application_with_initial_demo_and_render_options(
+    initial_demo: Option<&str>,
+    render_options: WindowRenderOptions,
+) -> Application {
+    finish_dev_application(DevBrowserShell::with_initial_demo(
+        render_options,
+        initial_demo,
+    ))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2597,6 +2660,12 @@ fn build_dev_application_with_render_options_and_automation(
 fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
     let mut app = Application::new();
     register_widget_book_images(&mut app);
+    app.register_image(
+        DEV_SHELL_LOGO_IMAGE_HANDLE,
+        default_sui_logo_image(DEV_SHELL_LOGO_IMAGE_SIZE)
+            .expect("default SUI logo SVG should rasterize for dev shell"),
+    )
+    .expect("dev shell logo SVG should register exactly once");
     let app = app.window(
         WindowBuilder::new()
             .title(WINDOW_TITLE)
@@ -2635,6 +2704,21 @@ pub fn build_dev_application_with_automation(
 mod tests {
     use super::*;
 
+    use crate::paint_demo::{
+        PAINT_ACTUAL_SIZE_NAME, PAINT_BLEND_MODE_NAME, PAINT_BRUSH_COLOR_NAME,
+        PAINT_BRUSH_OPACITY_NAME, PAINT_BRUSH_PREVIEW_NAME, PAINT_BRUSH_SHAPE_NAME,
+        PAINT_BRUSH_SIZE_NAME, PAINT_BRUSH_SIZE_PRESETS_NAME, PAINT_COLOR_EDITOR_NAME,
+        PAINT_COLOR_PRESETS_NAME, PAINT_DOCUMENT_BAR_NAME, PAINT_DOCUMENT_COMMANDS_NAME,
+        PAINT_DOCUMENT_HEIGHT, PAINT_DOCUMENT_NAME, PAINT_DOCUMENT_VIEW_COMMANDS_NAME,
+        PAINT_DOCUMENT_WIDTH, PAINT_ERASER_PREVIEW_NAME, PAINT_FILL_BLEND_MODE_NAME,
+        PAINT_FILL_OPACITY_NAME, PAINT_FIT_VIEW_NAME, PAINT_HISTORY_COMMANDS_NAME,
+        PAINT_HORIZONTAL_RULER_NAME, PAINT_INITIAL_BRUSH_SIZE, PAINT_LAYER_BLEND_MODE_NAME,
+        PAINT_LAYER_OPACITY_NAME, PAINT_LAYERS_NAME, PAINT_PROPERTIES_NAME, PAINT_SCROLL_NAME,
+        PAINT_SELECT_LAYER_ABOVE_NAME, PAINT_SELECT_LAYER_BELOW_NAME, PAINT_VERTICAL_RULER_NAME,
+        PAINT_VIEW_COMMANDS_NAME, PAINT_ZOOM_IN_NAME, PAINT_ZOOM_OUT_NAME, PAINT_ZOOM_READOUT_NAME,
+        build_paint_demo_with_state,
+    };
+
     use std::{
         collections::BTreeSet,
         path::PathBuf,
@@ -2644,9 +2728,9 @@ mod tests {
 
     use sui::{
         Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
-        SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, StackOrderPolicy, Vector,
-        WidgetId, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent,
-        WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowRenderOptions,
+        SceneCommand, SceneStatisticsDetailMode, ScrollDelta, SemanticsNode, SemanticsRole,
+        StackOrderPolicy, Vector, WidgetId, WindowColorManagementMode, WindowDynamicRangeMode,
+        WindowEvent, WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowRenderOptions,
         WindowToneMappingMode, set_window_scene_statistics_detail_mode,
         window_performance_snapshot, window_scene_statistics_detail_mode,
     };
@@ -3197,6 +3281,1995 @@ mod tests {
         assert!(open_demo.bounds.max_y() <= DEV_SHELL_TOOLBAR_HEIGHT);
     }
 
+    #[test]
+    fn dev_shell_logo_button_draws_registered_svg_logo_image() {
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render");
+
+        let mut logo_rect = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::DrawImage { rect, source } = command
+                && source.image == DEV_SHELL_LOGO_IMAGE_HANDLE
+            {
+                logo_rect = Some(*rect);
+            }
+        });
+        let logo_rect = logo_rect
+            .expect("dev shell should render the SUI menu trigger from the registered logo image");
+        let logo_image = output
+            .frame
+            .image_registry
+            .get(DEV_SHELL_LOGO_IMAGE_HANDLE)
+            .expect("dev shell logo image should be registered");
+
+        assert_eq!(logo_rect.width(), DEV_SHELL_LOGO_BUTTON_SIZE);
+        assert_eq!(logo_rect.height(), DEV_SHELL_LOGO_BUTTON_SIZE);
+        assert_eq!(logo_image.width(), DEV_SHELL_LOGO_IMAGE_SIZE);
+        assert_eq!(logo_image.height(), DEV_SHELL_LOGO_IMAGE_SIZE);
+        assert!(
+            logo_image.bytes().chunks_exact(4).any(|pixel| pixel[3] > 0),
+            "the SVG-backed logo raster should contain visible pixels"
+        );
+    }
+
+    #[test]
+    fn paint_workspace_exposes_canvas_and_inspector_controls() {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("paint workspace should render");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("paint workspace semantics should exist");
+
+        let canvas = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Canvas && node.name.as_deref() == Some(PAINT_TAB_LABEL)
+            })
+            .expect("expected the paint workspace to expose the pixel canvas");
+        let properties = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(PAINT_PROPERTIES_NAME)
+            })
+            .expect("expected the paint workspace to expose the properties dock");
+        assert!(
+            canvas.bounds.max_x() <= properties.bounds.x() + 0.5,
+            "paint canvas should not overlap the properties dock: canvas={:?}, properties={:?}",
+            canvas.bounds,
+            properties.bounds
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(PAINT_COLOR_EDITOR_NAME)
+                    && node.state.expanded == Some(false)
+            }),
+            "expected the full color editor to start collapsed"
+        );
+        assert!(
+            !semantics.iter().any(|node| {
+                node.role == SemanticsRole::ColorPicker
+                    && node.name.as_deref() == Some(PAINT_BRUSH_COLOR_NAME)
+            }),
+            "expected the hidden full color picker to stay out of the initial semantics tree"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(PAINT_COLOR_PRESETS_NAME)
+                    && node.value == Some(SemanticsValue::Text("Ocean #1438C7FF".to_string()))
+            }),
+            "expected the color presets to expose the selected brush color"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ColorSwatch
+                    && node.name.as_deref() == Some(PAINT_BRUSH_COLOR_NAME)
+                    && node.value == Some(SemanticsValue::Text("#1438C7FF".to_string()))
+                    && node.actions.is_empty()
+            }),
+            "expected the visible brush color well to expose the current brush color"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ColorSwatch
+                    && node.name.as_deref() == Some("Ocean")
+                    && node.state.selected
+            }),
+            "expected the initial Ocean color preset to be selected"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Image
+                    && node.name.as_deref() == Some(PAINT_BRUSH_PREVIEW_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Text(
+                            "Square brush, 18 px, 100% opacity".to_string(),
+                        ))
+            }),
+            "expected the brush preview to expose the current brush settings"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(PAINT_BRUSH_SIZE_PRESETS_NAME)
+                    && node.value == Some(SemanticsValue::Text("18 px".to_string()))
+            }),
+            "expected the brush size presets to expose the selected preset"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("18 px")
+                    && node.state.selected
+            }),
+            "expected the initial 18 px brush preset to be selected"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::List
+                    && node.name.as_deref() == Some(PAINT_LAYERS_NAME)
+                    && node.value == Some(SemanticsValue::Text("Paint".to_string()))
+            }),
+            "expected the paint workspace to expose the selected layer list"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ListItem
+                    && node.name.as_deref() == Some("Paint")
+                    && node.description.as_deref() == Some("Normal / 100%")
+                    && node.value
+                        == Some(SemanticsValue::Text(
+                            "Normal / 100%; Visible; Unlocked".to_string(),
+                        ))
+                    && node.state.selected
+            }),
+            "expected the visible paint layer row to expose its detail and selection state"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ListItem
+                    && node.name.as_deref() == Some("Paper")
+                    && node.description.as_deref() == Some("Normal / 100%")
+                    && node.value
+                        == Some(SemanticsValue::Text(
+                            "Normal / 100%; Visible; Locked".to_string(),
+                        ))
+                    && !node.state.selected
+            }),
+            "expected the visible paper layer row to expose its detail"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hide Paint layer")
+                    && node.value == Some(SemanticsValue::Text("Visible".to_string()))
+                    && node.state.checked == Some(ToggleState::Checked)
+            }),
+            "expected the paint layer to expose a visibility toggle"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Lock Paint layer")
+                    && node.value == Some(SemanticsValue::Text("Unlocked".to_string()))
+                    && node.state.checked == Some(ToggleState::Unchecked)
+            }),
+            "expected the paint layer to expose an unlocked lock toggle"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Unlock Paper layer")
+                    && node.value == Some(SemanticsValue::Text("Locked".to_string()))
+                    && node.state.checked == Some(ToggleState::Checked)
+            }),
+            "expected the paper layer to expose a locked lock toggle"
+        );
+        for group in [
+            "Paint toolbar",
+            PAINT_HISTORY_COMMANDS_NAME,
+            PAINT_VIEW_COMMANDS_NAME,
+            PAINT_DOCUMENT_COMMANDS_NAME,
+            "Paint tools",
+            PAINT_DOCUMENT_BAR_NAME,
+            PAINT_DOCUMENT_VIEW_COMMANDS_NAME,
+            PAINT_HORIZONTAL_RULER_NAME,
+            PAINT_VERTICAL_RULER_NAME,
+        ] {
+            assert!(
+                semantics.iter().any(|node| {
+                    node.role == SemanticsRole::GenericContainer
+                        && node.name.as_deref() == Some(group)
+                }),
+                "expected the paint workspace to expose the {group} group"
+            );
+        }
+        for text in [PAINT_DOCUMENT_NAME, PAINT_PROPERTIES_NAME, "1920 x 1080 px"] {
+            assert!(
+                semantics.iter().any(|node| {
+                    node.role == SemanticsRole::Text && node.name.as_deref() == Some(text)
+                }),
+                "expected the paint workspace to expose {text:?}"
+            );
+        }
+        let document_zoom = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some(PAINT_ZOOM_READOUT_NAME)
+            })
+            .expect("expected the document bar to expose the zoom level");
+        let Some(SemanticsValue::Text(document_zoom_value)) = &document_zoom.value else {
+            panic!("expected the document zoom readout to expose its visible value");
+        };
+        assert!(
+            document_zoom_value.starts_with("Zoom "),
+            "expected the document zoom readout value to match visible zoom text, got {document_zoom_value:?}"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Brush tool")
+                    && node.state.selected
+            }),
+            "expected the active paint tool to be exposed as selected"
+        );
+        for button in [PAINT_ZOOM_OUT_NAME, PAINT_ZOOM_IN_NAME] {
+            assert!(
+                semantics.iter().any(|node| {
+                    node.role == SemanticsRole::Button && node.name.as_deref() == Some(button)
+                }),
+                "expected the document bar to expose the {button} button"
+            );
+        }
+        for button in [
+            "Undo",
+            "Redo",
+            PAINT_FIT_VIEW_NAME,
+            PAINT_ACTUAL_SIZE_NAME,
+            "Clear",
+            "Export",
+        ] {
+            assert!(
+                semantics.iter().any(|node| {
+                    node.role == SemanticsRole::Button && node.name.as_deref() == Some(button)
+                }),
+                "expected the paint toolbar to expose the {button} button"
+            );
+        }
+        for button in ["Undo", "Redo"] {
+            let node = semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::Button && node.name.as_deref() == Some(button)
+                })
+                .expect("toolbar history button should exist");
+            assert!(node.state.disabled, "expected {button} to start disabled");
+        }
+        let clear = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Clear")
+            })
+            .expect("clear button should exist");
+        assert!(
+            !clear.state.disabled,
+            "seeded paint document should be clearable"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Paint status")
+            }),
+            "expected the paint workspace to expose a status bar"
+        );
+        for status in [
+            "Tool Brush",
+            "Brush 18 px / 100%",
+            "Blend Normal",
+            "Layer Paint / Normal / 100% / Unlocked",
+            "Document 1920 x 1080 px",
+            "Cursor --",
+        ] {
+            assert!(
+                semantics.iter().any(|node| {
+                    node.role == SemanticsRole::Text && node.name.as_deref() == Some(status)
+                }),
+                "expected the paint status bar to expose {status:?}"
+            );
+        }
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| name.starts_with("Zoom "))
+            }),
+            "expected the paint status bar to expose zoom"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::SpinBox
+                    && node.name.as_deref() == Some(PAINT_BRUSH_SIZE_NAME)
+                    && node.value == Some(SemanticsValue::Number(PAINT_INITIAL_BRUSH_SIZE as f64))
+            }),
+            "expected the brush size number input to expose its value"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(PAINT_BRUSH_OPACITY_NAME)
+            }),
+            "expected the brush opacity slider to be accessible"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(PAINT_LAYER_OPACITY_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: 1.0,
+                            min: 0.0,
+                            max: 1.0,
+                        })
+            }),
+            "expected the selected layer opacity slider to expose its value"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_LAYER_BLEND_MODE_NAME)
+                    && node.value == Some(SemanticsValue::Text("Normal".to_string()))
+            }),
+            "expected the selected layer blend mode select to expose its value"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_BRUSH_SHAPE_NAME)
+                    && node.value == Some(SemanticsValue::Text("Square".to_string()))
+            }),
+            "expected the brush shape select to expose the current brush shape"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_BLEND_MODE_NAME)
+                    && node.value == Some(SemanticsValue::Text("Normal".to_string()))
+            }),
+            "expected the blend mode select to expose the current blend mode"
+        );
+    }
+
+    #[test]
+    fn paint_workspace_layer_list_updates_selected_layer_status() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let layers = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::List && node.name.as_deref() == Some(PAINT_LAYERS_NAME)
+            })
+            .expect("layers list should exist");
+        let position = Point::new(
+            layers.bounds.x() + 104.0,
+            layers.bounds.y() + layers.bounds.height() - 24.0,
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let layers = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::List && node.name.as_deref() == Some(PAINT_LAYERS_NAME)
+            })
+            .expect("layers list should still exist");
+        assert_eq!(
+            layers.value,
+            Some(SemanticsValue::Text("Paper".to_string()))
+        );
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer row should still exist");
+        assert!(paper.state.selected);
+        assert_eq!(
+            paper.value,
+            Some(SemanticsValue::Text(
+                "Normal / 100%; Visible; Locked".to_string()
+            ))
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layer Paper / Normal / 100% / Locked")
+            }),
+            "expected the status bar to expose the selected Paper layer"
+        );
+
+        let above = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some(PAINT_SELECT_LAYER_ABOVE_NAME)
+            })
+            .expect("select layer above action should exist");
+        assert!(
+            above.actions.contains(&SemanticsAction::Activate),
+            "select layer above should be enabled when Paper is selected"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some(PAINT_SELECT_LAYER_BELOW_NAME)
+                    && node.state.disabled
+            }),
+            "select layer below should be disabled at the bottom layer"
+        );
+        let position = Point::new(
+            above.bounds.x() + (above.bounds.width() * 0.5),
+            above.bounds.y() + (above.bounds.height() * 0.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 2;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 2;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 2;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row should still exist");
+        assert!(
+            paint.state.selected,
+            "expected the Paint layer row to follow the header action selection"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layer Paint / Normal / 100% / Unlocked")
+            }),
+            "expected the status bar to expose the selected Paint layer"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_layer_visibility_toggle_updates_semantics() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let paper_visibility = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hide Paper layer")
+            })
+            .expect("paper layer visibility button should exist");
+        let position = Point::new(
+            paper_visibility.bounds.x() + (paper_visibility.bounds.width() * 0.5),
+            paper_visibility.bounds.y() + (paper_visibility.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 5;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 5;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 5;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let layers = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::List && node.name.as_deref() == Some(PAINT_LAYERS_NAME)
+            })
+            .expect("layers list should still exist");
+        assert_eq!(
+            layers.value,
+            Some(SemanticsValue::Text("Paint".to_string()))
+        );
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row should still exist");
+        assert!(paint.state.selected);
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer row should still exist");
+        assert!(!paper.state.selected);
+        assert_eq!(
+            paper.value,
+            Some(SemanticsValue::Text(
+                "Normal / 100%; Hidden; Locked".to_string()
+            ))
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Show Paper layer")
+                    && node.value == Some(SemanticsValue::Text("Hidden".to_string()))
+                    && node.state.checked == Some(ToggleState::Unchecked)
+            }),
+            "expected the paper layer visibility toggle to expose the hidden state"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_paint_layer_display_controls_drive_canvas_state() -> Result<()> {
+        let paint_state = PixelCanvasState::new();
+        let mut runtime = finish_dev_application(build_paint_demo_with_state(paint_state.clone()))
+            .build()
+            .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        assert!(paint_state.display_visible());
+        assert_eq!(paint_state.display_opacity(), 1.0);
+        assert_eq!(
+            paint_state.display_blend_mode(),
+            PixelCanvasBlendMode::Normal
+        );
+
+        let paint_visibility = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hide Paint layer")
+            })
+            .expect("paint layer visibility button should exist");
+        let visibility_position = Point::new(
+            paint_visibility.bounds.x() + (paint_visibility.bounds.width() * 0.5),
+            paint_visibility.bounds.y() + (paint_visibility.bounds.height() * 0.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, visibility_position);
+        move_event.pointer_id = 12;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, visibility_position);
+        down.pointer_id = 12;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, visibility_position);
+        up.pointer_id = 12;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert!(!paint_state.display_visible());
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("paint canvas semantics should exist");
+        assert!(
+            matches!(
+                canvas.value.as_ref(),
+                Some(SemanticsValue::Text(value)) if value.contains("layer hidden")
+            ),
+            "expected the paint canvas semantics to report the hidden paint layer"
+        );
+
+        paint_state.set_display_visible(true);
+        let output = runtime.render(window_id)?;
+        let opacity = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(PAINT_LAYER_OPACITY_NAME)
+            })
+            .expect("layer opacity slider should exist");
+        let opacity_position = Point::new(
+            opacity.bounds.x() + (opacity.bounds.width() * 0.5),
+            opacity.bounds.y() + (opacity.bounds.height() * 0.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, opacity_position);
+        move_event.pointer_id = 13;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, opacity_position);
+        down.pointer_id = 13;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, opacity_position);
+        up.pointer_id = 13;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+        assert_eq!(paint_state.display_opacity(), 0.5);
+
+        let output = runtime.render(window_id)?;
+        let blend = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_LAYER_BLEND_MODE_NAME)
+            })
+            .expect("layer blend mode select should exist");
+        let blend_position = Point::new(
+            blend.bounds.x() + (blend.bounds.width() * 0.5),
+            blend.bounds.y() + (blend.bounds.height() * 0.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, blend_position);
+        move_event.pointer_id = 14;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, blend_position);
+        down.pointer_id = 14;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, blend_position);
+        up.pointer_id = 14;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+        let _ = runtime.render(window_id)?;
+
+        let option_position = Point::new(
+            blend.bounds.x() + (blend.bounds.width() * 0.5),
+            blend.bounds.y() + blend.bounds.height() + 6.0 + (blend.bounds.height() * 1.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, option_position);
+        move_event.pointer_id = 14;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, option_position);
+        down.pointer_id = 14;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, option_position);
+        up.pointer_id = 14;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+        assert_eq!(
+            paint_state.display_blend_mode(),
+            PixelCanvasBlendMode::Multiply
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_paper_layer_display_controls_drive_canvas_state() -> Result<()> {
+        let paint_state = PixelCanvasState::new();
+        let mut runtime = finish_dev_application(build_paint_demo_with_state(paint_state.clone()))
+            .build()
+            .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        assert!(paint_state.paper_visible());
+        assert_eq!(paint_state.paper_opacity(), 1.0);
+        assert!(paint_state.display_visible());
+        assert_eq!(paint_state.display_opacity(), 1.0);
+
+        let paper_visibility = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hide Paper layer")
+            })
+            .expect("paper layer visibility button should exist");
+        let visibility_position = Point::new(
+            paper_visibility.bounds.x() + (paper_visibility.bounds.width() * 0.5),
+            paper_visibility.bounds.y() + (paper_visibility.bounds.height() * 0.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, visibility_position);
+        move_event.pointer_id = 15;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, visibility_position);
+        down.pointer_id = 15;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, visibility_position);
+        up.pointer_id = 15;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert!(!paint_state.paper_visible());
+        assert!(paint_state.display_visible());
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("paint canvas semantics should exist");
+        assert!(
+            matches!(
+                canvas.value.as_ref(),
+                Some(SemanticsValue::Text(value)) if value.contains("paper layer hidden")
+            ),
+            "expected the paint canvas semantics to report the hidden paper layer"
+        );
+
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer row should exist");
+        let paper_position = Point::new(
+            paper.bounds.x() + (paper.bounds.width() * 0.5),
+            paper.bounds.y() + (paper.bounds.height() * 0.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, paper_position);
+        move_event.pointer_id = 16;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, paper_position);
+        down.pointer_id = 16;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, paper_position);
+        up.pointer_id = 16;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let opacity = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(PAINT_LAYER_OPACITY_NAME)
+            })
+            .expect("layer opacity slider should exist");
+        let opacity_position = Point::new(
+            opacity.bounds.x() + (opacity.bounds.width() * 0.5),
+            opacity.bounds.y() + (opacity.bounds.height() * 0.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, opacity_position);
+        move_event.pointer_id = 17;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, opacity_position);
+        down.pointer_id = 17;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, opacity_position);
+        up.pointer_id = 17;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert_eq!(paint_state.paper_opacity(), 0.5);
+        assert_eq!(paint_state.display_opacity(), 1.0);
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("paint canvas semantics should exist");
+        assert!(
+            matches!(
+                canvas.value.as_ref(),
+                Some(SemanticsValue::Text(value)) if value.contains("paper opacity 50%")
+            ),
+            "expected the paint canvas semantics to report the paper opacity"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_layer_lock_toggle_updates_semantics() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let paint_lock = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Lock Paint layer")
+            })
+            .expect("paint layer lock button should exist");
+        let position = Point::new(
+            paint_lock.bounds.x() + (paint_lock.bounds.width() * 0.5),
+            paint_lock.bounds.y() + (paint_lock.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 9;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 9;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 9;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row should still exist");
+        assert!(paint.state.selected);
+        assert_eq!(
+            paint.value,
+            Some(SemanticsValue::Text(
+                "Normal / 100%; Visible; Locked".to_string()
+            ))
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Unlock Paint layer")
+                    && node.value == Some(SemanticsValue::Text("Locked".to_string()))
+                    && node.state.checked == Some(ToggleState::Checked)
+            }),
+            "expected the paint layer lock toggle to expose the locked state"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_selected_locked_layer_makes_canvas_read_only() -> Result<()> {
+        let paint_state = PixelCanvasState::new();
+        let mut runtime = finish_dev_application(build_paint_demo_with_state(paint_state.clone()))
+            .build()
+            .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        assert!(paint_state.is_editable());
+
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer row should exist");
+        let position = Point::new(
+            paper.bounds.x() + paper.bounds.width() * 0.5,
+            paper.bounds.y() + paper.bounds.height() * 0.5,
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 10;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 10;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 10;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert!(!paint_state.is_editable());
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("paint canvas semantics should exist");
+        assert!(
+            matches!(
+                canvas.value.as_ref(),
+                Some(SemanticsValue::Text(value)) if value.contains("read only")
+            ),
+            "expected selected locked layer to make the canvas read only"
+        );
+        assert!(
+            !canvas
+                .actions
+                .contains(&SemanticsAction::Custom("Paint".into())),
+            "read-only canvas should not expose a Paint action"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layer Paper / Normal / 100% / Locked")
+            }),
+            "expected the status bar to expose the locked selected layer"
+        );
+
+        let unlock = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Unlock Paper layer")
+            })
+            .expect("paper layer unlock control should exist");
+        let unlock_position = Point::new(
+            unlock.bounds.x() + unlock.bounds.width() * 0.5,
+            unlock.bounds.y() + unlock.bounds.height() * 0.5,
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, unlock_position);
+        move_event.pointer_id = 11;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, unlock_position);
+        down.pointer_id = 11;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, unlock_position);
+        up.pointer_id = 11;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert!(paint_state.is_editable());
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("paint canvas semantics should exist");
+        assert!(
+            matches!(
+                canvas.value.as_ref(),
+                Some(SemanticsValue::Text(value)) if value.contains("editable")
+            ),
+            "expected unlocked selected layer to make the canvas editable"
+        );
+        assert!(
+            canvas
+                .actions
+                .contains(&SemanticsAction::Custom("Paint".into())),
+            "editable canvas should expose a Paint action"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layer Paper / Normal / 100% / Unlocked")
+            }),
+            "expected the status bar to expose the unlocked selected layer"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_layer_opacity_updates_layer_detail() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let opacity = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(PAINT_LAYER_OPACITY_NAME)
+            })
+            .expect("layer opacity slider should exist");
+        let position = Point::new(
+            opacity.bounds.x() + (opacity.bounds.width() * 0.5),
+            opacity.bounds.y() + (opacity.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 6;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 6;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 6;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let opacity = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(PAINT_LAYER_OPACITY_NAME)
+            })
+            .expect("layer opacity slider should still exist");
+        assert_eq!(
+            opacity.value,
+            Some(SemanticsValue::Range {
+                value: 0.5,
+                min: 0.0,
+                max: 1.0,
+            })
+        );
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row should still exist");
+        assert_eq!(paint.description.as_deref(), Some("Normal / 50%"));
+        assert_eq!(
+            paint.value,
+            Some(SemanticsValue::Text(
+                "Normal / 50%; Visible; Unlocked".to_string()
+            ))
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layer Paint / Normal / 50% / Unlocked")
+            }),
+            "expected the status bar to expose the edited layer opacity"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_layer_blend_mode_updates_layer_detail() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let blend = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_LAYER_BLEND_MODE_NAME)
+            })
+            .expect("layer blend mode select should exist");
+        let position = Point::new(
+            blend.bounds.x() + (blend.bounds.width() * 0.5),
+            blend.bounds.y() + (blend.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 8;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 8;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 8;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let _ = runtime.render(window_id)?;
+        let option_position = Point::new(
+            blend.bounds.x() + (blend.bounds.width() * 0.5),
+            blend.bounds.y() + blend.bounds.height() + 6.0 + (blend.bounds.height() * 1.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, option_position);
+        move_event.pointer_id = 8;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, option_position);
+        down.pointer_id = 8;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, option_position);
+        up.pointer_id = 8;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let blend = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_LAYER_BLEND_MODE_NAME)
+            })
+            .expect("layer blend mode select should still exist");
+        assert_eq!(
+            blend.value,
+            Some(SemanticsValue::Text("Multiply".to_string()))
+        );
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row should still exist");
+        assert_eq!(paint.description.as_deref(), Some("Multiply / 100%"));
+        assert_eq!(
+            paint.value,
+            Some(SemanticsValue::Text(
+                "Multiply / 100%; Visible; Unlocked".to_string()
+            ))
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layer Paint / Multiply / 100% / Unlocked")
+            }),
+            "expected the status bar to expose the edited layer blend mode"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_brush_size_preset_updates_canvas_state() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let preset = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("36 px")
+            })
+            .expect("36 px brush preset should exist");
+        let position = Point::new(
+            preset.bounds.x() + (preset.bounds.width() * 0.5),
+            preset.bounds.y() + (preset.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 3;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 3;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 3;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(PAINT_BRUSH_SIZE_PRESETS_NAME)
+                    && node.value == Some(SemanticsValue::Text("36 px".to_string()))
+            }),
+            "expected the brush size preset group to expose 36 px"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("36 px")
+                    && node.state.selected
+            }),
+            "expected the 36 px preset to be selected"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::SpinBox
+                    && node.name.as_deref() == Some(PAINT_BRUSH_SIZE_NAME)
+                    && node.value == Some(SemanticsValue::Number(36.0))
+            }),
+            "expected the brush size number input to sync to 36"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Image
+                    && node.name.as_deref() == Some(PAINT_BRUSH_PREVIEW_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Text(
+                            "Square brush, 36 px, 100% opacity".to_string(),
+                        ))
+            }),
+            "expected the brush preview to reflect the selected 36 px preset"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_color_preset_updates_brush_color() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let preset = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some("Coral")
+            })
+            .expect("Coral color preset should exist");
+        let position = Point::new(
+            preset.bounds.x() + (preset.bounds.width() * 0.5),
+            preset.bounds.y() + (preset.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 4;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 4;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 4;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(PAINT_COLOR_PRESETS_NAME)
+                    && node.value == Some(SemanticsValue::Text("Coral #E6522EFF".to_string()))
+            }),
+            "expected the color presets to expose Coral"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::ColorSwatch
+                    && node.name.as_deref() == Some("Coral")
+                    && node.state.selected
+            }),
+            "expected the Coral preset to be selected"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::ColorSwatch
+                    && node.name.as_deref() == Some(PAINT_BRUSH_COLOR_NAME)
+                    && node.value == Some(SemanticsValue::Text("#E6522EFF".to_string()))
+                    && node.actions.is_empty()
+            }),
+            "expected the visible brush color well to sync to Coral"
+        );
+        assert!(
+            !output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::ColorPicker
+                    && node.name.as_deref() == Some(PAINT_BRUSH_COLOR_NAME)
+            }),
+            "expected the full color picker to stay hidden while the editor is collapsed"
+        );
+
+        let scroll = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(PAINT_SCROLL_NAME)
+            })
+            .expect("paint controls scroll view should exist");
+        let mut scroll_event = PointerEvent::new(
+            PointerEventKind::Scroll,
+            Point::new(scroll.bounds.x() + 16.0, scroll.bounds.max_y() - 16.0),
+        );
+        scroll_event.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -240.0)));
+        runtime.handle_event(window_id, Event::Pointer(scroll_event))?;
+
+        let output = runtime.render(window_id)?;
+        let editor = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(PAINT_COLOR_EDITOR_NAME)
+            })
+            .expect("color editor section should exist");
+        let position = Point::new(editor.bounds.x() + 20.0, editor.bounds.y() + 8.0);
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 5;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 5;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(PAINT_COLOR_EDITOR_NAME)
+                    && node.state.expanded == Some(true)
+            }),
+            "expected the color editor section to expand"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::ColorPicker
+                    && node.name.as_deref() == Some(PAINT_BRUSH_COLOR_NAME)
+                    && node.value == Some(SemanticsValue::Text("#E6522EFF".to_string()))
+            }),
+            "expected the expanded color picker to sync to the selected Coral color"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_tool_buttons_update_selected_tool() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let eraser = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Eraser tool")
+            })
+            .expect("eraser tool button should exist");
+        let position = Point::new(
+            eraser.bounds.x() + (eraser.bounds.width() * 0.5),
+            eraser.bounds.y() + (eraser.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let eraser = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Eraser tool")
+            })
+            .expect("eraser tool button should still exist");
+        let brush = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Brush tool")
+            })
+            .expect("brush tool button should still exist");
+
+        assert!(
+            eraser.state.selected,
+            "eraser state after click: selected={}, bounds={:?}; brush selected={}, bounds={:?}; click={:?}",
+            eraser.state.selected, eraser.bounds, brush.state.selected, brush.bounds, position
+        );
+        assert!(!brush.state.selected);
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Image
+                    && node.name.as_deref() == Some(PAINT_ERASER_PREVIEW_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Text(
+                            "Square eraser, 18 px, 100% opacity".to_string(),
+                        ))
+            }),
+            "expected eraser selection to swap in the eraser preview pane"
+        );
+        assert!(
+            !output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Image
+                    && node.name.as_deref() == Some(PAINT_BRUSH_PREVIEW_NAME)
+            }),
+            "brush preview should not remain exposed when the Eraser tool is active"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Eraser 18 px / 100%")
+            }),
+            "expected the status bar to expose eraser-specific tool settings"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_fill_and_pan_tools_swap_property_panes() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let fill = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Fill tool")
+            })
+            .expect("fill tool button should exist");
+        let position = Point::new(
+            fill.bounds.x() + (fill.bounds.width() * 0.5),
+            fill.bounds.y() + (fill.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 6;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 6;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 6;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(PAINT_FILL_OPACITY_NAME)
+            }),
+            "expected Fill to expose fill opacity"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_FILL_BLEND_MODE_NAME)
+                    && node.value == Some(SemanticsValue::Text("Normal".to_string()))
+            }),
+            "expected Fill to expose fill blend mode"
+        );
+        assert!(
+            !output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::SpinBox
+                    && node.name.as_deref() == Some(PAINT_BRUSH_SIZE_NAME)
+            }),
+            "Fill should not expose brush size controls"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Fill 100%")
+            }),
+            "expected the status bar to expose fill-specific tool settings"
+        );
+
+        let pan = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Pan tool")
+            })
+            .expect("pan tool button should exist");
+        let position = Point::new(
+            pan.bounds.x() + (pan.bounds.width() * 0.5),
+            pan.bounds.y() + (pan.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 7;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 7;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 7;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some(PAINT_FIT_VIEW_NAME)
+            }),
+            "expected Pan to expose fit view"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some(PAINT_ACTUAL_SIZE_NAME)
+            }),
+            "expected Pan to expose actual size"
+        );
+        assert!(
+            !output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(PAINT_FILL_OPACITY_NAME)
+            }),
+            "Pan should not expose fill opacity controls"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Pan view")
+            }),
+            "expected the status bar to expose pan-specific tool settings"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_export_button_creates_export_snapshot() -> Result<()> {
+        let paint_state = PixelCanvasState::new();
+        let mut runtime = finish_dev_application(build_paint_demo_with_state(paint_state.clone()))
+            .build()
+            .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        assert!(
+            paint_state.latest_export_snapshot().is_none(),
+            "export snapshot should not exist before clicking Export"
+        );
+        let export = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Export")
+            })
+            .expect("export button should exist");
+        let position = Point::new(
+            export.bounds.x() + (export.bounds.width() * 0.5),
+            export.bounds.y() + (export.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let snapshot = paint_state
+            .latest_export_snapshot()
+            .expect("export button should request a canvas snapshot");
+        assert_eq!(snapshot.name(), PAINT_TAB_LABEL);
+        assert_eq!(snapshot.width(), PAINT_DOCUMENT_WIDTH);
+        assert_eq!(snapshot.height(), PAINT_DOCUMENT_HEIGHT);
+        assert_eq!(
+            snapshot.byte_len(),
+            PAINT_DOCUMENT_WIDTH * PAINT_DOCUMENT_HEIGHT * 4
+        );
+        assert!(
+            !output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| name.starts_with("Exported "))
+            }),
+            "export details should not take over the editor status bar"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_canvas_cursor_updates_status_bar() -> Result<()> {
+        let paint_state = PixelCanvasState::new();
+        let mut runtime = finish_dev_application(build_paint_demo_with_state(paint_state.clone()))
+            .build()
+            .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Cursor --")
+            }),
+            "cursor status should start empty"
+        );
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Canvas && node.name.as_deref() == Some(PAINT_TAB_LABEL)
+            })
+            .expect("paint canvas should exist");
+        let position = Point::new(
+            canvas.bounds.x() + canvas.bounds.width() * 0.5,
+            canvas.bounds.y() + canvas.bounds.height() * 0.5,
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 9;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let output = runtime.render(window_id)?;
+        assert_eq!(
+            paint_state.cursor_position(),
+            Some(Point::new(
+                PAINT_DOCUMENT_WIDTH as f32 * 0.5,
+                PAINT_DOCUMENT_HEIGHT as f32 * 0.5
+            ))
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Cursor 960, 540")
+            }),
+            "cursor status should expose document coordinates"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_clear_button_records_undoable_canvas_change() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Canvas && node.name.as_deref() == Some(PAINT_TAB_LABEL)
+            })
+            .expect("paint canvas should exist");
+        assert!(!canvas.actions.contains(&SemanticsAction::Undo));
+        let clear = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Clear")
+            })
+            .expect("clear button should exist");
+        let position = Point::new(
+            clear.bounds.x() + (clear.bounds.width() * 0.5),
+            clear.bounds.y() + (clear.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Canvas && node.name.as_deref() == Some(PAINT_TAB_LABEL)
+            })
+            .expect("paint canvas should still exist");
+        assert!(canvas.actions.contains(&SemanticsAction::Undo));
+        let clear = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Clear")
+            })
+            .expect("clear button should still exist");
+        assert!(clear.state.disabled);
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_blend_mode_select_updates_canvas_state() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let blend = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_BLEND_MODE_NAME)
+            })
+            .expect("blend mode select should exist");
+        let position = Point::new(
+            blend.bounds.x() + (blend.bounds.width() * 0.5),
+            blend.bounds.y() + (blend.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let _ = runtime.render(window_id)?;
+        let option_position = Point::new(
+            blend.bounds.x() + (blend.bounds.width() * 0.5),
+            blend.bounds.y() + blend.bounds.height() + 6.0 + (blend.bounds.height() * 1.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, option_position);
+        move_event.pointer_id = 1;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, option_position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, option_position);
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let blend = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_BLEND_MODE_NAME)
+            })
+            .expect("blend mode select should still exist");
+        assert_eq!(
+            blend.value,
+            Some(SemanticsValue::Text("Multiply".to_string()))
+        );
+
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Canvas && node.name.as_deref() == Some(PAINT_TAB_LABEL)
+            })
+            .expect("paint canvas should exist");
+        let Some(SemanticsValue::Text(value)) = &canvas.value else {
+            panic!("paint canvas should expose text value");
+        };
+        assert!(
+            value.contains("blend Multiply"),
+            "unexpected canvas value after blend selection: {value}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_brush_shape_select_updates_canvas_state() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(PAINT_TAB_LABEL),
+        ))
+        .build()
+        .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let shape = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_BRUSH_SHAPE_NAME)
+            })
+            .expect("brush shape select should exist");
+        let position = Point::new(
+            shape.bounds.x() + (shape.bounds.width() * 0.5),
+            shape.bounds.y() + (shape.bounds.height() * 0.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let _ = runtime.render(window_id)?;
+        let option_position = Point::new(
+            shape.bounds.x() + (shape.bounds.width() * 0.5),
+            shape.bounds.y() + shape.bounds.height() + 6.0 + (shape.bounds.height() * 1.5),
+        );
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, option_position);
+        move_event.pointer_id = 1;
+        runtime.handle_event(window_id, Event::Pointer(move_event))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, option_position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, option_position);
+        up.pointer_id = 1;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        let output = runtime.render(window_id)?;
+        let shape = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(PAINT_BRUSH_SHAPE_NAME)
+            })
+            .expect("brush shape select should still exist");
+        assert_eq!(shape.value, Some(SemanticsValue::Text("Round".to_string())));
+
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Canvas && node.name.as_deref() == Some(PAINT_TAB_LABEL)
+            })
+            .expect("paint canvas should exist");
+        let Some(SemanticsValue::Text(value)) = &canvas.value else {
+            panic!("paint canvas should expose text value");
+        };
+        assert!(
+            value.contains("shape Round"),
+            "unexpected canvas value after brush shape selection: {value}"
+        );
+        Ok(())
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn desktop_automation_builder_uses_browser_shell_layout() {
@@ -3484,6 +5557,73 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
+    fn settings_controls_repaint_when_theme_toggle_changes() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_settings(&window)?;
+
+        let light_snapshot = window.snapshot()?;
+        let feather_width =
+            find_named_node(&light_snapshot, SemanticsRole::SpinBox, FEATHER_WIDTH_NAME);
+        let probe = Rect::new(
+            feather_width.bounds.x() + 8.0,
+            feather_width.bounds.y() + feather_width.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let light_pixel = sample_pixel(&window.capture_screenshot()?, probe, &light_snapshot)?;
+
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name("Dark theme")
+            .click()?;
+
+        let dark_snapshot = window.snapshot()?;
+        let dark_pixel = sample_pixel(&window.capture_screenshot()?, probe, &dark_snapshot)?;
+
+        assert_ne!(
+            light_pixel, dark_pixel,
+            "expected the settings number input surface to repaint after the theme switch toggles"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_controls_repaint_when_theme_toggle_changes() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
+
+        let light_snapshot = window.snapshot()?;
+        let primary_button = find_named_node(
+            &light_snapshot,
+            SemanticsRole::Button,
+            sui_widget_book::PRIMARY_BUTTON_LABEL,
+        );
+        let probe = Rect::new(
+            primary_button.bounds.x() + 8.0,
+            primary_button.bounds.y() + primary_button.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let light_pixel = sample_pixel(&window.capture_screenshot()?, probe, &light_snapshot)?;
+
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name("Dark theme")
+            .click()?;
+
+        let dark_snapshot = window.snapshot()?;
+        let dark_pixel = sample_pixel(&window.capture_screenshot()?, probe, &dark_snapshot)?;
+
+        assert_ne!(
+            light_pixel, dark_pixel,
+            "expected the widget book primary button surface to repaint after the theme switch toggles"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn settings_view_exposes_hdr_theme_mode_controls() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
@@ -3704,6 +5844,19 @@ final_max_luminance={final_max_luminance}
             .to_be_visible()
     }
 
+    fn percentile_index(count: usize, percentile: f64) -> usize {
+        assert!(count > 0, "percentile requires at least one sample");
+        let percentile = percentile.clamp(0.0, 1.0);
+        let rank = (count as f64 * percentile).ceil().max(1.0) as usize;
+        (rank - 1).min(count - 1)
+    }
+
+    #[test]
+    fn percentile_index_uses_nearest_rank_without_promoting_p95_to_max() {
+        assert_eq!(percentile_index(24, 0.95), 22);
+        assert_eq!(percentile_index(1, 0.95), 0);
+    }
+
     #[test]
     fn button_grid_resize_stays_at_stable_60_fps_in_dev_workspace() -> Result<()> {
         const FRAME_BUDGET_MS: f64 = 1000.0 / 60.0;
@@ -3781,7 +5934,7 @@ final_max_luminance={final_max_luminance}
             .unwrap_or(0.0);
         let mut sorted = frame_times_ms.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
-        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_index = percentile_index(valid_count, 0.95);
         let p95_ms = sorted[p95_index];
         let avg_visible_layers = measured_samples
             .iter()
@@ -4035,6 +6188,109 @@ final_max_luminance={final_max_luminance}
             );
         }
 
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(VECTOR_EDITOR_TAB_LABEL),
+        ))
+        .build()
+        .expect("vector editor demo should build");
+        let window_id = runtime.window_ids()[0];
+        runtime.render(window_id)?;
+        let semantics = runtime.semantics(window_id)?;
+
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Canvas
+                    && node.name.as_deref() == Some(VECTOR_EDITOR_TAB_LABEL)
+            }),
+            "expected vector editor to expose its canvas"
+        );
+        assert!(
+            !semantics
+                .iter()
+                .any(|node| node.name.as_deref() == Some("Vector toolbar")
+                    || node.name.as_deref() == Some("Select tool")),
+            "expected vector editor to omit non-functional toolbar controls"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ListItem
+                    && node.name.as_deref() == Some("Blue ellipse")
+                    && node.value
+                        == Some(SemanticsValue::Text(
+                            "124 x 96 px / 78% fill; Visible; Unlocked".to_string(),
+                        ))
+            }),
+            "expected vector object list to expose object values"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(VECTOR_WIDTH_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: 124.0,
+                            min: f64::from(VECTOR_MIN_OBJECT_SIZE),
+                            max: f64::from(VECTOR_DOCUMENT_WIDTH),
+                        })
+            }),
+            "expected selected width slider"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(VECTOR_ROTATION_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: -12.0,
+                            min: -180.0,
+                            max: 180.0,
+                        })
+            }),
+            "expected selected rotation slider"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(VECTOR_STROKE_WIDTH_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: 3.0,
+                            min: 0.5,
+                            max: 24.0,
+                        })
+            }),
+            "expected stroke width slider"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(VECTOR_OPACITY_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: 0.78,
+                            min: 0.0,
+                            max: 1.0,
+                        })
+            }),
+            "expected opacity slider"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(VECTOR_FILL_RULE_NAME)
+                    && node.value == Some(SemanticsValue::Text("Nonzero".to_string()))
+            }),
+            "expected fill rule combo box"
+        );
+        assert!(
+            semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Object Blue ellipse")
+            }),
+            "expected vector status bar to expose selected object"
+        );
+
         Ok(())
     }
 
@@ -4093,7 +6349,7 @@ final_max_luminance={final_max_luminance}
             .unwrap_or(0.0);
         let mut sorted = frame_times_ms.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
-        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_index = percentile_index(valid_count, 0.95);
         let p95_ms = sorted[p95_index];
         let avg_visible_layers = measured_samples
             .iter()
@@ -4307,7 +6563,7 @@ final_max_luminance={final_max_luminance}
             .unwrap_or(0.0);
         let mut sorted = frame_times_ms.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
-        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_index = percentile_index(valid_count, 0.95);
         let p95_ms = sorted[p95_index];
         let avg_visible_layers = measured_samples
             .iter()
@@ -4592,7 +6848,7 @@ final_max_luminance={final_max_luminance}
             .unwrap_or(0.0);
         let mut sorted = frame_times_ms.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
-        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_index = percentile_index(valid_count, 0.95);
         let p95_ms = sorted[p95_index];
         let avg_visible_layers = measured_samples
             .iter()
@@ -4881,7 +7137,7 @@ final_max_luminance={final_max_luminance}
             .unwrap_or(0.0);
         let mut sorted = frame_times_ms.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
-        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_index = percentile_index(valid_count, 0.95);
         let p95_ms = sorted[p95_index];
         let observed_fps = valid_count as f64 / benchmark_elapsed_s;
         let avg_surface_acquire_ms = frame_samples
@@ -5058,7 +7314,7 @@ final_max_luminance={final_max_luminance}
             .unwrap_or(0.0);
         let mut sorted = frame_times_ms.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
-        let p95_index = ((valid_count as f64 * 0.95).ceil() as usize).min(valid_count - 1);
+        let p95_index = percentile_index(valid_count, 0.95);
         let p95_ms = sorted[p95_index];
         let observed_fps = valid_count as f64 / benchmark_elapsed_s;
         let avg_surface_acquire_ms = frame_samples
@@ -5255,19 +7511,20 @@ final_max_luminance={final_max_luminance}
     ) -> Result<()> {
         for _ in 0..max_steps {
             let snapshot = window.snapshot()?;
-            if let Some(story) = find_named_node_optional(&snapshot, role.clone(), name) {
-                let gallery_bounds = find_named_node(
-                    &snapshot,
-                    SemanticsRole::ScrollView,
-                    sui_widget_book::GALLERY_SCROLL_NAME,
-                )
-                .bounds;
-                if visible_area_ratio(story.bounds, gallery_bounds) > 0.0 {
-                    return Ok(());
-                }
+            if story_is_visible_in_gallery(&snapshot, &role, name) {
+                return Ok(());
             }
 
             gallery.scroll_pixels(Vector::new(0.0, -120.0))?;
+        }
+
+        for _ in 0..max_steps.saturating_mul(2) {
+            let snapshot = window.snapshot()?;
+            if story_is_visible_in_gallery(&snapshot, &role, name) {
+                return Ok(());
+            }
+
+            gallery.scroll_pixels(Vector::new(0.0, 120.0))?;
         }
 
         Err(sui::Error::new(format!(
@@ -5329,6 +7586,29 @@ final_max_luminance={final_max_luminance}
             .iter()
             .find(|node| node.role == role && node.name.as_deref() == Some(name))
             .cloned()
+    }
+
+    fn story_is_visible_in_gallery(
+        snapshot: &WindowSnapshot,
+        role: &SemanticsRole,
+        name: &str,
+    ) -> bool {
+        let Some(story) = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.role == *role && node.name.as_deref() == Some(name))
+        else {
+            return false;
+        };
+        let Some(gallery) = snapshot.accessibility.nodes.iter().find(|node| {
+            node.role == SemanticsRole::ScrollView
+                && node.name.as_deref() == Some(sui_widget_book::GALLERY_SCROLL_NAME)
+        }) else {
+            return false;
+        };
+
+        visible_area_ratio(story.bounds, gallery.bounds) > 0.0
     }
 
     fn visible_area_ratio(bounds: Rect, viewport: Rect) -> f32 {

@@ -60,11 +60,14 @@ impl Widget for Padding {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let child_size = self.child.child().measured_size();
-        self.child.arrange(
-            ctx,
-            Rect::from_origin_size(bounds.origin + self.insets.offset().to_vector(), child_size),
+        let content = inset_rect(bounds, self.insets);
+        let measured = self.child.child().measured_size();
+        let child_size = Size::new(
+            measured.width.min(content.width()),
+            measured.height.min(content.height()),
         );
+        self.child
+            .arrange(ctx, Rect::from_origin_size(content.origin, child_size));
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -162,6 +165,7 @@ impl Widget for Align {
 
 pub struct Background {
     brush: Brush,
+    brush_reader: Option<Box<dyn Fn() -> Brush>>,
     child: SingleChild,
 }
 
@@ -172,8 +176,18 @@ impl Background {
     {
         Self {
             brush: brush.into(),
+            brush_reader: None,
             child: SingleChild::new(child),
         }
+    }
+
+    pub fn brush_when<F, B>(mut self, brush: F) -> Self
+    where
+        F: Fn() -> B + 'static,
+        B: Into<Brush>,
+    {
+        self.brush_reader = Some(Box::new(move || brush().into()));
+        self
     }
 
     pub fn child(&self) -> &WidgetPod {
@@ -195,7 +209,12 @@ impl Widget for Background {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.fill_bounds(self.brush.clone());
+        let brush = self
+            .brush_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.brush.clone());
+        ctx.fill_bounds(brush);
         self.child.paint(ctx);
     }
 
@@ -283,10 +302,12 @@ impl Widget for SizedBox {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         if let Some(child) = &mut self.child {
-            child.arrange(
-                ctx,
-                Rect::from_origin_size(bounds.origin, child.child().measured_size()),
+            let measured = child.child().measured_size();
+            let child_size = Size::new(
+                measured.width.min(bounds.width()),
+                measured.height.min(bounds.height()),
             );
+            child.arrange(ctx, Rect::from_origin_size(bounds.origin, child_size));
         }
     }
 
@@ -404,7 +425,12 @@ impl Widget for Stack {
                 main_offset += self.spacing;
             }
 
-            let child_size = child.measured_size();
+            let child_size = stack_arranged_child_size(
+                self.axis,
+                self.alignment,
+                child.measured_size(),
+                cross_available,
+            );
             let cross_offset = aligned_offset(
                 self.alignment,
                 cross_available - axis_cross(self.axis, child_size),
@@ -435,6 +461,118 @@ impl Widget for Stack {
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.children.visit_children_mut(visitor);
+    }
+}
+
+pub struct SwitchView {
+    selected: usize,
+    selected_reader: Option<Box<dyn Fn() -> usize>>,
+    children: WidgetChildren,
+}
+
+impl SwitchView {
+    pub fn new() -> Self {
+        Self {
+            selected: 0,
+            selected_reader: None,
+            children: WidgetChildren::new(),
+        }
+    }
+
+    pub fn selected(mut self, selected: usize) -> Self {
+        self.selected = selected;
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> usize + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
+    }
+
+    pub fn with_child<W>(mut self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self
+    }
+
+    pub fn push<W>(&mut self, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.active_index()
+    }
+
+    pub fn children(&self) -> &[WidgetPod] {
+        self.children.as_slice()
+    }
+
+    pub fn children_mut(&mut self) -> &mut [WidgetPod] {
+        self.children.as_mut_slice()
+    }
+
+    fn active_index(&self) -> Option<usize> {
+        let selected = self
+            .selected_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.selected);
+        (selected < self.children.as_slice().len()).then_some(selected)
+    }
+}
+
+impl Default for SwitchView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Widget for SwitchView {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let Some(index) = self.active_index() else {
+            return constraints.clamp(Size::ZERO);
+        };
+
+        self.children.as_mut_slice()[index].measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        if let Some(index) = self.active_index() {
+            self.children.as_mut_slice()[index].arrange(ctx, bounds);
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        if let Some(index) = self.active_index() {
+            self.children.as_slice()[index].paint(ctx);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if let Some(index) = self.active_index() {
+            self.children.as_slice()[index].semantics(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if let Some(index) = self.active_index() {
+            visitor.visit(&self.children.as_slice()[index]);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if let Some(index) = self.active_index() {
+            visitor.visit(&mut self.children.as_mut_slice()[index]);
+        }
     }
 }
 
@@ -1001,7 +1139,7 @@ impl Widget for ScrollBar {
         let thumb_radius = (thumb.width() * 0.5).min(thumb.height() * 0.5);
         ctx.fill(
             Path::rounded_rect(track, track_radius),
-            palette.surface_pressed.with_alpha(0.7),
+            palette.control_active.with_alpha(0.7),
         );
         ctx.fill(
             Path::rounded_rect(thumb, thumb_radius),
@@ -1654,11 +1792,24 @@ impl Widget for ScrollView {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.sync_state(ctx, bounds.size);
+        let measured = self.child.child().measured_size();
+        let child_size = Size::new(
+            if self.overflow_x == Overflow::Clip {
+                bounds.width()
+            } else {
+                measured.width
+            },
+            if self.overflow_y == Overflow::Clip {
+                bounds.height()
+            } else {
+                measured.height
+            },
+        );
         self.child.arrange(
             ctx,
             Rect::from_origin_size(
                 Point::new(bounds.x() - self.offset.x, bounds.y() - self.offset.y),
-                self.child.child().measured_size(),
+                child_size,
             ),
         );
     }
@@ -2156,6 +2307,22 @@ fn axis_size(axis: Axis, main: f32, cross: f32) -> Size {
     }
 }
 
+fn stack_arranged_child_size(
+    axis: Axis,
+    alignment: Alignment,
+    measured: Size,
+    cross_available: f32,
+) -> Size {
+    let main = axis_main(axis, measured);
+    let measured_cross = axis_cross(axis, measured);
+    let cross = if alignment == Alignment::Stretch {
+        cross_available
+    } else {
+        measured_cross.min(cross_available)
+    };
+    axis_size(axis, main, cross)
+}
+
 fn axis_point(axis: Axis, main: f32, cross: f32) -> Point {
     match axis {
         Axis::Horizontal => Point::new(main, cross),
@@ -2189,7 +2356,7 @@ mod tests {
 
     use super::{
         Align, Background, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView,
-        SizedBox, Stack, VirtualScrollView,
+        SizedBox, Stack, SwitchView, VirtualScrollView,
     };
     use crate::SplitView;
     use sui_core::{
@@ -2646,6 +2813,65 @@ mod tests {
     }
 
     #[test]
+    fn switch_view_only_exposes_selected_child_semantics() {
+        let (output, _) = render_root(
+            SwitchView::new()
+                .selected(1)
+                .with_child(crate::Label::new("Brush options"))
+                .with_child(crate::Label::new("Pan options")),
+        );
+
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Pan options")
+        }));
+        assert!(!output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Brush options")
+        }));
+    }
+
+    #[test]
+    fn switch_view_selected_when_updates_active_child() -> sui_core::Result<()> {
+        let selected = Rc::new(RefCell::new(0_usize));
+        let selected_reader = Rc::clone(&selected);
+        let (mut runtime, window_id) = build_runtime(
+            SwitchView::new()
+                .selected_when(move || *selected_reader.borrow())
+                .with_child(
+                    SizedBox::new()
+                        .size(Size::new(80.0, 24.0))
+                        .with_child(crate::Label::new("Brush options")),
+                )
+                .with_child(
+                    SizedBox::new()
+                        .size(Size::new(120.0, 36.0))
+                        .with_child(crate::Label::new("Fill options")),
+                ),
+        );
+
+        let output = runtime.render(window_id)?;
+        assert_eq!(output.frame.viewport, Size::new(80.0, 24.0));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Brush options")
+        }));
+
+        *selected.borrow_mut() = 1;
+        runtime.handle_event(
+            window_id,
+            Event::Window(sui_core::WindowEvent::Resized(Size::new(120.0, 36.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+
+        assert_eq!(output.frame.viewport, Size::new(120.0, 36.0));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Fill options")
+        }));
+        assert!(!output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Brush options")
+        }));
+        Ok(())
+    }
+
+    #[test]
     fn padding_expands_child_size_and_offsets_bounds() {
         let (output, graph) = render_root(Padding::new(
             Insets {
@@ -2892,6 +3118,41 @@ mod tests {
         assert_eq!(constraints.max.width, 120.0);
         assert!(constraints.max.height.is_infinite());
         assert_eq!(output.frame.viewport, Size::new(120.0, 60.0));
+    }
+
+    #[test]
+    fn vertical_scroll_view_clamps_cross_axis_after_split_arrange() {
+        let (_, graph) = render_root(
+            SizedBox::new().size(Size::new(240.0, 80.0)).with_child(
+                SplitView::horizontal(
+                    FixedBox::new(Size::new(40.0, 80.0), Color::rgba(0.1, 0.2, 0.3, 1.0)),
+                    ScrollView::vertical(Padding::all(
+                        8.0,
+                        Stack::vertical()
+                            .alignment(Alignment::Stretch)
+                            .with_child(FixedBox::new(
+                                Size::new(400.0, 32.0),
+                                Color::rgba(0.4, 0.5, 0.6, 1.0),
+                            )),
+                    )),
+                )
+                .ratio(0.5)
+                .min_first(40.0)
+                .min_second(40.0)
+                .divider_thickness(8.0),
+            ),
+        );
+
+        let content = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                (node.bounds.x() - 132.0).abs() < 0.001
+                    && (node.bounds.y() - 8.0).abs() < 0.001
+                    && (node.bounds.height() - 32.0).abs() < 0.001
+            })
+            .expect("scroll content child should be arranged inside the narrow pane");
+        assert_eq!(content.bounds.width(), 100.0);
     }
 
     #[test]

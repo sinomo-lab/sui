@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod diagnostics;
+mod logo;
 mod widget;
 
 use std::{
@@ -35,6 +36,7 @@ pub use diagnostics::{
     window_performance_summary, window_performance_text_caches, window_render_options,
     window_scene_statistics_detail_mode,
 };
+pub use logo::{DEFAULT_SUI_LOGO_SVG, default_sui_logo_image};
 use std::rc::Rc;
 pub use sui_core::DpiInfo;
 pub use sui_layout::LayoutContext;
@@ -118,7 +120,7 @@ pub enum WindowIcon {
 
 impl WindowIcon {
     pub fn sui() -> Self {
-        Self::from_svg(include_bytes!("../assets/sui-logo.svg").as_slice())
+        Self::from_svg(DEFAULT_SUI_LOGO_SVG)
     }
 
     pub fn from_svg(svg: impl Into<Vec<u8>>) -> Self {
@@ -232,6 +234,14 @@ impl Application {
         Ok(())
     }
 
+    pub fn register_svg_image_with_handle(
+        &mut self,
+        handle: ImageHandle,
+        data: impl AsRef<[u8]>,
+    ) -> Result<()> {
+        self.register_image(handle, RegisteredImage::from_svg(data)?)
+    }
+
     pub fn register_rgba_image(
         &mut self,
         width: u32,
@@ -241,6 +251,41 @@ impl Application {
         let handle = ImageHandle::new(self.next_image_id.max(1));
         self.next_image_id = handle.get() + 1;
         self.register_image(handle, RegisteredImage::from_rgba8(width, height, data)?)?;
+        Ok(handle)
+    }
+
+    pub fn register_svg_image(&mut self, data: impl AsRef<[u8]>) -> Result<ImageHandle> {
+        let handle = ImageHandle::new(self.next_image_id.max(1));
+        self.next_image_id = handle.get() + 1;
+        self.register_image(handle, RegisteredImage::from_svg(data)?)?;
+        Ok(handle)
+    }
+
+    pub fn register_svg_image_at_size_with_handle(
+        &mut self,
+        handle: ImageHandle,
+        width: u32,
+        height: u32,
+        data: impl AsRef<[u8]>,
+    ) -> Result<()> {
+        self.register_image(
+            handle,
+            RegisteredImage::from_svg_at_size(width, height, data)?,
+        )
+    }
+
+    pub fn register_svg_image_at_size(
+        &mut self,
+        width: u32,
+        height: u32,
+        data: impl AsRef<[u8]>,
+    ) -> Result<ImageHandle> {
+        let handle = ImageHandle::new(self.next_image_id.max(1));
+        self.next_image_id = handle.get() + 1;
+        self.register_image(
+            handle,
+            RegisteredImage::from_svg_at_size(width, height, data)?,
+        )?;
         Ok(handle)
     }
 
@@ -410,6 +455,14 @@ impl Runtime {
         Ok(())
     }
 
+    pub fn register_svg_image_with_handle(
+        &mut self,
+        handle: ImageHandle,
+        data: impl AsRef<[u8]>,
+    ) -> Result<()> {
+        self.register_image(handle, RegisteredImage::from_svg(data)?)
+    }
+
     pub fn register_rgba_image(
         &mut self,
         width: u32,
@@ -419,6 +472,41 @@ impl Runtime {
         let handle = ImageHandle::new(self.next_image_id.max(1));
         self.next_image_id = handle.get() + 1;
         self.register_image(handle, RegisteredImage::from_rgba8(width, height, data)?)?;
+        Ok(handle)
+    }
+
+    pub fn register_svg_image(&mut self, data: impl AsRef<[u8]>) -> Result<ImageHandle> {
+        let handle = ImageHandle::new(self.next_image_id.max(1));
+        self.next_image_id = handle.get() + 1;
+        self.register_image(handle, RegisteredImage::from_svg(data)?)?;
+        Ok(handle)
+    }
+
+    pub fn register_svg_image_at_size_with_handle(
+        &mut self,
+        handle: ImageHandle,
+        width: u32,
+        height: u32,
+        data: impl AsRef<[u8]>,
+    ) -> Result<()> {
+        self.register_image(
+            handle,
+            RegisteredImage::from_svg_at_size(width, height, data)?,
+        )
+    }
+
+    pub fn register_svg_image_at_size(
+        &mut self,
+        width: u32,
+        height: u32,
+        data: impl AsRef<[u8]>,
+    ) -> Result<ImageHandle> {
+        let handle = ImageHandle::new(self.next_image_id.max(1));
+        self.next_image_id = handle.get() + 1;
+        self.register_image(
+            handle,
+            RegisteredImage::from_svg_at_size(width, height, data)?,
+        )?;
         Ok(handle)
     }
 
@@ -4368,6 +4456,24 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
 
         assert!(output.frame.image_registry.contains(handle));
+    }
+
+    #[test]
+    fn runtime_attaches_registered_svg_images_to_render_output() {
+        let (mut runtime, window_id, _, _) = build_runtime();
+        let handle = ImageHandle::new(41);
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4" fill="#27B7C8"/></svg>"##;
+
+        runtime
+            .register_svg_image_at_size_with_handle(handle, 16, 16, svg)
+            .unwrap();
+
+        let output = runtime.render(window_id).unwrap();
+        let image = output.frame.image_registry.get(handle).unwrap();
+
+        assert_eq!(image.width(), 16);
+        assert_eq!(image.height(), 16);
+        assert!(image.bytes().chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
     #[test]

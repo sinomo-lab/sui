@@ -1,4 +1,3 @@
-use palette::{FromColor, Oklch, Srgb};
 use sui_core::Color;
 use sui_layout::Padding as Insets;
 use sui_text::TextStyle;
@@ -57,6 +56,7 @@ pub enum ThemeColorScheme {
     #[default]
     Light,
     Dark,
+    HighContrast,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -90,26 +90,26 @@ impl ThemeColors {
         Self {
             name: "light",
             scheme: ThemeColorScheme::Light,
-            base_100: oklch(100.0, 0.0, 0.0),
-            base_200: oklch(98.0, 0.0, 0.0),
-            base_300: oklch(95.0, 0.0, 0.0),
-            base_content: oklch(21.0, 0.006, 285.885),
-            primary: oklch(45.0, 0.24, 277.023),
-            primary_content: oklch(93.0, 0.034, 272.788),
-            secondary: oklch(65.0, 0.241, 354.308),
-            secondary_content: oklch(94.0, 0.028, 342.258),
-            accent: oklch(77.0, 0.152, 181.912),
-            accent_content: oklch(38.0, 0.063, 188.416),
-            neutral: oklch(14.0, 0.005, 285.823),
-            neutral_content: oklch(92.0, 0.004, 286.32),
-            info: oklch(74.0, 0.16, 232.661),
-            info_content: oklch(29.0, 0.066, 243.157),
-            success: oklch(76.0, 0.177, 163.223),
-            success_content: oklch(37.0, 0.077, 168.94),
-            warning: oklch(82.0, 0.189, 84.429),
-            warning_content: oklch(41.0, 0.112, 45.904),
-            error: oklch(71.0, 0.194, 13.428),
-            error_content: oklch(27.0, 0.105, 12.094),
+            base_100: Color::rgba(0.965, 0.973, 0.984, 1.0),
+            base_200: Color::rgba(1.0, 1.0, 1.0, 1.0),
+            base_300: Color::rgba(0.815, 0.842, 0.878, 1.0),
+            base_content: Color::rgba(0.105, 0.137, 0.184, 1.0),
+            primary: Color::rgba(0.045, 0.384, 0.645, 1.0),
+            primary_content: Color::rgba(0.985, 0.995, 1.0, 1.0),
+            secondary: Color::rgba(0.125, 0.565, 0.498, 1.0),
+            secondary_content: Color::rgba(0.975, 1.0, 0.995, 1.0),
+            accent: Color::rgba(0.080, 0.520, 0.600, 1.0),
+            accent_content: Color::rgba(0.960, 1.0, 1.0, 1.0),
+            neutral: Color::rgba(0.180, 0.215, 0.270, 1.0),
+            neutral_content: Color::rgba(0.950, 0.965, 0.985, 1.0),
+            info: Color::rgba(0.075, 0.455, 0.780, 1.0),
+            info_content: Color::rgba(0.960, 0.985, 1.0, 1.0),
+            success: Color::rgba(0.075, 0.555, 0.345, 1.0),
+            success_content: Color::rgba(0.960, 1.0, 0.980, 1.0),
+            warning: Color::rgba(0.740, 0.470, 0.080, 1.0),
+            warning_content: Color::rgba(1.0, 0.985, 0.930, 1.0),
+            error: Color::rgba(0.760, 0.165, 0.200, 1.0),
+            error_content: Color::rgba(1.0, 0.960, 0.965, 1.0),
         }
     }
 
@@ -117,26 +117,53 @@ impl ThemeColors {
         Self {
             name: "dark",
             scheme: ThemeColorScheme::Dark,
-            base_100: oklch(25.33, 0.016, 252.42),
-            base_200: oklch(23.26, 0.014, 253.1),
-            base_300: oklch(21.15, 0.012, 254.09),
-            base_content: oklch(97.807, 0.029, 256.847),
-            primary: oklch(58.0, 0.233, 277.117),
-            primary_content: oklch(96.0, 0.018, 272.314),
-            secondary: oklch(65.0, 0.241, 354.308),
-            secondary_content: oklch(94.0, 0.028, 342.258),
-            accent: oklch(77.0, 0.152, 181.912),
-            accent_content: oklch(38.0, 0.063, 188.416),
-            neutral: oklch(14.0, 0.005, 285.823),
-            neutral_content: oklch(92.0, 0.004, 286.32),
-            info: oklch(74.0, 0.16, 232.661),
-            info_content: oklch(29.0, 0.066, 243.157),
-            success: oklch(76.0, 0.177, 163.223),
-            success_content: oklch(37.0, 0.077, 168.94),
-            warning: oklch(82.0, 0.189, 84.429),
-            warning_content: oklch(41.0, 0.112, 45.904),
-            error: oklch(71.0, 0.194, 13.428),
-            error_content: oklch(27.0, 0.105, 12.094),
+            base_100: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            base_200: Color::rgba(0.065, 0.070, 0.080, 1.0),
+            base_300: Color::rgba(0.760, 0.800, 0.860, 1.0),
+            base_content: Color::rgba(1.0, 1.0, 1.0, 1.0),
+            primary: Color::rgba(0.250, 0.820, 1.0, 1.0),
+            primary_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            secondary: Color::rgba(0.330, 0.980, 0.720, 1.0),
+            secondary_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            accent: Color::rgba(1.0, 0.840, 0.120, 1.0),
+            accent_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            neutral: Color::rgba(0.120, 0.130, 0.150, 1.0),
+            neutral_content: Color::rgba(1.0, 1.0, 1.0, 1.0),
+            info: Color::rgba(0.250, 0.820, 1.0, 1.0),
+            info_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            success: Color::rgba(0.360, 1.0, 0.620, 1.0),
+            success_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            warning: Color::rgba(1.0, 0.840, 0.120, 1.0),
+            warning_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            error: Color::rgba(1.0, 0.360, 0.420, 1.0),
+            error_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+        }
+    }
+
+    pub fn high_contrast() -> Self {
+        Self {
+            name: "high-contrast",
+            scheme: ThemeColorScheme::HighContrast,
+            base_100: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            base_200: Color::rgba(0.065, 0.070, 0.080, 1.0),
+            base_300: Color::rgba(0.760, 0.800, 0.860, 1.0),
+            base_content: Color::rgba(1.0, 1.0, 1.0, 1.0),
+            primary: Color::rgba(0.250, 0.820, 1.0, 1.0),
+            primary_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            secondary: Color::rgba(0.330, 0.980, 0.720, 1.0),
+            secondary_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            accent: Color::rgba(1.0, 0.840, 0.120, 1.0),
+            accent_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            neutral: Color::rgba(0.120, 0.130, 0.150, 1.0),
+            neutral_content: Color::rgba(1.0, 1.0, 1.0, 1.0),
+            info: Color::rgba(0.250, 0.820, 1.0, 1.0),
+            info_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            success: Color::rgba(0.360, 1.0, 0.620, 1.0),
+            success_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            warning: Color::rgba(1.0, 0.840, 0.120, 1.0),
+            warning_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            error: Color::rgba(1.0, 0.360, 0.420, 1.0),
+            error_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
         }
     }
 
@@ -144,6 +171,7 @@ impl ThemeColors {
         match scheme {
             ThemeColorScheme::Light => Self::light(),
             ThemeColorScheme::Dark => Self::dark(),
+            ThemeColorScheme::HighContrast => Self::high_contrast(),
         }
     }
 }
@@ -603,16 +631,23 @@ impl Default for ThemeAspectRatios {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ControlPalette {
     pub text: Color,
+    pub text_muted: Color,
     pub placeholder: Color,
     pub surface: Color,
+    pub surface_raised: Color,
+    pub control: Color,
+    pub control_hover: Color,
+    pub control_active: Color,
     pub surface_hover: Color,
     pub surface_pressed: Color,
     pub surface_focus: Color,
     pub border: Color,
+    pub border_strong: Color,
     pub border_hover: Color,
     pub border_focus: Color,
     pub focus_ring: Color,
     pub caret: Color,
+    pub selection: Color,
     pub accent: Color,
     pub accent_hover: Color,
     pub accent_pressed: Color,
@@ -620,26 +655,65 @@ pub struct ControlPalette {
     pub accent_border_hover: Color,
     pub accent_border_focus: Color,
     pub accent_text: Color,
+    pub danger: Color,
+    pub danger_text: Color,
 }
 
 impl ControlPalette {
     pub fn from_colors(colors: &ThemeColors) -> Self {
-        let border = mix(colors.base_300, colors.base_content, 0.12);
-        let border_hover = mix(colors.base_300, colors.base_content, 0.24);
-        let placeholder = mix(colors.base_content, colors.base_100, 0.4);
+        let is_dark = matches!(
+            colors.scheme,
+            ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
+        );
+        let surface = colors.base_100;
+        let surface_raised = colors.base_200;
+        let control = colors.base_200;
+        let control_hover = interactive_surface(control, colors.scheme, 0.035);
+        let control_active = interactive_surface(control, colors.scheme, 0.075);
+        let text_muted = mix(
+            colors.base_content,
+            surface,
+            if is_dark { 0.36 } else { 0.42 },
+        );
+        let placeholder = mix(
+            colors.base_content,
+            surface,
+            if is_dark { 0.50 } else { 0.58 },
+        );
+        let border = mix(colors.base_300, surface, if is_dark { 0.18 } else { 0.20 });
+        let border_strong = mix(
+            colors.base_300,
+            colors.base_content,
+            if is_dark { 0.25 } else { 0.12 },
+        );
+        let border_hover = mix(border, colors.primary, if is_dark { 0.28 } else { 0.18 });
+        let border_focus = colors.primary;
+        let focus_alpha = if colors.scheme == ThemeColorScheme::HighContrast {
+            0.72
+        } else {
+            0.32
+        };
+        let selection = colors.primary.with_alpha(if is_dark { 0.34 } else { 0.18 });
 
         Self {
             text: colors.base_content,
+            text_muted,
             placeholder,
-            surface: colors.base_100,
-            surface_hover: colors.base_200,
-            surface_pressed: colors.base_300,
-            surface_focus: mix(colors.base_200, colors.primary, 0.08),
+            surface,
+            surface_raised,
+            control,
+            control_hover,
+            control_active,
+            surface_hover: control_hover,
+            surface_pressed: control_active,
+            surface_focus: mix(control, colors.primary, if is_dark { 0.14 } else { 0.08 }),
             border,
+            border_strong,
             border_hover,
-            border_focus: colors.primary,
-            focus_ring: colors.primary.with_alpha(0.28),
+            border_focus,
+            focus_ring: colors.primary.with_alpha(focus_alpha),
             caret: colors.primary,
+            selection,
             accent: colors.primary,
             accent_hover: interactive_variant(colors.primary, colors.scheme, 0.08),
             accent_pressed: interactive_variant(colors.primary, colors.scheme, 0.16),
@@ -647,6 +721,8 @@ impl ControlPalette {
             accent_border_hover: interactive_variant(colors.primary, colors.scheme, 0.2),
             accent_border_focus: colors.primary,
             accent_text: colors.primary_content,
+            danger: colors.error,
+            danger_text: colors.error_content,
         }
     }
 }
@@ -715,9 +791,9 @@ impl ControlMetrics {
             button_min_width: 64.0,
             button_padding: Insets {
                 left: unit * 2.0,
-                top: unit,
+                top: unit * 1.25,
                 right: unit * 2.0,
-                bottom: unit,
+                bottom: unit * 1.25,
             },
             checkbox_padding: Insets {
                 left: unit * 1.5,
@@ -729,7 +805,7 @@ impl ControlMetrics {
             checkbox_gap: 6.0,
             separator_thickness: 1.0,
             icon_size: 14.0,
-            icon_button_size: 24.0,
+            icon_button_size: 26.0,
             switch_track_width: 28.0,
             switch_track_height: 16.0,
             slider_min_width: 140.0,
@@ -739,9 +815,9 @@ impl ControlMetrics {
             text_input_min_width: 180.0,
             text_input_padding: Insets {
                 left: unit * 2.0,
-                top: unit,
+                top: unit * 1.25,
                 right: unit * 2.0,
-                bottom: unit,
+                bottom: unit * 1.25,
             },
             text_area_min_height: 80.0,
             select_menu_max_height: 200.0,
@@ -794,6 +870,14 @@ impl DefaultTheme {
 
     pub fn dark() -> Self {
         Self::from_colors(ThemeColors::dark())
+    }
+
+    pub fn high_contrast() -> Self {
+        let mut theme = Self::from_colors(ThemeColors::high_contrast());
+        theme.metrics.border_width = 1.5;
+        theme.metrics.focus_ring_width = 2.5;
+        theme.metrics.focus_ring_outset = 2.0;
+        theme
     }
 
     pub fn from_colors(colors: ThemeColors) -> Self {
@@ -875,7 +959,14 @@ fn mix(from: Color, to: Color, amount: f32) -> Color {
 fn interactive_variant(color: Color, scheme: ThemeColorScheme, amount: f32) -> Color {
     match scheme {
         ThemeColorScheme::Light => mix(color, Color::BLACK, amount),
-        ThemeColorScheme::Dark => mix(color, Color::WHITE, amount),
+        ThemeColorScheme::Dark | ThemeColorScheme::HighContrast => mix(color, Color::WHITE, amount),
+    }
+}
+
+fn interactive_surface(color: Color, scheme: ThemeColorScheme, amount: f32) -> Color {
+    match scheme {
+        ThemeColorScheme::Light => mix(color, Color::BLACK, amount),
+        ThemeColorScheme::Dark | ThemeColorScheme::HighContrast => mix(color, Color::WHITE, amount),
     }
 }
 
@@ -895,16 +986,6 @@ fn shadow_layer(
         color,
         inset,
     }
-}
-
-fn oklch(lightness_percent: f32, chroma: f32, hue: f32) -> Color {
-    let rgb: Srgb = Srgb::from_color(Oklch::new(lightness_percent / 100.0, chroma, hue));
-    Color::srgba(
-        rgb.red.clamp(0.0, 1.0),
-        rgb.green.clamp(0.0, 1.0),
-        rgb.blue.clamp(0.0, 1.0),
-        1.0,
-    )
 }
 
 #[cfg(test)]
@@ -983,15 +1064,36 @@ mod tests {
     }
 
     #[test]
-    fn dark_theme_uses_dark_daisy_tokens() {
+    fn dark_theme_uses_professional_dark_tokens() {
         let theme = DefaultTheme::dark();
 
         assert_eq!(theme.colors.scheme, ThemeColorScheme::Dark);
         assert_eq!(theme.colors.name, "dark");
+        assert_eq!(theme.colors.base_100, Color::BLACK);
         assert_eq!(theme.palette.surface, theme.colors.base_100);
+        assert_ne!(theme.palette.surface_raised, Color::BLACK);
         assert_eq!(theme.palette.text, theme.colors.base_content);
+        assert_eq!(theme.palette.text, Color::WHITE);
         assert_eq!(theme.palette.caret, theme.colors.primary);
         assert_eq!(theme.palette.accent, theme.colors.primary);
         assert_eq!(theme.palette.accent_text, theme.colors.primary_content);
+    }
+
+    #[test]
+    fn high_contrast_theme_uses_dedicated_scheme_and_metrics() {
+        let theme = DefaultTheme::high_contrast();
+
+        assert_eq!(theme.colors.scheme, ThemeColorScheme::HighContrast);
+        assert_eq!(theme.colors.name, "high-contrast");
+        assert_eq!(theme.palette.surface, theme.colors.base_100);
+        assert_eq!(theme.palette.surface, Color::BLACK);
+        assert_ne!(theme.palette.surface_raised, Color::BLACK);
+        assert_ne!(theme.palette.control, Color::BLACK);
+        assert_ne!(theme.palette.control_hover, Color::BLACK);
+        assert_ne!(theme.palette.control_active, Color::BLACK);
+        assert_ne!(theme.palette.surface_focus, Color::BLACK);
+        assert_eq!(theme.palette.text, theme.colors.base_content);
+        assert!(theme.metrics.border_width > DefaultTheme::default().metrics.border_width);
+        assert!(theme.metrics.focus_ring_width > DefaultTheme::default().metrics.focus_ring_width);
     }
 }

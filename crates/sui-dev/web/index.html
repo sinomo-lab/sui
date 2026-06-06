@@ -8,10 +8,12 @@
     <link id="sui-window-icon" rel="icon" type="image/svg+xml" href="sui-logo.svg" />
     <link data-trunk rel="copy-file" href="../../sui-runtime/assets/sui-logo.svg" />
     <style>
-      html, body {
+      html,
+      body {
         margin: 0;
         width: 100%;
         height: 100%;
+        overflow: hidden;
         background: #0f1720;
         color: #e5eef8;
         font-family: system-ui, sans-serif;
@@ -442,6 +444,7 @@
             GenericContainer: "group",
             Separator: "separator",
             List: "list",
+            ListItem: "listitem",
             Tree: "tree",
             Table: "table",
             Splitter: "separator",
@@ -468,9 +471,7 @@
           }[node.role] || null;
         };
 
-        const isInteractive = (node) =>
-          node.dom?.interactive ??
-          [
+        const interactiveRoles = [
             "Button",
             "Link",
             "CheckBox",
@@ -483,7 +484,63 @@
             "ComboBox",
             "ColorPicker",
             "ScrollView",
-          ].includes(node.role);
+          ];
+        const interactiveActions = [
+          "Activate",
+          "SetValue",
+          "SetSelection",
+          "Increment",
+          "Decrement",
+          "InsertText",
+        ];
+        const hasInteractiveAction = (node) =>
+          Array.isArray(node?.actions) &&
+          node.actions.some((action) => interactiveActions.includes(action));
+        const isInteractive = (node) =>
+          node.dom?.interactive ??
+          (interactiveRoles.includes(node.role) || hasInteractiveAction(node));
+        const semanticNodeKey = (id) => (id == null ? null : String(id));
+        const computeSemanticNodeDepths = (nodes) => {
+          const byId = new Map();
+          const depths = new Map();
+          const visiting = new Set();
+
+          for (const node of nodes) {
+            byId.set(semanticNodeKey(node.id), node);
+          }
+
+          const depthFor = (node) => {
+            const key = semanticNodeKey(node.id);
+            if (depths.has(key)) {
+              return depths.get(key);
+            }
+            if (visiting.has(key)) {
+              return 0;
+            }
+
+            visiting.add(key);
+            const parent = byId.get(semanticNodeKey(node.parent));
+            const depth = parent ? depthFor(parent) + 1 : 0;
+            visiting.delete(key);
+            depths.set(key, depth);
+            return depth;
+          };
+
+          for (const node of nodes) {
+            depthFor(node);
+          }
+
+          return depths;
+        };
+        const semanticStackIndex = (node, index, depths) => {
+          const depth = depths.get(semanticNodeKey(node.id)) || 0;
+          return depth * 100000 + index;
+        };
+        const pointerTransparentRoles = new Set(["Text"]);
+        const receivesDomPointerEvents = (node) =>
+          domPointerForwardingEnabled &&
+          !Boolean(node.state?.hidden) &&
+          !pointerTransparentRoles.has(node.role);
         const setStyle = (element, property, value) => {
           if (element.style[property] !== value) {
             element.style[property] = value;
@@ -596,38 +653,58 @@
           metaKey: event.metaKey,
           shiftKey: event.shiftKey,
         });
+        const mouseEventTypeForPointer = (type) => {
+          switch (type) {
+            case "pointerdown":
+              return "mousedown";
+            case "pointermove":
+              return "mousemove";
+            case "pointerup":
+              return "mouseup";
+            default:
+              return null;
+          }
+        };
+        const dispatchMouseEventToCanvas = (canvas, event) => {
+          const type = mouseEventTypeForPointer(event.type);
+          if (!type) {
+            return false;
+          }
+          const coordinates = canvasEventCoordinates(canvas, event);
+          canvas.dispatchEvent(
+            new MouseEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              ...coordinates,
+              button: event.button,
+              buttons: event.buttons,
+              altKey: event.altKey,
+              ctrlKey: event.ctrlKey,
+              metaKey: event.metaKey,
+              shiftKey: event.shiftKey,
+            }),
+          );
+          return true;
+        };
         const forwardPointerEventToCanvas = (event) => {
           const canvas = document.getElementById("sui-main-canvas");
           if (!canvas) {
             return false;
           }
+          let forwarded = false;
           try {
             canvas.dispatchEvent(
               new PointerEvent(event.type, clonePointerEventInit(event, canvas)),
             );
-            return true;
+            forwarded = true;
           } catch (_) {
-            const coordinates = canvasEventCoordinates(canvas, event);
-            try {
-              canvas.dispatchEvent(
-                new MouseEvent(event.type.replace(/^pointer/, "mouse"), {
-                  bubbles: true,
-                  cancelable: true,
-                  composed: true,
-                  ...coordinates,
-                  button: event.button,
-                  buttons: event.buttons,
-                  altKey: event.altKey,
-                  ctrlKey: event.ctrlKey,
-                  metaKey: event.metaKey,
-                  shiftKey: event.shiftKey,
-                }),
-              );
-              return true;
-            } catch (_) {
-              return false;
-            }
           }
+          try {
+            forwarded = dispatchMouseEventToCanvas(canvas, event) || forwarded;
+          } catch (_) {
+          }
+          return forwarded;
         };
         const forwardWheelEventToCanvas = (event) => {
           const canvas = document.getElementById("sui-main-canvas");
@@ -786,7 +863,14 @@
           return element;
         };
 
-        const configureElement = (mirror, key, element, node, canvasRect) => {
+        const configureElement = (
+          mirror,
+          key,
+          element,
+          node,
+          canvasRect,
+          stackIndex,
+        ) => {
           const bounds = node.bounds || { x: 0, y: 0, width: 0, height: 0 };
           const label = nodeLabel(node);
           const role = ariaRole(node, element);
@@ -821,8 +905,9 @@
           setStyle(
             element,
             "pointerEvents",
-            domPointerForwardingEnabled && isInteractive(node) ? "auto" : "none",
+            receivesDomPointerEvents(node) ? "auto" : "none",
           );
+          setStyle(element, "zIndex", String(stackIndex));
 
           if (automationEnabled) {
             element.dataset.suiId = String(node.id);
@@ -888,8 +973,13 @@
             if (node.role === "RadioButton" && element.type !== "radio") {
               element.type = "radio";
             }
-            if (node.role === "Slider" && element.type !== "range") {
-              element.type = "range";
+            if (node.role === "Slider") {
+              if (element.type !== "range") {
+                element.type = "range";
+              }
+              element.step = "any";
+            } else {
+              setAttribute(element, "step", null);
             }
             if (node.role === "TextInput" && element.type !== "text") {
               element.type = "text";
@@ -900,7 +990,7 @@
             if (node.role === "Slider" && range) {
               element.min = String(range.min);
               element.max = String(range.max);
-              element.value = value;
+              element.value = String(range.value);
             }
             if (node.role === "TextInput") {
               if (element.value !== value) {
@@ -937,8 +1027,10 @@
           }
 
           const canvasRect = canvas.getBoundingClientRect();
+          const nodes = snapshot.nodes || [];
+          const stackDepths = computeSemanticNodeDepths(nodes);
           const activeIds = new Set();
-          for (const node of snapshot.nodes || []) {
+          for (const [index, node] of nodes.entries()) {
             const key = String(node.id);
             activeIds.add(key);
             let element = state.elements.get(key);
@@ -948,7 +1040,14 @@
               element = createElement(node);
               state.elements.set(key, element);
             }
-            configureElement(mirror, key, element, node, canvasRect);
+            configureElement(
+              mirror,
+              key,
+              element,
+              node,
+              canvasRect,
+              semanticStackIndex(node, index, stackDepths),
+            );
             if (element.parentNode !== mirror) {
               mirror.appendChild(element);
             }
@@ -1173,9 +1272,12 @@
     <script>
       (() => {
         const canvasId = "sui-main-canvas";
+        const rootId = "sui-root";
         let pending = false;
         let installed = false;
         let lastMetrics = null;
+        let resizeObserver = null;
+        let observedResizeTargets = new Set();
 
         const positive = (value, fallback = 1) => {
           const number = Number(value);
@@ -1202,6 +1304,72 @@
           return { width, height };
         };
 
+        const isDocumentSizingElement = (element) =>
+          element === document.body || element === document.documentElement;
+
+        const explicitResizeContainer = (canvas) => {
+          let element = canvas;
+          while (element) {
+            if (
+              typeof element.hasAttribute === "function" &&
+              element.hasAttribute("data-sui-resize-container")
+            ) {
+              return element;
+            }
+            element = element.parentElement;
+          }
+          return null;
+        };
+
+        const hostContainerForCanvas = (canvas) => {
+          const explicit = explicitResizeContainer(canvas);
+          if (explicit) {
+            return explicit;
+          }
+
+          const root = document.getElementById(rootId) || canvas.parentElement;
+          if (!root) {
+            return canvas;
+          }
+
+          const parent = root.parentElement;
+          if (parent && !isDocumentSizingElement(parent)) {
+            const parentBox = measuredBox(parent, 0, 0);
+            if (parentBox.width > 0 && parentBox.height > 0) {
+              return parent;
+            }
+          }
+
+          return root;
+        };
+
+        const resizeTargetsForCanvas = (canvas) => {
+          const root = document.getElementById(rootId) || canvas.parentElement;
+          return new Set(
+            [hostContainerForCanvas(canvas), root, canvas].filter(Boolean),
+          );
+        };
+
+        const refreshObservedResizeTargets = (canvas) => {
+          if (!resizeObserver) {
+            return;
+          }
+
+          const nextTargets = resizeTargetsForCanvas(canvas);
+          const changed =
+            nextTargets.size !== observedResizeTargets.size ||
+            [...nextTargets].some((element) => !observedResizeTargets.has(element));
+          if (!changed) {
+            return;
+          }
+
+          resizeObserver.disconnect();
+          for (const element of nextTargets) {
+            resizeObserver.observe(element);
+          }
+          observedResizeTargets = nextTargets;
+        };
+
         const readMetrics = () => {
           const canvas = document.getElementById(canvasId);
           if (!canvas) {
@@ -1210,7 +1378,8 @@
 
           const fallbackWidth = window.innerWidth || canvas.clientWidth || 1;
           const fallbackHeight = window.innerHeight || canvas.clientHeight || 1;
-          const container = canvas.parentElement || canvas;
+          const root = document.getElementById(rootId) || canvas.parentElement;
+          const container = hostContainerForCanvas(canvas);
           const containerBox = measuredBox(
             container,
             fallbackWidth,
@@ -1227,6 +1396,7 @@
 
           return {
             canvas,
+            root,
             container,
             cssWidth,
             cssHeight,
@@ -1250,6 +1420,7 @@
           if (!metrics) {
             return;
           }
+          refreshObservedResizeTargets(metrics.canvas);
 
           const cssWidth = `${metrics.cssWidth}px`;
           const cssHeight = `${metrics.cssHeight}px`;
@@ -1277,6 +1448,8 @@
             dpr: metrics.dpr,
             pixelWidth: metrics.pixelWidth,
             pixelHeight: metrics.pixelHeight,
+            containerId: metrics.container.id || "",
+            rootId: metrics.root?.id || "",
           };
           window.__suiContainerMetrics = { ...lastMetrics };
           window.dispatchEvent(new Event("resize"));
@@ -1305,13 +1478,10 @@
             return;
           }
           installed = true;
-          const container = canvas.parentElement || canvas;
-
           if (typeof ResizeObserver === "function") {
-            const observer = new ResizeObserver(schedule);
-            observer.observe(container);
-            observer.observe(canvas);
-            window.__suiContainerResizeObserver = observer;
+            resizeObserver = new ResizeObserver(schedule);
+            refreshObservedResizeTargets(canvas);
+            window.__suiContainerResizeObserver = resizeObserver;
           }
 
           window.addEventListener("resize", schedule);

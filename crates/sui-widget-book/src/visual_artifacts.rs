@@ -347,13 +347,10 @@ impl StoryCase {
                         .with_name(TOOLTIP_TRIGGER_LABEL)
                         .hover(),
                     Self::PopoverOpen => self.target(window).click(),
-                    Self::Dialog => {
-                        scroll_gallery_by(window, -220.0)?;
-                        window
-                            .get_by_role(SemanticsRole::Button)
-                            .with_name(DIALOG_TRIGGER_LABEL)
-                            .click()
-                    }
+                    Self::Dialog => window
+                        .get_by_role(SemanticsRole::Button)
+                        .with_name(DIALOG_TRIGGER_LABEL)
+                        .click(),
                     _ => Ok(()),
                 }
             }
@@ -766,12 +763,14 @@ pub(crate) fn scroll_to_story_target(
     };
 
     if story_node_is_visible(window, role.clone(), name)? {
+        align_story_target_for_capture(window, story)?;
         return Ok(());
     }
 
     for _ in 0..(max_pages * 4) {
         scroll_gallery_by(window, SCROLL_STEP)?;
         if story_node_is_visible(window, role.clone(), name)? {
+            align_story_target_for_capture(window, story)?;
             return Ok(());
         }
     }
@@ -793,6 +792,13 @@ pub(crate) fn scroll_to_story_target(
         "failed to scroll story target {:?} {:?} into view; visible nodes: {}",
         role, name, visible_nodes
     )))
+}
+
+fn align_story_target_for_capture(window: &TestWindow, story: StoryCase) -> Result<()> {
+    if matches!(story, StoryCase::Dialog) {
+        scroll_gallery_by(window, -220.0)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn artifact_root() -> PathBuf {

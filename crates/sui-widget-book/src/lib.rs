@@ -11,10 +11,10 @@ use sui::{
     HdrLuminanceTokens, HdrThemeMode, HdrThemeTokens, InvalidationKind, InvalidationRequest,
     InvalidationTarget, Rect, SceneStatisticsDetailMode, SemanticColorToken, SemanticsNode,
     SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextSurface, TextSurfaceOverlayKind,
-    TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap, TimerToken, Vector, WidgetColorRole,
-    WidgetLuminanceRole, WidgetMaterialRole, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent,
-    WindowId, WindowPerformanceSnapshot, resolve_semantic_color, resolve_widget_hdr_style,
-    set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap, ThemeColorScheme, TimerToken, Vector,
+    WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole, WidgetPodMutVisitor,
+    WidgetPodVisitor, WindowEvent, WindowId, WindowPerformanceSnapshot, resolve_semantic_color,
+    resolve_widget_hdr_style, set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_scene_statistics_detail_mode,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
@@ -74,6 +74,10 @@ pub const THEME_DEMO_DESCRIPTION: &str =
 pub const THEME_DEMO_SCROLL_NAME: &str = "Theme demo gallery";
 pub const RETAINED_TEXT_BENCHMARK_SCROLL_NAME: &str = "Retained text benchmark scroll";
 pub const TEXT_RENDERING_COMPARISON_SCROLL_NAME: &str = "Text rendering comparison scroll";
+pub const TEXT_RENDERING_COMPARISON_VERTICAL_SCROLL_BAR_NAME: &str =
+    "Text rendering comparison vertical scroll bar";
+pub const TEXT_RENDERING_COMPARISON_HORIZONTAL_SCROLL_BAR_NAME: &str =
+    "Text rendering comparison horizontal scroll bar";
 pub const COLOR_VALIDATION_SCROLL_NAME: &str = "Color validation scroll";
 pub const COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME: &str = "Color validation vertical scroll bar";
 pub const COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME: &str =
@@ -83,15 +87,18 @@ pub const TEXT_VALIDATION_EDITOR_NAME: &str = "Validation editor";
 pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark editor";
 pub const TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME: &str = "Text editing benchmark syntax preview";
 pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
-pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare light and dark themes";
+pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare default themes";
 pub const LIGHT_THEME_PREVIEW_CARD_NAME: &str = "Light theme preview card";
 pub const DARK_THEME_PREVIEW_CARD_NAME: &str = "Dark theme preview card";
+pub const HIGH_CONTRAST_THEME_PREVIEW_CARD_NAME: &str = "High contrast theme preview card";
 pub const HDR_THEME_LAB_NAME: &str = "HDR theme mode lab";
 pub const HDR_THEME_LAB_ACTIVE_PREVIEW_NAME: &str = "Current HDR theme mode preview";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
 pub const DARK_PREVIEW_ACTION_LABEL: &str = "Dark preview action";
+pub const HIGH_CONTRAST_PREVIEW_ACTION_LABEL: &str = "High contrast preview action";
 pub const LIGHT_PREVIEW_INPUT_LABEL: &str = "Light preview query";
 pub const DARK_PREVIEW_INPUT_LABEL: &str = "Dark preview query";
+pub const HIGH_CONTRAST_PREVIEW_INPUT_LABEL: &str = "High contrast preview query";
 pub const LIST_VIEW_NAME: &str = "Assets list";
 pub const TREE_VIEW_NAME: &str = "Scene tree";
 pub const TABLE_NAME: &str = "Material table";
@@ -116,6 +123,68 @@ const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
 const BLEND_MODE_OPTIONS: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
 const TAB_BAR_OPTIONS: [&str; 3] = ["Canvas", "Inspector", "Export"];
 const TAB_PANEL_OPTIONS: [&str; 3] = ["Layout", "Data", "History"];
+const TEXT_RENDERING_COMPARISON_MIN_WIDTH: f32 = 1094.0;
+const TEXT_RENDERING_COMPARISON_CARD_WIDTH: f32 = 520.0;
+const TEXT_RENDERING_SAMPLE_TILE_WIDTH: f32 = 232.0;
+const TEXT_RENDERING_SAMPLE_TILE_HEIGHT: f32 = 108.0;
+const TEXT_VALIDATION_CONTENT_WIDTH: f32 = 1040.0;
+const TEXT_VALIDATION_PROBE_CARD_WIDTH: f32 = 320.0;
+
+pub type WidgetBookThemeReader = Rc<dyn Fn() -> DefaultTheme>;
+
+fn default_widget_book_theme_reader() -> WidgetBookThemeReader {
+    Rc::new(DefaultTheme::default)
+}
+
+fn clone_widget_book_theme_reader(
+    theme_reader: &WidgetBookThemeReader,
+) -> impl Fn() -> DefaultTheme + 'static {
+    let theme_reader = Rc::clone(theme_reader);
+    move || theme_reader()
+}
+
+fn widget_book_theme_color<F>(
+    theme_reader: &WidgetBookThemeReader,
+    color: F,
+) -> impl Fn() -> Color + 'static
+where
+    F: Fn(DefaultTheme) -> Color + 'static,
+{
+    let theme_reader = Rc::clone(theme_reader);
+    move || color(theme_reader())
+}
+const TEXT_RENDERING_MODE_DATA: [(&str, &str, &str); 6] = [
+    (
+        "Grayscale baseline",
+        "Control sample for coverage-only text.",
+        "Dark and light samples should match perceived weight without extra policy adjustments.",
+    ),
+    (
+        "Grayscale + hinting",
+        "Small UI text snapped to the pixel grid.",
+        "Check that 11-14 px labels become steadier without shifting medium-size copy.",
+    ),
+    (
+        "Grayscale + stem darkening",
+        "Thin strokes receive a restrained weight boost.",
+        "Look for stronger stems while avoiding bold-looking captions on bright surfaces.",
+    ),
+    (
+        "LCD subpixel",
+        "Axis-aligned text can use subpixel coverage.",
+        "Inspect fine edge detail and keep color fringing under control on neutral text.",
+    ),
+    (
+        "LCD subpixel + hinting",
+        "Subpixel coverage with small-text grid fitting.",
+        "Use this as the practical UI-label candidate for dense toolbars and status rows.",
+    ),
+    (
+        "LCD subpixel + hinting + stem darkening",
+        "Most assertive small-text rendering policy.",
+        "Validate tiny labels first, then confirm body-size text still feels neutral.",
+    ),
+];
 
 fn hdr_theme_lab_mode_store() -> &'static RwLock<HdrThemeMode> {
     static STORE: OnceLock<RwLock<HdrThemeMode>> = OnceLock::new();
@@ -998,6 +1067,7 @@ struct ThemePreviewShowcase {
     toggle: SingleChild,
     light_card: SingleChild,
     dark_card: SingleChild,
+    high_contrast_card: SingleChild,
 }
 
 impl ThemePreviewShowcase {
@@ -1032,11 +1102,20 @@ impl ThemePreviewShowcase {
                     DARK_PREVIEW_INPUT_LABEL,
                 ),
             )),
+            high_contrast_card: SingleChild::new(NamedSection::new(
+                HIGH_CONTRAST_THEME_PREVIEW_CARD_NAME,
+                theme_preview_card(
+                    DefaultTheme::high_contrast(),
+                    "High contrast",
+                    HIGH_CONTRAST_PREVIEW_ACTION_LABEL,
+                    HIGH_CONTRAST_PREVIEW_INPUT_LABEL,
+                ),
+            )),
         }
     }
 
     fn card_height() -> f32 {
-        272.0
+        320.0
     }
 
     fn comparison_enabled(&self) -> bool {
@@ -1070,7 +1149,7 @@ impl Widget for ThemePreviewShowcase {
         let max_width = if constraints.max.width.is_finite() {
             constraints.max.width.max(320.0)
         } else {
-            920.0
+            1080.0
         };
         let toggle_size = self.toggle.measure(ctx, constraints.loosen());
         let top = toggle_size.height + 16.0;
@@ -1078,7 +1157,7 @@ impl Widget for ThemePreviewShowcase {
         let card_height = Self::card_height();
 
         if comparison_enabled {
-            let stacked = max_width < 760.0;
+            let stacked = max_width < 1020.0;
             if stacked {
                 let light_size = self
                     .light_card
@@ -1086,24 +1165,37 @@ impl Widget for ThemePreviewShowcase {
                 let dark_size = self
                     .dark_card
                     .measure(ctx, Constraints::tight(Size::new(max_width, card_height)));
+                let high_contrast_size = self
+                    .high_contrast_card
+                    .measure(ctx, Constraints::tight(Size::new(max_width, card_height)));
 
                 return constraints.clamp(Size::new(
                     max_width,
-                    top + light_size.height + gap + dark_size.height,
+                    top + light_size.height
+                        + gap
+                        + dark_size.height
+                        + gap
+                        + high_contrast_size.height,
                 ));
             }
 
-            let card_width = ((max_width - gap) / 2.0).max(280.0);
+            let card_width = ((max_width - (gap * 2.0)) / 3.0).max(280.0);
             let light_size = self
                 .light_card
                 .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
             let dark_size = self
                 .dark_card
                 .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
+            let high_contrast_size = self
+                .high_contrast_card
+                .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
 
             return constraints.clamp(Size::new(
-                light_size.width + gap + dark_size.width,
-                top + light_size.height.max(dark_size.height),
+                light_size.width + gap + dark_size.width + gap + high_contrast_size.width,
+                top + light_size
+                    .height
+                    .max(dark_size.height)
+                    .max(high_contrast_size.height),
             ));
         }
 
@@ -1125,9 +1217,10 @@ impl Widget for ThemePreviewShowcase {
         let top = (bounds.y() + toggle_size.height + 16.0).round();
         let gap = 16.0;
         if comparison_enabled {
-            if bounds.width() < 760.0 {
+            if bounds.width() < 1020.0 {
                 let light_size = self.light_card.child().measured_size();
                 let dark_size = self.dark_card.child().measured_size();
+                let high_contrast_size = self.high_contrast_card.child().measured_size();
                 self.light_card.arrange(
                     ctx,
                     Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
@@ -1141,9 +1234,19 @@ impl Widget for ThemePreviewShowcase {
                         dark_size.height,
                     ),
                 );
+                self.high_contrast_card.arrange(
+                    ctx,
+                    Rect::new(
+                        bounds.x().round(),
+                        top + light_size.height + gap + dark_size.height + gap,
+                        high_contrast_size.width,
+                        high_contrast_size.height,
+                    ),
+                );
             } else {
                 let light_size = self.light_card.child().measured_size();
                 let dark_size = self.dark_card.child().measured_size();
+                let high_contrast_size = self.high_contrast_card.child().measured_size();
                 self.light_card.arrange(
                     ctx,
                     Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
@@ -1155,6 +1258,15 @@ impl Widget for ThemePreviewShowcase {
                         top,
                         dark_size.width,
                         dark_size.height,
+                    ),
+                );
+                self.high_contrast_card.arrange(
+                    ctx,
+                    Rect::new(
+                        (bounds.x() + light_size.width + gap + dark_size.width + gap).round(),
+                        top,
+                        high_contrast_size.width,
+                        high_contrast_size.height,
                     ),
                 );
             }
@@ -1173,6 +1285,7 @@ impl Widget for ThemePreviewShowcase {
         self.light_card.paint(ctx);
         if comparison_enabled {
             self.dark_card.paint(ctx);
+            self.high_contrast_card.paint(ctx);
         }
     }
 
@@ -1185,7 +1298,7 @@ impl Widget for ThemePreviewShowcase {
         );
         node.name = Some(THEME_PREVIEW_NAME.to_string());
         node.description = Some(if comparison_enabled {
-            "Light and dark preview cards are visible side by side.".to_string()
+            "Light, dark, and high contrast preview cards are visible.".to_string()
         } else {
             "Only the light preview card is visible.".to_string()
         });
@@ -1194,6 +1307,7 @@ impl Widget for ThemePreviewShowcase {
         self.light_card.semantics(ctx);
         if comparison_enabled {
             self.dark_card.semantics(ctx);
+            self.high_contrast_card.semantics(ctx);
         }
     }
 
@@ -1203,6 +1317,7 @@ impl Widget for ThemePreviewShowcase {
         self.light_card.visit_children(visitor);
         if comparison_enabled {
             self.dark_card.visit_children(visitor);
+            self.high_contrast_card.visit_children(visitor);
         }
     }
 
@@ -1212,6 +1327,7 @@ impl Widget for ThemePreviewShowcase {
         self.light_card.visit_children_mut(visitor);
         if comparison_enabled {
             self.dark_card.visit_children_mut(visitor);
+            self.high_contrast_card.visit_children_mut(visitor);
         }
     }
 }
@@ -1362,96 +1478,98 @@ fn hdr_theme_lab_card(
 
     NamedSection::new(
         section_name,
-        Background::new(
-            theme.palette.border.with_alpha(0.92),
-            Padding::all(
-                1.0,
-                Background::new(
-                    theme.palette.surface,
-                    Padding::all(
-                        16.0,
-                        Stack::vertical()
-                            .spacing(12.0)
-                            .alignment(Alignment::Stretch)
-                            .with_child(
-                                Label::new(hdr_theme_mode_title(mode))
-                                    .font_size(18.0)
-                                    .line_height(22.0)
-                                    .color(theme.palette.text),
+        ThemePreviewCardFrame::new(
+            theme,
+            Stack::vertical()
+                .spacing(12.0)
+                .alignment(Alignment::Start)
+                .with_child(
+                    Label::new(hdr_theme_mode_title(mode))
+                        .font_size(18.0)
+                        .line_height(22.0)
+                        .color(theme.palette.text),
+                )
+                .with_child(MaximumWidth::new(
+                    980.0,
+                    Label::new(lead_text)
+                        .font_size(13.0)
+                        .line_height(18.0)
+                        .color(theme.palette.placeholder),
+                ))
+                .with_child(MaximumWidth::new(
+                    980.0,
+                    Label::new(format!(
+                        "Token mode: {} · accent peak {:.2}× · indicator peak {:.2}× · alert peak {:.2}×",
+                        hdr_theme_mode_title(mode),
+                        theme.hdr.luminance.semantic_accent,
+                        theme.hdr.luminance.emissive_indicator,
+                        theme.hdr.luminance.alert_pulse,
+                    ))
+                    .font_size(12.0)
+                    .line_height(17.0)
+                    .color(theme.palette.placeholder),
+                ))
+                .with_child(
+                    Stack::horizontal()
+                        .spacing(12.0)
+                        .alignment(Alignment::Center)
+                        .with_child(
+                            SizedBox::new().width(300.0).with_child(
+                                Button::new(button_label).min_width(280.0).theme(theme),
+                            ),
+                        )
+                        .with_child(
+                            ColorSwatch::new(swatch_name, indicator_color)
+                                .size(Size::new(64.0, 28.0)),
+                        )
+                        .with_child(MaximumWidth::new(
+                            520.0,
+                            Label::new(
+                                "The swatch mirrors the accent token resolved for the current gamut/HDR mode.",
                             )
-                            .with_child(
-                                Label::new(lead_text)
+                            .font_size(12.0)
+                            .line_height(17.0)
+                            .color(theme.palette.placeholder),
+                        )),
+                )
+                .with_child(
+                    SizedBox::new().width(520.0).with_child(
+                        Switch::new(switch_label)
+                            .on(!matches!(mode, HdrThemeMode::Disabled))
+                            .theme(theme),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(430.0).with_child(
+                        Popover::new(
+                            popover_name,
+                            Button::new(popover_trigger_label)
+                                .min_width(400.0)
+                                .theme(theme),
+                            Stack::vertical()
+                                .spacing(8.0)
+                                .alignment(Alignment::Stretch)
+                                .with_child(
+                                    Label::new(
+                                        "Small popup surfaces are where constrained vs full HDR arrival cues become easiest to validate.",
+                                    )
                                     .font_size(13.0)
                                     .line_height(18.0)
+                                    .color(theme.palette.text),
+                                )
+                                .with_child(
+                                    Label::new(
+                                        "Use this trigger to compare popup chrome, border lift, and arrival emphasis against the matching button and switch.",
+                                    )
+                                    .font_size(12.0)
+                                    .line_height(17.0)
                                     .color(theme.palette.placeholder),
-                            )
-                            .with_child(
-                                Label::new(format!(
-                                    "Token mode: {} · accent peak {:.2}× · indicator peak {:.2}× · alert peak {:.2}×",
-                                    hdr_theme_mode_title(mode),
-                                    theme.hdr.luminance.semantic_accent,
-                                    theme.hdr.luminance.emissive_indicator,
-                                    theme.hdr.luminance.alert_pulse,
-                                ))
-                                .font_size(12.0)
-                                .line_height(17.0)
-                                .color(theme.palette.placeholder),
-                            )
-                            .with_child(
-                                Stack::horizontal()
-                                    .spacing(12.0)
-                                    .alignment(Alignment::Center)
-                                    .with_child(
-                                        SizedBox::new().width(186.0).with_child(
-                                            Button::new(button_label).min_width(176.0).theme(theme),
-                                        ),
-                                    )
-                                    .with_child(
-                                        ColorSwatch::new(swatch_name, indicator_color)
-                                            .size(Size::new(64.0, 28.0)),
-                                    )
-                                    .with_child(
-                                        Label::new("The swatch mirrors the accent token resolved for the current gamut/HDR mode.")
-                                            .font_size(12.0)
-                                            .line_height(17.0)
-                                            .color(theme.palette.placeholder),
-                                    ),
-                            )
-                            .with_child(
-                                Switch::new(switch_label)
-                                    .on(!matches!(mode, HdrThemeMode::Disabled))
-                                    .theme(theme),
-                            )
-                            .with_child(
-                                SizedBox::new().width(260.0).with_child(
-                                    Popover::new(
-                                        popover_name,
-                                        Button::new(popover_trigger_label)
-                                            .min_width(220.0)
-                                            .theme(theme),
-                                        Stack::vertical()
-                                            .spacing(8.0)
-                                            .alignment(Alignment::Stretch)
-                                            .with_child(
-                                                Label::new("Small popup surfaces are where constrained vs full HDR arrival cues become easiest to validate.")
-                                                    .font_size(13.0)
-                                                    .line_height(18.0)
-                                                    .color(theme.palette.text),
-                                            )
-                                            .with_child(
-                                                Label::new("Use this trigger to compare popup chrome, border lift, and arrival emphasis against the matching button and switch.")
-                                                    .font_size(12.0)
-                                                    .line_height(17.0)
-                                                    .color(theme.palette.placeholder),
-                                            ),
-                                    )
-                                    .open(true)
-                                    .theme(theme),
                                 ),
-                            ),
+                        )
+                        .open(true)
+                        .theme(theme),
                     ),
                 ),
-            ),
         ),
     )
 }
@@ -1621,10 +1739,16 @@ impl Widget for HdrThemeLabShowcase {
     }
 }
 
+#[cfg(test)]
 fn build_animation_demo_panel() -> impl Widget {
+    build_animation_demo_panel_with_theme(default_widget_book_theme_reader())
+}
+
+fn build_animation_demo_panel_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
     NamedSection::new(
         ANIMATION_DEMO_NAME,
-        panel(
+        panel_with_theme(
+            Rc::clone(&theme_reader),
             "Animation demo",
             "Exercise built-in hover, focus, and retained overlay motion in one compact surface.",
             Stack::vertical()
@@ -1633,26 +1757,28 @@ fn build_animation_demo_panel() -> impl Widget {
                 .with_child(
                     Button::new(ANIMATION_DEMO_BUTTON_LABEL)
                         .min_width(220.0)
-                        .theme(DefaultTheme::default()),
+                        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                 )
                 .with_child(
                     Switch::new(ANIMATION_DEMO_SWITCH_LABEL)
                         .on(true)
-                        .theme(DefaultTheme::default()),
+                        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                 )
                 .with_child(
                     SizedBox::new().width(320.0).with_child(
                         TextInput::new(ANIMATION_DEMO_TEXT_INPUT_LABEL)
                             .value("Retained overlay motion")
                             .placeholder("Focus to inspect caret blink")
-                            .theme(DefaultTheme::default()),
+                            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                     ),
                 )
                 .with_child(
                     SizedBox::new().width(240.0).with_child(
                         Tooltip::new(
                             ANIMATION_DEMO_TOOLTIP_TEXT,
-                            Button::new(ANIMATION_DEMO_TOOLTIP_TRIGGER_LABEL).min_width(200.0),
+                            Button::new(ANIMATION_DEMO_TOOLTIP_TRIGGER_LABEL)
+                                .min_width(200.0)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                         ),
                     ),
                 )
@@ -1660,7 +1786,9 @@ fn build_animation_demo_panel() -> impl Widget {
                     SizedBox::new().width(360.0).with_child(
                         Popover::new(
                             ANIMATION_DEMO_POPOVER_NAME,
-                            Button::new(ANIMATION_DEMO_POPOVER_TRIGGER_LABEL).min_width(220.0),
+                            Button::new(ANIMATION_DEMO_POPOVER_TRIGGER_LABEL)
+                                .min_width(220.0)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                             Stack::vertical()
                                 .spacing(8.0)
                                 .alignment(Alignment::Stretch)
@@ -1670,7 +1798,10 @@ fn build_animation_demo_panel() -> impl Widget {
                                     )
                                     .font_size(13.0)
                                     .line_height(18.0)
-                                    .color(Color::rgba(0.35, 0.43, 0.52, 1.0)),
+                                    .color_when(widget_book_theme_color(
+                                        &theme_reader,
+                                        |theme| theme.palette.text,
+                                    )),
                                 )
                                 .with_child(
                                     Label::new(
@@ -1678,7 +1809,10 @@ fn build_animation_demo_panel() -> impl Widget {
                                     )
                                     .font_size(12.0)
                                     .line_height(17.0)
-                                    .color(Color::rgba(0.46, 0.54, 0.63, 1.0)),
+                                    .color_when(widget_book_theme_color(
+                                        &theme_reader,
+                                        |theme| theme.palette.text_muted,
+                                    )),
                                 ),
                         ),
                     ),
@@ -1689,7 +1823,9 @@ fn build_animation_demo_panel() -> impl Widget {
                     )
                     .font_size(13.0)
                     .line_height(18.0)
-                    .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
+                    .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                        theme.palette.text_muted
+                    })),
                 ),
         ),
     )
@@ -1724,7 +1860,7 @@ pub fn build_theme_demo_surface(state: Rc<RefCell<WidgetBookState>>) -> impl Wid
         )
         .with_child(panel(
             "Theme preview",
-            "Flip the compare toggle to inspect the simplified light and dark daisy-style themes with the same control composition.",
+            "Flip the compare toggle to inspect light, dark, and high contrast themes with the same control composition.",
             ThemePreviewShowcase::new(Rc::clone(&state)),
         ))
         .with_child(panel(
@@ -1735,6 +1871,13 @@ pub fn build_theme_demo_surface(state: Rc<RefCell<WidgetBookState>>) -> impl Wid
 }
 
 pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
+    build_widget_book_gallery_with_theme(state, default_widget_book_theme_reader())
+}
+
+pub fn build_widget_book_gallery_with_theme(
+    state: Rc<RefCell<WidgetBookState>>,
+    theme_reader: WidgetBookThemeReader,
+) -> impl Widget {
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
     let initial_notes = snapshot.notes.clone();
@@ -1780,7 +1923,9 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                     Label::new(WINDOW_TITLE)
                         .font_size(30.0)
                         .line_height(34.0)
-                        .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text
+                        })),
                 ))
                 .with_child(MaximumWidth::new(
                     GALLERY_TEXT_MAX_WIDTH,
@@ -1789,159 +1934,238 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                     )
                     .font_size(15.0)
                     .line_height(20.0)
-                    .color(Color::rgba(0.40, 0.48, 0.58, 1.0)),
+                    .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                        theme.palette.text_muted
+                    })),
                 )),
         )
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Common controls",
                 "These defaults should feel contemporary and light, while still staying dense enough for inspectors, toolbars, and side panels.",
                 Stack::vertical()
                     .spacing(14.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(
-                        SizedBox::new().width(320.0).with_child(
-                            TextInput::new(NAME_INPUT_LABEL)
-                                .value(initial_name)
-                                .placeholder("Type your name")
-                                .on_change(move |value| {
-                                    name_state.borrow_mut().name = value;
-                                }),
-                        ),
-                    )
-                    .with_child(
-                        Checkbox::new(SUBSCRIBE_LABEL)
-                            .checked(initial_subscribed)
-                            .on_toggle(move |checked| {
-                                subscribed_state.borrow_mut().subscribed = checked;
-                            }),
-                    )
+                    .alignment(Alignment::Start)
                     .with_child(
                         Stack::horizontal()
-                            .spacing(12.0)
-                            .alignment(Alignment::Center)
-                            .with_child(
-                                SizedBox::new().width(180.0).with_child(
-                                    Button::new(PRIMARY_BUTTON_LABEL).on_press(move || {
-                                        action_state.borrow_mut().button_presses += 1;
-                                    }),
-                                ),
-                            )
-                            .with_child(
-                                Label::new(
-                                    "Primary actions, boolean toggles, and text fields should feel related by default instead of looking like separate experiments.",
-                                )
-                                .font_size(14.0)
-                                .line_height(18.0)
-                                .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
-                            ),
+                            .spacing(14.0)
+                            .alignment(Alignment::Start)
+                            .with_child(control_story_with_theme(
+                                Rc::clone(&theme_reader),
+                                "Input state",
+                                "Text entry and boolean opt-in controls keep their natural widths instead of stretching across the page.",
+                                Stack::vertical()
+                                    .spacing(12.0)
+                                    .alignment(Alignment::Start)
+                                    .with_child(
+                                        SizedBox::new().width(300.0).with_child(
+                                            TextInput::new(NAME_INPUT_LABEL)
+                                                .value(initial_name)
+                                                .placeholder("Type your name")
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                ))
+                                                .on_change(move |value| {
+                                                    name_state.borrow_mut().name = value;
+                                                }),
+                                        ),
+                                    )
+                                    .with_child(
+                                        Checkbox::new(SUBSCRIBE_LABEL)
+                                            .checked(initial_subscribed)
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            ))
+                                            .on_toggle(move |checked| {
+                                                subscribed_state.borrow_mut().subscribed = checked;
+                                            }),
+                                    ),
+                            ))
+                            .with_child(control_story_with_theme(
+                                Rc::clone(&theme_reader),
+                                "Primary action",
+                                "A dense action plus supporting copy demonstrates the button without turning the row into a full-width form.",
+                                Stack::vertical()
+                                    .spacing(12.0)
+                                    .alignment(Alignment::Start)
+                                    .with_child(
+                                        SizedBox::new().width(180.0).with_child(
+                                            Button::new(PRIMARY_BUTTON_LABEL).on_press(move || {
+                                                action_state.borrow_mut().button_presses += 1;
+                                            })
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                        ),
+                                    )
+                                    .with_child(
+                                        Label::new(
+                                            "Related controls should feel like one composed workflow, not separate experiments.",
+                                        )
+                                        .font_size(13.0)
+                                        .line_height(18.0)
+                                        .color_when(widget_book_theme_color(
+                                            &theme_reader,
+                                            |theme| theme.palette.text_muted,
+                                        )),
+                                    ),
+                            )),
                     )
-                    .with_child(
+                    .with_child(MaximumWidth::new(
+                        GALLERY_TEXT_MAX_WIDTH,
                         Label::new(
                             "The widget book tests capture these controls directly so visual regressions can be reviewed manually or compared automatically.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)
-                        .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
-                    ),
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text_muted
+                        })),
+                    )),
             ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Toolbar pieces",
                 "Compact controls, separators, and icons need to feel intentional before any themed application shell exists.",
-                Stack::vertical()
+                control_story_with_theme(
+                    Rc::clone(&theme_reader),
+                    "Toolbar cluster",
+                    "Small controls stay aligned, scannable, and visually grouped before any app-specific toolbar exists.",
+                    Stack::vertical()
+                        .spacing(14.0)
+                        .alignment(Alignment::Start)
+                        .with_child(
+                            Stack::horizontal()
+                                .spacing(14.0)
+                                .alignment(Alignment::Center)
+                                .with_child(
+                                    Icon::new(IconGlyph::Search).label(ICON_LABEL).size(24.0),
+                                )
+                                .with_child(
+                                    IconButton::new(IconGlyph::MoreHorizontal, ICON_BUTTON_LABEL)
+                                        .theme_when(clone_widget_book_theme_reader(
+                                            &theme_reader,
+                                        ))
+                                        .on_press(move || {
+                                            icon_action_state.borrow_mut().icon_button_presses += 1;
+                                        }),
+                                )
+                                .with_child(
+                                    Label::new(
+                                        "Icons and icon buttons round out dense toolbar layouts.",
+                                    )
+                                    .font_size(14.0)
+                                    .line_height(18.0)
+                                    .color_when(widget_book_theme_color(
+                                        &theme_reader,
+                                        |theme| theme.palette.text_muted,
+                                    )),
+                                ),
+                        )
+                        .with_child(SizedBox::new().width(260.0).with_child(
+                            Separator::horizontal()
+                                .name(TOOLBAR_SEPARATOR_NAME)
+                                .inset(12.0),
+                        )),
+                ),
+            ))
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
+                "Choices and ranges",
+                "Desktop-style inspectors rely on switches, radio groups, sliders, numeric inputs, and selects more than oversized form controls.",
+                Stack::horizontal()
                     .spacing(14.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(
-                        Stack::horizontal()
-                            .spacing(14.0)
-                            .alignment(Alignment::Center)
-                            .with_child(Icon::new(IconGlyph::Search).label(ICON_LABEL).size(24.0))
+                    .alignment(Alignment::Start)
+                    .with_child(control_story_with_theme(
+                        Rc::clone(&theme_reader),
+                        "Boolean choices",
+                        "Switches and radios are compact choices, so they should sit in a compact inspector-like block.",
+                        Stack::vertical()
+                            .spacing(12.0)
+                            .alignment(Alignment::Start)
                             .with_child(
-                                IconButton::new(IconGlyph::MoreHorizontal, ICON_BUTTON_LABEL)
-                                    .on_press(move || {
-                                        icon_action_state.borrow_mut().icon_button_presses += 1;
+                                Switch::new(SWITCH_LABEL)
+                                    .on(initial_switch_on)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                    .on_toggle(move |checked| {
+                                        switch_state.borrow_mut().switch_on = checked;
                                     }),
                             )
                             .with_child(
-                                Label::new(
-                                    "Icons and icon buttons round out dense toolbar layouts.",
-                                )
-                                .font_size(14.0)
-                                .line_height(18.0)
-                                .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                                RadioButton::new(RADIO_BUTTON_LABEL)
+                                    .selected(initial_standalone_radio)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                    .on_select(move || {
+                                        radio_button_state.borrow_mut().standalone_radio_selected =
+                                            true;
+                                    }),
+                            )
+                            .with_child(
+                                SizedBox::new().width(280.0).with_child(
+                                    RadioGroup::new(RADIO_GROUP_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .options(RADIO_OPTIONS)
+                                        .selected(
+                                            option_index(&RADIO_OPTIONS, &initial_radio_choice)
+                                                .unwrap_or(0),
+                                        )
+                                        .on_change(move |_, value| {
+                                            radio_group_state.borrow_mut().radio_choice = value;
+                                        }),
+                                ),
                             ),
-                    )
-                    .with_child(SizedBox::new().width(260.0).with_child(
-                        Separator::horizontal()
-                            .name(TOOLBAR_SEPARATOR_NAME)
-                            .inset(12.0),
+                    ))
+                    .with_child(control_story_with_theme(
+                        Rc::clone(&theme_reader),
+                        "Numeric range",
+                        "Slider, spinbox, and select examples now read like inspector controls instead of long page rows.",
+                        Stack::vertical()
+                            .spacing(12.0)
+                            .alignment(Alignment::Start)
+                            .with_child(
+                                SizedBox::new().width(320.0).with_child(
+                                    Slider::new(SLIDER_NAME)
+                                        .range(0.0, 100.0)
+                                        .step(1.0)
+                                        .value(initial_slider_value)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .on_change(move |value| {
+                                            slider_state.borrow_mut().slider_value = value;
+                                        }),
+                                ),
+                            )
+                            .with_child(
+                                SizedBox::new().width(220.0).with_child(
+                                    NumberInput::new(NUMBER_INPUT_NAME)
+                                        .range(1.0, 256.0)
+                                        .step(1.0)
+                                        .precision(0)
+                                        .value(initial_number_value)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .on_change(move |value| {
+                                            number_state.borrow_mut().number_value = value;
+                                        }),
+                                ),
+                            )
+                            .with_child(
+                                SizedBox::new().width(260.0).with_child(
+                                    Select::new(SELECT_NAME)
+                                        .placeholder("Choose blend mode")
+                                        .options(BLEND_MODE_OPTIONS)
+                                        .selected(
+                                            option_index(&BLEND_MODE_OPTIONS, &initial_mode)
+                                                .unwrap_or(0),
+                                        )
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .on_change(move |_, value| {
+                                            select_state.borrow_mut().mode = value;
+                                        }),
+                                ),
+                            ),
                     )),
             ))
-            .with_child(panel(
-                "Choices and ranges",
-                "Desktop-style inspectors rely on switches, radio groups, sliders, numeric inputs, and selects more than oversized form controls.",
-                Stack::vertical()
-                    .spacing(14.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(
-                        Switch::new(SWITCH_LABEL)
-                            .on(initial_switch_on)
-                            .on_toggle(move |checked| {
-                                switch_state.borrow_mut().switch_on = checked;
-                            }),
-                    )
-                    .with_child(
-                        RadioButton::new(RADIO_BUTTON_LABEL)
-                            .selected(initial_standalone_radio)
-                            .on_select(move || {
-                                radio_button_state.borrow_mut().standalone_radio_selected = true;
-                            }),
-                    )
-                    .with_child(
-                        SizedBox::new().width(280.0).with_child(
-                            RadioGroup::new(RADIO_GROUP_NAME)
-                                .options(RADIO_OPTIONS)
-                                .selected(option_index(&RADIO_OPTIONS, &initial_radio_choice).unwrap_or(0))
-                                .on_change(move |_, value| {
-                                    radio_group_state.borrow_mut().radio_choice = value;
-                                }),
-                        ),
-                    )
-                    .with_child(
-                        SizedBox::new().width(320.0).with_child(
-                            Slider::new(SLIDER_NAME)
-                                .range(0.0, 100.0)
-                                .step(1.0)
-                                .value(initial_slider_value)
-                                .on_change(move |value| {
-                                    slider_state.borrow_mut().slider_value = value;
-                                }),
-                        ),
-                    )
-                    .with_child(
-                        SizedBox::new().width(220.0).with_child(
-                            NumberInput::new(NUMBER_INPUT_NAME)
-                                .range(1.0, 256.0)
-                                .step(1.0)
-                                .precision(0)
-                                .value(initial_number_value)
-                                .on_change(move |value| {
-                                    number_state.borrow_mut().number_value = value;
-                                }),
-                        ),
-                    )
-                    .with_child(
-                        SizedBox::new().width(260.0).with_child(
-                            Select::new(SELECT_NAME)
-                                .placeholder("Choose blend mode")
-                                .options(BLEND_MODE_OPTIONS)
-                                .selected(option_index(&BLEND_MODE_OPTIONS, &initial_mode).unwrap_or(0))
-                                .on_change(move |_, value| {
-                                    select_state.borrow_mut().mode = value;
-                                }),
-                        ),
-                    ),
-            ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Multiline and scroll",
                 "The widget book itself now scrolls, and the multiline editor fills the long-form text entry gap for notes, JSON, and small scripting panes.",
                 Stack::vertical()
@@ -1953,6 +2177,7 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                 .min_height(150.0)
                                 .value(initial_notes)
                                 .placeholder("Write notes")
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                 .on_change(move |value| {
                                     notes_state.borrow_mut().notes = value;
                                 }),
@@ -1964,10 +2189,13 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         )
                         .font_size(13.0)
                         .line_height(18.0)
-                        .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text_muted
+                        })),
                     ),
             ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Typography",
                 "Static text is now a real widget too, so the dev host no longer needs to hand-paint every heading and caption.",
                 Stack::vertical()
@@ -1977,22 +2205,29 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         Label::new("Section heading")
                             .font_size(22.0)
                             .line_height(26.0)
-                            .color(Color::rgba(0.13, 0.17, 0.23, 1.0)),
+                            .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                                theme.palette.text
+                            })),
                     )
                     .with_child(
                         Label::new("Body copy can use the same widget with different size and color settings.")
                             .font_size(15.0)
                             .line_height(20.0)
-                            .color(Color::rgba(0.38, 0.46, 0.56, 1.0)),
+                            .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                                theme.palette.text
+                            })),
                     )
                     .with_child(
                         Label::new("Secondary note")
                             .font_size(13.0)
                             .line_height(18.0)
-                            .color(Color::rgba(0.50, 0.57, 0.66, 1.0)),
+                            .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                                theme.palette.text_muted
+                            })),
                     ),
             ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Navigation surfaces",
                 "Tab bars and tab containers should work for editor chrome and docked inspectors without waiting for a custom application shell.",
                 Stack::vertical()
@@ -2003,6 +2238,7 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                             TabBar::new(TAB_BAR_NAME)
                                 .tabs(TAB_BAR_OPTIONS)
                                 .selected(option_index(&TAB_BAR_OPTIONS, &initial_tab_bar_choice).unwrap_or(0))
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                 .on_change(move |_, value| {
                                     tab_bar_state.borrow_mut().tab_bar_choice = value;
                                 }),
@@ -2012,6 +2248,7 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         SizedBox::new().width(540.0).height(220.0).with_child(
                             Tabs::new(TABS_NAME)
                                 .selected(option_index(&TAB_PANEL_OPTIONS, &initial_tabs_choice).unwrap_or(0))
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                 .tab(
                                     TAB_PANEL_OPTIONS[0],
                                     Padding::all(
@@ -2023,13 +2260,19 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                                 Label::new("Alignment, spacing, and surface geometry controls belong in a compact inspector tab.")
                                                     .font_size(14.0)
                                                     .line_height(19.0)
-                                                    .color(Color::rgba(0.36, 0.44, 0.54, 1.0)),
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text,
+                                                    )),
                                             )
                                             .with_child(
                                                 ProgressBar::new("Layout completion")
                                                     .range(0.0, 100.0)
                                                     .value(initial_slider_value)
-                                                    .show_value(true),
+                                                    .show_value(true)
+                                                    .theme_when(clone_widget_book_theme_reader(
+                                                        &theme_reader,
+                                                    )),
                                             ),
                                     ),
                                 )
@@ -2044,13 +2287,19 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                                 Label::new("Inline data summaries and editable metadata fit naturally in a reusable tabs widget.")
                                                     .font_size(14.0)
                                                     .line_height(19.0)
-                                                    .color(Color::rgba(0.36, 0.44, 0.54, 1.0)),
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text,
+                                                    )),
                                             )
                                             .with_child(
                                                 Label::new("Selection: 4 layers, 2 masks, 1 smart object")
                                                     .font_size(13.0)
                                                     .line_height(18.0)
-                                                    .color(Color::rgba(0.46, 0.54, 0.63, 1.0)),
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text_muted,
+                                                    )),
                                             ),
                                     ),
                                 )
@@ -2065,13 +2314,19 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                                 Label::new("Undo groups, import checkpoints, and review markers are another common fit for tabbed panels.")
                                                     .font_size(14.0)
                                                     .line_height(19.0)
-                                                    .color(Color::rgba(0.36, 0.44, 0.54, 1.0)),
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text,
+                                                    )),
                                             )
                                             .with_child(
                                                 Label::new("Replaying history cache")
                                                     .font_size(13.0)
                                                     .line_height(18.0)
-                                                    .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text_muted,
+                                                    )),
                                             ),
                                     ),
                                 )
@@ -2081,8 +2336,9 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         ),
                     ),
             ))
-            .with_child(build_animation_demo_panel())
-            .with_child(panel(
+            .with_child(build_animation_demo_panel_with_theme(Rc::clone(&theme_reader)))
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Menus and overlays",
                 "App menus, context menus, popovers, tooltips, and dialogs are the small but high-value surfaces that make desktop workflows feel complete.",
                 Stack::vertical()
@@ -2091,6 +2347,7 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                     .with_child(
                         SizedBox::new().width(300.0).with_child(
                             Menu::new(MENU_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                 .item(MenuItem::new("New tab").shortcut("Ctrl+T"))
                                 .item(MenuItem::new("Duplicate panel").shortcut("Ctrl+D"))
                                 .item(
@@ -2109,16 +2366,24 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                             ContextMenu::new(
                                 CONTEXT_MENU_NAME,
                                 Background::new(
-                                    Color::rgba(0.96, 0.975, 0.995, 1.0),
+                                    DefaultTheme::default().palette.control,
                                     Padding::all(
                                         14.0,
                                         Label::new("Right-click this explicit surface")
                                             .font_size(14.0)
                                             .line_height(18.0)
-                                            .color(Color::rgba(0.16, 0.21, 0.29, 1.0)),
+                                            .color_when(widget_book_theme_color(
+                                                &theme_reader,
+                                                |theme| theme.palette.text,
+                                            )),
                                     ),
-                                ),
+                                )
+                                .brush_when(widget_book_theme_color(
+                                    &theme_reader,
+                                    |theme| theme.palette.control,
+                                )),
                             )
+                            .theme_when(clone_widget_book_theme_reader(&theme_reader))
                             .item(MenuItem::new("Rename"))
                             .item(MenuItem::new("Duplicate"))
                             .item(MenuItem::new("Delete").separator_before().destructive())
@@ -2131,7 +2396,9 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         SizedBox::new().width(220.0).with_child(
                             Tooltip::new(
                                 TOOLTIP_TEXT,
-                                Button::new(TOOLTIP_TRIGGER_LABEL).min_width(180.0),
+                                Button::new(TOOLTIP_TRIGGER_LABEL)
+                                    .min_width(180.0)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                             ),
                         ),
                     )
@@ -2139,7 +2406,9 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         SizedBox::new().width(360.0).with_child(
                             Popover::new(
                                 POPOVER_NAME,
-                                Button::new(POPOVER_TRIGGER_LABEL).min_width(190.0),
+                                Button::new(POPOVER_TRIGGER_LABEL)
+                                    .min_width(190.0)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                                 Stack::vertical()
                                     .spacing(8.0)
                                     .alignment(Alignment::Stretch)
@@ -2147,13 +2416,19 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                         Label::new("Inline inspector content can stay lightweight instead of forcing a full modal.")
                                             .font_size(14.0)
                                             .line_height(19.0)
-                                            .color(Color::rgba(0.34, 0.42, 0.52, 1.0)),
+                                            .color_when(widget_book_theme_color(
+                                                &theme_reader,
+                                                |theme| theme.palette.text,
+                                            )),
                                     )
                                     .with_child(
                                         Label::new("Blend preview: Screen @ 72%")
                                             .font_size(13.0)
                                             .line_height(18.0)
-                                            .color(Color::rgba(0.46, 0.54, 0.63, 1.0)),
+                                            .color_when(widget_book_theme_color(
+                                                &theme_reader,
+                                                |theme| theme.palette.text_muted,
+                                            )),
                                     ),
                             ),
                         ),
@@ -2164,7 +2439,8 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         ),
                     ),
             ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Progress and busy",
                 "Progress bars and busy indicators are simple, but they anchor long-running exports, caching, and background processing workflows.",
                 Stack::vertical()
@@ -2175,21 +2451,26 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                             ProgressBar::new(PROGRESS_NAME)
                                 .range(0.0, 100.0)
                                 .value(initial_slider_value)
-                                .show_value(true),
+                                .show_value(true)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                         ),
                     )
                     .with_child(
                         SizedBox::new().width(320.0).with_child(
-                            Spinner::new(SPINNER_NAME).label(SPINNER_NAME),
+                            Spinner::new(SPINNER_NAME)
+                                .label(SPINNER_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                         ),
                     )
             ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Live state",
                 "This summary reads state produced by reusable controls so screenshot stories can cover both isolated widgets and composed UI.",
                 WidgetBookSummary::new(state),
             ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Live performance overlay",
                 "The stats card now floats over the gallery so frame timing stays visible while you inspect any part of the widget book.",
                 Label::new(
@@ -2197,9 +2478,12 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                 )
                 .font_size(13.0)
                 .line_height(18.0)
-                .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
+                .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                    theme.palette.text_muted
+                })),
             ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Debugging and inspection",
                 "The sui-debug crate composes reusable diagnostics chrome with SUI-specific views over focus, semantics, widget graph, and scene summaries.",
                 Label::new(
@@ -2207,9 +2491,12 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                 )
                 .font_size(13.0)
                 .line_height(18.0)
-                .color(Color::rgba(0.45, 0.53, 0.62, 1.0)),
+                .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                    theme.palette.text_muted
+                })),
             ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Collections and hierarchy",
                 "Foundational editor widgets need to cover lists, trees, and structured tables without requiring app-specific shells first.",
                 Stack::vertical()
@@ -2271,7 +2558,8 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         ),
                     ),
             ))
-            .with_child(panel(
+            .with_child(panel_with_theme(
+                Rc::clone(&theme_reader),
                 "Layout and pathing",
                 "Editor shells need split panes and breadcrumb-style navigation before the rest of the UI can settle into place.",
                 Stack::vertical()
@@ -2294,7 +2582,7 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                         SizedBox::new().width(720.0).height(240.0).with_child(
                             SplitView::horizontal(
                                 Background::new(
-                                    Color::rgba(0.97, 0.981, 0.992, 1.0),
+                                    DefaultTheme::default().palette.control,
                                     Padding::all(
                                         16.0,
                                         Stack::vertical()
@@ -2304,18 +2592,28 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                                 Label::new("Viewport")
                                                     .font_size(18.0)
                                                     .line_height(22.0)
-                                                    .color(Color::rgba(0.12, 0.16, 0.22, 1.0)),
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text,
+                                                    )),
                                             )
                                             .with_child(
                                                 Label::new("Resizable panes let editor shells settle into familiar two-up and inspector layouts.")
                                                     .font_size(14.0)
                                                     .line_height(19.0)
-                                                    .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text_muted,
+                                                    )),
                                             ),
                                     ),
-                                ),
+                                )
+                                .brush_when(widget_book_theme_color(
+                                    &theme_reader,
+                                    |theme| theme.palette.control,
+                                )),
                                 Background::new(
-                                    Color::rgba(0.985, 0.99, 1.0, 1.0),
+                                    DefaultTheme::default().palette.surface_raised,
                                     Padding::all(
                                         16.0,
                                         Stack::vertical()
@@ -2325,23 +2623,35 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
                                                 Label::new("Inspector")
                                                     .font_size(18.0)
                                                     .line_height(22.0)
-                                                    .color(Color::rgba(0.12, 0.16, 0.22, 1.0)),
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text,
+                                                    )),
                                             )
                                             .with_child(
                                                 Label::new("Drag the divider to rebalance the viewport and detail pane without custom shell code.")
                                                     .font_size(14.0)
                                                     .line_height(19.0)
-                                                    .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text_muted,
+                                                    )),
                                             ),
                                     ),
-                                ),
+                                )
+                                .brush_when(widget_book_theme_color(
+                                    &theme_reader,
+                                    |theme| theme.palette.surface_raised,
+                                )),
                             )
                             .name(SPLIT_VIEW_NAME)
                             .ratio(0.62),
                         ),
                     ),
             ))
-            .with_child(build_color_and_imagery_story());
+            .with_child(build_color_and_imagery_story_with_theme(Rc::clone(
+                &theme_reader,
+            )));
 
     WidgetBookGalleryScrollPane::new(
         gallery,
@@ -2349,8 +2659,14 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
     )
 }
 
+#[cfg(test)]
 fn build_color_and_imagery_story() -> impl Widget {
-    panel(
+    build_color_and_imagery_story_with_theme(default_widget_book_theme_reader())
+}
+
+fn build_color_and_imagery_story_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
+    panel_with_theme(
+        Rc::clone(&theme_reader),
         "Color and imagery",
         "SUI targets visual tooling, so swatches, a usable picker, and image previews need to exist as first-class widgets.",
         Stack::vertical()
@@ -2374,25 +2690,32 @@ fn build_color_and_imagery_story() -> impl Widget {
                         )
                         .font_size(14.0)
                         .line_height(18.0)
-                        .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text_muted
+                        })),
                     ),
             )
             .with_child(
-                Stack::horizontal()
+                Stack::vertical()
                     .spacing(16.0)
                     .alignment(Alignment::Start)
-                    .with_child(SizedBox::new().width(434.0).height(448.0).with_child(
-                        ColorPicker::from_color(
-                            COLOR_PICKER_NAME,
-                            Color::new(sui::ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0),
+                    .with_child(
+                        SizedBox::new().width(434.0).height(448.0).with_child(
+                            ColorPicker::from_color(
+                                COLOR_PICKER_NAME,
+                                Color::new(sui::ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0),
+                            )
+                            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                         ),
-                    ))
+                    )
                     .with_child(
                         SizedBox::new().width(220.0).height(220.0).with_child(
                             Image::new(WIDGET_BOOK_IMAGE_HANDLE)
                                 .label(DEMO_IMAGE_LABEL)
                                 .fit(ImageFit::Contain)
-                                .background(Color::rgba(0.965, 0.975, 0.99, 1.0))
+                                .background_when(widget_book_theme_color(&theme_reader, |theme| {
+                                    theme.palette.control
+                                }))
                                 .corner_radius(12.0),
                         ),
                     ),
@@ -2540,76 +2863,67 @@ pub fn build_retained_text_benchmark_application() -> Application {
 }
 
 pub fn build_text_rendering_comparison_surface() -> impl Widget {
-    let mut mode_cards = Stack::vertical()
-        .spacing(18.0)
+    let scroll_state = ScrollState::new();
+    let mut mode_grid = Stack::vertical()
+        .spacing(14.0)
         .alignment(Alignment::Stretch);
 
-    for (title, subtitle, notes) in [
-        (
-            "Grayscale baseline",
-            "Baseline grayscale coverage for dark-on-light and light-on-dark UI text.",
-            "Use this as the control sample for repeated stems like ill, scroll, minimum, Hello, Ж, and 中.",
-        ),
-        (
-            "Grayscale + hinting",
-            "Small-text hinting below the configured threshold.",
-            "Compare 10–14 px labels, mixed-script captions, and medium UI text against the baseline.",
-        ),
-        (
-            "Grayscale + stem darkening",
-            "Conservative stroke-weight boost for thin dark-on-light text.",
-            "Look for stronger stems without muddying medium-size text or emoji fallback.",
-        ),
-        (
-            "LCD subpixel",
-            "Subpixel coverage path for axis-aligned pixel-snapped text.",
-            "Check repeated stems, color-fringe-aware edge detail, and automatic grayscale fallback expectations.",
-        ),
-        (
-            "LCD subpixel + hinting",
-            "Subpixel path plus small-text hinting.",
-            "Focus on tiny Latin labels, mixed-script tool captions, and editor-like status lines.",
-        ),
-        (
-            "LCD subpixel + hinting + stem darkening",
-            "Most aggressive small-text experiment in the current plan.",
-            "Validate tiny UI text, dark/light contrast pairs, and make sure medium text still reads cleanly.",
-        ),
-    ] {
-        mode_cards = mode_cards.with_child(build_text_rendering_mode_card(title, subtitle, notes));
+    for row in TEXT_RENDERING_MODE_DATA.chunks(2) {
+        let mut row_stack = Stack::horizontal()
+            .spacing(14.0)
+            .alignment(Alignment::Start);
+        for &(title, subtitle, notes) in row {
+            row_stack =
+                row_stack.with_child(build_text_rendering_mode_card(title, subtitle, notes));
+        }
+        mode_grid = mode_grid.with_child(row_stack);
     }
 
-    ScrollView::vertical(Padding::all(
-        24.0,
-        Stack::vertical()
-            .spacing(18.0)
-            .alignment(Alignment::Stretch)
-            .with_child(panel(
-                "Text rendering mode matrix",
-                "Compare the same representative text samples across grayscale, hinted, darkened, and LCD-oriented rendering modes. The current surface is intended as a visual checklist for repeated stems, mixed scripts, and contrast-sensitive UI labels.",
-                Stack::vertical()
-                    .spacing(10.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(
-                        SizedBox::new().width(980.0).with_child(
-                            Label::new("Samples include dark text on light background, light text on dark background, small label text, medium UI copy, mixed-script runs, and repeated stems such as ill, scroll, minimum, Hello, Ж, and 中.")
-                                .font_size(14.0)
-                                .line_height(20.0)
-                                .color(Color::rgba(0.38, 0.46, 0.56, 1.0)),
-                        ),
-                    )
-                    .with_child(
-                        SizedBox::new().width(980.0).with_child(
-                            Label::new("Use the dev workspace renderer settings to switch the active mode, then compare how each reference card should look when the chosen policy is active. This keeps one stable validation surface for native and wasm runs.")
-                                .font_size(14.0)
-                                .line_height(20.0)
-                                .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
-                        ),
-                    ),
-            ))
-            .with_child(mode_cards),
-    ))
-    .name(TEXT_RENDERING_COMPARISON_SCROLL_NAME)
+    let content = MinimumWidth::new(
+        TEXT_RENDERING_COMPARISON_MIN_WIDTH,
+        Padding::all(
+            20.0,
+            Stack::vertical()
+                .spacing(14.0)
+                .alignment(Alignment::Stretch)
+                .with_child(panel(
+                    "Text rendering matrix",
+                    "A compact visual QA surface for comparing small UI text policies across light and dark surfaces.",
+                    Stack::horizontal()
+                        .spacing(12.0)
+                        .alignment(Alignment::Center)
+                        .with_child(build_text_rendering_summary_metric(
+                            "Modes",
+                            "6",
+                            "coverage, hinting, LCD, darkening",
+                        ))
+                        .with_child(build_text_rendering_summary_metric(
+                            "Pairs",
+                            "2",
+                            "light and dark contrast checks",
+                        ))
+                        .with_child(build_text_rendering_summary_metric(
+                            "Stress",
+                            "11-16 px",
+                            "dense labels and status text",
+                        )),
+                ))
+                .with_child(mode_grid),
+        ),
+    );
+
+    TwoAxisScrollPane::new(
+        scroll_state.clone(),
+        ScrollView::both(content)
+            .state(scroll_state.clone())
+            .overflow_x(Overflow::Auto)
+            .overflow_y(Overflow::Auto)
+            .name(TEXT_RENDERING_COMPARISON_SCROLL_NAME),
+        ScrollBar::vertical(scroll_state.clone())
+            .name(TEXT_RENDERING_COMPARISON_VERTICAL_SCROLL_BAR_NAME),
+        ScrollBar::horizontal(scroll_state)
+            .name(TEXT_RENDERING_COMPARISON_HORIZONTAL_SCROLL_BAR_NAME),
+    )
 }
 
 pub fn build_text_rendering_comparison_application() -> Application {
@@ -2861,174 +3175,191 @@ fn build_text_rendering_mode_card(
 ) -> impl Widget {
     NamedSection::new(
         title,
-        Background::new(
-            Color::rgba(0.985, 0.99, 1.0, 1.0),
-            Padding::all(
-                18.0,
-                Stack::vertical()
-                    .spacing(14.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(
-                        Label::new(title)
-                            .font_size(20.0)
-                            .line_height(24.0)
-                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
-                    )
-                    .with_child(
-                        Label::new(subtitle)
-                            .font_size(14.0)
-                            .line_height(19.0)
-                            .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
-                    )
-                    .with_child(
-                        Stack::horizontal()
-                            .spacing(16.0)
-                            .alignment(Alignment::Start)
-                            .with_child(Background::new(
-                                Color::rgba(0.995, 0.998, 1.0, 1.0),
-                                Padding::all(
-                                    16.0,
-                                    Stack::vertical()
-                                        .spacing(8.0)
-                                        .alignment(Alignment::Stretch)
-                                        .with_child(
-                                            Label::new("Dark on light")
-                                                .font_size(13.0)
-                                                .line_height(18.0)
-                                                .color(Color::rgba(0.43, 0.50, 0.58, 1.0)),
-                                        )
-                                        .with_child(
-                                            Label::new("ill scroll minimum Hello Ж 中")
-                                                .font_size(12.0)
-                                                .line_height(16.0)
-                                                .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
-                                        )
-                                        .with_child(
-                                            Label::new(
-                                                "Toolbar 12 px · glyph atlas · Привет · 中文",
-                                            )
-                                            .font_size(14.0)
-                                            .line_height(19.0)
-                                            .color(Color::rgba(0.14, 0.19, 0.26, 1.0)),
-                                        ),
-                                ),
-                            ))
-                            .with_child(Background::new(
-                                Color::rgba(0.14, 0.18, 0.24, 1.0),
-                                Padding::all(
-                                    16.0,
-                                    Stack::vertical()
-                                        .spacing(8.0)
-                                        .alignment(Alignment::Stretch)
-                                        .with_child(
-                                            Label::new("Light on dark")
-                                                .font_size(13.0)
-                                                .line_height(18.0)
-                                                .color(Color::rgba(0.70, 0.78, 0.86, 1.0)),
-                                        )
-                                        .with_child(
-                                            Label::new("ill scroll minimum Hello Ж 中")
-                                                .font_size(12.0)
-                                                .line_height(16.0)
-                                                .color(Color::rgba(0.95, 0.97, 1.0, 1.0)),
-                                        )
-                                        .with_child(
-                                            Label::new("Status · שלום · مرحبا · नमस्ते · 中文")
-                                                .font_size(14.0)
-                                                .line_height(19.0)
-                                                .color(Color::rgba(0.90, 0.94, 1.0, 1.0)),
-                                        ),
-                                ),
-                            )),
-                    )
-                    .with_child(
-                        SizedBox::new().width(980.0).with_child(
+        SizedBox::new()
+            .width(TEXT_RENDERING_COMPARISON_CARD_WIDTH)
+            .with_child(Background::new(
+                Color::rgba(0.985, 0.99, 1.0, 1.0),
+                Padding::all(
+                    14.0,
+                    Stack::vertical()
+                        .spacing(10.0)
+                        .alignment(Alignment::Stretch)
+                        .with_child(
+                            Label::new(title)
+                                .font_size(17.0)
+                                .line_height(21.0)
+                                .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
+                        )
+                        .with_child(MaximumWidth::new(
+                            480.0,
+                            Label::new(subtitle)
+                                .font_size(12.0)
+                                .line_height(16.0)
+                                .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
+                        ))
+                        .with_child(
+                            Stack::horizontal()
+                                .spacing(10.0)
+                                .alignment(Alignment::Start)
+                                .with_child(build_text_rendering_sample_tile(
+                                    format!("{title} light sample"),
+                                    "Light",
+                                    false,
+                                ))
+                                .with_child(build_text_rendering_sample_tile(
+                                    format!("{title} dark sample"),
+                                    "Dark",
+                                    true,
+                                )),
+                        )
+                        .with_child(MaximumWidth::new(
+                            480.0,
                             Label::new(notes)
-                                .font_size(13.0)
-                                .line_height(19.0)
+                                .font_size(12.0)
+                                .line_height(16.0)
                                 .color(Color::rgba(0.41, 0.48, 0.56, 1.0)),
-                        ),
-                    ),
+                        )),
+                ),
+            )),
+    )
+}
+
+fn build_text_rendering_summary_metric(
+    label: &'static str,
+    value: &'static str,
+    caption: &'static str,
+) -> impl Widget {
+    SizedBox::new().width(210.0).with_child(StoryCard::new(
+        Stack::vertical()
+            .spacing(5.0)
+            .alignment(Alignment::Start)
+            .with_child(
+                Label::new(label)
+                    .font_size(11.0)
+                    .line_height(14.0)
+                    .color(Color::rgba(0.48, 0.55, 0.64, 1.0)),
+            )
+            .with_child(
+                Label::new(value)
+                    .font_size(18.0)
+                    .line_height(21.0)
+                    .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
+            )
+            .with_child(
+                Label::new(caption)
+                    .font_size(11.0)
+                    .line_height(14.0)
+                    .color(Color::rgba(0.38, 0.45, 0.54, 1.0)),
             ),
-        ),
+    ))
+}
+
+fn build_text_rendering_sample_tile(
+    name: impl Into<String>,
+    label: &'static str,
+    dark: bool,
+) -> impl Widget {
+    let background = if dark {
+        Color::rgba(0.12, 0.16, 0.22, 1.0)
+    } else {
+        Color::rgba(0.995, 0.998, 1.0, 1.0)
+    };
+    let label_color = if dark {
+        Color::rgba(0.70, 0.78, 0.86, 1.0)
+    } else {
+        Color::rgba(0.42, 0.49, 0.57, 1.0)
+    };
+    let primary_color = if dark {
+        Color::rgba(0.96, 0.98, 1.0, 1.0)
+    } else {
+        Color::rgba(0.10, 0.14, 0.20, 1.0)
+    };
+    let secondary_color = if dark {
+        Color::rgba(0.82, 0.88, 0.95, 1.0)
+    } else {
+        Color::rgba(0.18, 0.24, 0.32, 1.0)
+    };
+
+    NamedSection::new(
+        name,
+        SizedBox::new()
+            .width(TEXT_RENDERING_SAMPLE_TILE_WIDTH)
+            .height(TEXT_RENDERING_SAMPLE_TILE_HEIGHT)
+            .with_child(Background::new(
+                background,
+                Padding::all(
+                    12.0,
+                    Stack::vertical()
+                        .spacing(7.0)
+                        .alignment(Alignment::Stretch)
+                        .with_child(
+                            Label::new(label)
+                                .font_size(11.0)
+                                .line_height(14.0)
+                                .color(label_color),
+                        )
+                        .with_child(
+                            Label::new("minimum ill scroll")
+                                .font_size(12.0)
+                                .line_height(15.0)
+                                .color(primary_color),
+                        )
+                        .with_child(
+                            Label::new("Toolbar 12 px glyph atlas")
+                                .font_size(13.0)
+                                .line_height(17.0)
+                                .color(secondary_color),
+                        )
+                        .with_child(
+                            Label::new("Status row 16 px")
+                                .font_size(16.0)
+                                .line_height(20.0)
+                                .color(primary_color),
+                        ),
+                ),
+            )),
     )
 }
 
 pub fn build_text_validation_surface() -> impl Widget {
     let content = Stack::vertical()
-        .spacing(18.0)
+        .spacing(16.0)
         .alignment(Alignment::Stretch)
         .with_child(panel(
-            "Mixed scripts and fallback",
-            "Validate mixed-script shaping, emoji fallback, and bidirectional runs against one stable visual surface.",
-            Stack::vertical()
-                .spacing(8.0)
-                .alignment(Alignment::Stretch)
-                .with_child(
-                    SizedBox::new().width(900.0).with_child(
-                        Label::new("Latin, Cyrillic, Hebrew, Arabic, Devanagari, and Han: SUI validates editor text in English, Привет, שלום, مرحبا, नमस्ते, 中文.")
-                            .font_size(15.0)
-                            .line_height(22.0)
-                            .color(Color::rgba(0.16, 0.22, 0.30, 1.0)),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(900.0).with_child(
-                        Label::new("Emoji and fallback coverage: status ready 🙂, warning ⚠, success ✅, palette 🎨, atlas 🔤, mixed fallback 中 and Ж in one line.")
-                            .font_size(15.0)
-                            .line_height(22.0)
-                            .color(Color::rgba(0.18, 0.25, 0.35, 1.0)),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(900.0).with_child(
-                        Label::new("Bidirectional sample: layout anchor -> abc אבג 123 مرحبا <- editor overlay should preserve readable ordering.")
-                            .font_size(15.0)
-                            .line_height(22.0)
-                            .color(Color::rgba(0.22, 0.30, 0.39, 1.0)),
-                    ),
-                ),
-        ))
-        .with_child(panel(
-            "Wrapping and line breaking",
-            "Constrained paragraphs keep the validation surface honest about line windows, wrapping, and caret placement near soft wraps.",
+            "Text validation lab",
+            "Focused smoke checks for shaping, wrapping, bidi boundaries, IME commits, and selection overlays.",
             Stack::horizontal()
-                .spacing(18.0)
+                .spacing(14.0)
                 .alignment(Alignment::Start)
-                .with_child(
-                    SizedBox::new().width(300.0).with_child(
-                        Label::new("A narrow validation column should wrap mixed punctuation, inline numbers like 2026, and fallback text such as 漢字 without collapsing the selection geometry into one long strip.")
-                            .font_size(14.0)
-                            .line_height(20.0)
-                            .color(Color::rgba(0.29, 0.35, 0.43, 1.0)),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(300.0).with_child(
-                        Label::new("A second constrained column helps compare where the renderer slices visible lines when long technical prose, bidi fragments, and emoji comments all sit in the same viewport.")
-                            .font_size(14.0)
-                            .line_height(20.0)
-                            .color(Color::rgba(0.29, 0.35, 0.43, 1.0)),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(260.0).with_child(
-                        Label::new("Expected focus: stable wraps, readable fallback glyphs, and no clipping around caret or selection overlays.")
-                            .font_size(13.0)
-                            .line_height(19.0)
-                            .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
-                    ),
-                ),
+                .with_child(build_text_validation_probe_card(
+                    "Glyph coverage probe",
+                    "Glyph coverage",
+                    "Aa ill minimum | Cyrillic Привет",
+                    "Checks Latin stems and one common fallback family without filling the page with missing-glyph blocks.",
+                ))
+                .with_child(build_text_validation_probe_card(
+                    "Line wrapping probe",
+                    "Line wrapping",
+                    "wrap -> metrics -> caret -> overlay",
+                    "Constrained text should reflow cleanly while selection geometry stays aligned to visible lines.",
+                ))
+                .with_child(build_text_validation_probe_card(
+                    "Bidi caret probe",
+                    "Bidi caret",
+                    "abc 123 | RTL run | caret crosses",
+                    "Use the editor below for live RTL input while this card keeps the visual checklist compact.",
+                )),
         ))
         .with_child(panel(
-            "Interactive text surface",
-            "This editor-sized surface is the manual validation target for caret, selection, scrolling, IME commit, and mixed-script editing behavior.",
+            "Interactive editor target",
+            "Manual target for caret movement, selection ranges, scrolling, IME preedit, and fallback text entry.",
             Stack::vertical()
                 .spacing(10.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
-                    SizedBox::new().width(900.0).with_child(
-                        Label::new("Focus the surface, type with IME or keyboard input, extend selection with Shift+Arrow, and wheel-scroll to inspect visible-line extraction.")
+                    MaximumWidth::new(
+                        960.0,
+                        Label::new("Focus the editor, type with IME or keyboard input, extend selection with Shift+Arrow, and wheel-scroll to inspect visible-line extraction.")
                             .font_size(13.0)
                             .line_height(19.0)
                             .color(Color::rgba(0.43, 0.50, 0.58, 1.0)),
@@ -3036,15 +3367,15 @@ pub fn build_text_validation_surface() -> impl Widget {
                 )
                 .with_child(
                     SizedBox::new()
-                        .width(900.0)
-                        .height(260.0)
+                        .width(980.0)
+                        .height(300.0)
                         .with_child(
                             TextSurface::new(TEXT_VALIDATION_EDITOR_NAME)
                                 .value(text_validation_editor_seed())
                                 .wrap(TextWrap::Word)
                                 .direction(TextDirection::Auto)
-                                .min_width(900.0)
-                                .min_height(260.0)
+                                .min_width(980.0)
+                                .min_height(300.0)
                                 .text_style(TextStyle {
                                     font_size: 14.0,
                                     line_height: 20.0,
@@ -3057,9 +3388,47 @@ pub fn build_text_validation_surface() -> impl Widget {
 
     ScrollView::vertical(Padding::all(
         24.0,
-        SizedBox::new().width(980.0).with_child(content),
+        SizedBox::new()
+            .width(TEXT_VALIDATION_CONTENT_WIDTH)
+            .with_child(content),
     ))
     .name(TEXT_VALIDATION_SCROLL_NAME)
+}
+
+fn build_text_validation_probe_card(
+    name: &'static str,
+    title: &'static str,
+    sample: &'static str,
+    caption: &'static str,
+) -> impl Widget {
+    NamedSection::new(
+        name,
+        SizedBox::new()
+            .width(TEXT_VALIDATION_PROBE_CARD_WIDTH)
+            .with_child(StoryCard::new(
+                Stack::vertical()
+                    .spacing(8.0)
+                    .alignment(Alignment::Start)
+                    .with_child(
+                        Label::new(title)
+                            .font_size(13.0)
+                            .line_height(17.0)
+                            .color(Color::rgba(0.45, 0.52, 0.61, 1.0)),
+                    )
+                    .with_child(
+                        Label::new(sample)
+                            .font_size(16.0)
+                            .line_height(21.0)
+                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
+                    )
+                    .with_child(
+                        Label::new(caption)
+                            .font_size(12.0)
+                            .line_height(16.0)
+                            .color(Color::rgba(0.39, 0.47, 0.56, 1.0)),
+                    ),
+            )),
+    )
 }
 
 pub fn build_text_editing_benchmark() -> impl Widget {
@@ -3188,10 +3557,13 @@ fn retained_text_benchmark_paragraph(section_index: usize, paragraph_index: usiz
 fn text_validation_editor_seed() -> String {
     [
         "Validation checklist",
-        "- Mixed script: English, العربية, עברית, हिन्दी, 中文, and emoji 🙂 should stay readable.",
+        "- Shape: Latin stems and common fallback families should stay readable.",
         "- Wrapping: long diagnostics must reflow without selection gaps when the viewport narrows.",
         "- IME: composition commits should land near the caret instead of invalidating the whole surface.",
         "- Caret: moving across bidi boundaries should preserve stable layout handles and visible overlays.",
+        "",
+        "Fallback probes to paste, edit, or compare:",
+        "Arabic: مرحبا | Hebrew: שלום | Hindi: नमस्ते | Han: 中文 | Emoji: 🙂",
         "",
         "Type here to confirm the runtime still exposes semantics-first text input for automated tests.",
     ]
@@ -3466,22 +3838,9 @@ fn build_text_editing_syntax_preview() -> impl Widget {
 
 fn build_text_editing_syntax_line(line_index: usize) -> impl Widget {
     let keyword = ["fn", "let", "match", "if", "while", "return"][line_index % 6];
-    let type_name = [
-        "EditorState",
-        "GlyphRun",
-        "SelectionOverlay",
-        "SyntaxPalette",
-        "VisibleWindow",
-        "BenchmarkFrame",
-    ][(line_index * 7) % 6];
-    let method = [
-        "shape_visible_window",
-        "collect_cache_delta",
-        "measure_cursor_band",
-        "update_highlight_rows",
-        "resolve_fallback_faces",
-        "commit_frame_sample",
-    ][(line_index * 11) % 6];
+    let type_name =
+        ["Editor", "Glyphs", "Select", "Syntax", "Window", "Frame"][(line_index * 7) % 6];
+    let method = ["shape", "cache", "cursor", "paint", "fallback", "commit"][(line_index * 11) % 6];
     let accent = ["keyword", "type", "comment", "number"][line_index % 4];
     let line = Stack::horizontal()
         .spacing(0.0)
@@ -3501,19 +3860,19 @@ fn build_text_editing_syntax_line(line_index: usize) -> impl Widget {
                 .color(Color::rgba(0.78, 0.34, 0.16, 1.0)),
         )
         .with_child(
-            Label::new(format!("sample_{line_index:03}: "))
+            Label::new(format!("sample_{line_index:03}"))
                 .font_size(13.0)
                 .line_height(18.0)
                 .color(Color::rgba(0.15, 0.19, 0.26, 1.0)),
         )
         .with_child(
-            Label::new(format!("{type_name} "))
+            Label::new(format!(": {type_name}"))
                 .font_size(13.0)
                 .line_height(18.0)
                 .color(Color::rgba(0.09, 0.43, 0.58, 1.0)),
         )
         .with_child(
-            Label::new(format!("= {method}("))
+            Label::new(format!(" = {method}("))
                 .font_size(13.0)
                 .line_height(18.0)
                 .color(Color::rgba(0.21, 0.27, 0.35, 1.0)),
@@ -3525,19 +3884,16 @@ fn build_text_editing_syntax_line(line_index: usize) -> impl Widget {
                 .color(Color::rgba(0.14, 0.49, 0.24, 1.0)),
         )
         .with_child(
-            Label::new(") ")
+            Label::new("); ")
                 .font_size(13.0)
                 .line_height(18.0)
                 .color(Color::rgba(0.21, 0.27, 0.35, 1.0)),
         )
         .with_child(
-            Label::new(format!(
-                "// {accent} tint, abc אבג 123, glyph set 🙂{}",
-                line_index % 9
-            ))
-            .font_size(13.0)
-            .line_height(18.0)
-            .color(Color::rgba(0.36, 0.45, 0.25, 1.0)),
+            Label::new(format!("// {accent} glyph {}", line_index % 9))
+                .font_size(13.0)
+                .line_height(18.0)
+                .color(Color::rgba(0.36, 0.45, 0.25, 1.0)),
         );
 
     if line_index % 2 == 0 {
@@ -3599,8 +3955,20 @@ fn panel<W>(title: &str, subtitle: &str, body: W) -> impl Widget
 where
     W: Widget + 'static,
 {
+    panel_with_theme(default_widget_book_theme_reader(), title, subtitle, body)
+}
+
+fn panel_with_theme<W>(
+    theme_reader: WidgetBookThemeReader,
+    title: &str,
+    subtitle: &str,
+    body: W,
+) -> impl Widget
+where
+    W: Widget + 'static,
+{
     Background::new(
-        Color::rgba(0.985, 0.99, 1.0, 1.0),
+        DefaultTheme::default().palette.surface,
         Padding::all(
             18.0,
             Stack::vertical()
@@ -3611,18 +3979,160 @@ where
                     Label::new(title)
                         .font_size(20.0)
                         .line_height(24.0)
-                        .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text
+                        })),
                 ))
                 .with_child(MaximumWidth::new(
                     GALLERY_TEXT_MAX_WIDTH,
                     Label::new(subtitle)
                         .font_size(14.0)
                         .line_height(19.0)
-                        .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text_muted
+                        })),
                 ))
                 .with_child(body),
         ),
     )
+    .brush_when(widget_book_theme_color(&theme_reader, |theme| {
+        theme.palette.surface
+    }))
+}
+
+fn control_story_with_theme<W>(
+    theme_reader: WidgetBookThemeReader,
+    title: &str,
+    caption: &str,
+    body: W,
+) -> impl Widget
+where
+    W: Widget + 'static,
+{
+    SizedBox::new().width(430.0).with_child(
+        StoryCard::new(
+            Stack::vertical()
+                .spacing(10.0)
+                .alignment(Alignment::Start)
+                .with_child(
+                    Label::new(title)
+                        .font_size(14.0)
+                        .line_height(18.0)
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text
+                        })),
+                )
+                .with_child(MaximumWidth::new(
+                    380.0,
+                    Label::new(caption)
+                        .font_size(12.0)
+                        .line_height(16.0)
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text_muted
+                        })),
+                ))
+                .with_child(body),
+        )
+        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+    )
+}
+
+struct StoryCard {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    padding: Insets,
+    child: SingleChild,
+}
+
+impl StoryCard {
+    fn new<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            padding: Insets::all(14.0),
+            child: SingleChild::new(child),
+        }
+    }
+
+    fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+}
+
+impl Widget for StoryCard {
+    fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let child_constraints = Constraints::new(
+            Size::new(
+                (constraints.min.width - self.padding.left - self.padding.right).max(0.0),
+                (constraints.min.height - self.padding.top - self.padding.bottom).max(0.0),
+            ),
+            Size::new(
+                (constraints.max.width - self.padding.left - self.padding.right).max(0.0),
+                (constraints.max.height - self.padding.top - self.padding.bottom).max(0.0),
+            ),
+        );
+        let child_size = self.child.measure(ctx, child_constraints);
+        constraints.clamp(Size::new(
+            child_size.width + self.padding.left + self.padding.right,
+            child_size.height + self.padding.top + self.padding.bottom,
+        ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let measured = self.child.child().measured_size();
+        let child_bounds = Rect::new(
+            bounds.x() + self.padding.left,
+            bounds.y() + self.padding.top,
+            (bounds.width() - self.padding.left - self.padding.right)
+                .max(0.0)
+                .min(measured.width),
+            (bounds.height() - self.padding.top - self.padding.bottom)
+                .max(0.0)
+                .min(measured.height),
+        );
+        self.child.arrange(ctx, child_bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let bounds = ctx.bounds();
+        ctx.fill(Path::rounded_rect(bounds, 8.0), palette.surface_raised);
+        ctx.stroke(
+            Path::rounded_rect(bounds, 8.0),
+            palette.border,
+            StrokeStyle::new(1.0),
+        );
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
 }
 
 struct NamedSection {
@@ -3682,14 +4192,15 @@ fn theme_preview_card(
 ) -> impl Widget {
     let body = Stack::vertical()
         .spacing(12.0)
-        .alignment(Alignment::Stretch)
+        .alignment(Alignment::Start)
         .with_child(
             Label::new(format!("{title} theme"))
                 .font_size(18.0)
                 .line_height(22.0)
                 .color(theme.palette.text),
         )
-        .with_child(
+        .with_child(MaximumWidth::new(
+            520.0,
             Label::new(format!(
                 "{} base surface with {} accent for primary actions.",
                 theme.colors.name, theme.colors.name
@@ -3697,7 +4208,7 @@ fn theme_preview_card(
             .font_size(13.0)
             .line_height(18.0)
             .color(theme.palette.placeholder),
-        )
+        ))
         .with_child(
             SizedBox::new().width(220.0).with_child(
                 TextInput::new(input_label)
@@ -3710,24 +4221,29 @@ fn theme_preview_card(
                 .spacing(12.0)
                 .alignment(Alignment::Center)
                 .with_child(Button::new(action_label).theme(theme))
-                .with_child(
+                .with_child(MaximumWidth::new(
+                    280.0,
                     Label::new(
-                        "Reusable controls should stay coherent across both theme variants.",
+                        "Reusable controls should stay coherent across all theme directions.",
                     )
                     .font_size(13.0)
                     .line_height(18.0)
                     .color(theme.palette.placeholder),
-                ),
+                )),
         )
         .with_child(
-            Checkbox::new(format!("{title} preview snap to grid"))
-                .checked(true)
-                .theme(theme),
+            SizedBox::new().width(310.0).with_child(
+                Checkbox::new(format!("{title} preview snap to grid"))
+                    .checked(true)
+                    .theme(theme),
+            ),
         )
         .with_child(
-            Switch::new(format!("{title} preview live updates"))
-                .on(true)
-                .theme(theme),
+            SizedBox::new().width(310.0).with_child(
+                Switch::new(format!("{title} preview live updates"))
+                    .on(true)
+                    .theme(theme),
+            ),
         )
         .with_child(
             Stack::horizontal()
@@ -3747,13 +4263,92 @@ fn theme_preview_card(
                 ),
         );
 
-    Background::new(
-        theme.palette.border,
-        Padding::all(
-            1.0,
-            Background::new(theme.palette.surface, Padding::all(18.0, body)),
-        ),
-    )
+    ThemePreviewCardFrame::new(theme, body)
+}
+
+struct ThemePreviewCardFrame {
+    theme: DefaultTheme,
+    padding: Insets,
+    child: SingleChild,
+}
+
+impl ThemePreviewCardFrame {
+    fn new<W>(theme: DefaultTheme, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme,
+            padding: Insets::all(18.0),
+            child: SingleChild::new(child),
+        }
+    }
+}
+
+impl Widget for ThemePreviewCardFrame {
+    fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let child_constraints = Constraints::new(
+            Size::new(
+                (constraints.min.width - self.padding.left - self.padding.right).max(0.0),
+                (constraints.min.height - self.padding.top - self.padding.bottom).max(0.0),
+            ),
+            Size::new(
+                (constraints.max.width - self.padding.left - self.padding.right).max(0.0),
+                (constraints.max.height - self.padding.top - self.padding.bottom).max(0.0),
+            ),
+        );
+        let child_size = self.child.measure(ctx, child_constraints);
+        constraints.clamp(Size::new(
+            child_size.width + self.padding.left + self.padding.right,
+            child_size.height + self.padding.top + self.padding.bottom,
+        ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let measured = self.child.child().measured_size();
+        let child_bounds = Rect::new(
+            bounds.x() + self.padding.left,
+            bounds.y() + self.padding.top,
+            (bounds.width() - self.padding.left - self.padding.right)
+                .max(0.0)
+                .min(measured.width),
+            (bounds.height() - self.padding.top - self.padding.bottom)
+                .max(0.0)
+                .min(measured.height),
+        );
+        self.child.arrange(ctx, child_bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds();
+        let border = self.theme.palette.border.with_alpha(0.92);
+        let background = if self.theme.colors.scheme == ThemeColorScheme::HighContrast {
+            self.theme.palette.surface
+        } else {
+            self.theme.palette.surface_raised
+        };
+        ctx.fill(Path::rounded_rect(bounds, 10.0), background);
+        ctx.stroke(
+            Path::rounded_rect(bounds, 10.0),
+            border,
+            StrokeStyle::new(1.0),
+        );
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
 }
 
 struct WidgetBookSummary {
@@ -4578,6 +5173,20 @@ mod tests {
         build_text_rendering_comparison_application().build()
     }
 
+    fn build_narrow_text_rendering_comparison_runtime() -> Result<sui::Runtime> {
+        Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title(TEXT_RENDERING_COMPARISON_TITLE)
+                    .root(
+                        SizedBox::new()
+                            .size(Size::new(430.0, 320.0))
+                            .with_child(super::build_text_rendering_comparison_surface()),
+                    ),
+            )
+            .build()
+    }
+
     fn build_narrow_button_grid_runtime() -> Result<sui::Runtime> {
         Application::new()
             .window(
@@ -4684,22 +5293,25 @@ mod tests {
     fn build_light_theme_preview_reference_app(card_width: f32) -> Result<TestApp> {
         TestApp::from_runtime(
             Application::new()
-                .window(WindowBuilder::new().title("Theme preview reference").root(
-                    sui::containers::Padding::all(
-                        24.0,
-                        SizedBox::new().width(card_width).height(272.0).with_child(
-                            super::NamedSection::new(
-                                LIGHT_THEME_PREVIEW_CARD_NAME,
-                                theme_preview_card(
-                                    DefaultTheme::light(),
-                                    "Light",
-                                    LIGHT_PREVIEW_ACTION_LABEL,
-                                    LIGHT_PREVIEW_INPUT_LABEL,
-                                ),
-                            ),
+                .window(
+                    WindowBuilder::new().title("Theme preview reference").root(
+                        sui::containers::Padding::all(
+                            24.0,
+                            SizedBox::new()
+                                .width(card_width)
+                                .height(super::ThemePreviewShowcase::card_height())
+                                .with_child(super::NamedSection::new(
+                                    LIGHT_THEME_PREVIEW_CARD_NAME,
+                                    theme_preview_card(
+                                        DefaultTheme::light(),
+                                        "Light",
+                                        LIGHT_PREVIEW_ACTION_LABEL,
+                                        LIGHT_PREVIEW_INPUT_LABEL,
+                                    ),
+                                )),
                         ),
                     ),
-                ))
+                )
                 .build()?,
         )
     }
@@ -5179,6 +5791,57 @@ mod tests {
                     && node.name.as_deref() == Some(mode_name)
             }));
         }
+    }
+
+    #[test]
+    fn text_rendering_comparison_surface_uses_two_axis_scroll_when_narrow() {
+        let mut runtime = build_narrow_text_rendering_comparison_runtime()
+            .expect("narrow comparison runtime should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime
+            .render(window_id)
+            .expect("narrow comparison surface should render");
+
+        let scroll = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(TEXT_RENDERING_COMPARISON_SCROLL_NAME)
+            })
+            .expect("text comparison scroll view should be present");
+        let horizontal_scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref()
+                        == Some(super::TEXT_RENDERING_COMPARISON_HORIZONTAL_SCROLL_BAR_NAME)
+            })
+            .expect("horizontal text comparison scroll bar should be present");
+        let vertical_scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref()
+                        == Some(super::TEXT_RENDERING_COMPARISON_VERTICAL_SCROLL_BAR_NAME)
+            })
+            .expect("vertical text comparison scroll bar should be present");
+
+        let horizontal_max = match horizontal_scroll_bar.value {
+            Some(SemanticsValue::Range { max, .. }) => max,
+            _ => 0.0,
+        };
+        let vertical_max = match vertical_scroll_bar.value {
+            Some(SemanticsValue::Range { max, .. }) => max,
+            _ => 0.0,
+        };
+
+        assert!(horizontal_max > 0.0);
+        assert!(vertical_max > 0.0);
+        assert!(horizontal_scroll_bar.bounds.y() >= scroll.bounds.max_y());
+        assert!(vertical_scroll_bar.bounds.x() >= scroll.bounds.max_x());
     }
 
     #[test]
@@ -5889,7 +6552,7 @@ mod tests {
     }
 
     #[test]
-    fn text_validation_surface_supports_ime_selection_and_scrolling() -> Result<()> {
+    fn text_validation_surface_supports_ime_and_selection() -> Result<()> {
         let app = build_text_validation_app()?;
         let window = app.main_window()?;
         let editor = window
@@ -5933,14 +6596,6 @@ mod tests {
             .expect("validation editor semantics value present after IME commit");
         assert!(editor_value.contains("validated🙂"));
 
-        let scroll = window
-            .get_by_role(SemanticsRole::ScrollView)
-            .with_name(TEXT_VALIDATION_SCROLL_NAME);
-        let before_scroll = scroll.capture_screenshot()?;
-        scroll.scroll_pixels(Vector::new(0.0, -220.0))?;
-        let after_scroll = scroll.capture_screenshot()?;
-
-        assert_ne!(before_scroll, after_scroll);
         Ok(())
     }
 

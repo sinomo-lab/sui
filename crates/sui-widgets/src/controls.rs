@@ -29,9 +29,21 @@ pub enum IconGlyph {
     Close,
     Maximize,
     Restore,
+    FitView,
+    ActualSize,
     MoreHorizontal,
     MoreVertical,
     Search,
+    Undo,
+    Redo,
+    Brush,
+    Eraser,
+    PaintBucket,
+    Hand,
+    Lock,
+    Unlock,
+    Trash,
+    Download,
 }
 
 pub struct Separator {
@@ -298,10 +310,15 @@ fn mix_color(from: Color, to: Color, t: f32) -> Color {
 
 pub struct IconButton {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     icon: IconGlyph,
     label: String,
     size: Option<f32>,
     icon_size: Option<f32>,
+    selected: bool,
+    selected_reader: Option<Box<dyn Fn() -> bool>>,
+    enabled: bool,
+    enabled_reader: Option<Box<dyn Fn() -> bool>>,
     hovered: bool,
     pressed: bool,
     hover_animation: AnimatedScalar,
@@ -314,10 +331,15 @@ impl IconButton {
     pub fn new(icon: IconGlyph, label: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             icon,
             label: label.into(),
             size: None,
             icon_size: None,
+            selected: false,
+            selected_reader: None,
+            enabled: true,
+            enabled_reader: None,
             hovered: false,
             pressed: false,
             hover_animation: AnimatedScalar::new(0.0),
@@ -329,6 +351,15 @@ impl IconButton {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -339,6 +370,34 @@ impl IconButton {
 
     pub fn icon_size(mut self, icon_size: f32) -> Self {
         self.icon_size = Some(icon_size.max(0.0));
+        self
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self.enabled_reader = None;
+        self
+    }
+
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled_reader = Some(Box::new(enabled));
         self
     }
 
@@ -358,17 +417,43 @@ impl IconButton {
         self
     }
 
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn resolved_size(&self) -> f32 {
+        let theme = self.resolved_theme();
         self.size
-            .unwrap_or(self.theme.metrics.icon_button_size)
-            .max(self.theme.metrics.min_height)
+            .unwrap_or(theme.metrics.icon_button_size)
+            .max(theme.metrics.min_height)
     }
 
     fn resolved_icon_size(&self) -> f32 {
-        self.icon_size.unwrap_or(self.theme.metrics.icon_size)
+        let theme = self.resolved_theme();
+        self.icon_size.unwrap_or(theme.metrics.icon_size)
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected_reader
+            .as_ref()
+            .map(|selected| selected())
+            .unwrap_or(self.selected)
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled_reader
+            .as_ref()
+            .map(|enabled| enabled())
+            .unwrap_or(self.enabled)
     }
 
     fn activate(&mut self, ctx: &mut EventCtx) {
+        if !self.is_enabled() {
+            return;
+        }
         if let Some(on_press) = &mut self.on_press {
             on_press();
         }
@@ -398,6 +483,18 @@ impl IconButton {
 
 impl Widget for IconButton {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.is_enabled() {
+            if self.hovered || self.pressed {
+                self.hovered = false;
+                self.pressed = false;
+                set_animation_target(&mut self.hover_animation, 0.0, HOVER_ANIMATION_SECONDS, ctx);
+                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            return;
+        }
+
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -493,19 +590,54 @@ impl Widget for IconButton {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
-        let hover_progress = self.hover_animation.value;
-        let press_progress = self.press_animation.value;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
+        let selected = self.is_selected();
+        let enabled = self.is_enabled();
+        let hover_progress = if enabled {
+            self.hover_animation.value
+        } else {
+            0.0
+        };
+        let press_progress = if enabled {
+            self.press_animation.value
+        } else {
+            0.0
+        };
+        let base_background = if selected {
+            mix_color(palette.control, palette.accent, 0.18)
+        } else {
+            palette.control
+        };
+        let hover_background = if selected {
+            mix_color(base_background, palette.accent_hover, 0.18)
+        } else {
+            palette.control_hover
+        };
+        let press_background = if selected {
+            mix_color(base_background, palette.control_active, 0.45)
+        } else {
+            palette.control_active
+        };
         let background = mix_color(
-            mix_color(palette.surface, palette.surface_hover, hover_progress),
-            palette.surface_pressed,
+            mix_color(base_background, hover_background, hover_progress),
+            press_background,
             press_progress,
         );
-        let border = if ctx.is_focused() {
+        let border = if !enabled {
+            palette.border.with_alpha(0.55)
+        } else if ctx.is_focused() {
             palette.border_focus
+        } else if selected {
+            mix_color(palette.accent_border, palette.border_hover, hover_progress)
         } else {
             mix_color(palette.border, palette.border_hover, hover_progress)
+        };
+        let background = if enabled {
+            background
+        } else {
+            mix_color(background, palette.control, 0.72).with_alpha(0.82)
         };
 
         draw_control_frame(
@@ -521,7 +653,13 @@ impl Widget for IconButton {
             ctx,
             self.icon,
             center_square(ctx.bounds(), self.resolved_icon_size()),
-            palette.text,
+            if !enabled {
+                palette.text.with_alpha(0.38)
+            } else if selected {
+                palette.accent
+            } else {
+                palette.text
+            },
         );
     }
 
@@ -529,13 +667,19 @@ impl Widget for IconButton {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
         node.name = Some(self.label.clone());
         node.state.focused = ctx.is_focused();
-        node.state.hovered = self.hovered;
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        node.state.hovered = self.hovered && self.is_enabled();
+        node.state.selected = self.is_selected();
+        node.state.disabled = !self.is_enabled();
+        node.actions = if self.is_enabled() {
+            vec![SemanticsAction::Focus, SemanticsAction::Activate]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.is_enabled()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
@@ -546,7 +690,10 @@ impl Widget for IconButton {
 
 pub struct Label {
     text: String,
+    text_reader: Option<Box<dyn Fn() -> String>>,
+    semantic_name: Option<String>,
     style: TextStyle,
+    color_reader: Option<Box<dyn Fn() -> Color>>,
     measurement: Option<TextMeasurement>,
 }
 
@@ -554,9 +701,32 @@ impl Label {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            text_reader: None,
+            semantic_name: None,
             style: DefaultTheme::default().body_text_style(),
+            color_reader: None,
             measurement: None,
         }
+    }
+
+    pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        Self::new(fallback).text_when(reader)
+    }
+
+    pub fn text_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.text_reader = Some(Box::new(reader));
+        self
+    }
+
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
+        self
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -570,10 +740,20 @@ impl Label {
 
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.text = text.into();
+        self.text_reader = None;
     }
 
     pub fn color(mut self, color: Color) -> Self {
         self.style.color = color;
+        self.color_reader = None;
+        self
+    }
+
+    pub fn color_when<F>(mut self, color: F) -> Self
+    where
+        F: Fn() -> Color + 'static,
+    {
+        self.color_reader = Some(Box::new(color));
         self
     }
 
@@ -591,20 +771,37 @@ impl Label {
         self.style = style;
         self
     }
+
+    fn current_text(&self) -> String {
+        self.text_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.text.clone())
+    }
+
+    fn resolved_style(&self) -> TextStyle {
+        let mut style = self.style.clone();
+        if let Some(color_reader) = &self.color_reader {
+            style.color = color_reader();
+        }
+        style
+    }
 }
 
 impl Widget for Label {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let natural_measurement = measure_text(ctx, &self.text, &self.style);
+        let text = self.current_text();
+        let style = self.resolved_style();
+        let natural_measurement = measure_text(ctx, &text, &style);
         let (measured_width, measurement) = if constraints.max.width.is_finite()
             && natural_measurement.width > constraints.max.width
         {
             let wrapped_measurement = ctx
                 .layout()
                 .shape_text(
-                    self.text.clone(),
+                    text,
                     Size::new(constraints.max.width.max(1.0), f32::INFINITY),
-                    self.style.clone(),
+                    style.clone(),
                 )
                 .map(|layout| layout.measurement())
                 .unwrap_or(natural_measurement);
@@ -615,25 +812,33 @@ impl Widget for Label {
         self.measurement = Some(measurement);
         constraints.clamp(Size::new(
             measured_width,
-            measurement.height.max(self.style.line_height),
+            measurement.height.max(style.line_height),
         ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.draw_text(ctx.bounds(), self.text.clone(), self.style.clone());
+        ctx.draw_text(ctx.bounds(), self.current_text(), self.resolved_style());
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let text = self.current_text();
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Text, ctx.bounds());
-        node.name = Some(self.text.clone());
+        node.name = Some(self.semantic_name.clone().unwrap_or_else(|| text.clone()));
+        if self.semantic_name.is_some() {
+            node.value = Some(SemanticsValue::Text(text));
+        }
         ctx.push(node);
     }
 }
 
 pub struct Button {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     text_style: Option<TextStyle>,
+    icon: Option<IconGlyph>,
+    icon_size: Option<f32>,
+    icon_gap: Option<f32>,
     padding: Option<Insets>,
     min_width: Option<f32>,
     min_height: Option<f32>,
@@ -643,6 +848,8 @@ pub struct Button {
     press_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     label_layout: Option<PersistentTextLayout>,
+    enabled: bool,
+    enabled_reader: Option<Box<dyn Fn() -> bool>>,
     on_press: Option<Box<dyn FnMut()>>,
     on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
 }
@@ -661,8 +868,12 @@ impl Button {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             label: label.into(),
             text_style: None,
+            icon: None,
+            icon_size: None,
+            icon_gap: None,
             padding: None,
             min_width: None,
             min_height: None,
@@ -672,6 +883,8 @@ impl Button {
             press_animation: AnimatedScalar::new(0.0),
             label_measurement: None,
             label_layout: None,
+            enabled: true,
+            enabled_reader: None,
             on_press: None,
             on_press_with_ctx: None,
         }
@@ -687,11 +900,40 @@ impl Button {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
     pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = Some(text_style);
+        self
+    }
+
+    pub fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn without_icon(mut self) -> Self {
+        self.icon = None;
+        self
+    }
+
+    pub fn icon_size(mut self, icon_size: f32) -> Self {
+        self.icon_size = Some(icon_size.max(0.0));
+        self
+    }
+
+    pub fn icon_gap(mut self, icon_gap: f32) -> Self {
+        self.icon_gap = Some(icon_gap.max(0.0));
         self
     }
 
@@ -707,6 +949,20 @@ impl Button {
 
     pub fn padding(mut self, padding: Insets) -> Self {
         self.padding = Some(padding);
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self.enabled_reader = None;
+        self
+    }
+
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled_reader = Some(Box::new(enabled));
         self
     }
 
@@ -727,6 +983,9 @@ impl Button {
     }
 
     fn activate(&mut self, ctx: &mut EventCtx) {
+        if !self.is_enabled() {
+            return;
+        }
         if let Some(on_press) = &mut self.on_press {
             on_press();
         }
@@ -753,45 +1012,108 @@ impl Button {
         self.hover_animation.advance(time) | self.press_animation.advance(time)
     }
 
+    fn is_enabled(&self) -> bool {
+        self.enabled_reader
+            .as_ref()
+            .map(|enabled| enabled())
+            .unwrap_or(self.enabled)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn resolved_text_style(&self) -> TextStyle {
         self.text_style
             .clone()
-            .unwrap_or_else(|| self.theme.button_text_style())
+            .unwrap_or_else(|| self.resolved_theme().button_text_style())
     }
 
     fn resolved_padding(&self) -> Insets {
-        self.padding.unwrap_or(self.theme.metrics.button_padding)
+        self.padding
+            .unwrap_or(self.resolved_theme().metrics.button_padding)
+    }
+
+    fn resolved_icon_size(&self) -> f32 {
+        self.icon_size
+            .unwrap_or(self.resolved_theme().metrics.icon_size)
+            .max(0.0)
+    }
+
+    fn resolved_icon_gap(&self) -> f32 {
+        self.icon_gap
+            .unwrap_or(self.resolved_theme().metrics.checkbox_gap)
+            .max(0.0)
+    }
+
+    fn icon_extent(&self) -> Option<(f32, f32)> {
+        self.icon.map(|_| {
+            let icon_size = self.resolved_icon_size();
+            let gap = if self.label.is_empty() {
+                0.0
+            } else {
+                self.resolved_icon_gap()
+            };
+            (icon_size, gap)
+        })
     }
 
     fn resolved_min_size(&self) -> Size {
+        let theme = self.resolved_theme();
         Size::new(
-            self.min_width
-                .unwrap_or(self.theme.metrics.button_min_width),
-            self.min_height.unwrap_or(self.theme.metrics.min_height),
+            self.min_width.unwrap_or(theme.metrics.button_min_width),
+            self.min_height.unwrap_or(theme.metrics.min_height),
         )
     }
 
     fn resolved_visuals(&self, focused: bool) -> ButtonVisuals {
-        let palette = self.theme.palette;
-        let background = if self.pressed {
-            palette.accent_pressed
-        } else if self.hovered {
-            palette.accent_hover
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let enabled = self.is_enabled();
+        let hover_progress = if enabled {
+            self.hover_animation.value
         } else {
-            palette.accent
+            0.0
         };
-        let border = if focused {
+        let press_progress = if enabled {
+            self.press_animation.value
+        } else {
+            0.0
+        };
+        let background = if !enabled {
+            mix_color(palette.control, palette.accent, 0.08).with_alpha(0.82)
+        } else {
+            mix_color(
+                mix_color(palette.accent, palette.accent_hover, hover_progress),
+                palette.accent_pressed,
+                press_progress,
+            )
+        };
+        let border = if !enabled {
+            palette.accent_border.with_alpha(0.45)
+        } else if focused {
             palette.accent_border_focus
-        } else if self.hovered {
-            palette.accent_border_hover
         } else {
-            palette.accent_border
+            mix_color(
+                palette.accent_border,
+                palette.accent_border_hover,
+                hover_progress,
+            )
         };
-        let label_peak_lift =
-            resolve_luminance_role(&self.theme.hdr, WidgetLuminanceRole::Standard);
-        let label_color = apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift);
+        let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
+        let label_color = if enabled {
+            apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift)
+        } else {
+            apply_hdr_policy_cap(
+                self.resolved_text_style().color.with_alpha(0.45),
+                label_peak_lift,
+            )
+        };
 
-        if matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) {
+        if matches!(theme.hdr.mode, HdrThemeMode::Disabled) {
             return ButtonVisuals {
                 background,
                 border,
@@ -803,45 +1125,112 @@ impl Button {
         }
 
         let chrome_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
-            &self.theme.hdr,
+            &theme.hdr,
             WidgetColorRole::Accent,
             WidgetLuminanceRole::SemanticAccent,
             WidgetMaterialRole::Flat,
             None,
         ));
         let focus_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
-            &self.theme.hdr,
+            &theme.hdr,
             WidgetColorRole::Accent,
             WidgetLuminanceRole::Focused,
             WidgetMaterialRole::Flat,
             None,
         ));
+        let hdr_background = if !enabled {
+            background
+        } else {
+            mix_color(
+                mix_color(chrome_style.color, palette.accent_hover, hover_progress),
+                palette.accent_pressed,
+                press_progress,
+            )
+        };
+        let hdr_border = if !enabled {
+            border
+        } else if focused {
+            focus_style.color
+        } else {
+            mix_color(
+                palette.accent_border,
+                palette.accent_border_hover,
+                hover_progress,
+            )
+        };
 
         ButtonVisuals {
-            background: if self.pressed {
-                palette.accent_pressed
-            } else if self.hovered {
-                palette.accent_hover
-            } else {
-                chrome_style.color
-            },
-            border: if focused {
-                focus_style.color
-            } else if self.hovered {
-                palette.accent_border_hover
-            } else {
-                palette.accent_border
-            },
+            background: hdr_background,
+            border: hdr_border,
             focus_ring: focused.then_some(focus_style.color.with_alpha(palette.focus_ring.alpha)),
             label_color,
             label_peak_lift,
             chrome_style: Some(chrome_style),
         }
     }
+
+    fn button_content_rects(
+        &self,
+        ctx: &PaintCtx,
+        bounds: Rect,
+        padding: Insets,
+        line_height: f32,
+    ) -> (Option<Rect>, Rect) {
+        let content = inset_rect(bounds, padding);
+        let Some((icon_size, icon_gap)) = self.icon_extent() else {
+            return (
+                None,
+                centered_text_rect(ctx, bounds, padding, self.label_measurement, line_height),
+            );
+        };
+
+        let measurement = self.label_measurement;
+        let natural_label_width = measurement.map(|value| value.width).unwrap_or(0.0);
+        let icon_size = icon_size
+            .min(content.width())
+            .min(content.height())
+            .max(0.0);
+        let gap = if icon_size > 0.0 && natural_label_width > 0.0 {
+            icon_gap.min(content.width())
+        } else {
+            0.0
+        };
+        let label_width = natural_label_width.min((content.width() - icon_size - gap).max(0.0));
+        let group_width = icon_size + gap + label_width;
+        let start_x = content.x() + ((content.width() - group_width).max(0.0) * 0.5);
+        let icon_rect = Rect::new(
+            start_x,
+            content.y() + ((content.height() - icon_size) * 0.5),
+            icon_size,
+            icon_size,
+        );
+        let label_base = Rect::new(
+            start_x + icon_size + gap,
+            content.y(),
+            label_width,
+            content.height(),
+        );
+        (
+            Some(icon_rect),
+            vertically_centered_text_rect(ctx, label_base, measurement, line_height),
+        )
+    }
 }
 
 impl Widget for Button {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.is_enabled() {
+            if self.hovered || self.pressed {
+                self.hovered = false;
+                self.pressed = false;
+                set_animation_target(&mut self.hover_animation, 0.0, HOVER_ANIMATION_SECONDS, ctx);
+                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            return;
+        }
+
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -951,54 +1340,42 @@ impl Widget for Button {
         self.label_measurement = Some(measurement);
         self.label_layout = label_layout;
 
-        let width = (measurement.width + padding.left + padding.right).max(min_size.width);
-        let height =
-            (measurement.height.max(text_style.line_height) + padding.top + padding.bottom)
-                .max(min_size.height);
+        let (icon_size, icon_gap) = self.icon_extent().unwrap_or((0.0, 0.0));
+        let content_width = icon_size + icon_gap + measurement.width;
+        let content_height = measurement
+            .height
+            .max(text_style.line_height)
+            .max(icon_size);
+        let width = (content_width + padding.left + padding.right).max(min_size.width);
+        let height = (content_height + padding.top + padding.bottom).max(min_size.height);
 
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let metrics = self.theme.metrics;
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let visuals = self.resolved_visuals(ctx.is_focused());
-        let hover_progress = self.hover_animation.value;
-        let press_progress = self.press_animation.value;
-        let background = mix_color(
-            mix_color(palette.accent, palette.accent_hover, hover_progress),
-            palette.accent_pressed,
-            press_progress,
-        );
-        let border = if ctx.is_focused() {
-            palette.accent_border_focus
-        } else {
-            mix_color(
-                palette.accent_border,
-                palette.accent_border_hover,
-                hover_progress,
-            )
-        };
 
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            background,
-            border,
+            visuals.background,
+            visuals.border,
             visuals.focus_ring,
         );
-        let label_rect = centered_text_rect(
-            ctx,
-            ctx.bounds(),
-            padding,
-            self.label_measurement,
-            text_style.line_height,
-        );
-        if let Some(layout) = &self.label_layout {
+        let (icon_rect, label_rect) =
+            self.button_content_rects(ctx, ctx.bounds(), padding, text_style.line_height);
+        if let (Some(icon), Some(icon_rect)) = (self.icon, icon_rect) {
+            draw_icon_glyph(ctx, icon, icon_rect, visuals.label_color);
+        }
+        if self.is_enabled()
+            && let Some(layout) = &self.label_layout
+        {
             let layout_bounds = layout.measurement().bounds;
             ctx.push_clip_rect(label_rect);
             ctx.draw_persistent_text_layout(
@@ -1006,29 +1383,34 @@ impl Widget for Button {
                 layout,
             );
             ctx.pop_clip();
-        } else {
-            ctx.draw_text(
-                label_rect,
-                self.label.clone(),
-                TextStyle {
-                    color: visuals.label_color,
-                    ..text_style
-                },
-            );
+            return;
         }
+        ctx.draw_text(
+            label_rect,
+            self.label.clone(),
+            TextStyle {
+                color: visuals.label_color,
+                ..text_style
+            },
+        );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
         node.name = Some(self.label.clone());
         node.state.focused = ctx.is_focused();
-        node.state.hovered = self.hovered;
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        node.state.hovered = self.hovered && self.is_enabled();
+        node.state.disabled = !self.is_enabled();
+        node.actions = if self.is_enabled() {
+            vec![SemanticsAction::Focus, SemanticsAction::Activate]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.is_enabled()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
@@ -1039,6 +1421,7 @@ impl Widget for Button {
 
 pub struct Checkbox {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     checked: bool,
     text_style: Option<TextStyle>,
@@ -1059,6 +1442,7 @@ impl Checkbox {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             label: label.into(),
             checked: false,
             text_style: None,
@@ -1088,6 +1472,15 @@ impl Checkbox {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -1155,20 +1548,29 @@ impl Checkbox {
     fn resolved_text_style(&self) -> TextStyle {
         self.text_style
             .clone()
-            .unwrap_or_else(|| self.theme.body_text_style())
+            .unwrap_or_else(|| self.resolved_theme().body_text_style())
     }
 
     fn resolved_padding(&self) -> Insets {
-        self.padding.unwrap_or(self.theme.metrics.checkbox_padding)
+        self.padding
+            .unwrap_or(self.resolved_theme().metrics.checkbox_padding)
     }
 
     fn resolved_indicator_size(&self) -> f32 {
         self.indicator_size
-            .unwrap_or(self.theme.metrics.checkbox_indicator_size)
+            .unwrap_or(self.resolved_theme().metrics.checkbox_indicator_size)
     }
 
     fn resolved_gap(&self) -> f32 {
-        self.gap.unwrap_or(self.theme.metrics.checkbox_gap)
+        self.gap
+            .unwrap_or(self.resolved_theme().metrics.checkbox_gap)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 }
 
@@ -1276,6 +1678,7 @@ impl Widget for Checkbox {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
@@ -1287,14 +1690,15 @@ impl Widget for Checkbox {
         let height = (indicator_size.max(measurement.height.max(text_style.line_height))
             + padding.top
             + padding.bottom)
-            .max(self.theme.metrics.min_height);
+            .max(theme.metrics.min_height);
 
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
@@ -1304,8 +1708,8 @@ impl Widget for Checkbox {
         let toggle_progress = self.toggle_animation.value;
         let focus_progress = self.focus_animation.value;
         let background = mix_color(
-            mix_color(palette.surface, palette.surface_hover, hover_progress),
-            palette.surface_pressed,
+            mix_color(palette.control, palette.control_hover, hover_progress),
+            palette.control_active,
             press_progress,
         );
         let border = if ctx.is_focused() {
@@ -1332,7 +1736,7 @@ impl Widget for Checkbox {
 
         let indicator_background = mix_color(
             mix_color(
-                palette.surface_pressed,
+                palette.control_active,
                 palette.surface_focus,
                 hover_progress,
             ),
@@ -1409,6 +1813,7 @@ impl Widget for Checkbox {
 
 pub struct Switch {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     on: bool,
     text_style: Option<TextStyle>,
@@ -1439,6 +1844,7 @@ impl Switch {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             label: label.into(),
             on: false,
             text_style: None,
@@ -1471,6 +1877,15 @@ impl Switch {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -1500,15 +1915,24 @@ impl Switch {
     fn resolved_text_style(&self) -> TextStyle {
         self.text_style
             .clone()
-            .unwrap_or_else(|| self.theme.body_text_style())
+            .unwrap_or_else(|| self.resolved_theme().body_text_style())
     }
 
     fn resolved_padding(&self) -> Insets {
-        self.padding.unwrap_or(self.theme.metrics.checkbox_padding)
+        self.padding
+            .unwrap_or(self.resolved_theme().metrics.checkbox_padding)
     }
 
     fn resolved_gap(&self) -> f32 {
-        self.gap.unwrap_or(self.theme.metrics.checkbox_gap)
+        self.gap
+            .unwrap_or(self.resolved_theme().metrics.checkbox_gap)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn toggle(&mut self) {
@@ -1539,15 +1963,16 @@ impl Switch {
     }
 
     fn resolved_visuals_for_state(&self, on: bool, focused: bool) -> SwitchVisuals {
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let frame_background = if self.pressed {
-            palette.surface_pressed
+            palette.control_active
         } else if self.hovered {
-            palette.surface_hover
+            palette.control_hover
         } else if focused {
             palette.surface_focus
         } else {
-            palette.surface
+            palette.control
         };
         let frame_border = if focused {
             palette.border_focus
@@ -1565,7 +1990,7 @@ impl Switch {
                 palette.accent
             }
         } else if self.hovered {
-            palette.surface_pressed
+            palette.control_active
         } else {
             palette.surface_focus
         };
@@ -1576,11 +2001,10 @@ impl Switch {
         } else {
             palette.border
         };
-        let label_peak_lift =
-            resolve_luminance_role(&self.theme.hdr, WidgetLuminanceRole::Standard);
+        let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
         let label_color = apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift);
 
-        if matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) || !on {
+        if matches!(theme.hdr.mode, HdrThemeMode::Disabled) || !on {
             return SwitchVisuals {
                 frame_background,
                 frame_border,
@@ -1594,7 +2018,7 @@ impl Switch {
         }
 
         let indicator_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
-            &self.theme.hdr,
+            &theme.hdr,
             WidgetColorRole::Accent,
             WidgetLuminanceRole::EmissiveIndicator,
             WidgetMaterialRole::Flat,
@@ -1732,26 +2156,28 @@ impl Widget for Switch {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let gap = self.resolved_gap();
         let measurement = measure_text(ctx, &self.label, &text_style);
         self.label_measurement = Some(measurement);
-        let track_width = self.theme.metrics.switch_track_width;
-        let track_height = self.theme.metrics.switch_track_height;
+        let track_width = theme.metrics.switch_track_width;
+        let track_height = theme.metrics.switch_track_height;
 
         constraints.clamp(Size::new(
             padding.left + track_width + gap + measurement.width + padding.right,
             (track_height.max(measurement.height.max(text_style.line_height))
                 + padding.top
                 + padding.bottom)
-                .max(self.theme.metrics.min_height),
+                .max(theme.metrics.min_height),
         ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let metrics = self.theme.metrics;
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let palette = theme.palette;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let gap = self.resolved_gap();
@@ -1765,8 +2191,8 @@ impl Widget for Switch {
         let toggle_progress = self.toggle_animation.value;
 
         let frame_background = mix_color(
-            mix_color(palette.surface, palette.surface_hover, hover_progress),
-            palette.surface_pressed,
+            mix_color(palette.control, palette.control_hover, hover_progress),
+            palette.control_active,
             press_progress,
         );
         let frame_border = if ctx.is_focused() {
@@ -1782,7 +2208,7 @@ impl Widget for Switch {
             metrics,
             frame_background,
             frame_border,
-            ctx.is_focused().then_some(self.theme.palette.focus_ring),
+            ctx.is_focused().then_some(palette.focus_ring),
         );
 
         let thumb_size = (track.height() - 4.0).max(0.0);
@@ -1871,6 +2297,7 @@ impl Widget for Switch {
 
 pub struct RadioButton {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     selected: bool,
     text_style: Option<TextStyle>,
@@ -1887,6 +2314,7 @@ impl RadioButton {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             label: label.into(),
             selected: false,
             text_style: None,
@@ -1915,6 +2343,15 @@ impl RadioButton {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -1949,20 +2386,29 @@ impl RadioButton {
     fn resolved_text_style(&self) -> TextStyle {
         self.text_style
             .clone()
-            .unwrap_or_else(|| self.theme.body_text_style())
+            .unwrap_or_else(|| self.resolved_theme().body_text_style())
     }
 
     fn resolved_padding(&self) -> Insets {
-        self.padding.unwrap_or(self.theme.metrics.checkbox_padding)
+        self.padding
+            .unwrap_or(self.resolved_theme().metrics.checkbox_padding)
     }
 
     fn resolved_indicator_size(&self) -> f32 {
         self.indicator_size
-            .unwrap_or(self.theme.metrics.checkbox_indicator_size)
+            .unwrap_or(self.resolved_theme().metrics.checkbox_indicator_size)
     }
 
     fn resolved_gap(&self) -> f32 {
-        self.gap.unwrap_or(self.theme.metrics.checkbox_gap)
+        self.gap
+            .unwrap_or(self.resolved_theme().metrics.checkbox_gap)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn activate(&mut self) {
@@ -2058,13 +2504,14 @@ impl Widget for RadioButton {
             (indicator_size.max(measurement.height.max(text_style.line_height))
                 + padding.top
                 + padding.bottom)
-                .max(self.theme.metrics.min_height),
+                .max(self.resolved_theme().metrics.min_height),
         ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
@@ -2078,13 +2525,13 @@ impl Widget for RadioButton {
             metrics.corner_radius,
             metrics,
             if self.pressed {
-                palette.surface_pressed
+                palette.control_active
             } else if self.hovered {
-                palette.surface_hover
+                palette.control_hover
             } else if ctx.is_focused() {
                 palette.surface_focus
             } else {
-                palette.surface
+                palette.control
             },
             if ctx.is_focused() {
                 palette.border_focus
@@ -2103,7 +2550,7 @@ impl Widget for RadioButton {
             } else if self.hovered {
                 palette.surface_focus
             } else {
-                palette.surface_pressed
+                palette.control_active
             },
         );
         ctx.stroke(
@@ -2160,6 +2607,7 @@ impl Widget for RadioButton {
 
 pub struct RadioGroup {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     options: Vec<String>,
     selected: Option<usize>,
@@ -2174,6 +2622,7 @@ impl RadioGroup {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             options: Vec::new(),
             selected: None,
@@ -2187,6 +2636,15 @@ impl RadioGroup {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -2222,7 +2680,7 @@ impl RadioGroup {
     }
 
     fn row_height(&self) -> f32 {
-        self.theme.metrics.min_height
+        self.resolved_theme().metrics.min_height
     }
 
     fn row_rect(&self, bounds: Rect, index: usize) -> Rect {
@@ -2245,6 +2703,13 @@ impl RadioGroup {
                 on_change(selected, self.options[selected].clone());
             }
         }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 }
 
@@ -2326,10 +2791,11 @@ impl Widget for RadioGroup {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let text_style = self.theme.body_text_style();
-        let padding = self.theme.metrics.checkbox_padding;
-        let indicator = self.theme.metrics.checkbox_indicator_size;
-        let gap = self.theme.metrics.checkbox_gap;
+        let theme = self.resolved_theme();
+        let text_style = theme.body_text_style();
+        let padding = theme.metrics.checkbox_padding;
+        let indicator = theme.metrics.checkbox_indicator_size;
+        let gap = theme.metrics.checkbox_gap;
         let mut width: f32 = 0.0;
         self.label_measurements.clear();
 
@@ -2346,74 +2812,74 @@ impl Widget for RadioGroup {
             (count * self.row_height()) + ((count - 1.0) * self.spacing.max(0.0))
         };
 
-        constraints.clamp(Size::new(
-            width.max(self.theme.metrics.button_min_width),
-            height,
-        ))
+        constraints.clamp(Size::new(width.max(theme.metrics.button_min_width), height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         for (index, option) in self.options.iter().enumerate() {
             let row = self.row_rect(ctx.bounds(), index);
             let indicator = indicator_rect(
                 row,
-                self.theme.metrics.checkbox_padding,
-                self.theme.metrics.checkbox_indicator_size,
+                metrics.checkbox_padding,
+                metrics.checkbox_indicator_size,
             );
             let label_rect = checkbox_label_rect(
                 row,
-                self.theme.metrics.checkbox_padding,
-                self.theme.metrics.checkbox_indicator_size,
-                self.theme.metrics.checkbox_gap,
+                metrics.checkbox_padding,
+                metrics.checkbox_indicator_size,
+                metrics.checkbox_gap,
             );
             let hovered = self.hovered == Some(index);
             let selected = self.selected == Some(index);
             let background = if self.pressed == Some(index) {
-                self.theme.palette.surface_pressed
+                palette.control_active
             } else if hovered {
-                self.theme.palette.surface_hover
+                palette.control_hover
             } else {
-                self.theme.palette.surface
+                palette.control
             };
 
             draw_control_shape(
                 ctx,
                 row,
-                self.theme.metrics.corner_radius,
-                physical_pixels(ctx, self.theme.metrics.border_width),
+                metrics.corner_radius,
+                physical_pixels(ctx, metrics.border_width),
                 background,
                 if selected {
-                    self.theme.palette.accent_border
+                    palette.accent_border
                 } else if hovered {
-                    self.theme.palette.border_hover
+                    palette.border_hover
                 } else {
-                    self.theme.palette.border
+                    palette.border
                 },
             );
             ctx.fill(
                 Path::circle(rect_center(indicator), indicator.width() * 0.5),
                 if selected {
-                    self.theme.palette.accent
+                    palette.accent
                 } else {
-                    self.theme.palette.surface_pressed
+                    palette.control_active
                 },
             );
             ctx.stroke(
                 Path::circle(rect_center(indicator), (indicator.width() * 0.5) - 0.5),
                 if selected {
-                    self.theme.palette.accent_border
+                    palette.accent_border
                 } else {
-                    self.theme.palette.border
+                    palette.border
                 },
-                StrokeStyle::new(physical_pixels(ctx, self.theme.metrics.border_width)),
+                StrokeStyle::new(physical_pixels(ctx, metrics.border_width)),
             );
             if selected {
                 ctx.fill(
                     Path::circle(rect_center(indicator), indicator.width() * 0.22),
-                    self.theme.palette.accent_text,
+                    palette.accent_text,
                 );
             }
-            let text_style = self.theme.body_text_style();
+            let text_style = theme.body_text_style();
             ctx.draw_text(
                 vertically_centered_text_rect(
                     ctx,
@@ -2450,37 +2916,52 @@ impl Widget for RadioGroup {
 
 pub struct Slider {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     min: f64,
     max: f64,
     step: f64,
     value: f64,
+    value_reader: Option<Box<dyn Fn() -> f64>>,
     hovered: bool,
     dragging: bool,
     hover_animation: AnimatedScalar,
     drag_animation: AnimatedScalar,
     on_change: Option<Box<dyn FnMut(f64)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, f64)>>,
 }
 
 impl Slider {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             min: 0.0,
             max: 1.0,
             step: 0.01,
             value: 0.0,
+            value_reader: None,
             hovered: false,
             dragging: false,
             hover_animation: AnimatedScalar::new(0.0),
             drag_animation: AnimatedScalar::new(0.0),
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -2499,6 +2980,15 @@ impl Slider {
 
     pub fn value(mut self, value: f64) -> Self {
         self.value = clamp_and_snap_value(value, self.min, self.max, self.step);
+        self.value_reader = None;
+        self
+    }
+
+    pub fn value_when<F>(mut self, value: F) -> Self
+    where
+        F: Fn() -> f64 + 'static,
+    {
+        self.value_reader = Some(Box::new(value));
         self
     }
 
@@ -2514,6 +3004,14 @@ impl Slider {
         self
     }
 
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, f64) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     fn fraction(&self) -> f32 {
         if (self.max - self.min).abs() <= f64::EPSILON {
             return 0.0;
@@ -2522,9 +3020,27 @@ impl Slider {
         ((self.value - self.min) / (self.max - self.min)).clamp(0.0, 1.0) as f32
     }
 
+    fn sync_external_value(&mut self) {
+        if self.dragging {
+            return;
+        }
+        let Some(reader) = &self.value_reader else {
+            return;
+        };
+        self.value = clamp_and_snap_value(reader(), self.min, self.max, self.step);
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn track_rect(&self, bounds: Rect) -> Rect {
-        let padding = self.theme.metrics.text_input_padding;
-        let height = self.theme.metrics.slider_track_height.max(1.0);
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.text_input_padding;
+        let height = theme.metrics.slider_track_height.max(1.0);
         Rect::new(
             bounds.x() + padding.left,
             bounds.y() + ((bounds.height() - height) * 0.5),
@@ -2535,7 +3051,8 @@ impl Slider {
 
     fn thumb_rect(&self, bounds: Rect) -> Rect {
         let track = self.track_rect(bounds);
-        let thumb = self.theme.metrics.slider_thumb_size;
+        let theme = self.resolved_theme();
+        let thumb = theme.metrics.slider_thumb_size;
         Rect::new(
             track.x() + (track.width() * self.fraction()) - (thumb * 0.5),
             bounds.y() + ((bounds.height() - thumb) * 0.5),
@@ -2544,7 +3061,16 @@ impl Slider {
         )
     }
 
-    fn set_from_position(&mut self, bounds: Rect, position: Point) {
+    fn emit_change(&mut self, ctx: &mut EventCtx) {
+        if let Some(on_change) = &mut self.on_change {
+            on_change(self.value);
+        }
+        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
+            on_change_with_ctx(ctx, self.value);
+        }
+    }
+
+    fn set_from_position(&mut self, ctx: &mut EventCtx, bounds: Rect, position: Point) {
         let track = self.track_rect(bounds);
         if track.width() <= 0.0 {
             return;
@@ -2555,9 +3081,7 @@ impl Slider {
         let next = clamp_and_snap_value(raw, self.min, self.max, self.step);
         if (next - self.value).abs() > f64::EPSILON {
             self.value = next;
-            if let Some(on_change) = &mut self.on_change {
-                on_change(self.value);
-            }
+            self.emit_change(ctx);
         }
     }
 
@@ -2582,13 +3106,15 @@ impl Slider {
 
 impl Widget for Slider {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_external_value();
+
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = ctx.bounds().contains(pointer.position);
                 self.set_hovered(hovered, ctx);
                 if self.dragging {
                     let previous = self.value;
-                    self.set_from_position(ctx.bounds(), pointer.position);
+                    self.set_from_position(ctx, ctx.bounds(), pointer.position);
                     if (self.value - previous).abs() > f64::EPSILON {
                         ctx.request_paint();
                         ctx.request_semantics();
@@ -2609,7 +3135,7 @@ impl Widget for Slider {
                 self.hovered = true;
                 set_animation_target(&mut self.hover_animation, 1.0, HOVER_ANIMATION_SECONDS, ctx);
                 set_animation_target(&mut self.drag_animation, 1.0, PRESS_ANIMATION_SECONDS, ctx);
-                self.set_from_position(ctx.bounds(), pointer.position);
+                self.set_from_position(ctx, ctx.bounds(), pointer.position);
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
@@ -2629,7 +3155,7 @@ impl Widget for Slider {
                     ctx,
                 );
                 set_animation_target(&mut self.drag_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
-                self.set_from_position(ctx.bounds(), pointer.position);
+                self.set_from_position(ctx, ctx.bounds(), pointer.position);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -2670,9 +3196,7 @@ impl Widget for Slider {
                     let clamped = clamp_and_snap_value(next, self.min, self.max, self.step);
                     if (clamped - self.value).abs() > f64::EPSILON {
                         self.value = clamped;
-                        if let Some(on_change) = &mut self.on_change {
-                            on_change(self.value);
-                        }
+                        self.emit_change(ctx);
                     }
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -2690,15 +3214,19 @@ impl Widget for Slider {
     }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_external_value();
+        let theme = self.resolved_theme();
+
         constraints.clamp(Size::new(
-            self.theme.metrics.slider_min_width,
-            self.theme.metrics.min_height,
+            theme.metrics.slider_min_width,
+            theme.metrics.min_height,
         ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let hover_progress = self.hover_animation.value;
         let drag_progress = self.drag_animation.value;
         let track = self.track_rect(ctx.bounds());
@@ -2716,8 +3244,8 @@ impl Widget for Slider {
             metrics.corner_radius,
             metrics,
             mix_color(
-                palette.surface,
-                palette.surface_hover,
+                palette.control,
+                palette.control_hover,
                 hover_progress.max(drag_progress),
             ),
             if ctx.is_focused() {
@@ -2729,7 +3257,7 @@ impl Widget for Slider {
         );
         ctx.fill(
             rounded_rect_path(track, track.height() * 0.5),
-            palette.surface_pressed,
+            palette.control_active,
         );
         ctx.fill(
             rounded_rect_path(active, track.height() * 0.5),
@@ -2781,6 +3309,7 @@ impl Widget for Slider {
 
 pub struct NumberInput {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     value: f64,
     min: f64,
@@ -2789,6 +3318,8 @@ pub struct NumberInput {
     precision: usize,
     buffer: String,
     hovered: bool,
+    editing: bool,
+    value_reader: Option<Box<dyn Fn() -> f64>>,
     on_change: Option<Box<dyn FnMut(f64)>>,
 }
 
@@ -2797,6 +3328,7 @@ impl NumberInput {
         let value = 0.0;
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             value,
             min: f64::NEG_INFINITY,
@@ -2805,12 +3337,23 @@ impl NumberInput {
             precision: 2,
             buffer: format_number(value, 2),
             hovered: false,
+            editing: false,
+            value_reader: None,
             on_change: None,
         }
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -2838,6 +3381,15 @@ impl NumberInput {
     pub fn value(mut self, value: f64) -> Self {
         self.value = clamp_and_snap_value(value, self.min, self.max, self.step);
         self.buffer = format_number(self.value, self.precision);
+        self.value_reader = None;
+        self
+    }
+
+    pub fn value_when<F>(mut self, value: F) -> Self
+    where
+        F: Fn() -> f64 + 'static,
+    {
+        self.value_reader = Some(Box::new(value));
         self
     }
 
@@ -2853,8 +3405,47 @@ impl NumberInput {
         self
     }
 
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn text_style(&self) -> TextStyle {
-        self.theme.body_text_style()
+        self.resolved_theme().body_text_style()
+    }
+
+    fn sync_external_value(&mut self) {
+        if self.editing {
+            return;
+        }
+        let Some(reader) = &self.value_reader else {
+            return;
+        };
+        let next = clamp_and_snap_value(reader(), self.min, self.max, self.step);
+        if (next - self.value).abs() > f64::EPSILON {
+            self.value = next;
+            self.buffer = format_number(self.value, self.precision);
+        }
+    }
+
+    fn resolved_value(&self) -> f64 {
+        if !self.editing
+            && let Some(reader) = &self.value_reader
+        {
+            return clamp_and_snap_value(reader(), self.min, self.max, self.step);
+        }
+
+        self.value
+    }
+
+    fn display_buffer(&self) -> String {
+        if !self.editing && self.value_reader.is_some() {
+            format_number(self.resolved_value(), self.precision)
+        } else {
+            self.buffer.clone()
+        }
     }
 
     fn commit_buffer(&mut self) {
@@ -2907,6 +3498,7 @@ impl NumberInput {
 
 impl Widget for NumberInput {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_external_value();
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -2923,7 +3515,7 @@ impl Widget for NumberInput {
             {
                 self.hovered = true;
                 ctx.request_focus();
-                if number_input_stepper_rect(ctx.bounds(), self.theme.metrics)
+                if number_input_stepper_rect(ctx.bounds(), self.resolved_theme().metrics)
                     .contains(pointer.position)
                 {
                     if pointer.position.y < ctx.bounds().y() + (ctx.bounds().height() * 0.5) {
@@ -2965,25 +3557,30 @@ impl Widget for NumberInput {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let measurement = measure_text(ctx, &self.buffer, &self.text_style());
-        let padding = self.theme.metrics.text_input_padding;
+        self.sync_external_value();
+        let buffer = self.display_buffer();
+        let measurement = measure_text(ctx, &buffer, &self.text_style());
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.text_input_padding;
         constraints.clamp(Size::new(
             (measurement.width
                 + padding.left
                 + padding.right
-                + self.theme.metrics.number_input_stepper_width)
-                .max(self.theme.metrics.button_min_width + 60.0),
-            self.theme.metrics.min_height,
+                + theme.metrics.number_input_stepper_width)
+                .max(theme.metrics.button_min_width + 60.0),
+            theme.metrics.min_height,
         ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let content = number_input_text_rect(ctx.bounds(), metrics);
         let stepper = number_input_stepper_rect(ctx.bounds(), metrics);
         let text_style = self.text_style();
-        let measurement = paint_text_measurement(ctx, &self.buffer, &text_style);
+        let buffer = self.display_buffer();
+        let measurement = paint_text_measurement(ctx, &buffer, &text_style);
 
         draw_control_frame(
             ctx,
@@ -2993,9 +3590,9 @@ impl Widget for NumberInput {
             if ctx.is_focused() {
                 palette.surface_focus
             } else if self.hovered {
-                palette.surface_hover
+                palette.control_hover
             } else {
-                palette.surface
+                palette.control
             },
             if ctx.is_focused() {
                 palette.border_focus
@@ -3009,7 +3606,7 @@ impl Widget for NumberInput {
 
         ctx.draw_text(
             vertically_centered_text_rect(ctx, content, Some(measurement), text_style.line_height),
-            self.buffer.clone(),
+            buffer.clone(),
             text_style,
         );
         ctx.stroke(
@@ -3045,7 +3642,7 @@ impl Widget for NumberInput {
 
         if ctx.is_focused() {
             let caret_x = content.x()
-                + measure_text_width_estimate(&self.buffer, self.text_style().font_size.max(1.0));
+                + measure_text_width_estimate(&buffer, self.text_style().font_size.max(1.0));
             let caret_width = physical_pixels(ctx, metrics.caret_width);
             let caret = Rect::new(
                 caret_x.min((content.max_x() - caret_width).max(content.x())),
@@ -3061,7 +3658,7 @@ impl Widget for NumberInput {
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::SpinBox, ctx.bounds());
         node.name = Some(self.name.clone());
-        node.value = Some(SemanticsValue::Number(self.value));
+        node.value = Some(SemanticsValue::Number(self.resolved_value()));
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
         node.actions = vec![
@@ -3078,8 +3675,13 @@ impl Widget for NumberInput {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        if focused {
+            self.sync_external_value();
+        }
+        self.editing = focused;
         if !focused {
             self.commit_buffer();
+            self.sync_external_value();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -3088,6 +3690,7 @@ impl Widget for NumberInput {
 
 pub struct TextArea {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     editor: EditorState,
     clipboard: String,
@@ -3111,6 +3714,7 @@ impl TextArea {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             editor: EditorState::new(),
             clipboard: String::new(),
@@ -3133,6 +3737,15 @@ impl TextArea {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -3198,21 +3811,28 @@ impl TextArea {
     fn resolved_text_style(&self) -> TextStyle {
         self.text_style
             .clone()
-            .unwrap_or_else(|| self.theme.body_text_style())
+            .unwrap_or_else(|| self.resolved_theme().body_text_style())
     }
 
     fn resolved_padding(&self) -> Insets {
         self.padding
-            .unwrap_or(self.theme.metrics.text_input_padding)
+            .unwrap_or(self.resolved_theme().metrics.text_input_padding)
     }
 
     fn resolved_min_size(&self) -> Size {
+        let theme = self.resolved_theme();
         Size::new(
-            self.min_width
-                .unwrap_or(self.theme.metrics.text_input_min_width),
+            self.min_width.unwrap_or(theme.metrics.text_input_min_width),
             self.min_height
-                .unwrap_or(self.theme.metrics.text_area_min_height),
+                .unwrap_or(theme.metrics.text_area_min_height),
         )
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn commit_text_change(&mut self) {
@@ -3440,10 +4060,11 @@ impl Widget for TextArea {
         } else {
             (min_size.width - padding.left - padding.right).max(0.0)
         };
+        let theme = self.resolved_theme();
         let display_text = self.display_text();
         let input_text = self.input_text();
         let display_style = if input_text.is_empty() {
-            self.theme.placeholder_text_style()
+            theme.placeholder_text_style()
         } else {
             text_style.clone()
         };
@@ -3487,8 +4108,9 @@ impl Widget for TextArea {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let padding = self.resolved_padding();
         let content = inset_rect(ctx.bounds(), padding);
         let focus_progress = self.focus_animation.value;
@@ -3500,9 +4122,9 @@ impl Widget for TextArea {
             metrics,
             mix_color(
                 if self.hovered {
-                    palette.surface_hover
+                    palette.control_hover
                 } else {
-                    palette.surface
+                    palette.control
                 },
                 palette.surface_focus,
                 focus_progress,
@@ -3630,35 +4252,50 @@ impl Widget for TextArea {
 
 pub struct Select {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     options: Vec<String>,
     selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     placeholder: String,
     expanded: bool,
     hovered_option: Option<usize>,
     hovered_header: bool,
     pressed_header: bool,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
 }
 
 impl Select {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             options: Vec::new(),
             selected: None,
+            selected_reader: None,
             placeholder: String::new(),
             expanded: false,
             hovered_option: None,
             hovered_header: false,
             pressed_header: false,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -3683,6 +4320,15 @@ impl Select {
 
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = Some(index);
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
         self
     }
 
@@ -3691,7 +4337,7 @@ impl Select {
     }
 
     pub fn current_value(&self) -> Option<&str> {
-        self.selected
+        self.current_selected_index()
             .and_then(|index| self.options.get(index).map(String::as_str))
     }
 
@@ -3703,14 +4349,37 @@ impl Select {
         self
     }
 
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn header_height(&self) -> f32 {
-        self.theme.metrics.min_height
+        self.resolved_theme().metrics.min_height
     }
 
     fn current_label(&self) -> String {
         self.current_value()
             .map(str::to_string)
             .unwrap_or_else(|| self.placeholder.clone())
+    }
+
+    fn current_selected_index(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.selected)
+            .filter(|index| *index < self.options.len())
     }
 
     fn header_rect(&self, bounds: Rect) -> Rect {
@@ -3723,7 +4392,7 @@ impl Select {
             bounds.y() + self.header_height() + 6.0,
             bounds.width(),
             (self.options.len() as f32 * self.header_height())
-                .min(self.theme.metrics.select_menu_max_height),
+                .min(self.resolved_theme().metrics.select_menu_max_height),
         )
     }
 
@@ -3749,11 +4418,18 @@ impl Select {
         })
     }
 
-    fn select_index(&mut self, index: usize) {
+    fn select_index(&mut self, ctx: &mut EventCtx, index: usize) {
+        if self.options.is_empty() {
+            return;
+        }
         let index = index.min(self.options.len().saturating_sub(1));
         self.selected = Some(index);
+        let value = self.options[index].clone();
         if let Some(on_change) = &mut self.on_change {
-            on_change(index, self.options[index].clone());
+            on_change(index, value.clone());
+        }
+        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
+            on_change_with_ctx(ctx, index, value);
         }
     }
 
@@ -3815,10 +4491,10 @@ impl Widget for Select {
                 if self.pressed_header && hovered_header {
                     self.expanded = !self.expanded;
                     if self.expanded {
-                        self.hovered_option = self.selected.or(Some(0));
+                        self.hovered_option = self.current_selected_index().or(Some(0));
                     }
                 } else if let Some(index) = hovered_option {
-                    self.select_index(index);
+                    self.select_index(ctx, index);
                     self.expanded = false;
                 } else {
                     self.expanded = false;
@@ -3855,13 +4531,16 @@ impl Widget for Select {
                 match key.key.as_str() {
                     "Enter" | " " => {
                         if self.expanded {
-                            if let Some(index) = self.hovered_option.or(self.selected) {
-                                self.select_index(index);
+                            if let Some(index) = self
+                                .hovered_option
+                                .or_else(|| self.current_selected_index())
+                            {
+                                self.select_index(ctx, index);
                             }
                             self.expanded = false;
                         } else {
                             self.expanded = true;
-                            self.hovered_option = self.selected.or(Some(0));
+                            self.hovered_option = self.current_selected_index().or(Some(0));
                         }
                     }
                     "Escape" => self.expanded = false,
@@ -3869,33 +4548,33 @@ impl Widget for Select {
                         if self.expanded {
                             let next = self
                                 .hovered_option
-                                .unwrap_or_else(|| self.selected.unwrap_or(0))
+                                .unwrap_or_else(|| self.current_selected_index().unwrap_or(0))
                                 .saturating_add(1)
                                 .min(self.options.len() - 1);
                             self.hovered_option = Some(next);
                         } else {
                             let next = self
-                                .selected
+                                .current_selected_index()
                                 .unwrap_or(0)
                                 .saturating_add(1)
                                 .min(self.options.len() - 1);
-                            self.select_index(next);
+                            self.select_index(ctx, next);
                         }
                     }
                     "ArrowUp" => {
                         if self.expanded {
                             let next = self
                                 .hovered_option
-                                .unwrap_or_else(|| self.selected.unwrap_or(0))
+                                .unwrap_or_else(|| self.current_selected_index().unwrap_or(0))
                                 .saturating_sub(1);
                             self.hovered_option = Some(next);
                         } else {
-                            let next = self.selected.unwrap_or(0).saturating_sub(1);
-                            self.select_index(next);
+                            let next = self.current_selected_index().unwrap_or(0).saturating_sub(1);
+                            self.select_index(ctx, next);
                         }
                     }
-                    "Home" => self.select_index(0),
-                    "End" => self.select_index(self.options.len() - 1),
+                    "Home" => self.select_index(ctx, 0),
+                    "End" => self.select_index(ctx, self.options.len() - 1),
                     _ => {}
                 }
 
@@ -3908,8 +4587,9 @@ impl Widget for Select {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let padding = self.theme.metrics.text_input_padding;
-        let text_style = self.theme.body_text_style();
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.text_input_padding;
+        let text_style = theme.body_text_style();
         let widest = self
             .options
             .iter()
@@ -3917,22 +4597,23 @@ impl Widget for Select {
             .map(|label| measure_text(ctx, label, &text_style).width)
             .fold(0.0, f32::max);
         let width = (widest + padding.left + padding.right + 24.0)
-            .max(self.theme.metrics.button_min_width + 40.0);
+            .max(theme.metrics.button_min_width + 40.0);
         let height = self.header_height();
 
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let header = self.header_rect(ctx.bounds());
         let label = self.current_label();
         let placeholder = self.current_value().is_none();
         let text_style = if placeholder {
-            self.theme.placeholder_text_style()
+            theme.placeholder_text_style()
         } else {
-            self.theme.body_text_style()
+            theme.body_text_style()
         };
         let text_measurement = paint_text_measurement(ctx, &label, &text_style);
         let text_rect = vertically_centered_text_rect(
@@ -3948,11 +4629,11 @@ impl Widget for Select {
             metrics.corner_radius,
             metrics,
             if self.hovered_header {
-                palette.surface_hover
+                palette.control_hover
             } else if ctx.is_focused() {
                 palette.surface_focus
             } else {
-                palette.surface
+                palette.control
             },
             if ctx.is_focused() {
                 palette.border_focus
@@ -3977,27 +4658,28 @@ impl Widget for Select {
 
         if self.expanded {
             let menu = self.menu_rect(ctx.bounds());
+            let current_selected = self.current_selected_index();
             draw_control_shape(
                 ctx,
                 menu,
                 metrics.corner_radius,
                 physical_pixels(ctx, metrics.border_width),
-                palette.surface,
+                palette.surface_raised,
                 palette.border,
             );
             for (index, option) in self.options.iter().enumerate() {
                 let row = self.option_rect(ctx.bounds(), index);
-                let selected = self.selected == Some(index);
+                let selected = current_selected == Some(index);
                 let hovered = self.hovered_option == Some(index);
-                let text_style = self.theme.body_text_style();
+                let text_style = theme.body_text_style();
                 let text_measurement = paint_text_measurement(ctx, option, &text_style);
                 if hovered || selected {
                     ctx.fill(
                         rounded_rect_path(row.inflate(-4.0, -4.0), metrics.corner_radius - 2.0),
                         if hovered {
-                            palette.surface_hover
+                            palette.control_hover
                         } else {
-                            palette.surface_pressed
+                            palette.selection
                         },
                     );
                 }
@@ -4069,6 +4751,7 @@ pub type ComboBox = Select;
 
 pub struct TextInput {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     editor: EditorState,
     clipboard: String,
@@ -4094,6 +4777,7 @@ impl TextInput {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             editor: EditorState::new(),
             clipboard: String::new(),
@@ -4122,6 +4806,15 @@ impl TextInput {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -4280,20 +4973,27 @@ impl TextInput {
     fn resolved_text_style(&self) -> TextStyle {
         self.text_style
             .clone()
-            .unwrap_or_else(|| self.theme.body_text_style())
+            .unwrap_or_else(|| self.resolved_theme().body_text_style())
     }
 
     fn resolved_padding(&self) -> Insets {
         self.padding
-            .unwrap_or(self.theme.metrics.text_input_padding)
+            .unwrap_or(self.resolved_theme().metrics.text_input_padding)
     }
 
     fn resolved_min_size(&self) -> Size {
+        let theme = self.resolved_theme();
         Size::new(
-            self.min_width
-                .unwrap_or(self.theme.metrics.text_input_min_width),
-            self.min_height.unwrap_or(self.theme.metrics.min_height),
+            self.min_width.unwrap_or(theme.metrics.text_input_min_width),
+            self.min_height.unwrap_or(theme.metrics.min_height),
         )
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 }
 
@@ -4451,13 +5151,14 @@ impl Widget for TextInput {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
         let visible_text = self.visible_text();
         let input_text = self.input_text();
         let display_style = if input_text.is_empty() {
-            self.theme.placeholder_text_style()
+            theme.placeholder_text_style()
         } else {
             text_style.clone()
         };
@@ -4517,16 +5218,17 @@ impl Widget for TextInput {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let focus_progress = self.focus_animation.value;
         let background = mix_color(
             if self.hovered {
-                palette.surface_hover
+                palette.control_hover
             } else {
-                palette.surface
+                palette.control
             },
             palette.surface_focus,
             focus_progress,
@@ -4569,7 +5271,7 @@ impl Widget for TextInput {
                 content_rect,
                 display_text,
                 if placeholder {
-                    self.theme.placeholder_text_style()
+                    theme.placeholder_text_style()
                 } else {
                     text_style.clone()
                 },
@@ -4824,11 +5526,30 @@ fn measure_text_width_estimate(text: &str, font_size: f32) -> f32 {
     text.chars().count() as f32 * font_size * 0.62
 }
 
-fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
+pub(crate) fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
     let stroke = StrokeStyle::new(physical_pixels(ctx, 1.8).max(1.0));
+    let inset_ratio = if matches!(
+        glyph,
+        IconGlyph::Undo
+            | IconGlyph::Redo
+            | IconGlyph::Brush
+            | IconGlyph::Eraser
+            | IconGlyph::PaintBucket
+            | IconGlyph::Hand
+            | IconGlyph::Lock
+            | IconGlyph::Unlock
+            | IconGlyph::Trash
+            | IconGlyph::Download
+            | IconGlyph::FitView
+            | IconGlyph::ActualSize
+    ) {
+        0.08
+    } else {
+        0.2
+    };
     let inset = bounds.inflate(
-        -((bounds.width() * 0.2) + (stroke.width * 0.5)),
-        -((bounds.height() * 0.2) + (stroke.width * 0.5)),
+        -((bounds.width() * inset_ratio) + (stroke.width * 0.5)),
+        -((bounds.height() * inset_ratio) + (stroke.width * 0.5)),
     );
 
     match glyph {
@@ -4917,6 +5638,23 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
             );
             ctx.stroke(rounded_rect_path(front, stroke.width * 1.5), color, stroke);
         }
+        IconGlyph::FitView => {
+            ctx.stroke(fit_view_frame_path(inset), color, stroke.clone());
+            ctx.stroke(
+                fit_view_arrow_path(inset, -1.0, -1.0),
+                color,
+                stroke.clone(),
+            );
+            ctx.stroke(fit_view_arrow_path(inset, 1.0, -1.0), color, stroke.clone());
+            ctx.stroke(fit_view_arrow_path(inset, -1.0, 1.0), color, stroke.clone());
+            ctx.stroke(fit_view_arrow_path(inset, 1.0, 1.0), color, stroke);
+        }
+        IconGlyph::ActualSize => {
+            ctx.stroke(actual_size_frame_path(inset), color, stroke.clone());
+            for pixel in actual_size_pixel_rects(inset) {
+                ctx.fill(rounded_rect_path(pixel, stroke.width * 0.7), color);
+            }
+        }
         IconGlyph::MoreHorizontal => {
             for offset in [0.2_f32, 0.5, 0.8] {
                 ctx.fill(
@@ -4957,6 +5695,82 @@ fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Co
                         lens.max_x() - (lens.width() * 0.05),
                         lens.max_y() - (lens.height() * 0.05),
                     ),
+                    Point::new(inset.max_x(), inset.max_y()),
+                ),
+                color,
+                stroke,
+            );
+        }
+        IconGlyph::Undo => {
+            ctx.stroke(history_arrow_path(inset, -1.0), color, stroke.clone());
+            ctx.stroke(history_arrow_head_path(inset, -1.0), color, stroke);
+        }
+        IconGlyph::Redo => {
+            ctx.stroke(history_arrow_path(inset, 1.0), color, stroke.clone());
+            ctx.stroke(history_arrow_head_path(inset, 1.0), color, stroke);
+        }
+        IconGlyph::Brush => {
+            ctx.stroke(brush_handle_path(inset), color, stroke.clone());
+            ctx.fill(brush_tip_path(inset), color);
+        }
+        IconGlyph::Eraser => {
+            ctx.stroke(eraser_path(inset), color, stroke.clone());
+            ctx.stroke(
+                line_path(
+                    Point::new(inset.x() + inset.width() * 0.18, inset.max_y()),
+                    Point::new(inset.max_x(), inset.max_y()),
+                ),
+                color,
+                stroke,
+            );
+        }
+        IconGlyph::PaintBucket => {
+            ctx.stroke(paint_bucket_path(inset), color, stroke.clone());
+            ctx.fill(paint_drop_path(inset), color);
+        }
+        IconGlyph::Hand => {
+            ctx.stroke(hand_path(inset), color, stroke);
+        }
+        IconGlyph::Lock => {
+            ctx.stroke(lock_shackle_path(inset, true), color, stroke.clone());
+            ctx.stroke(
+                rounded_rect_path(lock_body_rect(inset), stroke.width * 1.2),
+                color,
+                stroke,
+            );
+        }
+        IconGlyph::Unlock => {
+            ctx.stroke(lock_shackle_path(inset, false), color, stroke.clone());
+            ctx.stroke(
+                rounded_rect_path(lock_body_rect(inset), stroke.width * 1.2),
+                color,
+                stroke,
+            );
+        }
+        IconGlyph::Trash => {
+            ctx.stroke(trash_can_path(inset), color, stroke.clone());
+            ctx.stroke(
+                line_path(
+                    Point::new(inset.x() + inset.width() * 0.28, inset.y()),
+                    Point::new(inset.max_x() - inset.width() * 0.28, inset.y()),
+                ),
+                color,
+                stroke,
+            );
+        }
+        IconGlyph::Download => {
+            ctx.stroke(
+                line_path(
+                    Point::new(rect_center(inset).x, inset.y()),
+                    Point::new(rect_center(inset).x, inset.max_y() - inset.height() * 0.28),
+                ),
+                color,
+                stroke.clone(),
+            );
+            ctx.stroke(download_arrow_head_path(inset), color, stroke.clone());
+            ctx.stroke(
+                line_path(
+                    Point::new(inset.x(), inset.max_y()),
                     Point::new(inset.max_x(), inset.max_y()),
                 ),
                 color,
@@ -5043,6 +5857,438 @@ fn maximize_path(rect: Rect) -> Path {
         .move_to(Point::new(rect.x() + corner, rect.max_y()))
         .line_to(Point::new(rect.x(), rect.max_y()))
         .line_to(Point::new(rect.x(), rect.max_y() - corner));
+    builder.build()
+}
+
+fn fit_view_frame_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    let corner = rect.width().min(rect.height()) * 0.22;
+    builder
+        .move_to(Point::new(rect.x(), rect.y() + corner))
+        .line_to(Point::new(rect.x(), rect.y()))
+        .line_to(Point::new(rect.x() + corner, rect.y()))
+        .move_to(Point::new(rect.max_x() - corner, rect.y()))
+        .line_to(Point::new(rect.max_x(), rect.y()))
+        .line_to(Point::new(rect.max_x(), rect.y() + corner))
+        .move_to(Point::new(rect.max_x(), rect.max_y() - corner))
+        .line_to(Point::new(rect.max_x(), rect.max_y()))
+        .line_to(Point::new(rect.max_x() - corner, rect.max_y()))
+        .move_to(Point::new(rect.x() + corner, rect.max_y()))
+        .line_to(Point::new(rect.x(), rect.max_y()))
+        .line_to(Point::new(rect.x(), rect.max_y() - corner));
+    builder.build()
+}
+
+fn fit_view_arrow_path(rect: Rect, x_direction: f32, y_direction: f32) -> Path {
+    let center = rect_center(rect);
+    let target = Point::new(
+        center.x + x_direction * rect.width() * 0.22,
+        center.y + y_direction * rect.height() * 0.22,
+    );
+    let tail = Point::new(
+        center.x + x_direction * rect.width() * 0.02,
+        center.y + y_direction * rect.height() * 0.02,
+    );
+    let wing_x = -x_direction * rect.width() * 0.12;
+    let wing_y = -y_direction * rect.height() * 0.12;
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(tail)
+        .line_to(target)
+        .move_to(target)
+        .line_to(Point::new(target.x + wing_x, target.y))
+        .move_to(target)
+        .line_to(Point::new(target.x, target.y + wing_y));
+    builder.build()
+}
+
+fn actual_size_frame_path(rect: Rect) -> Path {
+    rounded_rect_path(
+        Rect::new(
+            rect.x() + rect.width() * 0.16,
+            rect.y() + rect.height() * 0.16,
+            rect.width() * 0.68,
+            rect.height() * 0.68,
+        ),
+        rect.width().min(rect.height()) * 0.08,
+    )
+}
+
+fn actual_size_pixel_rects(rect: Rect) -> [Rect; 4] {
+    let frame = Rect::new(
+        rect.x() + rect.width() * 0.28,
+        rect.y() + rect.height() * 0.28,
+        rect.width() * 0.44,
+        rect.height() * 0.44,
+    );
+    let size = rect.width().min(rect.height()) * 0.12;
+    [
+        Rect::new(frame.x(), frame.y(), size, size),
+        Rect::new(frame.max_x() - size, frame.y(), size, size),
+        Rect::new(frame.x(), frame.max_y() - size, size, size),
+        Rect::new(frame.max_x() - size, frame.max_y() - size, size, size),
+    ]
+}
+
+fn history_arrow_path(rect: Rect, direction: f32) -> Path {
+    let mut builder = PathBuilder::new();
+    if direction.is_sign_positive() {
+        builder.move_to(Point::new(
+            rect.x() + rect.width() * 0.20,
+            rect.y() + rect.height() * 0.72,
+        ));
+        builder.cubic_to(
+            Point::new(
+                rect.x() + rect.width() * 0.48,
+                rect.y() + rect.height() * 0.72,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.67,
+                rect.y() + rect.height() * 0.58,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.67,
+                rect.y() + rect.height() * 0.43,
+            ),
+        );
+    } else {
+        builder.move_to(Point::new(
+            rect.x() + rect.width() * 0.80,
+            rect.y() + rect.height() * 0.72,
+        ));
+        builder.cubic_to(
+            Point::new(
+                rect.x() + rect.width() * 0.52,
+                rect.y() + rect.height() * 0.72,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.33,
+                rect.y() + rect.height() * 0.58,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.33,
+                rect.y() + rect.height() * 0.43,
+            ),
+        );
+    }
+    builder.build()
+}
+
+fn history_arrow_head_path(rect: Rect, direction: f32) -> Path {
+    let mut builder = PathBuilder::new();
+    if direction.is_sign_positive() {
+        let tip = Point::new(
+            rect.x() + rect.width() * 0.67,
+            rect.y() + rect.height() * 0.43,
+        );
+        builder
+            .move_to(Point::new(
+                rect.x() + rect.width() * 0.52,
+                rect.y() + rect.height() * 0.27,
+            ))
+            .line_to(tip)
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.52,
+                rect.y() + rect.height() * 0.57,
+            ));
+    } else {
+        let tip = Point::new(
+            rect.x() + rect.width() * 0.33,
+            rect.y() + rect.height() * 0.43,
+        );
+        builder
+            .move_to(Point::new(
+                rect.x() + rect.width() * 0.48,
+                rect.y() + rect.height() * 0.27,
+            ))
+            .line_to(tip)
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.48,
+                rect.y() + rect.height() * 0.57,
+            ));
+    }
+    builder.build()
+}
+
+fn brush_handle_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.68,
+            rect.y() + rect.height() * 0.14,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.36,
+            rect.y() + rect.height() * 0.56,
+        ));
+    builder.build()
+}
+
+fn brush_tip_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.30,
+            rect.y() + rect.height() * 0.56,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.45,
+            rect.y() + rect.height() * 0.70,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.22,
+            rect.y() + rect.height() * 0.92,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.16,
+            rect.y() + rect.height() * 0.78,
+        ))
+        .close();
+    builder.build()
+}
+
+fn eraser_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.24,
+            rect.y() + rect.height() * 0.66,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.56,
+            rect.y() + rect.height() * 0.24,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.82,
+            rect.y() + rect.height() * 0.44,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.50,
+            rect.y() + rect.height() * 0.86,
+        ))
+        .close()
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.38,
+            rect.y() + rect.height() * 0.52,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.64,
+            rect.y() + rect.height() * 0.72,
+        ));
+    builder.build()
+}
+
+fn paint_bucket_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.28,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.66,
+            rect.y() + rect.height() * 0.18,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.86,
+            rect.y() + rect.height() * 0.52,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.44,
+            rect.y() + rect.height() * 0.74,
+        ))
+        .close()
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.40,
+            rect.y() + rect.height() * 0.24,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.66,
+            rect.y() + rect.height() * 0.58,
+        ));
+    builder.build()
+}
+
+fn paint_drop_path(rect: Rect) -> Path {
+    Path::circle(
+        Point::new(
+            rect.x() + rect.width() * 0.76,
+            rect.y() + rect.height() * 0.82,
+        ),
+        rect.width().min(rect.height()) * 0.08,
+    )
+}
+
+fn hand_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.50,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.30,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.38,
+            rect.y() + rect.height() * 0.30,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.38,
+            rect.y() + rect.height() * 0.18,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.48,
+            rect.y() + rect.height() * 0.18,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.48,
+            rect.y() + rect.height() * 0.32,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.58,
+            rect.y() + rect.height() * 0.32,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.58,
+            rect.y() + rect.height() * 0.40,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.70,
+            rect.y() + rect.height() * 0.40,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.70,
+            rect.y() + rect.height() * 0.68,
+        ))
+        .cubic_to(
+            Point::new(
+                rect.x() + rect.width() * 0.70,
+                rect.y() + rect.height() * 0.88,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.52,
+                rect.y() + rect.height() * 0.94,
+            ),
+            Point::new(
+                rect.x() + rect.width() * 0.38,
+                rect.y() + rect.height() * 0.82,
+            ),
+        )
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.22,
+            rect.y() + rect.height() * 0.62,
+        ));
+    builder.build()
+}
+
+fn lock_body_rect(rect: Rect) -> Rect {
+    Rect::new(
+        rect.x() + rect.width() * 0.20,
+        rect.y() + rect.height() * 0.46,
+        rect.width() * 0.60,
+        rect.height() * 0.42,
+    )
+}
+
+fn lock_shackle_path(rect: Rect, locked: bool) -> Path {
+    let body = lock_body_rect(rect);
+    let mut builder = PathBuilder::new();
+    if locked {
+        builder
+            .move_to(Point::new(rect.x() + rect.width() * 0.30, body.y()))
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.30,
+                rect.y() + rect.height() * 0.34,
+            ))
+            .cubic_to(
+                Point::new(
+                    rect.x() + rect.width() * 0.30,
+                    rect.y() + rect.height() * 0.14,
+                ),
+                Point::new(
+                    rect.x() + rect.width() * 0.70,
+                    rect.y() + rect.height() * 0.14,
+                ),
+                Point::new(
+                    rect.x() + rect.width() * 0.70,
+                    rect.y() + rect.height() * 0.34,
+                ),
+            )
+            .line_to(Point::new(rect.x() + rect.width() * 0.70, body.y()));
+    } else {
+        builder
+            .move_to(Point::new(rect.x() + rect.width() * 0.30, body.y()))
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.30,
+                rect.y() + rect.height() * 0.34,
+            ))
+            .cubic_to(
+                Point::new(
+                    rect.x() + rect.width() * 0.30,
+                    rect.y() + rect.height() * 0.14,
+                ),
+                Point::new(
+                    rect.x() + rect.width() * 0.66,
+                    rect.y() + rect.height() * 0.14,
+                ),
+                Point::new(
+                    rect.x() + rect.width() * 0.66,
+                    rect.y() + rect.height() * 0.34,
+                ),
+            )
+            .line_to(Point::new(
+                rect.x() + rect.width() * 0.86,
+                rect.y() + rect.height() * 0.34,
+            ));
+    }
+    builder.build()
+}
+
+fn trash_can_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.22,
+            rect.y() + rect.height() * 0.24,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.92,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.72,
+            rect.y() + rect.height() * 0.92,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.78,
+            rect.y() + rect.height() * 0.24,
+        ))
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.42,
+            rect.y() + rect.height() * 0.14,
+        ))
+        .line_to(Point::new(
+            rect.x() + rect.width() * 0.58,
+            rect.y() + rect.height() * 0.14,
+        ));
+    builder.build()
+}
+
+fn download_arrow_head_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::new();
+    let tip = Point::new(rect_center(rect).x, rect.y() + rect.height() * 0.72);
+    builder
+        .move_to(Point::new(
+            rect.x() + rect.width() * 0.28,
+            rect.y() + rect.height() * 0.48,
+        ))
+        .line_to(tip)
+        .line_to(Point::new(
+            rect.max_x() - rect.width() * 0.28,
+            rect.y() + rect.height() * 0.48,
+        ));
     builder.build()
 }
 
@@ -5265,9 +6511,9 @@ mod tests {
 
     use super::{
         Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, FOCUS_ANIMATION_SECONDS,
-        HOVER_ANIMATION_SECONDS, Label, NumberInput, PRESS_ANIMATION_SECONDS, RadioButton,
-        RadioGroup, Select, Slider, Switch, TOGGLE_ANIMATION_SECONDS, TextArea, TextInput,
-        rect_is_finite,
+        HOVER_ANIMATION_SECONDS, IconButton, IconGlyph, Label, NumberInput,
+        PRESS_ANIMATION_SECONDS, RadioButton, RadioGroup, Select, Slider, Switch,
+        TOGGLE_ANIMATION_SECONDS, TextArea, TextInput, rect_is_finite,
     };
     use crate::containers::SizedBox;
     use crate::{HdrThemeMode, SemanticColorToken, WidgetLuminanceRole, resolve_luminance_role};
@@ -5521,6 +6767,36 @@ mod tests {
     }
 
     #[test]
+    fn label_dynamic_text_updates_named_semantic_value() -> Result<()> {
+        let text = Rc::new(RefCell::new("Zoom 25%".to_string()));
+        let text_reader = Rc::clone(&text);
+        let (mut runtime, window_id) = build_runtime(
+            Label::dynamic("Zoom --", move || text_reader.borrow().clone())
+                .semantic_name("Zoom level"),
+        );
+
+        let output = runtime.render(window_id)?;
+        assert_eq!(output.semantics[0].role, SemanticsRole::Text);
+        assert_eq!(output.semantics[0].name.as_deref(), Some("Zoom level"));
+        assert_eq!(
+            output.semantics[0].value,
+            Some(SemanticsValue::Text("Zoom 25%".to_string()))
+        );
+
+        *text.borrow_mut() = "Zoom 50%".to_string();
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(320.0, 80.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        assert_eq!(
+            output.semantics[0].value,
+            Some(SemanticsValue::Text("Zoom 50%".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn label_measures_wrapped_height_when_width_is_constrained() {
         let output = render(SizedBox::new().width(96.0).with_child(Label::new(
             "This label should wrap onto multiple lines when its layout width is constrained.",
@@ -5556,6 +6832,91 @@ mod tests {
             .find(|node| node.role == SemanticsRole::Button)
             .unwrap();
         assert_eq!(button.name.as_deref(), Some("Save"));
+        Ok(())
+    }
+
+    #[test]
+    fn disabled_button_exposes_semantics_and_ignores_activation() -> Result<()> {
+        let activations = Rc::new(RefCell::new(0usize));
+        let on_press = Rc::clone(&activations);
+        let (mut runtime, window_id) = build_runtime(
+            Button::new("Save")
+                .enabled(false)
+                .on_press(move || *on_press.borrow_mut() += 1),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false),
+        )?;
+
+        assert_eq!(*activations.borrow(), 0);
+        let output = runtime.render(window_id)?;
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("button semantics should be present");
+        assert!(button.state.disabled);
+        assert!(button.actions.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn button_with_icon_keeps_label_semantics_and_paints_icon() {
+        let plain = render(Button::new("Export").min_width(96.0));
+        let with_icon = render(
+            Button::new("Export")
+                .icon(IconGlyph::Download)
+                .min_width(96.0),
+        );
+
+        let button = with_icon
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("button semantics should exist");
+        assert_eq!(button.name.as_deref(), Some("Export"));
+        assert!(
+            with_icon.frame.scene.commands().len() > plain.frame.scene.commands().len(),
+            "icon button should add visible icon ink"
+        );
+    }
+
+    #[test]
+    fn disabled_icon_button_exposes_semantics_and_ignores_activation() -> Result<()> {
+        let activations = Rc::new(RefCell::new(0usize));
+        let on_press = Rc::clone(&activations);
+        let (mut runtime, window_id) = build_runtime(
+            IconButton::new(IconGlyph::Add, "Add")
+                .enabled(false)
+                .on_press(move || *on_press.borrow_mut() += 1),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false),
+        )?;
+
+        assert_eq!(*activations.borrow(), 0);
+        let output = runtime.render(window_id)?;
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("icon button semantics should be present");
+        assert!(button.state.disabled);
+        assert!(button.actions.is_empty());
         Ok(())
     }
 
@@ -5659,8 +7020,8 @@ mod tests {
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
         let mid_background = solid_fill_colors(&mid)[0];
-        assert_ne!(mid_background, theme.palette.surface_pressed);
-        assert_ne!(mid_background, theme.palette.surface_hover);
+        assert_ne!(mid_background, theme.palette.control_active);
+        assert_ne!(mid_background, theme.palette.control_hover);
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
         runtime.tick(HOVER_ANIMATION_SECONDS);
@@ -5668,9 +7029,47 @@ mod tests {
         let end = runtime.render(window_id)?;
         let end_fills = solid_fill_colors(&end);
         assert_ne!(end_fills, solid_fill_colors(&mid));
-        assert!(!end_fills.contains(&theme.palette.surface_pressed));
+        assert!(!end_fills.contains(&theme.palette.control_active));
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
+    }
+
+    #[test]
+    fn icon_button_selected_state_is_exposed_to_semantics() {
+        let output =
+            render(super::IconButton::new(super::IconGlyph::Check, "Brush tool").selected(true));
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("icon button semantics should exist");
+
+        assert_eq!(button.name.as_deref(), Some("Brush tool"));
+        assert!(button.state.selected);
+    }
+
+    #[test]
+    fn editor_icon_glyphs_paint_visible_ink() {
+        for glyph in [
+            IconGlyph::Undo,
+            IconGlyph::Redo,
+            IconGlyph::Brush,
+            IconGlyph::Eraser,
+            IconGlyph::PaintBucket,
+            IconGlyph::Hand,
+            IconGlyph::Lock,
+            IconGlyph::Unlock,
+            IconGlyph::Trash,
+            IconGlyph::Download,
+            IconGlyph::FitView,
+            IconGlyph::ActualSize,
+        ] {
+            let output = render(IconButton::new(glyph, "Editor command"));
+            assert!(
+                output.frame.scene.commands().len() > 2,
+                "{glyph:?} should paint more than the button frame"
+            );
+        }
     }
 
     #[test]
@@ -6653,6 +8052,98 @@ mod tests {
     }
 
     #[test]
+    fn slider_value_when_syncs_external_value() -> Result<()> {
+        let value = Rc::new(RefCell::new(0.25));
+        let value_reader = Rc::clone(&value);
+        let (mut runtime, window_id) = build_runtime(
+            Slider::new("Opacity")
+                .range(0.0, 1.0)
+                .step(0.01)
+                .value_when(move || *value_reader.borrow()),
+        );
+
+        let output = runtime.render(window_id)?;
+        let slider = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider)
+            .expect("slider semantics present");
+        assert_eq!(
+            slider.value,
+            Some(SemanticsValue::Range {
+                value: 0.25,
+                min: 0.0,
+                max: 1.0,
+            })
+        );
+
+        *value.borrow_mut() = 0.75;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(200.0, 32.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let slider = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider)
+            .expect("slider semantics present after external update");
+        assert_eq!(
+            slider.value,
+            Some(SemanticsValue::Range {
+                value: 0.75,
+                min: 0.0,
+                max: 1.0,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn slider_on_change_with_ctx_receives_value() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(200.0).height(32.0).with_child(
+                Slider::new("Opacity")
+                    .range(0.0, 1.0)
+                    .step(0.01)
+                    .on_change_with_ctx(move |ctx, value| {
+                        on_change.borrow_mut().push(value);
+                        ctx.request_semantics();
+                    }),
+            ),
+        );
+        let output = runtime.render(window_id)?;
+        let slider = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider)
+            .expect("slider semantics present");
+        let position = Point::new(
+            slider.bounds.x() + (slider.bounds.width() * 0.5),
+            slider.bounds.y() + (slider.bounds.height() * 0.5),
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+
+        assert!(
+            changes
+                .borrow()
+                .last()
+                .is_some_and(|value| (*value - 0.5).abs() < 1e-6)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn slider_clears_hover_state_after_pointer_moves_off_control() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(crate::Padding::all(
             12.0,
@@ -6851,6 +8342,49 @@ mod tests {
     }
 
     #[test]
+    fn number_input_value_when_syncs_unfocused_external_value() {
+        let value = Rc::new(RefCell::new(12.0));
+        let value_reader = Rc::clone(&value);
+        let (mut runtime, window_id) = build_runtime(
+            NumberInput::new("Count")
+                .range(0.0, 96.0)
+                .precision(0)
+                .value_when(move || *value_reader.borrow()),
+        );
+
+        let output = runtime.render(window_id).unwrap();
+        let count = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::SpinBox && node.name.as_deref() == Some("Count")
+            })
+            .expect("number input semantics should exist");
+        assert_eq!(count.value, Some(SemanticsValue::Number(12.0)));
+
+        *value.borrow_mut() = 36.0;
+        let position = Point::new(
+            count.bounds.x() + (count.bounds.width() * 0.5),
+            count.bounds.y() + (count.bounds.height() * 0.5),
+        );
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime
+            .handle_event(window_id, Event::Pointer(move_event))
+            .unwrap();
+        let output = runtime.render(window_id).unwrap();
+        let count = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::SpinBox && node.name.as_deref() == Some("Count")
+            })
+            .expect("number input semantics should still exist");
+        assert_eq!(count.value, Some(SemanticsValue::Number(36.0)));
+        text_run_for(&output, "36");
+    }
+
+    #[test]
     fn text_area_supports_multiline_input() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
@@ -6984,6 +8518,62 @@ mod tests {
         assert_eq!(
             select.value,
             Some(SemanticsValue::Text("Final".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn select_selected_when_reads_external_selection() -> Result<()> {
+        let selected = Rc::new(RefCell::new(Some(1usize)));
+        let selected_reader = Rc::clone(&selected);
+        let (mut runtime, window_id) = build_runtime(
+            Select::new("Mode")
+                .placeholder("Choose mode")
+                .options(["Draft", "Final", "Review"])
+                .selected_when(move || *selected_reader.borrow()),
+        );
+
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present");
+        assert_eq!(
+            select.value,
+            Some(SemanticsValue::Text("Final".to_string()))
+        );
+
+        *selected.borrow_mut() = Some(2);
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(320.0, 80.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after external selection changes");
+        assert_eq!(
+            select.value,
+            Some(SemanticsValue::Text("Review".to_string()))
+        );
+
+        *selected.borrow_mut() = None;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(320.0, 80.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after external selection clears");
+        assert_eq!(
+            select.value,
+            Some(SemanticsValue::Text("Choose mode".to_string()))
         );
         Ok(())
     }

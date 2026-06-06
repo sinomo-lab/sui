@@ -14,14 +14,20 @@ pub mod text_surface;
 pub mod theme;
 
 pub use animation::{Blink, Easing, Interpolate, Pulse, SpringF32, Transition};
-pub use canvas::{Canvas, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas};
+pub use canvas::{
+    Canvas, CanvasRuler, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas,
+    PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState,
+    PixelCanvasTool,
+};
 pub use composites::{
-    BusyIndicator, ContextMenu, Dialog, Menu, MenuItem, Modal, Popover, ProgressBar, Spinner,
-    TabBar, Tabs, Tooltip, TooltipPlacement,
+    ActionCard, BusyIndicator, CommandGroup, ContextMenu, Dialog, DockPanel, Menu, MenuItem, Modal,
+    PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, Spinner,
+    StatusBar, StatusBarHost, StatusBarSegment, TabBar, Tabs, ToolPalette, ToolPaletteItem,
+    Toolbar, Tooltip, TooltipPlacement,
 };
 pub use containers::{
     Align, Background, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox,
-    Stack, VirtualScrollView,
+    Stack, SwitchView, VirtualScrollView,
 };
 pub use controls::{
     Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label, MultilineTextInput,
@@ -29,8 +35,8 @@ pub use controls::{
     TextInput,
 };
 pub use data::{
-    Breadcrumb, BreadcrumbItem, DataGrid, ListItem, ListView, PathBar, Table, TableColumn,
-    TableColumnAlignment, TableRow, TreeItem, TreeView,
+    Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, ListItem, ListView, PathBar,
+    Table, TableColumn, TableColumnAlignment, TableRow, TreeItem, TreeView,
 };
 pub use hdr_theme::{
     EffectToken, HdrColorRoles, HdrEffectTokens, HdrLuminanceTokens, HdrMaterialTokens,
@@ -39,7 +45,10 @@ pub use hdr_theme::{
     WidgetLuminanceRole, WidgetMaterialRole, resolve_effect_role, resolve_luminance_role,
     resolve_material_role, resolve_semantic_color, resolve_widget_hdr_style,
 };
-pub use media::{ColorPicker, ColorSwatch, Image, ImageFit};
+pub use media::{
+    BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette, ColorPaletteSwatch,
+    ColorPicker, ColorSwatch, Image, ImageFit,
+};
 pub use panes::{
     FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
     FloatingWorkspaceState, ResizablePane, SplitView,
