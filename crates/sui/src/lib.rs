@@ -68,7 +68,8 @@ pub use sui_scene::{
     SceneFrame, StrokeStyle, WidgetShader,
 };
 pub use sui_text::{
-    FontRegistry, PersistentTextLayout, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText,
+    FontFeature, FontFeatures, FontRegistry, FontStretch, FontStyle, FontWeight,
+    PersistentTextLayout, RegisteredFont, ResolvedTextFace, ShapedGlyph, ShapedText,
     ShapedTextWindow, TextAffinity, TextAlign, TextCluster, TextCursor, TextDirection,
     TextDocument, TextFlowDirection, TextGlyphInstance, TextLayout, TextLayoutHandle, TextLayoutId,
     TextLayoutMetadata, TextLayoutRegistry, TextLayoutRequest, TextLayoutRun, TextLayoutVersion,
@@ -434,7 +435,8 @@ pub mod prelude {
         ColorSwatch, ComboBox, CommandGroup, Constraints, ContextMenu, ControlMetrics,
         ControlPalette, ControlTypography, DataGrid, DefaultTheme, Dialog, Divider, DockPanel,
         Event, EventCtx, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
-        FloatingWorkspaceState, FontHandle, Icon, IconButton, IconGlyph, Image, ImageFit,
+        FloatingWorkspaceState, FontFeature, FontFeatures, FontHandle, FontStretch, FontStyle,
+        FontWeight, Icon, IconButton, IconGlyph, Image, ImageFit,
         ImageHandle, ImeEvent, Insets, KeyboardEvent, Label, LayerList, LayerListItem, ListItem,
         ListView, MeasureCtx, Menu, MenuItem, Modal, MultilineTextInput, NumberInput, Overflow,
         PaintCtx, PanelSection, Path, PathBar, PathBuilder, PixelCanvas, PixelCanvasBlendMode,
