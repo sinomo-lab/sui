@@ -1154,9 +1154,9 @@ impl Widget for TextSurface {
         let background = if ctx.is_focused() {
             palette.surface_focus
         } else if self.hovered {
-            palette.surface_hover
+            palette.control_hover
         } else {
-            palette.surface
+            palette.control
         };
         let border = if ctx.is_focused() {
             palette.border_focus
@@ -1206,13 +1206,14 @@ impl Widget for TextSurface {
                 palette.accent.with_alpha(match self.theme.colors.scheme {
                     ThemeColorScheme::Light => 0.05,
                     ThemeColorScheme::Dark => 0.12,
+                    ThemeColorScheme::HighContrast => 0.18,
                 }),
             );
         } else {
             for rect in selection_rects {
                 ctx.fill(
                     Path::rounded_rect(rect.translate(origin.to_vector()), 3.0),
-                    palette.accent.with_alpha(0.22),
+                    palette.selection,
                 );
             }
         }

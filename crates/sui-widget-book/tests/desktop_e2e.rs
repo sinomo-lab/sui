@@ -2352,6 +2352,26 @@ fn build_widget_book_gallery_application(state: Rc<RefCell<WidgetBookState>>) ->
     )
 }
 
+fn build_widget_book_application_with_overlay(state: Rc<RefCell<WidgetBookState>>) -> Application {
+    sui_widget_book::set_widget_book_hdr_theme_mode(sui::HdrThemeMode::Disabled);
+
+    let mut application = Application::new();
+    register_widget_book_images(&mut application);
+    application.window(
+        WindowBuilder::new()
+            .title(sui_widget_book::WINDOW_TITLE)
+            .root(
+                sui_widget_book::LivePerformanceRoot::new(
+                    sui_widget_book::WINDOW_TITLE,
+                    sui_widget_book::WINDOW_DESCRIPTION,
+                    build_widget_book_gallery(Rc::clone(&state)),
+                )
+                .show_performance_overlay()
+                .watch_widget_book_state(state),
+            ),
+    )
+}
+
 fn run_widget_book_scroll_benchmark(
     build_runtime: impl FnOnce() -> Application + Send + 'static,
 ) -> Result<()> {
@@ -4142,7 +4162,7 @@ fn desktop_widget_book_overlay_toggle_publishes_detailed_scene_stats() -> Result
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let harness = DesktopHarness::launch(|| {
-        build_widget_book_application(Rc::new(RefCell::new(WidgetBookState {
+        build_widget_book_application_with_overlay(Rc::new(RefCell::new(WidgetBookState {
             name: "Ada".to_string(),
             subscribed: true,
             theme_preview_comparison: true,

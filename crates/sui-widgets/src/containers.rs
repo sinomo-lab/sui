@@ -165,6 +165,7 @@ impl Widget for Align {
 
 pub struct Background {
     brush: Brush,
+    brush_reader: Option<Box<dyn Fn() -> Brush>>,
     child: SingleChild,
 }
 
@@ -175,8 +176,18 @@ impl Background {
     {
         Self {
             brush: brush.into(),
+            brush_reader: None,
             child: SingleChild::new(child),
         }
+    }
+
+    pub fn brush_when<F, B>(mut self, brush: F) -> Self
+    where
+        F: Fn() -> B + 'static,
+        B: Into<Brush>,
+    {
+        self.brush_reader = Some(Box::new(move || brush().into()));
+        self
     }
 
     pub fn child(&self) -> &WidgetPod {
@@ -198,7 +209,12 @@ impl Widget for Background {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.fill_bounds(self.brush.clone());
+        let brush = self
+            .brush_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.brush.clone());
+        ctx.fill_bounds(brush);
         self.child.paint(ctx);
     }
 
@@ -1123,7 +1139,7 @@ impl Widget for ScrollBar {
         let thumb_radius = (thumb.width() * 0.5).min(thumb.height() * 0.5);
         ctx.fill(
             Path::rounded_rect(track, track_radius),
-            palette.surface_pressed.with_alpha(0.7),
+            palette.control_active.with_alpha(0.7),
         );
         ctx.fill(
             Path::rounded_rect(thumb, thumb_radius),

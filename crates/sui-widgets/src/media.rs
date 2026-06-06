@@ -20,6 +20,7 @@ pub enum ImageFit {
 
 pub struct Image {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     image: ImageHandle,
     label: Option<String>,
     fit: ImageFit,
@@ -29,6 +30,7 @@ pub struct Image {
     source_rect: Option<Rect>,
     tint: Option<Color>,
     background: Option<Color>,
+    background_reader: Option<Box<dyn Fn() -> Color>>,
     show_border: bool,
     corner_radius: f32,
     resolved_source_size: Size,
@@ -38,6 +40,7 @@ impl Image {
     pub fn new(image: ImageHandle) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             image,
             label: None,
             fit: ImageFit::Contain,
@@ -47,6 +50,7 @@ impl Image {
             source_rect: None,
             tint: None,
             background: None,
+            background_reader: None,
             show_border: true,
             corner_radius: 10.0,
             resolved_source_size: Size::new(96.0, 96.0),
@@ -55,6 +59,15 @@ impl Image {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -101,6 +114,15 @@ impl Image {
 
     pub fn background(mut self, background: Color) -> Self {
         self.background = Some(background);
+        self.background_reader = None;
+        self
+    }
+
+    pub fn background_when<F>(mut self, background: F) -> Self
+    where
+        F: Fn() -> Color + 'static,
+    {
+        self.background_reader = Some(Box::new(background));
         self
     }
 
@@ -132,6 +154,20 @@ impl Image {
             (None, None) => self.resolved_source_size,
         }
     }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn resolved_background(&self) -> Option<Color> {
+        self.background_reader
+            .as_ref()
+            .map(|background| background())
+            .or(self.background)
+    }
 }
 
 impl Widget for Image {
@@ -143,7 +179,7 @@ impl Widget for Image {
     fn paint(&self, ctx: &mut PaintCtx) {
         let bounds = ctx.bounds();
         let image_rect = fit_rect(bounds, self.resolved_source_size, self.fit);
-        if let Some(background) = self.background {
+        if let Some(background) = self.resolved_background() {
             ctx.fill(rounded_rect_path(bounds, self.corner_radius), background);
         }
 
@@ -159,10 +195,11 @@ impl Widget for Image {
         ctx.pop_clip();
 
         if self.show_border {
+            let theme = self.resolved_theme();
             ctx.stroke(
                 rounded_rect_path(bounds, self.corner_radius),
-                self.theme.palette.border,
-                StrokeStyle::new(self.theme.metrics.border_width.max(1.0)),
+                theme.palette.border,
+                StrokeStyle::new(theme.metrics.border_width.max(1.0)),
             );
         }
     }
@@ -176,6 +213,7 @@ impl Widget for Image {
 
 pub struct ColorSwatch {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     color: Color,
     color_reader: Option<Box<dyn Fn() -> Color>>,
@@ -191,6 +229,7 @@ impl ColorSwatch {
     pub fn new(name: impl Into<String>, color: Color) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             color,
             color_reader: None,
@@ -205,6 +244,15 @@ impl ColorSwatch {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -240,6 +288,13 @@ impl ColorSwatch {
             .as_ref()
             .map(|reader| reader())
             .unwrap_or(self.color)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn activate(&mut self) {
@@ -341,7 +396,8 @@ impl Widget for ColorSwatch {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let outer_radius = self.theme.metrics.corner_radius;
+        let theme = self.resolved_theme();
+        let outer_radius = theme.metrics.corner_radius;
         let inner_radius = (outer_radius - 1.0).max(0.0);
         let color = self.current_color();
         draw_checkerboard(ctx, ctx.bounds(), 6.0);
@@ -352,11 +408,11 @@ impl Widget for ColorSwatch {
         ctx.stroke(
             rounded_rect_path(ctx.bounds(), outer_radius),
             if ctx.is_focused() || self.hovered {
-                self.theme.palette.border_focus
+                theme.palette.border_focus
             } else {
-                self.theme.palette.border
+                theme.palette.border
             },
-            StrokeStyle::new(self.theme.metrics.border_width.max(1.0)),
+            StrokeStyle::new(theme.metrics.border_width.max(1.0)),
         );
     }
 
@@ -410,6 +466,7 @@ const COLOR_PALETTE_GAP: f32 = 6.0;
 
 pub struct ColorPalette {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     swatches: Vec<ColorPaletteSwatch>,
     selected: Option<usize>,
@@ -426,6 +483,7 @@ impl ColorPalette {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             swatches: Vec::new(),
             selected: None,
@@ -441,6 +499,15 @@ impl ColorPalette {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -504,6 +571,13 @@ impl ColorPalette {
             .map(|selected| selected())
             .unwrap_or(self.selected)
             .filter(|index| *index < self.swatches.len())
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn grid_columns(&self) -> usize {
@@ -673,19 +747,16 @@ impl Widget for ColorPalette {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let radius = self
-            .theme
-            .metrics
-            .corner_radius
-            .min(self.swatch_size * 0.25);
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let radius = theme.metrics.corner_radius.min(self.swatch_size * 0.25);
         let selected = self.current_selected();
 
         if ctx.is_focused() {
             ctx.stroke(
                 rounded_rect_path(ctx.bounds().inflate(2.0, 2.0), radius + 2.0),
                 palette.focus_ring,
-                StrokeStyle::new(self.theme.metrics.focus_ring_width.max(1.0)),
+                StrokeStyle::new(theme.metrics.focus_ring_width.max(1.0)),
             );
         }
 
@@ -707,7 +778,7 @@ impl Widget for ColorPalette {
             let fill_rect = inset_rect(rect, Insets::all(if selected { 3.0 } else { 2.0 }));
 
             if pressed {
-                ctx.fill(rounded_rect_path(rect, radius), palette.surface_pressed);
+                ctx.fill(rounded_rect_path(rect, radius), palette.control_active);
             }
             draw_checkerboard(ctx, fill_rect, 5.0);
             ctx.fill(
@@ -813,6 +884,7 @@ impl BrushPreviewSpec {
 
 pub struct BrushPreview {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     kind: String,
     spec: BrushPreviewSpec,
@@ -825,6 +897,7 @@ impl BrushPreview {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             kind: "brush".to_string(),
             spec: BrushPreviewSpec::new(
@@ -841,6 +914,15 @@ impl BrushPreview {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -876,6 +958,13 @@ impl BrushPreview {
             .unwrap_or(self.spec)
     }
 
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn value_text(kind: &str, spec: BrushPreviewSpec) -> String {
         format!(
             "{} {}, {:.0} px, {:.0}% opacity",
@@ -894,7 +983,8 @@ impl Widget for BrushPreview {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let bounds = ctx.bounds();
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let spec = self.current_spec();
         let content = inset_rect(bounds, Insets::all(8.0));
         let swatch = Rect::new(content.x(), content.y(), 54.0, content.height());
@@ -908,11 +998,11 @@ impl Widget for BrushPreview {
             .color
             .with_alpha((spec.color.alpha * spec.opacity).clamp(0.0, 1.0));
 
-        ctx.fill(rounded_rect_path(bounds, 6.0), palette.surface);
+        ctx.fill(rounded_rect_path(bounds, 6.0), palette.surface_raised);
         ctx.stroke(
             rounded_rect_path(bounds, 6.0),
             palette.border,
-            StrokeStyle::new(self.theme.metrics.border_width.max(1.0)),
+            StrokeStyle::new(theme.metrics.border_width.max(1.0)),
         );
         draw_checkerboard(ctx, swatch, 8.0);
         ctx.stroke(
@@ -940,7 +1030,7 @@ impl Widget for BrushPreview {
                 font_size: 11.0,
                 line_height: 14.0,
                 color: palette.text.with_alpha(0.72),
-                ..self.theme.body_text_style()
+                ..theme.body_text_style()
             },
         );
         ctx.pop_clip();
@@ -1049,6 +1139,7 @@ enum ColorPickerSemanticPart {
 
 pub struct ColorPicker {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     editing_space: ColorSpace,
     hue: f32,
@@ -1106,6 +1197,7 @@ impl ColorPicker {
         let (hue, saturation, value) = rgb_to_hsv(color);
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             editing_space: color.space,
             hue,
@@ -1124,6 +1216,15 @@ impl ColorPicker {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -1181,6 +1282,13 @@ impl ColorPicker {
         } else {
             None
         }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn resolved_state(&self) -> ColorPickerResolvedState {
@@ -1948,7 +2056,8 @@ impl Widget for ColorPicker {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let resolved = self.resolved_state();
         let current = resolved.color;
         let header = self.header_rect(ctx.bounds());
@@ -1956,18 +2065,12 @@ impl Widget for ColorPicker {
         let map = self.saturation_value_rect(ctx.bounds());
         let encoding = self.encoding_rect(ctx.bounds());
 
-        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
-        paint_picker_header(
-            ctx,
-            header,
-            self.theme.as_ref(),
-            self.previous_color,
-            current,
-        );
+        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
+        paint_picker_header(ctx, header, &theme, self.previous_color, current);
         paint_dropdown(
             ctx,
             encoding,
-            self.theme.as_ref(),
+            &theme,
             editing_space_label(resolved.editing_space),
         );
 
@@ -2073,14 +2176,14 @@ impl Widget for ColorPicker {
             paint_disabled_field(
                 ctx,
                 self.hex_rect(ctx.bounds()),
-                self.theme.as_ref(),
+                &theme,
                 "HDR hex unavailable",
             );
         } else {
             paint_hex_field(
                 ctx,
                 self.hex_rect(ctx.bounds()),
-                self.theme.as_ref(),
+                &theme,
                 &format_color(current),
             );
         }
@@ -2089,7 +2192,7 @@ impl Widget for ColorPicker {
             paint_encoding_menu(
                 ctx,
                 self.encoding_menu_rect(ctx.bounds()),
-                self.theme.as_ref(),
+                &theme,
                 resolved.editing_space,
             );
         }

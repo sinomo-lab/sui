@@ -17,7 +17,6 @@ const PIXEL_CANVAS_NEAREST_SAMPLING_ZOOM: f32 = 1.0;
 const PIXEL_CANVAS_FIT_PADDING: f32 = 24.0;
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
 const PIXEL_CANVAS_HISTORY_LIMIT: usize = 32;
-const PIXEL_CANVAS_WORKBENCH: Color = Color::rgba(0.84, 0.865, 0.895, 1.0);
 const PIXEL_CANVAS_PAPER: Color = Color::rgba(0.975, 0.98, 0.988, 1.0);
 const PIXEL_CANVAS_SHADOW_NEAR: Color = Color::rgba(0.05, 0.07, 0.10, 0.16);
 const PIXEL_CANVAS_SHADOW_FAR: Color = Color::rgba(0.05, 0.07, 0.10, 0.08);
@@ -123,6 +122,7 @@ impl CanvasViewport {
 
 pub struct CanvasRuler {
     theme: DefaultTheme,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     axis: CanvasRulerAxis,
     name: String,
     document_size: Size,
@@ -136,6 +136,7 @@ impl CanvasRuler {
     pub fn new(axis: CanvasRulerAxis, name: impl Into<String>, document_size: Size) -> Self {
         Self {
             theme: DefaultTheme::default(),
+            theme_reader: None,
             axis,
             name: name.into(),
             document_size: Size::new(document_size.width.max(1.0), document_size.height.max(1.0)),
@@ -156,6 +157,15 @@ impl CanvasRuler {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = theme;
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -199,6 +209,13 @@ impl CanvasRuler {
             CanvasRulerAxis::Vertical => "vertical",
         }
     }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(self.theme)
+    }
 }
 
 impl Widget for CanvasRuler {
@@ -226,17 +243,18 @@ impl Widget for CanvasRuler {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let bounds = ctx.bounds();
         let (viewport, viewport_size) = self.viewport_snapshot();
-        let background = Color::rgba(0.925, 0.936, 0.950, 1.0);
-        let border = Color::rgba(0.58, 0.63, 0.70, 0.68);
-        let tick = Color::rgba(0.24, 0.29, 0.36, 0.72);
+        let background = palette.surface_raised;
+        let border = palette.border.with_alpha(0.78);
+        let tick = palette.text_muted.with_alpha(0.72);
         let text_style = TextStyle {
             font_size: 10.0,
             line_height: 12.0,
             color: palette.text.with_alpha(0.76),
-            ..self.theme.body_text_style()
+            ..theme.body_text_style()
         };
 
         ctx.fill_rect(bounds, background);
@@ -344,6 +362,7 @@ enum CanvasDrag {
 
 pub struct Canvas {
     theme: DefaultTheme,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     viewport: CanvasViewport,
     shapes: Vec<CanvasShape>,
@@ -357,6 +376,7 @@ impl Canvas {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: DefaultTheme::default(),
+            theme_reader: None,
             name: name.into(),
             viewport: CanvasViewport::default(),
             shapes: Vec::new(),
@@ -369,6 +389,15 @@ impl Canvas {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = theme;
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -448,6 +477,13 @@ impl Canvas {
     fn request_interaction_update(ctx: &mut EventCtx) {
         ctx.request_paint();
         ctx.request_semantics();
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(self.theme)
     }
 }
 
@@ -607,8 +643,9 @@ impl Widget for Canvas {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        ctx.fill_bounds(Color::rgba(0.955, 0.965, 0.975, 1.0));
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        ctx.fill_bounds(palette.surface);
         ctx.stroke_bounds(palette.border, StrokeStyle::new(1.0));
         ctx.push_clip_rect(ctx.bounds());
         paint_canvas_grid(ctx, self.viewport, ctx.bounds(), self.document_origin());
@@ -1376,6 +1413,7 @@ impl Default for PixelCanvasState {
 
 pub struct PixelCanvas {
     theme: DefaultTheme,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     width: usize,
     height: usize,
@@ -1398,6 +1436,7 @@ impl PixelCanvas {
         let height = height.max(1);
         Self {
             theme: DefaultTheme::default(),
+            theme_reader: None,
             name: name.into(),
             width,
             height,
@@ -1432,6 +1471,15 @@ impl PixelCanvas {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = theme;
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -1942,6 +1990,13 @@ impl PixelCanvas {
         ctx.request_paint();
         ctx.request_semantics();
     }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(self.theme)
+    }
 }
 
 impl Widget for PixelCanvas {
@@ -2216,8 +2271,9 @@ impl Widget for PixelCanvas {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        ctx.fill_bounds(PIXEL_CANVAS_WORKBENCH);
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        ctx.fill_bounds(palette.surface);
         ctx.stroke_bounds(palette.border, StrokeStyle::new(1.0));
         ctx.push_clip_rect(ctx.bounds());
         let transform = self

@@ -523,11 +523,11 @@ impl Widget for ListView {
                     ctx.fill_rect(
                         highlight,
                         if selected {
-                            palette.accent.with_alpha(0.14)
+                            palette.selection
                         } else if pressed {
-                            palette.surface_pressed
+                            palette.control_active
                         } else {
-                            palette.surface_hover
+                            palette.control_hover
                         },
                     );
                 }
@@ -795,6 +795,7 @@ enum LayerListHit {
 
 pub struct LayerList {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     layers: Vec<LayerListItem>,
     selected: Option<usize>,
@@ -814,6 +815,7 @@ impl LayerList {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             layers: Vec::new(),
             selected: None,
@@ -832,6 +834,15 @@ impl LayerList {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -936,6 +947,13 @@ impl LayerList {
             .map(|selected| selected())
             .unwrap_or(self.selected)
             .filter(|index| *index < self.layers.len())
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
@@ -1178,8 +1196,9 @@ impl Widget for LayerList {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.sync_selected();
-        let text_style = self.theme.body_text_style();
-        let detail_style = caption_style(self.theme.as_ref());
+        let theme = self.resolved_theme();
+        let text_style = theme.body_text_style();
+        let detail_style = caption_style(&theme);
         let mut width: f32 = 260.0;
         for layer in &self.layers {
             let detail_width = layer
@@ -1202,12 +1221,13 @@ impl Widget for LayerList {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let viewport = self.viewport_rect(ctx.bounds());
-        let label_style = self.theme.body_text_style();
-        let detail_style = caption_style(self.theme.as_ref());
+        let label_style = theme.body_text_style();
+        let detail_style = caption_style(&theme);
 
-        draw_surface(ctx, ctx.bounds(), self.theme.as_ref(), ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
         ctx.push_clip_rect(viewport);
 
         for (index, layer) in self.layers.iter().enumerate() {
@@ -1225,11 +1245,11 @@ impl Widget for LayerList {
                     ctx.fill_rect(
                         highlight,
                         if selected {
-                            palette.accent.with_alpha(0.14)
+                            palette.selection
                         } else if row_pressed {
-                            palette.surface_pressed
+                            palette.control_active
                         } else {
-                            palette.surface_hover
+                            palette.control_hover
                         },
                     );
                 }
@@ -1255,7 +1275,7 @@ impl Widget for LayerList {
                 ctx,
                 self.thumbnail_rect(row),
                 self.theme.as_ref(),
-                layer.thumbnail.unwrap_or(palette.surface_hover),
+                layer.thumbnail.unwrap_or(palette.control_hover),
                 visible,
             );
 
@@ -1839,11 +1859,11 @@ impl Widget for TreeView {
                     ctx.fill_rect(
                         highlight,
                         if selected {
-                            palette.accent.with_alpha(0.14)
+                            palette.selection
                         } else if pressed {
-                            palette.surface_pressed
+                            palette.control_active
                         } else {
-                            palette.surface_hover
+                            palette.control_hover
                         },
                     );
                 }
@@ -2317,15 +2337,15 @@ impl Widget for Table {
             let hovered = self.hovered == Some(row_index);
             let pressed = self.pressed == Some(row_index);
             let background = if selected {
-                palette.accent.with_alpha(0.14)
+                palette.selection
             } else if pressed {
-                palette.surface_pressed
+                palette.control_active
             } else if hovered {
-                palette.surface_hover
+                palette.control_hover
             } else if row_index % 2 == 0 {
                 palette.surface.with_alpha(0.88)
             } else {
-                Color::rgba(0.985, 0.989, 0.997, 1.0)
+                palette.surface_raised
             };
             ctx.fill_rect(row_rect, background);
             ctx.stroke_rect(
@@ -2630,11 +2650,11 @@ impl Widget for Breadcrumb {
                 ctx.fill(
                     rounded_rect_path(rect, self.theme.metrics.corner_radius),
                     if current {
-                        palette.accent.with_alpha(0.14)
+                        palette.selection
                     } else if pressed {
-                        palette.surface_pressed
+                        palette.control_active
                     } else {
-                        palette.surface_hover
+                        palette.control_hover
                     },
                 );
             }
@@ -3059,9 +3079,9 @@ fn paint_layer_visibility_button(
         ctx.fill(
             rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
             if pressed {
-                palette.surface_pressed
+                palette.control_active
             } else {
-                palette.surface_hover
+                palette.control_hover
             },
         );
     }
@@ -3119,9 +3139,9 @@ fn paint_layer_lock_button(
         ctx.fill(
             rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
             if pressed {
-                palette.surface_pressed
+                palette.control_active
             } else {
-                palette.surface_hover
+                palette.control_hover
             },
         );
     }
@@ -3151,7 +3171,7 @@ fn paint_layer_thumbnail(
 ) {
     let palette = theme.palette;
     let radius = theme.metrics.corner_radius.min(4.0);
-    ctx.fill(rounded_rect_path(rect, radius), palette.surface_hover);
+    ctx.fill(rounded_rect_path(rect, radius), palette.control_hover);
     let fill = inset_rect(rect, Insets::all(2.0));
     ctx.fill(
         rounded_rect_path(fill, (radius - 1.0).max(0.0)),
@@ -3306,7 +3326,7 @@ mod tests {
     }
 
     fn selected_highlight_rects(output: &RenderOutput) -> Vec<Rect> {
-        let selected_brush = Brush::Solid(DefaultTheme::default().palette.accent.with_alpha(0.14));
+        let selected_brush = Brush::Solid(DefaultTheme::default().palette.selection);
         let mut rects = Vec::new();
         output
             .frame

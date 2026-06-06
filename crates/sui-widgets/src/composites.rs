@@ -134,6 +134,7 @@ const TOOLBAR_SPACING: f32 = 8.0;
 
 pub struct Toolbar {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     axis: Axis,
     name: Option<String>,
     extent: f32,
@@ -156,6 +157,7 @@ impl Toolbar {
     pub fn new(axis: Axis) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             axis,
             name: None,
             extent: TOOLBAR_EXTENT,
@@ -169,6 +171,15 @@ impl Toolbar {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -232,6 +243,13 @@ impl Toolbar {
             (bounds.width() - self.padding.left - self.padding.right).max(0.0),
             (bounds.height() - self.padding.top - self.padding.bottom).max(0.0),
         )
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 }
 
@@ -330,7 +348,8 @@ impl Widget for Toolbar {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let bounds = ctx.bounds();
         ctx.fill_bounds(self.background.unwrap_or(palette.surface));
         if self.divider {
@@ -376,6 +395,7 @@ const COMMAND_GROUP_RADIUS: f32 = 6.0;
 
 pub struct CommandGroup {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     axis: Axis,
     name: Option<String>,
     padding: Insets,
@@ -398,6 +418,7 @@ impl CommandGroup {
     pub fn new(axis: Axis, name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             axis,
             name: Some(name.into()),
             padding: Insets::all(2.0),
@@ -411,6 +432,15 @@ impl CommandGroup {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -469,6 +499,13 @@ impl CommandGroup {
 
     fn content_bounds(&self, bounds: Rect) -> Rect {
         inset_rect(bounds, self.padding)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 }
 
@@ -541,11 +578,12 @@ impl Widget for CommandGroup {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
         let radius = self
             .corner_radius
             .min(ctx.bounds().width().min(ctx.bounds().height()) * 0.5);
-        let background = self.background.unwrap_or(self.theme.palette.surface_hover);
-        let border = self.border.unwrap_or(self.theme.palette.border);
+        let background = self.background.unwrap_or(theme.palette.surface_raised);
+        let border = self.border.unwrap_or(theme.palette.border);
         let shape = rounded_rect_path(ctx.bounds(), radius);
         ctx.fill(shape.clone(), background);
         ctx.stroke(shape, border, StrokeStyle::new(physical_pixels(ctx, 1.0)));
@@ -626,6 +664,7 @@ impl ToolPaletteItem {
 
 pub struct ToolPalette {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     axis: Axis,
     name: String,
     items: Vec<ToolPaletteItem>,
@@ -656,6 +695,7 @@ impl ToolPalette {
     pub fn new(axis: Axis, name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             axis,
             name: name.into(),
             items: Vec::new(),
@@ -677,6 +717,15 @@ impl ToolPalette {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -768,6 +817,13 @@ impl ToolPalette {
             .map(|selected| selected())
             .unwrap_or(self.selected)
             .filter(|index| *index < self.items.len())
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn content_bounds(&self, bounds: Rect) -> Rect {
@@ -982,8 +1038,9 @@ impl Widget for ToolPalette {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let bounds = ctx.bounds();
         ctx.fill_bounds(self.background.unwrap_or(palette.surface));
         if self.divider {
@@ -1010,16 +1067,16 @@ impl Widget for ToolPalette {
             let pressed = self.pressed == Some(index);
             let enabled = item.enabled;
             let base_background = if selected_item {
-                mix_color(palette.surface, palette.accent, 0.18)
+                palette.selection
             } else {
                 palette.surface
             };
             let background = if !enabled {
                 mix_color(base_background, palette.surface, 0.72).with_alpha(0.82)
             } else if pressed {
-                palette.surface_pressed
+                palette.control_active
             } else if hovered {
-                palette.surface_hover
+                palette.control_hover
             } else {
                 base_background
             };
@@ -1513,8 +1570,8 @@ impl Widget for ActionCard {
             0.0
         };
         let accent = self.accent.unwrap_or(palette.accent);
-        let mut background = mix_color(palette.surface, palette.surface_hover, hover);
-        background = mix_color(background, palette.surface_pressed, press * 0.55);
+        let mut background = mix_color(palette.control, palette.control_hover, hover);
+        background = mix_color(background, palette.control_active, press * 0.55);
         if !enabled {
             background = mix_color(background, palette.surface, 0.68).with_alpha(0.82);
         }
@@ -1700,6 +1757,7 @@ pub enum PropertyRowLayout {
 
 pub struct PropertyRow {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     layout: PropertyRowLayout,
     label_width: f32,
@@ -1717,6 +1775,7 @@ impl PropertyRow {
     {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             label: label.into(),
             layout: PropertyRowLayout::Stacked,
             label_width: PROPERTY_ROW_LABEL_WIDTH,
@@ -1730,6 +1789,15 @@ impl PropertyRow {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -1783,12 +1851,20 @@ impl PropertyRow {
     }
 
     fn resolved_label_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
         self.label_style.clone().unwrap_or_else(|| TextStyle {
             font_size: 13.0,
             line_height: 18.0,
-            color: Color::rgba(0.20, 0.27, 0.35, 1.0),
-            ..self.theme.body_text_style()
+            color: theme.palette.text_muted,
+            ..theme.body_text_style()
         })
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn label_height(&self, style: &TextStyle) -> f32 {
@@ -1969,6 +2045,7 @@ const PANEL_SECTION_GAP: f32 = 8.0;
 
 pub struct PanelSection {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     title: String,
     gap: f32,
     action_gap: f32,
@@ -1989,6 +2066,7 @@ impl PanelSection {
     {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             title: title.into(),
             gap: PANEL_SECTION_GAP,
             action_gap: 6.0,
@@ -2005,6 +2083,15 @@ impl PanelSection {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -2055,12 +2142,20 @@ impl PanelSection {
     }
 
     fn resolved_title_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
         self.title_style.clone().unwrap_or_else(|| TextStyle {
             font_size: 12.0,
             line_height: 16.0,
-            color: Color::rgba(0.31, 0.37, 0.45, 1.0),
-            ..self.theme.body_text_style()
+            color: theme.palette.text_muted,
+            ..theme.body_text_style()
         })
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn title_height(&self, style: &TextStyle) -> f32 {
@@ -2295,6 +2390,7 @@ impl Widget for PanelSection {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
         let title_style = self.resolved_title_style();
         let title_height = self.title_height(&title_style);
         let header_height = self.header_height(&title_style);
@@ -2302,11 +2398,11 @@ impl Widget for PanelSection {
         if self.collapsible {
             let header_hit = self.header_hit_rect(ctx.bounds());
             let header_fill = if self.pressed_header {
-                self.theme.palette.accent.with_alpha(0.10)
+                theme.palette.accent.with_alpha(0.10)
             } else if self.hovered_header {
-                self.theme.palette.accent.with_alpha(0.06)
+                theme.palette.accent.with_alpha(0.06)
             } else {
-                self.theme.palette.surface.with_alpha(0.001)
+                theme.palette.surface.with_alpha(0.001)
             };
             ctx.fill(rounded_rect_path(header_hit, 4.0), header_fill);
             paint_panel_section_disclosure(
@@ -2315,7 +2411,7 @@ impl Widget for PanelSection {
                 self.expanded,
                 self.hovered_header,
                 self.pressed_header,
-                self.theme.as_ref(),
+                &theme,
             );
         }
         ctx.push_clip_rect(title_rect);
@@ -2444,6 +2540,7 @@ const DOCK_PANEL_VERTICAL_PADDING: f32 = 8.0;
 
 pub struct DockPanel {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: Option<String>,
     title: String,
     header_height: f32,
@@ -2461,6 +2558,7 @@ impl DockPanel {
     {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: None,
             title: title.into(),
             header_height: DOCK_PANEL_HEADER_HEIGHT,
@@ -2479,6 +2577,15 @@ impl DockPanel {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -2516,12 +2623,20 @@ impl DockPanel {
     }
 
     fn resolved_title_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
         TextStyle {
             font_size: 13.0,
             line_height: 18.0,
-            color: self.theme.palette.text,
-            ..self.theme.body_text_style()
+            color: theme.palette.text,
+            ..theme.body_text_style()
         }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn title_height(&self, style: &TextStyle) -> f32 {
@@ -2583,7 +2698,8 @@ impl Widget for DockPanel {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let bounds = ctx.bounds();
         let header = self.header_rect(bounds);
         let title_style = self.resolved_title_style();
@@ -2600,7 +2716,7 @@ impl Widget for DockPanel {
         ctx.fill_rect(
             header,
             self.header_background
-                .unwrap_or_else(|| palette.surface_hover.with_alpha(0.55)),
+                .unwrap_or_else(|| palette.surface_raised.with_alpha(0.72)),
         );
         ctx.fill_rect(
             Rect::new(
@@ -2671,6 +2787,7 @@ const PRESET_STRIP_GAP: f32 = 6.0;
 
 pub struct PresetStrip {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     presets: Vec<String>,
     selected: Option<usize>,
@@ -2689,6 +2806,7 @@ impl PresetStrip {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             presets: Vec::new(),
             selected: None,
@@ -2706,6 +2824,15 @@ impl PresetStrip {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -2770,6 +2897,13 @@ impl PresetStrip {
             .map(|selected| selected())
             .unwrap_or(self.selected)
             .filter(|index| *index < self.presets.len())
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn item_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
@@ -2910,10 +3044,11 @@ impl Widget for PresetStrip {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
         let style = TextStyle {
             font_size: 12.0,
             line_height: 16.0,
-            ..self.theme.body_text_style()
+            ..theme.body_text_style()
         };
         self.label_measurements = self
             .presets
@@ -2937,14 +3072,15 @@ impl Widget for PresetStrip {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let selected = self.current_selected();
         let style = TextStyle {
             font_size: 12.0,
             line_height: 16.0,
             color: palette.text,
-            ..self.theme.body_text_style()
+            ..theme.body_text_style()
         };
 
         if ctx.is_focused() {
@@ -2965,9 +3101,9 @@ impl Widget for PresetStrip {
             let background = if is_selected {
                 palette.accent
             } else if is_pressed {
-                palette.surface_pressed
+                palette.control_active
             } else if is_hovered {
-                palette.surface_hover
+                palette.control_hover
             } else {
                 palette.surface
             };
@@ -3121,6 +3257,7 @@ impl StatusBarSegment {
 
 pub struct StatusBar {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: Option<String>,
     height: f32,
     segments: Vec<StatusBarSegment>,
@@ -3131,6 +3268,7 @@ impl StatusBar {
     pub fn new() -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: None,
             height: STATUS_BAR_HEIGHT,
             segments: Vec::new(),
@@ -3140,6 +3278,15 @@ impl StatusBar {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -3170,12 +3317,20 @@ impl StatusBar {
     }
 
     fn text_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
         TextStyle {
             font_size: 12.0,
             line_height: 18.0,
-            color: self.theme.palette.placeholder,
-            ..self.theme.body_text_style()
+            color: theme.palette.placeholder,
+            ..theme.body_text_style()
         }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn segment_widths(&self) -> Vec<f32> {
@@ -3353,13 +3508,14 @@ impl Widget for StatusBar {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let bounds = ctx.bounds();
         ctx.fill_bounds(palette.surface);
         ctx.stroke_rect(
             Rect::new(bounds.x(), bounds.y(), bounds.width(), 1.0),
             palette.border,
-            StrokeStyle::new(self.theme.metrics.border_width.max(1.0)),
+            StrokeStyle::new(theme.metrics.border_width.max(1.0)),
         );
 
         let text_style = self.text_style();
@@ -3440,6 +3596,7 @@ fn status_bar_segment_id(parent: WidgetId, index: usize) -> WidgetId {
 
 pub struct TabBar {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     tabs: Vec<String>,
     selected: usize,
@@ -3455,6 +3612,7 @@ impl TabBar {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             tabs: Vec::new(),
             selected: 0,
@@ -3469,6 +3627,15 @@ impl TabBar {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -3537,7 +3704,7 @@ impl TabBar {
     }
 
     fn tab_height(&self) -> f32 {
-        self.theme.metrics.min_height
+        self.resolved_theme().metrics.min_height
     }
 
     fn measured_widths(&self) -> &[f32] {
@@ -3588,6 +3755,13 @@ impl TabBar {
         let next = (selected + delta).clamp(0, last) as usize;
         self.activate(next);
         self.hovered = Some(next);
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 }
 
@@ -3666,7 +3840,8 @@ impl Widget for TabBar {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let style = self.theme.body_text_style();
+        let theme = self.resolved_theme();
+        let style = theme.body_text_style();
         self.label_measurements = self
             .tabs
             .iter()
@@ -3684,12 +3859,13 @@ impl Widget for TabBar {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
 
         ctx.fill(
             rounded_rect_path(ctx.bounds(), metrics.corner_radius),
-            Color::rgba(0.93, 0.95, 0.98, 1.0),
+            palette.control,
         );
 
         for (index, tab) in self.tabs.iter().enumerate() {
@@ -3700,11 +3876,11 @@ impl Widget for TabBar {
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
             let background = if selected {
-                palette.surface
+                palette.surface_raised
             } else if pressed {
-                palette.surface_pressed
+                palette.control_active
             } else if hovered {
-                palette.surface_hover
+                palette.control_hover
             } else {
                 Color::rgba(0.0, 0.0, 0.0, 0.0)
             };
@@ -3734,16 +3910,16 @@ impl Widget for TabBar {
                     Insets::all(10.0),
                     self.label_measurements.get(index).copied(),
                     if selected {
-                        self.theme.text_style(palette.border_focus).line_height
+                        theme.text_style(palette.border_focus).line_height
                     } else {
-                        self.theme.body_text_style().line_height
+                        theme.body_text_style().line_height
                     },
                 ),
                 tab.clone(),
                 if selected {
-                    self.theme.text_style(palette.border_focus)
+                    theme.text_style(palette.border_focus)
                 } else {
-                    self.theme.body_text_style()
+                    theme.body_text_style()
                 },
             );
 
@@ -3782,6 +3958,7 @@ impl Widget for TabBar {
 
 pub struct Tabs {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     labels: Vec<String>,
     panels: WidgetChildren,
@@ -3800,6 +3977,7 @@ impl Tabs {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             labels: Vec::new(),
             panels: WidgetChildren::new(),
@@ -3817,6 +3995,15 @@ impl Tabs {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -3861,7 +4048,7 @@ impl Tabs {
     }
 
     fn header_height(&self) -> f32 {
-        self.theme.metrics.min_height
+        self.resolved_theme().metrics.min_height
     }
 
     fn header_rect(&self, bounds: Rect) -> Rect {
@@ -3934,6 +4121,13 @@ impl Tabs {
     fn selected_panel_mut(&mut self) -> Option<&mut sui_runtime::WidgetPod> {
         let index = self.normalized_selected();
         self.panels.as_mut_slice().get_mut(index)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 }
 
@@ -4017,7 +4211,8 @@ impl Widget for Tabs {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let text_style = self.theme.body_text_style();
+        let theme = self.resolved_theme();
+        let text_style = theme.body_text_style();
         self.label_measurements = self
             .labels
             .iter()
@@ -4059,7 +4254,7 @@ impl Widget for Tabs {
         let panel_size = if let Some(panel) = self.selected_panel_mut() {
             panel.measure(ctx, panel_constraints)
         } else {
-            Size::new(0.0, self.theme.metrics.min_height)
+            Size::new(0.0, theme.metrics.min_height)
         };
 
         let content_width = (panel_size.width + padding.left + padding.right).max(available_width);
@@ -4096,13 +4291,14 @@ impl Widget for Tabs {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let header = self.header_rect(ctx.bounds());
 
         ctx.fill(
             rounded_rect_path(header, metrics.corner_radius),
-            Color::rgba(0.93, 0.95, 0.98, 1.0),
+            palette.control,
         );
 
         for (index, label) in self.labels.iter().enumerate() {
@@ -4120,11 +4316,11 @@ impl Widget for Tabs {
                     metrics.corner_radius,
                     physical_pixels(ctx, metrics.border_width),
                     if selected {
-                        palette.surface
+                        palette.surface_raised
                     } else if pressed {
-                        palette.surface_pressed
+                        palette.control_active
                     } else {
-                        palette.surface_hover
+                        palette.control_hover
                     },
                     if selected {
                         palette.border_focus
@@ -4141,16 +4337,16 @@ impl Widget for Tabs {
                     Insets::all(10.0),
                     self.label_measurements.get(index).copied(),
                     if selected {
-                        self.theme.text_style(palette.border_focus).line_height
+                        theme.text_style(palette.border_focus).line_height
                     } else {
-                        self.theme.body_text_style().line_height
+                        theme.body_text_style().line_height
                     },
                 ),
                 label.clone(),
                 if selected {
-                    self.theme.text_style(palette.border_focus)
+                    theme.text_style(palette.border_focus)
                 } else {
-                    self.theme.body_text_style()
+                    theme.body_text_style()
                 },
             );
         }
@@ -4161,7 +4357,7 @@ impl Widget for Tabs {
             content,
             metrics.corner_radius + 2.0,
             metrics,
-            palette.surface,
+            palette.surface_raised,
             palette.border,
             None,
         );
@@ -4208,6 +4404,7 @@ impl Widget for Tabs {
 
 pub struct Menu {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     items: Vec<MenuItem>,
     highlighted: Option<usize>,
@@ -4222,6 +4419,7 @@ impl Menu {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             items: Vec::new(),
             highlighted: None,
@@ -4235,6 +4433,15 @@ impl Menu {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -4273,7 +4480,8 @@ impl Menu {
     }
 
     fn row_height(&self) -> f32 {
-        menu_row_height(self.theme.as_ref())
+        let theme = self.resolved_theme();
+        menu_row_height(&theme)
     }
 
     fn activate(&mut self, ctx: &mut EventCtx, index: usize) {
@@ -4328,6 +4536,13 @@ impl Menu {
             index = next;
         }
         self.highlighted = Some(index as usize);
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 }
 
@@ -4412,8 +4627,9 @@ impl Widget for Menu {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let label_style = self.theme.body_text_style();
-        let shortcut_style = self.theme.placeholder_text_style();
+        let theme = self.resolved_theme();
+        let label_style = theme.body_text_style();
+        let shortcut_style = theme.placeholder_text_style();
         let mut width: f32 = 0.0;
         for item in &self.items {
             let label = measure_text(ctx, item.label(), &label_style).width;
@@ -4433,15 +4649,16 @@ impl Widget for Menu {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
 
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius + 2.0,
             metrics,
-            palette.surface,
+            palette.surface_raised,
             palette.border,
             ctx.is_focused().then_some(palette.focus_ring),
         );
@@ -4463,15 +4680,15 @@ impl Widget for Menu {
 
             let highlighted = self.highlighted == Some(index);
             let pressed = self.pressed == Some(index);
-            let label_style = self.theme.text_style(item.text_color(self.theme.as_ref()));
+            let label_style = theme.text_style(item.text_color(&theme));
             let label_measurement = paint_text_measurement(ctx, &item.label, &label_style);
             if highlighted || pressed {
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
                     if pressed {
-                        palette.surface_pressed
+                        palette.control_active
                     } else {
-                        palette.surface_hover
+                        palette.control_hover
                     },
                 );
             }
@@ -4488,7 +4705,7 @@ impl Widget for Menu {
             );
 
             if let Some(shortcut) = &item.shortcut {
-                let shortcut_style = self.theme.placeholder_text_style();
+                let shortcut_style = theme.placeholder_text_style();
                 let shortcut_measurement = paint_text_measurement(ctx, shortcut, &shortcut_style);
                 ctx.draw_text(
                     vertically_centered_text_rect(
@@ -4980,7 +5197,7 @@ impl PopoverSurfaceState {
 
         if !self.is_presented() || matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) {
             return PopoverVisuals {
-                background: palette.surface,
+                background: palette.surface_raised,
                 border: palette.border,
                 focus_ring: Some(palette.focus_ring),
                 surface_style: None,
@@ -5435,6 +5652,7 @@ impl Widget for Popover {
 
 pub struct ContextMenu {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     trigger: SingleChild,
     items: Vec<MenuItem>,
@@ -5454,6 +5672,7 @@ impl ContextMenu {
     {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             trigger: SingleChild::new(trigger),
             items: Vec::new(),
@@ -5469,6 +5688,15 @@ impl ContextMenu {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -5507,12 +5735,13 @@ impl ContextMenu {
     }
 
     fn row_height(&self) -> f32 {
-        menu_row_height(self.theme.as_ref())
+        menu_row_height(&self.resolved_theme())
     }
 
     fn measured_menu_width(&self, ctx: &mut MeasureCtx) -> f32 {
-        let label_style = self.theme.body_text_style();
-        let shortcut_style = self.theme.placeholder_text_style();
+        let theme = self.resolved_theme();
+        let label_style = theme.body_text_style();
+        let shortcut_style = theme.placeholder_text_style();
         let mut width: f32 = 220.0;
         for item in &self.items {
             let label = measure_text(ctx, item.label(), &label_style).width;
@@ -5524,6 +5753,13 @@ impl ContextMenu {
             width = width.max(label + shortcut + 64.0);
         }
         width
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn trigger_rect(&self) -> Rect {
@@ -5722,14 +5958,15 @@ impl Widget for ContextMenu {
         }
 
         let menu = self.frame_rect.translate(ctx.bounds().origin.to_vector());
-        let metrics = self.theme.metrics;
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let palette = theme.palette;
         draw_control_frame(
             ctx,
             menu,
             metrics.corner_radius + 2.0,
             metrics,
-            palette.surface,
+            palette.surface_raised,
             palette.border,
             Some(palette.focus_ring),
         );
@@ -5751,15 +5988,15 @@ impl Widget for ContextMenu {
 
             let highlighted = self.highlighted == Some(index);
             let pressed = self.pressed == Some(index);
-            let label_style = self.theme.text_style(item.text_color(self.theme.as_ref()));
+            let label_style = theme.text_style(item.text_color(&theme));
             let label_measurement = paint_text_measurement(ctx, &item.label, &label_style);
             if highlighted || pressed {
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
                     if pressed {
-                        palette.surface_pressed
+                        palette.control_active
                     } else {
-                        palette.surface_hover
+                        palette.control_hover
                     },
                 );
             }
@@ -5776,7 +6013,7 @@ impl Widget for ContextMenu {
             );
 
             if let Some(shortcut) = &item.shortcut {
-                let shortcut_style = self.theme.placeholder_text_style();
+                let shortcut_style = theme.placeholder_text_style();
                 let shortcut_measurement = paint_text_measurement(ctx, shortcut, &shortcut_style);
                 ctx.draw_text(
                     vertically_centered_text_rect(
@@ -6155,7 +6392,7 @@ impl Widget for Dialog {
             dialog,
             metrics.corner_radius + 3.0,
             metrics,
-            palette.surface,
+            palette.surface_raised,
             palette.border,
             Some(palette.focus_ring),
         );
@@ -6258,6 +6495,7 @@ pub type Modal = Dialog;
 
 pub struct ProgressBar {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     min: f64,
     max: f64,
@@ -6269,6 +6507,7 @@ impl ProgressBar {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             min: 0.0,
             max: 1.0,
@@ -6279,6 +6518,15 @@ impl ProgressBar {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -6306,12 +6554,20 @@ impl ProgressBar {
             ((self.value - self.min) / (self.max - self.min)).clamp(0.0, 1.0) as f32
         }
     }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
 }
 
 impl Widget for ProgressBar {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
         let min_height = if self.show_value {
-            self.theme.body_text_style().line_height.max(18.0)
+            theme.body_text_style().line_height.max(18.0)
         } else {
             18.0
         };
@@ -6319,14 +6575,15 @@ impl Widget for ProgressBar {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let metrics = self.theme.metrics;
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let palette = theme.palette;
         draw_control_shape(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             physical_pixels(ctx, metrics.border_width),
-            Color::rgba(0.91, 0.94, 0.98, 1.0),
+            palette.control,
             palette.border,
         );
         let fill = Rect::new(
@@ -6343,7 +6600,7 @@ impl Widget for ProgressBar {
         }
         if self.show_value {
             let label = format!("{:.0}%", self.fraction() * 100.0);
-            let text_style = self.theme.text_style(palette.accent_text);
+            let text_style = theme.text_style(palette.accent_text);
             let text_measurement = paint_text_measurement(ctx, &label, &text_style);
             ctx.draw_text(
                 centered_text_rect(
@@ -6374,6 +6631,7 @@ impl Widget for ProgressBar {
 
 pub struct Spinner {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     size: f32,
     label: Option<String>,
@@ -6383,6 +6641,7 @@ impl Spinner {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             size: 20.0,
             label: None,
@@ -6391,6 +6650,15 @@ impl Spinner {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -6412,19 +6680,29 @@ impl Spinner {
             self.size,
         )
     }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
 }
 
 impl Widget for Spinner {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
         let label_width = self
             .label
             .as_ref()
-            .map(|label| measure_text(ctx, label, &self.theme.body_text_style()).width + 12.0)
+            .map(|label| measure_text(ctx, label, &theme.body_text_style()).width + 12.0)
             .unwrap_or(0.0);
         constraints.clamp(Size::new(self.size + label_width, self.size.max(20.0)))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let indicator = self.indicator_rect(ctx.bounds());
         let center = rect_center(indicator);
         let radius = indicator.width().min(indicator.height()) * 0.4;
@@ -6433,9 +6711,9 @@ impl Widget for Spinner {
             let angle = (index as f32 / 10.0) * std::f32::consts::TAU;
             let alpha = 0.22 + ((index as f32) / 10.0) * 0.72;
             let color = Color::rgba(
-                self.theme.palette.accent.red,
-                self.theme.palette.accent.green,
-                self.theme.palette.accent.blue,
+                palette.accent.red,
+                palette.accent.green,
+                palette.accent.blue,
                 alpha,
             );
             let dot = Point::new(
@@ -6454,7 +6732,7 @@ impl Widget for Spinner {
                     ctx.bounds().height(),
                 ),
                 label.clone(),
-                self.theme.body_text_style(),
+                theme.body_text_style(),
             );
         }
     }
@@ -8184,7 +8462,7 @@ mod tests {
         disabled_theme.hdr.mode = HdrThemeMode::Disabled;
         disabled_theme.hdr.policy.max_large_area_lift = 1.12;
         disabled_theme.hdr.color_roles.surface_elevated =
-            SemanticColorToken::from_sdr(disabled_theme.palette.surface)
+            SemanticColorToken::from_sdr(disabled_theme.palette.surface_raised)
                 .with_hdr(Color::linear_display_p3(1.30, 1.08, 1.05, 1.0));
 
         let mut disabled = Popover::new(
@@ -8201,7 +8479,10 @@ mod tests {
         }
         let disabled_visuals = disabled.state.borrow().resolved_visuals();
 
-        assert_eq!(disabled_visuals.background, disabled_theme.palette.surface);
+        assert_eq!(
+            disabled_visuals.background,
+            disabled_theme.palette.surface_raised
+        );
         assert!(disabled_visuals.surface_style.is_none());
         assert!(disabled_visuals.arrival_effect.is_none());
 
@@ -8230,7 +8511,7 @@ mod tests {
         let mut hdr_theme = disabled_theme;
         hdr_theme.hdr.mode = HdrThemeMode::ConstrainedHdr;
         hdr_theme.hdr.color_roles.surface_elevated =
-            SemanticColorToken::from_sdr(hdr_theme.palette.surface)
+            SemanticColorToken::from_sdr(hdr_theme.palette.surface_raised)
                 .with_hdr(Color::linear_display_p3(1.30, 1.08, 1.05, 1.0));
 
         let mut hdr = Popover::new(
@@ -8255,7 +8536,7 @@ mod tests {
 
         assert_eq!(hdr_visuals.background, surface_style.color);
         assert!(surface_style.color.red <= hdr_theme.hdr.policy.max_large_area_lift);
-        assert_ne!(hdr_visuals.background, hdr_theme.palette.surface);
+        assert_ne!(hdr_visuals.background, hdr_theme.palette.surface_raised);
         assert!(arrival_effect.intensity > 0.0);
         assert!(arrival_effect.speed > 0.0);
 

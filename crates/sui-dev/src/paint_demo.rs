@@ -2,7 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui::prelude::*;
 
-use crate::app::request_window_refresh;
+#[cfg(test)]
+use crate::app::default_dev_theme_reader;
+use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_theme_color, request_window_refresh};
 
 pub(crate) const PAINT_TAB_LABEL: &str = "Paint";
 pub(crate) const PAINT_DOCUMENT_WIDTH: usize = 1920;
@@ -214,12 +216,20 @@ impl PaintDemoState {
     }
 }
 
-pub(crate) fn build_paint_demo() -> impl Widget {
+pub(crate) fn build_paint_demo_with_theme(theme_reader: DevThemeReader) -> impl Widget {
     let paint_state = PixelCanvasState::new();
-    build_paint_demo_with_state(paint_state)
+    build_paint_demo_with_state_and_theme(paint_state, theme_reader)
 }
 
+#[cfg(test)]
 pub(crate) fn build_paint_demo_with_state(paint_state: PixelCanvasState) -> impl Widget {
+    build_paint_demo_with_state_and_theme(paint_state, default_dev_theme_reader())
+}
+
+fn build_paint_demo_with_state_and_theme(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let demo_state = PaintDemoState::new();
     paint_state.set_brush_color(Color::rgba(0.08, 0.22, 0.78, 1.0));
     paint_state.set_brush_size(PAINT_INITIAL_BRUSH_SIZE);
@@ -231,13 +241,20 @@ pub(crate) fn build_paint_demo_with_state(paint_state: PixelCanvasState) -> impl
         StatusBarHost::new(
             Stack::vertical()
                 .alignment(Alignment::Stretch)
-                .with_child(build_paint_toolbar(paint_state.clone()))
+                .with_child(build_paint_toolbar(
+                    paint_state.clone(),
+                    Rc::clone(&theme_reader),
+                ))
                 .with_child(
                     SplitView::horizontal(
-                        build_paint_tool_rail(paint_state.clone()),
+                        build_paint_tool_rail(paint_state.clone(), Rc::clone(&theme_reader)),
                         SplitView::horizontal(
-                            build_paint_canvas_stage(paint_state.clone()),
-                            build_paint_properties_panel(paint_state.clone(), demo_state.clone()),
+                            build_paint_canvas_stage(paint_state.clone(), Rc::clone(&theme_reader)),
+                            build_paint_properties_panel(
+                                paint_state.clone(),
+                                demo_state.clone(),
+                                Rc::clone(&theme_reader),
+                            ),
                         )
                         .name("Canvas and properties")
                         .ratio(0.79)
@@ -251,12 +268,13 @@ pub(crate) fn build_paint_demo_with_state(paint_state: PixelCanvasState) -> impl
                     .min_second(640.0)
                     .divider_thickness(4.0),
                 ),
-            build_paint_status_bar(paint_state, demo_state),
+            build_paint_status_bar(paint_state, demo_state, Rc::clone(&theme_reader)),
         ),
     )
+    .brush_when(move || theme_reader().palette.surface)
 }
 
-fn build_paint_toolbar(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_toolbar(paint_state: PixelCanvasState, theme_reader: DevThemeReader) -> impl Widget {
     let undo_state = paint_state.clone();
     let undo_enabled_state = paint_state.clone();
     let redo_state = paint_state.clone();
@@ -268,20 +286,21 @@ fn build_paint_toolbar(paint_state: PixelCanvasState) -> impl Widget {
     let export_state = paint_state.clone();
     Toolbar::horizontal()
         .name("Paint toolbar")
+        .theme_when(clone_dev_theme_reader(&theme_reader))
         .extent(44.0)
-        .background(Color::rgba(0.982, 0.986, 0.992, 1.0))
         .padding(Insets::all(6.0))
         .spacing(8.0)
         .with_child(
             Label::new("SUI Paint")
                 .font_size(15.0)
                 .line_height(20.0)
-                .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
+                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
         )
         .with_child(
-            paint_command_group(PAINT_HISTORY_COMMANDS_NAME)
+            paint_command_group(PAINT_HISTORY_COMMANDS_NAME, &theme_reader)
                 .with_child(
                     IconButton::new(IconGlyph::Undo, "Undo")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .enabled_when(move || undo_enabled_state.can_undo())
@@ -292,6 +311,7 @@ fn build_paint_toolbar(paint_state: PixelCanvasState) -> impl Widget {
                 )
                 .with_child(
                     IconButton::new(IconGlyph::Redo, "Redo")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .enabled_when(move || redo_enabled_state.can_redo())
@@ -302,9 +322,10 @@ fn build_paint_toolbar(paint_state: PixelCanvasState) -> impl Widget {
                 ),
         )
         .with_child(
-            paint_command_group(PAINT_VIEW_COMMANDS_NAME)
+            paint_command_group(PAINT_VIEW_COMMANDS_NAME, &theme_reader)
                 .with_child(
                     IconButton::new(IconGlyph::FitView, PAINT_FIT_VIEW_NAME)
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(15.0)
                         .on_press_with_ctx(move |ctx| {
@@ -314,6 +335,7 @@ fn build_paint_toolbar(paint_state: PixelCanvasState) -> impl Widget {
                 )
                 .with_child(
                     IconButton::new(IconGlyph::ActualSize, PAINT_ACTUAL_SIZE_NAME)
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(15.0)
                         .on_press_with_ctx(move |ctx| {
@@ -323,9 +345,10 @@ fn build_paint_toolbar(paint_state: PixelCanvasState) -> impl Widget {
                 ),
         )
         .with_child(
-            paint_command_group(PAINT_DOCUMENT_COMMANDS_NAME)
+            paint_command_group(PAINT_DOCUMENT_COMMANDS_NAME, &theme_reader)
                 .with_child(
                     IconButton::new(IconGlyph::Trash, "Clear")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .enabled_when(move || clear_enabled_state.can_clear())
@@ -336,6 +359,7 @@ fn build_paint_toolbar(paint_state: PixelCanvasState) -> impl Widget {
                 )
                 .with_child(
                     IconButton::new(IconGlyph::Download, "Export")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
@@ -346,20 +370,22 @@ fn build_paint_toolbar(paint_state: PixelCanvasState) -> impl Widget {
         )
 }
 
-fn paint_command_group(name: &'static str) -> CommandGroup {
+fn paint_command_group(name: &'static str, theme_reader: &DevThemeReader) -> CommandGroup {
     CommandGroup::horizontal(name)
+        .theme_when(clone_dev_theme_reader(theme_reader))
         .padding(Insets::all(2.0))
         .spacing(2.0)
         .corner_radius(6.0)
-        .background(Color::rgba(0.952, 0.960, 0.974, 1.0))
-        .border(Color::rgba(0.79, 0.82, 0.87, 1.0))
 }
 
-fn build_paint_tool_rail(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_tool_rail(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let selected_state = paint_state.clone();
     ToolPalette::vertical("Paint tools")
+        .theme_when(clone_dev_theme_reader(&theme_reader))
         .extent(52.0)
-        .background(Color::rgba(0.955, 0.965, 0.978, 1.0))
         .padding(Insets::all(6.0))
         .spacing(6.0)
         .items(paint_tool_palette_items())
@@ -376,6 +402,7 @@ fn build_paint_tool_rail(paint_state: PixelCanvasState) -> impl Widget {
 fn build_paint_status_bar(
     paint_state: PixelCanvasState,
     demo_state: PaintDemoState,
+    theme_reader: DevThemeReader,
 ) -> impl Widget {
     let tool_state = paint_state.clone();
     let zoom_state = paint_state.clone();
@@ -386,6 +413,7 @@ fn build_paint_status_bar(
 
     StatusBar::new()
         .name("Paint status")
+        .theme_when(clone_dev_theme_reader(&theme_reader))
         .height(28.0)
         .segment(
             StatusBarSegment::dynamic("Tool Brush", move || {
@@ -487,7 +515,10 @@ fn paint_layer_opacity_text(opacity: f32) -> String {
     format!("{:.0}%", opacity.clamp(0.0, 1.0) * 100.0)
 }
 
-fn build_paint_canvas_stage(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_canvas_stage(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let horizontal_ruler_state = paint_state.clone();
     let vertical_ruler_state = paint_state.clone();
     let document_size = paint_document_size();
@@ -495,16 +526,20 @@ fn build_paint_canvas_stage(paint_state: PixelCanvasState) -> impl Widget {
         Color::rgba(0.89, 0.905, 0.925, 1.0),
         Stack::vertical()
             .alignment(Alignment::Stretch)
-            .with_child(build_paint_document_bar(paint_state.clone()))
+            .with_child(build_paint_document_bar(
+                paint_state.clone(),
+                Rc::clone(&theme_reader),
+            ))
             .with_child(Padding::all(
                 12.0,
                 Stack::vertical()
                     .alignment(Alignment::Stretch)
                     .with_child(
                         Stack::horizontal()
-                            .with_child(paint_ruler_corner())
+                            .with_child(paint_ruler_corner(Rc::clone(&theme_reader)))
                             .with_child(
                                 CanvasRuler::horizontal(PAINT_HORIZONTAL_RULER_NAME, document_size)
+                                    .theme_when(clone_dev_theme_reader(&theme_reader))
                                     .extent(PAINT_RULER_EXTENT)
                                     .viewport_when(move || {
                                         (
@@ -519,6 +554,7 @@ fn build_paint_canvas_stage(paint_state: PixelCanvasState) -> impl Widget {
                             .alignment(Alignment::Stretch)
                             .with_child(
                                 CanvasRuler::vertical(PAINT_VERTICAL_RULER_NAME, document_size)
+                                    .theme_when(clone_dev_theme_reader(&theme_reader))
                                     .extent(PAINT_RULER_EXTENT)
                                     .viewport_when(move || {
                                         (
@@ -538,6 +574,7 @@ fn build_paint_canvas_stage(paint_state: PixelCanvasState) -> impl Widget {
                                         seeded_paint_color(u, v)
                                     },
                                 )
+                                .theme_when(clone_dev_theme_reader(&theme_reader))
                                 .state(paint_state)
                                 .desired_size(Size::new(960.0, 620.0))
                                 .fit_on_first_layout(),
@@ -545,36 +582,41 @@ fn build_paint_canvas_stage(paint_state: PixelCanvasState) -> impl Widget {
                     ),
             )),
     )
+    .brush_when(move || theme_reader().palette.surface_raised)
 }
 
 fn paint_document_size() -> Size {
     Size::new(PAINT_DOCUMENT_WIDTH as f32, PAINT_DOCUMENT_HEIGHT as f32)
 }
 
-fn paint_ruler_corner() -> impl Widget {
+fn paint_ruler_corner(theme_reader: DevThemeReader) -> impl Widget {
     Background::new(
         Color::rgba(0.925, 0.936, 0.950, 1.0),
         SizedBox::new()
             .width(PAINT_RULER_EXTENT)
             .height(PAINT_RULER_EXTENT),
     )
+    .brush_when(move || theme_reader().palette.surface_raised)
 }
 
-fn build_paint_document_bar(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_document_bar(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let zoom_out_state = paint_state.clone();
     let zoom_state = paint_state.clone();
     let zoom_in_state = paint_state;
     Toolbar::horizontal()
         .name(PAINT_DOCUMENT_BAR_NAME)
+        .theme_when(clone_dev_theme_reader(&theme_reader))
         .extent(34.0)
-        .background(Color::rgba(0.946, 0.954, 0.966, 1.0))
         .padding(Insets::all(6.0))
         .spacing(8.0)
         .with_child(
             Label::new(PAINT_DOCUMENT_NAME)
                 .font_size(13.0)
                 .line_height(18.0)
-                .color(Color::rgba(0.10, 0.13, 0.18, 1.0)),
+                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
         )
         .with_child(Separator::vertical().length(18.0))
         .with_child(
@@ -584,21 +626,26 @@ fn build_paint_document_bar(paint_state: PixelCanvasState) -> impl Widget {
             ))
             .font_size(12.0)
             .line_height(18.0)
-            .color(Color::rgba(0.38, 0.43, 0.50, 1.0)),
+            .color_when(dev_theme_color(&theme_reader, |theme| {
+                theme.palette.text_muted
+            })),
         )
         .with_child(
             Label::new("RGB / 8-bit")
                 .font_size(12.0)
                 .line_height(18.0)
-                .color(Color::rgba(0.38, 0.43, 0.50, 1.0)),
+                .color_when(dev_theme_color(&theme_reader, |theme| {
+                    theme.palette.text_muted
+                })),
         )
         .with_child(Separator::vertical().length(18.0))
         .with_child(
-            paint_command_group(PAINT_DOCUMENT_VIEW_COMMANDS_NAME)
+            paint_command_group(PAINT_DOCUMENT_VIEW_COMMANDS_NAME, &theme_reader)
                 .padding(Insets::all(2.0))
                 .spacing(3.0)
                 .with_child(
                     IconButton::new(IconGlyph::Remove, PAINT_ZOOM_OUT_NAME)
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(24.0)
                         .icon_size(12.0)
                         .on_press_with_ctx(move |ctx| {
@@ -612,11 +659,12 @@ fn build_paint_document_bar(paint_state: PixelCanvasState) -> impl Widget {
                             .semantic_name(PAINT_ZOOM_READOUT_NAME)
                             .font_size(12.0)
                             .line_height(18.0)
-                            .color(Color::rgba(0.22, 0.27, 0.34, 1.0)),
+                            .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
                     ),
                 )
                 .with_child(
                     IconButton::new(IconGlyph::Add, PAINT_ZOOM_IN_NAME)
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(24.0)
                         .icon_size(12.0)
                         .on_press_with_ctx(move |ctx| {
@@ -630,6 +678,7 @@ fn build_paint_document_bar(paint_state: PixelCanvasState) -> impl Widget {
 fn build_paint_properties_panel(
     paint_state: PixelCanvasState,
     demo_state: PaintDemoState,
+    theme_reader: DevThemeReader,
 ) -> impl Widget {
     let picker_reader_state = paint_state.clone();
     let picker_change_state = paint_state.clone();
@@ -641,21 +690,39 @@ fn build_paint_properties_panel(
             Stack::vertical()
                 .spacing(8.0)
                 .alignment(Alignment::Stretch)
-                .with_child(PanelSection::new(
-                    "Tool options",
-                    build_paint_tool_options_panel(paint_state.clone()),
-                ))
+                .with_child(
+                    PanelSection::new(
+                        "Tool options",
+                        build_paint_tool_options_panel(
+                            paint_state.clone(),
+                            Rc::clone(&theme_reader),
+                        ),
+                    )
+                    .theme_when(clone_dev_theme_reader(&theme_reader)),
+                )
                 .with_child(
                     PanelSection::new(
                         PAINT_LAYERS_NAME,
-                        build_paint_layers_panel(demo_state.clone(), paint_state.clone()),
+                        build_paint_layers_panel(
+                            demo_state.clone(),
+                            paint_state.clone(),
+                            Rc::clone(&theme_reader),
+                        ),
                     )
-                    .header_action(build_paint_layer_actions(demo_state, paint_state.clone())),
+                    .theme_when(clone_dev_theme_reader(&theme_reader))
+                    .header_action(build_paint_layer_actions(
+                        demo_state,
+                        paint_state.clone(),
+                        Rc::clone(&theme_reader),
+                    )),
                 )
-                .with_child(PanelSection::new(
-                    "Color",
-                    build_paint_color_panel(paint_state.clone()),
-                ))
+                .with_child(
+                    PanelSection::new(
+                        "Color",
+                        build_paint_color_panel(paint_state.clone(), Rc::clone(&theme_reader)),
+                    )
+                    .theme_when(clone_dev_theme_reader(&theme_reader)),
+                )
                 .with_child(
                     PanelSection::new(
                         PAINT_COLOR_EDITOR_NAME,
@@ -664,6 +731,7 @@ fn build_paint_properties_panel(
                                 PAINT_BRUSH_COLOR_NAME,
                                 paint_state.brush_color(),
                             )
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .color_when(move || picker_reader_state.brush_color())
                             .compact(true)
                             .show_alpha(false)
@@ -672,6 +740,7 @@ fn build_paint_properties_panel(
                             }),
                         ),
                     )
+                    .theme_when(clone_dev_theme_reader(&theme_reader))
                     .collapsible(true)
                     .collapsed(),
                 ),
@@ -679,12 +748,14 @@ fn build_paint_properties_panel(
         .name(PAINT_SCROLL_NAME),
     )
     .name(PAINT_PROPERTIES_NAME)
+    .theme_when(clone_dev_theme_reader(&theme_reader))
     .padding(Insets::ZERO)
-    .background(Color::rgba(0.974, 0.979, 0.987, 1.0))
-    .header_background(Color::rgba(0.956, 0.964, 0.976, 1.0))
 }
 
-fn build_paint_color_panel(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_color_panel(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let swatch_reader_state = paint_state.clone();
     let palette_reader_state = paint_state.clone();
     let palette_change_state = paint_state;
@@ -693,15 +764,18 @@ fn build_paint_color_panel(paint_state: PixelCanvasState) -> impl Widget {
         .spacing(8.0)
         .alignment(Alignment::Stretch)
         .with_child(paint_property_row_with_width(
+            &theme_reader,
             PAINT_BRUSH_COLOR_NAME,
             104.0,
             ColorSwatch::new(PAINT_BRUSH_COLOR_NAME, swatch_reader_state.brush_color())
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .size(Size::new(104.0, 32.0))
                 .color_when(move || swatch_reader_state.brush_color())
                 .read_only(),
         ))
         .with_child(
             ColorPalette::new(PAINT_COLOR_PRESETS_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .swatches(paint_color_palette_swatches())
                 .selected_when(move || {
                     paint_color_preset_selected_index(palette_reader_state.brush_color())
@@ -714,18 +788,33 @@ fn build_paint_color_panel(paint_state: PixelCanvasState) -> impl Widget {
         )
 }
 
-fn build_paint_tool_options_panel(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_tool_options_panel(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let selected_state = paint_state.clone();
     SwitchView::new()
         .selected(paint_tool_selected_index(paint_state.tool()))
         .selected_when(move || paint_tool_selected_index(selected_state.tool()))
-        .with_child(build_paint_brush_options(paint_state.clone()))
-        .with_child(build_paint_eraser_options(paint_state.clone()))
-        .with_child(build_paint_fill_options(paint_state.clone()))
-        .with_child(build_paint_pan_options(paint_state))
+        .with_child(build_paint_brush_options(
+            paint_state.clone(),
+            Rc::clone(&theme_reader),
+        ))
+        .with_child(build_paint_eraser_options(
+            paint_state.clone(),
+            Rc::clone(&theme_reader),
+        ))
+        .with_child(build_paint_fill_options(
+            paint_state.clone(),
+            Rc::clone(&theme_reader),
+        ))
+        .with_child(build_paint_pan_options(paint_state, theme_reader))
 }
 
-fn build_paint_brush_options(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_brush_options(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let preview_state = paint_state.clone();
     let preset_reader_state = paint_state.clone();
     let preset_change_state = paint_state.clone();
@@ -741,6 +830,7 @@ fn build_paint_brush_options(paint_state: PixelCanvasState) -> impl Widget {
         .alignment(Alignment::Stretch)
         .with_child(
             BrushPreview::new(PAINT_BRUSH_PREVIEW_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .size(Size::new(268.0, 68.0))
                 .spec_when(move || {
                     BrushPreviewSpec::new(
@@ -754,11 +844,18 @@ fn build_paint_brush_options(paint_state: PixelCanvasState) -> impl Widget {
         .with_child(build_brush_size_presets(
             preset_reader_state,
             preset_change_state,
+            Rc::clone(&theme_reader),
         ))
-        .with_child(build_brush_size_row(size_reader_state, size_state))
+        .with_child(build_brush_size_row(
+            size_reader_state,
+            size_state,
+            Rc::clone(&theme_reader),
+        ))
         .with_child(paint_property_row(
+            &theme_reader,
             PAINT_BRUSH_OPACITY_NAME,
             Slider::new(PAINT_BRUSH_OPACITY_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(0.0, 1.0)
                 .step(0.01)
                 .value(paint_state.brush_opacity() as f64)
@@ -768,15 +865,23 @@ fn build_paint_brush_options(paint_state: PixelCanvasState) -> impl Widget {
                     request_window_refresh(ctx, true);
                 }),
         ))
-        .with_child(build_brush_shape_row(paint_state.clone(), shape_state))
+        .with_child(build_brush_shape_row(
+            paint_state.clone(),
+            shape_state,
+            Rc::clone(&theme_reader),
+        ))
         .with_child(build_blend_mode_row(
+            &theme_reader,
             PAINT_BLEND_MODE_NAME,
             paint_state,
             blend_mode_state,
         ))
 }
 
-fn build_paint_eraser_options(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_eraser_options(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let preview_state = paint_state.clone();
     let preset_reader_state = paint_state.clone();
     let preset_change_state = paint_state.clone();
@@ -791,6 +896,7 @@ fn build_paint_eraser_options(paint_state: PixelCanvasState) -> impl Widget {
         .alignment(Alignment::Stretch)
         .with_child(
             BrushPreview::new(PAINT_ERASER_PREVIEW_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .kind("eraser")
                 .size(Size::new(268.0, 68.0))
                 .spec_when(move || {
@@ -805,11 +911,18 @@ fn build_paint_eraser_options(paint_state: PixelCanvasState) -> impl Widget {
         .with_child(build_brush_size_presets(
             preset_reader_state,
             preset_change_state,
+            Rc::clone(&theme_reader),
         ))
-        .with_child(build_brush_size_row(size_reader_state, size_state))
+        .with_child(build_brush_size_row(
+            size_reader_state,
+            size_state,
+            Rc::clone(&theme_reader),
+        ))
         .with_child(paint_property_row(
+            &theme_reader,
             PAINT_BRUSH_OPACITY_NAME,
             Slider::new(PAINT_BRUSH_OPACITY_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(0.0, 1.0)
                 .step(0.01)
                 .value(paint_state.brush_opacity() as f64)
@@ -819,10 +932,17 @@ fn build_paint_eraser_options(paint_state: PixelCanvasState) -> impl Widget {
                     request_window_refresh(ctx, true);
                 }),
         ))
-        .with_child(build_brush_shape_row(paint_state, shape_state))
+        .with_child(build_brush_shape_row(
+            paint_state,
+            shape_state,
+            theme_reader,
+        ))
 }
 
-fn build_paint_fill_options(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_fill_options(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let opacity_reader_state = paint_state.clone();
     let opacity_state = paint_state.clone();
     let blend_mode_state = paint_state.clone();
@@ -831,8 +951,10 @@ fn build_paint_fill_options(paint_state: PixelCanvasState) -> impl Widget {
         .spacing(6.0)
         .alignment(Alignment::Stretch)
         .with_child(paint_property_row(
+            &theme_reader,
             PAINT_FILL_OPACITY_NAME,
             Slider::new(PAINT_FILL_OPACITY_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(0.0, 1.0)
                 .step(0.01)
                 .value(paint_state.brush_opacity() as f64)
@@ -843,13 +965,17 @@ fn build_paint_fill_options(paint_state: PixelCanvasState) -> impl Widget {
                 }),
         ))
         .with_child(build_blend_mode_row(
+            &theme_reader,
             PAINT_FILL_BLEND_MODE_NAME,
             paint_state,
             blend_mode_state,
         ))
 }
 
-fn build_paint_pan_options(paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_pan_options(
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let fit_state = paint_state.clone();
     let actual_size_state = paint_state;
 
@@ -858,6 +984,7 @@ fn build_paint_pan_options(paint_state: PixelCanvasState) -> impl Widget {
         .alignment(Alignment::Start)
         .with_child(
             IconButton::new(IconGlyph::FitView, PAINT_FIT_VIEW_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .size(28.0)
                 .icon_size(15.0)
                 .on_press_with_ctx(move |ctx| {
@@ -867,6 +994,7 @@ fn build_paint_pan_options(paint_state: PixelCanvasState) -> impl Widget {
         )
         .with_child(
             IconButton::new(IconGlyph::ActualSize, PAINT_ACTUAL_SIZE_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .size(28.0)
                 .icon_size(15.0)
                 .on_press_with_ctx(move |ctx| {
@@ -879,8 +1007,10 @@ fn build_paint_pan_options(paint_state: PixelCanvasState) -> impl Widget {
 fn build_brush_size_presets(
     reader_state: PixelCanvasState,
     change_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
 ) -> impl Widget {
     PresetStrip::new(PAINT_BRUSH_SIZE_PRESETS_NAME)
+        .theme_when(clone_dev_theme_reader(&theme_reader))
         .presets(PAINT_BRUSH_SIZE_PRESETS.map(paint_brush_size_preset_label))
         .selected_when(move || paint_brush_size_preset_selected_index(reader_state.brush_size()))
         .item_width(54.0)
@@ -894,11 +1024,14 @@ fn build_brush_size_presets(
 fn build_brush_size_row(
     reader_state: PixelCanvasState,
     change_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
 ) -> PropertyRow {
     paint_property_row_with_width(
+        &theme_reader,
         PAINT_BRUSH_SIZE_NAME,
         96.0,
         NumberInput::new(PAINT_BRUSH_SIZE_NAME)
+            .theme_when(clone_dev_theme_reader(&theme_reader))
             .range(1.0, 96.0)
             .step(1.0)
             .precision(0)
@@ -913,10 +1046,13 @@ fn build_brush_size_row(
 fn build_brush_shape_row(
     reader_state: PixelCanvasState,
     change_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
 ) -> PropertyRow {
     paint_property_row(
+        &theme_reader,
         PAINT_BRUSH_SHAPE_NAME,
         Select::new(PAINT_BRUSH_SHAPE_NAME)
+            .theme_when(clone_dev_theme_reader(&theme_reader))
             .options(PixelCanvasBrushShape::ALL.map(PixelCanvasBrushShape::label))
             .selected(paint_brush_shape_selected_index(reader_state.brush_shape()))
             .on_change(move |index, _| {
@@ -928,14 +1064,17 @@ fn build_brush_shape_row(
 }
 
 fn build_blend_mode_row(
+    theme_reader: &DevThemeReader,
     label: &'static str,
     reader_state: PixelCanvasState,
     change_state: PixelCanvasState,
 ) -> PropertyRow {
     let selected_state = reader_state.clone();
     paint_property_row(
+        theme_reader,
         label,
         Select::new(label)
+            .theme_when(clone_dev_theme_reader(theme_reader))
             .options(PixelCanvasBlendMode::ALL.map(PixelCanvasBlendMode::label))
             .selected(paint_blend_mode_selected_index(reader_state.blend_mode()))
             .selected_when(move || {
@@ -950,21 +1089,34 @@ fn build_blend_mode_row(
     )
 }
 
-fn paint_property_row<W>(label: &'static str, control: W) -> PropertyRow
+fn paint_property_row<W>(
+    theme_reader: &DevThemeReader,
+    label: &'static str,
+    control: W,
+) -> PropertyRow
 where
     W: Widget + 'static,
 {
-    PropertyRow::new(label, control).inline().label_width(92.0)
+    PropertyRow::new(label, control)
+        .theme_when(clone_dev_theme_reader(theme_reader))
+        .inline()
+        .label_width(92.0)
 }
 
-fn paint_property_row_with_width<W>(label: &'static str, width: f32, control: W) -> PropertyRow
+fn paint_property_row_with_width<W>(
+    theme_reader: &DevThemeReader,
+    label: &'static str,
+    width: f32,
+    control: W,
+) -> PropertyRow
 where
     W: Widget + 'static,
 {
-    paint_property_row(label, control).control_width(width)
+    paint_property_row(theme_reader, label, control).control_width(width)
 }
 
 fn paint_property_row_with_label_width<W>(
+    theme_reader: &DevThemeReader,
     label: &'static str,
     label_width: f32,
     control: W,
@@ -973,11 +1125,16 @@ where
     W: Widget + 'static,
 {
     PropertyRow::new(label, control)
+        .theme_when(clone_dev_theme_reader(theme_reader))
         .inline()
         .label_width(label_width)
 }
 
-fn build_paint_layers_panel(state: PaintDemoState, paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_layers_panel(
+    state: PaintDemoState,
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let selected_layer = state.selected_layer();
     let selected_state = state.clone();
     let selection_state = state.clone();
@@ -1006,6 +1163,7 @@ fn build_paint_layers_panel(state: PaintDemoState, paint_state: PixelCanvasState
         .with_child(
             SizedBox::new().width(284.0).height(112.0).with_child(
                 LayerList::new(PAINT_LAYERS_NAME)
+                    .theme_when(clone_dev_theme_reader(&theme_reader))
                     .layers([
                         LayerListItem::new("Paint")
                             .detail_when(move || paint_layer_detail(&paint_detail_state, 0))
@@ -1043,8 +1201,10 @@ fn build_paint_layers_panel(state: PaintDemoState, paint_state: PixelCanvasState
             ),
         )
         .with_child(paint_property_row(
+            &theme_reader,
             PAINT_LAYER_OPACITY_NAME,
             Slider::new(PAINT_LAYER_OPACITY_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(0.0, 1.0)
                 .step(0.01)
                 .value(opacity_reader_state.selected_layer_opacity() as f64)
@@ -1058,9 +1218,11 @@ fn build_paint_layers_panel(state: PaintDemoState, paint_state: PixelCanvasState
                 }),
         ))
         .with_child(paint_property_row_with_label_width(
+            &theme_reader,
             PAINT_LAYER_BLEND_MODE_NAME,
             116.0,
             Select::new(PAINT_LAYER_BLEND_MODE_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .options(PixelCanvasBlendMode::ALL.map(PixelCanvasBlendMode::label))
                 .selected(blend_initial)
                 .selected_when(move || {
@@ -1080,7 +1242,11 @@ fn build_paint_layers_panel(state: PaintDemoState, paint_state: PixelCanvasState
         ))
 }
 
-fn build_paint_layer_actions(state: PaintDemoState, paint_state: PixelCanvasState) -> impl Widget {
+fn build_paint_layer_actions(
+    state: PaintDemoState,
+    paint_state: PixelCanvasState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let above_enabled = state.clone();
     let above_state = state.clone();
     let above_paint_state = paint_state.clone();
@@ -1091,6 +1257,7 @@ fn build_paint_layer_actions(state: PaintDemoState, paint_state: PixelCanvasStat
         .spacing(4.0)
         .with_child(
             IconButton::new(IconGlyph::ChevronUp, PAINT_SELECT_LAYER_ABOVE_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .size(24.0)
                 .icon_size(12.0)
                 .enabled_when(move || above_enabled.can_select_layer_above())
@@ -1102,6 +1269,7 @@ fn build_paint_layer_actions(state: PaintDemoState, paint_state: PixelCanvasStat
         )
         .with_child(
             IconButton::new(IconGlyph::ChevronDown, PAINT_SELECT_LAYER_BELOW_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .size(24.0)
                 .icon_size(12.0)
                 .enabled_when(move || below_enabled.can_select_layer_below())

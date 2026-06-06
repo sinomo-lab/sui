@@ -9,21 +9,23 @@ use sui::{
     WindowTextHinting, WindowToneMappingMode, default_sui_logo_image, prelude::*,
     window_output_diagnostics,
 };
+#[cfg(test)]
+use sui_widget_book::build_widget_book_gallery;
 use sui_widget_book::{
     LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
     build_retained_text_benchmark, build_text_editing_benchmark,
     build_text_rendering_comparison_surface, build_text_validation_surface,
-    build_theme_demo_surface, build_widget_book_gallery, default_widget_book_state,
+    build_theme_demo_surface, build_widget_book_gallery_with_theme, default_widget_book_state,
     register_widget_book_images, set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
 };
 
-use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo};
+use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
 #[cfg(test)]
 use crate::vector_demo::{
     VECTOR_DOCUMENT_WIDTH, VECTOR_FILL_RULE_NAME, VECTOR_MIN_OBJECT_SIZE, VECTOR_OPACITY_NAME,
     VECTOR_ROTATION_NAME, VECTOR_STROKE_WIDTH_NAME, VECTOR_WIDTH_NAME,
 };
-use crate::vector_demo::{VECTOR_EDITOR_TAB_LABEL, build_vector_editor_demo};
+use crate::vector_demo::{VECTOR_EDITOR_TAB_LABEL, build_vector_editor_demo_with_theme};
 
 const WINDOW_TITLE: &str = "SUI Dev";
 const WINDOW_DESCRIPTION: &str =
@@ -94,6 +96,31 @@ pub enum DesktopAutomationMode {
     WidgetBookScroll,
 }
 
+pub(crate) type DevThemeReader = Rc<dyn Fn() -> DefaultTheme>;
+
+#[cfg(test)]
+pub(crate) fn default_dev_theme_reader() -> DevThemeReader {
+    Rc::new(DefaultTheme::default)
+}
+
+pub(crate) fn clone_dev_theme_reader(
+    theme_reader: &DevThemeReader,
+) -> impl Fn() -> DefaultTheme + 'static {
+    let theme_reader = Rc::clone(theme_reader);
+    move || theme_reader()
+}
+
+pub(crate) fn dev_theme_color<F>(
+    theme_reader: &DevThemeReader,
+    color: F,
+) -> impl Fn() -> Color + 'static
+where
+    F: Fn(DefaultTheme) -> Color + 'static,
+{
+    let theme_reader = Rc::clone(theme_reader);
+    move || color(theme_reader())
+}
+
 #[derive(Clone)]
 struct DevShellState {
     inner: Rc<RefCell<DevShellStateInner>>,
@@ -135,6 +162,11 @@ impl DevShellState {
         } else {
             DefaultTheme::default()
         }
+    }
+
+    fn theme_reader(&self) -> DevThemeReader {
+        let state = self.clone();
+        Rc::new(move || state.theme())
     }
 
     fn is_dark(&self) -> bool {
@@ -268,7 +300,8 @@ impl DevBrowserShell {
     fn with_initial_demo(render_options: WindowRenderOptions, initial_demo: Option<&str>) -> Self {
         set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
         let state = DevShellState::new();
-        let demos = build_dev_demo_entries();
+        let theme_reader = state.theme_reader();
+        let demos = build_dev_demo_entries(Rc::clone(&theme_reader));
         if let Some(index) =
             initial_demo.and_then(|title| demos.iter().position(|demo| demo.title == title))
         {
@@ -295,6 +328,7 @@ impl DevBrowserShell {
 
         let picker_state = state.clone();
         let plus_button = IconButton::new(IconGlyph::Add, "Open demo")
+            .theme_when(clone_dev_theme_reader(&theme_reader))
             .size(DEV_SHELL_PLUS_BUTTON_SIZE)
             .icon_size(16.0)
             .on_press_with_ctx(move |ctx| {
@@ -304,6 +338,7 @@ impl DevBrowserShell {
 
         let menu_state = state.clone();
         let main_menu = ContextMenu::new("SUI menu", SuiLogoButton::new())
+            .theme_when(clone_dev_theme_reader(&theme_reader))
             .activation_button(PointerButton::Primary)
             .item(MenuItem::new("Settings"))
             .on_activate_with_ctx(move |ctx, _, _| {
@@ -321,7 +356,7 @@ impl DevBrowserShell {
             theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
             settings_window: SingleChild::new(FloatingSettingsWindow::new(
                 state,
-                build_render_settings_tab_with_options(render_options),
+                build_render_settings_tab_with_options(render_options, Rc::clone(&theme_reader)),
             )),
             tab_widths: Vec::new(),
             tab_rects: Vec::new(),
@@ -1416,7 +1451,7 @@ impl Widget for FloatingSettingsWindow {
         }
         let theme = self.state.theme();
         let palette = theme.palette;
-        let content_palette = DefaultTheme::default().palette;
+        let content_palette = palette;
         let bounds = ctx.bounds();
         if bounds.is_empty() {
             return;
@@ -1527,14 +1562,17 @@ impl Widget for FloatingSettingsWindow {
     }
 }
 
-fn build_dev_demo_entries() -> Vec<DevDemo> {
+fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
     vec![
         DevDemo {
             title: WIDGET_BOOK_TAB_LABEL,
             description: "Catalog of controls, containers, media, and text surfaces.",
             icon: IconGlyph::MoreHorizontal,
             accent: Color::rgba(0.16, 0.48, 0.86, 1.0),
-            child: WidgetPod::new(build_widget_book_gallery(default_widget_book_state())),
+            child: WidgetPod::new(build_widget_book_gallery_with_theme(
+                default_widget_book_state(),
+                Rc::clone(&theme_reader),
+            )),
         },
         DevDemo {
             title: THEMES_TAB_LABEL,
@@ -1590,14 +1628,14 @@ fn build_dev_demo_entries() -> Vec<DevDemo> {
             description: "Pixel canvas painting workspace with editor-style panels.",
             icon: IconGlyph::Brush,
             accent: Color::rgba(0.80, 0.22, 0.44, 1.0),
-            child: WidgetPod::new(build_paint_demo()),
+            child: WidgetPod::new(build_paint_demo_with_theme(Rc::clone(&theme_reader))),
         },
         DevDemo {
             title: VECTOR_EDITOR_TAB_LABEL,
             description: "Vector canvas drawing and editing demo.",
             icon: IconGlyph::ChevronRight,
             accent: Color::rgba(0.12, 0.56, 0.76, 1.0),
-            child: WidgetPod::new(build_vector_editor_demo()),
+            child: WidgetPod::new(build_vector_editor_demo_with_theme(theme_reader)),
         },
     ]
 }
@@ -1905,6 +1943,7 @@ fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
 }
 
 pub(crate) fn labeled_settings_control<W>(
+    theme_reader: DevThemeReader,
     label: &'static str,
     width: f32,
     control: W,
@@ -1912,10 +1951,24 @@ pub(crate) fn labeled_settings_control<W>(
 where
     W: Widget + 'static,
 {
-    PropertyRow::new(label, control).control_width(width)
+    PropertyRow::new(label, control)
+        .theme_when(clone_dev_theme_reader(&theme_reader))
+        .control_width(width)
 }
 
-struct HdrThemeInspectionPanel;
+struct HdrThemeInspectionPanel {
+    theme_reader: DevThemeReader,
+}
+
+impl HdrThemeInspectionPanel {
+    fn new(theme_reader: DevThemeReader) -> Self {
+        Self { theme_reader }
+    }
+
+    fn theme(&self) -> DefaultTheme {
+        (self.theme_reader)()
+    }
+}
 
 impl Widget for HdrThemeInspectionPanel {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -1923,7 +1976,7 @@ impl Widget for HdrThemeInspectionPanel {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = DefaultTheme::default().palette;
+        let palette = self.theme().palette;
         let border = StrokeStyle::default();
         ctx.fill_rect(ctx.bounds(), palette.surface.with_alpha(0.35));
         ctx.stroke_rect(ctx.bounds(), palette.border.with_alpha(0.85), border);
@@ -1978,7 +2031,19 @@ impl Widget for HdrThemeInspectionPanel {
     }
 }
 
-struct OutputDiagnosticsPanel;
+struct OutputDiagnosticsPanel {
+    theme_reader: DevThemeReader,
+}
+
+impl OutputDiagnosticsPanel {
+    fn new(theme_reader: DevThemeReader) -> Self {
+        Self { theme_reader }
+    }
+
+    fn theme(&self) -> DefaultTheme {
+        (self.theme_reader)()
+    }
+}
 
 impl Widget for OutputDiagnosticsPanel {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -1993,7 +2058,7 @@ impl Widget for OutputDiagnosticsPanel {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = DefaultTheme::default().palette;
+        let palette = self.theme().palette;
         let border = StrokeStyle::default();
         ctx.fill_rect(ctx.bounds(), palette.surface.with_alpha(0.35));
         ctx.stroke_rect(ctx.bounds(), palette.border.with_alpha(0.85), border);
@@ -2035,7 +2100,19 @@ impl Widget for OutputDiagnosticsPanel {
     }
 }
 
-struct SdrContentBrightnessStatus;
+struct SdrContentBrightnessStatus {
+    theme_reader: DevThemeReader,
+}
+
+impl SdrContentBrightnessStatus {
+    fn new(theme_reader: DevThemeReader) -> Self {
+        Self { theme_reader }
+    }
+
+    fn theme(&self) -> DefaultTheme {
+        (self.theme_reader)()
+    }
+}
 
 impl Widget for SdrContentBrightnessStatus {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -2043,7 +2120,7 @@ impl Widget for SdrContentBrightnessStatus {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = DefaultTheme::default().palette;
+        let palette = self.theme().palette;
         let text = window_output_diagnostics(ctx.window_id())
             .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
             .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
@@ -2173,7 +2250,7 @@ impl RenderSettingsTab {
             ))
     }
 
-    fn with_initial_options(initial: WindowRenderOptions) -> Self {
+    fn with_initial_options(initial: WindowRenderOptions, theme_reader: DevThemeReader) -> Self {
         let state = Rc::new(RefCell::new(initial));
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
@@ -2202,7 +2279,7 @@ impl RenderSettingsTab {
                         Label::new("Renderer settings")
                             .font_size(24.0)
                             .line_height(30.0)
-                            .color(Color::rgba(0.14, 0.18, 0.24, 1.0)),
+                            .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
                     )
                     .with_child(
                         Label::new(
@@ -2210,10 +2287,11 @@ impl RenderSettingsTab {
                         )
                         .font_size(14.0)
                         .line_height(20.0)
-                        .color(Color::rgba(0.40, 0.47, 0.56, 1.0)),
+                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
                     )
                     .with_child(
                         Checkbox::new(FEATHERING_TOGGLE_LABEL)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .checked(initial.feathering_enabled)
                             .on_toggle(move |checked| {
                                 toggle_state.borrow_mut().feathering_enabled = checked;
@@ -2221,6 +2299,7 @@ impl RenderSettingsTab {
                     )
                     .with_child(
                         Checkbox::new(OPTICAL_TEXT_CENTERING_TOGGLE_LABEL)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .checked(initial.optical_vertical_text_alignment_enabled)
                             .on_toggle(move |checked| {
                                 text_centering_state
@@ -2229,9 +2308,11 @@ impl RenderSettingsTab {
                             }),
                     )
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         FEATHER_WIDTH_NAME,
                         220.0,
                         NumberInput::new(FEATHER_WIDTH_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .range(0.0, 8.0)
                             .step(0.05)
                             .precision(2)
@@ -2242,6 +2323,7 @@ impl RenderSettingsTab {
                     ))
                     .with_child(
                         Checkbox::new(TEXT_HINTING_TOGGLE_LABEL)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .checked(!matches!(initial.text_hinting, WindowTextHinting::None))
                             .on_toggle(move |checked| {
                                 let mut state = hinting_toggle_state.borrow_mut();
@@ -2260,9 +2342,11 @@ impl RenderSettingsTab {
                             }),
                     )
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         TEXT_HINTING_MAX_PPEM_NAME,
                         220.0,
                         NumberInput::new(TEXT_HINTING_MAX_PPEM_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .range(1.0, 64.0)
                             .step(0.5)
                             .precision(1)
@@ -2278,6 +2362,7 @@ impl RenderSettingsTab {
                     ))
                     .with_child(
                         Checkbox::new(STEM_DARKENING_TOGGLE_LABEL)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .checked(!matches!(initial.stem_darkening, WindowStemDarkening::None))
                             .on_toggle(move |checked| {
                                 let mut state = stem_darkening_toggle_state.borrow_mut();
@@ -2299,9 +2384,11 @@ impl RenderSettingsTab {
                             }),
                     )
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         STEM_DARKENING_AMOUNT_NAME,
                         220.0,
                         NumberInput::new(STEM_DARKENING_AMOUNT_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .range(0.0, 1.0)
                             .step(0.01)
                             .precision(2)
@@ -2324,9 +2411,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         STEM_DARKENING_MAX_PPEM_NAME,
                         220.0,
                         NumberInput::new(STEM_DARKENING_MAX_PPEM_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .range(1.0, 64.0)
                             .step(0.5)
                             .precision(1)
@@ -2349,9 +2438,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         COLOR_MANAGEMENT_MODE_NAME,
                         280.0,
                         Select::new(COLOR_MANAGEMENT_MODE_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(COLOR_MANAGEMENT_MODE_OPTIONS)
                             .selected(color_management_mode_selected_index(initial.color_management_mode))
                             .on_change(move |index, _| {
@@ -2360,9 +2451,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         OUTPUT_PRIMARIES_NAME,
                         240.0,
                         Select::new(OUTPUT_PRIMARIES_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(OUTPUT_PRIMARIES_OPTIONS)
                             .selected(output_primaries_selected_index(initial.output_color_primaries))
                             .on_change(move |index, _| {
@@ -2371,9 +2464,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         DYNAMIC_RANGE_MODE_NAME,
                         240.0,
                         Select::new(DYNAMIC_RANGE_MODE_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(DYNAMIC_RANGE_MODE_OPTIONS)
                             .selected(dynamic_range_mode_selected_index(initial.dynamic_range_mode))
                             .on_change(move |index, _| {
@@ -2382,9 +2477,11 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         TONE_MAPPING_MODE_NAME,
                         240.0,
                         Select::new(TONE_MAPPING_MODE_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(TONE_MAPPING_MODE_OPTIONS)
                             .selected(tone_mapping_mode_selected_index(initial.tone_mapping_mode))
                             .on_change(move |index, _| {
@@ -2393,6 +2490,7 @@ impl RenderSettingsTab {
                             }),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         SDR_CONTENT_BRIGHTNESS_NAME,
                         420.0,
                         Stack::vertical()
@@ -2400,6 +2498,7 @@ impl RenderSettingsTab {
                             .alignment(Alignment::Start)
                             .with_child(SizedBox::new().width(220.0).with_child(
                                 NumberInput::new(SDR_CONTENT_BRIGHTNESS_NAME)
+                                    .theme_when(clone_dev_theme_reader(&theme_reader))
                                     .range(48.0, 1000.0)
                                     .step(1.0)
                                     .precision(0)
@@ -2413,6 +2512,7 @@ impl RenderSettingsTab {
                             ))
                             .with_child(
                                 Checkbox::new(USE_SYSTEM_SDR_BRIGHTNESS_LABEL)
+                                    .theme_when(clone_dev_theme_reader(&theme_reader))
                                     .checked(initial.use_system_sdr_content_brightness)
                                     .on_toggle(move |checked| {
                                         system_sdr_content_brightness_state
@@ -2420,27 +2520,29 @@ impl RenderSettingsTab {
                                             .use_system_sdr_content_brightness = checked;
                                     }),
                             )
-                            .with_child(SdrContentBrightnessStatus),
+                            .with_child(SdrContentBrightnessStatus::new(Rc::clone(&theme_reader))),
                     ))
                     .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
                         HDR_THEME_MODE_NAME,
                         280.0,
                         Select::new(HDR_THEME_MODE_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
                             .options(HDR_THEME_MODE_OPTIONS)
                             .selected(hdr_theme_mode_selected_index(current_hdr_theme_mode))
                             .on_change(move |index, _| {
                                 set_widget_book_hdr_theme_mode(hdr_theme_mode_from_index(index));
                             }),
                     ))
-                    .with_child(HdrThemeInspectionPanel)
-                    .with_child(OutputDiagnosticsPanel)
+                    .with_child(HdrThemeInspectionPanel::new(Rc::clone(&theme_reader)))
+                    .with_child(OutputDiagnosticsPanel::new(Rc::clone(&theme_reader)))
                     .with_child(
                         Label::new(
                             "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)
-                        .color(Color::rgba(0.45, 0.52, 0.60, 1.0)),
+                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
                     ),
             ))
             .state(scroll_state.clone())
@@ -2516,8 +2618,11 @@ impl Widget for RenderSettingsTab {
     }
 }
 
-fn build_render_settings_tab_with_options(options: WindowRenderOptions) -> impl Widget {
-    RenderSettingsTab::with_initial_options(options)
+fn build_render_settings_tab_with_options(
+    options: WindowRenderOptions,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
+    RenderSettingsTab::with_initial_options(options, theme_reader)
 }
 
 pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
@@ -5448,6 +5553,73 @@ final_max_luminance={final_max_luminance}
                 "expected semantics tree to expose settings control {label:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn settings_controls_repaint_when_theme_toggle_changes() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_settings(&window)?;
+
+        let light_snapshot = window.snapshot()?;
+        let feather_width =
+            find_named_node(&light_snapshot, SemanticsRole::SpinBox, FEATHER_WIDTH_NAME);
+        let probe = Rect::new(
+            feather_width.bounds.x() + 8.0,
+            feather_width.bounds.y() + feather_width.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let light_pixel = sample_pixel(&window.capture_screenshot()?, probe, &light_snapshot)?;
+
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name("Dark theme")
+            .click()?;
+
+        let dark_snapshot = window.snapshot()?;
+        let dark_pixel = sample_pixel(&window.capture_screenshot()?, probe, &dark_snapshot)?;
+
+        assert_ne!(
+            light_pixel, dark_pixel,
+            "expected the settings number input surface to repaint after the theme switch toggles"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_controls_repaint_when_theme_toggle_changes() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
+
+        let light_snapshot = window.snapshot()?;
+        let primary_button = find_named_node(
+            &light_snapshot,
+            SemanticsRole::Button,
+            sui_widget_book::PRIMARY_BUTTON_LABEL,
+        );
+        let probe = Rect::new(
+            primary_button.bounds.x() + 8.0,
+            primary_button.bounds.y() + primary_button.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let light_pixel = sample_pixel(&window.capture_screenshot()?, probe, &light_snapshot)?;
+
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name("Dark theme")
+            .click()?;
+
+        let dark_snapshot = window.snapshot()?;
+        let dark_pixel = sample_pixel(&window.capture_screenshot()?, probe, &dark_snapshot)?;
+
+        assert_ne!(
+            light_pixel, dark_pixel,
+            "expected the widget book primary button surface to repaint after the theme switch toggles"
+        );
         Ok(())
     }
 

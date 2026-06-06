@@ -5,7 +5,9 @@ use sui::{
     SemanticsValue, WidgetId, prelude::*,
 };
 
-use crate::app::request_window_refresh;
+#[cfg(test)]
+use crate::app::default_dev_theme_reader;
+use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_theme_color, request_window_refresh};
 
 pub(crate) const VECTOR_EDITOR_TAB_LABEL: &str = "Vector editor";
 const VECTOR_DOCUMENT_NAME: &str = "Wave mark.svg";
@@ -575,23 +577,24 @@ fn vector_distance_to_segment(point: Point, start: Point, end: Point) -> f32 {
     ((delta.x * delta.x) + (delta.y * delta.y)).sqrt()
 }
 
-pub(crate) fn build_vector_editor_demo() -> impl Widget {
+pub(crate) fn build_vector_editor_demo_with_theme(theme_reader: DevThemeReader) -> impl Widget {
     let state = VectorDemoState::new();
     Background::new(
         Color::rgba(0.925, 0.940, 0.958, 1.0),
         StatusBarHost::new(
             SplitView::horizontal(
-                build_vector_canvas_stage(state.clone()),
-                build_vector_properties_panel(state.clone()),
+                build_vector_canvas_stage(state.clone(), Rc::clone(&theme_reader)),
+                build_vector_properties_panel(state.clone(), Rc::clone(&theme_reader)),
             )
             .name("Vector workspace")
             .ratio(0.76)
             .min_first(520.0)
             .min_second(292.0)
             .divider_thickness(4.0),
-            build_vector_status_bar(state),
+            build_vector_status_bar(state, Rc::clone(&theme_reader)),
         ),
     )
+    .brush_when(move || theme_reader().palette.surface)
 }
 
 fn vector_document_size() -> Size {
@@ -602,22 +605,22 @@ fn vector_canvas_viewport() -> CanvasViewport {
     CanvasViewport::new().zoom(VECTOR_CANVAS_ZOOM)
 }
 
-fn vector_command_group(name: &'static str) -> CommandGroup {
+fn vector_command_group(name: &'static str, theme_reader: &DevThemeReader) -> CommandGroup {
     CommandGroup::horizontal(name)
+        .theme_when(clone_dev_theme_reader(theme_reader))
         .padding(Insets::all(2.0))
         .spacing(2.0)
         .corner_radius(6.0)
-        .background(Color::rgba(0.952, 0.960, 0.974, 1.0))
-        .border(Color::rgba(0.79, 0.82, 0.87, 1.0))
 }
 
-fn build_vector_status_bar(state: VectorDemoState) -> impl Widget {
+fn build_vector_status_bar(state: VectorDemoState, theme_reader: DevThemeReader) -> impl Widget {
     let object_state = state.clone();
     let stroke_state = state.clone();
     let opacity_state = state.clone();
     let fill_state = state;
     StatusBar::new()
         .name(VECTOR_STATUS_NAME)
+        .theme_when(clone_dev_theme_reader(&theme_reader))
         .height(28.0)
         .segment(StatusBarSegment::new("Select / edit").min_width(120.0))
         .segment(StatusBarSegment::new("Zoom 105%").min_width(92.0))
@@ -647,26 +650,27 @@ fn build_vector_status_bar(state: VectorDemoState) -> impl Widget {
         )
 }
 
-fn build_vector_canvas_stage(state: VectorDemoState) -> impl Widget {
+fn build_vector_canvas_stage(state: VectorDemoState, theme_reader: DevThemeReader) -> impl Widget {
     let viewport = vector_canvas_viewport();
     let ruler_viewport_size = Size::new(900.0, 560.0);
     Background::new(
         Color::rgba(0.890, 0.905, 0.925, 1.0),
         Stack::vertical()
             .alignment(Alignment::Stretch)
-            .with_child(build_vector_document_bar())
+            .with_child(build_vector_document_bar(Rc::clone(&theme_reader)))
             .with_child(Padding::all(
                 12.0,
                 Stack::vertical()
                     .alignment(Alignment::Stretch)
                     .with_child(
                         Stack::horizontal()
-                            .with_child(vector_ruler_corner())
+                            .with_child(vector_ruler_corner(Rc::clone(&theme_reader)))
                             .with_child(
                                 CanvasRuler::horizontal(
                                     VECTOR_HORIZONTAL_RULER_NAME,
                                     vector_document_size(),
                                 )
+                                .theme_when(clone_dev_theme_reader(&theme_reader))
                                 .extent(VECTOR_RULER_EXTENT)
                                 .viewport(viewport, ruler_viewport_size),
                             ),
@@ -679,27 +683,29 @@ fn build_vector_canvas_stage(state: VectorDemoState) -> impl Widget {
                                     VECTOR_VERTICAL_RULER_NAME,
                                     vector_document_size(),
                                 )
+                                .theme_when(clone_dev_theme_reader(&theme_reader))
                                 .extent(VECTOR_RULER_EXTENT)
                                 .viewport(viewport, ruler_viewport_size),
                             )
-                            .with_child(VectorEditorCanvas::new(state)),
+                            .with_child(VectorEditorCanvas::new(state, Rc::clone(&theme_reader))),
                     ),
             )),
     )
+    .brush_when(move || theme_reader().palette.surface_raised)
 }
 
-fn build_vector_document_bar() -> impl Widget {
+fn build_vector_document_bar(theme_reader: DevThemeReader) -> impl Widget {
     Toolbar::horizontal()
         .name(VECTOR_DOCUMENT_BAR_NAME)
+        .theme_when(clone_dev_theme_reader(&theme_reader))
         .extent(34.0)
-        .background(Color::rgba(0.946, 0.954, 0.966, 1.0))
         .padding(Insets::all(6.0))
         .spacing(8.0)
         .with_child(
             Label::new(VECTOR_DOCUMENT_NAME)
                 .font_size(13.0)
                 .line_height(18.0)
-                .color(Color::rgba(0.10, 0.13, 0.18, 1.0)),
+                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
         )
         .with_child(Separator::vertical().length(18.0))
         .with_child(
@@ -709,33 +715,43 @@ fn build_vector_document_bar() -> impl Widget {
             ))
             .font_size(12.0)
             .line_height(18.0)
-            .color(Color::rgba(0.38, 0.43, 0.50, 1.0)),
+            .color_when(dev_theme_color(&theme_reader, |theme| {
+                theme.palette.text_muted
+            })),
         )
         .with_child(
             Label::new("SVG / Display P3")
                 .font_size(12.0)
                 .line_height(18.0)
-                .color(Color::rgba(0.38, 0.43, 0.50, 1.0)),
+                .color_when(dev_theme_color(&theme_reader, |theme| {
+                    theme.palette.text_muted
+                })),
         )
         .with_child(Separator::vertical().length(18.0))
         .with_child(
             Label::new("1 artboard / 3 objects")
                 .font_size(12.0)
                 .line_height(18.0)
-                .color(Color::rgba(0.38, 0.43, 0.50, 1.0)),
+                .color_when(dev_theme_color(&theme_reader, |theme| {
+                    theme.palette.text_muted
+                })),
         )
 }
 
-fn vector_ruler_corner() -> impl Widget {
+fn vector_ruler_corner(theme_reader: DevThemeReader) -> impl Widget {
     Background::new(
         Color::rgba(0.925, 0.936, 0.950, 1.0),
         SizedBox::new()
             .width(VECTOR_RULER_EXTENT)
             .height(VECTOR_RULER_EXTENT),
     )
+    .brush_when(move || theme_reader().palette.surface_raised)
 }
 
-fn build_vector_properties_panel(state: VectorDemoState) -> impl Widget {
+fn build_vector_properties_panel(
+    state: VectorDemoState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     DockPanel::new(
         VECTOR_PROPERTIES_NAME,
         ScrollView::vertical(Padding::all(
@@ -743,32 +759,43 @@ fn build_vector_properties_panel(state: VectorDemoState) -> impl Widget {
             Stack::vertical()
                 .spacing(8.0)
                 .alignment(Alignment::Stretch)
-                .with_child(PanelSection::new(
-                    VECTOR_OBJECTS_NAME,
-                    build_vector_objects_panel(state.clone()),
-                ))
-                .with_child(PanelSection::new(
-                    VECTOR_TRANSFORM_NAME,
-                    build_vector_transform_panel(state.clone()),
-                ))
-                .with_child(PanelSection::new(
-                    VECTOR_APPEARANCE_NAME,
-                    build_vector_appearance_panel(state.clone()),
-                ))
-                .with_child(PanelSection::new(
-                    VECTOR_ALIGNMENT_NAME,
-                    build_vector_alignment_panel(state.clone()),
-                )),
+                .with_child(
+                    PanelSection::new(
+                        VECTOR_OBJECTS_NAME,
+                        build_vector_objects_panel(state.clone(), Rc::clone(&theme_reader)),
+                    )
+                    .theme_when(clone_dev_theme_reader(&theme_reader)),
+                )
+                .with_child(
+                    PanelSection::new(
+                        VECTOR_TRANSFORM_NAME,
+                        build_vector_transform_panel(state.clone(), Rc::clone(&theme_reader)),
+                    )
+                    .theme_when(clone_dev_theme_reader(&theme_reader)),
+                )
+                .with_child(
+                    PanelSection::new(
+                        VECTOR_APPEARANCE_NAME,
+                        build_vector_appearance_panel(state.clone(), Rc::clone(&theme_reader)),
+                    )
+                    .theme_when(clone_dev_theme_reader(&theme_reader)),
+                )
+                .with_child(
+                    PanelSection::new(
+                        VECTOR_ALIGNMENT_NAME,
+                        build_vector_alignment_panel(state.clone(), Rc::clone(&theme_reader)),
+                    )
+                    .theme_when(clone_dev_theme_reader(&theme_reader)),
+                ),
         ))
         .name("Vector controls"),
     )
     .name(VECTOR_PROPERTIES_NAME)
+    .theme_when(clone_dev_theme_reader(&theme_reader))
     .padding(Insets::ZERO)
-    .background(Color::rgba(0.974, 0.979, 0.987, 1.0))
-    .header_background(Color::rgba(0.956, 0.964, 0.976, 1.0))
 }
 
-fn build_vector_objects_panel(state: VectorDemoState) -> impl Widget {
+fn build_vector_objects_panel(state: VectorDemoState, theme_reader: DevThemeReader) -> impl Widget {
     let selected_state = state.clone();
     let artboard_detail_state = state.clone();
     let blue_detail_state = state.clone();
@@ -787,6 +814,7 @@ fn build_vector_objects_panel(state: VectorDemoState) -> impl Widget {
 
     SizedBox::new().width(284.0).height(204.0).with_child(
         LayerList::new(VECTOR_OBJECTS_NAME)
+            .theme_when(clone_dev_theme_reader(&theme_reader))
             .layers([
                 LayerListItem::new(VECTOR_OBJECT_LABELS[0])
                     .detail_when(move || artboard_detail_state.object_detail(0))
@@ -827,7 +855,10 @@ fn build_vector_objects_panel(state: VectorDemoState) -> impl Widget {
     )
 }
 
-fn build_vector_transform_panel(state: VectorDemoState) -> impl Widget {
+fn build_vector_transform_panel(
+    state: VectorDemoState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let x_reader_state = state.clone();
     let x_change_state = state.clone();
     let x_label_state = state.clone();
@@ -849,8 +880,10 @@ fn build_vector_transform_panel(state: VectorDemoState) -> impl Widget {
         .spacing(6.0)
         .alignment(Alignment::Stretch)
         .with_child(vector_property_slider_row(
+            &theme_reader,
             VECTOR_CENTER_X_NAME,
             Slider::new(VECTOR_CENTER_X_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(-360.0, 360.0)
                 .step(1.0)
                 .value(x_reader_state.selected_center_x() as f64)
@@ -862,8 +895,10 @@ fn build_vector_transform_panel(state: VectorDemoState) -> impl Widget {
             move || format!("{:.0}", x_label_state.selected_center_x()),
         ))
         .with_child(vector_property_slider_row(
+            &theme_reader,
             VECTOR_CENTER_Y_NAME,
             Slider::new(VECTOR_CENTER_Y_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(-240.0, 240.0)
                 .step(1.0)
                 .value(y_reader_state.selected_center_y() as f64)
@@ -875,8 +910,10 @@ fn build_vector_transform_panel(state: VectorDemoState) -> impl Widget {
             move || format!("{:.0}", y_label_state.selected_center_y()),
         ))
         .with_child(vector_property_slider_row(
+            &theme_reader,
             VECTOR_WIDTH_NAME,
             Slider::new(VECTOR_WIDTH_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(
                     f64::from(VECTOR_MIN_OBJECT_SIZE),
                     f64::from(VECTOR_DOCUMENT_WIDTH),
@@ -891,8 +928,10 @@ fn build_vector_transform_panel(state: VectorDemoState) -> impl Widget {
             move || format!("{:.0}", width_label_state.selected_width()),
         ))
         .with_child(vector_property_slider_row(
+            &theme_reader,
             VECTOR_HEIGHT_NAME,
             Slider::new(VECTOR_HEIGHT_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(
                     f64::from(VECTOR_MIN_OBJECT_SIZE),
                     f64::from(VECTOR_DOCUMENT_HEIGHT),
@@ -907,8 +946,10 @@ fn build_vector_transform_panel(state: VectorDemoState) -> impl Widget {
             move || format!("{:.0}", height_label_state.selected_height()),
         ))
         .with_child(vector_property_slider_row(
+            &theme_reader,
             VECTOR_ROTATION_NAME,
             Slider::new(VECTOR_ROTATION_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(-180.0, 180.0)
                 .step(1.0)
                 .value(rotation_reader_state.selected_rotation() as f64)
@@ -920,8 +961,9 @@ fn build_vector_transform_panel(state: VectorDemoState) -> impl Widget {
             move || format!("{:.0} deg", rotation_label_state.selected_rotation()),
         ))
         .with_child(
-            vector_command_group("Transform commands").with_child(
+            vector_command_group("Transform commands", &theme_reader).with_child(
                 IconButton::new(IconGlyph::Restore, "Reset transform")
+                    .theme_when(clone_dev_theme_reader(&theme_reader))
                     .size(28.0)
                     .icon_size(14.0)
                     .on_press_with_ctx(move |ctx| {
@@ -932,7 +974,10 @@ fn build_vector_transform_panel(state: VectorDemoState) -> impl Widget {
         )
 }
 
-fn build_vector_appearance_panel(state: VectorDemoState) -> impl Widget {
+fn build_vector_appearance_panel(
+    state: VectorDemoState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let color_state = state.clone();
     let stroke_reader_state = state.clone();
     let stroke_change_state = state.clone();
@@ -950,16 +995,20 @@ fn build_vector_appearance_panel(state: VectorDemoState) -> impl Widget {
         .spacing(6.0)
         .alignment(Alignment::Stretch)
         .with_child(vector_property_row_with_width(
+            &theme_reader,
             "Object color",
             104.0,
             ColorSwatch::new("Selected object color", color_state.selected_object_color())
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .size(Size::new(104.0, 32.0))
                 .color_when(move || color_state.selected_object_color())
                 .read_only(),
         ))
         .with_child(vector_property_slider_row(
+            &theme_reader,
             VECTOR_STROKE_WIDTH_NAME,
             Slider::new(VECTOR_STROKE_WIDTH_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(0.5, 24.0)
                 .step(0.5)
                 .value(stroke_reader_state.stroke_width() as f64)
@@ -971,8 +1020,10 @@ fn build_vector_appearance_panel(state: VectorDemoState) -> impl Widget {
             move || format!("{:.1}", stroke_label_state.stroke_width()),
         ))
         .with_child(vector_property_slider_row(
+            &theme_reader,
             VECTOR_OPACITY_NAME,
             Slider::new(VECTOR_OPACITY_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(0.0, 1.0)
                 .step(0.01)
                 .value(opacity_reader_state.opacity() as f64)
@@ -984,8 +1035,10 @@ fn build_vector_appearance_panel(state: VectorDemoState) -> impl Widget {
             move || format!("{:.0}%", opacity_label_state.opacity() * 100.0),
         ))
         .with_child(vector_property_slider_row(
+            &theme_reader,
             VECTOR_CORNER_RADIUS_NAME,
             Slider::new(VECTOR_CORNER_RADIUS_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .range(0.0, 96.0)
                 .step(1.0)
                 .value(corner_reader_state.corner_radius() as f64)
@@ -997,8 +1050,10 @@ fn build_vector_appearance_panel(state: VectorDemoState) -> impl Widget {
             move || format!("{:.0}", corner_label_state.corner_radius()),
         ))
         .with_child(vector_property_row(
+            &theme_reader,
             VECTOR_FILL_RULE_NAME,
             Select::new(VECTOR_FILL_RULE_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
                 .options(VECTOR_FILL_RULE_OPTIONS)
                 .selected(fill_reader_state.fill_rule())
                 .selected_when(move || Some(fill_reader_state.fill_rule()))
@@ -1009,7 +1064,10 @@ fn build_vector_appearance_panel(state: VectorDemoState) -> impl Widget {
         ))
 }
 
-fn build_vector_alignment_panel(state: VectorDemoState) -> impl Widget {
+fn build_vector_alignment_panel(
+    state: VectorDemoState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let left_state = state.clone();
     let center_state = state.clone();
     let right_state = state.clone();
@@ -1021,9 +1079,10 @@ fn build_vector_alignment_panel(state: VectorDemoState) -> impl Widget {
         .spacing(8.0)
         .alignment(Alignment::Stretch)
         .with_child(
-            vector_command_group("Horizontal align")
+            vector_command_group("Horizontal align", &theme_reader)
                 .with_child(
                     IconButton::new(IconGlyph::ChevronLeft, "Align left")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
@@ -1033,6 +1092,7 @@ fn build_vector_alignment_panel(state: VectorDemoState) -> impl Widget {
                 )
                 .with_child(
                     IconButton::new(IconGlyph::Maximize, "Align center")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
@@ -1042,6 +1102,7 @@ fn build_vector_alignment_panel(state: VectorDemoState) -> impl Widget {
                 )
                 .with_child(
                     IconButton::new(IconGlyph::ChevronRight, "Align right")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
@@ -1051,9 +1112,10 @@ fn build_vector_alignment_panel(state: VectorDemoState) -> impl Widget {
                 ),
         )
         .with_child(
-            vector_command_group("Vertical align")
+            vector_command_group("Vertical align", &theme_reader)
                 .with_child(
                     IconButton::new(IconGlyph::ChevronUp, "Align top")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
@@ -1063,6 +1125,7 @@ fn build_vector_alignment_panel(state: VectorDemoState) -> impl Widget {
                 )
                 .with_child(
                     IconButton::new(IconGlyph::Restore, "Align middle")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
@@ -1072,6 +1135,7 @@ fn build_vector_alignment_panel(state: VectorDemoState) -> impl Widget {
                 )
                 .with_child(
                     IconButton::new(IconGlyph::ChevronDown, "Align bottom")
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .size(28.0)
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
@@ -1082,21 +1146,38 @@ fn build_vector_alignment_panel(state: VectorDemoState) -> impl Widget {
         )
 }
 
-fn vector_property_row<W>(label: &'static str, control: W) -> PropertyRow
+fn vector_property_row<W>(
+    theme_reader: &DevThemeReader,
+    label: &'static str,
+    control: W,
+) -> PropertyRow
 where
     W: Widget + 'static,
 {
-    PropertyRow::new(label, control).inline().label_width(104.0)
+    PropertyRow::new(label, control)
+        .theme_when(clone_dev_theme_reader(theme_reader))
+        .inline()
+        .label_width(104.0)
 }
 
-fn vector_property_row_with_width<W>(label: &'static str, width: f32, control: W) -> PropertyRow
+fn vector_property_row_with_width<W>(
+    theme_reader: &DevThemeReader,
+    label: &'static str,
+    width: f32,
+    control: W,
+) -> PropertyRow
 where
     W: Widget + 'static,
 {
-    vector_property_row(label, control).control_width(width)
+    vector_property_row(theme_reader, label, control).control_width(width)
 }
 
-fn vector_property_slider_row<W, F>(label: &'static str, control: W, value_reader: F) -> PropertyRow
+fn vector_property_slider_row<W, F>(
+    theme_reader: &DevThemeReader,
+    label: &'static str,
+    control: W,
+    value_reader: F,
+) -> PropertyRow
 where
     W: Widget + 'static,
     F: Fn() -> String + 'static,
@@ -1112,10 +1193,13 @@ where
                     Label::dynamic("", value_reader)
                         .font_size(10.0)
                         .line_height(14.0)
-                        .color(Color::rgba(0.32, 0.37, 0.44, 1.0)),
+                        .color_when(dev_theme_color(theme_reader, |theme| {
+                            theme.palette.text_muted
+                        })),
                 ),
             ),
     )
+    .theme_when(clone_dev_theme_reader(theme_reader))
     .inline()
     .label_width(82.0)
 }
@@ -1146,19 +1230,25 @@ struct VectorCanvasDrag {
 
 struct VectorEditorCanvas {
     state: VectorDemoState,
+    theme_reader: DevThemeReader,
     drag: Option<VectorCanvasDrag>,
     hovered_object: Option<usize>,
     hovered_handle: Option<VectorCanvasDragMode>,
 }
 
 impl VectorEditorCanvas {
-    fn new(state: VectorDemoState) -> Self {
+    fn new(state: VectorDemoState, theme_reader: DevThemeReader) -> Self {
         Self {
             state,
+            theme_reader,
             drag: None,
             hovered_object: None,
             hovered_handle: None,
         }
+    }
+
+    fn theme(&self) -> DefaultTheme {
+        (self.theme_reader)()
     }
 
     fn screen_center(bounds: Rect) -> Point {
@@ -1279,11 +1369,11 @@ impl VectorEditorCanvas {
         request_window_refresh(ctx, true);
     }
 
-    fn paint_grid(ctx: &mut PaintCtx, bounds: Rect) {
+    fn paint_grid(ctx: &mut PaintCtx, bounds: Rect, theme: &DefaultTheme) {
         let minor = 24.0 * VECTOR_CANVAS_ZOOM;
         let center = Self::screen_center(bounds);
-        let grid_minor = Color::rgba(0.72, 0.76, 0.82, 0.30);
-        let grid_major = Color::rgba(0.56, 0.61, 0.70, 0.36);
+        let grid_minor = theme.palette.text_muted.with_alpha(0.18);
+        let grid_major = theme.palette.text_muted.with_alpha(0.30);
 
         let mut x = center.x;
         while x > bounds.x() {
@@ -1401,7 +1491,7 @@ impl VectorEditorCanvas {
         );
     }
 
-    fn paint_selection(&self, ctx: &mut PaintCtx, bounds: Rect) {
+    fn paint_selection(&self, ctx: &mut PaintCtx, bounds: Rect, theme: &DefaultTheme) {
         let selected = self.state.selected_object();
         if !self.state.object_visible(selected) {
             return;
@@ -1412,7 +1502,7 @@ impl VectorEditorCanvas {
             .corners()
             .map(|corner| Self::document_to_screen(bounds, corner));
         let selection = vector_closed_polyline_path(&corners);
-        let accent = Color::rgba(0.07, 0.38, 0.92, 1.0);
+        let accent = theme.palette.accent_border_focus;
         ctx.stroke(selection, accent, StrokeStyle::new(1.5));
 
         let top_center = Self::document_to_screen(bounds, object.top_center());
@@ -1578,10 +1668,11 @@ impl Widget for VectorEditorCanvas {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let bounds = ctx.bounds();
-        ctx.fill_rect(bounds, Color::rgba(0.905, 0.920, 0.942, 1.0));
-        ctx.stroke_bounds(Color::rgba(0.62, 0.67, 0.74, 0.82), StrokeStyle::new(1.0));
+        let theme = self.theme();
+        ctx.fill_rect(bounds, theme.palette.surface);
+        ctx.stroke_bounds(theme.palette.border, StrokeStyle::new(1.0));
         ctx.push_clip_rect(bounds);
-        Self::paint_grid(ctx, bounds);
+        Self::paint_grid(ctx, bounds, &theme);
         for index in 0..VECTOR_OBJECT_LABELS.len() {
             if !self.state.object_visible(index) {
                 continue;
@@ -1590,7 +1681,7 @@ impl Widget for VectorEditorCanvas {
                 self.paint_object(ctx, bounds, object);
             }
         }
-        self.paint_selection(ctx, bounds);
+        self.paint_selection(ctx, bounds, &theme);
         ctx.pop_clip();
     }
 
@@ -1837,11 +1928,9 @@ mod tests {
     }
 
     fn build_vector_canvas_test_application() -> Application {
-        Application::new().window(
-            WindowBuilder::new()
-                .title(VECTOR_EDITOR_TAB_LABEL)
-                .root(VectorEditorCanvas::new(VectorDemoState::new())),
-        )
+        Application::new().window(WindowBuilder::new().title(VECTOR_EDITOR_TAB_LABEL).root(
+            VectorEditorCanvas::new(VectorDemoState::new(), default_dev_theme_reader()),
+        ))
     }
 
     fn click_pointer(window: &TestWindow, position: Point) -> Result<()> {

@@ -1,5 +1,5 @@
 use sui_core::{
-    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
+    Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
     PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
     SemanticsValue, Size, WidgetId,
 };
@@ -623,10 +623,10 @@ impl Widget for FloatingWorkspace {
         }
 
         let palette = self.theme.palette;
-        ctx.fill_bounds(Color::rgba(0.94, 0.955, 0.975, 1.0));
+        ctx.fill_bounds(palette.control);
         ctx.fill_rect(
             ctx.bounds().inflate(-12.0, -12.0),
-            palette.surface.with_alpha(0.55),
+            palette.surface_raised.with_alpha(0.72),
         );
 
         for view_id in self.active_view_ids() {
@@ -735,10 +735,10 @@ impl Widget for FloatingViewSurface {
         let metrics = self.theme.metrics;
         let border_width = metrics.border_width.max(1.0);
         ctx.push_clip_rect(ctx.bounds());
-        ctx.fill_rect(ctx.bounds(), palette.surface);
+        ctx.fill_rect(ctx.bounds(), palette.surface_raised);
         if !view.maximized {
             let title_bar = floating_view_title_bar_rect(&self.theme, ctx.bounds());
-            ctx.fill_rect(title_bar, Color::rgba(0.16, 0.20, 0.26, 1.0));
+            ctx.fill_rect(title_bar, palette.control_active);
             ctx.draw_text(
                 Rect::new(
                     title_bar.x() + 14.0,
@@ -747,7 +747,7 @@ impl Widget for FloatingViewSurface {
                     (title_bar.height() - 16.0).max(0.0),
                 ),
                 view.title,
-                self.theme.text_style(Color::rgba(0.96, 0.97, 0.99, 1.0)),
+                self.theme.text_style(palette.text),
             );
         }
         self.host.paint(ctx);
@@ -1285,9 +1285,9 @@ impl Widget for SplitView {
         let divider_color = if self.drag_pointer.is_some() {
             palette.accent.with_alpha(0.16)
         } else if self.hovered {
-            palette.surface_hover
+            palette.control_hover
         } else {
-            Color::rgba(0.94, 0.955, 0.975, 1.0)
+            palette.control
         };
         let border_color = if self.drag_pointer.is_some() || self.hovered || ctx.is_focused() {
             palette.border_focus
