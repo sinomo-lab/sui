@@ -932,6 +932,7 @@ fn hdr_image_to_sdr_rgba(
     image: &HdrRgbaImage,
     visualization: DebugSdrVisualization,
     reference_white: f32,
+    output_primaries: DisplayColorPrimaries,
 ) -> Result<RgbaImage> {
     let reference_white = if reference_white.is_finite() && reference_white > 0.0 {
         reference_white
@@ -940,33 +941,44 @@ fn hdr_image_to_sdr_rgba(
     };
     let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
     for rgba in image.pixels().chunks_exact(4) {
+        let normalized = linear_output_primaries_to_srgb(
+            [
+                rgba[0] / reference_white,
+                rgba[1] / reference_white,
+                rgba[2] / reference_white,
+            ],
+            output_primaries,
+        );
         match visualization {
             DebugSdrVisualization::ToneMappedColor => {
-                // Native HDR final targets store SDR white above 1.0 in scRGB space.
+                // Native HDR final targets store SDR white above 1.0. Divide that
+                // headroom back out, convert the output primaries to linear sRGB,
+                // then clamp during sRGB encoding. SDR-authored sRGB colors round
+                // back to their original PNG bytes; HDR values overflow to white.
                 pixels.extend_from_slice(&[
-                    linear_to_srgb_capture_u8(rgba[0] / reference_white),
-                    linear_to_srgb_capture_u8(rgba[1] / reference_white),
-                    linear_to_srgb_capture_u8(rgba[2] / reference_white),
+                    linear_to_srgb_capture_u8(normalized[0]),
+                    linear_to_srgb_capture_u8(normalized[1]),
+                    linear_to_srgb_capture_u8(normalized[2]),
                     linear_alpha_to_capture_u8(rgba[3]),
                 ]);
             }
             DebugSdrVisualization::LuminanceHeatmap => {
-                let luminance = ((rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
-                    / reference_white)
-                    .max(0.0);
+                let luminance =
+                    (normalized[0] * 0.2126 + normalized[1] * 0.7152 + normalized[2] * 0.0722)
+                        .max(0.0);
                 let normalized = (luminance / (1.0 + luminance)).clamp(0.0, 1.0);
                 let value = (normalized * 255.0).round() as u8;
                 pixels.extend_from_slice(&[value, value, value, 255]);
             }
             DebugSdrVisualization::HeadroomHeatmap => {
-                let headroom = (rgba[0].max(rgba[1]).max(rgba[2]) / reference_white).max(0.0);
+                let headroom = normalized[0].max(normalized[1]).max(normalized[2]).max(0.0);
                 let normalized = (headroom / (1.0 + headroom)).clamp(0.0, 1.0);
                 let red = (normalized * 255.0).round() as u8;
                 let blue = ((1.0 - normalized) * 96.0).round() as u8;
                 pixels.extend_from_slice(&[red, 32, blue, 255]);
             }
             DebugSdrVisualization::ClipMask => {
-                let clipped = rgba[0].max(rgba[1]).max(rgba[2]) > reference_white;
+                let clipped = normalized[0].max(normalized[1]).max(normalized[2]) > 1.0;
                 if clipped {
                     pixels.extend_from_slice(&[255, 64, 64, 255]);
                 } else {
@@ -978,17 +990,37 @@ fn hdr_image_to_sdr_rgba(
     RgbaImage::new(image.width(), image.height(), pixels)
 }
 
+fn linear_output_primaries_to_srgb(
+    color: [f32; 3],
+    output_primaries: DisplayColorPrimaries,
+) -> [f32; 3] {
+    match output_primaries {
+        DisplayColorPrimaries::Srgb => color,
+        DisplayColorPrimaries::DisplayP3 => {
+            let det = (0.822_461_96 * 0.966_805_76) - (0.177_538_02 * 0.033_194_2);
+            let red = (0.966_805_76 * color[0] - 0.177_538_02 * color[1]) / det;
+            let green = (-0.033_194_2 * color[0] + 0.822_461_96 * color[1]) / det;
+            let blue = (color[2] - (0.017_082_63 * red) - (0.072_397_43 * green)) / 0.910_519_96;
+            [red, green, blue]
+        }
+    }
+}
+
 fn encode_hdr_debug_artifact(
     image: HdrRgbaImage,
     request: DebugCaptureRequest,
     sdr_reference_white: f32,
+    output_primaries: DisplayColorPrimaries,
 ) -> Result<DebugCaptureArtifact> {
     match request.encoding {
         DebugCaptureEncoding::Exr => Ok(DebugCaptureArtifact::HdrLinearRgbaF32(image)),
-        DebugCaptureEncoding::Png => {
-            hdr_image_to_sdr_rgba(&image, request.sdr_visualization, sdr_reference_white)
-                .map(DebugCaptureArtifact::SdrRgba8)
-        }
+        DebugCaptureEncoding::Png => hdr_image_to_sdr_rgba(
+            &image,
+            request.sdr_visualization,
+            sdr_reference_white,
+            output_primaries,
+        )
+        .map(DebugCaptureArtifact::SdrRgba8),
     }
 }
 
@@ -1382,7 +1414,7 @@ impl WgpuRenderer {
             }
             DebugCaptureStage::HdrIntermediate => {
                 let image = self.capture_hdr_intermediate_rgba_f32(window_id)?;
-                encode_hdr_debug_artifact(image, request, 1.0)
+                encode_hdr_debug_artifact(image, request, 1.0, DisplayColorPrimaries::Srgb)
             }
         }
     }
@@ -1450,6 +1482,7 @@ impl WgpuRenderer {
                     image,
                     request,
                     self.final_composed_sdr_reference_white(window_id),
+                    self.final_composed_output_primaries(window_id),
                 )
             }
             other => Err(Error::new(format!(
@@ -1489,6 +1522,13 @@ impl WgpuRenderer {
             })
             .filter(|scale| scale.is_finite() && *scale > 0.0)
             .unwrap_or(1.0)
+    }
+
+    fn final_composed_output_primaries(&self, window_id: WindowId) -> DisplayColorPrimaries {
+        self.surfaces
+            .get(&window_id)
+            .map(|surface| scene::output_primaries(surface.output_strategy))
+            .unwrap_or(DisplayColorPrimaries::Srgb)
     }
 
     fn readback_target_bytes(
@@ -4426,14 +4466,83 @@ mod tests {
         )
         .unwrap();
 
-        let sdr =
-            hdr_image_to_sdr_rgba(&image, DebugSdrVisualization::ToneMappedColor, 2.5).unwrap();
+        let sdr = hdr_image_to_sdr_rgba(
+            &image,
+            DebugSdrVisualization::ToneMappedColor,
+            2.5,
+            DisplayColorPrimaries::Srgb,
+        )
+        .unwrap();
 
         assert_eq!(&sdr.pixels()[0..4], &[255, 255, 255, 255]);
         assert!(sdr.pixels()[4] < 255);
         assert_eq!(sdr.pixels()[4], sdr.pixels()[5]);
         assert_eq!(sdr.pixels()[7], 128);
         assert_eq!(&sdr.pixels()[8..12], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn hdr_png_capture_preserves_srgb_bytes_after_hdr_scale_and_half_readback() {
+        let reference_white = 203.0 / 80.0;
+        let mut pixels = Vec::with_capacity(256 * 4);
+        let mut expected = Vec::with_capacity(256 * 4);
+
+        for value in 0..=255u8 {
+            let encoded = value as f32 / 255.0;
+            let linear = shader_color(Color::srgba(encoded, encoded, encoded, 1.0));
+            let captured = half::f16::from_f32(linear[0] * reference_white).to_f32();
+            pixels.extend_from_slice(&[captured, captured, captured, 1.0]);
+            expected.extend_from_slice(&[value, value, value, 255]);
+        }
+
+        let image = HdrRgbaImage::new(256, 1, pixels).unwrap();
+        let sdr = hdr_image_to_sdr_rgba(
+            &image,
+            DebugSdrVisualization::ToneMappedColor,
+            reference_white,
+            DisplayColorPrimaries::Srgb,
+        )
+        .unwrap();
+
+        assert_eq!(sdr.pixels(), expected.as_slice());
+    }
+
+    #[test]
+    fn hdr_png_capture_converts_display_p3_final_output_back_to_srgb() {
+        let color = Color::srgba(66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0, 1.0);
+        let strategy = OutputStrategy::HdrNativeSurface {
+            format: wgpu::TextureFormat::Rgba16Float,
+            primaries: DisplayColorPrimaries::DisplayP3,
+            transfer: DisplayTransferFunction::LinearExtended,
+        };
+        let transformed = apply_output_transform_for_testing(
+            shader_color(color),
+            strategy,
+            RequestedToneMappingMode::Automatic,
+            203.0,
+            None,
+        );
+        let image = HdrRgbaImage::new(
+            1,
+            1,
+            vec![
+                transformed[0],
+                transformed[1],
+                transformed[2],
+                transformed[3],
+            ],
+        )
+        .unwrap();
+
+        let sdr = hdr_image_to_sdr_rgba(
+            &image,
+            DebugSdrVisualization::ToneMappedColor,
+            203.0 / 80.0,
+            DisplayColorPrimaries::DisplayP3,
+        )
+        .unwrap();
+
+        assert_eq!(&sdr.pixels()[0..4], &[66, 42, 213, 255]);
     }
 
     #[test]
@@ -4448,12 +4557,23 @@ mod tests {
         )
         .unwrap();
 
-        let mask = hdr_image_to_sdr_rgba(&image, DebugSdrVisualization::ClipMask, 2.0).unwrap();
+        let mask = hdr_image_to_sdr_rgba(
+            &image,
+            DebugSdrVisualization::ClipMask,
+            2.0,
+            DisplayColorPrimaries::Srgb,
+        )
+        .unwrap();
         assert_eq!(&mask.pixels()[0..4], &[0, 0, 0, 255]);
         assert_eq!(&mask.pixels()[4..8], &[255, 64, 64, 255]);
 
-        let heatmap =
-            hdr_image_to_sdr_rgba(&image, DebugSdrVisualization::HeadroomHeatmap, 2.0).unwrap();
+        let heatmap = hdr_image_to_sdr_rgba(
+            &image,
+            DebugSdrVisualization::HeadroomHeatmap,
+            2.0,
+            DisplayColorPrimaries::Srgb,
+        )
+        .unwrap();
         assert!(heatmap.pixels()[4] >= heatmap.pixels()[0]);
         assert_eq!(heatmap.pixels()[7], 255);
     }
@@ -4470,6 +4590,7 @@ mod tests {
                 sdr_visualization: DebugSdrVisualization::ToneMappedColor,
             },
             2.5,
+            DisplayColorPrimaries::Srgb,
         )
         .unwrap();
         let DebugCaptureArtifact::SdrRgba8(png) = png else {
@@ -4486,6 +4607,7 @@ mod tests {
                 sdr_visualization: DebugSdrVisualization::ToneMappedColor,
             },
             2.5,
+            DisplayColorPrimaries::Srgb,
         )
         .unwrap();
         let DebugCaptureArtifact::HdrLinearRgbaF32(exr) = exr else {
