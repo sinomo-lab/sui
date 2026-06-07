@@ -3714,6 +3714,105 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+const ROUNDED_RECT_SHADER_SOURCE: &str = r#"
+const RR_MODE_FILL: f32 = 0.0;
+const RR_MODE_SHADOW: f32 = 1.0;
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>, @location(1) local: vec2<f32>,
+    @location(2) p0: vec4<f32>, @location(3) radii: vec4<f32>,
+    @location(4) p2: vec4<f32>, @location(5) border_color: vec4<f32>,
+};
+@vertex
+fn vs_main(@location(0) position: vec2<f32>, @location(1) color: vec4<f32>,
+    @location(2) local: vec2<f32>, @location(3) p0: vec4<f32>, @location(4) radii: vec4<f32>,
+    @location(5) p2: vec4<f32>, @location(6) border_color: vec4<f32>) -> VsOut {
+    var out: VsOut; out.position = vec4<f32>(position, 0.0, 1.0);
+    out.color = color; out.local = local; out.p0 = p0; out.radii = radii; out.p2 = p2; out.border_color = border_color;
+    return out;
+}
+fn sd_round_box(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>) -> f32 {
+    let rt = select(r.x, r.y, p.x > 0.0);
+    let rb = select(r.w, r.z, p.x > 0.0);
+    let rr = select(rt, rb, p.y > 0.0);
+    let q = abs(p) - b + vec2<f32>(rr, rr);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - rr;
+}
+fn gaussian_box_coverage(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>, sigma: f32) -> f32 {
+    let s = max(sigma, 1e-3); let d = sd_round_box(p, b, r); let edge = 1.4142136 * s;
+    return 1.0 - smoothstep(-edge, edge, d);
+}
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let half = max(in.p0.xy, vec2<f32>(0.0));
+    let mode = in.p0.z; let feather = in.p0.w;
+    let radii = clamp(in.radii, vec4<f32>(0.0), vec4<f32>(min(half.x, half.y)));
+    if (mode == RR_MODE_SHADOW) {
+        let sigma = in.p2.y;
+        let pp = in.local - vec2<f32>(in.p2.z, in.p2.w);
+        let cov = gaussian_box_coverage(pp, half, radii, sigma);
+        return vec4<f32>(in.color.rgb, in.color.a * cov);
+    }
+    let p = in.local; let d = sd_round_box(p, half, radii);
+    let aa = max(feather, length(vec2<f32>(fwidth(p.x), fwidth(p.y))));
+    let fill_cov = clamp(0.5 - d / max(aa, 1e-4), 0.0, 1.0);
+    let bw = in.p2.x;
+    if (bw > 0.0) {
+        let inner_cov = clamp(0.5 - (d + bw) / max(aa, 1e-4), 0.0, 1.0);
+        let ring = clamp(fill_cov - inner_cov, 0.0, 1.0);
+        let interior = inner_cov;
+        let a = in.border_color.a * ring + in.color.a * interior;
+        if (a <= 0.0) { return vec4<f32>(0.0); }
+        let rgb = in.border_color.rgb * (in.border_color.a * ring) + in.color.rgb * (in.color.a * interior);
+        return vec4<f32>(rgb / a, a);
+    }
+    return vec4<f32>(in.color.rgb, in.color.a * fill_cov);
+}
+"#;
+
+// Linear-gradient brush. The gradient is packed entirely into vertex attributes
+// (bind-group-free, like the rounded-rect pipeline): two stops carried in `color`
+// (stop 0, linear) and `border_color` (stop 1, linear); the gradient axis end-points
+// (rect-local) in p2 = [start.x, start.y, end.x, end.y]. Coverage reuses the rounded
+// rect SDF so the same pipeline fills both sharp FillRect (radii = 0) and rounded fills.
+const GRADIENT_RECT_SHADER_SOURCE: &str = r#"
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) stop0: vec4<f32>, @location(1) local: vec2<f32>,
+    @location(2) p0: vec4<f32>, @location(3) radii: vec4<f32>,
+    @location(4) axis: vec4<f32>, @location(5) stop1: vec4<f32>,
+};
+@vertex
+fn vs_main(@location(0) position: vec2<f32>, @location(1) stop0: vec4<f32>,
+    @location(2) local: vec2<f32>, @location(3) p0: vec4<f32>, @location(4) radii: vec4<f32>,
+    @location(5) axis: vec4<f32>, @location(6) stop1: vec4<f32>) -> VsOut {
+    var out: VsOut; out.position = vec4<f32>(position, 0.0, 1.0);
+    out.stop0 = stop0; out.local = local; out.p0 = p0; out.radii = radii; out.axis = axis; out.stop1 = stop1;
+    return out;
+}
+fn sd_round_box(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>) -> f32 {
+    let rt = select(r.x, r.y, p.x > 0.0);
+    let rb = select(r.w, r.z, p.x > 0.0);
+    let rr = select(rt, rb, p.y > 0.0);
+    let q = abs(p) - b + vec2<f32>(rr, rr);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - rr;
+}
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let half = max(in.p0.xy, vec2<f32>(0.0));
+    let feather = in.p0.w;
+    let radii = clamp(in.radii, vec4<f32>(0.0), vec4<f32>(min(half.x, half.y)));
+    let p = in.local; let d = sd_round_box(p, half, radii);
+    let aa = max(feather, length(vec2<f32>(fwidth(p.x), fwidth(p.y))));
+    let fill_cov = clamp(0.5 - d / max(aa, 1e-4), 0.0, 1.0);
+    let a = in.axis.xy; let b = in.axis.zw;
+    let ab = b - a; let denom = max(dot(ab, ab), 1e-6);
+    let t = clamp(dot(in.local - a, ab) / denom, 0.0, 1.0);
+    let col = mix(in.stop0, in.stop1, t);
+    return vec4<f32>(col.rgb, col.a * fill_cov);
+}
+"#;
+
 const TEXT_ATLAS_SHADER_SOURCE: &str = r#"
 struct VsOut {
     @builtin(position) position: vec4<f32>,
@@ -3760,6 +3859,39 @@ fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
     return select(high, low, color <= vec3<f32>(0.04045));
 }
 
+// Gamma-aware coverage correction for grayscale + LCD glyph masks.
+//
+// Glyph AA coverage is alpha-blended into a LINEAR (Rgba16Float) target. A linear
+// blend of a dark glyph over a light surface composites too light once re-encoded to
+// sRGB at output: e.g. coverage 0.5 of black-on-white yields linear 0.5 -> sRGB ~0.735
+// instead of the perceptually-correct ~0.5, so light-mode text looks faint/thin.
+//
+// We darken mid-coverage with a `coverage^gamma` (gamma < 1 raises coverage, which in
+// the One/OneMinusSrcAlpha blend pulls the result toward the foreground -> darker text).
+// The correction is LUMINANCE-AWARE: full strength for dark foreground text (which is
+// effectively always drawn on a light surface) and tapered to zero for light foreground
+// text (light-on-dark, i.e. dark mode), so dark-mode weight is left visually unchanged.
+const TEXT_COVERAGE_GAMMA: f32 = 0.45;
+
+// Perceptual luminance of the (linear) foreground; below LUMA_LO it is treated as fully
+// "dark text" (full correction), above LUMA_HI as fully "light text" (no correction).
+const TEXT_COVERAGE_LUMA_LO: f32 = 0.20;
+const TEXT_COVERAGE_LUMA_HI: f32 = 0.55;
+
+fn coverage_correction_strength(linear_fg: vec3<f32>) -> f32 {
+    let luma = dot(linear_fg, vec3<f32>(0.2126, 0.7152, 0.0722));
+    // 1.0 for dark text, 0.0 for light text, smooth in between.
+    return 1.0 - smoothstep(TEXT_COVERAGE_LUMA_LO, TEXT_COVERAGE_LUMA_HI, luma);
+}
+
+fn correct_coverage(coverage: f32, strength: f32) -> f32 {
+    let c = clamp(coverage, 0.0, 1.0);
+    // Interpolate the exponent from identity (1.0, no change) toward TEXT_COVERAGE_GAMMA
+    // by `strength`, so light-on-dark text keeps its exact linear coverage.
+    let gamma = mix(1.0, TEXT_COVERAGE_GAMMA, strength);
+    return pow(c, gamma);
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Clamp the sample point to the glyph's half-texel-inset UV rect so bilinear taps at the quad
@@ -3770,24 +3902,33 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
         let alpha = sampled.a * opacity;
-        // Color glyphs are stored as sRGB; linearize before premultiplying for the linear blend.
+        // Color/bitmap emoji glyphs carry their own RGB; they are NOT coverage masks, so the
+        // gamma correction must not touch them. Linearize the stored sRGB and premultiply.
         return vec4<f32>(srgb_to_linear(sampled.rgb) * alpha, alpha);
     }
 
+    // Foreground-luminance-aware correction strength, shared by every coverage-mask path.
+    let strength = coverage_correction_strength(in.color.rgb);
+
     if in.metadata.x > 0.5 {
-        let coverage = sampled.rgb;
+        // LCD subpixel: correct each channel of the per-subpixel coverage independently.
+        let coverage = vec3<f32>(
+            correct_coverage(sampled.r, strength),
+            correct_coverage(sampled.g, strength),
+            correct_coverage(sampled.b, strength),
+        );
         let max_coverage = max(max(coverage.r, coverage.g), coverage.b);
         let premul = in.color.rgb * coverage * in.color.a;
         return vec4<f32>(premul, in.color.a * max_coverage);
     }
 
     if in.metadata.y > 0.5 {
-        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
+        let coverage = correct_coverage((sampled.r + sampled.g + sampled.b) / 3.0, strength);
         let alpha = in.color.a * coverage;
         return vec4<f32>(in.color.rgb * alpha, alpha);
     }
 
-    let coverage = sampled.a;
+    let coverage = correct_coverage(sampled.a, strength);
     let alpha = in.color.a * coverage;
     return vec4<f32>(in.color.rgb * alpha, alpha);
 }
@@ -3846,6 +3987,24 @@ fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
     return select(high, low, color <= vec3<f32>(0.04045));
 }
 
+// See TEXT_ATLAS_SHADER_SOURCE for the rationale: a luminance-aware `coverage^gamma`
+// correction that restores light-mode (dark-text-on-light) weight without thickening
+// dark-mode (light-text-on-dark) text. Color/bitmap emoji are exempt (handled before).
+const TEXT_COVERAGE_GAMMA: f32 = 0.45;
+const TEXT_COVERAGE_LUMA_LO: f32 = 0.20;
+const TEXT_COVERAGE_LUMA_HI: f32 = 0.55;
+
+fn coverage_correction_strength(linear_fg: vec3<f32>) -> f32 {
+    let luma = dot(linear_fg, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return 1.0 - smoothstep(TEXT_COVERAGE_LUMA_LO, TEXT_COVERAGE_LUMA_HI, luma);
+}
+
+fn correct_coverage(coverage: f32, strength: f32) -> f32 {
+    let c = clamp(coverage, 0.0, 1.0);
+    let gamma = mix(1.0, TEXT_COVERAGE_GAMMA, strength);
+    return pow(c, gamma);
+}
+
 fn dual_source(foreground: vec3<f32>, alpha: vec3<f32>) -> FragmentOutput {
     var out: FragmentOutput;
     let source_alpha = max(max(alpha.r, alpha.g), alpha.b);
@@ -3863,21 +4022,28 @@ fn fs_main(in: VsOut) -> FragmentOutput {
     let sampled = textureSample(text_atlas_texture, text_atlas_sampler, clamped_uv, i32(in.layer));
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
-        // Color glyphs are stored as sRGB; linearize before premultiplying for the linear blend.
+        // Color/bitmap emoji glyphs carry their own RGB and are not coverage masks: exempt
+        // from the gamma correction. Linearize the stored sRGB before premultiplying.
         return dual_source(srgb_to_linear(sampled.rgb), vec3<f32>(sampled.a * opacity));
     }
 
+    let strength = coverage_correction_strength(in.color.rgb);
+
     if in.metadata.x > 0.5 {
-        let coverage = sampled.rgb;
+        let coverage = vec3<f32>(
+            correct_coverage(sampled.r, strength),
+            correct_coverage(sampled.g, strength),
+            correct_coverage(sampled.b, strength),
+        );
         return dual_source(in.color.rgb, coverage * in.color.a);
     }
 
     if in.metadata.y > 0.5 {
-        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
+        let coverage = correct_coverage((sampled.r + sampled.g + sampled.b) / 3.0, strength);
         return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
     }
 
-    let coverage = sampled.a;
+    let coverage = correct_coverage(sampled.a, strength);
     return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
 }
 "#;
@@ -4141,9 +4307,10 @@ mod tests {
         WidgetId, WindowId,
     };
     use sui_scene::{
-        ImageRegistry, ImageSampling, ImageSource, LayerCompositionMode, RegisteredImage, Scene,
-        SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
-        SceneLayerUpdateKind, StrokeStyle, WidgetShader,
+        Border, Brush, GradientStop, ImageRegistry, ImageSampling, ImageSource,
+        LayerCompositionMode, RegisteredImage, Scene, SceneCommand, SceneFrame, SceneLayer,
+        SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, ShadowParams,
+        StrokeStyle, WidgetShader,
     };
     use sui_text::{
         FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, TextLayoutRegistry, TextRun,
@@ -5648,10 +5815,20 @@ mod tests {
     #[test]
     fn text_atlas_shaders_use_sampled_coverage_and_dual_source_blending() {
         assert!(!TEXT_ATLAS_SHADER_SOURCE.contains("apply_contrast_and_gamma_correction"));
-        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("let coverage = sampled.a;"));
+        // The grayscale coverage is still derived from `sampled.a`, now routed through the
+        // luminance-aware gamma correction (`correct_coverage`) that fixes light-mode washout.
+        assert!(
+            TEXT_ATLAS_SHADER_SOURCE
+                .contains("let coverage = correct_coverage(sampled.a, strength);")
+        );
+        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("fn correct_coverage("));
         assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(0)"));
         assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(1)"));
-        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("let coverage = sampled.a;"));
+        assert!(
+            TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE
+                .contains("let coverage = correct_coverage(sampled.a, strength);")
+        );
+        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("fn correct_coverage("));
     }
 
     #[test]
@@ -5958,12 +6135,12 @@ mod tests {
         let passes = batch_draw_ops(
             &DrawOpArena {
                 scene_vertices: vec![
-                    Vertex {
-                        position: [0.0, 0.0],
-                        color: [1.0, 1.0, 1.0, 1.0],
-                        tex_coords: [0.0, 0.0],
-                        shader_params: [0.0; 4],
-                    };
+                    Vertex::basic(
+                        [0.0, 0.0],
+                        [1.0, 1.0, 1.0, 1.0],
+                        [0.0, 0.0],
+                        [0.0; 4],
+                    );
                     6
                 ],
                 clip_vertices: Vec::new(),
@@ -6002,12 +6179,12 @@ mod tests {
         let prepared = prepare_frame_batches(
             DrawOpArena {
                 scene_vertices: vec![
-                    Vertex {
-                        position: [0.0, 0.0],
-                        color: [1.0, 1.0, 1.0, 1.0],
-                        tex_coords: [0.0, 0.0],
-                        shader_params: [0.0; 4],
-                    };
+                    Vertex::basic(
+                        [0.0, 0.0],
+                        [1.0, 1.0, 1.0, 1.0],
+                        [0.0, 0.0],
+                        [0.0; 4],
+                    );
                     6
                 ],
                 clip_vertices: Vec::new(),
@@ -6142,12 +6319,7 @@ mod tests {
 
     #[test]
     fn renderer_frame_stats_count_passes_draws_and_uploaded_vertices() {
-        let vertex = Vertex {
-            position: [0.0, 0.0],
-            color: [1.0, 1.0, 1.0, 1.0],
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        };
+        let vertex = Vertex::basic([0.0, 0.0], [1.0, 1.0, 1.0, 1.0], [0.0, 0.0], [0.0; 4]);
         let prepared = PreparedFrameBatches {
             scene_vertices: vec![vertex; 9],
             clip_vertices: vec![vertex; 6],
@@ -11263,5 +11435,320 @@ mod tests {
         renderer.set_feathering_enabled(false);
 
         assert!(!renderer.feathering_enabled());
+    }
+
+    /// Minimal RGBA8 PNG encoder using a single zlib "stored" (uncompressed) block, so the
+    /// capture test can persist a screenshot without pulling in an image/png dependency.
+    fn encode_png_rgba8(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+        fn crc32(bytes: &[u8]) -> u32 {
+            let mut crc: u32 = 0xFFFF_FFFF;
+            for &byte in bytes {
+                crc ^= byte as u32;
+                for _ in 0..8 {
+                    let mask = (crc & 1).wrapping_neg();
+                    crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+                }
+            }
+            !crc
+        }
+
+        fn adler32(bytes: &[u8]) -> u32 {
+            let mut a: u32 = 1;
+            let mut b: u32 = 0;
+            for &byte in bytes {
+                a = (a + byte as u32) % 65521;
+                b = (b + a) % 65521;
+            }
+            (b << 16) | a
+        }
+
+        fn write_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+            out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            let mut crc_input = Vec::with_capacity(4 + data.len());
+            crc_input.extend_from_slice(kind);
+            crc_input.extend_from_slice(data);
+            out.extend_from_slice(&crc_input);
+            out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
+        }
+
+        // Raw image data: one filter byte (0 = None) per scanline, then RGBA pixels.
+        let stride = width as usize * 4;
+        let mut raw = Vec::with_capacity((stride + 1) * height as usize);
+        for row in 0..height as usize {
+            raw.push(0);
+            raw.extend_from_slice(&rgba[row * stride..(row + 1) * stride]);
+        }
+
+        // zlib stream: 0x78 0x01 header, stored deflate blocks, adler32 trailer.
+        let mut zlib = vec![0x78, 0x01];
+        let mut offset = 0;
+        while offset < raw.len() {
+            let block = (raw.len() - offset).min(0xFFFF);
+            let last = offset + block >= raw.len();
+            zlib.push(if last { 1 } else { 0 });
+            zlib.extend_from_slice(&(block as u16).to_le_bytes());
+            zlib.extend_from_slice(&(!(block as u16)).to_le_bytes());
+            zlib.extend_from_slice(&raw[offset..offset + block]);
+            offset += block;
+        }
+        zlib.extend_from_slice(&adler32(&raw).to_be_bytes());
+
+        let mut png = Vec::new();
+        png.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        let mut ihdr = Vec::with_capacity(13);
+        ihdr.extend_from_slice(&width.to_be_bytes());
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]); // bit depth 8, color type 6 (RGBA)
+        write_chunk(&mut png, b"IHDR", &ihdr);
+        write_chunk(&mut png, b"IDAT", &zlib);
+        write_chunk(&mut png, b"IEND", &[]);
+        png
+    }
+
+    #[test]
+    fn rounded_rect_primitives_render_to_png_capture() {
+        // Exercises the new rounded-rect (per-corner radii + border + soft shadow) and the
+        // linear-gradient brush end to end: build a scene, render headless, persist a PNG.
+        let window_id = WindowId::new(4242);
+        let viewport = Size::new(320.0, 240.0);
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Clear(Color::rgba(0.12, 0.13, 0.16, 1.0)));
+
+        // A shadowed, bordered rounded card inside a larger clip. The clip is wide enough
+        // that the soft shadow remains visible around the card.
+        scene.push(SceneCommand::PushClip {
+            rect: Rect::new(16.0, 16.0, 180.0, 150.0),
+        });
+        scene.push(SceneCommand::FillRoundedRect {
+            rect: Rect::new(40.0, 44.0, 120.0, 84.0),
+            radii: [16.0; 4],
+            brush: Brush::Solid(Color::rgba(0.20, 0.55, 0.95, 1.0)),
+            border: Some(Border {
+                width: 3.0,
+                color: Color::rgba(0.95, 0.97, 1.0, 1.0),
+            }),
+            shadow: Some(ShadowParams {
+                offset_x: 0.0,
+                offset_y: 6.0,
+                blur: 8.0,
+                spread: 1.0,
+                color: Color::rgba(0.0, 0.0, 0.0, 0.55),
+            }),
+        });
+        scene.push(SceneCommand::PopClip);
+
+        // A per-corner-radii rounded rect (sharp tl/br, round tr/bl).
+        scene.push(SceneCommand::FillRoundedRect {
+            rect: Rect::new(210.0, 30.0, 90.0, 70.0),
+            radii: [2.0, 20.0, 2.0, 20.0],
+            brush: Brush::Solid(Color::rgba(0.95, 0.45, 0.30, 1.0)),
+            border: None,
+            shadow: None,
+        });
+
+        // A horizontal linear-gradient rounded rect.
+        scene.push(SceneCommand::FillRoundedRect {
+            rect: Rect::new(40.0, 160.0, 240.0, 56.0),
+            radii: [10.0; 4],
+            brush: Brush::LinearGradient {
+                start: Point::new(40.0, 188.0),
+                end: Point::new(280.0, 188.0),
+                stops: vec![
+                    GradientStop {
+                        offset: 0.0,
+                        color: Color::rgba(0.10, 0.80, 0.55, 1.0),
+                    },
+                    GradientStop {
+                        offset: 1.0,
+                        color: Color::rgba(0.55, 0.20, 0.85, 1.0),
+                    },
+                ],
+            },
+            border: None,
+            shadow: None,
+        });
+
+        let frame = SceneFrame {
+            window_id,
+            viewport,
+            surface_size: viewport,
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut renderer = WgpuRenderer::new();
+        renderer
+            .render(&frame)
+            .expect("headless render of rounded-rect primitives should succeed");
+
+        let image = renderer
+            .capture_last_frame_rgba(window_id)
+            .expect("capture of rendered frame should succeed");
+
+        // The frame must contain visibly painted content (the clear color is opaque, so we
+        // additionally check that some pixels differ from the background).
+        let bg = [
+            (0.12_f32.powf(1.0 / 2.2) * 255.0) as u8,
+            (0.13_f32.powf(1.0 / 2.2) * 255.0) as u8,
+            (0.16_f32.powf(1.0 / 2.2) * 255.0) as u8,
+        ];
+        let non_background = image.pixels().chunks_exact(4).any(|pixel| {
+            (pixel[0] as i32 - bg[0] as i32).abs()
+                + (pixel[1] as i32 - bg[1] as i32).abs()
+                + (pixel[2] as i32 - bg[2] as i32).abs()
+                > 24
+        });
+        assert!(
+            non_background,
+            "rendered frame should contain the painted primitives"
+        );
+
+        let png = encode_png_rgba8(image.width(), image.height(), image.pixels());
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("../../target");
+        let _ = std::fs::create_dir_all(&path);
+        path.push("rounded_rect_primitives_capture.png");
+        std::fs::write(&path, &png).expect("writing capture PNG should succeed");
+        eprintln!("wrote capture PNG to {}", path.display());
+    }
+
+    /// Renders a body-text + small-label sample on a LIGHT surface (dark text) and a DARK
+    /// surface (light text), then writes PNGs to the workspace target dir. The filenames are
+    /// suffixed `-after` when the shader carries the gamma coverage correction and `-before`
+    /// when it does not, so running this test across `git stash` of the shader change yields a
+    /// matched before/after set. It also prints the mean text luminance in each sample so the
+    /// effect is quantifiable (light-mode mean must drop; dark-mode mean must stay ~constant).
+    #[test]
+    fn text_coverage_gamma_before_after_capture() {
+        let suffix = if TEXT_ATLAS_SHADER_SOURCE.contains("correct_coverage") {
+            "after"
+        } else {
+            "before"
+        };
+
+        let handle = FontHandle::new(7001);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+        let fonts = Arc::new(fonts);
+
+        // Body paragraph + a couple of small UI labels.
+        let lines: [(&str, f32, f32); 5] = [
+            ("The quick brown fox jumps over the lazy dog.", 20.0, 16.0),
+            ("Pack my box with five dozen liquor jugs.", 20.0, 44.0),
+            (
+                "Body text at a typical reading size, 1234567890.",
+                16.0,
+                72.0,
+            ),
+            ("Small UI label", 12.0, 98.0),
+            ("settings  ·  profile  ·  sign out", 11.0, 118.0),
+        ];
+
+        let render_sample = |bg: Color, fg: Color| -> super::RgbaImage {
+            let window_id = WindowId::new(7100 + suffix.len() as u64);
+            let viewport = Size::new(420.0, 140.0);
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::Clear(bg));
+            for (text, size, y) in lines {
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(12.0, y, 400.0, size + 8.0),
+                    text: text.to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: size,
+                        line_height: size + 6.0,
+                        color: fg,
+                        ..TextStyle::default()
+                    },
+                }));
+            }
+            let frame = SceneFrame {
+                window_id,
+                viewport,
+                surface_size: viewport,
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: Vec::new(),
+                scene,
+                font_registry: Arc::clone(&fonts),
+                image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+            };
+            let mut renderer = WgpuRenderer::new();
+            renderer
+                .render(&frame)
+                .expect("headless text render should succeed");
+            renderer
+                .capture_last_frame_rgba(window_id)
+                .expect("capture of rendered text frame should succeed")
+        };
+
+        // Two robust weight signals over the inked pixels (those differing from the surface):
+        //  - `mean`: average luma of all inked pixels (includes AA fringe).
+        //  - `core`: average luma of the darkest 25% (light mode) / brightest 25% (dark mode)
+        //    of inked pixels, i.e. the glyph CORE, which best reflects perceived stem weight.
+        // For light mode, lower numbers = darker/heavier text. For dark mode the polarity is
+        // inverted (higher core luma = brighter text), so we report core as deviation toward fg.
+        fn ink_stats(image: &super::RgbaImage, bg: [u8; 3], dark_text: bool) -> (f32, f32, u64) {
+            let mut lumas: Vec<f32> = Vec::new();
+            for px in image.pixels().chunks_exact(4) {
+                let d = (px[0] as i32 - bg[0] as i32).abs()
+                    + (px[1] as i32 - bg[1] as i32).abs()
+                    + (px[2] as i32 - bg[2] as i32).abs();
+                if d > 10 {
+                    lumas.push(
+                        0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32,
+                    );
+                }
+            }
+            let count = lumas.len() as u64;
+            if count == 0 {
+                return (0.0, 0.0, 0);
+            }
+            let mean = lumas.iter().sum::<f32>() / count as f32;
+            // Glyph core: for dark text the core is the darkest pixels (ascending), for light
+            // text on dark the core is the brightest pixels (descending).
+            if dark_text {
+                lumas.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            } else {
+                lumas.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            }
+            let q = (lumas.len() / 4).max(1);
+            let core = lumas[..q].iter().sum::<f32>() / q as f32;
+            (mean, core, count)
+        }
+
+        let light_bg = Color::rgba(0.98, 0.98, 0.99, 1.0);
+        let dark_bg = Color::rgba(0.08, 0.09, 0.11, 1.0);
+        let light = render_sample(light_bg, Color::rgba(0.05, 0.05, 0.06, 1.0));
+        let dark = render_sample(dark_bg, Color::rgba(0.95, 0.95, 0.96, 1.0));
+
+        let light_bg8 = [250u8, 250, 252];
+        let dark_bg8 = [22u8, 24, 28];
+        let (light_mean, light_core, light_n) = ink_stats(&light, light_bg8, true);
+        let (dark_mean, dark_core, dark_n) = ink_stats(&dark, dark_bg8, false);
+        eprintln!(
+            "[text-coverage-{suffix}] LIGHT mode (dark text): mean ink luma = {light_mean:.1}, core(darkest 25%) = {light_core:.1} [n={light_n}] (lower = heavier)"
+        );
+        eprintln!(
+            "[text-coverage-{suffix}] DARK mode (light text): mean ink luma = {dark_mean:.1}, core(brightest 25%) = {dark_core:.1} [n={dark_n}] (should be ~unchanged)"
+        );
+
+        let mut dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        dir.push("../../target");
+        let _ = std::fs::create_dir_all(&dir);
+        for (image, name) in [(&light, "text-light"), (&dark, "text-dark")] {
+            let png = encode_png_rgba8(image.width(), image.height(), image.pixels());
+            let mut path = dir.clone();
+            path.push(format!("{name}-{suffix}.png"));
+            std::fs::write(&path, &png).expect("writing text capture PNG should succeed");
+            eprintln!("wrote {}", path.display());
+        }
     }
 }

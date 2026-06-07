@@ -102,6 +102,34 @@ impl SharedRenderer {
         self.pipeline_for(format, PipelineKind::WidgetShaderClipped)
     }
 
+    pub(crate) fn rounded_rect_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::RoundedRect)
+    }
+
+    pub(crate) fn clipped_rounded_rect_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::RoundedRectClipped)
+    }
+
+    pub(crate) fn gradient_rect_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::GradientRect)
+    }
+
+    pub(crate) fn clipped_gradient_rect_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::GradientRectClipped)
+    }
+
     pub(crate) fn output_transform_pipeline(
         &mut self,
         format: wgpu::TextureFormat,
@@ -129,6 +157,12 @@ impl SharedRenderer {
                 PipelineKind::WidgetShader | PipelineKind::WidgetShaderClipped => {
                     "SUI widget shader"
                 }
+                PipelineKind::RoundedRect | PipelineKind::RoundedRectClipped => {
+                    "SUI rounded rect shader"
+                }
+                PipelineKind::GradientRect | PipelineKind::GradientRectClipped => {
+                    "SUI gradient rect shader"
+                }
                 PipelineKind::OutputTransform => "SUI output transform shader",
             };
             let shader_source = match kind {
@@ -150,6 +184,12 @@ impl SharedRenderer {
                 PipelineKind::WidgetShader | PipelineKind::WidgetShaderClipped => {
                     WIDGET_SHADER_SOURCE
                 }
+                PipelineKind::RoundedRect | PipelineKind::RoundedRectClipped => {
+                    ROUNDED_RECT_SHADER_SOURCE
+                }
+                PipelineKind::GradientRect | PipelineKind::GradientRectClipped => {
+                    GRADIENT_RECT_SHADER_SOURCE
+                }
                 PipelineKind::OutputTransform => OUTPUT_TRANSFORM_SHADER_SOURCE,
             };
             let shader = self
@@ -165,12 +205,16 @@ impl SharedRenderer {
                 | PipelineKind::TextAtlas
                 | PipelineKind::AnalyticPath
                 | PipelineKind::WidgetShader
+                | PipelineKind::RoundedRect
+                | PipelineKind::GradientRect
                 | PipelineKind::OutputTransform => None,
                 PipelineKind::Clipped
                 | PipelineKind::TexturedClipped
                 | PipelineKind::TextAtlasClipped
                 | PipelineKind::AnalyticPathClipped
-                | PipelineKind::WidgetShaderClipped => Some(wgpu::DepthStencilState {
+                | PipelineKind::WidgetShaderClipped
+                | PipelineKind::RoundedRectClipped
+                | PipelineKind::GradientRectClipped => Some(wgpu::DepthStencilState {
                     format: STENCIL_FORMAT,
                     depth_write_enabled: Some(false),
                     depth_compare: Some(wgpu::CompareFunction::Always),
@@ -253,6 +297,10 @@ impl SharedRenderer {
                 | PipelineKind::AnalyticPathClipped
                 | PipelineKind::WidgetShader
                 | PipelineKind::WidgetShaderClipped
+                | PipelineKind::RoundedRect
+                | PipelineKind::RoundedRectClipped
+                | PipelineKind::GradientRect
+                | PipelineKind::GradientRectClipped
                 | PipelineKind::ClipMask => wgpu::BlendState::ALPHA_BLENDING,
             };
             let fragment_targets = [Some(wgpu::ColorTargetState {
@@ -308,6 +356,10 @@ impl SharedRenderer {
                 | PipelineKind::Clipped
                 | PipelineKind::WidgetShader
                 | PipelineKind::WidgetShaderClipped
+                | PipelineKind::RoundedRect
+                | PipelineKind::RoundedRectClipped
+                | PipelineKind::GradientRect
+                | PipelineKind::GradientRectClipped
                 | PipelineKind::ClipMask => None,
             };
             let scene_vertex_layouts = [Vertex::layout()];
@@ -333,6 +385,10 @@ impl SharedRenderer {
                         PipelineKind::AnalyticPathClipped => "SUI clipped analytic path pipeline",
                         PipelineKind::WidgetShader => "SUI widget shader pipeline",
                         PipelineKind::WidgetShaderClipped => "SUI clipped widget shader pipeline",
+                        PipelineKind::RoundedRect => "SUI rounded rect pipeline",
+                        PipelineKind::RoundedRectClipped => "SUI clipped rounded rect pipeline",
+                        PipelineKind::GradientRect => "SUI gradient rect pipeline",
+                        PipelineKind::GradientRectClipped => "SUI clipped gradient rect pipeline",
                         PipelineKind::ClipMask => "SUI clip mask pipeline",
                         PipelineKind::OutputTransform => "SUI output transform pipeline",
                     }),
@@ -358,6 +414,10 @@ impl SharedRenderer {
                         | PipelineKind::AnalyticPathClipped
                         | PipelineKind::WidgetShader
                         | PipelineKind::WidgetShaderClipped
+                        | PipelineKind::RoundedRect
+                        | PipelineKind::RoundedRectClipped
+                        | PipelineKind::GradientRect
+                        | PipelineKind::GradientRectClipped
                         | PipelineKind::OutputTransform => Some(wgpu::FragmentState {
                             module: &shader,
                             entry_point: Some("fs_main"),
@@ -384,6 +444,10 @@ pub(crate) enum PipelineKind {
     AnalyticPathClipped,
     WidgetShader,
     WidgetShaderClipped,
+    RoundedRect,
+    RoundedRectClipped,
+    GradientRect,
+    GradientRectClipped,
     ClipMask,
     OutputTransform,
 }
@@ -449,17 +513,44 @@ pub(crate) struct Vertex {
     pub(crate) color: [f32; 4],
     pub(crate) tex_coords: [f32; 2],
     pub(crate) shader_params: [f32; 4],
+    pub(crate) shader_params2: [f32; 4], // radii [tl, tr, br, bl]
+    pub(crate) shader_params3: [f32; 4], // [border_w, shadow_sigma, shadow_dx_local, shadow_dy_local]
+    pub(crate) shader_params4: [f32; 4], // border_color rgba (linear)
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4, 2 => Float32x2, 3 => Float32x4];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+        0 => Float32x2,
+        1 => Float32x4,
+        2 => Float32x2,
+        3 => Float32x4,
+        4 => Float32x4,
+        5 => Float32x4,
+        6 => Float32x4,
+    ];
 
     pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &Self::ATTRIBUTES,
+        }
+    }
+
+    pub(crate) fn basic(
+        position: [f32; 2],
+        color: [f32; 4],
+        tex_coords: [f32; 2],
+        shader_params: [f32; 4],
+    ) -> Self {
+        Self {
+            position,
+            color,
+            tex_coords,
+            shader_params,
+            shader_params2: [0.0; 4],
+            shader_params3: [0.0; 4],
+            shader_params4: [0.0; 4],
         }
     }
 }

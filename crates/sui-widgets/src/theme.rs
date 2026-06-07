@@ -2,7 +2,82 @@ use sui_core::Color;
 use sui_layout::Padding as Insets;
 use sui_text::TextStyle;
 
+use crate::animation::Easing;
 use crate::hdr_theme::HdrThemeTokens;
+
+/// Motion design tokens: a shared vocabulary of animation durations and easing
+/// curves so widgets and applications animate consistently.
+///
+/// Durations are expressed in **seconds** (matching the `delta` supplied by
+/// [`crate::animation::AnimatedValue::tick`] and the `time`/`delta` fields of
+/// `WakeEvent::AnimationFrame`). Easing curves are built from the
+/// [`Easing`] enum and are [`Copy`], keeping [`DefaultTheme`] `Copy`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThemeMotion {
+    /// No animation: state changes apply immediately (0.0s).
+    pub duration_instant: f32,
+    /// Quick feedback such as hover/press state changes (~0.12s).
+    pub duration_fast: f32,
+    /// The default transition duration for most state changes (~0.2s).
+    pub duration_normal: f32,
+    /// Larger or more prominent transitions, e.g. expanding panels (~0.32s).
+    pub duration_slow: f32,
+    /// The standard easing curve: gentle acceleration, firm deceleration.
+    /// Use for the majority of UI transitions.
+    pub easing_standard: Easing,
+    /// A more expressive curve for prominent, attention-drawing motion.
+    pub easing_emphasized: Easing,
+    /// Decelerate curve: enters quickly, settles softly. Good for elements
+    /// entering the screen.
+    pub easing_decelerate: Easing,
+    /// Accelerate curve: starts softly, exits quickly. Good for elements
+    /// leaving the screen.
+    pub easing_accelerate: Easing,
+}
+
+impl ThemeMotion {
+    /// The standard motion tokens shared by every built-in theme.
+    pub const fn standard() -> Self {
+        Self {
+            duration_instant: 0.0,
+            duration_fast: 0.12,
+            duration_normal: 0.2,
+            duration_slow: 0.32,
+            easing_standard: Easing::CubicBezier {
+                x1: 0.2,
+                y1: 0.0,
+                x2: 0.0,
+                y2: 1.0,
+            },
+            // Material-style emphasized curve: a more expressive, slightly
+            // overshooting-feeling ease distinct from `standard`.
+            easing_emphasized: Easing::CubicBezier {
+                x1: 0.05,
+                y1: 0.7,
+                x2: 0.1,
+                y2: 1.0,
+            },
+            easing_decelerate: Easing::CubicBezier {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 0.0,
+                y2: 1.0,
+            },
+            easing_accelerate: Easing::CubicBezier {
+                x1: 0.3,
+                y1: 0.0,
+                x2: 1.0,
+                y2: 1.0,
+            },
+        }
+    }
+}
+
+impl Default for ThemeMotion {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeFontStack {
@@ -461,6 +536,58 @@ impl ThemeShadow {
     }
 }
 
+impl ThemeShadowLayer {
+    /// Convert this theme shadow layer into the renderer primitive
+    /// [`sui_scene::ShadowParams`] consumed by `PaintCtx::draw_shadow`.
+    pub fn to_shadow_params(&self) -> sui_scene::ShadowParams {
+        sui_scene::ShadowParams {
+            offset_x: self.offset_x,
+            offset_y: self.offset_y,
+            blur: self.blur,
+            spread: self.spread,
+            color: self.color,
+        }
+    }
+
+    /// An outer (drop) shadow casts beyond the surface edge; an inset layer
+    /// renders an inner shadow. Only outer layers are paintable today.
+    pub const fn is_outer(&self) -> bool {
+        !self.inset
+    }
+}
+
+/// Paint the outer (drop) layers of a [`ThemeShadow`] behind a rounded-rect
+/// surface. The tighter `second` layer is drawn first and the wider/more-diffuse
+/// `first` layer on top — matching CSS `box-shadow`, where the first-listed
+/// shadow is topmost.
+///
+/// Inset layers are skipped: inner shadows are future work.
+///
+/// The caller MUST invoke this BEFORE filling the surface background and BEFORE
+/// pushing any clip tight to the widget, so the soft shadow renders behind the
+/// fill and is not clipped away.
+pub fn paint_theme_shadow(
+    paint: &mut sui_runtime::PaintCtx,
+    rect: sui_core::Rect,
+    radii: [f32; 4],
+    shadow: &ThemeShadow,
+) {
+    // Draw the tighter `second` layer first, then the wider/more-diffuse `first`
+    // layer on top (CSS box-shadow order: the first-listed shadow is topmost).
+    if let Some(layer) = shadow.second {
+        if layer.is_outer() {
+            paint.draw_shadow(rect, radii, layer.to_shadow_params());
+        }
+        // inset layers are inner shadows -> future work
+    }
+    if let Some(layer) = shadow.first {
+        if layer.is_outer() {
+            paint.draw_shadow(rect, radii, layer.to_shadow_params());
+        }
+        // inset layers are inner shadows -> future work
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeBoxShadowScale {
     pub _2xs: ThemeShadow,
@@ -853,6 +980,7 @@ pub struct DefaultTheme {
     pub blur: ThemeBlurScale,
     pub perspective: ThemePerspective,
     pub aspect: ThemeAspectRatios,
+    pub motion: ThemeMotion,
     pub hdr: HdrThemeTokens,
     pub palette: ControlPalette,
     pub typography: ControlTypography,
@@ -901,6 +1029,7 @@ impl DefaultTheme {
             blur: ThemeBlurScale::default(),
             perspective: ThemePerspective::default(),
             aspect: ThemeAspectRatios::default(),
+            motion: ThemeMotion::default(),
             hdr,
             palette: ControlPalette::from_colors(&colors),
             typography: ControlTypography::from_text_scale(&text),

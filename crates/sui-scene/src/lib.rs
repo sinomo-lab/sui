@@ -8,9 +8,46 @@ use sui_core::{
 };
 use sui_text::{FontRegistry, ShapedText, ShapedTextWindow, TextLayoutRegistry, TextRun};
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Border {
+    pub width: f32,
+    pub color: Color,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadowParams {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur: f32,
+    pub spread: f32,
+    pub color: Color,
+}
+
+impl ShadowParams {
+    /// logical-px reach beyond the rect edge; used to inflate the shadow quad & bounds.
+    pub fn extent(&self) -> f32 {
+        3.0 * self.blur.max(0.0)
+            + self.spread.max(0.0)
+            + self.offset_x.abs().max(self.offset_y.abs())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradientStop {
+    pub offset: f32,
+    pub color: Color,
+}
+
+pub const MAX_GRADIENT_STOPS: usize = 8;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Brush {
     Solid(Color),
+    LinearGradient {
+        start: Point,
+        end: Point,
+        stops: Vec<GradientStop>,
+    },
 }
 
 impl From<Color> for Brush {
@@ -418,6 +455,13 @@ pub enum SceneCommand {
     },
     PopTransform,
     Layer(SceneLayer),
+    FillRoundedRect {
+        rect: Rect,
+        radii: [f32; 4],
+        brush: Brush,
+        border: Option<Border>,
+        shadow: Option<ShadowParams>,
+    },
     Label {
         rect: Rect,
         text: String,
@@ -678,6 +722,19 @@ impl SceneBoundsState {
                 },
                 clipped,
             ),
+            SceneCommand::FillRoundedRect { rect, shadow, .. } => {
+                let bounds = match shadow {
+                    Some(shadow) => {
+                        let extent = shadow.extent();
+                        let shadow_rect = rect
+                            .inflate(extent, extent)
+                            .translate(Vector::new(shadow.offset_x, shadow.offset_y));
+                        rect.union(shadow_rect)
+                    }
+                    None => *rect,
+                };
+                self.apply_rect(bounds, clipped)
+            }
             SceneCommand::Label { rect, .. } => self.apply_rect(*rect, clipped),
         }
     }
@@ -759,6 +816,13 @@ fn translate_command(command: &mut SceneCommand, delta: Vector) {
         SceneCommand::PushTransform { .. } => {}
         SceneCommand::Layer(layer) => {
             layer.translate(delta);
+        }
+        SceneCommand::FillRoundedRect { rect, brush, .. } => {
+            *rect = rect.translate(delta);
+            if let Brush::LinearGradient { start, end, .. } = brush {
+                *start += delta;
+                *end += delta;
+            }
         }
     }
 }

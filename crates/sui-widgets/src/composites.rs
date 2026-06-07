@@ -19,7 +19,7 @@ use crate::{
     ResolvedHdrStyle, Transition, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole,
     WidgetMaterialRole,
     controls::{apply_hdr_policy_cap, cap_resolved_hdr_style, draw_icon_glyph},
-    resolve_widget_hdr_style,
+    paint_theme_shadow, resolve_widget_hdr_style,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1582,6 +1582,17 @@ impl Widget for ActionCard {
         } else {
             mix_color(palette.border, palette.border_hover, hover)
         };
+
+        // Elevation shadow behind the raised card surface, drawn before the
+        // fill so the soft shadow is not clipped.
+        if enabled {
+            paint_theme_shadow(
+                ctx,
+                ctx.bounds(),
+                [metrics.corner_radius; 4],
+                &theme.shadows.box_shadow.md,
+            );
+        }
 
         draw_control_frame(
             ctx,
@@ -4653,10 +4664,20 @@ impl Widget for Menu {
         let palette = theme.palette;
         let metrics = theme.metrics;
 
+        // Cast an elevation shadow behind the raised menu surface before any
+        // fill so the soft drop shadow is not clipped by the frame.
+        let surface_radius = metrics.corner_radius + 2.0;
+        paint_theme_shadow(
+            ctx,
+            ctx.bounds(),
+            [surface_radius; 4],
+            &theme.shadows.box_shadow.lg,
+        );
+
         draw_control_frame(
             ctx,
             ctx.bounds(),
-            metrics.corner_radius + 2.0,
+            surface_radius,
             metrics,
             palette.surface_raised,
             palette.border,
@@ -4944,6 +4965,13 @@ impl Widget for TooltipOverlay {
 
         let bubble = ctx.bounds();
         let metrics = state.theme.metrics;
+        // Soft elevation behind the tooltip bubble, drawn before the fill.
+        paint_theme_shadow(
+            ctx,
+            bubble,
+            [metrics.corner_radius; 4],
+            &state.theme.shadows.box_shadow.sm,
+        );
         draw_control_frame(
             ctx,
             bubble,
@@ -5309,10 +5337,18 @@ impl Widget for PopoverSurface {
         let rect = ctx.bounds();
         let metrics = state.theme.metrics;
         let visuals = state.resolved_visuals();
+        // Elevation shadow behind the popover surface, drawn before the fill.
+        let surface_radius = metrics.corner_radius + 2.0;
+        paint_theme_shadow(
+            ctx,
+            rect,
+            [surface_radius; 4],
+            &state.theme.shadows.box_shadow.md,
+        );
         draw_control_frame(
             ctx,
             rect,
-            metrics.corner_radius + 2.0,
+            surface_radius,
             metrics,
             visuals.background,
             visuals.border,
@@ -5961,10 +5997,13 @@ impl Widget for ContextMenu {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let palette = theme.palette;
+        // Elevation shadow behind the raised context-menu surface.
+        let surface_radius = metrics.corner_radius + 2.0;
+        paint_theme_shadow(ctx, menu, [surface_radius; 4], &theme.shadows.box_shadow.lg);
         draw_control_frame(
             ctx,
             menu,
-            metrics.corner_radius + 2.0,
+            surface_radius,
             metrics,
             palette.surface_raised,
             palette.border,
@@ -6387,10 +6426,19 @@ impl Widget for Dialog {
 
         let metrics = self.theme.metrics;
         let palette = self.theme.palette;
+        // Prominent elevation shadow behind the dialog surface, drawn over the
+        // (optional) modal backdrop and before the surface fill.
+        let surface_radius = metrics.corner_radius + 3.0;
+        paint_theme_shadow(
+            ctx,
+            dialog,
+            [surface_radius; 4],
+            &self.theme.shadows.box_shadow.xl,
+        );
         draw_control_frame(
             ctx,
             dialog,
-            metrics.corner_radius + 3.0,
+            surface_radius,
             metrics,
             palette.surface_raised,
             palette.border,

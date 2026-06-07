@@ -720,6 +720,7 @@ impl RetainedCompositorState {
             | SceneCommand::DrawImageQuad { .. }
             | SceneCommand::DrawShaderRect { .. }
             | SceneCommand::Layer(_)
+            | SceneCommand::FillRoundedRect { .. }
             | SceneCommand::Label { .. } => {}
         }
     }
@@ -1424,6 +1425,7 @@ fn scene_has_draw_content(scene: &Scene) -> bool {
                 | SceneCommand::DrawImage { .. }
                 | SceneCommand::DrawImageQuad { .. }
                 | SceneCommand::DrawShaderRect { .. }
+                | SceneCommand::FillRoundedRect { .. }
                 | SceneCommand::Label { .. }
         )
     })
@@ -1697,6 +1699,39 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
             text.hash(hasher);
             hash_color(*color, hasher);
         }
+        SceneCommand::FillRoundedRect {
+            rect,
+            radii,
+            brush,
+            border,
+            shadow,
+        } => {
+            18u8.hash(hasher);
+            hash_rect(hasher, *rect);
+            for radius in radii {
+                radius.to_bits().hash(hasher);
+            }
+            hash_brush(brush, hasher);
+            match border {
+                Some(border) => {
+                    1u8.hash(hasher);
+                    border.width.to_bits().hash(hasher);
+                    hash_color(border.color, hasher);
+                }
+                None => 0u8.hash(hasher),
+            }
+            match shadow {
+                Some(shadow) => {
+                    1u8.hash(hasher);
+                    shadow.offset_x.to_bits().hash(hasher);
+                    shadow.offset_y.to_bits().hash(hasher);
+                    shadow.blur.to_bits().hash(hasher);
+                    shadow.spread.to_bits().hash(hasher);
+                    hash_color(shadow.color, hasher);
+                }
+                None => 0u8.hash(hasher),
+            }
+        }
     }
 }
 
@@ -1764,6 +1799,18 @@ fn hash_brush(brush: &Brush, hasher: &mut DefaultHasher) {
         Brush::Solid(color) => {
             0u8.hash(hasher);
             hash_color(*color, hasher);
+        }
+        Brush::LinearGradient { start, end, stops } => {
+            1u8.hash(hasher);
+            start.x.to_bits().hash(hasher);
+            start.y.to_bits().hash(hasher);
+            end.x.to_bits().hash(hasher);
+            end.y.to_bits().hash(hasher);
+            (stops.len() as u32).hash(hasher);
+            for stop in stops {
+                stop.offset.to_bits().hash(hasher);
+                hash_color(stop.color, hasher);
+            }
         }
     }
 }

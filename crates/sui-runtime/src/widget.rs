@@ -17,8 +17,9 @@ use sui_core::{
 };
 use sui_layout::{Constraints, LayoutContext};
 use sui_scene::{
-    Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, RegisteredImage,
-    Scene, SceneCommand, SceneLayer, SceneLayerDescriptor, SceneLayerId, StrokeStyle, WidgetShader,
+    Border, Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties,
+    RegisteredImage, Scene, SceneCommand, SceneLayer, SceneLayerDescriptor, SceneLayerId,
+    ShadowParams, StrokeStyle, WidgetShader,
 };
 use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
@@ -1510,6 +1511,62 @@ impl PaintCtx {
     pub fn draw_shader_rect(&mut self, rect: Rect, shader: WidgetShader) {
         self.scene
             .push(SceneCommand::DrawShaderRect { rect, shader });
+    }
+
+    /// Fill a rounded rectangle (per-corner radii `[tl, tr, br, bl]`) with a brush.
+    pub fn fill_rrect(&mut self, rect: Rect, radii: [f32; 4], brush: impl Into<Brush>) {
+        self.scene.push(SceneCommand::FillRoundedRect {
+            rect,
+            radii,
+            brush: brush.into(),
+            border: None,
+            shadow: None,
+        });
+    }
+
+    /// Fill a rounded rectangle with a brush and stroke an inset border.
+    pub fn fill_rrect_bordered(
+        &mut self,
+        rect: Rect,
+        radii: [f32; 4],
+        brush: impl Into<Brush>,
+        border: Border,
+    ) {
+        self.scene.push(SceneCommand::FillRoundedRect {
+            rect,
+            radii,
+            brush: brush.into(),
+            border: Some(border),
+            shadow: None,
+        });
+    }
+
+    /// Paint just a soft drop shadow for a rounded rectangle (no fill).
+    pub fn draw_shadow(&mut self, rect: Rect, radii: [f32; 4], shadow: ShadowParams) {
+        self.scene.push(SceneCommand::FillRoundedRect {
+            rect,
+            radii,
+            brush: Brush::Solid(Color::TRANSPARENT),
+            border: None,
+            shadow: Some(shadow),
+        });
+    }
+
+    /// Fill a rounded rectangle with a brush behind a soft drop shadow.
+    pub fn fill_rrect_with_shadow(
+        &mut self,
+        rect: Rect,
+        radii: [f32; 4],
+        brush: impl Into<Brush>,
+        shadow: ShadowParams,
+    ) {
+        self.scene.push(SceneCommand::FillRoundedRect {
+            rect,
+            radii,
+            brush: brush.into(),
+            border: None,
+            shadow: Some(shadow),
+        });
     }
 
     pub fn push_clip(&mut self, path: impl Into<Path>) {

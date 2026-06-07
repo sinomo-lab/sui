@@ -47,6 +47,16 @@ pub enum IconGlyph {
     Unlock,
     Trash,
     Download,
+    // Content/object glyphs (used by application chrome: chat, file browser, etc.).
+    Sparkles,
+    Chat,
+    History,
+    Folder,
+    File,
+    Link,
+    Send,
+    Alert,
+    Storage,
 }
 
 impl IconGlyph {
@@ -77,6 +87,15 @@ impl IconGlyph {
             Self::Unlock => LucideIcon::LockOpen,
             Self::Trash => LucideIcon::Trash2,
             Self::Download => LucideIcon::Download,
+            Self::Sparkles => LucideIcon::Sparkles,
+            Self::Chat => LucideIcon::MessageSquare,
+            Self::History => LucideIcon::History,
+            Self::Folder => LucideIcon::Folder,
+            Self::File => LucideIcon::File,
+            Self::Link => LucideIcon::Link,
+            Self::Send => LucideIcon::Send,
+            Self::Alert => LucideIcon::TriangleAlert,
+            Self::Storage => LucideIcon::HardDrive,
         }
     }
 }
@@ -107,6 +126,15 @@ pub const BUILTIN_ICON_GLYPHS: &[IconGlyph] = &[
     IconGlyph::Unlock,
     IconGlyph::Trash,
     IconGlyph::Download,
+    IconGlyph::Sparkles,
+    IconGlyph::Chat,
+    IconGlyph::History,
+    IconGlyph::Folder,
+    IconGlyph::File,
+    IconGlyph::Link,
+    IconGlyph::Send,
+    IconGlyph::Alert,
+    IconGlyph::Storage,
 ];
 
 pub fn register_builtin_icon_resources(
@@ -3793,6 +3821,7 @@ pub struct TextArea {
     display_layout: Option<PersistentTextLayout>,
     input_layout: Option<PersistentTextLayout>,
     on_change: Option<Box<dyn FnMut(String)>>,
+    on_submit: Option<Box<dyn FnMut(&str)>>,
 }
 
 impl TextArea {
@@ -3817,6 +3846,7 @@ impl TextArea {
             display_layout: None,
             input_layout: None,
             on_change: None,
+            on_submit: None,
         }
     }
 
@@ -3877,6 +3907,21 @@ impl TextArea {
         F: FnMut(String) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// Fire `on_submit(current_text)` when the user presses a plain `Enter` (no Shift/Ctrl/Meta
+    /// modifier) while focused, *instead* of inserting a newline. `Shift+Enter` (and any modified
+    /// Enter) still inserts a newline. When no `on_submit` is set, `Enter` inserts a newline as
+    /// before, so this is fully backward-compatible.
+    ///
+    /// This turns the multi-line `TextArea` into a chat-style composer: Enter to send, Shift+Enter
+    /// for a soft line break.
+    pub fn on_submit<F>(mut self, on_submit: F) -> Self
+    where
+        F: FnMut(&str) + 'static,
+    {
+        self.on_submit = Some(Box::new(on_submit));
         self
     }
 
@@ -4057,7 +4102,21 @@ impl Widget for TextArea {
             Event::Keyboard(key)
                 if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Enter" =>
             {
-                self.execute_editor_command(ctx, EditorCommand::InsertText("\n".to_string()));
+                // Chat-composer behavior (only when an `on_submit` is wired): a plain Enter (no
+                // Shift/Ctrl/Meta) submits the current text and is consumed, while Shift+Enter (or
+                // any modified Enter) inserts a newline as usual. With no `on_submit`, Enter always
+                // inserts a newline (backward-compatible).
+                let plain_enter =
+                    !key.modifiers.shift && !key.modifiers.control && !key.modifiers.meta;
+                if self.on_submit.is_some() && plain_enter {
+                    let text = self.current_value().to_string();
+                    if let Some(on_submit) = &mut self.on_submit {
+                        on_submit(&text);
+                    }
+                    ctx.set_handled();
+                } else {
+                    self.execute_editor_command(ctx, EditorCommand::InsertText("\n".to_string()));
+                }
             }
             Event::Keyboard(key) if key.state == KeyState::Pressed && ctx.is_focused() => {
                 let command_modifier = key.modifiers.control || key.modifiers.meta;
@@ -5609,6 +5668,13 @@ fn is_numeric_input_char(ch: char) -> bool {
 
 fn measure_text_width_estimate(text: &str, font_size: f32) -> f32 {
     text.chars().count() as f32 * font_size * 0.62
+}
+
+/// Draw an [`IconGlyph`] tinted `color`, centered and fit within `bounds`. Exposed for bespoke
+/// painters (application chrome) that draw an icon mark without composing an [`Icon`] widget; the
+/// glyph's Lucide image resource self-registers on first use, so no pre-registration is required.
+pub fn draw_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
+    draw_icon_glyph(ctx, glyph, bounds, color);
 }
 
 pub(crate) fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
@@ -7805,6 +7871,105 @@ mod tests {
         assert_eq!(
             input.value,
             Some(SemanticsValue::Text("Line 1\nLine 2".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_area_on_submit_fires_on_plain_enter_and_shift_enter_inserts_newline() -> Result<()> {
+        let submits = Rc::new(RefCell::new(Vec::new()));
+        let on_submit = Rc::clone(&submits);
+        let (mut runtime, window_id) = build_runtime(
+            TextArea::new("Composer")
+                .value("hello")
+                .on_submit(move |text| on_submit.borrow_mut().push(text.to_string())),
+        );
+
+        let _ = runtime.render(window_id)?;
+        // Focus the composer.
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(18.0, 18.0), true),
+        )?;
+
+        // Shift+Enter inserts a newline rather than submitting.
+        let mut shift_enter = KeyboardEvent::new("Enter", KeyState::Pressed);
+        shift_enter.modifiers.shift = true;
+        runtime.handle_event(window_id, Event::Keyboard(shift_enter))?;
+        assert!(
+            submits.borrow().is_empty(),
+            "Shift+Enter must not submit; it inserts a newline"
+        );
+
+        // The Shift+Enter inserted exactly one newline into "hello" (the caret position depends on
+        // the click hit-test, so assert on the newline count, not its placement).
+        let after_shift = {
+            let output = runtime.render(window_id)?;
+            let input = output
+                .semantics
+                .iter()
+                .find(|node| node.role == SemanticsRole::TextInput)
+                .expect("text area semantics present");
+            match input.value.clone() {
+                Some(SemanticsValue::Text(text)) => text,
+                other => panic!("unexpected semantics value: {other:?}"),
+            }
+        };
+        assert_eq!(
+            after_shift.matches('\n').count(),
+            1,
+            "Shift+Enter inserts exactly one newline"
+        );
+
+        // A plain Enter fires on_submit once with the current text (and does NOT insert another
+        // newline — it is consumed).
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed)),
+        )?;
+        assert_eq!(
+            submits.borrow().as_slice(),
+            &[after_shift.clone()],
+            "plain Enter submits the current text exactly once"
+        );
+
+        // The submit consumed the Enter, so the value is unchanged (no extra newline).
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text area semantics present");
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Text(after_shift)),
+            "plain Enter does not append a second newline"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_area_without_on_submit_inserts_newline_on_enter() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(TextArea::new("Notes").value("a"));
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(18.0, 18.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed)),
+        )?;
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text area semantics present");
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Text("a\n".to_string())),
+            "with no on_submit, Enter inserts a newline (backward-compatible)"
         );
         Ok(())
     }

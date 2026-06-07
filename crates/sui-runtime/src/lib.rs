@@ -11,9 +11,9 @@ use std::{
 
 use sui_core::{
     AsyncWakeToken, CustomEvent, DirtyRegion, Error, Event, FontHandle, ImageHandle,
-    InvalidationKind,
-    InvalidationRequest, InvalidationTarget, KeyState, Point, PointerEvent, PointerEventKind, Rect,
-    Result, SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
+    InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point, PointerEvent,
+    PointerEventKind, Rect, Result, SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId,
+    WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{

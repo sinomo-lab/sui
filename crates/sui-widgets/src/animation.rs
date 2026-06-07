@@ -215,6 +215,157 @@ impl Pulse {
     }
 }
 
+/// A self-contained, delta-driven transition driver for a single value.
+///
+/// `AnimatedValue` removes the boilerplate of hand-wiring a [`Transition`] plus
+/// `request_animation_frame`: hold one in widget/app state, call
+/// [`set_target`](Self::set_target) when the goal changes, and drive it from each
+/// `WakeEvent::AnimationFrame` by calling [`tick`](Self::tick) with the frame's
+/// `delta` (in **seconds**). [`tick`](Self::tick) returns `true` while the value
+/// is still moving, which is exactly the signal to call
+/// `EventCtx::request_animation_frame` again for the next frame.
+///
+/// Unlike [`Transition`], which is sampled against an absolute clock,
+/// `AnimatedValue` accumulates elapsed time internally, so callers only need the
+/// per-frame `delta`.
+///
+/// # Example
+///
+/// ```
+/// use sui_widgets::animation::{AnimatedValue, Easing};
+///
+/// // Fade-in opacity over 0.2s.
+/// let mut opacity = AnimatedValue::new(0.0_f32)
+///     .with_duration(0.2)
+///     .with_easing(Easing::EaseOut);
+/// opacity.set_target(1.0);
+///
+/// // In each animation frame, advance by the frame delta:
+/// let still_animating = opacity.tick(1.0 / 60.0);
+/// assert!(still_animating);
+/// assert!(opacity.value() > 0.0);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnimatedValue<T> {
+    start: T,
+    target: T,
+    current: T,
+    elapsed: f32,
+    duration: f32,
+    easing: Easing,
+    animating: bool,
+}
+
+impl<T> AnimatedValue<T>
+where
+    T: Interpolate + Copy,
+{
+    /// Creates a value that starts (and rests) at `initial`.
+    pub fn new(initial: T) -> Self {
+        Self {
+            start: initial,
+            target: initial,
+            current: initial,
+            elapsed: 0.0,
+            duration: 0.2,
+            easing: Easing::EaseInOut,
+            animating: false,
+        }
+    }
+
+    /// Sets the transition duration in **seconds** (builder form).
+    ///
+    /// A duration `<= 0.0` makes [`set_target`](Self::set_target) snap instantly.
+    pub fn with_duration(mut self, seconds: f32) -> Self {
+        self.duration = seconds.max(0.0);
+        self
+    }
+
+    /// Sets the easing curve applied while interpolating (builder form).
+    pub fn with_easing(mut self, easing: Easing) -> Self {
+        self.easing = easing;
+        self
+    }
+
+    /// Replaces the transition duration in **seconds**.
+    pub fn set_duration(&mut self, seconds: f32) {
+        self.duration = seconds.max(0.0);
+    }
+
+    /// Replaces the easing curve applied while interpolating.
+    pub fn set_easing(&mut self, easing: Easing) {
+        self.easing = easing;
+    }
+
+    /// Aims the value at `target`, animating from wherever it currently sits.
+    ///
+    /// If the configured duration is non-positive the value jumps immediately.
+    /// After calling this, drive the animation by calling [`tick`](Self::tick)
+    /// each frame until it returns `false`.
+    pub fn set_target(&mut self, target: T) {
+        self.target = target;
+        if self.duration <= f32::EPSILON {
+            self.start = target;
+            self.current = target;
+            self.elapsed = 0.0;
+            self.animating = false;
+            return;
+        }
+        self.start = self.current;
+        self.elapsed = 0.0;
+        self.animating = true;
+    }
+
+    /// Immediately sets the current value (and target) without animating.
+    pub fn jump_to(&mut self, value: T) {
+        self.start = value;
+        self.target = value;
+        self.current = value;
+        self.elapsed = 0.0;
+        self.animating = false;
+    }
+
+    /// Advances the animation by `delta_seconds` and updates the current value.
+    ///
+    /// Returns `true` while the value is still in motion (the caller should
+    /// request another animation frame), and `false` once it has settled on the
+    /// target.
+    pub fn tick(&mut self, delta_seconds: f32) -> bool {
+        if !self.animating {
+            return false;
+        }
+        self.elapsed += delta_seconds.max(0.0);
+        let progress = if self.duration <= f32::EPSILON {
+            1.0
+        } else {
+            (self.elapsed / self.duration).clamp(0.0, 1.0)
+        };
+        let eased = self.easing.sample(progress);
+        self.current = T::interpolate(self.start, self.target, eased);
+        if progress >= 1.0 {
+            self.current = self.target;
+            self.animating = false;
+            return false;
+        }
+        true
+    }
+
+    /// The value at the current point in the animation.
+    pub fn value(&self) -> T {
+        self.current
+    }
+
+    /// The value the animation is heading toward.
+    pub fn target(&self) -> T {
+        self.target
+    }
+
+    /// Whether the value is currently animating toward its target.
+    pub fn is_animating(&self) -> bool {
+        self.animating
+    }
+}
+
 fn sample_cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
     if t <= 0.0 {
         return 0.0;
@@ -249,7 +400,7 @@ fn sample_cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Blink, Easing, Interpolate, Pulse, SpringF32, Transition};
+    use super::{AnimatedValue, Blink, Easing, Interpolate, Pulse, SpringF32, Transition};
     use sui_core::{Color, Vector};
 
     #[test]
@@ -325,5 +476,34 @@ mod tests {
 
         assert!(value > 0.95);
         assert!((value - 1.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn animated_value_reaches_target_and_reports_completion() {
+        let mut animated = AnimatedValue::new(0.0_f32)
+            .with_duration(0.2)
+            .with_easing(Easing::Linear);
+        animated.set_target(1.0);
+        assert!(animated.is_animating());
+
+        // Halfway through a linear transition lands near the midpoint.
+        assert!(animated.tick(0.1));
+        assert!((animated.value() - 0.5).abs() < 1e-4);
+
+        // Completing the duration settles exactly on the target and stops.
+        assert!(!animated.tick(0.1));
+        assert_eq!(animated.value(), 1.0);
+        assert!(!animated.is_animating());
+        assert!(!animated.tick(0.1));
+    }
+
+    #[test]
+    fn animated_value_with_zero_duration_snaps_immediately() {
+        let mut animated = AnimatedValue::new(2.0_f32).with_duration(0.0);
+        animated.set_target(9.0);
+
+        assert!(!animated.is_animating());
+        assert_eq!(animated.value(), 9.0);
+        assert!(!animated.tick(1.0));
     }
 }

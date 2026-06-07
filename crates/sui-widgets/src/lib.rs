@@ -13,7 +13,7 @@ pub mod panes;
 pub mod text_surface;
 pub mod theme;
 
-pub use animation::{Blink, Easing, Interpolate, Pulse, SpringF32, Transition};
+pub use animation::{AnimatedValue, Blink, Easing, Interpolate, Pulse, SpringF32, Transition};
 pub use canvas::{
     Canvas, CanvasRuler, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas,
     PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState,
@@ -32,7 +32,7 @@ pub use containers::{
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label,
     MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox,
-    Switch, TextArea, TextInput, register_builtin_icon_resources,
+    Switch, TextArea, TextInput, draw_glyph, register_builtin_icon_resources,
 };
 pub use data::{
     Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, ListItem, ListView, PathBar,
@@ -60,7 +60,7 @@ pub use theme::{
     ControlMetrics, ControlPalette, ControlTypography, DefaultTheme, ThemeAspectRatios,
     ThemeBlurScale, ThemeBoxShadowScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,
     ThemeContainers, ThemeDropShadowScale, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
-    ThemeInsetShadowScale, ThemeLeading, ThemePerspective, ThemeRadii, ThemeShadow,
+    ThemeInsetShadowScale, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow,
     ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextShadowScale, ThemeTextToken,
-    ThemeTracking,
+    ThemeTracking, paint_theme_shadow,
 };

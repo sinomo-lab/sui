@@ -907,6 +907,7 @@ impl SceneStatistics {
                 | SceneCommand::FillPath { .. }
                 | SceneCommand::StrokePath { .. }
                 | SceneCommand::DrawShaderRect { .. }
+                | SceneCommand::FillRoundedRect { .. }
                 | SceneCommand::Layer(_) => {}
             }
         });
@@ -1269,6 +1270,7 @@ fn command_kind(command: &SceneCommand) -> &'static str {
         SceneCommand::PushTransform { .. } => "PushTransform",
         SceneCommand::PopTransform => "PopTransform",
         SceneCommand::Layer(_) => "Layer",
+        SceneCommand::FillRoundedRect { .. } => "FillRoundedRect",
         SceneCommand::Label { .. } => "Label",
     }
 }

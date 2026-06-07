@@ -33,6 +33,8 @@ pub(crate) enum DrawOpKind {
         id: u64,
     },
     WidgetShader,
+    RoundedRect,
+    GradientRect,
 }
 
 pub(crate) type ImageBindGroupKey = (ImageHandle, ImageSampling);
@@ -217,6 +219,8 @@ pub(crate) enum PreparedDrawKind {
         resource_signature: u64,
     },
     WidgetShader,
+    RoundedRect,
+    GradientRect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,6 +230,8 @@ enum PreparedDrawPipelineKind {
     TextAtlas,
     AnalyticPath,
     WidgetShader,
+    RoundedRect,
+    GradientRect,
 }
 
 impl PreparedDrawKind {
@@ -236,6 +242,8 @@ impl PreparedDrawKind {
             Self::TextAtlas => PreparedDrawPipelineKind::TextAtlas,
             Self::AnalyticPath { .. } => PreparedDrawPipelineKind::AnalyticPath,
             Self::WidgetShader => PreparedDrawPipelineKind::WidgetShader,
+            Self::RoundedRect => PreparedDrawPipelineKind::RoundedRect,
+            Self::GradientRect => PreparedDrawPipelineKind::GradientRect,
         }
     }
 }
@@ -462,6 +470,8 @@ fn prepared_draw_kind(draw_ops: &DrawOpArena, op: &DrawOp) -> PreparedDrawKind {
             resource_signature: draw_ops.analytic_paths[&id].resource_signature,
         },
         DrawOpKind::WidgetShader => PreparedDrawKind::WidgetShader,
+        DrawOpKind::RoundedRect => PreparedDrawKind::RoundedRect,
+        DrawOpKind::GradientRect => PreparedDrawKind::GradientRect,
     }
 }
 
@@ -487,6 +497,8 @@ pub(crate) fn collect_draw_op_resources(
                     .or_insert_with(|| path.clone());
             }
             DrawOpKind::WidgetShader => {}
+            DrawOpKind::RoundedRect => {}
+            DrawOpKind::GradientRect => {}
         }
     }
     uses_text_atlas
@@ -854,6 +866,18 @@ fn encode_draws_for_pass(
                 (PreparedDrawPipelineKind::WidgetShader, false) => {
                     shared.widget_shader_pipeline(target_format)
                 }
+                (PreparedDrawPipelineKind::RoundedRect, true) => {
+                    shared.clipped_rounded_rect_pipeline(target_format)
+                }
+                (PreparedDrawPipelineKind::RoundedRect, false) => {
+                    shared.rounded_rect_pipeline(target_format)
+                }
+                (PreparedDrawPipelineKind::GradientRect, true) => {
+                    shared.clipped_gradient_rect_pipeline(target_format)
+                }
+                (PreparedDrawPipelineKind::GradientRect, false) => {
+                    shared.gradient_rect_pipeline(target_format)
+                }
             };
             render_pass.set_pipeline(pipeline);
             if pipeline_kind == PreparedDrawPipelineKind::AnalyticPath {
@@ -884,6 +908,8 @@ fn encode_draws_for_pass(
             }
             PreparedDrawKind::AnalyticPath { .. } => {}
             PreparedDrawKind::WidgetShader => {}
+            PreparedDrawKind::RoundedRect => {}
+            PreparedDrawKind::GradientRect => {}
         }
 
         let (vertex_range, instances) = match draw.kind {
@@ -1042,17 +1068,42 @@ impl SceneDrawOpBuilder<'_> {
                 Ok(())
             }
             SceneCommand::FillRect { rect, brush } => {
-                let Brush::Solid(color) = brush;
                 self.scratch_vertices.clear();
-                append_painted_rect(
-                    &mut self.scratch_vertices,
-                    state,
-                    *rect,
-                    *color,
-                    viewport,
-                    self.feather_width,
-                );
-                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                match brush {
+                    Brush::Solid(color) => {
+                        append_painted_rect(
+                            &mut self.scratch_vertices,
+                            state,
+                            *rect,
+                            *color,
+                            viewport,
+                            self.feather_width,
+                        );
+                        push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                    }
+                    Brush::LinearGradient { start, end, stops } => {
+                        let stop0 = stops.first().map(|s| s.color).unwrap_or(Color::TRANSPARENT);
+                        let stop1 = stops.last().map(|s| s.color).unwrap_or(stop0);
+                        append_gradient_rect(
+                            &mut self.scratch_vertices,
+                            state,
+                            *rect,
+                            [0.0; 4],
+                            *start,
+                            *end,
+                            stop0,
+                            stop1,
+                            viewport,
+                            self.feather_width,
+                        );
+                        push_draw_op(
+                            draw_ops,
+                            DrawOpKind::GradientRect,
+                            &self.scratch_vertices,
+                            state,
+                        );
+                    }
+                }
                 diagnostics.rect_command_count += 1;
                 Ok(())
             }
@@ -1061,13 +1112,13 @@ impl SceneDrawOpBuilder<'_> {
                 brush,
                 stroke,
             } => {
-                let Brush::Solid(color) = brush;
+                let color = brush_fallback_color(brush);
                 self.scratch_vertices.clear();
                 append_stroke_rect(
                     &mut self.scratch_vertices,
                     state,
                     *rect,
-                    *color,
+                    color,
                     *stroke,
                     viewport,
                     self.feather_width,
@@ -1077,7 +1128,7 @@ impl SceneDrawOpBuilder<'_> {
                 Ok(())
             }
             SceneCommand::FillPath { path, brush } => {
-                let Brush::Solid(color) = brush;
+                let color = brush_fallback_color(brush);
                 self.scratch_vertices.clear();
                 self.overlay_scratch_vertices.clear();
                 let render_mode = append_painted_path(
@@ -1086,7 +1137,7 @@ impl SceneDrawOpBuilder<'_> {
                     draw_ops,
                     state,
                     path,
-                    *color,
+                    color,
                     self.path_cache,
                     viewport,
                     self.feather_width,
@@ -1108,7 +1159,7 @@ impl SceneDrawOpBuilder<'_> {
                 brush,
                 stroke,
             } => {
-                let Brush::Solid(color) = brush;
+                let color = brush_fallback_color(brush);
                 self.scratch_vertices.clear();
                 self.overlay_scratch_vertices.clear();
                 let analytic_id = append_stroked_path(
@@ -1117,7 +1168,7 @@ impl SceneDrawOpBuilder<'_> {
                     draw_ops,
                     state,
                     path,
-                    *color,
+                    color,
                     *stroke,
                     self.path_cache,
                     viewport,
@@ -1279,6 +1330,83 @@ impl SceneDrawOpBuilder<'_> {
                 "retained direct packet compiler encountered nested layer {}",
                 layer.layer_id().get()
             ))),
+            SceneCommand::FillRoundedRect {
+                rect,
+                radii,
+                brush,
+                border,
+                shadow,
+            } => {
+                // Submission order is z-order: paint the soft shadow first so the fill
+                // (and its border) draw on top of it.
+                if let Some(shadow) = shadow {
+                    self.scratch_vertices.clear();
+                    append_rounded_rect_shadow(
+                        &mut self.scratch_vertices,
+                        state,
+                        *rect,
+                        *radii,
+                        *shadow,
+                        viewport,
+                        self.feather_width,
+                    );
+                    push_draw_op(
+                        draw_ops,
+                        DrawOpKind::RoundedRect,
+                        &self.scratch_vertices,
+                        state,
+                    );
+                }
+
+                self.scratch_vertices.clear();
+                match brush {
+                    Brush::Solid(color) => {
+                        append_rounded_rect_fill(
+                            &mut self.scratch_vertices,
+                            state,
+                            *rect,
+                            *radii,
+                            *color,
+                            *border,
+                            viewport,
+                            self.feather_width,
+                        );
+                        push_draw_op(
+                            draw_ops,
+                            DrawOpKind::RoundedRect,
+                            &self.scratch_vertices,
+                            state,
+                        );
+                    }
+                    Brush::LinearGradient { start, end, stops } => {
+                        let stop0 = stops.first().map(|s| s.color).unwrap_or(Color::TRANSPARENT);
+                        let stop1 = stops.last().map(|s| s.color).unwrap_or(stop0);
+                        append_gradient_rect(
+                            &mut self.scratch_vertices,
+                            state,
+                            *rect,
+                            *radii,
+                            *start,
+                            *end,
+                            stop0,
+                            stop1,
+                            viewport,
+                            self.feather_width,
+                        );
+                        push_draw_op(
+                            draw_ops,
+                            DrawOpKind::GradientRect,
+                            &self.scratch_vertices,
+                            state,
+                        );
+                        // A gradient fill ignores any border here (documented limitation);
+                        // borders are only honored for solid rounded-rect fills.
+                        let _ = border;
+                    }
+                }
+                diagnostics.rect_command_count += 1;
+                Ok(())
+            }
             SceneCommand::Label { rect, text, color } => {
                 self.scratch_text_instances.clear();
                 self.text_engine.append_text_run(
@@ -1305,6 +1433,7 @@ impl SceneDrawOpBuilder<'_> {
             | SceneCommand::FillRect { .. }
             | SceneCommand::StrokeRect { .. }
             | SceneCommand::DrawShaderRect { .. }
+            | SceneCommand::FillRoundedRect { .. }
             | SceneCommand::PushClip { .. } => {
                 diagnostics.rect_command_time_ms += elapsed_ms;
             }
@@ -2622,42 +2751,32 @@ fn append_text_instance_vertices(vertices: &mut Vec<Vertex>, instances: &[TextAt
             top_right[1] + instance.y_axis[1],
         ];
         vertices.extend_from_slice(&[
-            Vertex {
-                position: top_left,
-                color: instance.color,
-                tex_coords: instance.uv_min,
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: top_right,
-                color: instance.color,
-                tex_coords: [instance.uv_max[0], instance.uv_min[1]],
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: bottom_left,
-                color: instance.color,
-                tex_coords: [instance.uv_min[0], instance.uv_max[1]],
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: bottom_left,
-                color: instance.color,
-                tex_coords: [instance.uv_min[0], instance.uv_max[1]],
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: top_right,
-                color: instance.color,
-                tex_coords: [instance.uv_max[0], instance.uv_min[1]],
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: bottom_right,
-                color: instance.color,
-                tex_coords: instance.uv_max,
-                shader_params: [0.0; 4],
-            },
+            Vertex::basic(top_left, instance.color, instance.uv_min, [0.0; 4]),
+            Vertex::basic(
+                top_right,
+                instance.color,
+                [instance.uv_max[0], instance.uv_min[1]],
+                [0.0; 4],
+            ),
+            Vertex::basic(
+                bottom_left,
+                instance.color,
+                [instance.uv_min[0], instance.uv_max[1]],
+                [0.0; 4],
+            ),
+            Vertex::basic(
+                bottom_left,
+                instance.color,
+                [instance.uv_min[0], instance.uv_max[1]],
+                [0.0; 4],
+            ),
+            Vertex::basic(
+                top_right,
+                instance.color,
+                [instance.uv_max[0], instance.uv_min[1]],
+                [0.0; 4],
+            ),
+            Vertex::basic(bottom_right, instance.color, instance.uv_max, [0.0; 4]),
         ]);
     }
 }
@@ -2719,12 +2838,12 @@ pub(crate) fn append_cached_path_mesh(
     for index in &mesh.indices {
         let vertex = mesh.vertices[*index as usize];
         let ndc = to_ndc(vertex.position.x, vertex.position.y, viewport);
-        vertices.push(Vertex {
-            position: ndc,
-            color: [rgba[0], rgba[1], rgba[2], rgba[3] * vertex.coverage],
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        });
+        vertices.push(Vertex::basic(
+            ndc,
+            [rgba[0], rgba[1], rgba[2], rgba[3] * vertex.coverage],
+            [0.0, 0.0],
+            [0.0; 4],
+        ));
     }
 }
 fn append_painted_path(
@@ -2949,42 +3068,12 @@ fn append_analytic_path_quad(vertices: &mut Vec<Vertex>, rect: Rect, color: Colo
     let y1 = rect.max_y();
 
     vertices.extend_from_slice(&[
-        Vertex {
-            position: [min[0], min[1]],
-            color: rgba,
-            tex_coords: [x0, y0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: rgba,
-            tex_coords: [x1, y0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: rgba,
-            tex_coords: [x0, y1],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: rgba,
-            tex_coords: [x0, y1],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: rgba,
-            tex_coords: [x1, y0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [max[0], max[1]],
-            color: rgba,
-            tex_coords: [x1, y1],
-            shader_params: [0.0; 4],
-        },
+        Vertex::basic([min[0], min[1]], rgba, [x0, y0], [0.0; 4]),
+        Vertex::basic([max[0], min[1]], rgba, [x1, y0], [0.0; 4]),
+        Vertex::basic([min[0], max[1]], rgba, [x0, y1], [0.0; 4]),
+        Vertex::basic([min[0], max[1]], rgba, [x0, y1], [0.0; 4]),
+        Vertex::basic([max[0], min[1]], rgba, [x1, y0], [0.0; 4]),
+        Vertex::basic([max[0], max[1]], rgba, [x1, y1], [0.0; 4]),
     ]);
 }
 
@@ -3095,12 +3184,7 @@ fn append_indexed_triangles(
     for index in &buffers.indices {
         let position = buffers.vertices[*index as usize];
         let ndc = to_ndc(position[0], position[1], viewport);
-        vertices.push(Vertex {
-            position: [ndc[0], ndc[1]],
-            color: rgba,
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        });
+        vertices.push(Vertex::basic([ndc[0], ndc[1]], rgba, [0.0, 0.0], [0.0; 4]));
     }
 }
 
@@ -3177,42 +3261,12 @@ fn append_image(
         let bottom_right = to_ndc(bottom_right.x, bottom_right.y, viewport);
 
         vertices.extend_from_slice(&[
-            Vertex {
-                position: top_left,
-                color: tint,
-                tex_coords: [u0, v0],
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: top_right,
-                color: tint,
-                tex_coords: [u1, v0],
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: bottom_left,
-                color: tint,
-                tex_coords: [u0, v1],
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: bottom_left,
-                color: tint,
-                tex_coords: [u0, v1],
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: top_right,
-                color: tint,
-                tex_coords: [u1, v0],
-                shader_params: [0.0; 4],
-            },
-            Vertex {
-                position: bottom_right,
-                color: tint,
-                tex_coords: [u1, v1],
-                shader_params: [0.0; 4],
-            },
+            Vertex::basic(top_left, tint, [u0, v0], [0.0; 4]),
+            Vertex::basic(top_right, tint, [u1, v0], [0.0; 4]),
+            Vertex::basic(bottom_left, tint, [u0, v1], [0.0; 4]),
+            Vertex::basic(bottom_left, tint, [u0, v1], [0.0; 4]),
+            Vertex::basic(top_right, tint, [u1, v0], [0.0; 4]),
+            Vertex::basic(bottom_right, tint, [u1, v1], [0.0; 4]),
         ]);
         return;
     }
@@ -3230,42 +3284,12 @@ fn append_image(
     let max = to_ndc(visible.max_x(), visible.max_y(), viewport);
 
     vertices.extend_from_slice(&[
-        Vertex {
-            position: [min[0], min[1]],
-            color: tint,
-            tex_coords: [uv_left, uv_top],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: tint,
-            tex_coords: [uv_right, uv_top],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: tint,
-            tex_coords: [uv_left, uv_bottom],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: tint,
-            tex_coords: [uv_left, uv_bottom],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: tint,
-            tex_coords: [uv_right, uv_top],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [max[0], max[1]],
-            color: tint,
-            tex_coords: [uv_right, uv_bottom],
-            shader_params: [0.0; 4],
-        },
+        Vertex::basic([min[0], min[1]], tint, [uv_left, uv_top], [0.0; 4]),
+        Vertex::basic([max[0], min[1]], tint, [uv_right, uv_top], [0.0; 4]),
+        Vertex::basic([min[0], max[1]], tint, [uv_left, uv_bottom], [0.0; 4]),
+        Vertex::basic([min[0], max[1]], tint, [uv_left, uv_bottom], [0.0; 4]),
+        Vertex::basic([max[0], min[1]], tint, [uv_right, uv_top], [0.0; 4]),
+        Vertex::basic([max[0], max[1]], tint, [uv_right, uv_bottom], [0.0; 4]),
     ]);
 }
 
@@ -3314,42 +3338,12 @@ fn append_image_quad(
     let bottom_right = to_ndc(points[3].x, points[3].y, viewport);
 
     vertices.extend_from_slice(&[
-        Vertex {
-            position: top_left,
-            color: tint,
-            tex_coords: [u0, v0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: top_right,
-            color: tint,
-            tex_coords: [u1, v0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: bottom_left,
-            color: tint,
-            tex_coords: [u0, v1],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: bottom_left,
-            color: tint,
-            tex_coords: [u0, v1],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: top_right,
-            color: tint,
-            tex_coords: [u1, v0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: bottom_right,
-            color: tint,
-            tex_coords: [u1, v1],
-            shader_params: [0.0; 4],
-        },
+        Vertex::basic(top_left, tint, [u0, v0], [0.0; 4]),
+        Vertex::basic(top_right, tint, [u1, v0], [0.0; 4]),
+        Vertex::basic(bottom_left, tint, [u0, v1], [0.0; 4]),
+        Vertex::basic(bottom_left, tint, [u0, v1], [0.0; 4]),
+        Vertex::basic(top_right, tint, [u1, v0], [0.0; 4]),
+        Vertex::basic(bottom_right, tint, [u1, v1], [0.0; 4]),
     ]);
 }
 
@@ -3385,43 +3379,238 @@ fn append_widget_shader_rect(
     let (metadata, params) = widget_shader_metadata(shader);
 
     vertices.extend_from_slice(&[
-        Vertex {
-            position: [min[0], min[1]],
-            color: metadata,
-            tex_coords: [left, top],
-            shader_params: params,
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: metadata,
-            tex_coords: [right, top],
-            shader_params: params,
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: metadata,
-            tex_coords: [left, bottom],
-            shader_params: params,
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: metadata,
-            tex_coords: [left, bottom],
-            shader_params: params,
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: metadata,
-            tex_coords: [right, top],
-            shader_params: params,
-        },
-        Vertex {
-            position: [max[0], max[1]],
-            color: metadata,
-            tex_coords: [right, bottom],
-            shader_params: params,
-        },
+        Vertex::basic([min[0], min[1]], metadata, [left, top], params),
+        Vertex::basic([max[0], min[1]], metadata, [right, top], params),
+        Vertex::basic([min[0], max[1]], metadata, [left, bottom], params),
+        Vertex::basic([min[0], max[1]], metadata, [left, bottom], params),
+        Vertex::basic([max[0], min[1]], metadata, [right, top], params),
+        Vertex::basic([max[0], max[1]], metadata, [right, bottom], params),
     ]);
+}
+
+/// A single representative color for ops that do not support gradients (stroke rect,
+/// fill/stroke path): the solid color, or the first gradient stop, falling back to
+/// transparent for an empty stop list. Documented limitation for non-rect gradient use.
+fn brush_fallback_color(brush: &Brush) -> Color {
+    match brush {
+        Brush::Solid(color) => *color,
+        Brush::LinearGradient { stops, .. } => {
+            stops.first().map(|s| s.color).unwrap_or(Color::TRANSPARENT)
+        }
+    }
+}
+
+/// Emit a 6-vertex (two-triangle) quad for the rounded-rect / gradient pipelines.
+///
+/// The quad spans `screen_quad` (already transformed + inflated for AA fringe) in NDC,
+/// and carries a center-origin rect-local coordinate in attribute 2 so the fragment
+/// shader can evaluate a signed-distance field. `center` is the screen-space center of
+/// the (un-inflated) rect; `local = corner_screen - center`. The remaining attributes
+/// (color, p0, radii, p2, attr6) are constant across the quad.
+#[allow(clippy::too_many_arguments)]
+fn append_rounded_rect_quad(
+    vertices: &mut Vec<Vertex>,
+    screen_quad: Rect,
+    center: Point,
+    viewport: Size,
+    color: [f32; 4],
+    p0: [f32; 4],
+    radii: [f32; 4],
+    p2: [f32; 4],
+    attr6: [f32; 4],
+) {
+    if screen_quad.is_empty() || viewport.is_empty() {
+        return;
+    }
+
+    let min_x = screen_quad.x();
+    let min_y = screen_quad.y();
+    let max_x = screen_quad.max_x();
+    let max_y = screen_quad.max_y();
+
+    let ndc_min = to_ndc(min_x, min_y, viewport);
+    let ndc_max = to_ndc(max_x, max_y, viewport);
+
+    let local_min = [min_x - center.x, min_y - center.y];
+    let local_max = [max_x - center.x, max_y - center.y];
+
+    let make = |position: [f32; 2], local: [f32; 2]| Vertex {
+        position,
+        color,
+        tex_coords: local,
+        shader_params: p0,
+        shader_params2: radii,
+        shader_params3: p2,
+        shader_params4: attr6,
+    };
+
+    vertices.extend_from_slice(&[
+        make([ndc_min[0], ndc_min[1]], [local_min[0], local_min[1]]),
+        make([ndc_max[0], ndc_min[1]], [local_max[0], local_min[1]]),
+        make([ndc_min[0], ndc_max[1]], [local_min[0], local_max[1]]),
+        make([ndc_min[0], ndc_max[1]], [local_min[0], local_max[1]]),
+        make([ndc_max[0], ndc_min[1]], [local_max[0], local_min[1]]),
+        make([ndc_max[0], ndc_max[1]], [local_max[0], local_max[1]]),
+    ]);
+}
+
+/// Clamp per-corner radii to half the smaller rect dimension so the SDF stays valid.
+fn clamp_radii(radii: [f32; 4], half_w: f32, half_h: f32) -> [f32; 4] {
+    let limit = half_w.min(half_h).max(0.0);
+    [
+        radii[0].clamp(0.0, limit),
+        radii[1].clamp(0.0, limit),
+        radii[2].clamp(0.0, limit),
+        radii[3].clamp(0.0, limit),
+    ]
+}
+
+/// Fill (and optionally border) a rounded rectangle. `mode` in the shader is FILL (0).
+fn append_rounded_rect_fill(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    rect: Rect,
+    radii: [f32; 4],
+    fill: Color,
+    border: Option<sui_scene::Border>,
+    viewport: Size,
+    feather: f32,
+) {
+    if rect.is_empty() || viewport.is_empty() {
+        return;
+    }
+    let transformed = state.current_transform.transform_rect_bbox(rect);
+    if transformed.width() <= 0.0 || transformed.height() <= 0.0 {
+        return;
+    }
+
+    let half_w = transformed.width() * 0.5;
+    let half_h = transformed.height() * 0.5;
+    let center = Point::new(transformed.x() + half_w, transformed.y() + half_h);
+    let fringe = (feather * 0.5).max(0.0);
+    let screen_quad = transformed.inflate(fringe, fringe);
+    let radii = clamp_radii(radii, half_w, half_h);
+
+    let (border_w, border_color) = match border {
+        Some(border) => (border.width.max(0.0), shader_color(border.color)),
+        None => (0.0, [0.0; 4]),
+    };
+
+    append_rounded_rect_quad(
+        vertices,
+        screen_quad,
+        center,
+        viewport,
+        shader_color(fill),
+        [half_w, half_h, 0.0, feather],
+        radii,
+        [border_w, 0.0, 0.0, 0.0],
+        border_color,
+    );
+}
+
+/// Soft drop shadow for a rounded rectangle. `mode` in the shader is SHADOW (1). The
+/// shadow quad is the rect inflated by its blur/spread/offset extent and shifted by the
+/// offset; the fragment shader re-centers via the local offset in p2.zw.
+///
+/// CLIP NOTE: the shadow op inherits the active clip just like any other op, so callers
+/// that want a shadow to bleed outside a tight self-clip must paint the shadow BEFORE
+/// pushing that clip.
+fn append_rounded_rect_shadow(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    rect: Rect,
+    radii: [f32; 4],
+    shadow: sui_scene::ShadowParams,
+    viewport: Size,
+    feather: f32,
+) {
+    if rect.is_empty() || viewport.is_empty() {
+        return;
+    }
+    let transformed = state.current_transform.transform_rect_bbox(rect);
+    if transformed.width() <= 0.0 || transformed.height() <= 0.0 {
+        return;
+    }
+
+    let half_w = transformed.width() * 0.5;
+    let half_h = transformed.height() * 0.5;
+    let center = Point::new(transformed.x() + half_w, transformed.y() + half_h);
+    let spread = shadow.spread.max(0.0);
+    let ext = shadow.extent();
+    // The shadow's rounded box is the fill box grown by `spread`; coverage is sampled in
+    // the same center-origin local space, offset by the shadow displacement.
+    let radii = clamp_radii(radii, half_w + spread, half_h + spread);
+    let screen_quad = transformed
+        .inflate(ext, ext)
+        .translate(Vector::new(shadow.offset_x, shadow.offset_y));
+
+    append_rounded_rect_quad(
+        vertices,
+        screen_quad,
+        center,
+        viewport,
+        shader_color(shadow.color),
+        [half_w + spread, half_h + spread, 1.0, feather],
+        radii,
+        [0.0, shadow.blur, shadow.offset_x, shadow.offset_y],
+        [0.0; 4],
+    );
+}
+
+/// Fill a (possibly rounded) rectangle with a 2-stop linear gradient. The gradient axis
+/// is given by `start`/`end` in scene (pre-transform) coordinates; both are mapped into
+/// the same center-origin rect-local space used by the SDF. Stops beyond the first two
+/// are ignored (documented limitation of the bind-group-free packing).
+#[allow(clippy::too_many_arguments)]
+fn append_gradient_rect(
+    vertices: &mut Vec<Vertex>,
+    state: &SceneRasterState,
+    rect: Rect,
+    radii: [f32; 4],
+    start: Point,
+    end: Point,
+    stop0: Color,
+    stop1: Color,
+    viewport: Size,
+    feather: f32,
+) {
+    if rect.is_empty() || viewport.is_empty() {
+        return;
+    }
+    let transformed = state.current_transform.transform_rect_bbox(rect);
+    if transformed.width() <= 0.0 || transformed.height() <= 0.0 {
+        return;
+    }
+
+    let half_w = transformed.width() * 0.5;
+    let half_h = transformed.height() * 0.5;
+    let center = Point::new(transformed.x() + half_w, transformed.y() + half_h);
+    let fringe = (feather * 0.5).max(0.0);
+    let screen_quad = transformed.inflate(fringe, fringe);
+    let radii = clamp_radii(radii, half_w, half_h);
+
+    // Gradient axis end-points in center-origin local space (matching the SDF space).
+    let start_screen = state.current_transform.transform_point(start);
+    let end_screen = state.current_transform.transform_point(end);
+    let axis = [
+        start_screen.x - center.x,
+        start_screen.y - center.y,
+        end_screen.x - center.x,
+        end_screen.y - center.y,
+    ];
+
+    append_rounded_rect_quad(
+        vertices,
+        screen_quad,
+        center,
+        viewport,
+        shader_color(stop0),
+        [half_w, half_h, 0.0, feather],
+        radii,
+        axis,
+        shader_color(stop1),
+    );
 }
 
 fn points_bounds(points: &[Point]) -> Rect {
@@ -3534,42 +3723,12 @@ pub(crate) fn append_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, 
     let rgba = shader_color(color);
 
     vertices.extend_from_slice(&[
-        Vertex {
-            position: [min[0], min[1]],
-            color: rgba,
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: rgba,
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: rgba,
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: rgba,
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: rgba,
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        },
-        Vertex {
-            position: [max[0], max[1]],
-            color: rgba,
-            tex_coords: [0.0, 0.0],
-            shader_params: [0.0; 4],
-        },
+        Vertex::basic([min[0], min[1]], rgba, [0.0, 0.0], [0.0; 4]),
+        Vertex::basic([max[0], min[1]], rgba, [0.0, 0.0], [0.0; 4]),
+        Vertex::basic([min[0], max[1]], rgba, [0.0, 0.0], [0.0; 4]),
+        Vertex::basic([min[0], max[1]], rgba, [0.0, 0.0], [0.0; 4]),
+        Vertex::basic([max[0], min[1]], rgba, [0.0, 0.0], [0.0; 4]),
+        Vertex::basic([max[0], max[1]], rgba, [0.0, 0.0], [0.0; 4]),
     ]);
 }
 

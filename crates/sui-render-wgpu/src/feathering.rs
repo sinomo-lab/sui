@@ -151,42 +151,12 @@ fn append_feathered_rect(
     let bottom = rect.height() + fringe_radius;
 
     vertices.extend_from_slice(&[
-        Vertex {
-            position: [min[0], min[1]],
-            color: rgba,
-            tex_coords: [left, top],
-            shader_params: params,
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: rgba,
-            tex_coords: [right, top],
-            shader_params: params,
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: rgba,
-            tex_coords: [left, bottom],
-            shader_params: params,
-        },
-        Vertex {
-            position: [min[0], max[1]],
-            color: rgba,
-            tex_coords: [left, bottom],
-            shader_params: params,
-        },
-        Vertex {
-            position: [max[0], min[1]],
-            color: rgba,
-            tex_coords: [right, top],
-            shader_params: params,
-        },
-        Vertex {
-            position: [max[0], max[1]],
-            color: rgba,
-            tex_coords: [right, bottom],
-            shader_params: params,
-        },
+        Vertex::basic([min[0], min[1]], rgba, [left, top], params),
+        Vertex::basic([max[0], min[1]], rgba, [right, top], params),
+        Vertex::basic([min[0], max[1]], rgba, [left, bottom], params),
+        Vertex::basic([min[0], max[1]], rgba, [left, bottom], params),
+        Vertex::basic([max[0], min[1]], rgba, [right, top], params),
+        Vertex::basic([max[0], max[1]], rgba, [right, bottom], params),
     ]);
 }
 
