@@ -10,7 +10,8 @@ use std::{
 };
 
 use sui_core::{
-    AsyncWakeToken, DirtyRegion, Error, Event, FontHandle, ImageHandle, InvalidationKind,
+    AsyncWakeToken, CustomEvent, DirtyRegion, Error, Event, FontHandle, ImageHandle,
+    InvalidationKind,
     InvalidationRequest, InvalidationTarget, KeyState, Point, PointerEvent, PointerEventKind, Rect,
     Result, SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
@@ -383,6 +384,11 @@ impl Default for Application {
     }
 }
 
+/// Custom-event kind delivered to a window's root widget when a background thread wakes the UI
+/// (see [`Runtime::wake_root`]). Widgets match `Event::Custom` with this `kind` to drain
+/// cross-thread work (channels, async results) without polling on animation frames.
+pub const EXTERNAL_WAKE_KIND: &str = "sui.external.wake";
+
 pub struct Runtime {
     next_window_id: u64,
     next_font_id: u64,
@@ -482,6 +488,17 @@ impl Runtime {
     pub fn wake_async(&mut self, window_id: WindowId, token: AsyncWakeToken) -> Result<bool> {
         let window = self.window_mut(window_id)?;
         Ok(window.wake_async(token))
+    }
+
+    /// Deliver an external-wake [`Event::Custom`] (kind [`EXTERNAL_WAKE_KIND`]) to a window's
+    /// root widget. Used by the platform to translate a background-thread wake into a UI event,
+    /// so widgets can drain channels / async results. Routed to the root and its effects
+    /// (invalidations, wake requests) applied like any other event.
+    pub fn wake_root(&mut self, window_id: WindowId) -> Result<()> {
+        self.handle_event(
+            window_id,
+            Event::Custom(CustomEvent::new(EXTERNAL_WAKE_KIND)),
+        )
     }
 
     pub fn register_font(&mut self, handle: FontHandle, font: RegisteredFont) -> Result<()> {
@@ -1333,6 +1350,20 @@ impl WindowState {
         true
     }
 
+    /// A viewport (window) resize or DPI change can reflow every widget, so it must
+    /// force a full re-measure rather than a scoped one. Marking the schedule alone is
+    /// not enough: `build_measure_scope` only re-measures the whole tree when it sees a
+    /// `Window`/`Surface` invalidation (or none at all), so record one explicitly —
+    /// otherwise stale per-widget invalidations would scope the pass and width-responsive
+    /// subtrees would keep their old bounds, failing to reflow on resize.
+    fn invalidate_layout_for_viewport_change(&mut self) {
+        self.schedule.mark(InvalidationKind::Measure);
+        self.pending_invalidations.push(InvalidationRequest::new(
+            InvalidationTarget::Window(self.id),
+            InvalidationKind::Measure,
+        ));
+    }
+
     fn preprocess_window_event(&mut self, event: &Event) {
         let Event::Window(window_event) = event else {
             return;
@@ -1341,7 +1372,7 @@ impl WindowState {
         match window_event {
             WindowEvent::Resized(size) => {
                 self.viewport_hint = Some(*size);
-                self.schedule.mark(InvalidationKind::Measure);
+                self.invalidate_layout_for_viewport_change();
             }
             WindowEvent::ScaleFactorChanged {
                 scale_factor,
@@ -1353,7 +1384,7 @@ impl WindowState {
                 if let Some(size) = suggested_size {
                     self.viewport_hint = Some(*size);
                 }
-                self.schedule.mark(InvalidationKind::Measure);
+                self.invalidate_layout_for_viewport_change();
             }
             WindowEvent::Focused(focused) => {
                 self.focus.window_focused = *focused;

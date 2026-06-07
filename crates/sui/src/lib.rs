@@ -39,7 +39,7 @@ pub use sui_layout::{Alignment, Axis, Constraints, LayoutContext, Padding};
 #[cfg(any(feature = "desktop", feature = "web"))]
 pub use sui_platform::{
     AccessibilitySnapshot, DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform,
-    HeadlessPlatform, PlatformWindow, WindowOutputDiagnostics, window_output_diagnostics,
+    HeadlessPlatform, PlatformWindow, Waker, WindowOutputDiagnostics, window_output_diagnostics,
 };
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{
@@ -48,7 +48,8 @@ pub use sui_render_wgpu::{
 };
 pub use sui_runtime::{
     Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta,
-    DEFAULT_SUI_LOGO_SVG, EmbeddedSvgImageResource, EventCtx, EventPhase, FocusState, FramePhase,
+    DEFAULT_SUI_LOGO_SVG, EXTERNAL_WAKE_KIND, EmbeddedSvgImageResource, EventCtx, EventPhase,
+    FocusState, FramePhase,
     FramePhaseSample, FrameSchedule, MeasureCtx, PaintCtx, PresentationLatencyDiagnostics,
     RenderDiagnostics, RenderOutput, RendererSubmissionDiagnostics,
     RetainedPacketRebuildDiagnostics, Runtime, SceneStatistics, SceneStatisticsDetailMode,
@@ -397,6 +398,27 @@ impl Application {
             }
         }
         let _ = platform.run(runtime)?;
+        Ok(())
+    }
+
+    /// Like [`run`](Self::run) but invokes `on_ready` with a [`Waker`] once the event loop is
+    /// created (before it starts running), so the caller can wake the UI from a background
+    /// thread — e.g. run startup work off the UI thread and refresh the UI when it finishes.
+    #[cfg(any(feature = "desktop", feature = "web"))]
+    pub fn run_with(self, on_ready: impl FnOnce(Waker)) -> Result<()> {
+        let feathering_enabled = self.feathering_enabled;
+        let feather_width = self.feather_width;
+        let initial_window_render_options = self.initial_window_render_options;
+        let runtime = self.build()?;
+        let platform = DesktopPlatform::new()
+            .with_feathering_enabled(feathering_enabled)
+            .with_feather_width(feather_width);
+        if let Some(options) = initial_window_render_options {
+            for window_id in runtime.window_ids() {
+                set_window_render_options(window_id, options);
+            }
+        }
+        let _ = platform.run_with(runtime, on_ready)?;
         Ok(())
     }
 

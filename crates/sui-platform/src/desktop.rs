@@ -17,7 +17,7 @@ use winit::{
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
     error::{EventLoopError, OsError},
     event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent as WinitWindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, ModifiersState, NamedKey, PhysicalKey},
     window::{Window, WindowAttributes, WindowId as HostWindowId},
 };
@@ -182,7 +182,22 @@ impl DesktopPlatform {
     }
 
     pub fn run(self, runtime: Runtime) -> Result<Vec<PlatformWindow>> {
-        let event_loop = EventLoop::new().map_err(map_event_loop_error)?;
+        self.run_with(runtime, |_| {})
+    }
+
+    /// Like [`run`](Self::run) but hands the caller a [`Waker`] (before the loop starts) that
+    /// wakes the UI from any thread — used to drive non-blocking startup work.
+    pub fn run_with(
+        self,
+        runtime: Runtime,
+        on_ready: impl FnOnce(Waker),
+    ) -> Result<Vec<PlatformWindow>> {
+        let event_loop = EventLoop::<WakeSignal>::with_user_event()
+            .build()
+            .map_err(map_event_loop_error)?;
+        on_ready(Waker {
+            proxy: event_loop.create_proxy(),
+        });
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -644,7 +659,6 @@ impl DesktopApp {
 
         let is_redraw = matches!(event, Event::Window(WindowEvent::RedrawRequested));
         let is_close = matches!(event, Event::Window(WindowEvent::CloseRequested));
-        let render_immediately = event_renders_immediately(&event);
 
         let event_started = Instant::now();
         self.runtime.handle_event(window_id, event)?;
@@ -663,13 +677,19 @@ impl DesktopApp {
             self.request_redraw_if_needed(window_id)?;
         }
 
+        // Render only in response to `RedrawRequested`. Every other event (resize, scale
+        // change, input) marks the schedule and asks winit for a redraw via
+        // `request_redraw_if_needed` above; winit then delivers `RedrawRequested` and we render
+        // here. Rendering synchronously inside the originating event instead clears the frame
+        // schedule, so the redraw winit subsequently delivers finds `needs_render() == false`
+        // and becomes a no-op — and a synchronous present issued inside a `Resized` callback is
+        // not reliably composited (notably during the Windows modal resize loop), leaving the
+        // window stale until an unrelated event repaints it.
         if is_redraw {
             if let Some(window) = self.windows.get_mut(&window_id) {
                 window.redraw_requested = false;
             }
 
-            self.render_window_if_needed(window_id, event_time_ms)?;
-        } else if render_immediately && !is_close {
             self.render_window_if_needed(window_id, event_time_ms)?;
         }
 
@@ -1577,8 +1597,42 @@ impl DesktopApp {
     }
 }
 
-impl ApplicationHandler for DesktopApp {
+/// Background-thread signal that wakes the desktop event loop (carried as a winit user event).
+#[derive(Debug, Clone, Copy)]
+pub struct WakeSignal;
+
+/// A cheap, cloneable, `Send` handle that wakes the running desktop UI from any thread. Each
+/// [`wake`](Self::wake) delivers an external-wake event ([`sui_runtime::EXTERNAL_WAKE_KIND`]) to
+/// every window's root widget, so a widget can drain cross-thread work (channels, async results)
+/// without polling on animation frames.
+#[derive(Clone)]
+pub struct Waker {
+    proxy: EventLoopProxy<WakeSignal>,
+}
+
+impl Waker {
+    pub fn wake(&self) {
+        let _ = self.proxy.send_event(WakeSignal);
+    }
+}
+
+impl ApplicationHandler<WakeSignal> for DesktopApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let Err(error) = self.drive_runtime(event_loop) {
+            self.handle_error(event_loop, error);
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, _signal: WakeSignal) {
+        // A background thread asked us to wake: deliver an external-wake event to every window's
+        // root (so widgets can drain cross-thread work), then drive the runtime — which
+        // re-renders affected windows and updates control flow.
+        for window_id in self.runtime.window_ids() {
+            if let Err(error) = self.runtime.wake_root(window_id) {
+                self.handle_error(event_loop, error);
+                return;
+            }
+        }
         if let Err(error) = self.drive_runtime(event_loop) {
             self.handle_error(event_loop, error);
         }
@@ -1662,14 +1716,6 @@ fn physical_position_to_logical_vector(
 ) -> Vector {
     let logical = position.to_logical::<f32>(scale_factor);
     Vector::new(logical.x, logical.y)
-}
-
-fn event_renders_immediately(event: &Event) -> bool {
-    matches!(
-        event,
-        Event::Window(WindowEvent::Resized(_))
-            | Event::Window(WindowEvent::ScaleFactorChanged { .. })
-    )
 }
 
 fn apply_ime_composition_rect(window: &Window, rect: Option<sui_core::Rect>) {
@@ -2049,11 +2095,11 @@ fn map_os_error(error: OsError) -> Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        event_renders_immediately, physical_position_to_logical_point,
-        physical_position_to_logical_vector, physical_size_to_logical_size,
-        rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area, window_icon_to_winit_icon,
+        physical_position_to_logical_point, physical_position_to_logical_vector,
+        physical_size_to_logical_size, rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area,
+        window_icon_to_winit_icon,
     };
-    use sui_core::{Event, Rect, Size, WindowEvent};
+    use sui_core::Rect;
     use sui_runtime::WindowIcon;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
 
@@ -2079,23 +2125,6 @@ mod tests {
 
         assert_eq!(delta.x, 60.0);
         assert_eq!(delta.y, 30.0);
-    }
-
-    #[test]
-    fn window_geometry_events_render_immediately() {
-        assert!(event_renders_immediately(&Event::Window(
-            WindowEvent::Resized(Size::new(640.0, 360.0))
-        )));
-        assert!(event_renders_immediately(&Event::Window(
-            WindowEvent::ScaleFactorChanged {
-                scale_factor: 2.0,
-                raw_dpi: Some(192.0),
-                suggested_size: Some(Size::new(320.0, 180.0)),
-            }
-        )));
-        assert!(!event_renders_immediately(&Event::Window(
-            WindowEvent::RedrawRequested
-        )));
     }
 
     #[test]

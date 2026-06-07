@@ -2277,6 +2277,12 @@ pub(crate) fn convert_subpixel_texel_for_mode(
     }
 }
 
+/// Boost the coverage of partially-covered pixels (thin stems, antialiased edges) so small text
+/// reads heavier. The boost is gated by `coverage` itself, so a fully-transparent pixel
+/// (coverage 0) stays fully transparent and a fully-covered pixel (coverage 1) stays solid;
+/// only the partial-coverage range in between is lifted. Without the `coverage` factor the old
+/// formula mapped 0 -> `amount`, flooding every glyph cell's transparent background with
+/// `amount` opacity and painting a gray box behind each glyph.
 pub(crate) fn apply_stem_darkening_to_coverage(coverage: u8, amount: f32) -> u8 {
     let amount = amount.clamp(0.0, 1.0);
     if amount <= f32::EPSILON {
@@ -2284,7 +2290,8 @@ pub(crate) fn apply_stem_darkening_to_coverage(coverage: u8, amount: f32) -> u8 
     }
 
     let coverage = coverage as f32 / 255.0;
-    (((coverage + ((1.0 - coverage) * amount)).clamp(0.0, 1.0)) * 255.0).round() as u8
+    let darkened = coverage + (coverage * (1.0 - coverage) * amount);
+    (darkened.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 fn mask_coverage_to_rgba(

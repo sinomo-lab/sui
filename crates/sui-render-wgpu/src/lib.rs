@@ -5496,6 +5496,17 @@ mod tests {
     }
 
     #[test]
+    fn stem_darkening_preserves_transparent_and_opaque_endpoints() {
+        // A transparent pixel must stay transparent — otherwise every glyph cell's background
+        // gets lifted to `amount` opacity, painting a gray box behind each glyph. A fully
+        // opaque pixel must stay opaque. This must hold even at a large darkening amount.
+        for amount in [0.1, 0.5, 0.6, 1.0] {
+            assert_eq!(apply_stem_darkening_to_coverage(0, amount), 0);
+            assert_eq!(apply_stem_darkening_to_coverage(255, amount), 255);
+        }
+    }
+
+    #[test]
     fn lcd_text_render_mode_has_distinct_cache_identity() {
         assert_ne!(
             TextAtlasColorMode::from(TextRenderMode::Grayscale),
