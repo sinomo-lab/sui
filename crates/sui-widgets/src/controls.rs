@@ -3,7 +3,7 @@ use crate::{
     ResolvedHdrStyle, ThemeColorScheme, Transition, WidgetColorRole, WidgetLuminanceRole,
     WidgetMaterialRole,
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
-    resolve_luminance_role, resolve_widget_hdr_style,
+    paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
 };
 use std::collections::BTreeSet;
 use sui_core::{
@@ -153,6 +153,7 @@ pub fn register_builtin_icon_resources(
 
 pub struct Separator {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     axis: Axis,
     name: Option<String>,
     inset: f32,
@@ -164,6 +165,7 @@ impl Separator {
     pub fn new(axis: Axis) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             axis,
             name: None,
             inset: 0.0,
@@ -182,6 +184,15 @@ impl Separator {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -207,8 +218,15 @@ impl Separator {
 
     fn resolved_thickness(&self) -> f32 {
         self.thickness
-            .unwrap_or(self.theme.metrics.separator_thickness)
+            .unwrap_or(self.resolved_theme().metrics.separator_thickness)
             .max(1.0)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| *self.theme)
     }
 }
 
@@ -236,6 +254,7 @@ impl Widget for Separator {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
         let thickness = physical_pixels(ctx, self.resolved_thickness());
         let line = match self.axis {
             Axis::Horizontal => Rect::new(
@@ -253,7 +272,7 @@ impl Widget for Separator {
         };
         ctx.fill(
             rounded_rect_path(line, thickness * 0.5),
-            self.theme.palette.border,
+            theme.palette.border,
         );
     }
 
@@ -337,6 +356,14 @@ const PRESS_ANIMATION_SECONDS: f64 = 1.0 / 12.0;
 const TOGGLE_ANIMATION_SECONDS: f64 = 1.0 / 6.0;
 const FOCUS_ANIMATION_SECONDS: f64 = 1.0 / 7.0;
 const CARET_BLINK_PERIOD_SECONDS: f64 = 1.0;
+const SELECT_MENU_GAP: f32 = 6.0;
+const SELECT_MENU_EDGE_PADDING: f32 = 8.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectMenuPlacement {
+    Below,
+    Above,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct AnimatedScalar {
@@ -4527,21 +4554,63 @@ impl Select {
     }
 
     fn header_rect(&self, bounds: Rect) -> Rect {
-        Rect::new(bounds.x(), bounds.y(), bounds.width(), self.header_height())
-    }
-
-    fn menu_rect(&self, bounds: Rect) -> Rect {
+        let height = self.header_height().min(bounds.height()).max(0.0);
         Rect::new(
             bounds.x(),
-            bounds.y() + self.header_height() + 6.0,
+            bounds.y() + ((bounds.height() - height) * 0.5).max(0.0),
             bounds.width(),
-            (self.options.len() as f32 * self.header_height())
-                .min(self.resolved_theme().metrics.select_menu_max_height),
+            height,
         )
     }
 
-    fn option_rect(&self, bounds: Rect, index: usize) -> Rect {
-        let menu = self.menu_rect(bounds);
+    fn menu_height(&self) -> f32 {
+        (self.options.len() as f32 * self.header_height())
+            .min(self.resolved_theme().metrics.select_menu_max_height)
+    }
+
+    fn menu_placement(&self, bounds: Rect, viewport: Size) -> SelectMenuPlacement {
+        if !viewport.height.is_finite() || viewport.height <= 0.0 {
+            return SelectMenuPlacement::Below;
+        }
+
+        let menu_height = self.menu_height();
+        let below_space = (viewport.height - bounds.max_y()).max(0.0);
+        let above_space = bounds.y().max(0.0);
+        let comfortable_below = menu_height + SELECT_MENU_GAP + SELECT_MENU_EDGE_PADDING;
+
+        if below_space < comfortable_below && above_space > below_space {
+            SelectMenuPlacement::Above
+        } else {
+            SelectMenuPlacement::Below
+        }
+    }
+
+    fn menu_rect(&self, bounds: Rect, viewport: Size) -> Rect {
+        let height = self.menu_height();
+        let placement = self.menu_placement(bounds, viewport);
+        let header = self.header_rect(bounds);
+        let mut y = match placement {
+            SelectMenuPlacement::Below => header.max_y() + SELECT_MENU_GAP,
+            SelectMenuPlacement::Above => header.y() - SELECT_MENU_GAP - height,
+        };
+
+        if viewport.height.is_finite()
+            && viewport.height > (height + (SELECT_MENU_EDGE_PADDING * 2.0))
+        {
+            let min_y = SELECT_MENU_EDGE_PADDING.min(bounds.y());
+            let max_y = (viewport.height - height - SELECT_MENU_EDGE_PADDING).max(0.0);
+            y = if min_y <= max_y {
+                y.clamp(min_y, max_y)
+            } else {
+                y.max(0.0)
+            };
+        }
+
+        Rect::new(bounds.x(), y, bounds.width(), height)
+    }
+
+    fn option_rect(&self, bounds: Rect, viewport: Size, index: usize) -> Rect {
+        let menu = self.menu_rect(bounds, viewport);
         Rect::new(
             menu.x(),
             menu.y() + (index as f32 * self.header_height()),
@@ -4550,13 +4619,18 @@ impl Select {
         )
     }
 
-    fn option_at(&self, bounds: Rect, position: Point) -> Option<usize> {
+    fn option_at(&self, bounds: Rect, viewport: Size, position: Point) -> Option<usize> {
         if !self.expanded {
             return None;
         }
 
+        let menu = self.menu_rect(bounds, viewport);
+        if !menu.contains(position) {
+            return None;
+        }
+
         self.options.iter().enumerate().find_map(|(index, _)| {
-            self.option_rect(bounds, index)
+            self.option_rect(bounds, viewport, index)
                 .contains(position)
                 .then_some(index)
         })
@@ -4598,14 +4672,14 @@ impl Widget for Select {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hover_state(
                     self.header_rect(ctx.bounds()).contains(pointer.position),
-                    self.option_at(ctx.bounds(), pointer.position),
+                    self.option_at(ctx.bounds(), ctx.dpi().viewport, pointer.position),
                     ctx,
                 );
             }
             Event::Pointer(pointer) if matches!(pointer.kind, PointerEventKind::Enter) => {
                 self.set_hover_state(
                     self.header_rect(ctx.bounds()).contains(pointer.position),
-                    self.option_at(ctx.bounds(), pointer.position),
+                    self.option_at(ctx.bounds(), ctx.dpi().viewport, pointer.position),
                     ctx,
                 );
             }
@@ -4617,7 +4691,8 @@ impl Widget for Select {
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 self.hovered_header = self.header_rect(ctx.bounds()).contains(pointer.position);
-                self.hovered_option = self.option_at(ctx.bounds(), pointer.position);
+                self.hovered_option =
+                    self.option_at(ctx.bounds(), ctx.dpi().viewport, pointer.position);
                 self.pressed_header = self.hovered_header;
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
@@ -4630,7 +4705,8 @@ impl Widget for Select {
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 let hovered_header = self.header_rect(ctx.bounds()).contains(pointer.position);
-                let hovered_option = self.option_at(ctx.bounds(), pointer.position);
+                let hovered_option =
+                    self.option_at(ctx.bounds(), ctx.dpi().viewport, pointer.position);
 
                 if self.pressed_header && hovered_header {
                     self.expanded = !self.expanded;
@@ -4801,18 +4877,22 @@ impl Widget for Select {
         );
 
         if self.expanded {
-            let menu = self.menu_rect(ctx.bounds());
+            let viewport = ctx.dpi().viewport;
+            let menu = self.menu_rect(ctx.bounds(), viewport);
             let current_selected = self.current_selected_index();
+            let menu_radius = metrics.corner_radius + 2.0;
+            paint_theme_shadow(ctx, menu, [menu_radius; 4], &theme.shadows.box_shadow.md);
             draw_control_shape(
                 ctx,
                 menu,
-                metrics.corner_radius,
+                menu_radius,
                 physical_pixels(ctx, metrics.border_width),
                 palette.surface_raised,
                 palette.border,
             );
+            ctx.push_clip_rect(menu);
             for (index, option) in self.options.iter().enumerate() {
-                let row = self.option_rect(ctx.bounds(), index);
+                let row = self.option_rect(ctx.bounds(), viewport, index);
                 let selected = current_selected == Some(index);
                 let hovered = self.hovered_option == Some(index);
                 let text_style = theme.body_text_style();
@@ -4838,6 +4918,7 @@ impl Widget for Select {
                     text_style,
                 );
             }
+            ctx.pop_clip();
         }
     }
 
@@ -5681,7 +5762,7 @@ pub(crate) fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect
     let icon = glyph.lucide_icon();
     let resource = icon.resource();
     if !ctx.image_registered(resource.handle()) {
-        if let Ok(image) = resource.registered_image() {
+        if let Ok(image) = icon.registered_mask_image() {
             ctx.register_image(resource.handle(), image);
         }
     }
@@ -5911,7 +5992,7 @@ mod tests {
     use super::{
         Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, FOCUS_ANIMATION_SECONDS,
         HOVER_ANIMATION_SECONDS, IconButton, IconGlyph, Label, NumberInput,
-        PRESS_ANIMATION_SECONDS, RadioButton, RadioGroup, Select, Slider, Switch,
+        PRESS_ANIMATION_SECONDS, RadioButton, RadioGroup, Select, Separator, Slider, Switch,
         TOGGLE_ANIMATION_SECONDS, TextArea, TextInput, rect_is_finite,
     };
     use crate::containers::SizedBox;
@@ -5978,6 +6059,32 @@ mod tests {
                 let blue = pixels[index + 2];
                 let alpha = pixels[index + 3];
                 if alpha != 0 && red <= max_channel && green <= max_channel && blue <= max_channel {
+                    count += 1;
+                }
+            }
+        }
+
+        count
+    }
+
+    fn bright_pixel_count(image: &RgbaImage, rect: Rect, min_channel: u8) -> usize {
+        let min_x = rect.x().floor().max(0.0) as u32;
+        let min_y = rect.y().floor().max(0.0) as u32;
+        let max_x = rect.max_x().ceil().min(image.width() as f32) as u32;
+        let max_y = rect.max_y().ceil().min(image.height() as f32) as u32;
+        let pixels = image.pixels();
+        let width = image.width() as usize;
+
+        let mut count = 0usize;
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                let index = ((y as usize * width) + x as usize) * 4;
+                let red = pixels[index];
+                let green = pixels[index + 1];
+                let blue = pixels[index + 2];
+                let alpha = pixels[index + 3];
+                if alpha > 200 && red >= min_channel && green >= min_channel && blue >= min_channel
+                {
                     count += 1;
                 }
             }
@@ -7159,7 +7266,7 @@ mod tests {
     }
 
     #[test]
-    fn switch_thumb_uses_white_in_dark_theme_variants() {
+    fn switch_thumb_uses_foreground_in_dark_theme_variants() {
         let light = DefaultTheme::default();
         assert_eq!(
             Switch::new("Wifi")
@@ -7177,12 +7284,12 @@ mod tests {
                         .theme(theme)
                         .resolved_visuals(false)
                         .thumb_color,
-                    Color::WHITE
+                    theme.palette.text
                 );
             }
 
             let fills = solid_fill_colors(&render(Switch::new("Wifi").theme(theme)));
-            assert!(fills.contains(&Color::WHITE));
+            assert!(fills.contains(&theme.palette.text));
         }
     }
 
@@ -7341,6 +7448,20 @@ mod tests {
         assert_eq!(label.style.font_size, 16.0);
         assert_eq!(label.style.line_height, 24.0);
         assert_eq!(label.style.color, theme.palette.accent_text);
+    }
+
+    #[test]
+    fn separator_theme_when_reads_current_theme() {
+        let mut theme = DefaultTheme::dark();
+        theme.metrics.separator_thickness = 3.0;
+
+        let separator = Separator::vertical().theme_when(move || theme);
+
+        assert_eq!(
+            separator.resolved_theme().colors.scheme,
+            theme.colors.scheme
+        );
+        assert_eq!(separator.resolved_thickness(), 3.0);
     }
 
     #[test]
@@ -8291,6 +8412,138 @@ mod tests {
         assert_eq!(
             select.value,
             Some(SemanticsValue::Text("Linear".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expanded_select_flips_above_when_below_space_is_constrained() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(220.0, 180.0)).with_child(
+                crate::Stack::vertical()
+                    .with_child(SizedBox::new().height(128.0))
+                    .with_child(
+                        Select::new("Mode")
+                            .placeholder("Choose mode")
+                            .options(["Automatic", "Linear", "Gamma"])
+                            .on_change(move |_, value| on_change.borrow_mut().push(value)),
+                    ),
+            ),
+        );
+
+        let initial = runtime.render(window_id)?;
+        let select_bounds = initial
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present before expand")
+            .bounds;
+        let header_point = Point::new(
+            select_bounds.x() + 20.0,
+            select_bounds.y() + (select_bounds.height() * 0.5),
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, header_point, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, header_point, false),
+        )?;
+
+        let expanded = runtime.render(window_id)?;
+        let select = expanded
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after expand");
+        let descriptor =
+            layer_descriptor_for(&expanded, select.id).expect("select layer descriptor present");
+
+        assert!(descriptor.paint_bounds.y() < select.bounds.y());
+
+        let option_point = Point::new(
+            select.bounds.x() + 20.0,
+            select.bounds.y() - super::SELECT_MENU_GAP - (select.bounds.height() * 1.5),
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, option_point, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, option_point, false),
+        )?;
+
+        assert_eq!(changes.borrow().as_slice(), &["Linear".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn expanded_select_popover_paints_outside_layout_bounds() -> Result<()> {
+        let root = crate::Background::new(
+            Brush::Solid(Color::srgba(0.04, 0.045, 0.055, 1.0)),
+            SizedBox::new().size(Size::new(220.0, 180.0)).with_child(
+                crate::Stack::vertical()
+                    .with_child(SizedBox::new().height(128.0))
+                    .with_child(Select::new("Mode").placeholder("Choose mode").options([
+                        "Automatic",
+                        "Linear",
+                        "Gamma",
+                    ])),
+            ),
+        );
+        let (mut runtime, window_id) = build_runtime(root);
+        let mut renderer = WgpuRenderer::default().with_feathering_enabled(false);
+
+        let initial = runtime.render(window_id)?;
+        renderer.render(&initial.frame)?;
+        let select_bounds = initial
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present before expand")
+            .bounds;
+        let header_point = Point::new(
+            select_bounds.x() + 20.0,
+            select_bounds.y() + (select_bounds.height() * 0.5),
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, header_point, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, header_point, false),
+        )?;
+
+        let expanded = runtime.render(window_id)?;
+        let select = expanded
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after expand");
+        let descriptor =
+            layer_descriptor_for(&expanded, select.id).expect("select layer descriptor present");
+        assert!(descriptor.paint_bounds.y() < select.bounds.y());
+
+        renderer.render(&expanded.frame)?;
+        let image = renderer.capture_last_frame_rgba(window_id)?;
+        let menu_probe = Rect::new(
+            select.bounds.x() + 4.0,
+            select.bounds.y() - super::SELECT_MENU_GAP - (select.bounds.height() * 3.0) + 4.0,
+            select.bounds.width() - 8.0,
+            (select.bounds.height() * 3.0) - 8.0,
+        );
+        let bright_pixels = bright_pixel_count(&image, menu_probe, 160);
+
+        assert!(
+            bright_pixels > 200,
+            "expanded select menu should paint outside layout bounds; bright_pixels={bright_pixels}, menu_probe={menu_probe:?}, select_bounds={:?}, paint_bounds={:?}",
+            select.bounds,
+            descriptor.paint_bounds
         );
         Ok(())
     }

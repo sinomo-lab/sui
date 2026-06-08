@@ -5,6 +5,28 @@ pub const LUCIDE_IMAGE_HANDLE_BASE: u64 = 0x4c55_4349_0000_0000;
 
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
+impl LucideIcon {
+    /// Rasterize a Lucide SVG as a white alpha mask.
+    ///
+    /// Lucide sources use `currentColor`, which `resvg` resolves to black by default. SUI's
+    /// `ImageSource::with_tint` multiplies texture RGB by the tint color, so a black icon texture
+    /// stays black no matter which color a widget requests. Using white RGB with the SVG alpha
+    /// preserves normal image tint multiplication while making icons colorable.
+    pub fn registered_mask_image(self) -> sui_core::Result<sui_scene::RegisteredImage> {
+        let image = self.resource().registered_image()?;
+        let mut pixels = Vec::with_capacity(image.bytes().len());
+        for pixel in image.bytes().chunks_exact(4) {
+            let alpha = pixel[3];
+            if alpha == 0 {
+                pixels.extend_from_slice(&[0, 0, 0, 0]);
+            } else {
+                pixels.extend_from_slice(&[255, 255, 255, alpha]);
+            }
+        }
+        sui_scene::RegisteredImage::from_rgba8(image.width(), image.height(), pixels)
+    }
+}
+
 pub fn icon_named(name: &str) -> Option<LucideIcon> {
     ALL_ICONS.iter().copied().find(|icon| icon.name() == name)
 }
@@ -13,14 +35,17 @@ pub fn register_icon(
     application: &mut sui_runtime::Application,
     icon: LucideIcon,
 ) -> sui_core::Result<()> {
-    application.register_embedded_svg_image(icon.resource())
+    application.register_image(icon.handle(), icon.registered_mask_image()?)
 }
 
 pub fn register_icons(
     application: &mut sui_runtime::Application,
     icons: impl IntoIterator<Item = LucideIcon>,
 ) -> sui_core::Result<()> {
-    application.register_embedded_svg_images(icons.into_iter().map(LucideIcon::resource))
+    for icon in icons {
+        register_icon(application, icon)?;
+    }
+    Ok(())
 }
 
 pub fn register_all(application: &mut sui_runtime::Application) -> sui_core::Result<()> {
@@ -67,6 +92,18 @@ mod tests {
         assert_eq!(plus.height(), 24);
         assert_eq!(search.width(), 24);
         assert_eq!(search.height(), 24);
+    }
+
+    #[test]
+    fn registered_mask_image_uses_white_rgb_for_tinting() {
+        let image = LucideIcon::Sparkles.registered_mask_image().unwrap();
+        let opaque_pixel = image
+            .bytes()
+            .chunks_exact(4)
+            .find(|pixel| pixel[3] > 0)
+            .expect("lucide icon should have visible pixels");
+
+        assert_eq!(&opaque_pixel[0..3], &[255, 255, 255]);
     }
 
     struct Empty;

@@ -1152,10 +1152,12 @@ impl WindowState {
 
     fn dispatch_direct_event(&mut self, target: WidgetId, event: &Event) -> widget::EventDispatch {
         let path = self.graph.path_to(target);
+        let dpi_info = self.current_dpi_info();
         self.root
             .dispatch_event_for_path(
                 path.as_deref().unwrap_or(&[self.root.id()]),
                 self.id,
+                dpi_info,
                 self.last_tick_time,
                 EventPhase::Target,
                 self.focus.focused_widget,
@@ -1533,6 +1535,7 @@ impl WindowState {
             .graph
             .path_to(target)
             .unwrap_or_else(|| vec![self.root.id()]);
+        let dpi_info = self.current_dpi_info();
         let mut effects = EventEffects::default();
         let mut handled = false;
         let mut focus_request = None;
@@ -1544,6 +1547,7 @@ impl WindowState {
                     .dispatch_event_for_path(
                         &path[..path_len],
                         self.id,
+                        dpi_info,
                         self.last_tick_time,
                         EventPhase::Capture,
                         self.focus.focused_widget,
@@ -1569,6 +1573,7 @@ impl WindowState {
                 .dispatch_event_for_path(
                     &path,
                     self.id,
+                    dpi_info,
                     self.last_tick_time,
                     EventPhase::Target,
                     self.focus.focused_widget,
@@ -1591,6 +1596,7 @@ impl WindowState {
                     .dispatch_event_for_path(
                         &path[..path_len],
                         self.id,
+                        dpi_info,
                         self.last_tick_time,
                         EventPhase::Bubble,
                         self.focus.focused_widget,
@@ -1674,6 +1680,7 @@ impl WindowState {
 
         let previous_focus = self.focus.focused_widget;
         self.focus.focused_widget = next_focus;
+        let dpi_info = self.current_dpi_info();
 
         let mut effects = EventEffects::default();
 
@@ -1688,6 +1695,7 @@ impl WindowState {
                     self.root.notify_focus_change_for_path(
                         &path,
                         self.id,
+                        dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
                         false,
@@ -1697,6 +1705,7 @@ impl WindowState {
                     self.root.notify_focus_change_for(
                         widget_id,
                         self.id,
+                        dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
                         false,
@@ -1718,6 +1727,7 @@ impl WindowState {
                     self.root.notify_focus_change_for_path(
                         &path,
                         self.id,
+                        dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
                         true,
@@ -1727,6 +1737,7 @@ impl WindowState {
                     self.root.notify_focus_change_for(
                         widget_id,
                         self.id,
+                        dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
                         true,

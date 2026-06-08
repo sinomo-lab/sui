@@ -1,3 +1,3 @@
 fn main() -> sui::Result<()> {
-    sui_dev::run_desktop()
+    sui_dev_app::run_desktop()
 }

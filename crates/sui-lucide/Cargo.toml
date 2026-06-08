@@ -10,6 +10,7 @@ build = "build.rs"
 [dependencies]
 sui-core = { workspace = true }
 sui-runtime = { workspace = true }
+sui-scene = { workspace = true }
 
 [dev-dependencies]
 sui-layout = { workspace = true }

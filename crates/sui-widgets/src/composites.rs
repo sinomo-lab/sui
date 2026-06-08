@@ -22,10 +22,309 @@ use crate::{
     paint_theme_shadow, resolve_widget_hdr_style,
 };
 
+const TAB_BAR_DEFAULT_HEIGHT: f32 = 32.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TooltipPlacement {
     Above,
     Below,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceRole {
+    Window,
+    Sidebar,
+    Panel,
+    Titlebar,
+    Field,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceBorder {
+    None,
+    All,
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceElevation {
+    None,
+    Small,
+    Medium,
+    Large,
+}
+
+pub struct Surface {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    name: Option<String>,
+    role: SurfaceRole,
+    border: SurfaceBorder,
+    elevation: SurfaceElevation,
+    radius: f32,
+    padding: Insets,
+    fill_width: bool,
+    fill_height: bool,
+    child: SingleChild,
+}
+
+impl Surface {
+    pub fn new<W>(role: SurfaceRole, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            name: None,
+            role,
+            border: SurfaceBorder::None,
+            elevation: SurfaceElevation::None,
+            radius: 0.0,
+            padding: Insets::ZERO,
+            fill_width: false,
+            fill_height: false,
+            child: SingleChild::new(child),
+        }
+    }
+
+    pub fn window<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::new(SurfaceRole::Window, child)
+    }
+
+    pub fn sidebar<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::new(SurfaceRole::Sidebar, child).border(SurfaceBorder::Right)
+    }
+
+    pub fn panel<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::new(SurfaceRole::Panel, child)
+            .border(SurfaceBorder::All)
+            .radius(8.0)
+    }
+
+    pub fn titlebar<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::new(SurfaceRole::Titlebar, child).border(SurfaceBorder::Bottom)
+    }
+
+    pub fn field<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::new(SurfaceRole::Field, child)
+            .border(SurfaceBorder::All)
+            .radius(6.0)
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn border(mut self, border: SurfaceBorder) -> Self {
+        self.border = border;
+        self
+    }
+
+    pub fn elevation(mut self, elevation: SurfaceElevation) -> Self {
+        self.elevation = elevation;
+        self
+    }
+
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = radius.max(0.0);
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn fill(mut self) -> Self {
+        self.fill_width = true;
+        self.fill_height = true;
+        self
+    }
+
+    pub fn fill_width(mut self) -> Self {
+        self.fill_width = true;
+        self
+    }
+
+    pub fn fill_height(mut self) -> Self {
+        self.fill_height = true;
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn background_for_role(theme: &DefaultTheme, role: SurfaceRole) -> Color {
+        match role {
+            SurfaceRole::Window => theme.surfaces.window,
+            SurfaceRole::Sidebar => theme.surfaces.sidebar,
+            SurfaceRole::Panel => theme.surfaces.panel,
+            SurfaceRole::Titlebar => theme.surfaces.titlebar,
+            SurfaceRole::Field => theme.surfaces.field,
+        }
+    }
+
+    fn content_rect(&self, bounds: Rect) -> Rect {
+        inset_rect(bounds, self.padding)
+    }
+}
+
+impl Widget for Surface {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let max_child = Size::new(
+            if constraints.max.width.is_finite() {
+                (constraints.max.width - self.padding.left - self.padding.right).max(0.0)
+            } else {
+                f32::INFINITY
+            },
+            if constraints.max.height.is_finite() {
+                (constraints.max.height - self.padding.top - self.padding.bottom).max(0.0)
+            } else {
+                f32::INFINITY
+            },
+        );
+        let child_size = self
+            .child
+            .measure(ctx, Constraints::new(Size::ZERO, max_child));
+        let mut size = Size::new(
+            child_size.width + self.padding.left + self.padding.right,
+            child_size.height + self.padding.top + self.padding.bottom,
+        );
+        if self.fill_width && constraints.max.width.is_finite() {
+            size.width = constraints.max.width;
+        }
+        if self.fill_height && constraints.max.height.is_finite() {
+            size.height = constraints.max.height;
+        }
+        constraints.clamp(size)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, self.content_rect(bounds));
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let bounds = ctx.bounds();
+        let radius = self.radius.min(bounds.width().min(bounds.height()) * 0.5);
+
+        let shadow = match self.elevation {
+            SurfaceElevation::None => None,
+            SurfaceElevation::Small => Some(&theme.shadows.box_shadow.sm),
+            SurfaceElevation::Medium => Some(&theme.shadows.box_shadow.md),
+            SurfaceElevation::Large => Some(&theme.shadows.box_shadow.lg),
+        };
+        if let Some(shadow) = shadow {
+            paint_theme_shadow(ctx, bounds, [radius; 4], shadow);
+        }
+
+        let background = Self::background_for_role(&theme, self.role);
+        let border = theme.surfaces.border;
+        if radius > 0.0 {
+            ctx.fill(rounded_rect_path(bounds, radius), background);
+        } else {
+            ctx.fill_rect(bounds, background);
+        }
+
+        let stroke_width = physical_pixels(ctx, theme.metrics.border_width.max(1.0));
+        match self.border {
+            SurfaceBorder::None => {}
+            SurfaceBorder::All => {
+                ctx.stroke(
+                    rounded_rect_path(bounds, radius),
+                    border,
+                    StrokeStyle::new(stroke_width),
+                );
+            }
+            SurfaceBorder::Top => ctx.fill_rect(
+                Rect::new(bounds.x(), bounds.y(), bounds.width(), stroke_width),
+                border,
+            ),
+            SurfaceBorder::Right => ctx.fill_rect(
+                Rect::new(
+                    bounds.max_x() - stroke_width,
+                    bounds.y(),
+                    stroke_width,
+                    bounds.height(),
+                ),
+                border,
+            ),
+            SurfaceBorder::Bottom => ctx.fill_rect(
+                Rect::new(
+                    bounds.x(),
+                    bounds.max_y() - stroke_width,
+                    bounds.width(),
+                    stroke_width,
+                ),
+                border,
+            ),
+            SurfaceBorder::Left => ctx.fill_rect(
+                Rect::new(bounds.x(), bounds.y(), stroke_width, bounds.height()),
+                border,
+            ),
+        }
+
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if let Some(name) = &self.name {
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
+            node.name = Some(name.clone());
+            ctx.push(node);
+        }
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1358,7 +1657,7 @@ impl ActionCard {
         self.hover_animation.advance(time) | self.press_animation.advance(time)
     }
 
-    fn title_style(&self) -> TextStyle {
+    fn resolved_title_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
         TextStyle {
             font_size: 14.0,
@@ -1369,7 +1668,7 @@ impl ActionCard {
         }
     }
 
-    fn description_style(&self) -> TextStyle {
+    fn resolved_description_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
         TextStyle {
             font_size: 12.0,
@@ -1528,8 +1827,8 @@ impl Widget for ActionCard {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let title_style = self.title_style();
-        let description_style = self.description_style();
+        let title_style = self.resolved_title_style();
+        let description_style = self.resolved_description_style();
         let title = measure_text(ctx, &self.title, &title_style);
         let description = measure_text(ctx, &self.description, &description_style);
         self.title_measurement = Some(title);
@@ -1652,8 +1951,8 @@ impl Widget for ActionCard {
         }
 
         let text_bounds = self.text_bounds(bounds);
-        let title_style = self.title_style();
-        let description_style = self.description_style();
+        let title_style = self.resolved_title_style();
+        let description_style = self.resolved_description_style();
         let title_height = title_style.line_height.max(
             self.title_measurement
                 .map(|measurement| measurement.height)
@@ -2050,6 +2349,700 @@ fn property_row_label_id(parent: WidgetId) -> WidgetId {
     const LOW_MASK: u64 = (1_u64 << 51) - 1;
 
     WidgetId::new(TAG | (parent.get().wrapping_mul(271).wrapping_add(1) & LOW_MASK))
+}
+
+const FORM_ROW_LABEL_WIDTH: f32 = 128.0;
+const FORM_ROW_CONTROL_WIDTH: f32 = 340.0;
+const FORM_ROW_GAP: f32 = 12.0;
+const FIELD_GROUP_SPACING: f32 = 8.0;
+const FORM_SECTION_BODY_GAP: f32 = 12.0;
+const FORM_SECTION_HEADER_GAP: f32 = 10.0;
+const FORM_SECTION_DESCRIPTION_GAP: f32 = 3.0;
+const FORM_SECTION_MAX_WIDTH: f32 = 640.0;
+const FORM_SECTION_RADIUS: f32 = 8.0;
+const FORM_SECTION_PADDING: Insets = Insets {
+    left: 14.0,
+    top: 12.0,
+    right: 14.0,
+    bottom: 14.0,
+};
+
+pub struct FormRow {
+    row: PropertyRow,
+}
+
+impl FormRow {
+    pub fn new<W>(label: impl Into<String>, control: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            row: PropertyRow::new(label, control)
+                .inline()
+                .label_width(FORM_ROW_LABEL_WIDTH)
+                .control_width(FORM_ROW_CONTROL_WIDTH)
+                .gap(FORM_ROW_GAP),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.row = self.row.theme(theme);
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.row = self.row.theme_when(theme);
+        self
+    }
+
+    pub fn stacked(mut self) -> Self {
+        self.row = self.row.stacked();
+        self
+    }
+
+    pub fn inline(mut self) -> Self {
+        self.row = self.row.inline();
+        self
+    }
+
+    pub fn label_width(mut self, width: f32) -> Self {
+        self.row = self.row.label_width(width);
+        self
+    }
+
+    pub fn control_width(mut self, width: f32) -> Self {
+        self.row = self.row.control_width(width);
+        self
+    }
+
+    pub fn auto_control_width(mut self) -> Self {
+        self.row = self.row.auto_control_width();
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.row = self.row.gap(gap);
+        self
+    }
+
+    pub fn label_style(mut self, style: TextStyle) -> Self {
+        self.row = self.row.label_style(style);
+        self
+    }
+
+    pub fn child(&self) -> &sui_runtime::WidgetPod {
+        self.row.child()
+    }
+
+    pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {
+        self.row.child_mut()
+    }
+}
+
+impl Widget for FormRow {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.row.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.row.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.row.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.row.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.row.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.row.visit_children_mut(visitor);
+    }
+}
+
+pub struct FieldGroup {
+    children: WidgetChildren,
+    spacing: f32,
+    padding: Insets,
+    max_width: Option<f32>,
+    fill_width: bool,
+}
+
+impl FieldGroup {
+    pub fn new() -> Self {
+        Self {
+            children: WidgetChildren::new(),
+            spacing: FIELD_GROUP_SPACING,
+            padding: Insets::ZERO,
+            max_width: None,
+            fill_width: false,
+        }
+    }
+
+    pub fn with_child<W>(mut self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self
+    }
+
+    pub fn push<W>(&mut self, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+    }
+
+    pub fn spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing.max(0.0);
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn max_width(mut self, width: f32) -> Self {
+        self.max_width = Some(width.max(0.0));
+        self
+    }
+
+    pub fn auto_width(mut self) -> Self {
+        self.max_width = None;
+        self
+    }
+
+    pub fn fill_width(mut self) -> Self {
+        self.fill_width = true;
+        self
+    }
+
+    pub fn children(&self) -> &[sui_runtime::WidgetPod] {
+        self.children.as_slice()
+    }
+
+    pub fn children_mut(&mut self) -> &mut [sui_runtime::WidgetPod] {
+        self.children.as_mut_slice()
+    }
+
+    fn content_max_width(&self, constraints: Constraints) -> f32 {
+        let available = if constraints.max.width.is_finite() {
+            (constraints.max.width - self.padding.left - self.padding.right).max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        self.max_width
+            .map(|width| width.min(available))
+            .unwrap_or(available)
+    }
+
+    fn content_rect(&self, bounds: Rect) -> Rect {
+        let inset = inset_rect(bounds, self.padding);
+        let width = self
+            .max_width
+            .map(|max_width| max_width.min(inset.width()))
+            .unwrap_or(inset.width())
+            .max(0.0);
+        Rect::new(inset.x(), inset.y(), width, inset.height())
+    }
+}
+
+impl Default for FieldGroup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Widget for FieldGroup {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let content_max_width = self.content_max_width(constraints);
+        let mut y: f32 = 0.0;
+        let mut width: f32 = 0.0;
+        for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
+            if index > 0 {
+                y += self.spacing;
+            }
+            let child_size = child.measure(
+                ctx,
+                Constraints::new(
+                    Size::ZERO,
+                    Size::new(content_max_width, constraints.max.height),
+                ),
+            );
+            y += child_size.height;
+            width = width.max(child_size.width);
+        }
+
+        if self.fill_width && content_max_width.is_finite() {
+            width = content_max_width;
+        }
+
+        constraints.clamp(Size::new(
+            width + self.padding.left + self.padding.right,
+            y + self.padding.top + self.padding.bottom,
+        ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let content = self.content_rect(bounds);
+        let mut y = content.y();
+        for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
+            if index > 0 {
+                y += self.spacing;
+            }
+            let measured = child.measured_size();
+            let width = if self.fill_width {
+                content.width()
+            } else {
+                measured.width.min(content.width())
+            };
+            child.arrange(ctx, Rect::new(content.x(), y, width, measured.height));
+            y += measured.height;
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.children.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.children.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.children.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.children.visit_children_mut(visitor);
+    }
+}
+
+pub struct FormSection {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    title: String,
+    description: Option<String>,
+    title_style: Option<TextStyle>,
+    description_style: Option<TextStyle>,
+    header_action: Option<SingleChild>,
+    child: SingleChild,
+    padding: Insets,
+    body_gap: f32,
+    header_gap: f32,
+    description_gap: f32,
+    max_width: Option<f32>,
+    radius: f32,
+    elevation: SurfaceElevation,
+    fill_width: bool,
+    title_measurement: Option<TextMeasurement>,
+    description_measurement: Option<TextMeasurement>,
+}
+
+impl FormSection {
+    pub fn new<W>(title: impl Into<String>, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            title: title.into(),
+            description: None,
+            title_style: None,
+            description_style: None,
+            header_action: None,
+            child: SingleChild::new(child),
+            padding: FORM_SECTION_PADDING,
+            body_gap: FORM_SECTION_BODY_GAP,
+            header_gap: FORM_SECTION_HEADER_GAP,
+            description_gap: FORM_SECTION_DESCRIPTION_GAP,
+            max_width: Some(FORM_SECTION_MAX_WIDTH),
+            radius: FORM_SECTION_RADIUS,
+            elevation: SurfaceElevation::Small,
+            fill_width: false,
+            title_measurement: None,
+            description_measurement: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn title_style(mut self, style: TextStyle) -> Self {
+        self.title_style = Some(style);
+        self
+    }
+
+    pub fn description_style(mut self, style: TextStyle) -> Self {
+        self.description_style = Some(style);
+        self
+    }
+
+    pub fn header_action<W>(mut self, action: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.header_action = Some(SingleChild::new(action));
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn body_gap(mut self, gap: f32) -> Self {
+        self.body_gap = gap.max(0.0);
+        self
+    }
+
+    pub fn header_gap(mut self, gap: f32) -> Self {
+        self.header_gap = gap.max(0.0);
+        self
+    }
+
+    pub fn max_width(mut self, width: f32) -> Self {
+        self.max_width = Some(width.max(0.0));
+        self
+    }
+
+    pub fn auto_width(mut self) -> Self {
+        self.max_width = None;
+        self
+    }
+
+    pub fn fill_width(mut self) -> Self {
+        self.fill_width = true;
+        self
+    }
+
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = radius.max(0.0);
+        self
+    }
+
+    pub fn elevation(mut self, elevation: SurfaceElevation) -> Self {
+        self.elevation = elevation;
+        self
+    }
+
+    pub fn child(&self) -> &sui_runtime::WidgetPod {
+        self.child.child()
+    }
+
+    pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {
+        self.child.child_mut()
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn resolved_title_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
+        self.title_style.clone().unwrap_or_else(|| TextStyle {
+            font_size: 13.0,
+            line_height: 18.0,
+            weight: FontWeight::SEMIBOLD,
+            color: theme.surfaces.text,
+            ..theme.body_text_style()
+        })
+    }
+
+    fn resolved_description_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
+        self.description_style.clone().unwrap_or_else(|| TextStyle {
+            font_size: 11.5,
+            line_height: 16.0,
+            color: theme.surfaces.text_muted,
+            ..theme.body_text_style()
+        })
+    }
+
+    fn title_height(&self, style: &TextStyle) -> f32 {
+        self.title_measurement
+            .map(|measurement| measurement.height)
+            .unwrap_or(style.line_height)
+            .max(style.line_height)
+    }
+
+    fn description_height(&self, style: &TextStyle) -> f32 {
+        if self.description.is_some() {
+            self.description_measurement
+                .map(|measurement| measurement.height)
+                .unwrap_or(style.line_height)
+                .max(style.line_height)
+        } else {
+            0.0
+        }
+    }
+
+    fn text_block_height(&self, title_style: &TextStyle, description_style: &TextStyle) -> f32 {
+        let title = self.title_height(title_style);
+        let description = self.description_height(description_style);
+        if description > 0.0 {
+            title + self.description_gap + description
+        } else {
+            title
+        }
+    }
+
+    fn content_max_width(&self, available_width: f32) -> f32 {
+        let available = if available_width.is_finite() {
+            (available_width - self.padding.left - self.padding.right).max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        self.max_width
+            .map(|width| width.min(available))
+            .unwrap_or(available)
+    }
+
+    fn card_rect(&self, bounds: Rect) -> Rect {
+        let width = if self.fill_width {
+            bounds.width()
+        } else {
+            self.max_width
+                .map(|max_width| {
+                    (max_width + self.padding.left + self.padding.right).min(bounds.width())
+                })
+                .unwrap_or(bounds.width())
+        }
+        .max(0.0);
+        let x = if self.fill_width || width >= bounds.width() {
+            bounds.x()
+        } else {
+            bounds.x() + ((bounds.width() - width) * 0.5)
+        };
+        Rect::new(x, bounds.y(), width, bounds.height())
+    }
+
+    fn content_rect(&self, bounds: Rect) -> Rect {
+        inset_rect(self.card_rect(bounds), self.padding)
+    }
+
+    fn header_height(&self, title_style: &TextStyle, description_style: &TextStyle) -> f32 {
+        let text_height = self.text_block_height(title_style, description_style);
+        let action_height = self
+            .header_action
+            .as_ref()
+            .map(|action| action.child().measured_size().height)
+            .unwrap_or(0.0);
+        text_height.max(action_height)
+    }
+}
+
+impl Widget for FormSection {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let title_style = self.resolved_title_style();
+        let description_style = self.resolved_description_style();
+        let title = measure_text(ctx, &self.title, &title_style);
+        self.title_measurement = Some(title);
+        let description = self
+            .description
+            .as_ref()
+            .map(|description| measure_text(ctx, description, &description_style));
+        self.description_measurement = description;
+
+        let content_max_width = self.content_max_width(constraints.max.width);
+        let action_size = self
+            .header_action
+            .as_mut()
+            .map(|action| {
+                action.measure(
+                    ctx,
+                    Constraints::new(
+                        Size::ZERO,
+                        Size::new(content_max_width, constraints.max.height),
+                    ),
+                )
+            })
+            .unwrap_or(Size::ZERO);
+        let action_extent = if self.header_action.is_some() {
+            action_size.width + self.header_gap
+        } else {
+            0.0
+        };
+        let text_width = title.width.max(
+            description
+                .map(|measurement| measurement.width)
+                .unwrap_or(0.0),
+        );
+        let header_width = (text_width + action_extent).min(content_max_width);
+        let child_size = self.child.measure(
+            ctx,
+            Constraints::new(
+                Size::ZERO,
+                Size::new(content_max_width, constraints.max.height),
+            ),
+        );
+        let content_width = header_width.max(child_size.width).min(content_max_width);
+        let header_height = self.header_height(&title_style, &description_style);
+
+        let mut width = content_width + self.padding.left + self.padding.right;
+        if self.fill_width && constraints.max.width.is_finite() {
+            width = constraints.max.width;
+        }
+        let height = self.padding.top
+            + header_height
+            + self.body_gap
+            + child_size.height
+            + self.padding.bottom;
+        constraints.clamp(Size::new(width, height))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let content = self.content_rect(bounds);
+        let title_style = self.resolved_title_style();
+        let description_style = self.resolved_description_style();
+        let header_height = self.header_height(&title_style, &description_style);
+
+        if let Some(action) = &mut self.header_action {
+            let action_size = action.child().measured_size();
+            action.arrange(
+                ctx,
+                Rect::new(
+                    content.max_x() - action_size.width,
+                    content.y() + ((header_height - action_size.height) * 0.5).max(0.0),
+                    action_size.width,
+                    action_size.height,
+                ),
+            );
+        }
+
+        let child_size = self.child.child().measured_size();
+        self.child.arrange(
+            ctx,
+            Rect::new(
+                content.x(),
+                content.y() + header_height + self.body_gap,
+                child_size.width.min(content.width()),
+                child_size.height,
+            ),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let card = self.card_rect(ctx.bounds());
+        let radius = self.radius.min(card.width().min(card.height()) * 0.5);
+        let shadow = match self.elevation {
+            SurfaceElevation::None => None,
+            SurfaceElevation::Small => Some(&theme.shadows.box_shadow.sm),
+            SurfaceElevation::Medium => Some(&theme.shadows.box_shadow.md),
+            SurfaceElevation::Large => Some(&theme.shadows.box_shadow.lg),
+        };
+        if let Some(shadow) = shadow {
+            paint_theme_shadow(ctx, card, [radius; 4], shadow);
+        }
+
+        let background = if theme.surfaces.dark {
+            theme.surfaces.panel
+        } else {
+            Color::rgba(0.925, 0.942, 0.965, 1.0)
+        };
+        let border = if theme.surfaces.dark {
+            theme.surfaces.border
+        } else {
+            Color::rgba(0.700, 0.745, 0.805, 1.0)
+        };
+        let shape = rounded_rect_path(card, radius);
+        ctx.fill(shape.clone(), background);
+        ctx.stroke(
+            shape,
+            border,
+            StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width.max(1.0))),
+        );
+
+        let content = inset_rect(card, self.padding);
+        let title_style = self.resolved_title_style();
+        let description_style = self.resolved_description_style();
+        let title_height = self.title_height(&title_style);
+        let description_height = self.description_height(&description_style);
+        let action_width = self
+            .header_action
+            .as_ref()
+            .map(|action| action.child().measured_size().width + self.header_gap)
+            .unwrap_or(0.0)
+            .min(content.width());
+        let text_width = (content.width() - action_width).max(0.0);
+        let title_rect = Rect::new(content.x(), content.y(), text_width, title_height);
+        ctx.push_clip_rect(title_rect);
+        ctx.draw_text(title_rect, self.title.clone(), title_style);
+        ctx.pop_clip();
+        if let Some(description) = &self.description {
+            let description_rect = Rect::new(
+                content.x(),
+                title_rect.max_y() + self.description_gap,
+                text_width,
+                description_height,
+            );
+            ctx.push_clip_rect(description_rect);
+            ctx.draw_text(description_rect, description.clone(), description_style);
+            ctx.pop_clip();
+        }
+
+        if let Some(action) = &self.header_action {
+            action.paint(ctx);
+        }
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let card = self.card_rect(ctx.bounds());
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::GenericContainer, card);
+        node.name = Some(self.title.clone());
+        node.description = self.description.clone();
+        ctx.push(node);
+        if let Some(action) = &self.header_action {
+            action.semantics(ctx);
+        }
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if let Some(action) = &self.header_action {
+            action.visit_children(visitor);
+        }
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if let Some(action) = &mut self.header_action {
+            action.visit_children_mut(visitor);
+        }
+        self.child.visit_children_mut(visitor);
+    }
 }
 
 const PANEL_SECTION_GAP: f32 = 8.0;
@@ -3715,7 +4708,10 @@ impl TabBar {
     }
 
     fn tab_height(&self) -> f32 {
-        self.resolved_theme().metrics.min_height
+        self.resolved_theme()
+            .metrics
+            .min_height
+            .max(TAB_BAR_DEFAULT_HEIGHT)
     }
 
     fn measured_widths(&self) -> &[f32] {
@@ -3735,10 +4731,12 @@ impl TabBar {
             0.0
         };
 
+        let tab_height = self.tab_height().min(bounds.height()).max(0.0);
+        let tab_y = bounds.y() + ((bounds.height() - tab_height) * 0.5).max(0.0);
         let mut x = bounds.x();
         for (current, width) in self.widths.iter().enumerate() {
             let width = *width + extra_per_tab;
-            let rect = Rect::new(x, bounds.y(), width, self.tab_height());
+            let rect = Rect::new(x, tab_y, width, tab_height);
             if current == index {
                 return Some(rect);
             }
@@ -7048,10 +8046,10 @@ mod tests {
 
     use super::Tabs;
     use super::{
-        ActionCard, CommandGroup, ContextMenu, Dialog, DockPanel, MENU_VERTICAL_PADDING, Menu,
-        MenuItem, PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout,
-        Spinner, StatusBar, StatusBarHost, StatusBarSegment, TabBar, ToolPalette, ToolPaletteItem,
-        Toolbar,
+        ActionCard, CommandGroup, ContextMenu, Dialog, DockPanel, FieldGroup, FormRow, FormSection,
+        MENU_VERTICAL_PADDING, Menu, MenuItem, PanelSection, Popover, PresetStrip, ProgressBar,
+        PropertyRow, PropertyRowLayout, Spinner, StatusBar, StatusBarHost, StatusBarSegment,
+        TabBar, ToolPalette, ToolPaletteItem, Toolbar,
     };
     use crate::FloatingStack;
     use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken};
@@ -7613,6 +8611,61 @@ mod tests {
     }
 
     #[test]
+    fn form_section_bounds_grouped_rows_and_exposes_semantics() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(900.0, 180.0))
+                .with_child(
+                    FormSection::new(
+                        "Providers",
+                        FieldGroup::new()
+                            .with_child(FormRow::new("API key", crate::Label::new("Configured")))
+                            .with_child(FormRow::new(
+                                "Default model",
+                                crate::Label::new("Provider default"),
+                            )),
+                    )
+                    .description("Credentials and model defaults"),
+                ),
+        );
+
+        assert!(
+            solid_fill_colors(&output).contains(&Color::rgba(0.925, 0.942, 0.965, 1.0)),
+            "light form section card fill should be present in render scene"
+        );
+
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Providers")
+            })
+            .expect("form section semantics should exist");
+        assert!(
+            section.bounds.width()
+                <= super::FORM_SECTION_MAX_WIDTH
+                    + super::FORM_SECTION_PADDING.left
+                    + super::FORM_SECTION_PADDING.right
+        );
+        assert!(
+            section.bounds.x() > 100.0,
+            "wide parent should center a max-width form section"
+        );
+        assert_eq!(
+            section.description.as_deref(),
+            Some("Credentials and model defaults")
+        );
+        assert!(
+            output
+                .semantics
+                .iter()
+                .any(|node| node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Default model"))
+        );
+    }
+
+    #[test]
     fn panel_section_exposes_group_title_and_child_semantics() {
         let output = render(
             crate::SizedBox::new()
@@ -8160,6 +9213,8 @@ mod tests {
     #[test]
     fn tab_bar_header_label_visual_center_matches_control_center() {
         let output = render(TabBar::new("Main tabs").tabs(["A", "B"]));
+        assert_eq!(output.frame.viewport.height, super::TAB_BAR_DEFAULT_HEIGHT);
+
         let text = first_text_run(&output);
         let layout = TextSystem::new()
             .shape_text_run(&text, &FontRegistry::new())

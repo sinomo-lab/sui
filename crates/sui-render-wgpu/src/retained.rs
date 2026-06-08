@@ -562,10 +562,17 @@ impl RetainedCompositorState {
                         Some(state.effect_node),
                         layer.descriptor.composition_mode,
                     );
-                    if layer.descriptor.composition_mode == sui_scene::LayerCompositionMode::Scroll
-                        || layer.descriptor.is_stack_surface
+                    let layer_clip = if layer.descriptor.composition_mode
+                        == sui_scene::LayerCompositionMode::Scroll
                     {
-                        let clip = ResolvedClipPrimitive::Rect(layer.descriptor.presented_bounds());
+                        Some(layer.descriptor.presented_bounds())
+                    } else if layer.descriptor.is_stack_surface {
+                        Some(layer.descriptor.presented_paint_bounds())
+                    } else {
+                        None
+                    };
+                    if let Some(clip_rect) = layer_clip {
+                        let clip = ResolvedClipPrimitive::Rect(clip_rect);
                         let parent = child_state
                             .clip_stack
                             .last()
@@ -1845,7 +1852,9 @@ mod tests {
     use std::sync::Arc;
 
     use sui_core::{Rect, Size, Vector, WidgetId, WindowId};
-    use sui_scene::{ImageRegistry, SceneFrame, SceneLayerUpdate, SceneLayerUpdateKind};
+    use sui_scene::{
+        ImageRegistry, LayerCompositionMode, SceneFrame, SceneLayerUpdate, SceneLayerUpdateKind,
+    };
     use sui_text::{FontRegistry, TextLayoutRegistry};
 
     fn build_layer_frame(
@@ -1892,6 +1901,80 @@ mod tests {
             compositor.viewport,
             f32::from_bits(compositor.feather_width_bits),
         )
+    }
+
+    fn layer_clip_rects(compositor: &RetainedCompositorState, layer_id: WidgetId) -> Vec<Rect> {
+        let layer = compositor
+            .layers
+            .get(&SceneLayerId::from_widget(layer_id))
+            .expect("retained layer present");
+        resolved_clip_primitives(layer.clip_node, &compositor.clips)
+            .into_iter()
+            .filter_map(|clip| match clip {
+                ResolvedClipPrimitive::Rect(rect) => Some(rect),
+                ResolvedClipPrimitive::Path { .. } => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stack_surface_layers_clip_to_presented_paint_bounds() {
+        let layer_id = WidgetId::new(61);
+        let bounds = Rect::new(40.0, 30.0, 32.0, 20.0);
+        let paint_bounds = Rect::new(32.0, 8.0, 48.0, 54.0);
+        let descriptor = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            bounds,
+        )
+        .with_content_bounds(paint_bounds)
+        .with_paint_bounds(paint_bounds)
+        .with_is_stack_surface(true)
+        .with_composition_mode(LayerCompositionMode::Overlay);
+
+        let mut layer_scene = Scene::new();
+        layer_scene.push(SceneCommand::FillRect {
+            rect: paint_bounds,
+            brush: Color::rgba(0.82, 0.36, 0.18, 1.0).into(),
+        });
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            descriptor.clone(),
+            layer_scene,
+        )));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(25),
+            viewport: Size::new(120.0, 90.0),
+            surface_size: Size::new(120.0, 90.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![SceneLayerUpdate::from_descriptor(
+                SceneLayerUpdateKind::Content,
+                descriptor,
+            )],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _ = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+        let clips = layer_clip_rects(&compositor, layer_id);
+
+        assert!(
+            clips.contains(&paint_bounds),
+            "stack surfaces should keep overhanging popover paint visible; clips={clips:?}"
+        );
+        assert!(
+            !clips.contains(&bounds),
+            "stack surfaces should not clip popovers to layout bounds; clips={clips:?}"
+        );
     }
 
     #[test]

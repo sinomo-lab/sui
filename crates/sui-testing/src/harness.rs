@@ -46,6 +46,8 @@ use crate::{
 const DEFAULT_WINDOW_SIZE: sui_core::Size = sui_core::Size::new(1280.0, 720.0);
 const REDRAW_FLUSH_LIMIT: usize = 256;
 const LIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
+// This is a failure timeout; normal live commands return as soon as the event loop replies.
+const LIVE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn map_window_color_management_for_harness(
     mode: WindowColorManagementMode,
@@ -266,7 +268,7 @@ impl Harness {
                 reply: reply_tx,
             })
             .map_err(|_| Error::new("live test harness service is unavailable"))?;
-        recv_result(&reply_rx, "live harness launch", Duration::from_secs(5))?;
+        recv_result(&reply_rx, "live harness launch", LIVE_RESPONSE_TIMEOUT)?;
 
         Ok(Self {
             backend: HarnessBackend::Live(LiveHarness {
@@ -506,7 +508,7 @@ impl LiveHarness {
         self.proxy
             .send_event(HarnessCommand::Flush { reply: reply_tx })
             .map_err(|_| Error::new("live harness service is unavailable"))?;
-        recv_result(&reply_rx, "live harness flush", Duration::from_secs(5))
+        recv_result(&reply_rx, "live harness flush", LIVE_RESPONSE_TIMEOUT)
     }
 
     fn dispatch_event(&self, window_id: WindowId, event: Event) -> Result<()> {
@@ -519,7 +521,7 @@ impl LiveHarness {
                     reply: reply_tx,
                 })
                 .map_err(|_| Error::new("live harness service is unavailable"))?;
-            recv_result(&reply_rx, "live harness dispatch", Duration::from_secs(5))?;
+            recv_result(&reply_rx, "live harness dispatch", LIVE_RESPONSE_TIMEOUT)?;
         }
         Ok(())
     }
@@ -532,7 +534,7 @@ impl LiveHarness {
         recv_result(
             &reply_rx,
             "live harness window listing",
-            Duration::from_secs(5),
+            LIVE_RESPONSE_TIMEOUT,
         )
     }
 
@@ -544,7 +546,7 @@ impl LiveHarness {
                 reply: reply_tx,
             })
             .map_err(|_| Error::new("live harness service is unavailable"))?;
-        recv_result(&reply_rx, "live harness snapshot", Duration::from_secs(5))
+        recv_result(&reply_rx, "live harness snapshot", LIVE_RESPONSE_TIMEOUT)
     }
 
     fn capture(&self, window_id: WindowId) -> Result<Screenshot> {
@@ -555,7 +557,7 @@ impl LiveHarness {
                 reply: reply_tx,
             })
             .map_err(|_| Error::new("live harness service is unavailable"))?;
-        recv_result(&reply_rx, "live harness capture", Duration::from_secs(5))
+        recv_result(&reply_rx, "live harness capture", LIVE_RESPONSE_TIMEOUT)
     }
 
     fn capture_debug(
@@ -574,7 +576,7 @@ impl LiveHarness {
         recv_result(
             &reply_rx,
             "live harness debug capture",
-            Duration::from_secs(5),
+            LIVE_RESPONSE_TIMEOUT,
         )
     }
 
@@ -1529,7 +1531,7 @@ fn harness_service() -> &'static HarnessService {
         let proxy = recv_result(
             &setup_rx,
             "live harness service setup",
-            Duration::from_secs(5),
+            LIVE_RESPONSE_TIMEOUT,
         )
         .expect("live harness service should start exactly once");
 

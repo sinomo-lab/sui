@@ -14,6 +14,7 @@ tui = ["dep:crossterm", "dep:ratatui", "dep:sui-tui"]
 web = ["sui/web", "sui/wgpu", "sui-widget-book/web"]
 
 [lib]
+name = "sui_dev_app"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]

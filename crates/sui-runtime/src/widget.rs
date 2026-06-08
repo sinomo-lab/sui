@@ -504,13 +504,21 @@ impl WidgetPod {
         &mut self,
         path: &[WidgetId],
         window_id: WindowId,
+        dpi_info: DpiInfo,
         current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
         event: &Event,
     ) -> Option<EventDispatch> {
         self.find_mut_path(path, &mut |pod| {
-            pod.dispatch_event(window_id, current_time, phase, focused_widget, event)
+            pod.dispatch_event(
+                window_id,
+                dpi_info,
+                current_time,
+                phase,
+                focused_widget,
+                event,
+            )
         })
     }
 
@@ -518,12 +526,13 @@ impl WidgetPod {
         &mut self,
         target: WidgetId,
         window_id: WindowId,
+        dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
         focused: bool,
     ) -> Option<EventDispatch> {
         self.find_mut(target, &mut |pod| {
-            pod.focus_changed(window_id, current_time, focused_widget, focused)
+            pod.focus_changed(window_id, dpi_info, current_time, focused_widget, focused)
         })
     }
 
@@ -531,18 +540,20 @@ impl WidgetPod {
         &mut self,
         path: &[WidgetId],
         window_id: WindowId,
+        dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
         focused: bool,
     ) -> Option<EventDispatch> {
         self.find_mut_path(path, &mut |pod| {
-            pod.focus_changed(window_id, current_time, focused_widget, focused)
+            pod.focus_changed(window_id, dpi_info, current_time, focused_widget, focused)
         })
     }
 
     fn dispatch_event(
         &mut self,
         window_id: WindowId,
+        dpi_info: DpiInfo,
         current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
@@ -552,6 +563,7 @@ impl WidgetPod {
             window_id,
             self.id,
             self.layout_state.arranged_bounds,
+            dpi_info,
             current_time,
             phase,
             focused_widget,
@@ -569,6 +581,7 @@ impl WidgetPod {
     fn focus_changed(
         &mut self,
         window_id: WindowId,
+        dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
         focused: bool,
@@ -577,6 +590,7 @@ impl WidgetPod {
             window_id,
             self.id,
             self.layout_state.arranged_bounds,
+            dpi_info,
             current_time,
             EventPhase::Target,
             focused_widget,
@@ -799,6 +813,7 @@ pub struct EventCtx {
     window_id: WindowId,
     widget_id: WidgetId,
     bounds: Rect,
+    dpi_info: DpiInfo,
     current_time: f64,
     phase: EventPhase,
     focused_widget_id: Option<WidgetId>,
@@ -814,6 +829,7 @@ impl EventCtx {
         window_id: WindowId,
         widget_id: WidgetId,
         bounds: Rect,
+        dpi_info: DpiInfo,
         current_time: f64,
         phase: EventPhase,
         focused_widget_id: Option<WidgetId>,
@@ -822,6 +838,7 @@ impl EventCtx {
             window_id,
             widget_id,
             bounds,
+            dpi_info,
             current_time,
             phase,
             focused_widget_id,
@@ -843,6 +860,10 @@ impl EventCtx {
 
     pub const fn bounds(&self) -> Rect {
         self.bounds
+    }
+
+    pub const fn dpi(&self) -> DpiInfo {
+        self.dpi_info
     }
 
     pub const fn current_time(&self) -> f64 {
@@ -1880,9 +1901,19 @@ mod tests {
             Arc::new(FontRegistry::new()),
             Arc::new(ImageRegistry::new()),
         );
+        let event = EventCtx::new(
+            WindowId::new(1),
+            WidgetId::new(2),
+            Rect::new(0.0, 0.0, 120.0, 60.0),
+            dpi,
+            0.0,
+            EventPhase::Target,
+            None,
+        );
 
         assert_eq!(measure.dpi(), dpi);
         assert_eq!(paint.dpi(), dpi);
+        assert_eq!(event.dpi(), dpi);
     }
 
     struct LabelWidget;
@@ -1911,6 +1942,7 @@ mod tests {
             WindowId::new(1),
             WidgetId::new(2),
             Rect::new(8.0, 12.0, 24.0, 36.0),
+            DpiInfo::default(),
             0.0,
             EventPhase::Target,
             None,
@@ -1950,6 +1982,7 @@ mod tests {
             WindowId::new(4),
             WidgetId::new(9),
             Rect::new(0.0, 0.0, 20.0, 10.0),
+            DpiInfo::default(),
             16.0,
             EventPhase::Target,
             None,

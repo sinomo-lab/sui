@@ -192,10 +192,10 @@ impl ThemeColors {
         Self {
             name: "dark",
             scheme: ThemeColorScheme::Dark,
-            base_100: Color::rgba(0.0, 0.0, 0.0, 1.0),
-            base_200: Color::rgba(0.065, 0.070, 0.080, 1.0),
-            base_300: Color::rgba(0.760, 0.800, 0.860, 1.0),
-            base_content: Color::rgba(1.0, 1.0, 1.0, 1.0),
+            base_100: Color::rgba(0.050, 0.055, 0.066, 1.0),
+            base_200: Color::rgba(0.075, 0.084, 0.100, 1.0),
+            base_300: Color::rgba(0.225, 0.245, 0.285, 1.0),
+            base_content: Color::rgba(0.900, 0.925, 0.960, 1.0),
             primary: Color::rgba(0.250, 0.820, 1.0, 1.0),
             primary_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
             secondary: Color::rgba(0.330, 0.980, 0.720, 1.0),
@@ -800,18 +800,22 @@ impl ControlPalette {
         let text_muted = mix(
             colors.base_content,
             surface,
-            if is_dark { 0.36 } else { 0.42 },
+            if is_dark { 0.34 } else { 0.16 },
         );
         let placeholder = mix(
             colors.base_content,
             surface,
-            if is_dark { 0.50 } else { 0.58 },
+            if is_dark { 0.50 } else { 0.22 },
         );
-        let border = mix(colors.base_300, surface, if is_dark { 0.18 } else { 0.20 });
+        let border = if is_dark {
+            mix(colors.base_300, surface, 0.22)
+        } else {
+            colors.base_300
+        };
         let border_strong = mix(
             colors.base_300,
             colors.base_content,
-            if is_dark { 0.25 } else { 0.12 },
+            if is_dark { 0.18 } else { 0.10 },
         );
         let border_hover = mix(border, colors.primary, if is_dark { 0.28 } else { 0.18 });
         let border_focus = colors.primary;
@@ -820,7 +824,7 @@ impl ControlPalette {
         } else {
             0.32
         };
-        let selection = colors.primary.with_alpha(if is_dark { 0.34 } else { 0.18 });
+        let selection = mix(surface, colors.primary, if is_dark { 0.30 } else { 0.14 });
 
         Self {
             text: colors.base_content,
@@ -857,6 +861,86 @@ impl ControlPalette {
 impl Default for ControlPalette {
     fn default() -> Self {
         Self::from_colors(&ThemeColors::default())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SurfacePalette {
+    pub dark: bool,
+    pub window: Color,
+    pub sidebar: Color,
+    pub panel: Color,
+    pub titlebar: Color,
+    pub field: Color,
+    pub border: Color,
+    pub border_strong: Color,
+    pub text: Color,
+    pub text_muted: Color,
+    pub text_faint: Color,
+    pub accent: Color,
+    pub accent_hover: Color,
+    pub on_accent: Color,
+    pub hover: Color,
+    pub selected: Color,
+    pub good: Color,
+    pub warn: Color,
+    pub bad: Color,
+}
+
+impl SurfacePalette {
+    pub fn from_theme_parts(colors: &ThemeColors, controls: &ControlPalette) -> Self {
+        let dark = matches!(
+            colors.scheme,
+            ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
+        );
+        let text_muted = mix(
+            controls.text,
+            controls.surface,
+            if dark { 0.34 } else { 0.18 },
+        );
+        let text_faint = mix(
+            controls.text,
+            controls.surface,
+            if dark { 0.50 } else { 0.28 },
+        );
+
+        Self {
+            dark,
+            window: controls.surface,
+            sidebar: if dark {
+                mix(controls.surface, controls.surface_raised, 0.22)
+            } else {
+                controls.surface
+            },
+            panel: controls.surface_raised,
+            titlebar: if dark {
+                mix(controls.surface_raised, controls.control, 0.35)
+            } else {
+                controls.surface_raised
+            },
+            field: controls.control,
+            border: controls.border,
+            border_strong: controls.border_strong,
+            text: controls.text,
+            text_muted,
+            text_faint,
+            accent: controls.accent,
+            accent_hover: controls.accent_hover,
+            on_accent: controls.accent_text,
+            hover: controls.text.with_alpha(if dark { 0.06 } else { 0.045 }),
+            selected: controls.selection,
+            good: colors.success,
+            warn: colors.warning,
+            bad: colors.error,
+        }
+    }
+}
+
+impl Default for SurfacePalette {
+    fn default() -> Self {
+        let colors = ThemeColors::default();
+        let controls = ControlPalette::from_colors(&colors);
+        Self::from_theme_parts(&colors, &controls)
     }
 }
 
@@ -983,6 +1067,7 @@ pub struct DefaultTheme {
     pub motion: ThemeMotion,
     pub hdr: HdrThemeTokens,
     pub palette: ControlPalette,
+    pub surfaces: SurfacePalette,
     pub typography: ControlTypography,
     pub metrics: ControlMetrics,
 }
@@ -1013,6 +1098,8 @@ impl DefaultTheme {
         let radius = ThemeRadii::default();
         let spacing = 4.0;
         let hdr = HdrThemeTokens::from_colors(colors);
+        let palette = ControlPalette::from_colors(&colors);
+        let surfaces = SurfacePalette::from_theme_parts(&colors, &palette);
 
         Self {
             fonts: ThemeFontFamilies::default(),
@@ -1031,7 +1118,8 @@ impl DefaultTheme {
             aspect: ThemeAspectRatios::default(),
             motion: ThemeMotion::default(),
             hdr,
-            palette: ControlPalette::from_colors(&colors),
+            palette,
+            surfaces,
             typography: ControlTypography::from_text_scale(&text),
             metrics: ControlMetrics::from_tokens(spacing, radius),
         }
@@ -1040,6 +1128,7 @@ impl DefaultTheme {
     pub fn sync_derived_fields(&mut self) {
         self.hdr.sync_semantic_defaults(self.colors);
         self.palette = ControlPalette::from_colors(&self.colors);
+        self.surfaces = SurfacePalette::from_theme_parts(&self.colors, &self.palette);
         self.typography = ControlTypography::from_text_scale(&self.text);
         self.metrics = ControlMetrics::from_tokens(self.spacing, self.radius);
     }
@@ -1167,6 +1256,8 @@ mod tests {
 
         assert_eq!(theme.palette.accent, Color::rgba(0.2, 0.3, 0.4, 1.0));
         assert_eq!(theme.palette.caret, Color::rgba(0.2, 0.3, 0.4, 1.0));
+        assert_eq!(theme.surfaces.accent, theme.palette.accent);
+        assert_eq!(theme.surfaces.window, theme.palette.surface);
         assert_eq!(theme.typography.body_font_size, 11.0);
         assert_eq!(theme.typography.body_line_height, 15.0);
     }
@@ -1198,14 +1289,19 @@ mod tests {
 
         assert_eq!(theme.colors.scheme, ThemeColorScheme::Dark);
         assert_eq!(theme.colors.name, "dark");
-        assert_eq!(theme.colors.base_100, Color::BLACK);
+        assert_ne!(theme.colors.base_100, Color::BLACK);
         assert_eq!(theme.palette.surface, theme.colors.base_100);
         assert_ne!(theme.palette.surface_raised, Color::BLACK);
         assert_eq!(theme.palette.text, theme.colors.base_content);
-        assert_eq!(theme.palette.text, Color::WHITE);
+        assert_ne!(theme.palette.text, Color::WHITE);
         assert_eq!(theme.palette.caret, theme.colors.primary);
         assert_eq!(theme.palette.accent, theme.colors.primary);
         assert_eq!(theme.palette.accent_text, theme.colors.primary_content);
+        assert_eq!(theme.surfaces.window, theme.palette.surface);
+        assert_eq!(theme.surfaces.panel, theme.palette.surface_raised);
+        assert_eq!(theme.surfaces.border, theme.palette.border);
+        assert_ne!(theme.surfaces.border, Color::WHITE);
+        assert_ne!(theme.surfaces.text_faint, theme.palette.surface);
     }
 
     #[test]
@@ -1216,6 +1312,7 @@ mod tests {
         assert_eq!(theme.colors.name, "high-contrast");
         assert_eq!(theme.palette.surface, theme.colors.base_100);
         assert_eq!(theme.palette.surface, Color::BLACK);
+        assert_eq!(theme.surfaces.window, Color::BLACK);
         assert_ne!(theme.palette.surface_raised, Color::BLACK);
         assert_ne!(theme.palette.control, Color::BLACK);
         assert_ne!(theme.palette.control_hover, Color::BLACK);

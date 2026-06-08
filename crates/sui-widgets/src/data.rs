@@ -17,9 +17,19 @@ use crate::{
     controls::{IconGlyph, draw_icon_glyph},
 };
 
+const LIST_ROW_LEFT_PADDING: f32 = 14.0;
+const LIST_ROW_RIGHT_PADDING: f32 = 10.0;
+const LIST_ROW_LEADING_ICON_SIZE: f32 = 14.0;
+const LIST_ROW_LEADING_GAP: f32 = 8.0;
+const LIST_ROW_TRAILING_GAP: f32 = 12.0;
+
 pub struct ListItem {
     label: String,
     detail: Option<String>,
+    trailing: Option<String>,
+    leading_icon: Option<IconGlyph>,
+    leading_text: Option<String>,
+    leading_color: Option<Color>,
     accent: Option<Color>,
     disabled: bool,
     content: Option<SingleChild>,
@@ -30,6 +40,10 @@ impl ListItem {
         Self {
             label: label.into(),
             detail: None,
+            trailing: None,
+            leading_icon: None,
+            leading_text: None,
+            leading_color: None,
             accent: None,
             disabled: false,
             content: None,
@@ -38,6 +52,32 @@ impl ListItem {
 
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    pub fn subtitle(self, subtitle: impl Into<String>) -> Self {
+        self.detail(subtitle)
+    }
+
+    pub fn trailing(mut self, trailing: impl Into<String>) -> Self {
+        self.trailing = Some(trailing.into());
+        self
+    }
+
+    pub fn leading_icon(mut self, icon: IconGlyph) -> Self {
+        self.leading_icon = Some(icon);
+        self.leading_text = None;
+        self
+    }
+
+    pub fn leading_text(mut self, text: impl Into<String>) -> Self {
+        self.leading_text = Some(text.into());
+        self.leading_icon = None;
+        self
+    }
+
+    pub fn leading_color(mut self, color: Color) -> Self {
+        self.leading_color = Some(color);
         self
     }
 
@@ -464,7 +504,26 @@ impl Widget for ListView {
                     .as_deref()
                     .map(|detail| measure_text(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
-                (label.max(detail) + 28.0, base_row_height)
+                let leading = measure_list_item_leading_width(ctx, item, &text_style);
+                let trailing = item
+                    .trailing
+                    .as_deref()
+                    .map(|trailing| measure_text(ctx, trailing, &detail_style).width)
+                    .unwrap_or(0.0);
+                let trailing_gap = if trailing > 0.0 {
+                    LIST_ROW_TRAILING_GAP
+                } else {
+                    0.0
+                };
+                (
+                    LIST_ROW_LEFT_PADDING
+                        + leading
+                        + label.max(detail)
+                        + trailing_gap
+                        + trailing
+                        + LIST_ROW_RIGHT_PADDING,
+                    base_row_height,
+                )
             };
             content_width = content_width.max(row_width);
             content_height += row_height;
@@ -569,11 +628,71 @@ impl Widget for ListView {
                 continue;
             }
 
-            let text_x = row.x() + 14.0;
+            let mut text_x = row.x() + LIST_ROW_LEFT_PADDING;
+            let leading_color = item.leading_color.unwrap_or_else(|| {
+                if item.disabled {
+                    palette.placeholder
+                } else if selected {
+                    palette.border_focus
+                } else {
+                    palette.text_muted
+                }
+            });
+            if let Some(icon) = item.leading_icon {
+                let side = LIST_ROW_LEADING_ICON_SIZE
+                    .min((row.height() - 8.0).max(0.0))
+                    .max(0.0);
+                let icon_rect = Rect::new(
+                    text_x,
+                    row.y() + ((row.height() - side) * 0.5).max(0.0),
+                    side,
+                    side,
+                );
+                draw_icon_glyph(ctx, icon, icon_rect, leading_color);
+                text_x += side + LIST_ROW_LEADING_GAP;
+            } else if let Some(leading) = &item.leading_text {
+                let leading_style = TextStyle {
+                    color: leading_color,
+                    ..label_style.clone()
+                };
+                let leading_measurement = paint_text_measurement(ctx, leading, &leading_style);
+                let leading_rect = Rect::new(
+                    text_x,
+                    vertically_centered_text_rect_y(
+                        ctx,
+                        row,
+                        leading_measurement,
+                        leading_style.line_height,
+                    ),
+                    leading_measurement.width,
+                    leading_style.line_height,
+                );
+                ctx.draw_text(leading_rect, leading.clone(), leading_style);
+                text_x += leading_measurement.width + LIST_ROW_LEADING_GAP;
+            }
+
+            let trailing_measurement = item
+                .trailing
+                .as_deref()
+                .map(|trailing| paint_text_measurement(ctx, trailing, &detail_style));
+            let trailing_width = trailing_measurement
+                .map(|measurement| (measurement.width + 8.0).min(row.width() * 0.42))
+                .unwrap_or(0.0);
+            let trailing_rect = item.trailing.as_ref().map(|_| {
+                Rect::new(
+                    row.max_x() - LIST_ROW_RIGHT_PADDING - trailing_width,
+                    row.y(),
+                    trailing_width,
+                    row.height(),
+                )
+            });
+            let text_right = trailing_rect
+                .map(|rect| rect.x() - LIST_ROW_TRAILING_GAP)
+                .unwrap_or(row.max_x() - LIST_ROW_RIGHT_PADDING);
             let text_bounds = Rect::new(
                 text_x,
                 row.y(),
-                (row.max_x() - text_x - 8.0).max(0.0),
+                (text_right - text_x).max(0.0),
                 row.height(),
             );
             let label_measurement = paint_text_measurement(ctx, &item.label, &label_style);
@@ -589,6 +708,7 @@ impl Widget for ListView {
                 detail_measurement,
                 item.detail.as_ref().map(|_| detail_style.line_height),
             );
+            ctx.push_clip_rect(label_rect);
             ctx.draw_text(
                 label_rect,
                 item.label.clone(),
@@ -600,12 +720,30 @@ impl Widget for ListView {
                     label_style.clone()
                 },
             );
+            ctx.pop_clip();
             if let Some(detail) = &item.detail {
-                ctx.draw_text(
-                    detail_rect.unwrap_or(text_bounds),
-                    detail.clone(),
-                    detail_style.clone(),
+                let detail_rect = detail_rect.unwrap_or(text_bounds);
+                ctx.push_clip_rect(detail_rect);
+                ctx.draw_text(detail_rect, detail.clone(), detail_style.clone());
+                ctx.pop_clip();
+            }
+            if let (Some(trailing), Some(rect), Some(measurement)) =
+                (&item.trailing, trailing_rect, trailing_measurement)
+            {
+                let style = if selected {
+                    theme.text_style(palette.border_focus)
+                } else {
+                    detail_style.clone()
+                };
+                let trailing_text_rect = Rect::new(
+                    rect.x(),
+                    vertically_centered_text_rect_y(ctx, rect, measurement, style.line_height),
+                    rect.width(),
+                    style.line_height,
                 );
+                ctx.push_clip_rect(trailing_text_rect);
+                ctx.draw_text(trailing_text_rect, trailing.clone(), style);
+                ctx.pop_clip();
             }
         }
 
@@ -3026,6 +3164,20 @@ fn estimate_text_width(text: &str, style: &TextStyle) -> f32 {
     text.chars().count() as f32 * style.font_size * 0.56
 }
 
+fn measure_list_item_leading_width(
+    ctx: &mut MeasureCtx,
+    item: &ListItem,
+    style: &TextStyle,
+) -> f32 {
+    if item.leading_icon.is_some() {
+        return LIST_ROW_LEADING_ICON_SIZE + LIST_ROW_LEADING_GAP;
+    }
+    item.leading_text
+        .as_deref()
+        .map(|text| measure_text(ctx, text, style).width + LIST_ROW_LEADING_GAP)
+        .unwrap_or(0.0)
+}
+
 fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
     ctx.layout()
         .measure_text(text.to_string(), style.clone())
@@ -3406,6 +3558,40 @@ mod tests {
             });
 
         runs
+    }
+
+    fn draw_clip_rects_for(output: &RenderOutput, text: &str) -> Vec<Rect> {
+        let mut clips = Vec::new();
+        let mut stack = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::PushClip { rect } => stack.push(*rect),
+                SceneCommand::PopClip => {
+                    stack.pop();
+                }
+                SceneCommand::DrawText(run) if run.text == text => {
+                    if let Some(rect) = stack.last() {
+                        clips.push(*rect);
+                    }
+                }
+                SceneCommand::DrawShapedText(run) => {
+                    if let Some(layout) = run
+                        .resolve(output.frame.text_layout_registry.as_ref())
+                        .filter(|layout| layout.text() == text)
+                    {
+                        if !layout.text().is_empty() {
+                            if let Some(rect) = stack.last() {
+                                clips.push(*rect);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            });
+
+        clips
     }
 
     fn selected_highlight_rects(output: &RenderOutput) -> Vec<Rect> {
@@ -4206,6 +4392,31 @@ mod tests {
         let detail = text_rects_for(&output, "2048 x 2048 RGBA")[0];
 
         assert!(label.max_y() <= detail.y());
+    }
+
+    #[test]
+    fn list_view_long_label_clips_to_single_line() {
+        let title = "What tools are available to you when the session title is very long";
+        let output = render(
+            SizedBox::new()
+                .width(170.0)
+                .height(56.0)
+                .with_child(ListView::new("Sessions").item(ListItem::new(title))),
+        );
+
+        let run = text_runs_for(&output, title)
+            .into_iter()
+            .next()
+            .expect("long title should be drawn");
+        let clips = draw_clip_rects_for(&output, title);
+
+        assert_eq!(clips.len(), 1);
+        assert!(
+            clips[0].height() <= run.style.line_height + 0.5,
+            "long single-line labels should clip wrapped overflow to one line; clip={:?}, line_height={}",
+            clips[0],
+            run.style.line_height
+        );
     }
 
     #[test]

@@ -1399,7 +1399,7 @@ impl WgpuRenderer {
             ))
         })?;
 
-        self.render_debug_capture_stage(&frame, size, request.stage)?;
+        self.render_debug_capture_stage(&frame, size, request)?;
         self.capture_debug_frame(window_id, request)
     }
 
@@ -2054,10 +2054,16 @@ impl WgpuRenderer {
         &mut self,
         frame: &SceneFrame,
         size: (u32, u32),
-        stage: DebugCaptureStage,
+        request: DebugCaptureRequest,
     ) -> Result<RendererFrameStats> {
-        match stage {
+        match request.stage {
             DebugCaptureStage::HdrIntermediate => self.render_offscreen(frame, size),
+            DebugCaptureStage::FinalComposed
+                if request.encoding == DebugCaptureEncoding::Png
+                    && request.sdr_visualization == DebugSdrVisualization::ToneMappedColor =>
+            {
+                self.render_offscreen(frame, size)
+            }
             DebugCaptureStage::FinalComposed => self.render_final_composed_offscreen(frame, size),
         }
     }
@@ -2128,10 +2134,8 @@ impl WgpuRenderer {
             &intermediate_view,
             &final_view,
             final_format,
-            OutputStrategy::HdrIntermediateThenToneMap {
-                intermediate_format,
-                surface_format: final_format,
-                primaries: DisplayColorPrimaries::Srgb,
+            OutputStrategy::SdrSurface {
+                format: final_format,
             },
             RequestedToneMappingMode::Clamp,
             ColorManagementMode::default().sdr_content_brightness_nits,
@@ -4505,6 +4509,73 @@ mod tests {
         .unwrap();
 
         assert_eq!(sdr.pixels(), expected.as_slice());
+    }
+
+    #[test]
+    fn sdr_png_capture_transform_preserves_srgb_bytes_regardless_of_sdr_brightness() {
+        let strategy = OutputStrategy::SdrSurface {
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        };
+
+        for value in 0..=255u8 {
+            let encoded = value as f32 / 255.0;
+            let transformed = apply_output_transform_for_testing(
+                shader_color(Color::srgba(encoded, encoded, encoded, 1.0)),
+                strategy,
+                RequestedToneMappingMode::Clamp,
+                10_000.0,
+                None,
+            );
+            let captured = super::linear_to_srgb_capture_u8(transformed[0]);
+            assert_eq!(captured, value, "sRGB byte {value} should round-trip");
+        }
+
+        let clipped = apply_output_transform_for_testing(
+            [4.0, 2.0, 0.5, 1.0],
+            strategy,
+            RequestedToneMappingMode::Clamp,
+            10_000.0,
+            None,
+        );
+        assert_eq!(super::linear_to_srgb_capture_u8(clipped[0]), 255);
+        assert_eq!(super::linear_to_srgb_capture_u8(clipped[1]), 255);
+        assert_eq!(super::linear_to_srgb_capture_u8(clipped[2]), 188);
+    }
+
+    #[test]
+    fn sdr_png_capture_readback_preserves_srgb_bytes_and_clips_hdr() {
+        let window_id = WindowId::new(4520);
+        let viewport = Size::new(32.0, 16.0);
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Clear(Color::srgba(0.0, 0.0, 0.0, 1.0)));
+        scene.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 16.0, 16.0),
+            brush: Color::srgba(66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0, 1.0).into(),
+        });
+        scene.push(SceneCommand::FillRect {
+            rect: Rect::new(16.0, 0.0, 16.0, 16.0),
+            brush: Color::linear_rgba(4.0, 2.0, 0.5, 1.0).into(),
+        });
+
+        let frame = SceneFrame {
+            window_id,
+            viewport,
+            surface_size: viewport,
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut renderer = WgpuRenderer::new();
+        renderer.render(&frame).unwrap();
+        let image = renderer.capture_last_frame_rgba(window_id).unwrap();
+
+        assert_eq!(rgba_pixel(&image, 8, 8), [66, 42, 213, 255]);
+        assert_eq!(rgba_pixel(&image, 24, 8), [255, 255, 188, 255]);
     }
 
     #[test]

@@ -20,9 +20,10 @@ pub use canvas::{
     PixelCanvasTool,
 };
 pub use composites::{
-    ActionCard, BusyIndicator, CommandGroup, ContextMenu, Dialog, DockPanel, Menu, MenuItem, Modal,
-    PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, Spinner,
-    StatusBar, StatusBarHost, StatusBarSegment, TabBar, Tabs, ToolPalette, ToolPaletteItem,
+    ActionCard, BusyIndicator, CommandGroup, ContextMenu, Dialog, DockPanel, FieldGroup, FormRow,
+    FormSection, Menu, MenuItem, Modal, PanelSection, Popover, PresetStrip, ProgressBar,
+    PropertyRow, PropertyRowLayout, Spinner, StatusBar, StatusBarHost, StatusBarSegment, Surface,
+    SurfaceBorder, SurfaceElevation, SurfaceRole, TabBar, Tabs, ToolPalette, ToolPaletteItem,
     Toolbar, Tooltip, TooltipPlacement,
 };
 pub use containers::{
@@ -57,10 +58,10 @@ pub use text_surface::{
     TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,
 };
 pub use theme::{
-    ControlMetrics, ControlPalette, ControlTypography, DefaultTheme, ThemeAspectRatios,
-    ThemeBlurScale, ThemeBoxShadowScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,
-    ThemeContainers, ThemeDropShadowScale, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
-    ThemeInsetShadowScale, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow,
-    ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextShadowScale, ThemeTextToken,
-    ThemeTracking, paint_theme_shadow,
+    ControlMetrics, ControlPalette, ControlTypography, DefaultTheme, SurfacePalette,
+    ThemeAspectRatios, ThemeBlurScale, ThemeBoxShadowScale, ThemeBreakpoints, ThemeColorScheme,
+    ThemeColors, ThemeContainers, ThemeDropShadowScale, ThemeFontFamilies, ThemeFontStack,
+    ThemeFontWeights, ThemeInsetShadowScale, ThemeLeading, ThemeMotion, ThemePerspective,
+    ThemeRadii, ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextShadowScale,
+    ThemeTextToken, ThemeTracking, paint_theme_shadow,
 };
