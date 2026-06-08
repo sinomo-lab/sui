@@ -25,6 +25,7 @@ The current workspace is organized around a retained widget runtime.
 
 - `sui` is the public Rust facade.
 - `sui-core` owns shared types such as events, geometry, color, semantics, and invalidation kinds.
+- `sui-animation` owns pure animation timelines, keyframes, playback state, editor state, and sampled values.
 - `sui-layout` owns layout primitives, constraints, and reusable measure/arrange utilities.
 - `sui-runtime` owns windows, the retained widget graph, event routing, invalidation scheduling, the default widget-tree layout pipeline, scene generation, and semantics generation.
 - `sui-scene` defines the renderer-neutral scene representation.

@@ -7,6 +7,7 @@ The workspace currently contains these crates:
 ```text
 crates/
   sui/
+  sui-animation/
   sui-core/
   sui-debug/
   sui-dev/
@@ -34,6 +35,7 @@ The codebase is easiest to understand as three stacked layers plus tooling.
 ### Engine
 
 - `sui-core`
+- `sui-animation`
 - `sui-layout`
 - `sui-text`
 - `sui-scene`
@@ -77,6 +79,20 @@ This crate owns:
 - the shared error and result types
 
 This crate must stay free of platform, runtime, and renderer implementation details.
+
+### `sui-animation`
+
+Pure animation timelines, documents, and evaluators.
+
+This crate owns:
+
+- easing curves, interpolation, transitions, springs, pulses, and blink helpers
+- stable animation target IDs and property paths
+- keyframes, tracks, clips, timelines, playback state, and sampled animation values
+- versioned animation documents and editor state for timeline selection, snapping, playhead, and undo/redo commands
+- dependency-free document-format read/write helpers for the current animation document version
+
+It depends only on `sui-core`. It must not know about widget identity, runtime scheduling, platform events, renderer details, or application persistence backends. Runtime-facing playback bridges belong in `sui-widgets` or application code.
 
 ### `sui-layout`
 
@@ -228,19 +244,21 @@ It is the main desktop host for manual runtime and renderer validation.
 The most important dependency rules are:
 
 1. `sui-core` stays platform-neutral and renderer-neutral.
-2. `sui-runtime` may depend on `sui-core`, `sui-layout`, `sui-scene`, and `sui-text`, but not on `wgpu` or `winit`.
-3. `sui-scene` is the only paint model widgets emit, including presentation-only layer properties for explicit retained boundaries.
-4. `sui-render-wgpu` consumes scene output and resource snapshots, not widget internals.
-5. `sui-platform` talks to the runtime through public runtime APIs, not private runtime state.
-6. built-in widgets stay outside `sui-runtime`.
-7. animation policy lives in widgets or widget libraries; runtime only provides scheduling and invalidation plumbing.
-8. development tools should reuse real runtime outputs where possible.
+2. `sui-animation` stays platform-neutral, renderer-neutral, and runtime-neutral.
+3. `sui-runtime` may depend on `sui-core`, `sui-layout`, `sui-scene`, and `sui-text`, but not on `wgpu` or `winit`.
+4. `sui-scene` is the only paint model widgets emit, including presentation-only layer properties for explicit retained boundaries.
+5. `sui-render-wgpu` consumes scene output and resource snapshots, not widget internals.
+6. `sui-platform` talks to the runtime through public runtime APIs, not private runtime state.
+7. built-in widgets stay outside `sui-runtime`.
+8. animation policy lives in widgets or widget libraries; runtime only provides scheduling and invalidation plumbing.
+9. development tools should reuse real runtime outputs where possible.
 
 ## Practical Ownership Guide
 
 When you need to change behavior, use this map.
 
 - Add or change an event type: `sui-core`, then `sui-platform`, then `sui-runtime`.
+- Add timeline, easing, keyframe, playback, or editor-document behavior: `sui-animation`.
 - Change layout primitives: `sui-layout`.
 - Change how widgets participate in layout or paint: `sui-runtime` and `sui-widgets`.
 - Add a new draw command or layer behavior: `sui-scene`, then `sui-render-wgpu`.
@@ -252,6 +270,7 @@ When you need to change behavior, use this map.
 ## Common Mistakes To Avoid
 
 - Do not add widget-specific policy to `sui-runtime` when it belongs in `sui-widgets`.
+- Do not put widget IDs, event contexts, or renderer concepts in `sui-animation`.
 - Do not turn `sui-runtime` into a framework-owned animation engine just because it already owns wake scheduling.
 - Do not make widgets depend on `wgpu` types when the scene system already provides the boundary.
 - Do not make tests depend on widget internals when semantics already exposes the intended surface.

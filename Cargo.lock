@@ -2849,6 +2849,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sui-animation"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+]
+
+[[package]]
 name = "sui-avif"
 version = "0.1.0"
 dependencies = [
@@ -3032,6 +3039,7 @@ name = "sui-widgets"
 version = "0.1.0"
 dependencies = [
  "palette",
+ "sui-animation",
  "sui-core",
  "sui-layout",
  "sui-lucide",

@@ -1,0 +1,9 @@
+[package]
+name = "sui-animation"
+version.workspace = true
+description = "Pure animation timeline and evaluator primitives for SUI."
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sui-core = { workspace = true }

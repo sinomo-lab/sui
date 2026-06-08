@@ -37,6 +37,7 @@ pollster = "0.4"
 rustybuzz = "0.20"
 swash = "0.2.7"
 sui = { path = "crates/sui" }
+sui-animation = { path = "crates/sui-animation" }
 sui-avif = { path = "crates/sui-avif" }
 sui-debug = { path = "crates/sui-debug" }
 sui-core = { path = "crates/sui-core" }
