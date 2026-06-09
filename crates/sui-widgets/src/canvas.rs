@@ -12,21 +12,9 @@ use sui_text::TextStyle;
 
 use crate::DefaultTheme;
 
-const PIXEL_GRID_ZOOM: f32 = 6.0;
-const PIXEL_CANVAS_NEAREST_SAMPLING_ZOOM: f32 = 1.0;
-const PIXEL_CANVAS_FIT_PADDING: f32 = 24.0;
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
 const PIXEL_CANVAS_HISTORY_LIMIT: usize = 32;
-const PIXEL_CANVAS_PAPER: Color = Color::rgba(0.975, 0.98, 0.988, 1.0);
-const PIXEL_CANVAS_SHADOW_NEAR: Color = Color::rgba(0.05, 0.07, 0.10, 0.16);
-const PIXEL_CANVAS_SHADOW_FAR: Color = Color::rgba(0.05, 0.07, 0.10, 0.08);
-const PIXEL_CANVAS_DOCUMENT_EDGE: Color = Color::rgba(0.08, 0.10, 0.14, 0.72);
-const CANVAS_RULER_EXTENT: f32 = 22.0;
-const CANVAS_RULER_MAJOR_TICK: f32 = 10.0;
-const CANVAS_RULER_MINOR_TICK: f32 = 5.0;
-const CANVAS_RULER_TARGET_MAJOR_SPACING: f32 = 96.0;
 const CANVAS_RULER_MAX_TICKS: usize = 400;
-const PIXEL_CANVAS_ZOOM_STEP: f32 = 1.1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanvasRulerAxis {
@@ -129,7 +117,7 @@ pub struct CanvasRuler {
     viewport: CanvasViewport,
     viewport_size: Size,
     viewport_reader: Option<Box<dyn Fn() -> (CanvasViewport, Size)>>,
-    extent: f32,
+    extent: Option<f32>,
 }
 
 impl CanvasRuler {
@@ -143,7 +131,7 @@ impl CanvasRuler {
             viewport: CanvasViewport::default(),
             viewport_size: Size::ZERO,
             viewport_reader: None,
-            extent: CANVAS_RULER_EXTENT,
+            extent: None,
         }
     }
 
@@ -185,7 +173,7 @@ impl CanvasRuler {
     }
 
     pub fn extent(mut self, extent: f32) -> Self {
-        self.extent = extent.max(0.0);
+        self.extent = Some(extent.max(0.0));
         self
     }
 
@@ -216,10 +204,18 @@ impl CanvasRuler {
             .map(|theme| theme())
             .unwrap_or(self.theme)
     }
+
+    fn resolved_extent(&self, theme: &DefaultTheme) -> f32 {
+        self.extent
+            .unwrap_or(theme.metrics.canvas_ruler_extent)
+            .max(0.0)
+    }
 }
 
 impl Widget for CanvasRuler {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let extent = self.resolved_extent(&theme);
         let natural = match self.axis {
             CanvasRulerAxis::Horizontal => Size::new(
                 if constraints.max.width.is_finite() {
@@ -227,10 +223,10 @@ impl Widget for CanvasRuler {
                 } else {
                     320.0
                 },
-                self.extent,
+                extent,
             ),
             CanvasRulerAxis::Vertical => Size::new(
-                self.extent,
+                extent,
                 if constraints.max.height.is_finite() {
                     constraints.max.height
                 } else {
@@ -244,21 +240,17 @@ impl Widget for CanvasRuler {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        let palette = theme.palette;
         let bounds = ctx.bounds();
         let (viewport, viewport_size) = self.viewport_snapshot();
-        let background = palette.surface_raised;
-        let border = palette.border.with_alpha(0.78);
-        let tick = palette.text_muted.with_alpha(0.72);
         let text_style = TextStyle {
-            font_size: 10.0,
-            line_height: 12.0,
-            color: palette.text.with_alpha(0.76),
+            font_size: theme.text.xs.size,
+            line_height: theme.text.xs.line_height,
+            color: theme.surfaces.canvas_ruler_text,
             ..theme.body_text_style()
         };
 
-        ctx.fill_rect(bounds, background);
-        paint_canvas_ruler_divider(ctx, bounds, self.axis, border);
+        ctx.fill_rect(bounds, theme.surfaces.canvas_ruler);
+        paint_canvas_ruler_divider(ctx, bounds, self.axis, theme.surfaces.canvas_ruler_border);
         ctx.push_clip_rect(bounds);
         paint_canvas_ruler_ticks(
             ctx,
@@ -267,7 +259,7 @@ impl Widget for CanvasRuler {
             self.document_size,
             viewport,
             viewport_size,
-            tick,
+            &theme,
             text_style,
         );
         ctx.pop_clip();
@@ -312,10 +304,11 @@ pub enum CanvasShape {
 
 impl CanvasShape {
     pub fn path(path: Path) -> Self {
+        let accent = DefaultTheme::default().palette.accent;
         Self::Path {
             path,
             fill: None,
-            stroke: Some(CanvasStroke::new(Color::rgba(0.16, 0.32, 0.72, 1.0), 2.0)),
+            stroke: Some(CanvasStroke::new(accent, 2.0)),
         }
     }
 
@@ -374,15 +367,16 @@ pub struct Canvas {
 
 impl Canvas {
     pub fn new(name: impl Into<String>) -> Self {
+        let theme = DefaultTheme::default();
         Self {
-            theme: DefaultTheme::default(),
+            theme,
             theme_reader: None,
             name: name.into(),
             viewport: CanvasViewport::default(),
             shapes: Vec::new(),
             active_stroke: None,
             drag: None,
-            draw_stroke: CanvasStroke::new(Color::rgba(0.10, 0.28, 0.78, 1.0), 2.5),
+            draw_stroke: CanvasStroke::new(theme.palette.accent, 2.5),
             desired_size: Size::new(520.0, 360.0),
         }
     }
@@ -589,17 +583,18 @@ impl Widget for Canvas {
                 }
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                let zoom_step = self.resolved_theme().metrics.pixel_canvas_zoom_step;
                 match key.key.as_str() {
                     "=" | "+" => self.viewport.zoom_around(
                         ctx.bounds(),
                         CanvasViewport::center(ctx.bounds()),
-                        1.1,
+                        zoom_step,
                         self.document_origin(),
                     ),
                     "-" => self.viewport.zoom_around(
                         ctx.bounds(),
                         CanvasViewport::center(ctx.bounds()),
-                        1.0 / 1.1,
+                        1.0 / zoom_step,
                         self.document_origin(),
                     ),
                     "[" => self.viewport.rotate_around(
@@ -644,12 +639,26 @@ impl Widget for Canvas {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        let palette = theme.palette;
-        ctx.fill_bounds(palette.surface);
-        ctx.stroke_bounds(palette.border, StrokeStyle::new(1.0));
+        ctx.fill_bounds(theme.surfaces.canvas);
+        ctx.stroke_bounds(
+            theme.surfaces.border,
+            StrokeStyle::new(theme.metrics.border_width),
+        );
         ctx.push_clip_rect(ctx.bounds());
-        paint_canvas_grid(ctx, self.viewport, ctx.bounds(), self.document_origin());
-        paint_canvas_axes(ctx, self.viewport, ctx.bounds(), self.document_origin());
+        paint_canvas_grid(
+            ctx,
+            self.viewport,
+            ctx.bounds(),
+            self.document_origin(),
+            &theme,
+        );
+        paint_canvas_axes(
+            ctx,
+            self.viewport,
+            ctx.bounds(),
+            self.document_origin(),
+            &theme,
+        );
         let transform = self
             .viewport
             .transform(ctx.bounds(), self.document_origin());
@@ -1030,9 +1039,9 @@ impl PixelCanvasPaperSettings {
         !self.visible || self.opacity < 0.999
     }
 
-    fn pixel(self) -> PixelColor {
+    fn pixel(self, paper_color: Color) -> PixelColor {
         if self.visible {
-            PixelColor::from_color(PIXEL_CANVAS_PAPER.with_alpha(self.opacity))
+            PixelColor::from_color(paper_color.with_alpha(self.opacity))
         } else {
             PixelColor::TRANSPARENT
         }
@@ -1377,10 +1386,11 @@ impl PixelCanvasState {
 
 impl Default for PixelCanvasState {
     fn default() -> Self {
+        let accent = DefaultTheme::default().palette.accent;
         Self {
             inner: Rc::new(RefCell::new(PixelCanvasStateInner {
                 tool: PixelCanvasTool::Brush,
-                brush: Color::rgba(0.12, 0.28, 0.88, 1.0),
+                brush: accent,
                 brush_size: 1.0,
                 brush_opacity: 1.0,
                 brush_shape: PixelCanvasBrushShape::Square,
@@ -1854,11 +1864,12 @@ impl PixelCanvas {
         if bounds.is_empty() {
             return false;
         }
+        let padding = self.resolved_theme().metrics.pixel_canvas_fit_padding;
         let (sin, cos) = self.viewport.rotation.sin_cos();
         let rotated_width = (self.width as f32 * cos.abs()) + (self.height as f32 * sin.abs());
         let rotated_height = (self.width as f32 * sin.abs()) + (self.height as f32 * cos.abs());
-        let available_width = (bounds.width() - (PIXEL_CANVAS_FIT_PADDING * 2.0)).max(1.0);
-        let available_height = (bounds.height() - (PIXEL_CANVAS_FIT_PADDING * 2.0)).max(1.0);
+        let available_width = (bounds.width() - (padding * 2.0)).max(1.0);
+        let available_height = (bounds.height() - (padding * 2.0)).max(1.0);
         let zoom = (available_width / rotated_width.max(1.0))
             .min(available_height / rotated_height.max(1.0))
             .max(0.01);
@@ -1903,15 +1914,16 @@ impl PixelCanvas {
 
     fn apply_pending_viewport_commands(&mut self, bounds: Rect) -> bool {
         let mut changed = false;
+        let zoom_step = self.resolved_theme().metrics.pixel_canvas_zoom_step;
         while let Some(command) = self.state.take_viewport_command() {
             changed |= match command {
                 PixelCanvasViewportCommand::Fit => self.fit_view_to_bounds(bounds),
                 PixelCanvasViewportCommand::ActualSize => self.set_actual_size_view(),
                 PixelCanvasViewportCommand::ZoomIn => {
-                    self.zoom_view_around_center(bounds, PIXEL_CANVAS_ZOOM_STEP)
+                    self.zoom_view_around_center(bounds, zoom_step)
                 }
                 PixelCanvasViewportCommand::ZoomOut => {
-                    self.zoom_view_around_center(bounds, 1.0 / PIXEL_CANVAS_ZOOM_STEP)
+                    self.zoom_view_around_center(bounds, 1.0 / zoom_step)
                 }
             };
         }
@@ -1943,8 +1955,9 @@ impl PixelCanvas {
     fn export_image_data(&self) -> Vec<u8> {
         let display = self.state.display();
         let paper = self.state.paper();
+        let paper_color = self.resolved_theme().surfaces.pixel_canvas_paper;
         if display.requires_compositing() || paper.requires_compositing() {
-            self.display_image_data(display, paper)
+            self.display_image_data(display, paper, paper_color)
         } else {
             self.image_data()
         }
@@ -1953,8 +1966,9 @@ impl PixelCanvas {
     fn paint_image_data(&self) -> Vec<u8> {
         let display = self.state.display();
         let paper = self.state.paper();
+        let paper_color = self.resolved_theme().surfaces.pixel_canvas_paper;
         if display.requires_compositing() || paper.requires_compositing() {
-            self.display_image_data(display, paper)
+            self.display_image_data(display, paper, paper_color)
         } else {
             self.image_data()
         }
@@ -1972,8 +1986,9 @@ impl PixelCanvas {
         &self,
         display: PixelCanvasDisplaySettings,
         paper: PixelCanvasPaperSettings,
+        paper_color: Color,
     ) -> Vec<u8> {
-        let paper = paper.pixel();
+        let paper = paper.pixel(paper_color);
         let mut data = Vec::with_capacity(self.pixels.len() * 4);
         for pixel in &self.pixels {
             let output = if display.visible {
@@ -2191,17 +2206,18 @@ impl Widget for PixelCanvas {
                     ctx.set_handled();
                     return;
                 }
+                let zoom_step = self.resolved_theme().metrics.pixel_canvas_zoom_step;
                 match key.key.as_str() {
                     "=" | "+" => self.viewport.zoom_around(
                         ctx.bounds(),
                         CanvasViewport::center(ctx.bounds()),
-                        PIXEL_CANVAS_ZOOM_STEP,
+                        zoom_step,
                         self.document_origin(),
                     ),
                     "-" => self.viewport.zoom_around(
                         ctx.bounds(),
                         CanvasViewport::center(ctx.bounds()),
-                        1.0 / PIXEL_CANVAS_ZOOM_STEP,
+                        1.0 / zoom_step,
                         self.document_origin(),
                     ),
                     "[" => self.viewport.rotate_around(
@@ -2272,20 +2288,27 @@ impl Widget for PixelCanvas {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        let palette = theme.palette;
-        ctx.fill_bounds(palette.surface);
-        ctx.stroke_bounds(palette.border, StrokeStyle::new(1.0));
+        ctx.fill_bounds(theme.surfaces.canvas);
+        ctx.stroke_bounds(
+            theme.surfaces.border,
+            StrokeStyle::new(theme.metrics.border_width),
+        );
         ctx.push_clip_rect(ctx.bounds());
         let transform = self
             .viewport
             .transform(ctx.bounds(), self.document_origin());
         let image_bounds = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
-        paint_pixel_canvas_document_shadow(ctx, image_bounds, transform);
+        paint_pixel_canvas_document_shadow(ctx, image_bounds, transform, &theme);
         let display = self.state.display();
         let paper = self.state.paper();
         let baked_image = display.requires_compositing() || paper.requires_compositing();
         if !baked_image {
-            fill_transformed_rect(ctx, image_bounds, transform, PIXEL_CANVAS_PAPER);
+            fill_transformed_rect(
+                ctx,
+                image_bounds,
+                transform,
+                theme.surfaces.pixel_canvas_paper,
+            );
         }
         let image_handle = ctx.widget_image_handle(0);
         let image = RegisteredImage::from_rgba8(
@@ -2295,7 +2318,7 @@ impl Widget for PixelCanvas {
         )
         .expect("pixel canvas image data should match its dimensions");
         ctx.register_image(image_handle, image);
-        let sampling = if self.viewport.zoom >= PIXEL_CANVAS_NEAREST_SAMPLING_ZOOM {
+        let sampling = if self.viewport.zoom >= theme.metrics.pixel_canvas_nearest_sampling_zoom {
             ImageSampling::Nearest
         } else {
             ImageSampling::Linear
@@ -2304,7 +2327,7 @@ impl Widget for PixelCanvas {
             transformed_rect_points(image_bounds, transform),
             ImageSource::new(image_handle).with_sampling(sampling),
         );
-        if self.viewport.zoom >= PIXEL_GRID_ZOOM
+        if self.viewport.zoom >= theme.metrics.pixel_canvas_grid_zoom
             && let Some(range) = pixel_visible_range(
                 self.viewport,
                 ctx.bounds(),
@@ -2313,11 +2336,11 @@ impl Widget for PixelCanvas {
                 self.height,
             )
         {
-            paint_pixel_grid(ctx, range, transform);
+            paint_pixel_grid(ctx, range, transform, theme.surfaces.pixel_canvas_grid);
         }
         ctx.stroke(
             transformed_rect_path(image_bounds, transform),
-            PIXEL_CANVAS_DOCUMENT_EDGE,
+            theme.surfaces.pixel_canvas_document_edge,
             StrokeStyle::new(1.0),
         );
         ctx.pop_clip();
@@ -2385,18 +2408,23 @@ fn fill_transformed_rect(ctx: &mut PaintCtx, rect: Rect, transform: Transform, c
     }
 }
 
-fn paint_pixel_canvas_document_shadow(ctx: &mut PaintCtx, rect: Rect, transform: Transform) {
+fn paint_pixel_canvas_document_shadow(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    transform: Transform,
+    theme: &DefaultTheme,
+) {
     fill_transformed_rect(
         ctx,
         rect,
         transform.then(Transform::translation(0.0, 7.0)),
-        PIXEL_CANVAS_SHADOW_FAR,
+        theme.surfaces.pixel_canvas_shadow_far,
     );
     fill_transformed_rect(
         ctx,
         rect,
         transform.then(Transform::translation(0.0, 3.0)),
-        PIXEL_CANVAS_SHADOW_NEAR,
+        theme.surfaces.pixel_canvas_shadow_near,
     );
 }
 
@@ -2435,13 +2463,16 @@ fn paint_canvas_ruler_ticks(
     document_size: Size,
     viewport: CanvasViewport,
     viewport_size: Size,
-    tick_color: Color,
+    theme: &DefaultTheme,
     text_style: TextStyle,
 ) {
     let canvas_bounds = ruler_canvas_bounds(bounds, axis, viewport_size);
     let document_origin = Point::new(document_size.width * 0.5, document_size.height * 0.5);
     let visible = ruler_visible_range(bounds, axis, document_size, viewport, canvas_bounds);
-    let major_step = ruler_major_step(viewport.zoom);
+    let major_step = ruler_major_step(
+        viewport.zoom,
+        theme.metrics.canvas_ruler_target_major_spacing,
+    );
     let minor_step = (major_step / 5.0).max(1.0);
     let start = (visible.0 / minor_step).floor() * minor_step;
     let end = visible.1 + minor_step;
@@ -2460,7 +2491,16 @@ fn paint_canvas_ruler_ticks(
                 document_origin,
             );
             if ruler_position_in_bounds(position, bounds, axis) {
-                paint_canvas_ruler_tick(ctx, bounds, axis, position, major, tick_color);
+                paint_canvas_ruler_tick(
+                    ctx,
+                    bounds,
+                    axis,
+                    position,
+                    major,
+                    theme.surfaces.canvas_ruler_tick,
+                    theme.metrics.canvas_ruler_major_tick,
+                    theme.metrics.canvas_ruler_minor_tick,
+                );
                 if major {
                     paint_canvas_ruler_label(
                         ctx,
@@ -2469,6 +2509,8 @@ fn paint_canvas_ruler_ticks(
                         position,
                         value,
                         text_style.clone(),
+                        theme.metrics.canvas_ruler_label_padding,
+                        theme.metrics.canvas_ruler_label_max_width,
                     );
                 }
             }
@@ -2543,8 +2585,8 @@ fn ruler_visible_range(
     (start.min(end), start.max(end))
 }
 
-fn ruler_major_step(zoom: f32) -> f32 {
-    let target_world = (CANVAS_RULER_TARGET_MAJOR_SPACING / zoom.max(0.01)).max(1.0);
+fn ruler_major_step(zoom: f32, target_major_spacing: f32) -> f32 {
+    let target_world = (target_major_spacing.max(1.0) / zoom.max(0.01)).max(1.0);
     let magnitude = 10.0_f32.powf(target_world.log10().floor());
     for multiplier in [1.0, 2.0, 5.0, 10.0] {
         let step = multiplier * magnitude;
@@ -2611,12 +2653,10 @@ fn paint_canvas_ruler_tick(
     position: f32,
     major: bool,
     color: Color,
+    major_length: f32,
+    minor_length: f32,
 ) {
-    let length = if major {
-        CANVAS_RULER_MAJOR_TICK
-    } else {
-        CANVAS_RULER_MINOR_TICK
-    };
+    let length = if major { major_length } else { minor_length };
     match axis {
         CanvasRulerAxis::Horizontal => stroke_line(
             ctx,
@@ -2642,19 +2682,21 @@ fn paint_canvas_ruler_label(
     position: f32,
     value: f32,
     style: TextStyle,
+    padding: sui_layout::Padding,
+    max_width: f32,
 ) {
     let label = format!("{value:.0}");
     let rect = match axis {
         CanvasRulerAxis::Horizontal => Rect::new(
-            position + 3.0,
-            bounds.y() + 2.0,
-            54.0_f32.min((bounds.max_x() - position - 3.0).max(0.0)),
+            position + padding.left,
+            bounds.y() + padding.top,
+            max_width.min((bounds.max_x() - position - padding.left).max(0.0)),
             style.line_height,
         ),
         CanvasRulerAxis::Vertical => Rect::new(
-            bounds.x() + 3.0,
-            position + 2.0,
-            (bounds.width() - 6.0).max(0.0),
+            bounds.x() + padding.left,
+            position + padding.top,
+            (bounds.width() - padding.left - padding.right).max(0.0),
             style.line_height,
         ),
     };
@@ -2721,8 +2763,11 @@ fn paint_canvas_axes(
     viewport: CanvasViewport,
     bounds: Rect,
     document_origin: Point,
+    theme: &DefaultTheme,
 ) {
-    let visible = canvas_visible_world_rect(viewport, bounds, document_origin).inflate(80.0, 80.0);
+    let overscan = theme.metrics.canvas_axis_overscan;
+    let visible =
+        canvas_visible_world_rect(viewport, bounds, document_origin).inflate(overscan, overscan);
     let transform = viewport.transform(bounds, document_origin);
     let mut x_axis = PathBuilder::new();
     x_axis
@@ -2730,7 +2775,7 @@ fn paint_canvas_axes(
         .line_to(transform.transform_point(Point::new(visible.max_x(), 0.0)));
     ctx.stroke(
         x_axis.build(),
-        Color::rgba(0.85, 0.23, 0.18, 0.55),
+        theme.surfaces.canvas_axis_x,
         StrokeStyle::new(1.0),
     );
 
@@ -2740,7 +2785,7 @@ fn paint_canvas_axes(
         .line_to(transform.transform_point(Point::new(0.0, visible.max_y())));
     ctx.stroke(
         y_axis.build(),
-        Color::rgba(0.16, 0.52, 0.28, 0.55),
+        theme.surfaces.canvas_axis_y,
         StrokeStyle::new(1.0),
     );
 }
@@ -2750,10 +2795,13 @@ fn paint_canvas_grid(
     viewport: CanvasViewport,
     bounds: Rect,
     document_origin: Point,
+    theme: &DefaultTheme,
 ) {
-    let visible = canvas_visible_world_rect(viewport, bounds, document_origin).inflate(80.0, 80.0);
+    let overscan = theme.metrics.canvas_axis_overscan;
+    let visible =
+        canvas_visible_world_rect(viewport, bounds, document_origin).inflate(overscan, overscan);
     let transform = viewport.transform(bounds, document_origin);
-    let step = 40.0;
+    let step = theme.metrics.canvas_grid_step.max(1.0);
     let min_x = (visible.x() / step).floor() as i32 - 1;
     let max_x = (visible.max_x() / step).ceil() as i32 + 1;
     let min_y = (visible.y() / step).floor() as i32 - 1;
@@ -2773,7 +2821,7 @@ fn paint_canvas_grid(
     }
     ctx.stroke(
         builder.build(),
-        Color::rgba(0.40, 0.46, 0.56, 0.18),
+        theme.surfaces.canvas_grid,
         StrokeStyle::new(1.0),
     );
 }
@@ -2905,7 +2953,12 @@ fn pixel_visible_range(
     })
 }
 
-fn paint_pixel_grid(ctx: &mut PaintCtx, range: PixelRenderRange, transform: Transform) {
+fn paint_pixel_grid(
+    ctx: &mut PaintCtx,
+    range: PixelRenderRange,
+    transform: Transform,
+    color: Color,
+) {
     let mut builder = PathBuilder::new();
     for x in range.start_x..=range.end_x {
         let x = x as f32;
@@ -2919,11 +2972,7 @@ fn paint_pixel_grid(ctx: &mut PaintCtx, range: PixelRenderRange, transform: Tran
             .move_to(transform.transform_point(Point::new(range.start_x as f32, y)))
             .line_to(transform.transform_point(Point::new(range.end_x as f32, y)));
     }
-    ctx.stroke(
-        builder.build(),
-        Color::rgba(0.08, 0.10, 0.14, 0.28),
-        StrokeStyle::new(1.0),
-    );
+    ctx.stroke(builder.build(), color, StrokeStyle::new(1.0));
 }
 
 fn channel_to_u8(channel: f32) -> u8 {
@@ -2933,17 +2982,17 @@ fn channel_to_u8(channel: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Canvas, CanvasRuler, CanvasShape, CanvasStroke, CanvasViewport, PIXEL_CANVAS_PAPER,
-        PixelCanvas, PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasState,
-        PixelCanvasTool, PixelColor,
+        Canvas, CanvasRuler, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas,
+        PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasState, PixelCanvasTool, PixelColor,
     };
+    use crate::DefaultTheme;
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
         PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsRole,
         SemanticsValue, Size, Vector, WindowEvent,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
-    use sui_scene::{ImageSampling, SceneCommand};
+    use sui_scene::{Brush, ImageSampling, SceneCommand};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -3023,6 +3072,49 @@ mod tests {
             .expect("zoom percent should parse")
     }
 
+    fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRect {
+                brush: Brush::Solid(color),
+                ..
+            }
+            | SceneCommand::FillPath {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                colors.push(*color);
+            }
+        });
+        colors
+    }
+
+    fn solid_stroke_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::StrokeRect {
+                brush: Brush::Solid(color),
+                ..
+            }
+            | SceneCommand::StrokePath {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                colors.push(*color);
+            }
+        });
+        colors
+    }
+
+    fn pixel_matches_color(pixel: &[u8], color: PixelColor) -> bool {
+        pixel[0] == color.red
+            && pixel[1] == color.green
+            && pixel[2] == color.blue
+            && pixel[3] == color.alpha
+    }
+
     #[test]
     fn viewport_screen_world_mapping_round_trips_nonzero_bounds() {
         let viewport = CanvasViewport::new()
@@ -3042,9 +3134,10 @@ mod tests {
 
     #[test]
     fn canvas_ruler_exposes_semantics_and_draws_ticks() {
+        let theme = DefaultTheme::default();
         let output = render(
             crate::SizedBox::new()
-                .size(Size::new(420.0, 22.0))
+                .size(Size::new(420.0, theme.metrics.canvas_ruler_extent))
                 .with_child(
                     CanvasRuler::horizontal("Horizontal ruler", Size::new(1920.0, 1080.0))
                         .viewport(CanvasViewport::new().zoom(0.5), Size::new(420.0, 260.0)),
@@ -3059,7 +3152,10 @@ mod tests {
                     && node.name.as_deref() == Some("Horizontal ruler")
             })
             .expect("ruler semantics should exist");
-        assert_eq!(ruler.bounds, Rect::new(0.0, 0.0, 420.0, 22.0));
+        assert_eq!(
+            ruler.bounds,
+            Rect::new(0.0, 0.0, 420.0, theme.metrics.canvas_ruler_extent)
+        );
         assert_eq!(
             ruler.value,
             Some(SemanticsValue::Text(
@@ -3080,6 +3176,64 @@ mod tests {
 
         assert!(stroke_count > 2);
         assert!(label_count > 0);
+    }
+
+    #[test]
+    fn canvas_ruler_defaults_follow_theme_density_and_extent_override() {
+        let compact = DefaultTheme::compact();
+        let touch = DefaultTheme::touch();
+
+        let compact_output = render(crate::SizedBox::new().width(420.0).with_child(
+            CanvasRuler::horizontal("Compact ruler", Size::new(1920.0, 1080.0)).theme(compact),
+        ));
+        let touch_output = render(crate::SizedBox::new().width(420.0).with_child(
+            CanvasRuler::horizontal("Touch ruler", Size::new(1920.0, 1080.0)).theme(touch),
+        ));
+        let override_output = render(
+            crate::SizedBox::new().width(420.0).with_child(
+                CanvasRuler::horizontal("Override ruler", Size::new(1920.0, 1080.0))
+                    .theme(touch)
+                    .extent(18.0),
+            ),
+        );
+
+        let ruler_height = |output: &RenderOutput, name: &str| {
+            output
+                .semantics
+                .iter()
+                .find(|node| node.name.as_deref() == Some(name))
+                .expect("ruler semantics should exist")
+                .bounds
+                .height()
+        };
+
+        assert_eq!(
+            ruler_height(&compact_output, "Compact ruler"),
+            compact.metrics.canvas_ruler_extent
+        );
+        assert_eq!(
+            ruler_height(&touch_output, "Touch ruler"),
+            touch.metrics.canvas_ruler_extent
+        );
+        assert_eq!(ruler_height(&override_output, "Override ruler"), 18.0);
+    }
+
+    #[test]
+    fn canvas_surface_tokens_drive_default_canvas_paint() {
+        let mut theme = DefaultTheme::default();
+        theme.surfaces.canvas = Color::rgba(0.91, 0.83, 0.72, 1.0);
+        theme.surfaces.canvas_grid = Color::rgba(0.24, 0.33, 0.44, 0.40);
+        theme.surfaces.canvas_axis_x = Color::rgba(0.80, 0.20, 0.30, 0.70);
+        theme.surfaces.canvas_axis_y = Color::rgba(0.20, 0.60, 0.40, 0.70);
+
+        let output = render(Canvas::new("Vector").theme(theme));
+        let fills = solid_fill_colors(&output);
+        let strokes = solid_stroke_colors(&output);
+
+        assert!(fills.contains(&theme.surfaces.canvas));
+        assert!(strokes.contains(&theme.surfaces.canvas_grid));
+        assert!(strokes.contains(&theme.surfaces.canvas_axis_x));
+        assert!(strokes.contains(&theme.surfaces.canvas_axis_y));
     }
 
     #[test]
@@ -3166,10 +3320,11 @@ mod tests {
             .image_registry
             .get(image_handle.expect("pixel canvas should draw an image"))
             .expect("pixel canvas image should be registered");
+        let accent = PixelColor::from_color(DefaultTheme::default().palette.accent);
         let painted = image
             .bytes()
             .chunks_exact(4)
-            .any(|pixel| pixel[2] > 200 && pixel[3] == 255);
+            .any(|pixel| pixel_matches_color(pixel, accent));
         assert!(painted);
         Ok(())
     }
@@ -3361,9 +3516,10 @@ mod tests {
             window_id,
             primary_pointer(PointerEventKind::Up, Point::new(260.0, 180.0), false),
         )?;
+        let accent = PixelColor::from_color(DefaultTheme::default().palette.accent);
         let painted = rendered_pixel_bytes(&runtime.render(window_id)?)
             .chunks_exact(4)
-            .any(|pixel| pixel[2] > 200 && pixel[3] == 255);
+            .any(|pixel| pixel_matches_color(pixel, accent));
         assert!(painted);
 
         runtime.handle_event(window_id, command_key("z"))?;
@@ -3375,7 +3531,7 @@ mod tests {
         runtime.handle_event(window_id, command_key("y"))?;
         let painted_after_redo = rendered_pixel_bytes(&runtime.render(window_id)?)
             .chunks_exact(4)
-            .any(|pixel| pixel[2] > 200 && pixel[3] == 255);
+            .any(|pixel| pixel_matches_color(pixel, accent));
         assert!(painted_after_redo);
         Ok(())
     }
@@ -3506,7 +3662,37 @@ mod tests {
                 .state(state.clone())
                 .with_pixels(vec![Color::rgba(1.0, 0.0, 0.0, 1.0)]),
         );
-        let paper = PixelColor::from_color(PIXEL_CANVAS_PAPER);
+        let paper = PixelColor::from_color(DefaultTheme::default().surfaces.pixel_canvas_paper);
+        let expected = [paper.red, paper.green, paper.blue, paper.alpha];
+
+        let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
+        assert_eq!(&pixels[0..4], &expected);
+
+        state.request_export_snapshot();
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(521.0, 361.0))),
+        )?;
+        let snapshot = state
+            .latest_export_snapshot()
+            .expect("hidden layer export should publish a snapshot");
+        assert_eq!(&snapshot.rgba8()[0..4], &expected);
+        Ok(())
+    }
+
+    #[test]
+    fn pixel_canvas_uses_theme_paper_for_render_and_export() -> sui_core::Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.surfaces.pixel_canvas_paper = Color::rgba(0.80, 0.62, 0.36, 1.0);
+        let state = PixelCanvasState::new();
+        state.set_display_visible(false);
+        let (mut runtime, window_id) = build_runtime(
+            PixelCanvas::new("Paint", 1, 1)
+                .theme(theme)
+                .state(state.clone())
+                .with_pixels(vec![Color::rgba(1.0, 0.0, 0.0, 1.0)]),
+        );
+        let paper = PixelColor::from_color(theme.surfaces.pixel_canvas_paper);
         let expected = [paper.red, paper.green, paper.blue, paper.alpha];
 
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
@@ -3533,7 +3719,7 @@ mod tests {
                 .state(state.clone())
                 .with_pixels(vec![Color::rgba(1.0, 0.0, 0.0, 1.0)]),
         );
-        let paper = PixelColor::from_color(PIXEL_CANVAS_PAPER);
+        let paper = PixelColor::from_color(DefaultTheme::default().surfaces.pixel_canvas_paper);
         let half = paper.compose(
             Color::rgba(1.0, 0.0, 0.0, 1.0),
             0.5,
@@ -3592,7 +3778,12 @@ mod tests {
         let state = PixelCanvasState::new();
         state.set_paper_opacity(0.5);
         let (mut runtime, window_id) = build_runtime(PixelCanvas::new("Paint", 1, 1).state(state));
-        let paper = PixelColor::from_color(PIXEL_CANVAS_PAPER.with_alpha(0.5));
+        let paper = PixelColor::from_color(
+            DefaultTheme::default()
+                .surfaces
+                .pixel_canvas_paper
+                .with_alpha(0.5),
+        );
         let expected = [paper.red, paper.green, paper.blue, paper.alpha];
 
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);

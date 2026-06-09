@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, KeyState, Path, PathBuilder, Point,
     PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
-    SemanticsTextRange, SemanticsValue, Size, TimerToken, ToggleState,
+    SemanticsTextRange, SemanticsValue, Size, TimerToken, ToggleState, Vector,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_lucide::LucideIcon;
@@ -565,7 +565,10 @@ impl IconButton {
 
     fn resolved_icon_size(&self) -> f32 {
         let theme = self.resolved_theme();
-        self.icon_size.unwrap_or(theme.metrics.icon_size)
+        self.icon_size
+            .unwrap_or(theme.metrics.icon_size)
+            .min(self.resolved_size())
+            .max(0.0)
     }
 
     fn is_selected(&self) -> bool {
@@ -725,20 +728,21 @@ impl Widget for IconButton {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
         let selected = self.is_selected();
         let enabled = self.is_enabled();
         let hover_progress = if enabled {
-            self.hover_animation.value
+            self.hover_animation.value * interaction.hover_blend
         } else {
             0.0
         };
         let press_progress = if enabled {
-            self.press_animation.value
+            self.press_animation.value * interaction.pressed_blend
         } else {
             0.0
         };
         let base_background = if selected {
-            mix_color(palette.control, palette.accent, 0.18)
+            mix_color(palette.control, palette.accent, interaction.selected_blend)
         } else {
             palette.control
         };
@@ -769,8 +773,10 @@ impl Widget for IconButton {
         let background = if enabled {
             background
         } else {
-            mix_color(background, palette.control, 0.72).with_alpha(0.82)
+            mix_color(background, palette.control, 0.72).with_alpha(interaction.disabled_opacity)
         };
+        let content_offset =
+            Vector::new(0.0, self.press_animation.value * interaction.pressed_offset);
 
         draw_control_frame(
             ctx,
@@ -784,9 +790,11 @@ impl Widget for IconButton {
         draw_icon_glyph(
             ctx,
             self.icon,
-            center_square(ctx.bounds(), self.resolved_icon_size()),
+            center_square(ctx.bounds(), self.resolved_icon_size()).translate(content_offset),
             if !enabled {
-                palette.text.with_alpha(0.38)
+                palette
+                    .text
+                    .with_alpha(interaction.disabled_content_opacity)
             } else if selected {
                 palette.accent
             } else {
@@ -1204,19 +1212,21 @@ impl Button {
     fn resolved_visuals(&self, focused: bool) -> ButtonVisuals {
         let theme = self.resolved_theme();
         let palette = theme.palette;
+        let interaction = theme.interaction;
         let enabled = self.is_enabled();
         let hover_progress = if enabled {
-            self.hover_animation.value
+            self.hover_animation.value * interaction.hover_blend
         } else {
             0.0
         };
         let press_progress = if enabled {
-            self.press_animation.value
+            self.press_animation.value * interaction.pressed_blend
         } else {
             0.0
         };
         let background = if !enabled {
-            mix_color(palette.control, palette.accent, 0.08).with_alpha(0.82)
+            mix_color(palette.control, palette.accent, 0.08)
+                .with_alpha(interaction.disabled_opacity)
         } else {
             mix_color(
                 mix_color(palette.accent, palette.accent_hover, hover_progress),
@@ -1225,7 +1235,9 @@ impl Button {
             )
         };
         let border = if !enabled {
-            palette.accent_border.with_alpha(0.45)
+            palette
+                .accent_border
+                .with_alpha(interaction.disabled_content_opacity)
         } else if focused {
             palette.accent_border_focus
         } else {
@@ -1240,7 +1252,9 @@ impl Button {
             apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift)
         } else {
             apply_hdr_policy_cap(
-                self.resolved_text_style().color.with_alpha(0.45),
+                self.resolved_text_style()
+                    .color
+                    .with_alpha(interaction.disabled_content_opacity),
                 label_peak_lift,
             )
         };
@@ -1487,9 +1501,12 @@ impl Widget for Button {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let visuals = self.resolved_visuals(ctx.is_focused());
+        let content_offset =
+            Vector::new(0.0, self.press_animation.value * interaction.pressed_offset);
 
         draw_control_frame(
             ctx,
@@ -1502,8 +1519,14 @@ impl Widget for Button {
         );
         let (icon_rect, label_rect) =
             self.button_content_rects(ctx, ctx.bounds(), padding, text_style.line_height);
+        let label_rect = label_rect.translate(content_offset);
         if let (Some(icon), Some(icon_rect)) = (self.icon, icon_rect) {
-            draw_icon_glyph(ctx, icon, icon_rect, visuals.label_color);
+            draw_icon_glyph(
+                ctx,
+                icon,
+                icon_rect.translate(content_offset),
+                visuals.label_color,
+            );
         }
         if self.is_enabled()
             && let Some(layout) = &self.label_layout
@@ -1831,12 +1854,13 @@ impl Widget for Checkbox {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
         let gap = self.resolved_gap();
-        let hover_progress = self.hover_animation.value;
-        let press_progress = self.press_animation.value;
+        let hover_progress = self.hover_animation.value * interaction.hover_blend;
+        let press_progress = self.press_animation.value * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.value;
         let focus_progress = self.focus_animation.value;
         let background = mix_color(
@@ -1898,7 +1922,7 @@ impl Widget for Checkbox {
             ctx.stroke(
                 checkmark_path(indicator.inflate(-4.0, -4.0)),
                 check_color,
-                StrokeStyle::new(physical_pixels(ctx, 2.0)),
+                StrokeStyle::new(physical_pixels(ctx, interaction.active_indicator_thickness)),
             );
         }
         ctx.draw_text(
@@ -2097,6 +2121,9 @@ impl Switch {
     fn resolved_visuals_for_state(&self, on: bool, focused: bool) -> SwitchVisuals {
         let theme = self.resolved_theme();
         let palette = theme.palette;
+        let interaction = theme.interaction;
+        let hover_t = self.hover_animation.value * interaction.hover_blend;
+        let press_t = self.press_animation.value * interaction.pressed_blend;
         let frame_background = if self.pressed {
             palette.control_active
         } else if self.hovered {
@@ -2115,14 +2142,14 @@ impl Switch {
         };
         let baseline_track_color = if on {
             if self.pressed {
-                palette.accent_pressed
+                mix_color(palette.accent, palette.accent_pressed, press_t)
             } else if self.hovered {
-                palette.accent_hover
+                mix_color(palette.accent, palette.accent_hover, hover_t)
             } else {
                 palette.accent
             }
         } else if self.hovered {
-            palette.control_active
+            mix_color(palette.surface_focus, palette.control_active, hover_t)
         } else {
             palette.surface_focus
         };
@@ -2169,9 +2196,9 @@ impl Switch {
             frame_background,
             frame_border,
             track_color: if self.pressed {
-                palette.accent_pressed
+                mix_color(palette.accent, palette.accent_pressed, press_t)
             } else if self.hovered {
-                palette.accent_hover
+                mix_color(palette.accent, palette.accent_hover, hover_t)
             } else {
                 indicator_style.color
             },
@@ -2318,6 +2345,7 @@ impl Widget for Switch {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let palette = theme.palette;
+        let interaction = theme.interaction;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let gap = self.resolved_gap();
@@ -2326,8 +2354,8 @@ impl Widget for Switch {
         let visuals = self.resolved_visuals(ctx.is_focused());
         let off_visuals = self.resolved_visuals_for_state(false, ctx.is_focused());
         let on_visuals = self.resolved_visuals_for_state(true, ctx.is_focused());
-        let hover_progress = self.hover_animation.value;
-        let press_progress = self.press_animation.value;
+        let hover_progress = self.hover_animation.value * interaction.hover_blend;
+        let press_progress = self.press_animation.value * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.value;
 
         let frame_background = mix_color(
@@ -2351,12 +2379,13 @@ impl Widget for Switch {
             ctx.is_focused().then_some(palette.focus_ring),
         );
 
-        let thumb_size = (track.height() - 4.0).max(0.0);
-        let thumb_x_off = track.x() + 2.0;
-        let thumb_x_on = track.max_x() - thumb_size - 2.0;
+        let thumb_inset = metrics.switch_thumb_inset;
+        let thumb_size = (track.height() - (thumb_inset * 2.0)).max(0.0);
+        let thumb_x_off = track.x() + thumb_inset;
+        let thumb_x_on = track.max_x() - thumb_size - thumb_inset;
         let thumb = Rect::new(
             f32::interpolate(thumb_x_off, thumb_x_on, toggle_progress),
-            track.y() + 2.0,
+            track.y() + thumb_inset,
             thumb_size,
             thumb_size,
         );
@@ -6441,6 +6470,83 @@ mod tests {
     }
 
     #[test]
+    fn density_modes_resize_core_controls() {
+        let compact = DefaultTheme::compact();
+        let touch = DefaultTheme::touch();
+
+        assert!(
+            render(Button::new("Density").theme(compact))
+                .frame
+                .viewport
+                .height
+                < render(Button::new("Density").theme(touch))
+                    .frame
+                    .viewport
+                    .height
+        );
+        assert!(
+            render(IconButton::new(IconGlyph::Search, "Search").theme(compact))
+                .frame
+                .viewport
+                .width
+                < render(IconButton::new(IconGlyph::Search, "Search").theme(touch))
+                    .frame
+                    .viewport
+                    .width
+        );
+        assert!(
+            render(TextInput::new("Name").theme(compact))
+                .frame
+                .viewport
+                .height
+                < render(TextInput::new("Name").theme(touch))
+                    .frame
+                    .viewport
+                    .height
+        );
+        assert!(
+            render(TextArea::new("Notes").theme(compact))
+                .frame
+                .viewport
+                .height
+                < render(TextArea::new("Notes").theme(touch))
+                    .frame
+                    .viewport
+                    .height
+        );
+        assert!(
+            render(Checkbox::new("Visible").theme(compact))
+                .frame
+                .viewport
+                .height
+                < render(Checkbox::new("Visible").theme(touch))
+                    .frame
+                    .viewport
+                    .height
+        );
+        assert!(
+            render(Switch::new("Enabled").theme(compact))
+                .frame
+                .viewport
+                .height
+                < render(Switch::new("Enabled").theme(touch))
+                    .frame
+                    .viewport
+                    .height
+        );
+        assert!(
+            render(Slider::new("Opacity").theme(compact))
+                .frame
+                .viewport
+                .height
+                < render(Slider::new("Opacity").theme(touch))
+                    .frame
+                    .viewport
+                    .height
+        );
+    }
+
+    #[test]
     fn button_hover_animation_advances_over_multiple_frames() -> Result<()> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(Button::new("Hover"));
@@ -6463,7 +6569,14 @@ mod tests {
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
         let end_background = solid_fill_colors(&end)[0];
-        assert_eq!(end_background, theme.palette.accent_hover);
+        assert_eq!(
+            end_background,
+            super::mix_color(
+                theme.palette.accent,
+                theme.palette.accent_hover,
+                theme.interaction.hover_blend
+            )
+        );
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
     }

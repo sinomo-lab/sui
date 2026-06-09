@@ -8,7 +8,7 @@ use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::{ImageSource, StrokeStyle, WidgetShader};
 use sui_text::TextStyle;
 
-use crate::DefaultTheme;
+use crate::{ControlMetrics, DefaultTheme, ThemeDensity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFit {
@@ -32,7 +32,7 @@ pub struct Image {
     background: Option<Color>,
     background_reader: Option<Box<dyn Fn() -> Color>>,
     show_border: bool,
-    corner_radius: f32,
+    corner_radius: Option<f32>,
     resolved_source_size: Size,
 }
 
@@ -52,7 +52,7 @@ impl Image {
             background: None,
             background_reader: None,
             show_border: true,
-            corner_radius: 10.0,
+            corner_radius: None,
             resolved_source_size: Size::new(96.0, 96.0),
         }
     }
@@ -132,7 +132,7 @@ impl Image {
     }
 
     pub fn corner_radius(mut self, corner_radius: f32) -> Self {
-        self.corner_radius = corner_radius.max(0.0);
+        self.corner_radius = Some(corner_radius.max(0.0));
         self
     }
 
@@ -168,6 +168,11 @@ impl Image {
             .map(|background| background())
             .or(self.background)
     }
+
+    fn resolved_corner_radius(&self, theme: &DefaultTheme) -> f32 {
+        self.corner_radius
+            .unwrap_or(theme.metrics.image_corner_radius)
+    }
 }
 
 impl Widget for Image {
@@ -178,9 +183,11 @@ impl Widget for Image {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let bounds = ctx.bounds();
+        let theme = self.resolved_theme();
+        let corner_radius = self.resolved_corner_radius(&theme);
         let image_rect = fit_rect(bounds, self.resolved_source_size, self.fit);
         if let Some(background) = self.resolved_background() {
-            ctx.fill(rounded_rect_path(bounds, self.corner_radius), background);
+            ctx.fill(rounded_rect_path(bounds, corner_radius), background);
         }
 
         ctx.push_clip_rect(bounds);
@@ -195,9 +202,8 @@ impl Widget for Image {
         ctx.pop_clip();
 
         if self.show_border {
-            let theme = self.resolved_theme();
             ctx.stroke(
-                rounded_rect_path(bounds, self.corner_radius),
+                rounded_rect_path(bounds, corner_radius),
                 theme.palette.border,
                 StrokeStyle::new(theme.metrics.border_width.max(1.0)),
             );
@@ -217,8 +223,7 @@ pub struct ColorSwatch {
     name: String,
     color: Color,
     color_reader: Option<Box<dyn Fn() -> Color>>,
-    width: f32,
-    height: f32,
+    size: Option<Size>,
     hovered: bool,
     pressed: bool,
     read_only: bool,
@@ -233,8 +238,7 @@ impl ColorSwatch {
             name: name.into(),
             color,
             color_reader: None,
-            width: 56.0,
-            height: 32.0,
+            size: None,
             hovered: false,
             pressed: false,
             read_only: false,
@@ -257,8 +261,7 @@ impl ColorSwatch {
     }
 
     pub fn size(mut self, size: Size) -> Self {
-        self.width = size.width.max(24.0);
-        self.height = size.height.max(24.0);
+        self.size = Some(Size::new(size.width.max(24.0), size.height.max(24.0)));
         self
     }
 
@@ -302,6 +305,13 @@ impl ColorSwatch {
         if let Some(on_press) = &mut self.on_press {
             on_press(color);
         }
+    }
+
+    fn resolved_size(&self, theme: &DefaultTheme) -> Size {
+        self.size.unwrap_or(Size::new(
+            theme.metrics.color_swatch_width,
+            theme.metrics.color_swatch_height,
+        ))
     }
 }
 
@@ -392,27 +402,73 @@ impl Widget for ColorSwatch {
     }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(self.width, self.height))
+        let theme = self.resolved_theme();
+        constraints.clamp(self.resolved_size(&theme))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        let outer_radius = theme.metrics.corner_radius;
-        let inner_radius = (outer_radius - 1.0).max(0.0);
+        let metrics = theme.metrics;
+        let palette = theme.palette;
+        let pressed_offset = if self.pressed {
+            theme.interaction.pressed_offset
+        } else {
+            0.0
+        };
+        let body = Rect::new(
+            ctx.bounds().x(),
+            ctx.bounds().y() + pressed_offset,
+            ctx.bounds().width(),
+            (ctx.bounds().height() - pressed_offset).max(0.0),
+        );
+        let outer_radius = metrics.corner_radius.min(body.height() * 0.5);
+        let inner_inset = metrics.color_swatch_inner_inset + pressed_offset * 0.5;
+        let inner_radius = (outer_radius - inner_inset).max(0.0);
         let color = self.current_color();
-        draw_checkerboard(ctx, ctx.bounds(), 6.0);
+
+        if ctx.is_focused() {
+            let focus_outset = metrics.focus_ring_outset;
+            ctx.stroke(
+                rounded_rect_path(
+                    ctx.bounds().inflate(focus_outset, focus_outset),
+                    outer_radius + focus_outset,
+                ),
+                palette.focus_ring,
+                StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
+            );
+        }
+
+        if self.pressed {
+            ctx.fill(
+                rounded_rect_path(ctx.bounds(), outer_radius),
+                palette.control_active,
+            );
+        } else if self.hovered {
+            ctx.fill(
+                rounded_rect_path(ctx.bounds(), outer_radius),
+                palette.control_hover,
+            );
+        }
+
+        draw_checkerboard(ctx, body, metrics.color_swatch_checker_size, &theme);
         ctx.fill(
-            rounded_rect_path(inset_rect(ctx.bounds(), Insets::all(1.0)), inner_radius),
+            rounded_rect_path(inset_rect(body, Insets::all(inner_inset)), inner_radius),
             color,
         );
         ctx.stroke(
-            rounded_rect_path(ctx.bounds(), outer_radius),
-            if ctx.is_focused() || self.hovered {
-                theme.palette.border_focus
+            rounded_rect_path(body, outer_radius),
+            if ctx.is_focused() {
+                palette.border_focus
+            } else if self.hovered {
+                palette.border_hover
+            } else if self.read_only {
+                palette
+                    .border
+                    .with_alpha(theme.interaction.disabled_opacity)
             } else {
-                theme.palette.border
+                palette.border
             },
-            StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+            StrokeStyle::new(metrics.border_width.max(1.0)),
         );
     }
 
@@ -461,9 +517,6 @@ impl ColorPaletteSwatch {
     }
 }
 
-const COLOR_PALETTE_SWATCH_SIZE: f32 = 28.0;
-const COLOR_PALETTE_GAP: f32 = 6.0;
-
 pub struct ColorPalette {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -474,8 +527,8 @@ pub struct ColorPalette {
     hovered: Option<usize>,
     pressed: Option<usize>,
     columns: usize,
-    swatch_size: f32,
-    gap: f32,
+    swatch_size: Option<f32>,
+    gap: Option<f32>,
     on_change: Option<Box<dyn FnMut(usize, String, Color)>>,
 }
 
@@ -491,8 +544,8 @@ impl ColorPalette {
             hovered: None,
             pressed: None,
             columns: 8,
-            swatch_size: COLOR_PALETTE_SWATCH_SIZE,
-            gap: COLOR_PALETTE_GAP,
+            swatch_size: None,
+            gap: None,
             on_change: None,
         }
     }
@@ -544,12 +597,12 @@ impl ColorPalette {
     }
 
     pub fn swatch_size(mut self, size: f32) -> Self {
-        self.swatch_size = size.max(18.0);
+        self.swatch_size = Some(size.max(18.0));
         self
     }
 
     pub fn gap(mut self, gap: f32) -> Self {
-        self.gap = gap.max(0.0);
+        self.gap = Some(gap.max(0.0));
         self
     }
 
@@ -592,30 +645,41 @@ impl ColorPalette {
         }
     }
 
-    fn swatch_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+    fn resolved_swatch_size(&self, theme: &DefaultTheme) -> f32 {
+        self.swatch_size
+            .unwrap_or(theme.metrics.color_palette_swatch_size)
+    }
+
+    fn resolved_gap(&self, theme: &DefaultTheme) -> f32 {
+        self.gap.unwrap_or(theme.metrics.color_palette_gap)
+    }
+
+    fn swatch_rect(&self, bounds: Rect, index: usize, theme: &DefaultTheme) -> Option<Rect> {
         if index >= self.swatches.len() {
             return None;
         }
 
+        let swatch_size = self.resolved_swatch_size(theme);
+        let gap = self.resolved_gap(theme);
         let columns = self.grid_columns();
         let column = index % columns;
         let row = index / columns;
-        let x = bounds.x() + column as f32 * (self.swatch_size + self.gap);
-        let y = bounds.y() + row as f32 * (self.swatch_size + self.gap);
+        let x = bounds.x() + column as f32 * (swatch_size + gap);
+        let y = bounds.y() + row as f32 * (swatch_size + gap);
         let available_width = (bounds.max_x() - x).max(0.0);
         let available_height = (bounds.max_y() - y).max(0.0);
         let rect = Rect::new(
             x,
             y,
-            self.swatch_size.min(available_width),
-            self.swatch_size.min(available_height),
+            swatch_size.min(available_width),
+            swatch_size.min(available_height),
         );
         (!rect.is_empty()).then_some(rect)
     }
 
-    fn swatch_at(&self, bounds: Rect, position: Point) -> Option<usize> {
+    fn swatch_at(&self, bounds: Rect, position: Point, theme: &DefaultTheme) -> Option<usize> {
         self.swatches.iter().enumerate().find_map(|(index, _)| {
-            self.swatch_rect(bounds, index)
+            self.swatch_rect(bounds, index, theme)
                 .filter(|rect| rect.contains(position))
                 .map(|_| index)
         })
@@ -657,7 +721,8 @@ impl Widget for ColorPalette {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = self.swatch_at(ctx.bounds(), pointer.position);
+                let theme = self.resolved_theme();
+                let hovered = self.swatch_at(ctx.bounds(), pointer.position, &theme);
                 if hovered != self.hovered {
                     self.hovered = hovered;
                     ctx.request_paint();
@@ -674,7 +739,8 @@ impl Widget for ColorPalette {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                self.hovered = self.swatch_at(ctx.bounds(), pointer.position);
+                let theme = self.resolved_theme();
+                self.hovered = self.swatch_at(ctx.bounds(), pointer.position, &theme);
                 self.pressed = self.hovered;
                 if self.hovered.is_some() {
                     ctx.request_focus();
@@ -688,7 +754,8 @@ impl Widget for ColorPalette {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                let hovered = self.swatch_at(ctx.bounds(), pointer.position);
+                let theme = self.resolved_theme();
+                let hovered = self.swatch_at(ctx.bounds(), pointer.position, &theme);
                 if let Some(index) = self
                     .pressed
                     .zip(hovered)
@@ -738,55 +805,92 @@ impl Widget for ColorPalette {
     }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let swatch_size = self.resolved_swatch_size(&theme);
+        let gap = self.resolved_gap(&theme);
         let columns = self.grid_columns() as f32;
         let rows = self.grid_rows() as f32;
         constraints.clamp(Size::new(
-            columns * self.swatch_size + (columns - 1.0).max(0.0) * self.gap,
-            rows * self.swatch_size + (rows - 1.0).max(0.0) * self.gap,
+            columns * swatch_size + (columns - 1.0).max(0.0) * gap,
+            rows * swatch_size + (rows - 1.0).max(0.0) * gap,
         ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let palette = theme.palette;
-        let radius = theme.metrics.corner_radius.min(self.swatch_size * 0.25);
+        let metrics = theme.metrics;
+        let interaction = theme.interaction;
+        let swatch_size = self.resolved_swatch_size(&theme);
+        let radius = metrics.corner_radius.min(swatch_size * 0.25);
         let selected = self.current_selected();
 
         if ctx.is_focused() {
+            let focus_outset = metrics.focus_ring_outset;
             ctx.stroke(
-                rounded_rect_path(ctx.bounds().inflate(2.0, 2.0), radius + 2.0),
+                rounded_rect_path(
+                    ctx.bounds().inflate(focus_outset, focus_outset),
+                    radius + focus_outset,
+                ),
                 palette.focus_ring,
-                StrokeStyle::new(theme.metrics.focus_ring_width.max(1.0)),
+                StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
             );
         }
 
         for (index, swatch) in self.swatches.iter().enumerate() {
-            let Some(rect) = self.swatch_rect(ctx.bounds(), index) else {
+            let Some(rect) = self.swatch_rect(ctx.bounds(), index, &theme) else {
                 continue;
             };
             let selected = selected == Some(index);
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
+            let pressed_offset = if pressed {
+                interaction.pressed_offset
+            } else {
+                0.0
+            };
+            let body = Rect::new(
+                rect.x(),
+                rect.y() + pressed_offset,
+                rect.width(),
+                (rect.height() - pressed_offset).max(0.0),
+            );
             let ring = if selected {
                 palette.accent_border
             } else if hovered {
-                palette.border_focus
+                palette.border_hover
             } else {
                 palette.border
             };
-            let ring_width = if selected { 2.0 } else { 1.0 };
-            let fill_rect = inset_rect(rect, Insets::all(if selected { 3.0 } else { 2.0 }));
+            let ring_width = if selected {
+                metrics.border_width.max(1.0) + 1.0
+            } else {
+                metrics.border_width.max(1.0)
+            };
+            let fill_inset = if selected {
+                metrics.color_palette_selected_swatch_inset
+            } else {
+                metrics.color_palette_swatch_inset
+            } + pressed_offset * 0.5;
+            let fill_rect = inset_rect(body, Insets::all(fill_inset));
 
-            if pressed {
+            if selected {
+                ctx.fill(
+                    rounded_rect_path(body, radius),
+                    mix_color(palette.control, palette.accent, interaction.selected_blend),
+                );
+            } else if pressed {
                 ctx.fill(rounded_rect_path(rect, radius), palette.control_active);
+            } else if hovered {
+                ctx.fill(rounded_rect_path(rect, radius), palette.control_hover);
             }
-            draw_checkerboard(ctx, fill_rect, 5.0);
+            draw_checkerboard(ctx, fill_rect, metrics.color_palette_checker_size, &theme);
             ctx.fill(
-                rounded_rect_path(fill_rect, (radius - 2.0).max(0.0)),
+                rounded_rect_path(fill_rect, (radius - fill_inset).max(0.0)),
                 swatch.color,
             );
             ctx.stroke(
-                rounded_rect_path(rect, radius),
+                rounded_rect_path(body, radius),
                 ring,
                 StrokeStyle::new(ring_width),
             );
@@ -806,8 +910,9 @@ impl Widget for ColorPalette {
         ctx.push(node);
 
         let selected = self.current_selected();
+        let theme = self.resolved_theme();
         for (index, swatch) in self.swatches.iter().enumerate() {
-            let Some(rect) = self.swatch_rect(ctx.bounds(), index) else {
+            let Some(rect) = self.swatch_rect(ctx.bounds(), index, &theme) else {
                 continue;
             };
             let mut node = SemanticsNode::new(
@@ -889,26 +994,25 @@ pub struct BrushPreview {
     kind: String,
     spec: BrushPreviewSpec,
     spec_reader: Option<Box<dyn Fn() -> BrushPreviewSpec>>,
-    width: f32,
-    height: f32,
+    size: Option<Size>,
 }
 
 impl BrushPreview {
     pub fn new(name: impl Into<String>) -> Self {
+        let default_theme = DefaultTheme::default();
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: name.into(),
             kind: "brush".to_string(),
             spec: BrushPreviewSpec::new(
-                Color::rgba(0.12, 0.28, 0.88, 1.0),
+                default_theme.palette.accent,
                 18.0,
                 1.0,
                 BrushPreviewShape::Round,
             ),
             spec_reader: None,
-            width: 260.0,
-            height: 70.0,
+            size: None,
         }
     }
 
@@ -946,8 +1050,7 @@ impl BrushPreview {
     }
 
     pub fn size(mut self, size: Size) -> Self {
-        self.width = size.width.max(80.0);
-        self.height = size.height.max(44.0);
+        self.size = Some(Size::new(size.width.max(80.0), size.height.max(44.0)));
         self
     }
 
@@ -974,41 +1077,54 @@ impl BrushPreview {
             spec.opacity * 100.0
         )
     }
+
+    fn resolved_size(&self, theme: &DefaultTheme) -> Size {
+        self.size.unwrap_or(Size::new(
+            theme.metrics.brush_preview_min_width,
+            theme.metrics.brush_preview_min_height,
+        ))
+    }
 }
 
 impl Widget for BrushPreview {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(self.width, self.height))
+        let theme = self.resolved_theme();
+        constraints.clamp(self.resolved_size(&theme))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let bounds = ctx.bounds();
         let theme = self.resolved_theme();
         let palette = theme.palette;
+        let metrics = theme.metrics;
         let spec = self.current_spec();
-        let content = inset_rect(bounds, Insets::all(8.0));
-        let swatch = Rect::new(content.x(), content.y(), 54.0, content.height());
+        let content = inset_rect(bounds, metrics.brush_preview_padding);
+        let swatch_width = metrics.brush_preview_swatch_width.min(content.width());
+        let swatch = Rect::new(content.x(), content.y(), swatch_width, content.height());
         let sample = Rect::new(
-            swatch.max_x() + 10.0,
+            swatch.max_x() + metrics.brush_preview_swatch_gap,
             content.y(),
-            (content.max_x() - swatch.max_x() - 10.0).max(0.0),
+            (content.max_x() - swatch.max_x() - metrics.brush_preview_swatch_gap).max(0.0),
             content.height(),
         );
         let preview_color = spec
             .color
             .with_alpha((spec.color.alpha * spec.opacity).clamp(0.0, 1.0));
 
-        ctx.fill(rounded_rect_path(bounds, 6.0), palette.surface_raised);
-        ctx.stroke(
-            rounded_rect_path(bounds, 6.0),
-            palette.border,
-            StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+        ctx.fill(
+            rounded_rect_path(bounds, metrics.corner_radius),
+            palette.surface_raised,
         );
-        draw_checkerboard(ctx, swatch, 8.0);
         ctx.stroke(
-            rounded_rect_path(swatch, 4.0),
+            rounded_rect_path(bounds, metrics.corner_radius),
+            palette.border,
+            StrokeStyle::new(metrics.border_width.max(1.0)),
+        );
+        draw_checkerboard(ctx, swatch, metrics.brush_preview_checker_size, &theme);
+        ctx.stroke(
+            rounded_rect_path(swatch, metrics.indicator_corner_radius),
             palette.border.with_alpha(0.70),
-            StrokeStyle::new(1.0),
+            StrokeStyle::new(metrics.border_width.max(1.0)),
         );
         paint_brush_preview_mark(ctx, swatch, spec, preview_color);
 
@@ -1018,17 +1134,22 @@ impl Widget for BrushPreview {
             sample.width(),
             sample.height() * 0.24,
         );
-        draw_checkerboard(ctx, track, 6.0);
+        draw_checkerboard(ctx, track, metrics.brush_preview_checker_size, &theme);
         paint_brush_preview_stroke(ctx, track, spec, preview_color);
 
-        let text_rect = Rect::new(sample.x(), sample.max_y() - 18.0, sample.width(), 16.0);
+        let text_rect = Rect::new(
+            sample.x(),
+            sample.max_y() - metrics.brush_preview_text_height,
+            sample.width(),
+            metrics.brush_preview_text_height,
+        );
         ctx.push_clip_rect(text_rect);
         ctx.draw_text(
             text_rect,
             Self::value_text(&self.kind, spec),
             TextStyle {
-                font_size: 11.0,
-                line_height: 14.0,
+                font_size: metrics.brush_preview_text_font_size,
+                line_height: metrics.brush_preview_text_line_height,
                 color: palette.text.with_alpha(0.72),
                 ..theme.body_text_style()
             },
@@ -1169,19 +1290,6 @@ struct ColorPickerResolvedState {
 
 impl ColorPicker {
     const MAX_HDR_VALUE: f32 = 12.0;
-    const PANEL_GAP: f32 = 14.0;
-    const COMPACT_PANEL_GAP: f32 = 10.0;
-    const TOP_BAR_HEIGHT: f32 = 52.0;
-    const COMPACT_TOP_BAR_HEIGHT: f32 = 40.0;
-    const WHEEL_SIZE: f32 = 166.0;
-    const COMPACT_WHEEL_SIZE: f32 = 128.0;
-    const MAP_SIZE: f32 = 210.0;
-    const COMPACT_MAP_SIZE: f32 = 132.0;
-    const ROW_HEIGHT: f32 = 24.0;
-    const ROW_GAP: f32 = 8.0;
-    const RIGHT_PANEL_WIDTH: f32 = 226.0;
-    const COMPACT_RIGHT_PANEL_WIDTH: f32 = 150.0;
-    const ENCODING_MENU_ROW_HEIGHT: f32 = 28.0;
     const ENCODING_OPTIONS: [ColorSpace; 4] = [
         ColorSpace::Srgb,
         ColorSpace::LinearSrgb,
@@ -1190,7 +1298,8 @@ impl ColorPicker {
     ];
 
     pub fn new(name: impl Into<String>) -> Self {
-        Self::from_color(name, Color::rgba(0.11, 0.43, 0.92, 1.0))
+        let theme = DefaultTheme::default();
+        Self::from_color(name, theme.palette.accent)
     }
 
     pub fn from_color(name: impl Into<String>, color: Color) -> Self {
@@ -1291,6 +1400,19 @@ impl ColorPicker {
             .unwrap_or(*self.theme)
     }
 
+    fn layout_metrics_for(&self, theme: &DefaultTheme) -> ControlMetrics {
+        if self.compact {
+            ControlMetrics::from_tokens(theme.spacing, theme.radius, ThemeDensity::Compact)
+        } else {
+            theme.metrics
+        }
+    }
+
+    fn layout_metrics(&self) -> ControlMetrics {
+        let theme = self.resolved_theme();
+        self.layout_metrics_for(&theme)
+    }
+
     fn resolved_state(&self) -> ColorPickerResolvedState {
         if let Some(color) = self.external_color() {
             let (hue, saturation, value) = rgb_to_hsv(color);
@@ -1335,55 +1457,63 @@ impl ColorPicker {
     }
 
     fn content_inset(&self) -> f32 {
-        if self.compact { 12.0 } else { 14.0 }
+        self.layout_metrics().color_picker_content_inset
     }
 
     fn panel_gap(&self) -> f32 {
-        if self.compact {
-            Self::COMPACT_PANEL_GAP
-        } else {
-            Self::PANEL_GAP
-        }
+        self.layout_metrics().color_picker_panel_gap
     }
 
     fn top_bar_height(&self) -> f32 {
-        if self.compact {
-            Self::COMPACT_TOP_BAR_HEIGHT
-        } else {
-            Self::TOP_BAR_HEIGHT
-        }
+        self.layout_metrics().color_picker_top_bar_height
     }
 
     fn swatch_width(&self) -> f32 {
-        if self.compact { 64.0 } else { 96.0 }
+        self.layout_metrics().color_picker_swatch_width
     }
 
     fn swatch_gap(&self) -> f32 {
-        if self.compact { 8.0 } else { 10.0 }
+        self.layout_metrics().color_picker_swatch_gap
+    }
+
+    fn section_gap(&self) -> f32 {
+        self.layout_metrics().color_picker_section_gap
     }
 
     fn wheel_size(&self) -> f32 {
-        if self.compact {
-            Self::COMPACT_WHEEL_SIZE
-        } else {
-            Self::WHEEL_SIZE
-        }
+        self.layout_metrics().color_picker_wheel_size
     }
 
     fn map_size(&self) -> f32 {
-        if self.compact {
-            Self::COMPACT_MAP_SIZE
-        } else {
-            Self::MAP_SIZE
-        }
+        self.layout_metrics().color_picker_map_size
     }
 
     fn right_panel_width(&self) -> f32 {
-        if self.compact {
-            Self::COMPACT_RIGHT_PANEL_WIDTH
-        } else {
-            Self::RIGHT_PANEL_WIDTH
-        }
+        self.layout_metrics().color_picker_right_panel_width
+    }
+
+    fn row_height(&self) -> f32 {
+        self.layout_metrics().color_picker_row_height
+    }
+
+    fn row_gap(&self) -> f32 {
+        self.layout_metrics().color_picker_row_gap
+    }
+
+    fn field_height(&self) -> f32 {
+        self.layout_metrics().color_picker_field_height
+    }
+
+    fn field_gap(&self) -> f32 {
+        self.layout_metrics().color_picker_field_gap
+    }
+
+    fn dropdown_gap(&self) -> f32 {
+        self.layout_metrics().color_picker_dropdown_gap
+    }
+
+    fn encoding_menu_row_height(&self) -> f32 {
+        self.layout_metrics().color_picker_encoding_menu_row_height
     }
 
     fn channel_slider_count(&self) -> usize {
@@ -1393,11 +1523,15 @@ impl ColorPicker {
     fn desired_size(&self) -> Size {
         let inset = self.content_inset();
         let left_height = self.wheel_size()
-            + 14.0
-            + self.channel_slider_count() as f32 * Self::ROW_HEIGHT
-            + self.channel_slider_count().saturating_sub(1) as f32 * Self::ROW_GAP;
-        let right_height =
-            self.map_size() + 14.0 + 3.0 * Self::ROW_HEIGHT + 2.0 * Self::ROW_GAP + 12.0 + 30.0;
+            + self.section_gap()
+            + self.channel_slider_count() as f32 * self.row_height()
+            + self.channel_slider_count().saturating_sub(1) as f32 * self.row_gap();
+        let right_height = self.map_size()
+            + self.section_gap()
+            + 3.0 * self.row_height()
+            + 2.0 * self.row_gap()
+            + self.field_gap()
+            + self.field_height();
         Size::new(
             inset * 2.0 + self.wheel_size() + self.panel_gap() + self.right_panel_width(),
             inset * 2.0 + self.top_bar_height() + self.panel_gap() + left_height.max(right_height),
@@ -1468,8 +1602,10 @@ impl ColorPicker {
 
     fn left_slider_rect(&self, bounds: Rect, index: usize) -> Rect {
         let wheel = self.color_wheel_rect(bounds);
-        let y = wheel.max_y() + 14.0 + index as f32 * (Self::ROW_HEIGHT + Self::ROW_GAP);
-        Rect::new(wheel.x(), y, wheel.width(), Self::ROW_HEIGHT)
+        let y = wheel.max_y()
+            + self.section_gap()
+            + index as f32 * (self.row_height() + self.row_gap());
+        Rect::new(wheel.x(), y, wheel.width(), self.row_height())
     }
 
     fn encoding_rect(&self, bounds: Rect) -> Rect {
@@ -1481,9 +1617,9 @@ impl ColorPicker {
             + self.panel_gap();
         Rect::new(
             selector_x,
-            header.y() + ((header.height() - 30.0) * 0.5),
+            header.y() + ((header.height() - self.field_height()) * 0.5),
             (header.max_x() - selector_x).max(0.0),
-            30.0,
+            self.field_height(),
         )
     }
 
@@ -1491,9 +1627,9 @@ impl ColorPicker {
         let encoding = self.encoding_rect(bounds);
         Rect::new(
             encoding.x(),
-            encoding.max_y() + 4.0,
+            encoding.max_y() + self.dropdown_gap(),
             encoding.width(),
-            Self::ENCODING_MENU_ROW_HEIGHT * Self::ENCODING_OPTIONS.len() as f32,
+            self.encoding_menu_row_height() * Self::ENCODING_OPTIONS.len() as f32,
         )
     }
 
@@ -1501,9 +1637,9 @@ impl ColorPicker {
         let menu = self.encoding_menu_rect(bounds);
         Rect::new(
             menu.x(),
-            menu.y() + index as f32 * Self::ENCODING_MENU_ROW_HEIGHT,
+            menu.y() + index as f32 * self.encoding_menu_row_height(),
             menu.width(),
-            Self::ENCODING_MENU_ROW_HEIGHT,
+            self.encoding_menu_row_height(),
         )
     }
 
@@ -1524,17 +1660,18 @@ impl ColorPicker {
 
     fn rgb_row_rect(&self, bounds: Rect, index: usize) -> Rect {
         let map = self.saturation_value_rect(bounds);
-        let y = map.max_y() + 14.0 + index as f32 * (Self::ROW_HEIGHT + Self::ROW_GAP);
-        Rect::new(map.x(), y, map.width(), Self::ROW_HEIGHT)
+        let y =
+            map.max_y() + self.section_gap() + index as f32 * (self.row_height() + self.row_gap());
+        Rect::new(map.x(), y, map.width(), self.row_height())
     }
 
     fn hex_rect(&self, bounds: Rect) -> Rect {
         let last_row = self.rgb_row_rect(bounds, 2);
         Rect::new(
             last_row.x(),
-            last_row.max_y() + 12.0,
+            last_row.max_y() + self.field_gap(),
             last_row.width(),
-            30.0,
+            self.field_height(),
         )
     }
 
@@ -2060,13 +2197,19 @@ impl Widget for ColorPicker {
         let palette = theme.palette;
         let resolved = self.resolved_state();
         let current = resolved.color;
-        let header = self.header_rect(ctx.bounds());
         let wheel = self.color_wheel_rect(ctx.bounds());
         let map = self.saturation_value_rect(ctx.bounds());
         let encoding = self.encoding_rect(ctx.bounds());
 
         draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
-        paint_picker_header(ctx, header, &theme, self.previous_color, current);
+        paint_picker_header(
+            ctx,
+            self.current_swatch_rect(ctx.bounds()),
+            self.previous_swatch_rect(ctx.bounds()),
+            &theme,
+            self.previous_color,
+            current,
+        );
         paint_dropdown(
             ctx,
             encoding,
@@ -2074,8 +2217,8 @@ impl Widget for ColorPicker {
             editing_space_label(resolved.editing_space),
         );
 
-        paint_color_wheel(ctx, wheel);
-        paint_wheel_marker(ctx, wheel, resolved.hue);
+        paint_color_wheel(ctx, wheel, &theme);
+        paint_wheel_marker(ctx, wheel, resolved.hue, &theme);
 
         paint_saturation_value_plane(
             ctx,
@@ -2083,6 +2226,7 @@ impl Widget for ColorPicker {
             resolved.editing_space,
             resolved.hue,
             resolved.max_channel_value,
+            &theme,
         );
         let marker = Point::new(
             map.x() + resolved.saturation * map.width(),
@@ -2095,7 +2239,7 @@ impl Widget for ColorPicker {
                     })
                     * map.height(),
         );
-        paint_marker(ctx, marker, contrast_color(current));
+        paint_marker(ctx, marker, contrast_color(current, &theme), &theme);
 
         let rows = [
             ("H", format!("{:.2}", resolved.hue * 360.0)),
@@ -2109,13 +2253,14 @@ impl Widget for ColorPicker {
             }
             let rect = self.left_slider_rect(ctx.bounds(), index);
             match index {
-                0 => paint_hue_bar(ctx, rect),
+                0 => paint_hue_bar(ctx, rect, &theme),
                 1 => paint_saturation_bar(
                     ctx,
                     rect,
                     resolved.editing_space,
                     resolved.hue,
                     resolved.value.max(1.0),
+                    &theme,
                 ),
                 2 => paint_value_bar(
                     ctx,
@@ -2124,13 +2269,14 @@ impl Widget for ColorPicker {
                     resolved.hue,
                     resolved.saturation,
                     resolved.hdr_capable,
+                    &theme,
                 ),
                 _ => {
-                    draw_checkerboard(ctx, rect, 4.0);
-                    paint_alpha_bar(ctx, rect, current);
+                    draw_checkerboard(ctx, rect, theme.metrics.color_swatch_checker_size, &theme);
+                    paint_alpha_bar(ctx, rect, current, &theme);
                 }
             }
-            paint_labeled_row_text(ctx, rect, label, &value_text, palette.placeholder);
+            paint_labeled_row_text(ctx, rect, label, &value_text, &theme, palette.placeholder);
             let marker_x = match index {
                 0 => rect.x() + resolved.hue * rect.width(),
                 1 => rect.x() + resolved.saturation * rect.width(),
@@ -2148,6 +2294,7 @@ impl Widget for ColorPicker {
                 ctx,
                 Point::new(marker_x, rect.y() + rect.height() * 0.5),
                 palette.border_focus,
+                &theme,
             );
         }
 
@@ -2155,12 +2302,20 @@ impl Widget for ColorPicker {
         let channel_labels = ["R", "G", "B"];
         for (index, label) in channel_labels.into_iter().enumerate() {
             let rect = self.rgb_row_rect(ctx.bounds(), index);
-            paint_rgb_channel_bar(ctx, rect, current, index, resolved.max_channel_value);
+            paint_rgb_channel_bar(
+                ctx,
+                rect,
+                current,
+                index,
+                resolved.max_channel_value,
+                &theme,
+            );
             paint_labeled_row_text(
                 ctx,
                 rect,
                 label,
                 &format!("{:.3}", rgb[index]),
+                &theme,
                 palette.placeholder,
             );
             let marker_x =
@@ -2169,6 +2324,7 @@ impl Widget for ColorPicker {
                 ctx,
                 Point::new(marker_x, rect.y() + rect.height() * 0.5),
                 palette.border_focus,
+                &theme,
             );
         }
 
@@ -2194,6 +2350,7 @@ impl Widget for ColorPicker {
                 self.encoding_menu_rect(ctx.bounds()),
                 &theme,
                 resolved.editing_space,
+                self.encoding_menu_row_height(),
             );
         }
     }
@@ -2230,31 +2387,32 @@ impl Widget for ColorPicker {
 
 fn paint_picker_header(
     ctx: &mut PaintCtx,
-    rect: Rect,
+    current_rect: Rect,
+    previous_rect: Rect,
     theme: &DefaultTheme,
     previous: Color,
     current: Color,
 ) {
     let palette = theme.palette;
-    let current_rect = Rect::new(rect.x(), rect.y(), 96.0, rect.height());
-    let previous_rect = Rect::new(current_rect.max_x() + 10.0, rect.y(), 96.0, rect.height());
-    draw_checkerboard(ctx, current_rect, 6.0);
-    draw_checkerboard(ctx, previous_rect, 6.0);
-    ctx.fill(rounded_rect_path(current_rect, 8.0), current);
-    ctx.fill(rounded_rect_path(previous_rect, 8.0), previous);
+    let metrics = theme.metrics;
+    let radius = metrics.indicator_corner_radius;
+    draw_checkerboard(ctx, current_rect, metrics.color_swatch_checker_size, theme);
+    draw_checkerboard(ctx, previous_rect, metrics.color_swatch_checker_size, theme);
+    ctx.fill(rounded_rect_path(current_rect, radius), current);
+    ctx.fill(rounded_rect_path(previous_rect, radius), previous);
     ctx.stroke(
-        rounded_rect_path(current_rect, 8.0),
+        rounded_rect_path(current_rect, radius),
         palette.border_focus,
-        StrokeStyle::new(1.0),
+        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.stroke(
-        rounded_rect_path(previous_rect, 8.0),
+        rounded_rect_path(previous_rect, radius),
         palette.border,
-        StrokeStyle::new(1.0),
+        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
 }
 
-fn paint_color_wheel(ctx: &mut PaintCtx, rect: Rect) {
+fn paint_color_wheel(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme) {
     let center = Point::new(
         rect.x() + rect.width() * 0.5,
         rect.y() + rect.height() * 0.5,
@@ -2264,17 +2422,17 @@ fn paint_color_wheel(ctx: &mut PaintCtx, rect: Rect) {
     ctx.draw_shader_rect(rect, WidgetShader::ColorWheel);
     ctx.stroke(
         Path::circle(center, outer - 1.0),
-        Color::rgba(0.0, 0.0, 0.0, 0.18),
+        theme.surfaces.color_picker_chrome_border,
         StrokeStyle::new(1.0),
     );
     ctx.stroke(
         Path::circle(center, inner),
-        Color::rgba(0.0, 0.0, 0.0, 0.18),
+        theme.surfaces.color_picker_chrome_border,
         StrokeStyle::new(1.0),
     );
 }
 
-fn paint_wheel_marker(ctx: &mut PaintCtx, rect: Rect, hue: f32) {
+fn paint_wheel_marker(ctx: &mut PaintCtx, rect: Rect, hue: f32, theme: &DefaultTheme) {
     let center = Point::new(
         rect.x() + rect.width() * 0.5,
         rect.y() + rect.height() * 0.5,
@@ -2287,7 +2445,7 @@ fn paint_wheel_marker(ctx: &mut PaintCtx, rect: Rect, hue: f32) {
         center.x + angle.cos() * radius,
         center.y + angle.sin() * radius,
     );
-    paint_marker(ctx, point, Color::BLACK.with_alpha(0.8));
+    paint_marker(ctx, point, theme.surfaces.color_picker_marker_dark, theme);
 }
 
 fn paint_saturation_value_plane(
@@ -2296,6 +2454,7 @@ fn paint_saturation_value_plane(
     space: ColorSpace,
     hue: f32,
     max_value: f32,
+    theme: &DefaultTheme,
 ) {
     ctx.draw_shader_rect(
         rect,
@@ -2307,7 +2466,7 @@ fn paint_saturation_value_plane(
     );
     ctx.stroke_rect(
         rect,
-        Color::rgba(0.0, 0.0, 0.0, 0.16),
+        theme.surfaces.color_picker_plane_border,
         StrokeStyle::new(1.0),
     );
     let sdr_marker = Rect::new(
@@ -2323,15 +2482,22 @@ fn paint_saturation_value_plane(
         rect.width(),
         1.0,
     );
-    ctx.fill_rect(sdr_marker, Color::WHITE.with_alpha(0.28));
+    ctx.fill_rect(sdr_marker, theme.surfaces.color_picker_sdr_marker);
 }
 
-fn paint_hue_bar(ctx: &mut PaintCtx, rect: Rect) {
+fn paint_hue_bar(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme) {
     ctx.draw_shader_rect(rect, WidgetShader::ColorPickerHueBar);
-    paint_bar_border(ctx, rect);
+    paint_bar_border(ctx, rect, theme);
 }
 
-fn paint_saturation_bar(ctx: &mut PaintCtx, rect: Rect, space: ColorSpace, hue: f32, value: f32) {
+fn paint_saturation_bar(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    space: ColorSpace,
+    hue: f32,
+    value: f32,
+    theme: &DefaultTheme,
+) {
     ctx.draw_shader_rect(
         rect,
         WidgetShader::ColorPickerSaturationBar {
@@ -2340,13 +2506,13 @@ fn paint_saturation_bar(ctx: &mut PaintCtx, rect: Rect, space: ColorSpace, hue: 
             value,
         },
     );
-    paint_bar_border(ctx, rect);
+    paint_bar_border(ctx, rect, theme);
 }
 
-fn paint_bar_border(ctx: &mut PaintCtx, rect: Rect) {
+fn paint_bar_border(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme) {
     ctx.stroke_rect(
         rect,
-        Color::rgba(0.0, 0.0, 0.0, 0.14),
+        theme.surfaces.color_picker_bar_border,
         StrokeStyle::new(1.0),
     );
 }
@@ -2358,6 +2524,7 @@ fn paint_value_bar(
     hue: f32,
     saturation: f32,
     hdr_capable: bool,
+    theme: &DefaultTheme,
 ) {
     ctx.draw_shader_rect(
         rect,
@@ -2372,19 +2539,19 @@ fn paint_value_bar(
             },
         },
     );
-    paint_bar_border(ctx, rect);
+    paint_bar_border(ctx, rect, theme);
     if hdr_capable {
         let divider_x = rect.x() + rect.width() * 0.5;
         ctx.fill_rect(
             Rect::new(divider_x, rect.y(), 1.0, rect.height()),
-            Color::WHITE.with_alpha(0.26),
+            theme.surfaces.color_picker_hdr_divider,
         );
     }
 }
 
-fn paint_alpha_bar(ctx: &mut PaintCtx, rect: Rect, color: Color) {
+fn paint_alpha_bar(ctx: &mut PaintCtx, rect: Rect, color: Color, theme: &DefaultTheme) {
     ctx.draw_shader_rect(rect, WidgetShader::ColorPickerAlphaBar { color });
-    paint_bar_border(ctx, rect);
+    paint_bar_border(ctx, rect, theme);
 }
 
 fn paint_rgb_channel_bar(
@@ -2393,6 +2560,7 @@ fn paint_rgb_channel_bar(
     current: Color,
     channel_index: usize,
     max_value: f32,
+    theme: &DefaultTheme,
 ) {
     ctx.draw_shader_rect(
         rect,
@@ -2402,7 +2570,7 @@ fn paint_rgb_channel_bar(
             max_value,
         },
     );
-    paint_bar_border(ctx, rect);
+    paint_bar_border(ctx, rect, theme);
 }
 
 fn paint_labeled_row_text(
@@ -2410,34 +2578,35 @@ fn paint_labeled_row_text(
     rect: Rect,
     label: &str,
     value_text: &str,
+    theme: &DefaultTheme,
     value_color: Color,
 ) {
+    let text = theme.text.xs;
+    let line_height = text.line_height.min(rect.height()).max(1.0);
+    let y = rect.y() + ((rect.height() - line_height) * 0.5);
+    let label_width = (theme.metrics.icon_size + theme.spacing * 2.0).max(20.0);
+    let value_width = (rect.width() * 0.36).clamp(56.0, 96.0);
     ctx.draw_text(
-        Rect::new(
-            rect.x() + 6.0,
-            rect.y() + ((rect.height() - 16.0) * 0.5),
-            22.0,
-            16.0,
-        ),
+        Rect::new(rect.x() + theme.spacing * 1.5, y, label_width, line_height),
         label.to_string(),
         TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            color: Color::rgba(0.93, 0.95, 0.99, 1.0),
+            font_size: text.size,
+            line_height,
+            color: theme.palette.accent_text,
             ..TextStyle::default()
         },
     );
     ctx.draw_text(
         Rect::new(
-            rect.max_x() - 74.0,
-            rect.y() + ((rect.height() - 16.0) * 0.5),
-            70.0,
-            16.0,
+            rect.max_x() - value_width - theme.spacing,
+            y,
+            value_width,
+            line_height,
         ),
         value_text.to_string(),
         TextStyle {
-            font_size: 11.0,
-            line_height: 16.0,
+            font_size: text.size.min(11.0),
+            line_height,
             color: value_color,
             ..TextStyle::default()
         },
@@ -2445,27 +2614,33 @@ fn paint_labeled_row_text(
 }
 
 fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &str) {
-    ctx.fill(
-        rounded_rect_path(rect, 8.0),
-        Color::rgba(0.10, 0.13, 0.18, 1.0),
-    );
+    let metrics = theme.metrics;
+    let radius = metrics.corner_radius;
+    let text = theme.text.xs;
+    let line_height = text.line_height.min(rect.height()).max(1.0);
+    let text_y = rect.y() + ((rect.height() - line_height) * 0.5);
+    let padding = metrics.text_input_padding;
+    ctx.fill(rounded_rect_path(rect, radius), theme.palette.control);
     ctx.stroke(
-        rounded_rect_path(rect, 8.0),
+        rounded_rect_path(rect, radius),
         theme.palette.border_focus,
-        StrokeStyle::new(1.0),
+        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.draw_text(
         Rect::new(
-            rect.x() + 10.0,
-            rect.y() + ((rect.height() - 16.0) * 0.5),
-            rect.width() - 32.0,
-            16.0,
+            rect.x() + padding.left.max(theme.spacing * 2.0),
+            text_y,
+            rect.width()
+                - padding.left.max(theme.spacing * 2.0)
+                - metrics.icon_size
+                - theme.spacing,
+            line_height,
         ),
         label.to_string(),
         TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            color: Color::rgba(0.88, 0.93, 0.98, 1.0),
+            font_size: text.size,
+            line_height,
+            color: theme.palette.text,
             ..TextStyle::default()
         },
     );
@@ -2476,55 +2651,76 @@ fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &
     );
 }
 
-fn paint_encoding_menu(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, selected: ColorSpace) {
+fn paint_encoding_menu(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    theme: &DefaultTheme,
+    selected: ColorSpace,
+    row_height: f32,
+) {
+    let metrics = theme.metrics;
+    let radius = metrics.corner_radius;
+    let text = theme.text.xs;
+    let line_height = text.line_height.min(row_height).max(1.0);
     ctx.fill(
-        rounded_rect_path(rect, 8.0),
-        Color::rgba(0.08, 0.105, 0.145, 1.0),
+        rounded_rect_path(rect, radius),
+        theme.palette.surface_raised,
     );
     ctx.stroke(
-        rounded_rect_path(rect, 8.0),
+        rounded_rect_path(rect, radius),
         theme.palette.border_focus,
-        StrokeStyle::new(1.0),
+        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
 
     for (index, space) in ColorPicker::ENCODING_OPTIONS.iter().copied().enumerate() {
         let row = Rect::new(
             rect.x(),
-            rect.y() + index as f32 * ColorPicker::ENCODING_MENU_ROW_HEIGHT,
+            rect.y() + index as f32 * row_height,
             rect.width(),
-            ColorPicker::ENCODING_MENU_ROW_HEIGHT,
+            row_height,
         );
         if space == selected {
+            let selected_rect = inset_rect(row, metrics.menu_item_padding);
             ctx.fill(
                 rounded_rect_path(
-                    inset_rect(
-                        row,
-                        Insets {
-                            left: 4.0,
-                            top: 3.0,
-                            right: 4.0,
-                            bottom: 3.0,
-                        },
-                    ),
-                    6.0,
+                    selected_rect,
+                    (radius - metrics.menu_item_padding.top).max(0.0),
                 ),
-                theme.palette.border_focus.with_alpha(0.22),
+                mix_color(
+                    theme.palette.control,
+                    theme.palette.accent,
+                    theme.interaction.selected_blend,
+                ),
             );
             ctx.fill_rect(
-                Rect::new(row.x() + 6.0, row.y() + 7.0, 3.0, row.height() - 14.0),
+                Rect::new(
+                    selected_rect.x(),
+                    selected_rect.y() + theme.spacing,
+                    theme.interaction.active_indicator_thickness,
+                    (selected_rect.height() - theme.spacing * 2.0).max(0.0),
+                ),
                 theme.palette.border_focus,
             );
         }
+        let text_y = row.y() + ((row.height() - line_height) * 0.5);
         ctx.draw_text(
-            Rect::new(row.x() + 14.0, row.y() + 6.0, row.width() - 22.0, 16.0),
+            Rect::new(
+                row.x() + metrics.menu_item_padding.left + theme.spacing * 1.5,
+                text_y,
+                row.width()
+                    - metrics.menu_item_padding.left
+                    - metrics.menu_item_padding.right
+                    - theme.spacing * 2.0,
+                line_height,
+            ),
             editing_space_label(space),
             TextStyle {
-                font_size: 12.0,
-                line_height: 16.0,
+                font_size: text.size,
+                line_height,
                 color: if space == selected {
-                    Color::rgba(0.93, 0.97, 1.0, 1.0)
+                    theme.palette.accent_text
                 } else {
-                    Color::rgba(0.78, 0.84, 0.91, 1.0)
+                    theme.palette.text
                 },
                 ..TextStyle::default()
             },
@@ -2544,53 +2740,64 @@ fn dropdown_chevron_path(rect: Rect) -> Path {
 }
 
 fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: &str) {
+    let metrics = theme.metrics;
+    let text = theme.text.xs;
+    let line_height = text.line_height.min(rect.height()).max(1.0);
+    let text_y = rect.y() + ((rect.height() - line_height) * 0.5);
+    let padding = metrics.text_input_padding;
     ctx.fill(
-        rounded_rect_path(rect, 8.0),
-        Color::rgba(0.12, 0.15, 0.20, 1.0),
+        rounded_rect_path(rect, metrics.corner_radius),
+        theme.palette.control,
     );
     ctx.stroke(
-        rounded_rect_path(rect, 8.0),
+        rounded_rect_path(rect, metrics.corner_radius),
         theme.palette.border,
-        StrokeStyle::new(1.0),
+        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.draw_text(
         Rect::new(
-            rect.x() + 10.0,
-            rect.y() + ((rect.height() - 16.0) * 0.5),
-            rect.width() - 16.0,
-            16.0,
+            rect.x() + padding.left.max(theme.spacing * 2.0),
+            text_y,
+            rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
+            line_height,
         ),
         value.to_string(),
         TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            color: Color::rgba(0.86, 0.92, 0.97, 1.0),
+            font_size: text.size,
+            line_height,
+            color: theme.palette.text,
             ..TextStyle::default()
         },
     );
 }
 
 fn paint_disabled_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: &str) {
+    let metrics = theme.metrics;
+    let text = theme.text.xs;
+    let line_height = text.line_height.min(rect.height()).max(1.0);
+    let text_y = rect.y() + ((rect.height() - line_height) * 0.5);
+    let padding = metrics.text_input_padding;
     ctx.fill(
-        rounded_rect_path(rect, 8.0),
-        Color::rgba(0.09, 0.11, 0.14, 1.0),
+        rounded_rect_path(rect, metrics.corner_radius),
+        mix_color(theme.palette.control, theme.palette.surface, 0.5)
+            .with_alpha(theme.interaction.disabled_opacity),
     );
     ctx.stroke(
-        rounded_rect_path(rect, 8.0),
+        rounded_rect_path(rect, metrics.corner_radius),
         theme.palette.border,
-        StrokeStyle::new(1.0),
+        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.draw_text(
         Rect::new(
-            rect.x() + 10.0,
-            rect.y() + ((rect.height() - 16.0) * 0.5),
-            rect.width() - 16.0,
-            16.0,
+            rect.x() + padding.left.max(theme.spacing * 2.0),
+            text_y,
+            rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
+            line_height,
         ),
         value.to_string(),
         TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
+            font_size: text.size,
+            line_height,
             color: theme.palette.placeholder,
             ..TextStyle::default()
         },
@@ -2641,6 +2848,17 @@ fn is_hdr_color(color: Color) -> bool {
     color.red > 1.0 || color.green > 1.0 || color.blue > 1.0
 }
 
+fn mix_color(from: Color, to: Color, amount: f32) -> Color {
+    let t = amount.clamp(0.0, 1.0);
+    Color::new(
+        from.space,
+        from.red + (to.red - from.red) * t,
+        from.green + (to.green - from.green) * t,
+        from.blue + (to.blue - from.blue) * t,
+        from.alpha + (to.alpha - from.alpha) * t,
+    )
+}
+
 fn fit_rect(bounds: Rect, source: Size, fit: ImageFit) -> Rect {
     if bounds.is_empty() || source.is_empty() {
         return bounds;
@@ -2668,10 +2886,10 @@ fn fit_rect(bounds: Rect, source: Size, fit: ImageFit) -> Rect {
     )
 }
 
-fn paint_marker(ctx: &mut PaintCtx, center: Point, color: Color) {
+fn paint_marker(ctx: &mut PaintCtx, center: Point, color: Color, theme: &DefaultTheme) {
     ctx.stroke(
         Path::circle(center, 6.5),
-        Color::WHITE.with_alpha(0.9),
+        theme.surfaces.color_picker_marker_outer,
         StrokeStyle::new(2.0),
     );
     ctx.stroke(Path::circle(center, 5.0), color, StrokeStyle::new(1.5));
@@ -2693,9 +2911,9 @@ fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focused: b
     );
 }
 
-fn draw_checkerboard(ctx: &mut PaintCtx, rect: Rect, cell_size: f32) {
-    let light = Color::rgba(0.98, 0.98, 0.99, 1.0);
-    let dark = Color::rgba(0.90, 0.92, 0.95, 1.0);
+fn draw_checkerboard(ctx: &mut PaintCtx, rect: Rect, cell_size: f32, theme: &DefaultTheme) {
+    let light = theme.surfaces.checkerboard_light;
+    let dark = theme.surfaces.checkerboard_dark;
     let cell_size = cell_size.max(2.0);
     let cols = (rect.width() / cell_size).ceil() as usize;
     let rows = (rect.height() / cell_size).ceil() as usize;
@@ -2736,11 +2954,11 @@ fn colors_close(left: Color, right: Color) -> bool {
         && (left.alpha - right.alpha).abs() < 0.0001
 }
 
-fn contrast_color(color: Color) -> Color {
+fn contrast_color(color: Color, theme: &DefaultTheme) -> Color {
     if perceived_luminance(color) > 0.55 {
-        Color::BLACK.with_alpha(0.85)
+        theme.surfaces.color_picker_marker_dark
     } else {
-        Color::WHITE.with_alpha(0.95)
+        theme.surfaces.color_picker_marker_light
     }
 }
 
@@ -2816,13 +3034,14 @@ mod tests {
         ColorPaletteSwatch, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image,
         color_picker_child_semantics_id, format_color, hsv_to_rgb, rgb_to_hsv,
     };
+    use crate::DefaultTheme;
     use sui_core::{
         Color, ColorSpace, Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, Result, SemanticsAction, SemanticsRole, SemanticsValue, Size,
         Vector, WidgetId,
     };
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
-    use sui_scene::{RegisteredImage, SceneCommand};
+    use sui_scene::{Brush, RegisteredImage, SceneCommand};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -2854,6 +3073,42 @@ mod tests {
             pointer_kind: sui_core::PointerKind::Mouse,
             is_primary: true,
         })
+    }
+
+    fn solid_fill_colors(output: &sui_runtime::RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRect {
+                brush: Brush::Solid(color),
+                ..
+            }
+            | SceneCommand::FillPath {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                colors.push(*color);
+            }
+        });
+        colors
+    }
+
+    fn solid_stroke_colors(output: &sui_runtime::RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::StrokeRect {
+                brush: Brush::Solid(color),
+                ..
+            }
+            | SceneCommand::StrokePath {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                colors.push(*color);
+            }
+        });
+        colors
     }
 
     #[test]
@@ -3053,6 +3308,77 @@ mod tests {
             selected.value,
             Some(SemanticsValue::Text("#1438C7FF".to_string()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn media_widget_defaults_follow_theme_density() -> Result<()> {
+        let (mut compact_runtime, compact_window) = build_runtime(
+            ColorSwatch::new("Accent", Color::rgba(0.2, 0.4, 0.8, 1.0))
+                .theme(DefaultTheme::compact()),
+        );
+        let compact = compact_runtime.render(compact_window)?.frame.viewport;
+
+        let (mut touch_runtime, touch_window) = build_runtime(
+            ColorSwatch::new("Accent", Color::rgba(0.2, 0.4, 0.8, 1.0))
+                .theme(DefaultTheme::touch()),
+        );
+        let touch = touch_runtime.render(touch_window)?.frame.viewport;
+
+        assert_eq!(
+            compact,
+            Size::new(
+                DefaultTheme::compact().metrics.color_swatch_width,
+                DefaultTheme::compact().metrics.color_swatch_height,
+            )
+        );
+        assert_eq!(
+            touch,
+            Size::new(
+                DefaultTheme::touch().metrics.color_swatch_width,
+                DefaultTheme::touch().metrics.color_swatch_height,
+            )
+        );
+        assert!(touch.width > compact.width);
+        assert!(touch.height > compact.height);
+        Ok(())
+    }
+
+    #[test]
+    fn color_palette_defaults_and_overrides_are_density_aware() -> Result<()> {
+        let swatches = [
+            ColorPaletteSwatch::new("Ink", Color::rgba(0.08, 0.10, 0.15, 1.0)),
+            ColorPaletteSwatch::new("Ocean", Color::rgba(0.08, 0.22, 0.78, 1.0)),
+        ];
+        let (mut compact_runtime, compact_window) = build_runtime(
+            ColorPalette::new("Brush palette")
+                .theme(DefaultTheme::compact())
+                .swatches(swatches.clone()),
+        );
+        let compact = compact_runtime.render(compact_window)?.frame.viewport;
+
+        let (mut touch_runtime, touch_window) = build_runtime(
+            ColorPalette::new("Brush palette")
+                .theme(DefaultTheme::touch())
+                .swatches(swatches.clone()),
+        );
+        let touch = touch_runtime.render(touch_window)?.frame.viewport;
+
+        assert!(touch.width > compact.width);
+        assert_eq!(
+            compact.height,
+            DefaultTheme::compact().metrics.color_palette_swatch_size
+        );
+
+        let (mut override_runtime, override_window) = build_runtime(
+            ColorPalette::new("Brush palette")
+                .theme(DefaultTheme::touch())
+                .swatches(swatches)
+                .swatch_size(18.0)
+                .gap(2.0),
+        );
+        let overridden = override_runtime.render(override_window)?.frame.viewport;
+        assert_eq!(overridden, Size::new(38.0, 18.0));
         Ok(())
     }
 
@@ -3363,9 +3689,10 @@ mod tests {
         let bounds = Rect::new(0.0, 0.0, 434.0, 448.0);
         let wheel = picker.color_wheel_rect(bounds);
         let map = picker.saturation_value_rect(bounds);
+        let metrics = DefaultTheme::default().metrics;
 
-        assert_eq!(map.x() - wheel.max_x(), ColorPicker::PANEL_GAP);
-        assert_eq!(map.width(), ColorPicker::MAP_SIZE);
+        assert_eq!(map.x() - wheel.max_x(), metrics.color_picker_panel_gap);
+        assert_eq!(map.width(), metrics.color_picker_map_size);
         assert_eq!(map.y(), wheel.y());
     }
 
@@ -3376,16 +3703,64 @@ mod tests {
             .compact(true)
             .show_alpha(false)
             .desired_size();
+        let metrics = DefaultTheme::compact().metrics;
 
         assert_eq!(
             compact.width,
-            ColorPicker::COMPACT_WHEEL_SIZE
-                + ColorPicker::COMPACT_PANEL_GAP
-                + ColorPicker::COMPACT_RIGHT_PANEL_WIDTH
-                + 24.0
+            metrics.color_picker_wheel_size
+                + metrics.color_picker_panel_gap
+                + metrics.color_picker_right_panel_width
+                + metrics.color_picker_content_inset * 2.0
         );
         assert!(compact.width < regular.width);
         assert!(compact.height < regular.height);
+    }
+
+    #[test]
+    fn color_picker_theme_density_changes_default_measurement() {
+        let compact = ColorPicker::new("Accent picker")
+            .theme(DefaultTheme::compact())
+            .desired_size();
+        let comfortable = ColorPicker::new("Accent picker").desired_size();
+        let touch = ColorPicker::new("Accent picker")
+            .theme(DefaultTheme::touch())
+            .desired_size();
+
+        assert!(compact.width < comfortable.width);
+        assert!(compact.height < comfortable.height);
+        assert!(touch.width > comfortable.width);
+        assert!(touch.height > comfortable.height);
+    }
+
+    #[test]
+    fn color_picker_chrome_uses_theme_surface_tokens() -> Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.surfaces.checkerboard_light = Color::rgba(0.91, 0.86, 0.78, 1.0);
+        theme.surfaces.checkerboard_dark = Color::rgba(0.66, 0.58, 0.48, 1.0);
+        theme.surfaces.color_picker_chrome_border = Color::rgba(0.20, 0.30, 0.42, 0.61);
+        theme.surfaces.color_picker_plane_border = Color::rgba(0.30, 0.20, 0.46, 0.62);
+        theme.surfaces.color_picker_bar_border = Color::rgba(0.42, 0.25, 0.18, 0.63);
+        theme.surfaces.color_picker_marker_outer = Color::rgba(0.98, 0.96, 0.90, 0.94);
+        theme.surfaces.color_picker_marker_dark = Color::rgba(0.05, 0.07, 0.10, 0.88);
+        theme.surfaces.color_picker_sdr_marker = Color::rgba(0.95, 0.92, 0.84, 0.38);
+
+        let (mut runtime, window_id) = build_runtime(
+            ColorPicker::from_color("Accent picker", Color::rgba(0.84, 0.72, 0.18, 1.0))
+                .theme(theme),
+        );
+        let output = runtime.render(window_id)?;
+        let fills = solid_fill_colors(&output);
+        let strokes = solid_stroke_colors(&output);
+
+        assert!(fills.contains(&theme.surfaces.checkerboard_light));
+        assert!(fills.contains(&theme.surfaces.checkerboard_dark));
+        assert!(fills.contains(&theme.surfaces.color_picker_sdr_marker));
+        assert!(strokes.contains(&theme.surfaces.color_picker_chrome_border));
+        assert!(strokes.contains(&theme.surfaces.color_picker_plane_border));
+        assert!(strokes.contains(&theme.surfaces.color_picker_bar_border));
+        assert!(strokes.contains(&theme.surfaces.color_picker_marker_outer));
+        assert!(strokes.contains(&theme.surfaces.color_picker_marker_dark));
+        Ok(())
     }
 
     #[test]

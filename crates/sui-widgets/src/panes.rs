@@ -17,10 +17,6 @@ use crate::{
 };
 
 pub type ResizablePane = SplitView;
-const FLOATING_VIEW_SCROLL_BAR_THICKNESS: f32 = 12.0;
-const SPLIT_VIEW_DEFAULT_DIVIDER_THICKNESS: f32 = 1.0;
-const SPLIT_VIEW_MIN_DIVIDER_THICKNESS: f32 = 1.0;
-const SPLIT_VIEW_MIN_DRAG_TARGET_THICKNESS: f32 = 12.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FloatingViewConfig {
@@ -381,7 +377,9 @@ impl FloatingWorkspace {
                     return None;
                 }
 
-                if !view.maximized && floating_view_resize_handle_rect(bounds).contains(position) {
+                if !view.maximized
+                    && floating_view_resize_handle_rect(&self.theme, bounds).contains(position)
+                {
                     return Some(FloatingWorkspaceHit {
                         view_id: view.id,
                         region: FloatingWorkspaceHitRegion::ResizeHandle,
@@ -628,7 +626,10 @@ impl Widget for FloatingWorkspace {
         let palette = self.theme.palette;
         ctx.fill_bounds(palette.control);
         ctx.fill_rect(
-            ctx.bounds().inflate(-12.0, -12.0),
+            ctx.bounds().inflate(
+                -self.theme.metrics.floating_workspace_margin,
+                -self.theme.metrics.floating_workspace_margin,
+            ),
             palette.surface_raised.with_alpha(0.72),
         );
 
@@ -742,12 +743,13 @@ impl Widget for FloatingViewSurface {
         if !view.maximized {
             let title_bar = floating_view_title_bar_rect(&self.theme, ctx.bounds());
             ctx.fill_rect(title_bar, palette.control_active);
+            let title_padding = metrics.floating_view_title_padding;
             ctx.draw_text(
                 Rect::new(
-                    title_bar.x() + 14.0,
-                    title_bar.y() + 8.0,
-                    (title_bar.width() - 28.0).max(0.0),
-                    (title_bar.height() - 16.0).max(0.0),
+                    title_bar.x() + title_padding.left,
+                    title_bar.y() + title_padding.top,
+                    (title_bar.width() - title_padding.left - title_padding.right).max(0.0),
+                    (title_bar.height() - title_padding.top - title_padding.bottom).max(0.0),
                 ),
                 view.title,
                 self.theme.text_style(palette.text),
@@ -756,17 +758,21 @@ impl Widget for FloatingViewSurface {
         self.host.paint(ctx);
         if !view.maximized {
             ctx.stroke_rect(ctx.bounds(), palette.border, StrokeStyle::new(border_width));
-            let handle = floating_view_resize_handle_rect(ctx.bounds());
+            let handle = floating_view_resize_handle_rect(&self.theme, ctx.bounds());
             let accent = palette.border.with_alpha(0.95);
+            let first_length = (metrics.floating_view_resize_handle_size * 0.56).max(6.0);
+            let second_length = (metrics.floating_view_resize_handle_size * 0.34).max(4.0);
+            let handle_inset = metrics.border_width.max(1.0);
+            let handle_stroke = metrics.border_width.max(1.0) + 0.5;
             ctx.stroke(
-                diagonal_handle_path(handle, 10.0, 1.0),
+                diagonal_handle_path(handle, first_length, handle_inset),
                 accent,
-                StrokeStyle::new(1.5),
+                StrokeStyle::new(handle_stroke),
             );
             ctx.stroke(
-                diagonal_handle_path(handle, 6.0, 5.0),
+                diagonal_handle_path(handle, second_length, handle_inset + self.theme.spacing),
                 accent.with_alpha(0.72),
-                StrokeStyle::new(1.5),
+                StrokeStyle::new(handle_stroke),
             );
         }
         ctx.pop_clip();
@@ -848,19 +854,14 @@ impl Widget for FloatingViewHost {
         let probe = Rect::from_origin_size(Point::ZERO, outer);
         let content = floating_view_content_rect(&self.theme, probe, view.maximized);
         self.content.measure(ctx, Constraints::tight(content.size));
+        let thickness = self.theme.metrics.scroll_bar_thickness;
         self.vertical_scroll_bar.measure(
             ctx,
-            Constraints::tight(Size::new(
-                FLOATING_VIEW_SCROLL_BAR_THICKNESS,
-                content.height(),
-            )),
+            Constraints::tight(Size::new(thickness, content.height())),
         );
         self.horizontal_scroll_bar.measure(
             ctx,
-            Constraints::tight(Size::new(
-                content.width(),
-                FLOATING_VIEW_SCROLL_BAR_THICKNESS,
-            )),
+            Constraints::tight(Size::new(content.width(), thickness)),
         );
         constraints.clamp(outer)
     }
@@ -871,7 +872,10 @@ impl Widget for FloatingViewHost {
         };
         let content = floating_view_content_rect(&self.theme, bounds, view.maximized);
         self.content.arrange(ctx, content);
-        let thickness = FLOATING_VIEW_SCROLL_BAR_THICKNESS
+        let thickness = self
+            .theme
+            .metrics
+            .scroll_bar_thickness
             .min(content.width().max(0.0))
             .min(content.height().max(0.0));
         let vertical_height = (content.height() - thickness).max(0.0);
@@ -949,7 +953,7 @@ pub struct SplitView {
     ratio: f32,
     min_first: f32,
     min_second: f32,
-    divider_thickness: f32,
+    divider_thickness: Option<f32>,
     first: SingleChild,
     second: SingleChild,
     hovered: bool,
@@ -971,7 +975,7 @@ impl SplitView {
             ratio: 0.5,
             min_first: 120.0,
             min_second: 120.0,
-            divider_thickness: SPLIT_VIEW_DEFAULT_DIVIDER_THICKNESS,
+            divider_thickness: None,
             first: SingleChild::new(first),
             second: SingleChild::new(second),
             hovered: false,
@@ -1023,7 +1027,7 @@ impl SplitView {
     }
 
     pub fn divider_thickness(mut self, divider_thickness: f32) -> Self {
-        self.divider_thickness = divider_thickness.max(0.0);
+        self.divider_thickness = Some(divider_thickness.max(0.0));
         self
     }
 
@@ -1056,7 +1060,9 @@ impl SplitView {
     }
 
     fn resolved_divider_thickness(&self) -> f32 {
-        self.divider_thickness.max(SPLIT_VIEW_MIN_DIVIDER_THICKNESS)
+        self.divider_thickness
+            .unwrap_or(self.theme.metrics.split_view_divider_thickness)
+            .max(self.theme.metrics.border_width.max(1.0))
     }
 
     fn divider_rect(&self, bounds: Rect) -> Rect {
@@ -1065,7 +1071,11 @@ impl SplitView {
 
     fn divider_hit_rect(&self, bounds: Rect) -> Rect {
         let divider = self.divider_rect(bounds);
-        let target = SPLIT_VIEW_MIN_DRAG_TARGET_THICKNESS.max(self.resolved_divider_thickness());
+        let target = self
+            .theme
+            .metrics
+            .split_view_drag_target_thickness
+            .max(self.resolved_divider_thickness());
         let extra = ((target - axis_main(self.axis, divider.size)).max(0.0)) * 0.5;
         let hit = match self.axis {
             Axis::Horizontal => divider.inflate(extra, 0.0),
@@ -1626,7 +1636,7 @@ fn first_size_main(axis: Axis, size: Size) -> f32 {
 }
 
 fn floating_view_title_bar_height(theme: &DefaultTheme) -> f32 {
-    (theme.metrics.min_height + (theme.spacing * 2.0)).max(30.0)
+    theme.metrics.floating_view_title_bar_height
 }
 
 fn floating_view_title_bar_rect(theme: &DefaultTheme, bounds: Rect) -> Rect {
@@ -1653,8 +1663,9 @@ fn floating_view_content_rect(theme: &DefaultTheme, bounds: Rect, maximized: boo
     )
 }
 
-fn floating_view_resize_handle_rect(bounds: Rect) -> Rect {
-    Rect::new(bounds.max_x() - 18.0, bounds.max_y() - 18.0, 18.0, 18.0)
+fn floating_view_resize_handle_rect(theme: &DefaultTheme, bounds: Rect) -> Rect {
+    let size = theme.metrics.floating_view_resize_handle_size;
+    Rect::new(bounds.max_x() - size, bounds.max_y() - size, size, size)
 }
 
 fn clamp_floating_view_bounds(
@@ -1763,9 +1774,9 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        FloatingStack, FloatingViewConfig, FloatingWorkspace, FloatingWorkspaceState,
-        SPLIT_VIEW_DEFAULT_DIVIDER_THICKNESS, SplitView,
+        FloatingStack, FloatingViewConfig, FloatingWorkspace, FloatingWorkspaceState, SplitView,
     };
+    use crate::DefaultTheme;
     use crate::containers::SizedBox;
     use sui_core::{
         Color, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
@@ -2055,10 +2066,84 @@ mod tests {
 
         let _ = runtime.render(window_id)?;
 
-        let pane_width = (240.0 - SPLIT_VIEW_DEFAULT_DIVIDER_THICKNESS) * 0.5;
+        let pane_width =
+            (240.0 - DefaultTheme::default().metrics.split_view_divider_thickness) * 0.5;
         let expected = Constraints::tight(Size::new(pane_width, 100.0));
         assert_eq!(first_constraints.borrow().last(), Some(&expected));
         assert_eq!(second_constraints.borrow().last(), Some(&expected));
+        Ok(())
+    }
+
+    #[test]
+    fn pane_chrome_defaults_follow_theme_density() -> Result<()> {
+        let compact = DefaultTheme::compact();
+        let touch = DefaultTheme::touch();
+
+        let (mut compact_runtime, compact_window) = build_runtime(
+            SplitView::new(
+                Axis::Horizontal,
+                SizedBox::new().width(80.0).height(40.0),
+                SizedBox::new().width(80.0).height(40.0),
+            )
+            .theme(compact)
+            .min_first(0.0)
+            .min_second(0.0),
+        );
+        let compact_size = compact_runtime.render(compact_window)?.frame.viewport;
+
+        let (mut touch_runtime, touch_window) = build_runtime(
+            SplitView::new(
+                Axis::Horizontal,
+                SizedBox::new().width(80.0).height(40.0),
+                SizedBox::new().width(80.0).height(40.0),
+            )
+            .theme(touch)
+            .min_first(0.0)
+            .min_second(0.0),
+        );
+        let touch_size = touch_runtime.render(touch_window)?.frame.viewport;
+
+        assert_eq!(
+            compact_size.width,
+            160.0 + compact.metrics.split_view_divider_thickness
+        );
+        assert_eq!(
+            touch_size.width,
+            160.0 + touch.metrics.split_view_divider_thickness
+        );
+        assert!(touch_size.width > compact_size.width);
+
+        let bounds = Rect::new(0.0, 0.0, 240.0, 180.0);
+        assert_eq!(
+            super::floating_view_title_bar_rect(&compact, bounds).height(),
+            compact.metrics.floating_view_title_bar_height
+        );
+        assert_eq!(
+            super::floating_view_title_bar_rect(&touch, bounds).height(),
+            touch.metrics.floating_view_title_bar_height
+        );
+        assert!(
+            super::floating_view_content_rect(&touch, bounds, false).y()
+                > super::floating_view_content_rect(&compact, bounds, false).y()
+        );
+
+        let compact_handle = super::floating_view_resize_handle_rect(&compact, bounds);
+        let touch_handle = super::floating_view_resize_handle_rect(&touch, bounds);
+        assert_eq!(
+            compact_handle.size,
+            Size::new(
+                compact.metrics.floating_view_resize_handle_size,
+                compact.metrics.floating_view_resize_handle_size,
+            )
+        );
+        assert_eq!(
+            touch_handle.size,
+            Size::new(
+                touch.metrics.floating_view_resize_handle_size,
+                touch.metrics.floating_view_resize_handle_size,
+            )
+        );
+        assert!(touch_handle.width() > compact_handle.width());
         Ok(())
     }
 
@@ -2268,7 +2353,8 @@ mod tests {
             .last()
             .expect("content should be measured initially");
         let initial_bounds = state.snapshot(view_id).expect("view state present").bounds;
-        let handle = super::floating_view_resize_handle_rect(initial_bounds);
+        let handle =
+            super::floating_view_resize_handle_rect(&DefaultTheme::default(), initial_bounds);
         let resize_start = Point::new(
             handle.x() + handle.width() * 0.5,
             handle.y() + handle.height() * 0.5,

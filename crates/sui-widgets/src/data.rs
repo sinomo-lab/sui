@@ -17,12 +17,6 @@ use crate::{
     controls::{IconGlyph, draw_icon_glyph},
 };
 
-const LIST_ROW_LEFT_PADDING: f32 = 14.0;
-const LIST_ROW_RIGHT_PADDING: f32 = 10.0;
-const LIST_ROW_LEADING_ICON_SIZE: f32 = 14.0;
-const LIST_ROW_LEADING_GAP: f32 = 8.0;
-const LIST_ROW_TRAILING_GAP: f32 = 12.0;
-
 pub struct ListItem {
     label: String,
     detail: Option<String>,
@@ -117,7 +111,7 @@ pub struct ListView {
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<usize>,
     pressed: Option<usize>,
-    row_height: f32,
+    row_height: Option<f32>,
     scroll_y: f32,
     row_heights: Vec<f32>,
     row_offsets: Vec<f32>,
@@ -136,7 +130,7 @@ impl ListView {
             selected_reader: None,
             hovered: None,
             pressed: None,
-            row_height: 28.0,
+            row_height: None,
             scroll_y: 0.0,
             row_heights: Vec::new(),
             row_offsets: Vec::new(),
@@ -187,7 +181,7 @@ impl ListView {
     }
 
     pub fn row_height(mut self, row_height: f32) -> Self {
-        self.row_height = row_height.max(24.0);
+        self.row_height = Some(row_height.max(0.0));
         self
     }
 
@@ -231,9 +225,7 @@ impl ListView {
 
     fn resolved_row_height(&self) -> f32 {
         let theme = self.resolved_theme();
-        let base = self
-            .row_height
-            .max((theme.metrics.min_height + 4.0).max(28.0));
+        let base = self.row_height.unwrap_or(theme.metrics.list_row_height);
         if self.items.iter().any(|item| item.detail.is_some()) {
             base.max(two_line_row_height(
                 theme.body_text_style().line_height,
@@ -245,7 +237,7 @@ impl ListView {
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, Insets::all(8.0))
+        inset_rect(bounds, self.resolved_theme().metrics.data_viewport_padding)
     }
 
     fn measured_content_height(&self) -> f32 {
@@ -474,11 +466,17 @@ impl Widget for ListView {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.sync_selected();
         let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let text_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
         let base_row_height = self.resolved_row_height();
         let child_max_width = if constraints.max.width.is_finite() {
-            (constraints.max.width - 36.0).max(0.0)
+            (constraints.max.width
+                - metrics.data_viewport_padding.left
+                - metrics.data_viewport_padding.right
+                - metrics.data_row_padding.left
+                - metrics.data_row_padding.right)
+                .max(0.0)
         } else {
             260.0
         };
@@ -494,8 +492,14 @@ impl Widget for ListView {
             let (row_width, row_height) = if let Some(content) = &mut item.content {
                 let child_size = content.measure(ctx, child_constraints);
                 (
-                    (child_size.width + 20.0).max(220.0),
-                    (child_size.height + 12.0).max(base_row_height),
+                    (child_size.width
+                        + metrics.data_row_padding.left
+                        + metrics.data_row_padding.right)
+                        .max(220.0),
+                    (child_size.height
+                        + metrics.data_row_padding.top
+                        + metrics.data_row_padding.bottom)
+                        .max(base_row_height),
                 )
             } else {
                 let label = measure_text(ctx, &item.label, &text_style).width;
@@ -504,24 +508,24 @@ impl Widget for ListView {
                     .as_deref()
                     .map(|detail| measure_text(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
-                let leading = measure_list_item_leading_width(ctx, item, &text_style);
+                let leading = measure_list_item_leading_width(ctx, item, &text_style, &theme);
                 let trailing = item
                     .trailing
                     .as_deref()
                     .map(|trailing| measure_text(ctx, trailing, &detail_style).width)
                     .unwrap_or(0.0);
                 let trailing_gap = if trailing > 0.0 {
-                    LIST_ROW_TRAILING_GAP
+                    metrics.data_row_trailing_gap
                 } else {
                     0.0
                 };
                 (
-                    LIST_ROW_LEFT_PADDING
+                    metrics.data_row_padding.left
                         + leading
                         + label.max(detail)
                         + trailing_gap
                         + trailing
-                        + LIST_ROW_RIGHT_PADDING,
+                        + metrics.data_row_padding.right,
                     base_row_height,
                 )
             };
@@ -531,7 +535,14 @@ impl Widget for ListView {
         }
 
         self.content_height = content_height;
-        let desired = Size::new(content_width + 16.0, self.measured_content_height() + 16.0);
+        let desired = Size::new(
+            content_width
+                + metrics.data_viewport_padding.left
+                + metrics.data_viewport_padding.right,
+            self.measured_content_height()
+                + metrics.data_viewport_padding.top
+                + metrics.data_viewport_padding.bottom,
+        );
         let size = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
@@ -551,6 +562,7 @@ impl Widget for ListView {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.sync_selected();
+        let theme = self.resolved_theme();
         let viewport = self.viewport_rect(bounds);
         for index in 0..self.items.len() {
             let Some((top, row_height)) = self.row_metrics(index) else {
@@ -568,8 +580,17 @@ impl Widget for ListView {
             content.arrange(
                 ctx,
                 Rect::from_origin_size(
-                    Point::new(viewport.x() + 10.0, row_y + 6.0),
-                    Size::new((viewport.width() - 20.0).max(0.0), child_size.height),
+                    Point::new(
+                        viewport.x() + theme.metrics.data_row_padding.left,
+                        row_y + theme.metrics.data_row_padding.top,
+                    ),
+                    Size::new(
+                        (viewport.width()
+                            - theme.metrics.data_row_padding.left
+                            - theme.metrics.data_row_padding.right)
+                            .max(0.0),
+                        child_size.height,
+                    ),
                 ),
             );
         }
@@ -578,6 +599,7 @@ impl Widget for ListView {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let palette = theme.palette;
+        let metrics = theme.metrics;
         let viewport = self.viewport_rect(ctx.bounds());
         let label_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
@@ -602,13 +624,7 @@ impl Widget for ListView {
                 if let Some(highlight) = row_highlight_rect(row, viewport) {
                     ctx.fill_rect(
                         highlight,
-                        if selected {
-                            palette.selection
-                        } else if pressed {
-                            palette.control_active
-                        } else {
-                            palette.control_hover
-                        },
+                        data_row_state_fill(&theme, selected, hovered, pressed),
                     );
                 }
             }
@@ -628,7 +644,7 @@ impl Widget for ListView {
                 continue;
             }
 
-            let mut text_x = row.x() + LIST_ROW_LEFT_PADDING;
+            let mut text_x = row.x() + metrics.data_row_padding.left;
             let leading_color = item.leading_color.unwrap_or_else(|| {
                 if item.disabled {
                     palette.placeholder
@@ -639,7 +655,8 @@ impl Widget for ListView {
                 }
             });
             if let Some(icon) = item.leading_icon {
-                let side = LIST_ROW_LEADING_ICON_SIZE
+                let side = metrics
+                    .data_row_icon_size
                     .min((row.height() - 8.0).max(0.0))
                     .max(0.0);
                 let icon_rect = Rect::new(
@@ -649,7 +666,7 @@ impl Widget for ListView {
                     side,
                 );
                 draw_icon_glyph(ctx, icon, icon_rect, leading_color);
-                text_x += side + LIST_ROW_LEADING_GAP;
+                text_x += side + metrics.data_row_icon_gap;
             } else if let Some(leading) = &item.leading_text {
                 let leading_style = TextStyle {
                     color: leading_color,
@@ -668,7 +685,7 @@ impl Widget for ListView {
                     leading_style.line_height,
                 );
                 ctx.draw_text(leading_rect, leading.clone(), leading_style);
-                text_x += leading_measurement.width + LIST_ROW_LEADING_GAP;
+                text_x += leading_measurement.width + metrics.data_row_icon_gap;
             }
 
             let trailing_measurement = item
@@ -680,15 +697,15 @@ impl Widget for ListView {
                 .unwrap_or(0.0);
             let trailing_rect = item.trailing.as_ref().map(|_| {
                 Rect::new(
-                    row.max_x() - LIST_ROW_RIGHT_PADDING - trailing_width,
+                    row.max_x() - metrics.data_row_padding.right - trailing_width,
                     row.y(),
                     trailing_width,
                     row.height(),
                 )
             });
             let text_right = trailing_rect
-                .map(|rect| rect.x() - LIST_ROW_TRAILING_GAP)
-                .unwrap_or(row.max_x() - LIST_ROW_RIGHT_PADDING);
+                .map(|rect| rect.x() - metrics.data_row_trailing_gap)
+                .unwrap_or(row.max_x() - metrics.data_row_padding.right);
             let text_bounds = Rect::new(
                 text_x,
                 row.y(),
@@ -961,7 +978,7 @@ pub struct LayerList {
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<LayerListHit>,
     pressed: Option<LayerListHit>,
-    row_height: f32,
+    row_height: Option<f32>,
     on_select: Option<Box<dyn FnMut(usize, String)>>,
     on_select_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
     on_visibility_change: Option<Box<dyn FnMut(usize, bool)>>,
@@ -981,7 +998,7 @@ impl LayerList {
             selected_reader: None,
             hovered: None,
             pressed: None,
-            row_height: 46.0,
+            row_height: None,
             on_select: None,
             on_select_with_ctx: None,
             on_visibility_change: None,
@@ -1033,7 +1050,7 @@ impl LayerList {
     }
 
     pub fn row_height(mut self, row_height: f32) -> Self {
-        self.row_height = row_height.max(40.0);
+        self.row_height = Some(row_height.max(0.0));
         self
     }
 
@@ -1116,7 +1133,12 @@ impl LayerList {
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, Insets::all(8.0))
+        inset_rect(bounds, self.resolved_theme().metrics.data_viewport_padding)
+    }
+
+    fn resolved_row_height(&self) -> f32 {
+        self.row_height
+            .unwrap_or(self.resolved_theme().metrics.layer_row_height)
     }
 
     fn row_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
@@ -1125,16 +1147,22 @@ impl LayerList {
         }
 
         let viewport = self.viewport_rect(bounds);
-        let y = viewport.y() + index as f32 * self.row_height;
-        Rect::new(viewport.x(), y, viewport.width(), self.row_height)
+        let row_height = self.resolved_row_height();
+        let y = viewport.y() + index as f32 * row_height;
+        Rect::new(viewport.x(), y, viewport.width(), row_height)
             .intersection(viewport)
             .filter(|rect| !rect.is_empty())
     }
 
     fn visibility_rect(&self, row: Rect) -> Rect {
-        let size = 26.0_f32.min(row.height()).max(18.0);
+        let size = self
+            .resolved_theme()
+            .metrics
+            .layer_action_size
+            .min(row.height())
+            .max(18.0);
         Rect::new(
-            row.x() + 4.0,
+            row.x() + self.resolved_theme().metrics.data_row_padding.left.min(8.0),
             row.y() + ((row.height() - size) * 0.5),
             size,
             size,
@@ -1142,9 +1170,15 @@ impl LayerList {
     }
 
     fn thumbnail_rect(&self, row: Rect) -> Rect {
-        let size = (row.height() - 14.0).clamp(22.0, 34.0);
+        let theme = self.resolved_theme();
+        let action = self.visibility_rect(row);
+        let size = theme
+            .metrics
+            .layer_thumbnail_size
+            .min((row.height() - 8.0).max(0.0))
+            .max(18.0);
         Rect::new(
-            row.x() + 36.0,
+            action.max_x() + theme.metrics.data_row_icon_gap,
             row.y() + ((row.height() - size) * 0.5),
             size,
             size,
@@ -1152,9 +1186,10 @@ impl LayerList {
     }
 
     fn lock_rect(&self, row: Rect) -> Rect {
-        let size = 26.0_f32.min(row.height()).max(18.0);
+        let theme = self.resolved_theme();
+        let size = theme.metrics.layer_action_size.min(row.height()).max(18.0);
         Rect::new(
-            row.max_x() - size - 4.0,
+            row.max_x() - size - theme.metrics.data_row_padding.right.min(8.0),
             row.y() + ((row.height() - size) * 0.5),
             size,
             size,
@@ -1164,10 +1199,11 @@ impl LayerList {
     fn text_rect(&self, row: Rect) -> Rect {
         let thumb = self.thumbnail_rect(row);
         let lock = self.lock_rect(row);
+        let theme = self.resolved_theme();
         Rect::new(
-            thumb.max_x() + 8.0,
+            thumb.max_x() + theme.metrics.data_row_icon_gap,
             row.y(),
-            (lock.x() - thumb.max_x() - 12.0).max(0.0),
+            (lock.x() - thumb.max_x() - theme.metrics.data_row_trailing_gap).max(0.0),
             row.height(),
         )
     }
@@ -1375,7 +1411,9 @@ impl Widget for LayerList {
             } else {
                 width + 16.0
             },
-            self.layers.len().max(1) as f32 * self.row_height + 16.0,
+            self.layers.len().max(1) as f32 * self.resolved_row_height()
+                + theme.metrics.data_viewport_padding.top
+                + theme.metrics.data_viewport_padding.bottom,
         ))
     }
 
@@ -1403,13 +1441,7 @@ impl Widget for LayerList {
                 if let Some(highlight) = row_highlight_rect(row, viewport) {
                     ctx.fill_rect(
                         highlight,
-                        if selected {
-                            palette.selection
-                        } else if row_pressed {
-                            palette.control_active
-                        } else {
-                            palette.control_hover
-                        },
+                        data_row_state_fill(&theme, selected, row_hovered, row_pressed),
                     );
                 }
             }
@@ -1647,16 +1679,10 @@ pub struct TreeView {
     selected: Option<Vec<usize>>,
     hovered: Option<Vec<usize>>,
     pressed: Option<Vec<usize>>,
-    row_height: f32,
+    row_height: Option<f32>,
     scroll_y: f32,
     on_change: Option<Box<dyn FnMut(Vec<usize>, String)>>,
 }
-
-const TREE_DISCLOSURE_LEFT: f32 = 8.0;
-const TREE_DISCLOSURE_SIZE: f32 = 12.0;
-const TREE_DISCLOSURE_LABEL_GAP: f32 = 6.0;
-const TREE_DEPTH_INDENT: f32 = 18.0;
-const TREE_ROW_RIGHT_PADDING: f32 = 8.0;
 
 impl TreeView {
     pub fn new(name: impl Into<String>) -> Self {
@@ -1668,7 +1694,7 @@ impl TreeView {
             selected: None,
             hovered: None,
             pressed: None,
-            row_height: 30.0,
+            row_height: None,
             scroll_y: 0.0,
             on_change: None,
         }
@@ -1702,7 +1728,7 @@ impl TreeView {
     }
 
     pub fn row_height(mut self, row_height: f32) -> Self {
-        self.row_height = row_height.max(24.0);
+        self.row_height = Some(row_height.max(0.0));
         self
     }
 
@@ -1723,9 +1749,7 @@ impl TreeView {
 
     fn resolved_row_height(&self) -> f32 {
         let theme = self.resolved_theme();
-        let base = self
-            .row_height
-            .max((theme.metrics.min_height + 4.0).max(28.0));
+        let base = self.row_height.unwrap_or(theme.metrics.tree_row_height);
         if self.visible_rows().iter().any(|row| row.detail.is_some()) {
             base.max(two_line_row_height(
                 theme.body_text_style().line_height,
@@ -1737,7 +1761,7 @@ impl TreeView {
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, Insets::all(8.0))
+        inset_rect(bounds, self.resolved_theme().metrics.data_viewport_padding)
     }
 
     fn visible_rows(&self) -> Vec<TreeRow> {
@@ -1877,7 +1901,9 @@ impl Widget for TreeView {
                         viewport_rect.width(),
                         row_height,
                     );
-                    if disclosure_rect(row_rect, row.depth).contains(pointer.position) {
+                    if disclosure_rect(&self.resolved_theme(), row_rect, row.depth)
+                        .contains(pointer.position)
+                    {
                         if self.toggle_path(&row.path) {
                             ctx.request_measure();
                         }
@@ -1984,17 +2010,24 @@ impl Widget for TreeView {
             .visible_rows()
             .iter()
             .map(|row| {
-                let label_start = tree_label_offset(row.depth);
+                let label_start = tree_label_offset(&theme, row.depth);
                 let label = measure_text(ctx, &row.label, &label_style).width;
                 let detail = row
                     .detail
                     .as_deref()
                     .map(|detail| measure_text(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
-                label_start + label.max(detail) + TREE_ROW_RIGHT_PADDING
+                label_start + label.max(detail) + theme.metrics.data_row_padding.right
             })
             .fold(220.0, f32::max);
-        let desired = Size::new(width + 16.0, self.content_height() + 16.0);
+        let desired = Size::new(
+            width
+                + theme.metrics.data_viewport_padding.left
+                + theme.metrics.data_viewport_padding.right,
+            self.content_height()
+                + theme.metrics.data_viewport_padding.top
+                + theme.metrics.data_viewport_padding.bottom,
+        );
         let size = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
@@ -2037,20 +2070,14 @@ impl Widget for TreeView {
                 if let Some(highlight) = row_highlight_rect(row_rect, viewport) {
                     ctx.fill_rect(
                         highlight,
-                        if selected {
-                            palette.selection
-                        } else if pressed {
-                            palette.control_active
-                        } else {
-                            palette.control_hover
-                        },
+                        data_row_state_fill(&theme, selected, hovered, pressed),
                     );
                 }
             }
 
             if row.has_children {
                 ctx.fill(
-                    disclosure_path(disclosure_rect(row_rect, row.depth), row.expanded),
+                    disclosure_path(disclosure_rect(&theme, row_rect, row.depth), row.expanded),
                     if selected {
                         palette.border_focus
                     } else {
@@ -2059,7 +2086,7 @@ impl Widget for TreeView {
                 );
             }
 
-            let label_x = row_rect.x() + tree_label_offset(row.depth);
+            let label_x = row_rect.x() + tree_label_offset(&theme, row.depth);
             let text_bounds = Rect::new(
                 label_x,
                 row_rect.y(),
@@ -2201,8 +2228,8 @@ pub struct Table {
     selected: Option<usize>,
     hovered: Option<usize>,
     pressed: Option<usize>,
-    row_height: f32,
-    header_height: f32,
+    row_height: Option<f32>,
+    header_height: Option<f32>,
     scroll_y: f32,
     column_widths: Vec<f32>,
     on_change: Option<Box<dyn FnMut(usize)>>,
@@ -2219,8 +2246,8 @@ impl Table {
             selected: None,
             hovered: None,
             pressed: None,
-            row_height: 28.0,
-            header_height: 30.0,
+            row_height: None,
+            header_height: None,
             scroll_y: 0.0,
             column_widths: Vec::new(),
             on_change: None,
@@ -2288,23 +2315,25 @@ impl Table {
     }
 
     fn resolved_row_height(&self) -> f32 {
-        let theme = self.resolved_theme();
         self.row_height
-            .max((theme.metrics.min_height + 2.0).max(26.0))
+            .unwrap_or(self.resolved_theme().metrics.table_row_height)
     }
 
     fn resolved_header_height(&self) -> f32 {
-        let theme = self.resolved_theme();
         self.header_height
-            .max((theme.metrics.min_height + 4.0).max(28.0))
+            .unwrap_or(self.resolved_theme().metrics.table_header_height)
     }
 
     fn body_rect(&self, bounds: Rect) -> Rect {
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.data_viewport_padding;
+        let gap = theme.metrics.select_menu_gap;
         Rect::new(
-            bounds.x() + 8.0,
-            bounds.y() + self.resolved_header_height() + 4.0,
-            (bounds.width() - 16.0).max(0.0),
-            (bounds.height() - self.resolved_header_height() - 12.0).max(0.0),
+            bounds.x() + padding.left,
+            bounds.y() + padding.top + self.resolved_header_height() + gap,
+            (bounds.width() - padding.left - padding.right).max(0.0),
+            (bounds.height() - padding.top - padding.bottom - self.resolved_header_height() - gap)
+                .max(0.0),
         )
     }
 
@@ -2343,9 +2372,10 @@ impl Table {
                     .filter_map(|row| row.cells.get(index))
                     .map(|cell| measure_text(ctx, cell, &body_style).width)
                     .fold(0.0, f32::max);
-                column
-                    .width
-                    .unwrap_or((measured_title.max(measured_cells) + 26.0).max(column.min_width))
+                column.width.unwrap_or(
+                    (measured_title.max(measured_cells) + (theme.metrics.table_cell_padding * 2.0))
+                        .max(column.min_width),
+                )
             })
             .collect();
 
@@ -2476,8 +2506,14 @@ impl Widget for Table {
         } else {
             540.0
         };
-        self.resolve_column_widths(ctx, (desired_width - 20.0).max(0.0));
-        let desired_height = self.resolved_header_height() + self.content_height() + 12.0;
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.data_viewport_padding;
+        self.resolve_column_widths(ctx, (desired_width - padding.left - padding.right).max(0.0));
+        let desired_height = padding.top
+            + self.resolved_header_height()
+            + theme.metrics.select_menu_gap
+            + self.content_height()
+            + padding.bottom;
         let size = constraints.clamp(Size::new(desired_width, desired_height));
         self.scroll_y = self.clamp_scroll(
             self.body_rect(Rect::from_origin_size(Point::ZERO, size))
@@ -2490,35 +2526,48 @@ impl Widget for Table {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let palette = theme.palette;
+        let metrics = theme.metrics;
         let header_style = theme.text_style(palette.placeholder);
         let body_style = theme.body_text_style();
         let selected_body_style = theme.text_style(palette.border_focus);
         let body = self.body_rect(ctx.bounds());
+        let padding = metrics.data_viewport_padding;
         let header = Rect::new(
-            ctx.bounds().x() + 8.0,
-            ctx.bounds().y() + 8.0,
-            (ctx.bounds().width() - 16.0).max(0.0),
+            ctx.bounds().x() + padding.left,
+            ctx.bounds().y() + padding.top,
+            (ctx.bounds().width() - padding.left - padding.right).max(0.0),
             self.resolved_header_height(),
         );
         let row_height = self.resolved_row_height();
 
         draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
-        ctx.fill(rounded_rect_path(header, 6.0), palette.control);
+        ctx.fill(
+            rounded_rect_path(header, metrics.corner_radius),
+            palette.control,
+        );
 
         let mut x = header.x();
         for (index, column) in self.columns.iter().enumerate() {
             let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
             let cell = Rect::new(x, header.y(), width, header.height());
             if index > 0 {
+                let separator_inset = metrics
+                    .table_header_separator_inset
+                    .min(cell.height() * 0.5);
                 ctx.stroke_rect(
-                    Rect::new(cell.x(), cell.y() + 4.0, 1.0, cell.height() - 8.0),
+                    Rect::new(
+                        cell.x(),
+                        cell.y() + separator_inset,
+                        metrics.table_separator_width,
+                        (cell.height() - (separator_inset * 2.0)).max(0.0),
+                    ),
                     palette.border,
-                    sui_scene::StrokeStyle::new(1.0),
+                    sui_scene::StrokeStyle::new(metrics.table_separator_width.max(1.0)),
                 );
             }
             draw_aligned_text(
                 ctx,
-                horizontal_inset_rect(cell, 8.0),
+                horizontal_inset_rect(cell, metrics.table_cell_padding),
                 &column.title,
                 &header_style,
                 column.alignment,
@@ -2537,12 +2586,8 @@ impl Widget for Table {
             let selected = self.selected == Some(row_index);
             let hovered = self.hovered == Some(row_index);
             let pressed = self.pressed == Some(row_index);
-            let background = if selected {
-                palette.selection
-            } else if pressed {
-                palette.control_active
-            } else if hovered {
-                palette.control_hover
+            let background = if selected || pressed || hovered {
+                data_row_state_fill(&theme, selected, hovered, pressed)
             } else if row_index % 2 == 0 {
                 palette.surface.with_alpha(0.88)
             } else {
@@ -2551,8 +2596,8 @@ impl Widget for Table {
             ctx.fill_rect(row_rect, background);
             ctx.stroke_rect(
                 row_rect,
-                palette.border.with_alpha(0.55),
-                sui_scene::StrokeStyle::new(1.0),
+                palette.border.with_alpha(metrics.table_row_border_opacity),
+                sui_scene::StrokeStyle::new(metrics.table_separator_width.max(1.0)),
             );
 
             let mut cell_x = row_rect.x();
@@ -2565,7 +2610,7 @@ impl Widget for Table {
                 if let Some(value) = self.rows[row_index].cells.get(column_index) {
                     draw_aligned_text(
                         ctx,
-                        horizontal_inset_rect(cell_rect, 8.0),
+                        horizontal_inset_rect(cell_rect, metrics.table_cell_padding),
                         value,
                         &if selected {
                             selected_body_style.clone()
@@ -2582,6 +2627,7 @@ impl Widget for Table {
         ctx.pop_clip();
         draw_vertical_scroll_thumb(
             ctx,
+            &theme,
             body,
             self.content_height(),
             self.scroll_y,
@@ -2729,19 +2775,21 @@ impl Breadcrumb {
         if index >= widths.len() {
             return None;
         }
-        let vertical_padding = 4.0;
-        let mut x = bounds.x() + 10.0;
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.breadcrumb_item_padding;
+        let gap = theme.metrics.breadcrumb_gap;
+        let mut x = bounds.x() + padding.left;
         for (current, width) in widths.iter().enumerate() {
             let rect = Rect::new(
                 x,
-                bounds.y() + vertical_padding,
+                bounds.y() + padding.top,
                 *width,
-                (bounds.height() - vertical_padding * 2.0).max(0.0),
+                (bounds.height() - padding.top - padding.bottom).max(0.0),
             );
             if current == index {
                 return Some(rect);
             }
-            x += *width + 20.0;
+            x += *width + gap;
         }
         None
     }
@@ -2842,14 +2890,19 @@ impl Widget for Breadcrumb {
         self.measured_widths = self
             .items
             .iter()
-            .map(|item| measure_text(ctx, &item.label, &text_style).width + 22.0)
+            .map(|item| {
+                measure_text(ctx, &item.label, &text_style).width
+                    + theme.metrics.breadcrumb_item_padding.left
+                    + theme.metrics.breadcrumb_item_padding.right
+            })
             .collect();
         let desired_width = self.measured_widths.iter().sum::<f32>()
-            + (self.items.len().saturating_sub(1) as f32 * 20.0)
-            + 20.0;
+            + (self.items.len().saturating_sub(1) as f32 * theme.metrics.breadcrumb_gap)
+            + theme.metrics.breadcrumb_item_padding.left
+            + theme.metrics.breadcrumb_item_padding.right;
         constraints.clamp(Size::new(
             desired_width.max(180.0),
-            theme.metrics.min_height,
+            theme.metrics.breadcrumb_height,
         ))
     }
 
@@ -2870,13 +2923,7 @@ impl Widget for Breadcrumb {
             if current || hovered || pressed || focused {
                 ctx.fill(
                     rounded_rect_path(rect, theme.metrics.corner_radius),
-                    if current {
-                        palette.selection
-                    } else if pressed {
-                        palette.control_active
-                    } else {
-                        palette.control_hover
-                    },
+                    data_row_state_fill(&theme, current || focused, hovered, pressed),
                 );
             }
 
@@ -2895,10 +2942,14 @@ impl Widget for Breadcrumb {
 
             if index + 1 < self.items.len() {
                 let separator = chevron_path(Rect::new(
-                    rect.max_x() + 6.0,
-                    rect.y() + ((rect.height() - 10.0) * 0.5),
-                    10.0,
-                    10.0,
+                    rect.max_x()
+                        + ((theme.metrics.breadcrumb_gap
+                            - theme.metrics.breadcrumb_separator_size)
+                            * 0.5)
+                            .max(0.0),
+                    rect.y() + ((rect.height() - theme.metrics.breadcrumb_separator_size) * 0.5),
+                    theme.metrics.breadcrumb_separator_size,
+                    theme.metrics.breadcrumb_separator_size,
                 ));
                 ctx.stroke(
                     separator,
@@ -2981,20 +3032,21 @@ fn tree_item_mut<'a>(items: &'a mut [TreeItem], path: &[usize]) -> Option<&'a mu
     }
 }
 
-fn disclosure_rect(row: Rect, depth: usize) -> Rect {
+fn disclosure_rect(theme: &DefaultTheme, row: Rect, depth: usize) -> Rect {
+    let metrics = theme.metrics;
     Rect::new(
-        row.x() + TREE_DISCLOSURE_LEFT + depth as f32 * TREE_DEPTH_INDENT,
-        row.y() + ((row.height() - TREE_DISCLOSURE_SIZE) * 0.5),
-        TREE_DISCLOSURE_SIZE,
-        TREE_DISCLOSURE_SIZE,
+        row.x() + metrics.data_row_padding.left + depth as f32 * metrics.tree_indent,
+        row.y() + ((row.height() - metrics.tree_disclosure_size) * 0.5),
+        metrics.tree_disclosure_size,
+        metrics.tree_disclosure_size,
     )
 }
 
-fn tree_label_offset(depth: usize) -> f32 {
-    TREE_DISCLOSURE_LEFT
-        + depth as f32 * TREE_DEPTH_INDENT
-        + TREE_DISCLOSURE_SIZE
-        + TREE_DISCLOSURE_LABEL_GAP
+fn tree_label_offset(theme: &DefaultTheme, depth: usize) -> f32 {
+    theme.metrics.data_row_padding.left
+        + depth as f32 * theme.metrics.tree_indent
+        + theme.metrics.tree_disclosure_size
+        + theme.metrics.tree_disclosure_gap
 }
 
 fn disclosure_path(rect: Rect, expanded: bool) -> Path {
@@ -3049,6 +3101,7 @@ fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focused: b
 
 fn draw_vertical_scroll_thumb(
     ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
     viewport: Rect,
     content_height: f32,
     scroll_y: f32,
@@ -3059,15 +3112,28 @@ fn draw_vertical_scroll_thumb(
     }
 
     let ratio = (viewport.height() / content_height).clamp(0.08, 1.0);
-    let thumb_height = (viewport.height() * ratio).max(28.0);
+    let metrics = theme.metrics;
+    let thumb_height = (viewport.height() * ratio).max(metrics.data_scroll_thumb_min_length);
     let max_scroll = (content_height - viewport.height()).max(1.0);
     let thumb_y = viewport.y() + ((viewport.height() - thumb_height) * (scroll_y / max_scroll));
+    let thumb_width = metrics
+        .data_scroll_thumb_width
+        .min(viewport.width())
+        .max(0.0);
+    let thumb_inset = metrics
+        .data_scroll_thumb_inset
+        .min((viewport.width() - thumb_width).max(0.0));
     ctx.fill(
         rounded_rect_path(
-            Rect::new(viewport.max_x() - 6.0, thumb_y, 4.0, thumb_height),
-            2.0,
+            Rect::new(
+                viewport.max_x() - thumb_inset - thumb_width,
+                thumb_y,
+                thumb_width,
+                thumb_height,
+            ),
+            metrics.data_scroll_thumb_radius,
         ),
-        color.with_alpha(0.75),
+        color.with_alpha(metrics.data_scroll_thumb_opacity),
     );
 }
 
@@ -3168,13 +3234,14 @@ fn measure_list_item_leading_width(
     ctx: &mut MeasureCtx,
     item: &ListItem,
     style: &TextStyle,
+    theme: &DefaultTheme,
 ) -> f32 {
     if item.leading_icon.is_some() {
-        return LIST_ROW_LEADING_ICON_SIZE + LIST_ROW_LEADING_GAP;
+        return theme.metrics.data_row_icon_size + theme.metrics.data_row_icon_gap;
     }
     item.leading_text
         .as_deref()
-        .map(|text| measure_text(ctx, text, style).width + LIST_ROW_LEADING_GAP)
+        .map(|text| measure_text(ctx, text, style).width + theme.metrics.data_row_icon_gap)
         .unwrap_or(0.0)
 }
 
@@ -3249,6 +3316,49 @@ fn row_highlight_rect(row: Rect, viewport: Rect) -> Option<Rect> {
         .filter(|rect| !rect.is_empty())
 }
 
+fn mix_color(from: Color, to: Color, amount: f32) -> Color {
+    let amount = amount.clamp(0.0, 1.0);
+    Color::new(
+        from.space,
+        from.red + (to.red - from.red) * amount,
+        from.green + (to.green - from.green) * amount,
+        from.blue + (to.blue - from.blue) * amount,
+        from.alpha + (to.alpha - from.alpha) * amount,
+    )
+    .clamped()
+}
+
+fn data_row_state_fill(
+    theme: &DefaultTheme,
+    selected: bool,
+    hovered: bool,
+    pressed: bool,
+) -> Color {
+    let palette = theme.palette;
+    let interaction = theme.interaction;
+    if selected {
+        mix_color(
+            palette.selection,
+            palette.accent,
+            interaction.selected_blend * 0.18,
+        )
+    } else if pressed {
+        mix_color(
+            palette.control,
+            palette.control_active,
+            interaction.pressed_blend,
+        )
+    } else if hovered {
+        mix_color(
+            palette.control,
+            palette.control_hover,
+            interaction.hover_blend,
+        )
+    } else {
+        palette.control
+    }
+}
+
 fn list_view_row_id(parent: WidgetId, index: usize) -> WidgetId {
     const TAG: u64 = 5_u64 << 50;
     const LOW_MASK: u64 = (1_u64 << 50) - 1;
@@ -3313,15 +3423,12 @@ fn paint_layer_visibility_button(
     if hovered || pressed {
         ctx.fill(
             rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
-            if pressed {
-                palette.control_active
-            } else {
-                palette.control_hover
-            },
+            data_row_state_fill(theme, false, hovered, pressed),
         );
     }
 
-    let icon = inset_rect(rect, Insets::all(5.0));
+    let metrics = theme.metrics;
+    let icon = inset_rect(rect, Insets::all(metrics.layer_action_icon_inset));
     let color = if visible {
         palette.border_focus
     } else {
@@ -3330,7 +3437,7 @@ fn paint_layer_visibility_button(
     ctx.stroke(
         layer_visibility_eye_path(icon),
         color,
-        sui_scene::StrokeStyle::new(1.4),
+        sui_scene::StrokeStyle::new(metrics.layer_visibility_stroke_width),
     );
     if visible {
         ctx.fill(
@@ -3356,7 +3463,7 @@ fn paint_layer_visibility_button(
                 ),
             ),
             color,
-            sui_scene::StrokeStyle::new(1.6),
+            sui_scene::StrokeStyle::new(metrics.layer_visibility_slash_stroke_width),
         );
     }
 }
@@ -3373,14 +3480,11 @@ fn paint_layer_lock_button(
     if hovered || pressed {
         ctx.fill(
             rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
-            if pressed {
-                palette.control_active
-            } else {
-                palette.control_hover
-            },
+            data_row_state_fill(theme, false, hovered, pressed),
         );
     }
 
+    let metrics = theme.metrics;
     draw_icon_glyph(
         ctx,
         if locked {
@@ -3388,7 +3492,7 @@ fn paint_layer_lock_button(
         } else {
             IconGlyph::Unlock
         },
-        inset_rect(rect, Insets::all(4.0)),
+        inset_rect(rect, Insets::all(metrics.layer_lock_icon_inset)),
         if locked {
             palette.border_focus
         } else {
@@ -3405,21 +3509,29 @@ fn paint_layer_thumbnail(
     visible: bool,
 ) {
     let palette = theme.palette;
-    let radius = theme.metrics.corner_radius.min(4.0);
+    let metrics = theme.metrics;
+    let radius = metrics.layer_thumbnail_radius;
     ctx.fill(rounded_rect_path(rect, radius), palette.control_hover);
-    let fill = inset_rect(rect, Insets::all(2.0));
+    let fill = inset_rect(rect, Insets::all(metrics.layer_thumbnail_inset));
     ctx.fill(
-        rounded_rect_path(fill, (radius - 1.0).max(0.0)),
+        rounded_rect_path(
+            fill,
+            (radius - metrics.layer_thumbnail_inset * 0.5).max(0.0),
+        ),
         if visible {
             color
         } else {
-            color.with_alpha(color.alpha * 0.36)
+            color.with_alpha(color.alpha * metrics.layer_thumbnail_disabled_opacity)
         },
     );
     ctx.stroke(
         rounded_rect_path(rect, radius),
-        palette.border.with_alpha(if visible { 1.0 } else { 0.55 }),
-        sui_scene::StrokeStyle::new(1.0),
+        palette.border.with_alpha(if visible {
+            1.0
+        } else {
+            metrics.layer_thumbnail_disabled_border_opacity
+        }),
+        sui_scene::StrokeStyle::new(metrics.border_width.max(1.0)),
     );
 }
 
@@ -3472,7 +3584,7 @@ mod tests {
 
     use super::{
         Breadcrumb, BreadcrumbItem, DefaultTheme, LayerList, LayerListItem, ListItem, ListView,
-        TREE_DISCLOSURE_LABEL_GAP, Table, TableColumn, TableRow, TreeItem, TreeView,
+        Table, TableColumn, TableRow, TreeItem, TreeView,
     };
     use crate::{Button, Label, ScrollView, SizedBox, Stack};
     use sui_core::{
@@ -3502,6 +3614,105 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).expect("render should succeed")
+    }
+
+    #[test]
+    fn density_modes_resize_data_widgets() {
+        let compact = DefaultTheme::compact();
+        let touch = DefaultTheme::touch();
+
+        assert!(
+            render(
+                ListView::new("Layers")
+                    .theme(compact)
+                    .items([ListItem::new("Paint"), ListItem::new("Ink")])
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    ListView::new("Layers")
+                        .theme(touch)
+                        .items([ListItem::new("Paint"), ListItem::new("Ink")])
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                LayerList::new("Layers")
+                    .theme(compact)
+                    .layers([LayerListItem::new("Paint"), LayerListItem::new("Ink")])
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    LayerList::new("Layers")
+                        .theme(touch)
+                        .layers([LayerListItem::new("Paint"), LayerListItem::new("Ink")])
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                TreeView::new("Scene")
+                    .theme(compact)
+                    .items([TreeItem::new("Canvas"), TreeItem::new("Lighting")])
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    TreeView::new("Scene")
+                        .theme(touch)
+                        .items([TreeItem::new("Canvas"), TreeItem::new("Lighting")])
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                Table::new("Objects")
+                    .theme(compact)
+                    .columns([TableColumn::new("Name")])
+                    .rows([TableRow::new(["Canvas"]), TableRow::new(["Lighting"])])
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    Table::new("Objects")
+                        .theme(touch)
+                        .columns([TableColumn::new("Name")])
+                        .rows([TableRow::new(["Canvas"]), TableRow::new(["Lighting"])])
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                Breadcrumb::new("Path")
+                    .theme(compact)
+                    .items([BreadcrumbItem::new("Scene"), BreadcrumbItem::new("Layers")])
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    Breadcrumb::new("Path")
+                        .theme(touch)
+                        .items([BreadcrumbItem::new("Scene"), BreadcrumbItem::new("Layers")])
+                )
+                .frame
+                .viewport
+                .height
+        );
     }
 
     fn text_rects_for(output: &RenderOutput, text: &str) -> Vec<Rect> {
@@ -3595,7 +3806,8 @@ mod tests {
     }
 
     fn selected_highlight_rects(output: &RenderOutput) -> Vec<Rect> {
-        let selected_brush = Brush::Solid(DefaultTheme::default().palette.selection);
+        let theme = DefaultTheme::default();
+        let selected_brush = Brush::Solid(super::data_row_state_fill(&theme, true, false, false));
         let mut rects = Vec::new();
         output
             .frame
@@ -3629,6 +3841,52 @@ mod tests {
                 _ => {}
             });
         colors
+    }
+
+    fn solid_stroke_widths(output: &RenderOutput) -> Vec<f32> {
+        let mut widths = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect { stroke, .. }
+                | SceneCommand::StrokePath { stroke, .. } => {
+                    widths.push(stroke.width);
+                }
+                _ => {}
+            });
+        widths
+    }
+
+    fn solid_stroke_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::StrokePath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
+    }
+
+    fn solid_stroke_rects(output: &RenderOutput) -> Vec<Rect> {
+        let mut rects = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect { rect, .. } => rects.push(*rect),
+                _ => {}
+            });
+        rects
     }
 
     fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
@@ -3919,6 +4177,43 @@ mod tests {
         );
         assert_eq!(lock.state.checked, Some(ToggleState::Unchecked));
         assert!(lock.actions.contains(&SemanticsAction::Activate));
+    }
+
+    #[test]
+    fn layer_list_chrome_uses_theme_metrics() {
+        let mut theme = DefaultTheme::default();
+        theme.metrics.layer_visibility_stroke_width = 2.75;
+        theme.metrics.layer_visibility_slash_stroke_width = 3.25;
+        theme.metrics.layer_thumbnail_disabled_opacity = 0.21;
+        theme.metrics.layer_thumbnail_disabled_border_opacity = 0.33;
+        let thumbnail = Color::rgba(0.30, 0.50, 0.70, 1.0);
+
+        let output = render(
+            SizedBox::new().width(280.0).height(64.0).with_child(
+                LayerList::new("Layers")
+                    .theme(theme)
+                    .layers([LayerListItem::new("Paper")
+                        .thumbnail(thumbnail)
+                        .visible(false)]),
+            ),
+        );
+        let fills = solid_fill_colors(&output);
+        let stroke_widths = solid_stroke_widths(&output);
+        let stroke_colors = solid_stroke_colors(&output);
+
+        assert!(fills.contains(&thumbnail.with_alpha(0.21)));
+        assert!(fills.contains(&theme.palette.control_hover));
+        assert!(stroke_colors.contains(&theme.palette.border.with_alpha(0.33)));
+        assert!(
+            stroke_widths
+                .iter()
+                .any(|width| (*width - 2.75).abs() < f32::EPSILON)
+        );
+        assert!(
+            stroke_widths
+                .iter()
+                .any(|width| (*width - 3.25).abs() < f32::EPSILON)
+        );
     }
 
     #[test]
@@ -4383,6 +4678,60 @@ mod tests {
     }
 
     #[test]
+    fn table_chrome_uses_theme_metrics() {
+        let mut theme = DefaultTheme::default();
+        theme.metrics.table_header_separator_inset = 7.0;
+        theme.metrics.table_separator_width = 2.75;
+        theme.metrics.table_row_border_opacity = 0.29;
+        theme.metrics.data_scroll_thumb_width = 5.5;
+        theme.metrics.data_scroll_thumb_inset = 9.0;
+        theme.metrics.data_scroll_thumb_radius = 2.75;
+        theme.metrics.data_scroll_thumb_min_length = 35.0;
+        theme.metrics.data_scroll_thumb_opacity = 0.41;
+        let rows = (0..10).map(|index| TableRow::new([format!("Row {index}"), format!("{index}")]));
+
+        let output = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                Table::new("Materials")
+                    .theme(theme)
+                    .columns([
+                        TableColumn::new("Name").width(160.0),
+                        TableColumn::new("Passes").width(80.0),
+                    ])
+                    .rows(rows),
+            ),
+        );
+
+        let expected_separator_height =
+            theme.metrics.table_header_height - (theme.metrics.table_header_separator_inset * 2.0);
+        assert!(solid_stroke_rects(&output).iter().any(|rect| {
+            (rect.width() - theme.metrics.table_separator_width).abs() < 0.01
+                && (rect.height() - expected_separator_height).abs() < 0.01
+        }));
+        assert!(
+            solid_stroke_widths(&output)
+                .iter()
+                .any(|width| { (*width - theme.metrics.table_separator_width).abs() < 0.01 })
+        );
+        assert!(
+            solid_stroke_colors(&output).contains(
+                &theme
+                    .palette
+                    .border
+                    .with_alpha(theme.metrics.table_row_border_opacity)
+            )
+        );
+        assert!(
+            solid_fill_colors(&output).contains(
+                &theme
+                    .palette
+                    .border_hover
+                    .with_alpha(theme.metrics.data_scroll_thumb_opacity)
+            )
+        );
+    }
+
+    #[test]
     fn list_view_detail_text_does_not_overlap_primary_label() {
         let output = render(SizedBox::new().width(320.0).height(120.0).with_child(
             ListView::new("Assets").item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
@@ -4617,7 +4966,9 @@ mod tests {
         let disclosure = disclosure_bounds
             .first()
             .expect("tree disclosure should be painted");
-        assert!(disclosure.max_x() + TREE_DISCLOSURE_LABEL_GAP <= label.x());
+        assert!(
+            disclosure.max_x() + DefaultTheme::default().metrics.tree_disclosure_gap <= label.x()
+        );
     }
 
     #[test]
@@ -4740,7 +5091,10 @@ mod tests {
         let label = text_rects_for(&output, "Workspace")[0];
         let theme = DefaultTheme::default();
         let line_height = theme.body_text_style().line_height;
-        let available_height = (theme.metrics.min_height - 8.0).max(0.0);
+        let available_height = (theme.metrics.breadcrumb_height
+            - theme.metrics.breadcrumb_item_padding.top
+            - theme.metrics.breadcrumb_item_padding.bottom)
+            .max(0.0);
 
         assert!((label.height() - line_height.min(available_height)).abs() < 0.001);
         assert!(label.width() > 0.0);

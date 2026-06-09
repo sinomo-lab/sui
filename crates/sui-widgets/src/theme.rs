@@ -134,6 +134,25 @@ pub enum ThemeColorScheme {
     HighContrast,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeDensity {
+    Compact,
+    #[default]
+    Comfortable,
+    Touch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SemanticTone {
+    #[default]
+    Neutral,
+    Accent,
+    Info,
+    Success,
+    Warning,
+    Danger,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeColors {
     pub name: &'static str,
@@ -782,6 +801,12 @@ pub struct ControlPalette {
     pub accent_border_hover: Color,
     pub accent_border_focus: Color,
     pub accent_text: Color,
+    pub info: Color,
+    pub info_text: Color,
+    pub success: Color,
+    pub success_text: Color,
+    pub warning: Color,
+    pub warning_text: Color,
     pub danger: Color,
     pub danger_text: Color,
 }
@@ -852,6 +877,12 @@ impl ControlPalette {
             accent_border_hover: interactive_variant(colors.primary, colors.scheme, 0.2),
             accent_border_focus: colors.primary,
             accent_text: colors.primary_content,
+            info: colors.info,
+            info_text: colors.info_content,
+            success: colors.success,
+            success_text: colors.success_content,
+            warning: colors.warning,
+            warning_text: colors.warning_content,
             danger: colors.error,
             danger_text: colors.error_content,
         }
@@ -882,6 +913,33 @@ pub struct SurfacePalette {
     pub on_accent: Color,
     pub hover: Color,
     pub selected: Color,
+    pub overlay_scrim: Color,
+    pub tooltip: Color,
+    pub tooltip_border: Color,
+    pub tooltip_text: Color,
+    pub canvas: Color,
+    pub canvas_grid: Color,
+    pub canvas_axis_x: Color,
+    pub canvas_axis_y: Color,
+    pub pixel_canvas_paper: Color,
+    pub pixel_canvas_document_edge: Color,
+    pub pixel_canvas_shadow_near: Color,
+    pub pixel_canvas_shadow_far: Color,
+    pub pixel_canvas_grid: Color,
+    pub canvas_ruler: Color,
+    pub canvas_ruler_border: Color,
+    pub canvas_ruler_tick: Color,
+    pub canvas_ruler_text: Color,
+    pub checkerboard_light: Color,
+    pub checkerboard_dark: Color,
+    pub color_picker_chrome_border: Color,
+    pub color_picker_plane_border: Color,
+    pub color_picker_bar_border: Color,
+    pub color_picker_marker_outer: Color,
+    pub color_picker_marker_dark: Color,
+    pub color_picker_marker_light: Color,
+    pub color_picker_sdr_marker: Color,
+    pub color_picker_hdr_divider: Color,
     pub good: Color,
     pub warn: Color,
     pub bad: Color,
@@ -929,6 +987,57 @@ impl SurfacePalette {
             on_accent: controls.accent_text,
             hover: controls.text.with_alpha(if dark { 0.06 } else { 0.045 }),
             selected: controls.selection,
+            overlay_scrim: Color::rgba(0.06, 0.08, 0.12, if dark { 0.38 } else { 0.24 }),
+            tooltip: if dark {
+                controls.surface_raised
+            } else {
+                controls.text
+            },
+            tooltip_border: if dark {
+                controls.border_strong
+            } else {
+                mix(controls.text, controls.surface, 0.20)
+            },
+            tooltip_text: if dark {
+                controls.text
+            } else {
+                controls.surface
+            },
+            canvas: controls.surface,
+            canvas_grid: controls.border.with_alpha(if dark { 0.30 } else { 0.18 }),
+            canvas_axis_x: colors.error.with_alpha(if dark { 0.72 } else { 0.55 }),
+            canvas_axis_y: colors.success.with_alpha(if dark { 0.72 } else { 0.55 }),
+            pixel_canvas_paper: if dark {
+                mix(controls.surface_raised, controls.text, 0.10)
+            } else {
+                Color::rgba(0.975, 0.980, 0.988, 1.0)
+            },
+            pixel_canvas_document_edge: controls.text.with_alpha(if dark { 0.82 } else { 0.72 }),
+            pixel_canvas_shadow_near: Color::rgba(0.05, 0.07, 0.10, if dark { 0.30 } else { 0.16 }),
+            pixel_canvas_shadow_far: Color::rgba(0.05, 0.07, 0.10, if dark { 0.18 } else { 0.08 }),
+            pixel_canvas_grid: controls.text.with_alpha(if dark { 0.32 } else { 0.28 }),
+            canvas_ruler: controls.surface_raised,
+            canvas_ruler_border: controls.border.with_alpha(0.78),
+            canvas_ruler_tick: controls.text_muted.with_alpha(0.72),
+            canvas_ruler_text: controls.text.with_alpha(0.76),
+            checkerboard_light: if dark {
+                mix(controls.surface_raised, controls.text, 0.18)
+            } else {
+                Color::rgba(0.980, 0.980, 0.990, 1.0)
+            },
+            checkerboard_dark: if dark {
+                mix(controls.surface_raised, controls.text, 0.10)
+            } else {
+                Color::rgba(0.900, 0.920, 0.950, 1.0)
+            },
+            color_picker_chrome_border: controls.text.with_alpha(if dark { 0.24 } else { 0.18 }),
+            color_picker_plane_border: controls.text.with_alpha(if dark { 0.22 } else { 0.16 }),
+            color_picker_bar_border: controls.text.with_alpha(if dark { 0.20 } else { 0.14 }),
+            color_picker_marker_outer: controls.surface_raised.with_alpha(0.92),
+            color_picker_marker_dark: Color::BLACK.with_alpha(0.84),
+            color_picker_marker_light: Color::WHITE.with_alpha(0.95),
+            color_picker_sdr_marker: controls.surface_raised.with_alpha(0.30),
+            color_picker_hdr_divider: controls.surface_raised.with_alpha(0.28),
             good: colors.success,
             warn: colors.warning,
             bad: colors.error,
@@ -966,8 +1075,64 @@ impl Default for ControlTypography {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ControlStateMetrics {
+    pub hover_blend: f32,
+    pub pressed_blend: f32,
+    pub selected_blend: f32,
+    pub tab_selected_blend: f32,
+    pub disabled_opacity: f32,
+    pub disabled_content_opacity: f32,
+    pub pressed_offset: f32,
+    pub active_indicator_thickness: f32,
+}
+
+impl ControlStateMetrics {
+    pub fn for_density(density: ThemeDensity) -> Self {
+        match density {
+            ThemeDensity::Compact => Self {
+                hover_blend: 0.78,
+                pressed_blend: 0.88,
+                selected_blend: 0.20,
+                tab_selected_blend: 0.07,
+                disabled_opacity: 0.70,
+                disabled_content_opacity: 0.46,
+                pressed_offset: 0.5,
+                active_indicator_thickness: 2.0,
+            },
+            ThemeDensity::Comfortable => Self {
+                hover_blend: 0.86,
+                pressed_blend: 1.0,
+                selected_blend: 0.22,
+                tab_selected_blend: 0.08,
+                disabled_opacity: 0.74,
+                disabled_content_opacity: 0.50,
+                pressed_offset: 1.0,
+                active_indicator_thickness: 3.0,
+            },
+            ThemeDensity::Touch => Self {
+                hover_blend: 0.94,
+                pressed_blend: 1.0,
+                selected_blend: 0.24,
+                tab_selected_blend: 0.09,
+                disabled_opacity: 0.78,
+                disabled_content_opacity: 0.54,
+                pressed_offset: 1.5,
+                active_indicator_thickness: 4.0,
+            },
+        }
+    }
+}
+
+impl Default for ControlStateMetrics {
+    fn default() -> Self {
+        Self::for_density(ThemeDensity::default())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ControlMetrics {
     pub min_height: f32,
+    pub touch_target_size: f32,
     pub button_min_width: f32,
     pub button_padding: Insets,
     pub checkbox_padding: Insets,
@@ -979,6 +1144,7 @@ pub struct ControlMetrics {
     pub icon_button_size: f32,
     pub switch_track_width: f32,
     pub switch_track_height: f32,
+    pub switch_thumb_inset: f32,
     pub slider_min_width: f32,
     pub slider_padding: Insets,
     pub slider_track_height: f32,
@@ -990,15 +1156,174 @@ pub struct ControlMetrics {
     pub select_menu_max_height: f32,
     pub select_menu_gap: f32,
     pub select_menu_edge_padding: f32,
+    pub tab_height: f32,
+    pub tab_min_width: f32,
     pub tab_gap: f32,
     pub tab_padding: Insets,
     pub tab_panel_padding: Insets,
     pub tab_panel_gap: f32,
+    pub menu_row_height: f32,
     pub menu_padding: Insets,
     pub menu_item_padding: Insets,
     pub menu_shortcut_width: f32,
     pub popover_padding: Insets,
     pub popover_gap: f32,
+    pub popover_reveal_offset: f32,
+    pub tooltip_padding: Insets,
+    pub tooltip_min_width: f32,
+    pub tooltip_gap: f32,
+    pub tooltip_reveal_offset: f32,
+    pub dialog_min_width: f32,
+    pub dialog_max_width: f32,
+    pub dialog_outer_margin: f32,
+    pub dialog_padding: Insets,
+    pub dialog_title_font_size: f32,
+    pub dialog_title_line_height: f32,
+    pub dialog_description_gap: f32,
+    pub dialog_body_gap: f32,
+    pub dialog_footer_gap: f32,
+    pub dialog_action_gap: f32,
+    pub dialog_action_min_width: f32,
+    pub toolbar_extent: f32,
+    pub toolbar_padding: Insets,
+    pub toolbar_spacing: f32,
+    pub command_group_padding: Insets,
+    pub command_group_spacing: f32,
+    pub command_group_radius: f32,
+    pub tool_palette_item_size: f32,
+    pub tool_palette_icon_size: f32,
+    pub preset_strip_item_height: f32,
+    pub preset_strip_item_min_width: f32,
+    pub preset_strip_item_padding: Insets,
+    pub preset_strip_gap: f32,
+    pub preset_strip_label_padding: Insets,
+    pub action_card_min_width: f32,
+    pub action_card_min_height: f32,
+    pub action_card_padding: Insets,
+    pub action_card_icon_box_size: f32,
+    pub action_card_icon_size: f32,
+    pub action_card_icon_gap: f32,
+    pub action_card_text_gap: f32,
+    pub action_card_trailing_gap: f32,
+    pub action_card_chevron_size: f32,
+    pub action_card_accent_width: f32,
+    pub action_card_accent_inset: f32,
+    pub status_bar_height: f32,
+    pub status_bar_segment_padding: f32,
+    pub status_bar_segment_min_width: f32,
+    pub status_bar_separator_inset: f32,
+    pub progress_bar_min_width: f32,
+    pub progress_bar_height: f32,
+    pub progress_bar_value_height: f32,
+    pub progress_bar_label_padding: Insets,
+    pub property_row_label_width: f32,
+    pub property_row_inline_gap: f32,
+    pub property_row_stacked_gap: f32,
+    pub form_row_label_width: f32,
+    pub form_row_control_width: f32,
+    pub form_row_gap: f32,
+    pub field_group_spacing: f32,
+    pub form_section_padding: Insets,
+    pub form_section_body_gap: f32,
+    pub form_section_header_gap: f32,
+    pub form_section_description_gap: f32,
+    pub form_section_max_width: f32,
+    pub form_section_radius: f32,
+    pub panel_section_gap: f32,
+    pub panel_section_action_gap: f32,
+    pub panel_section_disclosure_size: f32,
+    pub dock_panel_header_height: f32,
+    pub dock_panel_padding: Insets,
+    pub data_viewport_padding: Insets,
+    pub data_row_padding: Insets,
+    pub data_row_icon_size: f32,
+    pub data_row_icon_gap: f32,
+    pub data_row_trailing_gap: f32,
+    pub data_scroll_thumb_width: f32,
+    pub data_scroll_thumb_inset: f32,
+    pub data_scroll_thumb_radius: f32,
+    pub data_scroll_thumb_min_length: f32,
+    pub data_scroll_thumb_opacity: f32,
+    pub list_row_height: f32,
+    pub layer_row_height: f32,
+    pub layer_action_size: f32,
+    pub layer_action_icon_inset: f32,
+    pub layer_lock_icon_inset: f32,
+    pub layer_visibility_stroke_width: f32,
+    pub layer_visibility_slash_stroke_width: f32,
+    pub layer_thumbnail_size: f32,
+    pub layer_thumbnail_inset: f32,
+    pub layer_thumbnail_radius: f32,
+    pub layer_thumbnail_disabled_opacity: f32,
+    pub layer_thumbnail_disabled_border_opacity: f32,
+    pub tree_row_height: f32,
+    pub tree_indent: f32,
+    pub tree_disclosure_size: f32,
+    pub tree_disclosure_gap: f32,
+    pub table_row_height: f32,
+    pub table_header_height: f32,
+    pub table_cell_padding: f32,
+    pub table_header_separator_inset: f32,
+    pub table_separator_width: f32,
+    pub table_row_border_opacity: f32,
+    pub breadcrumb_height: f32,
+    pub breadcrumb_item_padding: Insets,
+    pub breadcrumb_gap: f32,
+    pub breadcrumb_separator_size: f32,
+    pub image_corner_radius: f32,
+    pub color_swatch_width: f32,
+    pub color_swatch_height: f32,
+    pub color_swatch_inner_inset: f32,
+    pub color_swatch_checker_size: f32,
+    pub color_palette_swatch_size: f32,
+    pub color_palette_gap: f32,
+    pub color_palette_swatch_inset: f32,
+    pub color_palette_selected_swatch_inset: f32,
+    pub color_palette_checker_size: f32,
+    pub brush_preview_min_width: f32,
+    pub brush_preview_min_height: f32,
+    pub brush_preview_padding: Insets,
+    pub brush_preview_swatch_width: f32,
+    pub brush_preview_swatch_gap: f32,
+    pub brush_preview_checker_size: f32,
+    pub brush_preview_text_height: f32,
+    pub brush_preview_text_font_size: f32,
+    pub brush_preview_text_line_height: f32,
+    pub color_picker_content_inset: f32,
+    pub color_picker_panel_gap: f32,
+    pub color_picker_top_bar_height: f32,
+    pub color_picker_swatch_width: f32,
+    pub color_picker_swatch_gap: f32,
+    pub color_picker_section_gap: f32,
+    pub color_picker_wheel_size: f32,
+    pub color_picker_map_size: f32,
+    pub color_picker_row_height: f32,
+    pub color_picker_row_gap: f32,
+    pub color_picker_right_panel_width: f32,
+    pub color_picker_field_height: f32,
+    pub color_picker_field_gap: f32,
+    pub color_picker_dropdown_gap: f32,
+    pub color_picker_encoding_menu_row_height: f32,
+    pub scroll_bar_thickness: f32,
+    pub scroll_bar_min_thumb_length: f32,
+    pub split_view_divider_thickness: f32,
+    pub split_view_drag_target_thickness: f32,
+    pub floating_workspace_margin: f32,
+    pub floating_view_title_bar_height: f32,
+    pub floating_view_title_padding: Insets,
+    pub floating_view_resize_handle_size: f32,
+    pub canvas_ruler_extent: f32,
+    pub canvas_ruler_major_tick: f32,
+    pub canvas_ruler_minor_tick: f32,
+    pub canvas_ruler_target_major_spacing: f32,
+    pub canvas_ruler_label_padding: Insets,
+    pub canvas_ruler_label_max_width: f32,
+    pub canvas_grid_step: f32,
+    pub canvas_axis_overscan: f32,
+    pub pixel_canvas_fit_padding: f32,
+    pub pixel_canvas_grid_zoom: f32,
+    pub pixel_canvas_nearest_sampling_zoom: f32,
+    pub pixel_canvas_zoom_step: f32,
     pub corner_radius: f32,
     pub indicator_corner_radius: f32,
     pub border_width: f32,
@@ -1008,71 +1333,1174 @@ pub struct ControlMetrics {
 }
 
 impl ControlMetrics {
-    pub fn from_tokens(spacing: f32, radius: ThemeRadii) -> Self {
+    pub fn from_tokens(spacing: f32, radius: ThemeRadii, density: ThemeDensity) -> Self {
         let unit = spacing.max(1.0);
+        let (
+            min_height,
+            touch_target_size,
+            button_padding,
+            checkbox_padding,
+            checkbox_indicator_size,
+            icon_size,
+            icon_button_size,
+            switch_track_width,
+            switch_track_height,
+            switch_thumb_inset,
+            slider_min_width,
+            slider_padding,
+            slider_track_height,
+            slider_thumb_size,
+            number_input_stepper_width,
+            text_input_min_width,
+            text_input_padding,
+            text_area_min_height,
+            select_menu_max_height,
+            tab_height,
+            tab_min_width,
+            tab_padding,
+            tab_panel_padding,
+            tab_panel_gap,
+            menu_row_height,
+            menu_padding,
+            menu_item_padding,
+            popover_padding,
+            action_card_min_width,
+            action_card_min_height,
+            action_card_padding,
+            action_card_icon_box_size,
+            action_card_icon_size,
+            action_card_icon_gap,
+            action_card_text_gap,
+            action_card_trailing_gap,
+            action_card_chevron_size,
+            action_card_accent_width,
+            action_card_accent_inset,
+            status_bar_height,
+            status_bar_segment_padding,
+            status_bar_segment_min_width,
+            status_bar_separator_inset,
+            progress_bar_min_width,
+            progress_bar_height,
+            progress_bar_value_height,
+            progress_bar_label_padding,
+            data_viewport_padding,
+            data_row_padding,
+            data_row_icon_size,
+            data_row_icon_gap,
+            data_row_trailing_gap,
+            list_row_height,
+            layer_row_height,
+            layer_action_size,
+            layer_thumbnail_size,
+            tree_row_height,
+            tree_indent,
+            tree_disclosure_size,
+            tree_disclosure_gap,
+            table_row_height,
+            table_header_height,
+            table_cell_padding,
+            breadcrumb_height,
+            breadcrumb_item_padding,
+            breadcrumb_gap,
+            breadcrumb_separator_size,
+        ) = match density {
+            ThemeDensity::Compact => (
+                22.0,
+                28.0,
+                Insets {
+                    left: unit * 1.5,
+                    top: unit * 0.75,
+                    right: unit * 1.5,
+                    bottom: unit * 0.75,
+                },
+                Insets {
+                    left: unit,
+                    top: unit * 0.5,
+                    right: unit,
+                    bottom: unit * 0.5,
+                },
+                12.0,
+                12.0,
+                22.0,
+                26.0,
+                14.0,
+                2.0,
+                120.0,
+                Insets {
+                    left: unit * 1.5,
+                    top: unit * 0.5,
+                    right: unit * 1.5,
+                    bottom: unit * 0.5,
+                },
+                3.0,
+                12.0,
+                22.0,
+                150.0,
+                Insets {
+                    left: unit * 1.5,
+                    top: unit * 0.75,
+                    right: unit * 1.5,
+                    bottom: unit * 0.75,
+                },
+                64.0,
+                176.0,
+                28.0,
+                84.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit * 0.75,
+                    right: unit * 2.0,
+                    bottom: unit * 0.75,
+                },
+                Insets::all(unit * 3.0),
+                unit * 2.0,
+                24.0,
+                Insets::all(unit),
+                Insets {
+                    left: unit * 2.0,
+                    top: unit * 0.5,
+                    right: unit * 2.0,
+                    bottom: unit * 0.5,
+                },
+                Insets::all(unit * 2.5),
+                252.0,
+                84.0,
+                Insets {
+                    left: unit * 3.0,
+                    top: unit * 2.5,
+                    right: unit * 2.5,
+                    bottom: unit * 2.5,
+                },
+                32.0,
+                16.0,
+                unit * 2.5,
+                unit,
+                18.0,
+                14.0,
+                2.0,
+                unit * 2.0,
+                24.0,
+                unit * 2.0,
+                72.0,
+                unit * 1.25,
+                180.0,
+                14.0,
+                22.0,
+                Insets::all(unit * 0.5),
+                Insets::all(unit * 1.5),
+                Insets {
+                    left: unit * 3.0,
+                    top: unit * 0.5,
+                    right: unit * 2.0,
+                    bottom: unit * 0.5,
+                },
+                12.0,
+                unit * 1.5,
+                unit * 2.0,
+                24.0,
+                38.0,
+                22.0,
+                26.0,
+                24.0,
+                unit * 4.0,
+                10.0,
+                unit,
+                24.0,
+                26.0,
+                unit * 1.5,
+                24.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit * 0.75,
+                    right: unit * 2.0,
+                    bottom: unit * 0.75,
+                },
+                unit * 4.0,
+                9.0,
+            ),
+            ThemeDensity::Comfortable => (
+                24.0,
+                32.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit * 1.25,
+                    right: unit * 2.0,
+                    bottom: unit * 1.25,
+                },
+                Insets {
+                    left: unit * 1.5,
+                    top: unit,
+                    right: unit * 1.5,
+                    bottom: unit,
+                },
+                14.0,
+                14.0,
+                26.0,
+                28.0,
+                16.0,
+                2.0,
+                140.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit,
+                    right: unit * 2.0,
+                    bottom: unit,
+                },
+                3.0,
+                14.0,
+                24.0,
+                180.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit * 1.25,
+                    right: unit * 2.0,
+                    bottom: unit * 1.25,
+                },
+                80.0,
+                200.0,
+                32.0,
+                96.0,
+                Insets {
+                    left: unit * 2.5,
+                    top: unit,
+                    right: unit * 2.5,
+                    bottom: unit,
+                },
+                Insets::all(unit * 4.0),
+                unit * 3.0,
+                28.0,
+                Insets::all(unit * 1.5),
+                Insets {
+                    left: unit * 3.0,
+                    top: unit,
+                    right: unit * 3.0,
+                    bottom: unit,
+                },
+                Insets::all(unit * 3.5),
+                280.0,
+                104.0,
+                Insets {
+                    left: unit * 4.0,
+                    top: unit * 3.5,
+                    right: unit * 3.5,
+                    bottom: unit * 3.5,
+                },
+                38.0,
+                20.0,
+                unit * 3.0,
+                unit * 1.25,
+                22.0,
+                16.0,
+                3.0,
+                unit * 2.5,
+                28.0,
+                unit * 2.5,
+                86.0,
+                unit * 1.5,
+                240.0,
+                18.0,
+                18.0,
+                Insets::all(unit * 0.5),
+                Insets::all(unit * 2.0),
+                Insets {
+                    left: 14.0,
+                    top: unit,
+                    right: 10.0,
+                    bottom: unit,
+                },
+                14.0,
+                unit * 2.0,
+                unit * 3.0,
+                28.0,
+                46.0,
+                26.0,
+                34.0,
+                30.0,
+                18.0,
+                12.0,
+                6.0,
+                28.0,
+                30.0,
+                unit * 2.0,
+                28.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit,
+                    right: unit * 2.0,
+                    bottom: unit,
+                },
+                unit * 5.0,
+                10.0,
+            ),
+            ThemeDensity::Touch => (
+                44.0,
+                44.0,
+                Insets {
+                    left: unit * 3.0,
+                    top: unit * 2.0,
+                    right: unit * 3.0,
+                    bottom: unit * 2.0,
+                },
+                Insets {
+                    left: unit * 2.5,
+                    top: unit * 2.0,
+                    right: unit * 2.5,
+                    bottom: unit * 2.0,
+                },
+                18.0,
+                18.0,
+                44.0,
+                42.0,
+                24.0,
+                3.0,
+                180.0,
+                Insets {
+                    left: unit * 3.0,
+                    top: unit * 2.0,
+                    right: unit * 3.0,
+                    bottom: unit * 2.0,
+                },
+                4.0,
+                22.0,
+                36.0,
+                220.0,
+                Insets {
+                    left: unit * 3.0,
+                    top: unit * 2.0,
+                    right: unit * 3.0,
+                    bottom: unit * 2.0,
+                },
+                112.0,
+                260.0,
+                44.0,
+                112.0,
+                Insets {
+                    left: unit * 3.5,
+                    top: unit * 2.0,
+                    right: unit * 3.5,
+                    bottom: unit * 2.0,
+                },
+                Insets::all(unit * 5.0),
+                unit * 4.0,
+                44.0,
+                Insets::all(unit * 2.0),
+                Insets {
+                    left: unit * 3.5,
+                    top: unit * 2.0,
+                    right: unit * 3.5,
+                    bottom: unit * 2.0,
+                },
+                Insets::all(unit * 4.5),
+                320.0,
+                128.0,
+                Insets {
+                    left: unit * 5.0,
+                    top: unit * 4.5,
+                    right: unit * 4.5,
+                    bottom: unit * 4.5,
+                },
+                48.0,
+                24.0,
+                unit * 3.5,
+                unit * 1.5,
+                28.0,
+                20.0,
+                4.0,
+                unit * 3.0,
+                44.0,
+                unit * 3.0,
+                104.0,
+                unit * 2.0,
+                280.0,
+                24.0,
+                44.0,
+                Insets::all(unit),
+                Insets::all(unit * 2.5),
+                Insets {
+                    left: unit * 4.0,
+                    top: unit * 2.0,
+                    right: unit * 3.0,
+                    bottom: unit * 2.0,
+                },
+                18.0,
+                unit * 2.5,
+                unit * 4.0,
+                44.0,
+                56.0,
+                40.0,
+                42.0,
+                44.0,
+                24.0,
+                16.0,
+                unit * 1.5,
+                44.0,
+                46.0,
+                unit * 3.0,
+                44.0,
+                Insets {
+                    left: unit * 3.0,
+                    top: unit * 2.0,
+                    right: unit * 3.0,
+                    bottom: unit * 2.0,
+                },
+                unit * 6.0,
+                12.0,
+            ),
+        };
+
+        let (
+            popover_reveal_offset,
+            tooltip_padding,
+            tooltip_min_width,
+            tooltip_gap,
+            tooltip_reveal_offset,
+            dialog_min_width,
+            dialog_max_width,
+            dialog_outer_margin,
+            dialog_padding,
+            dialog_title_font_size,
+            dialog_title_line_height,
+            dialog_description_gap,
+            dialog_body_gap,
+            dialog_footer_gap,
+            dialog_action_gap,
+            dialog_action_min_width,
+        ) = match density {
+            ThemeDensity::Compact => (
+                8.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit * 1.5,
+                    right: unit * 2.0,
+                    bottom: unit * 1.5,
+                },
+                80.0,
+                unit * 2.0,
+                6.0,
+                240.0,
+                460.0,
+                unit * 4.0,
+                Insets::all(unit * 3.5),
+                18.0,
+                22.0,
+                unit * 1.5,
+                unit * 3.0,
+                unit * 3.5,
+                unit * 2.0,
+                92.0,
+            ),
+            ThemeDensity::Comfortable => (
+                10.0,
+                Insets {
+                    left: unit * 2.25,
+                    top: unit * 2.25,
+                    right: unit * 2.25,
+                    bottom: unit * 2.25,
+                },
+                96.0,
+                unit * 2.5,
+                8.0,
+                280.0,
+                520.0,
+                unit * 6.0,
+                Insets::all(18.0),
+                20.0,
+                24.0,
+                unit * 2.0,
+                14.0,
+                18.0,
+                unit * 2.5,
+                110.0,
+            ),
+            ThemeDensity::Touch => (
+                12.0,
+                Insets {
+                    left: unit * 3.0,
+                    top: unit * 2.5,
+                    right: unit * 3.0,
+                    bottom: unit * 2.5,
+                },
+                112.0,
+                unit * 3.0,
+                10.0,
+                320.0,
+                600.0,
+                unit * 8.0,
+                Insets::all(unit * 6.0),
+                22.0,
+                28.0,
+                unit * 2.5,
+                unit * 4.5,
+                unit * 5.0,
+                unit * 3.0,
+                128.0,
+            ),
+        };
+
+        let (
+            layer_action_icon_inset,
+            layer_lock_icon_inset,
+            layer_visibility_stroke_width,
+            layer_visibility_slash_stroke_width,
+            layer_thumbnail_inset,
+            layer_thumbnail_radius,
+            layer_thumbnail_disabled_opacity,
+            layer_thumbnail_disabled_border_opacity,
+        ) = match density {
+            ThemeDensity::Compact => (4.5, 3.5, 1.25, 1.45, 1.5, radius.md, 0.34, 0.52),
+            ThemeDensity::Comfortable => (5.0, 4.0, 1.4, 1.6, 2.0, radius.md, 0.36, 0.55),
+            ThemeDensity::Touch => (7.0, 6.0, 1.8, 2.0, 3.0, radius.lg, 0.40, 0.60),
+        };
+
+        let (
+            data_scroll_thumb_width,
+            data_scroll_thumb_inset,
+            data_scroll_thumb_radius,
+            data_scroll_thumb_min_length,
+            data_scroll_thumb_opacity,
+            table_header_separator_inset,
+            table_separator_width,
+            table_row_border_opacity,
+        ) = match density {
+            ThemeDensity::Compact => (3.0, 5.0, radius.sm, 24.0, 0.68, 3.0, 1.0, 0.50),
+            ThemeDensity::Comfortable => (4.0, 6.0, radius.sm, 28.0, 0.75, 4.0, 1.0, 0.55),
+            ThemeDensity::Touch => (6.0, 8.0, radius.md, 44.0, 0.78, 8.0, 1.5, 0.60),
+        };
+
+        let (
+            toolbar_extent,
+            toolbar_padding,
+            toolbar_spacing,
+            command_group_padding,
+            command_group_spacing,
+            command_group_radius,
+            tool_palette_item_size,
+            tool_palette_icon_size,
+            preset_strip_item_height,
+            preset_strip_item_min_width,
+            preset_strip_item_padding,
+            preset_strip_gap,
+            preset_strip_label_padding,
+        ) = match density {
+            ThemeDensity::Compact => (
+                40.0,
+                Insets::all(unit * 1.5),
+                unit * 1.5,
+                Insets::all(unit * 0.25),
+                unit * 0.5,
+                radius.md,
+                30.0,
+                16.0,
+                24.0,
+                36.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit,
+                    right: unit * 2.0,
+                    bottom: unit,
+                },
+                unit,
+                Insets::all(unit * 0.75),
+            ),
+            ThemeDensity::Comfortable => (
+                52.0,
+                Insets::all(unit * 2.0),
+                unit * 2.0,
+                Insets::all(unit * 0.5),
+                unit * 0.75,
+                radius.lg,
+                40.0,
+                20.0,
+                28.0,
+                44.0,
+                Insets {
+                    left: unit * 3.0,
+                    top: unit,
+                    right: unit * 3.0,
+                    bottom: unit,
+                },
+                unit * 1.5,
+                Insets::all(unit),
+            ),
+            ThemeDensity::Touch => (
+                64.0,
+                Insets::all(unit * 2.5),
+                unit * 2.5,
+                Insets::all(unit),
+                unit,
+                radius.xl,
+                48.0,
+                24.0,
+                44.0,
+                56.0,
+                Insets {
+                    left: unit * 4.0,
+                    top: unit * 2.0,
+                    right: unit * 4.0,
+                    bottom: unit * 2.0,
+                },
+                unit * 2.0,
+                Insets::all(unit * 2.0),
+            ),
+        };
+
+        let (
+            property_row_label_width,
+            property_row_inline_gap,
+            property_row_stacked_gap,
+            form_row_label_width,
+            form_row_control_width,
+            form_row_gap,
+            field_group_spacing,
+            form_section_padding,
+            form_section_body_gap,
+            form_section_header_gap,
+            form_section_description_gap,
+            form_section_max_width,
+            form_section_radius,
+            panel_section_gap,
+            panel_section_action_gap,
+            panel_section_disclosure_size,
+            dock_panel_header_height,
+            dock_panel_padding,
+        ) = match density {
+            ThemeDensity::Compact => (
+                96.0,
+                unit * 1.5,
+                unit,
+                112.0,
+                300.0,
+                unit * 2.0,
+                unit * 1.5,
+                Insets {
+                    left: unit * 2.5,
+                    top: unit * 2.0,
+                    right: unit * 2.5,
+                    bottom: unit * 2.5,
+                },
+                unit * 2.0,
+                unit * 2.0,
+                unit * 0.5,
+                600.0,
+                radius.md,
+                unit * 1.5,
+                unit,
+                14.0,
+                28.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit * 1.5,
+                    right: unit * 2.0,
+                    bottom: unit * 1.5,
+                },
+            ),
+            ThemeDensity::Comfortable => (
+                112.0,
+                unit * 2.0,
+                unit * 1.5,
+                128.0,
+                340.0,
+                unit * 3.0,
+                unit * 2.0,
+                Insets {
+                    left: 14.0,
+                    top: unit * 3.0,
+                    right: 14.0,
+                    bottom: 14.0,
+                },
+                unit * 3.0,
+                unit * 2.5,
+                unit * 0.75,
+                640.0,
+                radius.lg,
+                unit * 2.0,
+                unit * 1.5,
+                16.0,
+                34.0,
+                Insets {
+                    left: unit * 2.5,
+                    top: unit * 2.0,
+                    right: unit * 2.5,
+                    bottom: unit * 2.0,
+                },
+            ),
+            ThemeDensity::Touch => (
+                136.0,
+                unit * 3.0,
+                unit * 2.0,
+                144.0,
+                380.0,
+                unit * 4.0,
+                unit * 3.0,
+                Insets {
+                    left: unit * 4.5,
+                    top: unit * 4.0,
+                    right: unit * 4.5,
+                    bottom: unit * 4.5,
+                },
+                unit * 4.0,
+                unit * 3.0,
+                unit,
+                720.0,
+                radius.xl,
+                unit * 3.0,
+                unit * 2.0,
+                20.0,
+                44.0,
+                Insets {
+                    left: unit * 3.5,
+                    top: unit * 3.0,
+                    right: unit * 3.5,
+                    bottom: unit * 3.0,
+                },
+            ),
+        };
+
+        let (
+            image_corner_radius,
+            color_swatch_width,
+            color_swatch_height,
+            color_swatch_inner_inset,
+            color_swatch_checker_size,
+            color_palette_swatch_size,
+            color_palette_gap,
+            color_palette_swatch_inset,
+            color_palette_selected_swatch_inset,
+            color_palette_checker_size,
+            brush_preview_min_width,
+            brush_preview_min_height,
+            brush_preview_padding,
+            brush_preview_swatch_width,
+            brush_preview_swatch_gap,
+            brush_preview_checker_size,
+            brush_preview_text_height,
+            brush_preview_text_font_size,
+            brush_preview_text_line_height,
+            color_picker_content_inset,
+            color_picker_panel_gap,
+            color_picker_top_bar_height,
+            color_picker_swatch_width,
+            color_picker_swatch_gap,
+            color_picker_section_gap,
+            color_picker_wheel_size,
+            color_picker_map_size,
+            color_picker_row_height,
+            color_picker_row_gap,
+            color_picker_right_panel_width,
+            color_picker_field_height,
+            color_picker_field_gap,
+            color_picker_dropdown_gap,
+            color_picker_encoding_menu_row_height,
+            scroll_bar_thickness,
+            scroll_bar_min_thumb_length,
+            split_view_divider_thickness,
+            split_view_drag_target_thickness,
+            floating_workspace_margin,
+            floating_view_title_bar_height,
+            floating_view_title_padding,
+            floating_view_resize_handle_size,
+            canvas_ruler_extent,
+            canvas_ruler_major_tick,
+            canvas_ruler_minor_tick,
+            canvas_ruler_target_major_spacing,
+            canvas_ruler_label_padding,
+            canvas_ruler_label_max_width,
+            canvas_grid_step,
+            canvas_axis_overscan,
+            pixel_canvas_fit_padding,
+            pixel_canvas_grid_zoom,
+            pixel_canvas_nearest_sampling_zoom,
+            pixel_canvas_zoom_step,
+        ) = match density {
+            ThemeDensity::Compact => (
+                radius.md,
+                48.0,
+                28.0,
+                1.0,
+                5.0,
+                24.0,
+                unit * 1.25,
+                2.0,
+                3.0,
+                5.0,
+                220.0,
+                58.0,
+                Insets::all(unit * 1.5),
+                46.0,
+                unit * 2.0,
+                5.0,
+                15.0,
+                10.0,
+                13.0,
+                unit * 3.0,
+                unit * 2.5,
+                40.0,
+                64.0,
+                unit * 2.0,
+                14.0,
+                128.0,
+                132.0,
+                24.0,
+                unit * 2.0,
+                150.0,
+                28.0,
+                12.0,
+                unit,
+                28.0,
+                10.0,
+                24.0,
+                1.0,
+                10.0,
+                unit * 2.0,
+                30.0,
+                Insets {
+                    left: unit * 2.5,
+                    top: unit * 1.5,
+                    right: unit * 2.5,
+                    bottom: unit * 1.5,
+                },
+                16.0,
+                20.0,
+                9.0,
+                4.0,
+                84.0,
+                Insets {
+                    left: unit * 0.5,
+                    top: unit * 0.5,
+                    right: unit * 0.5,
+                    bottom: unit * 0.5,
+                },
+                48.0,
+                32.0,
+                72.0,
+                20.0,
+                6.0,
+                1.0,
+                1.1,
+            ),
+            ThemeDensity::Comfortable => (
+                radius.lg,
+                56.0,
+                32.0,
+                1.0,
+                6.0,
+                28.0,
+                unit * 1.5,
+                2.0,
+                3.0,
+                5.0,
+                260.0,
+                70.0,
+                Insets::all(unit * 2.0),
+                54.0,
+                unit * 2.5,
+                6.0,
+                16.0,
+                11.0,
+                14.0,
+                14.0,
+                14.0,
+                52.0,
+                96.0,
+                unit * 2.5,
+                14.0,
+                166.0,
+                210.0,
+                24.0,
+                unit * 2.0,
+                226.0,
+                30.0,
+                12.0,
+                unit,
+                28.0,
+                12.0,
+                28.0,
+                1.0,
+                12.0,
+                unit * 3.0,
+                32.0,
+                Insets {
+                    left: 14.0,
+                    top: unit * 2.0,
+                    right: 14.0,
+                    bottom: unit * 2.0,
+                },
+                18.0,
+                22.0,
+                10.0,
+                5.0,
+                96.0,
+                Insets {
+                    left: unit * 0.75,
+                    top: unit * 0.5,
+                    right: unit * 0.75,
+                    bottom: unit * 0.5,
+                },
+                54.0,
+                40.0,
+                80.0,
+                24.0,
+                6.0,
+                1.0,
+                1.1,
+            ),
+            ThemeDensity::Touch => (
+                radius.xl,
+                72.0,
+                44.0,
+                1.5,
+                8.0,
+                40.0,
+                unit * 2.0,
+                3.0,
+                4.0,
+                7.0,
+                320.0,
+                88.0,
+                Insets::all(unit * 3.0),
+                72.0,
+                unit * 3.5,
+                8.0,
+                18.0,
+                12.0,
+                16.0,
+                unit * 4.5,
+                unit * 4.5,
+                64.0,
+                112.0,
+                unit * 3.0,
+                18.0,
+                210.0,
+                240.0,
+                44.0,
+                unit * 3.0,
+                280.0,
+                44.0,
+                16.0,
+                unit * 2.0,
+                44.0,
+                18.0,
+                44.0,
+                2.0,
+                44.0,
+                unit * 4.5,
+                52.0,
+                Insets {
+                    left: unit * 4.5,
+                    top: unit * 3.5,
+                    right: unit * 4.5,
+                    bottom: unit * 3.5,
+                },
+                28.0,
+                32.0,
+                16.0,
+                8.0,
+                120.0,
+                Insets::all(unit),
+                72.0,
+                48.0,
+                96.0,
+                32.0,
+                6.0,
+                1.0,
+                1.1,
+            ),
+        };
+
         Self {
-            min_height: 24.0,
+            min_height,
+            touch_target_size,
             button_min_width: 64.0,
-            button_padding: Insets {
-                left: unit * 2.0,
-                top: unit * 1.25,
-                right: unit * 2.0,
-                bottom: unit * 1.25,
-            },
-            checkbox_padding: Insets {
-                left: unit * 1.5,
-                top: unit,
-                right: unit * 1.5,
-                bottom: unit,
-            },
-            checkbox_indicator_size: 14.0,
+            button_padding,
+            checkbox_padding,
+            checkbox_indicator_size,
             checkbox_gap: 6.0,
             icon_label_gap: 6.0,
             separator_thickness: 1.0,
-            icon_size: 14.0,
-            icon_button_size: 26.0,
-            switch_track_width: 28.0,
-            switch_track_height: 16.0,
-            slider_min_width: 140.0,
-            slider_padding: Insets {
-                left: unit * 2.0,
-                top: unit,
-                right: unit * 2.0,
-                bottom: unit,
-            },
-            slider_track_height: 3.0,
-            slider_thumb_size: 14.0,
-            number_input_stepper_width: 24.0,
-            text_input_min_width: 180.0,
-            text_input_padding: Insets {
-                left: unit * 2.0,
-                top: unit * 1.25,
-                right: unit * 2.0,
-                bottom: unit * 1.25,
-            },
-            text_area_min_height: 80.0,
-            select_menu_max_height: 200.0,
+            icon_size,
+            icon_button_size,
+            switch_track_width,
+            switch_track_height,
+            switch_thumb_inset,
+            slider_min_width,
+            slider_padding,
+            slider_track_height,
+            slider_thumb_size,
+            number_input_stepper_width,
+            text_input_min_width,
+            text_input_padding,
+            text_area_min_height,
+            select_menu_max_height,
             select_menu_gap: 6.0,
             select_menu_edge_padding: 8.0,
+            tab_height,
+            tab_min_width,
             tab_gap: 6.0,
-            tab_padding: Insets {
-                left: unit * 2.5,
-                top: unit,
-                right: unit * 2.5,
-                bottom: unit,
-            },
-            tab_panel_padding: Insets::all(unit * 4.0),
-            tab_panel_gap: unit * 3.0,
-            menu_padding: Insets::all(unit * 1.5),
-            menu_item_padding: Insets {
-                left: unit * 3.0,
-                top: unit,
-                right: unit * 3.0,
-                bottom: unit,
-            },
+            tab_padding,
+            tab_panel_padding,
+            tab_panel_gap,
+            menu_row_height,
+            menu_padding,
+            menu_item_padding,
             menu_shortcut_width: 108.0,
-            popover_padding: Insets::all(unit * 3.5),
+            popover_padding,
             popover_gap: unit * 2.0,
+            popover_reveal_offset,
+            tooltip_padding,
+            tooltip_min_width,
+            tooltip_gap,
+            tooltip_reveal_offset,
+            dialog_min_width,
+            dialog_max_width,
+            dialog_outer_margin,
+            dialog_padding,
+            dialog_title_font_size,
+            dialog_title_line_height,
+            dialog_description_gap,
+            dialog_body_gap,
+            dialog_footer_gap,
+            dialog_action_gap,
+            dialog_action_min_width,
+            toolbar_extent,
+            toolbar_padding,
+            toolbar_spacing,
+            command_group_padding,
+            command_group_spacing,
+            command_group_radius,
+            tool_palette_item_size,
+            tool_palette_icon_size,
+            preset_strip_item_height,
+            preset_strip_item_min_width,
+            preset_strip_item_padding,
+            preset_strip_gap,
+            preset_strip_label_padding,
+            action_card_min_width,
+            action_card_min_height,
+            action_card_padding,
+            action_card_icon_box_size,
+            action_card_icon_size,
+            action_card_icon_gap,
+            action_card_text_gap,
+            action_card_trailing_gap,
+            action_card_chevron_size,
+            action_card_accent_width,
+            action_card_accent_inset,
+            status_bar_height,
+            status_bar_segment_padding,
+            status_bar_segment_min_width,
+            status_bar_separator_inset,
+            progress_bar_min_width,
+            progress_bar_height,
+            progress_bar_value_height,
+            progress_bar_label_padding,
+            property_row_label_width,
+            property_row_inline_gap,
+            property_row_stacked_gap,
+            form_row_label_width,
+            form_row_control_width,
+            form_row_gap,
+            field_group_spacing,
+            form_section_padding,
+            form_section_body_gap,
+            form_section_header_gap,
+            form_section_description_gap,
+            form_section_max_width,
+            form_section_radius,
+            panel_section_gap,
+            panel_section_action_gap,
+            panel_section_disclosure_size,
+            dock_panel_header_height,
+            dock_panel_padding,
+            data_viewport_padding,
+            data_row_padding,
+            data_row_icon_size,
+            data_row_icon_gap,
+            data_row_trailing_gap,
+            data_scroll_thumb_width,
+            data_scroll_thumb_inset,
+            data_scroll_thumb_radius,
+            data_scroll_thumb_min_length,
+            data_scroll_thumb_opacity,
+            list_row_height,
+            layer_row_height,
+            layer_action_size,
+            layer_action_icon_inset,
+            layer_lock_icon_inset,
+            layer_visibility_stroke_width,
+            layer_visibility_slash_stroke_width,
+            layer_thumbnail_size,
+            layer_thumbnail_inset,
+            layer_thumbnail_radius,
+            layer_thumbnail_disabled_opacity,
+            layer_thumbnail_disabled_border_opacity,
+            tree_row_height,
+            tree_indent,
+            tree_disclosure_size,
+            tree_disclosure_gap,
+            table_row_height,
+            table_header_height,
+            table_cell_padding,
+            table_header_separator_inset,
+            table_separator_width,
+            table_row_border_opacity,
+            breadcrumb_height,
+            breadcrumb_item_padding,
+            breadcrumb_gap,
+            breadcrumb_separator_size,
+            image_corner_radius,
+            color_swatch_width,
+            color_swatch_height,
+            color_swatch_inner_inset,
+            color_swatch_checker_size,
+            color_palette_swatch_size,
+            color_palette_gap,
+            color_palette_swatch_inset,
+            color_palette_selected_swatch_inset,
+            color_palette_checker_size,
+            brush_preview_min_width,
+            brush_preview_min_height,
+            brush_preview_padding,
+            brush_preview_swatch_width,
+            brush_preview_swatch_gap,
+            brush_preview_checker_size,
+            brush_preview_text_height,
+            brush_preview_text_font_size,
+            brush_preview_text_line_height,
+            color_picker_content_inset,
+            color_picker_panel_gap,
+            color_picker_top_bar_height,
+            color_picker_swatch_width,
+            color_picker_swatch_gap,
+            color_picker_section_gap,
+            color_picker_wheel_size,
+            color_picker_map_size,
+            color_picker_row_height,
+            color_picker_row_gap,
+            color_picker_right_panel_width,
+            color_picker_field_height,
+            color_picker_field_gap,
+            color_picker_dropdown_gap,
+            color_picker_encoding_menu_row_height,
+            scroll_bar_thickness,
+            scroll_bar_min_thumb_length,
+            split_view_divider_thickness,
+            split_view_drag_target_thickness,
+            floating_workspace_margin,
+            floating_view_title_bar_height,
+            floating_view_title_padding,
+            floating_view_resize_handle_size,
+            canvas_ruler_extent,
+            canvas_ruler_major_tick,
+            canvas_ruler_minor_tick,
+            canvas_ruler_target_major_spacing,
+            canvas_ruler_label_padding,
+            canvas_ruler_label_max_width,
+            canvas_grid_step,
+            canvas_axis_overscan,
+            pixel_canvas_fit_padding,
+            pixel_canvas_grid_zoom,
+            pixel_canvas_nearest_sampling_zoom,
+            pixel_canvas_zoom_step,
             corner_radius: radius.md,
             indicator_corner_radius: radius.sm + 1.0,
             border_width: 1.0,
@@ -1085,7 +2513,7 @@ impl ControlMetrics {
 
 impl Default for ControlMetrics {
     fn default() -> Self {
-        Self::from_tokens(4.0, ThemeRadii::default())
+        Self::from_tokens(4.0, ThemeRadii::default(), ThemeDensity::default())
     }
 }
 
@@ -1093,6 +2521,7 @@ impl Default for ControlMetrics {
 pub struct DefaultTheme {
     pub fonts: ThemeFontFamilies,
     pub colors: ThemeColors,
+    pub density: ThemeDensity,
     pub spacing: f32,
     pub breakpoints: ThemeBreakpoints,
     pub containers: ThemeContainers,
@@ -1110,6 +2539,7 @@ pub struct DefaultTheme {
     pub palette: ControlPalette,
     pub surfaces: SurfacePalette,
     pub typography: ControlTypography,
+    pub interaction: ControlStateMetrics,
     pub metrics: ControlMetrics,
 }
 
@@ -1127,24 +2557,34 @@ impl DefaultTheme {
     }
 
     pub fn high_contrast() -> Self {
-        let mut theme = Self::from_colors(ThemeColors::high_contrast());
-        theme.metrics.border_width = 1.5;
-        theme.metrics.focus_ring_width = 2.5;
-        theme.metrics.focus_ring_outset = 2.0;
-        theme
+        Self::from_colors(ThemeColors::high_contrast())
+    }
+
+    pub fn compact() -> Self {
+        Self::default().with_density(ThemeDensity::Compact)
+    }
+
+    pub fn comfortable() -> Self {
+        Self::default().with_density(ThemeDensity::Comfortable)
+    }
+
+    pub fn touch() -> Self {
+        Self::default().with_density(ThemeDensity::Touch)
     }
 
     pub fn from_colors(colors: ThemeColors) -> Self {
         let text = ThemeTextScale::default();
         let radius = ThemeRadii::default();
         let spacing = 4.0;
+        let density = ThemeDensity::Comfortable;
         let hdr = HdrThemeTokens::from_colors(colors);
         let palette = ControlPalette::from_colors(&colors);
         let surfaces = SurfacePalette::from_theme_parts(&colors, &palette);
 
-        Self {
+        let mut theme = Self {
             fonts: ThemeFontFamilies::default(),
             colors,
+            density,
             spacing,
             breakpoints: ThemeBreakpoints::default(),
             containers: ThemeContainers::default(),
@@ -1162,8 +2602,17 @@ impl DefaultTheme {
             palette,
             surfaces,
             typography: ControlTypography::from_text_scale(&text),
-            metrics: ControlMetrics::from_tokens(spacing, radius),
-        }
+            interaction: ControlStateMetrics::for_density(density),
+            metrics: ControlMetrics::from_tokens(spacing, radius, density),
+        };
+        theme.apply_scheme_overrides();
+        theme
+    }
+
+    pub fn with_density(mut self, density: ThemeDensity) -> Self {
+        self.density = density;
+        self.sync_derived_fields();
+        self
     }
 
     pub fn sync_derived_fields(&mut self) {
@@ -1171,7 +2620,17 @@ impl DefaultTheme {
         self.palette = ControlPalette::from_colors(&self.colors);
         self.surfaces = SurfacePalette::from_theme_parts(&self.colors, &self.palette);
         self.typography = ControlTypography::from_text_scale(&self.text);
-        self.metrics = ControlMetrics::from_tokens(self.spacing, self.radius);
+        self.interaction = ControlStateMetrics::for_density(self.density);
+        self.metrics = ControlMetrics::from_tokens(self.spacing, self.radius, self.density);
+        self.apply_scheme_overrides();
+    }
+
+    fn apply_scheme_overrides(&mut self) {
+        if self.colors.scheme == ThemeColorScheme::HighContrast {
+            self.metrics.border_width = 1.5;
+            self.metrics.focus_ring_width = 2.5;
+            self.metrics.focus_ring_outset = 2.0;
+        }
     }
 
     pub fn text_style(&self, color: Color) -> TextStyle {
@@ -1181,6 +2640,25 @@ impl DefaultTheme {
             color,
             ..TextStyle::default()
         }
+    }
+
+    pub fn semantic_tone_colors(&self, tone: SemanticTone) -> (Color, Color) {
+        match tone {
+            SemanticTone::Neutral => (self.palette.control, self.palette.text),
+            SemanticTone::Accent => (self.palette.accent, self.palette.accent_text),
+            SemanticTone::Info => (self.palette.info, self.palette.info_text),
+            SemanticTone::Success => (self.palette.success, self.palette.success_text),
+            SemanticTone::Warning => (self.palette.warning, self.palette.warning_text),
+            SemanticTone::Danger => (self.palette.danger, self.palette.danger_text),
+        }
+    }
+
+    pub fn semantic_tone_color(&self, tone: SemanticTone) -> Color {
+        self.semantic_tone_colors(tone).0
+    }
+
+    pub fn semantic_tone_text_color(&self, tone: SemanticTone) -> Color {
+        self.semantic_tone_colors(tone).1
     }
 
     pub fn body_text_style(&self) -> TextStyle {
@@ -1249,7 +2727,7 @@ fn shadow_layer(
 
 #[cfg(test)]
 mod tests {
-    use super::{Color, DefaultTheme, ThemeColorScheme};
+    use super::{Color, DefaultTheme, SemanticTone, ThemeColorScheme, ThemeDensity};
     use crate::hdr_theme::HdrThemeMode;
 
     #[test]
@@ -1260,7 +2738,206 @@ mod tests {
         assert_eq!(theme.typography.body_line_height, theme.text.sm.line_height);
         assert_eq!(theme.typography.body_font_size, 14.0);
         assert_eq!(theme.typography.body_line_height, 20.0);
+        assert_eq!(theme.density, ThemeDensity::Comfortable);
         assert_eq!(theme.metrics.min_height, 24.0);
+    }
+
+    #[test]
+    fn density_presets_update_control_metrics_and_interactions() {
+        let compact = DefaultTheme::compact();
+        let comfortable = DefaultTheme::comfortable();
+        let touch = DefaultTheme::touch();
+
+        assert_eq!(compact.density, ThemeDensity::Compact);
+        assert_eq!(comfortable.density, ThemeDensity::Comfortable);
+        assert_eq!(touch.density, ThemeDensity::Touch);
+        assert!(compact.metrics.min_height < comfortable.metrics.min_height);
+        assert!(comfortable.metrics.min_height < touch.metrics.min_height);
+        assert!(compact.metrics.menu_row_height < comfortable.metrics.menu_row_height);
+        assert!(comfortable.metrics.menu_row_height < touch.metrics.menu_row_height);
+        assert!(compact.metrics.list_row_height < comfortable.metrics.list_row_height);
+        assert!(comfortable.metrics.list_row_height < touch.metrics.list_row_height);
+        assert!(compact.metrics.layer_row_height < comfortable.metrics.layer_row_height);
+        assert!(comfortable.metrics.layer_row_height < touch.metrics.layer_row_height);
+        assert!(
+            compact.metrics.layer_action_icon_inset < comfortable.metrics.layer_action_icon_inset
+        );
+        assert!(
+            comfortable.metrics.layer_action_icon_inset < touch.metrics.layer_action_icon_inset
+        );
+        assert!(
+            compact.metrics.layer_visibility_stroke_width
+                < comfortable.metrics.layer_visibility_stroke_width
+        );
+        assert!(
+            comfortable.metrics.layer_visibility_stroke_width
+                < touch.metrics.layer_visibility_stroke_width
+        );
+        assert!(compact.metrics.layer_thumbnail_inset < comfortable.metrics.layer_thumbnail_inset);
+        assert!(comfortable.metrics.layer_thumbnail_inset < touch.metrics.layer_thumbnail_inset);
+        assert!(
+            compact.metrics.layer_thumbnail_radius <= comfortable.metrics.layer_thumbnail_radius
+        );
+        assert!(comfortable.metrics.layer_thumbnail_radius < touch.metrics.layer_thumbnail_radius);
+        assert!(compact.metrics.table_row_height < comfortable.metrics.table_row_height);
+        assert!(comfortable.metrics.table_row_height < touch.metrics.table_row_height);
+        assert!(
+            compact.metrics.data_scroll_thumb_width < comfortable.metrics.data_scroll_thumb_width
+        );
+        assert!(
+            comfortable.metrics.data_scroll_thumb_width < touch.metrics.data_scroll_thumb_width
+        );
+        assert!(
+            compact.metrics.data_scroll_thumb_min_length
+                < comfortable.metrics.data_scroll_thumb_min_length
+        );
+        assert!(
+            comfortable.metrics.data_scroll_thumb_min_length
+                < touch.metrics.data_scroll_thumb_min_length
+        );
+        assert!(
+            compact.metrics.table_header_separator_inset
+                < comfortable.metrics.table_header_separator_inset
+        );
+        assert!(
+            comfortable.metrics.table_header_separator_inset
+                < touch.metrics.table_header_separator_inset
+        );
+        assert!(compact.metrics.breadcrumb_height < comfortable.metrics.breadcrumb_height);
+        assert!(comfortable.metrics.breadcrumb_height < touch.metrics.breadcrumb_height);
+        assert!(
+            compact.metrics.action_card_min_height < comfortable.metrics.action_card_min_height
+        );
+        assert!(comfortable.metrics.action_card_min_height < touch.metrics.action_card_min_height);
+        assert!(compact.metrics.status_bar_height < comfortable.metrics.status_bar_height);
+        assert!(comfortable.metrics.status_bar_height < touch.metrics.status_bar_height);
+        assert!(compact.metrics.progress_bar_height < comfortable.metrics.progress_bar_height);
+        assert!(comfortable.metrics.progress_bar_height < touch.metrics.progress_bar_height);
+        assert!(compact.metrics.tooltip_gap < comfortable.metrics.tooltip_gap);
+        assert!(comfortable.metrics.tooltip_gap < touch.metrics.tooltip_gap);
+        assert!(compact.metrics.tooltip_min_width < comfortable.metrics.tooltip_min_width);
+        assert!(comfortable.metrics.tooltip_min_width < touch.metrics.tooltip_min_width);
+        assert!(compact.metrics.popover_reveal_offset < comfortable.metrics.popover_reveal_offset);
+        assert!(comfortable.metrics.popover_reveal_offset < touch.metrics.popover_reveal_offset);
+        assert!(compact.metrics.dialog_max_width < comfortable.metrics.dialog_max_width);
+        assert!(comfortable.metrics.dialog_max_width < touch.metrics.dialog_max_width);
+        assert!(
+            compact.metrics.dialog_action_min_width < comfortable.metrics.dialog_action_min_width
+        );
+        assert!(
+            comfortable.metrics.dialog_action_min_width < touch.metrics.dialog_action_min_width
+        );
+        assert!(compact.metrics.toolbar_extent < comfortable.metrics.toolbar_extent);
+        assert!(comfortable.metrics.toolbar_extent < touch.metrics.toolbar_extent);
+        assert!(
+            compact.metrics.tool_palette_item_size < comfortable.metrics.tool_palette_item_size
+        );
+        assert!(comfortable.metrics.tool_palette_item_size < touch.metrics.tool_palette_item_size);
+        assert!(
+            compact.metrics.preset_strip_item_height < comfortable.metrics.preset_strip_item_height
+        );
+        assert!(
+            comfortable.metrics.preset_strip_item_height < touch.metrics.preset_strip_item_height
+        );
+        assert!(
+            compact.metrics.property_row_label_width < comfortable.metrics.property_row_label_width
+        );
+        assert!(
+            comfortable.metrics.property_row_label_width < touch.metrics.property_row_label_width
+        );
+        assert!(compact.metrics.form_row_gap < comfortable.metrics.form_row_gap);
+        assert!(comfortable.metrics.form_row_gap < touch.metrics.form_row_gap);
+        assert!(compact.metrics.field_group_spacing < comfortable.metrics.field_group_spacing);
+        assert!(comfortable.metrics.field_group_spacing < touch.metrics.field_group_spacing);
+        assert!(
+            compact.metrics.form_section_max_width < comfortable.metrics.form_section_max_width
+        );
+        assert!(comfortable.metrics.form_section_max_width < touch.metrics.form_section_max_width);
+        assert!(compact.metrics.panel_section_gap < comfortable.metrics.panel_section_gap);
+        assert!(comfortable.metrics.panel_section_gap < touch.metrics.panel_section_gap);
+        assert!(
+            compact.metrics.dock_panel_header_height < comfortable.metrics.dock_panel_header_height
+        );
+        assert!(
+            comfortable.metrics.dock_panel_header_height < touch.metrics.dock_panel_header_height
+        );
+        assert!(compact.metrics.tab_height < comfortable.metrics.tab_height);
+        assert!(comfortable.metrics.tab_height < touch.metrics.tab_height);
+        assert!(compact.metrics.scroll_bar_thickness < comfortable.metrics.scroll_bar_thickness);
+        assert!(comfortable.metrics.scroll_bar_thickness < touch.metrics.scroll_bar_thickness);
+        assert!(
+            compact.metrics.scroll_bar_min_thumb_length
+                < comfortable.metrics.scroll_bar_min_thumb_length
+        );
+        assert!(
+            comfortable.metrics.scroll_bar_min_thumb_length
+                < touch.metrics.scroll_bar_min_thumb_length
+        );
+        assert!(
+            compact.metrics.split_view_drag_target_thickness
+                < comfortable.metrics.split_view_drag_target_thickness
+        );
+        assert!(
+            comfortable.metrics.split_view_drag_target_thickness
+                < touch.metrics.split_view_drag_target_thickness
+        );
+        assert!(
+            compact.metrics.floating_workspace_margin
+                < comfortable.metrics.floating_workspace_margin
+        );
+        assert!(
+            comfortable.metrics.floating_workspace_margin < touch.metrics.floating_workspace_margin
+        );
+        assert!(
+            compact.metrics.floating_view_title_bar_height
+                < comfortable.metrics.floating_view_title_bar_height
+        );
+        assert!(
+            comfortable.metrics.floating_view_title_bar_height
+                < touch.metrics.floating_view_title_bar_height
+        );
+        assert!(
+            compact.metrics.floating_view_resize_handle_size
+                < comfortable.metrics.floating_view_resize_handle_size
+        );
+        assert!(
+            comfortable.metrics.floating_view_resize_handle_size
+                < touch.metrics.floating_view_resize_handle_size
+        );
+        assert!(compact.metrics.canvas_ruler_extent < comfortable.metrics.canvas_ruler_extent);
+        assert!(comfortable.metrics.canvas_ruler_extent < touch.metrics.canvas_ruler_extent);
+        assert!(
+            compact.metrics.canvas_ruler_label_max_width
+                < comfortable.metrics.canvas_ruler_label_max_width
+        );
+        assert!(
+            comfortable.metrics.canvas_ruler_label_max_width
+                < touch.metrics.canvas_ruler_label_max_width
+        );
+        assert!(
+            compact.metrics.canvas_ruler_target_major_spacing
+                < comfortable.metrics.canvas_ruler_target_major_spacing
+        );
+        assert!(
+            comfortable.metrics.canvas_ruler_target_major_spacing
+                < touch.metrics.canvas_ruler_target_major_spacing
+        );
+        assert!(compact.metrics.canvas_grid_step < comfortable.metrics.canvas_grid_step);
+        assert!(comfortable.metrics.canvas_grid_step < touch.metrics.canvas_grid_step);
+        assert!(
+            compact.metrics.pixel_canvas_fit_padding < comfortable.metrics.pixel_canvas_fit_padding
+        );
+        assert!(
+            comfortable.metrics.pixel_canvas_fit_padding < touch.metrics.pixel_canvas_fit_padding
+        );
+        assert!(compact.metrics.icon_size < comfortable.metrics.icon_size);
+        assert!(comfortable.metrics.icon_size < touch.metrics.icon_size);
+        assert!(
+            compact.interaction.tab_selected_blend < comfortable.interaction.tab_selected_blend
+        );
+        assert!(comfortable.interaction.tab_selected_blend < touch.interaction.tab_selected_blend);
+        assert!(compact.interaction.pressed_offset < comfortable.interaction.pressed_offset);
+        assert!(comfortable.interaction.pressed_offset < touch.interaction.pressed_offset);
     }
 
     #[test]
@@ -1293,14 +2970,51 @@ mod tests {
         theme.colors.primary = Color::rgba(0.2, 0.3, 0.4, 1.0);
         theme.text.sm.size = 11.0;
         theme.text.sm.line_height = 15.0;
+        theme.density = ThemeDensity::Touch;
         theme.sync_derived_fields();
 
         assert_eq!(theme.palette.accent, Color::rgba(0.2, 0.3, 0.4, 1.0));
         assert_eq!(theme.palette.caret, Color::rgba(0.2, 0.3, 0.4, 1.0));
         assert_eq!(theme.surfaces.accent, theme.palette.accent);
         assert_eq!(theme.surfaces.window, theme.palette.surface);
+        assert_eq!(theme.surfaces.tooltip_text, theme.palette.surface);
+        assert!(theme.surfaces.overlay_scrim.alpha > 0.0);
         assert_eq!(theme.typography.body_font_size, 11.0);
         assert_eq!(theme.typography.body_line_height, 15.0);
+        assert_eq!(
+            theme.metrics.min_height,
+            DefaultTheme::touch().metrics.min_height
+        );
+        assert_eq!(
+            theme.interaction.pressed_offset,
+            DefaultTheme::touch().interaction.pressed_offset
+        );
+    }
+
+    #[test]
+    fn control_palette_exposes_semantic_status_colors() {
+        let theme = DefaultTheme::default();
+
+        assert_eq!(theme.palette.info, theme.colors.info);
+        assert_eq!(theme.palette.info_text, theme.colors.info_content);
+        assert_eq!(theme.palette.success, theme.colors.success);
+        assert_eq!(theme.palette.success_text, theme.colors.success_content);
+        assert_eq!(theme.palette.warning, theme.colors.warning);
+        assert_eq!(theme.palette.warning_text, theme.colors.warning_content);
+        assert_eq!(theme.palette.danger, theme.colors.error);
+        assert_eq!(theme.palette.danger_text, theme.colors.error_content);
+        assert_eq!(
+            theme.semantic_tone_colors(SemanticTone::Warning),
+            (theme.palette.warning, theme.palette.warning_text)
+        );
+        assert_eq!(
+            theme.semantic_tone_color(SemanticTone::Danger),
+            theme.palette.danger
+        );
+        assert_eq!(
+            theme.semantic_tone_text_color(SemanticTone::Success),
+            theme.palette.success_text
+        );
     }
 
     #[test]
@@ -1362,5 +3076,11 @@ mod tests {
         assert_eq!(theme.palette.text, theme.colors.base_content);
         assert!(theme.metrics.border_width > DefaultTheme::default().metrics.border_width);
         assert!(theme.metrics.focus_ring_width > DefaultTheme::default().metrics.focus_ring_width);
+
+        let touch = DefaultTheme::high_contrast().with_density(ThemeDensity::Touch);
+        assert_eq!(touch.density, ThemeDensity::Touch);
+        assert!(touch.metrics.min_height > theme.metrics.min_height);
+        assert!(touch.metrics.border_width > DefaultTheme::touch().metrics.border_width);
+        assert!(touch.metrics.focus_ring_width > DefaultTheme::touch().metrics.focus_ring_width);
     }
 }

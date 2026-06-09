@@ -16,13 +16,11 @@ use sui_text::{FontWeight, TextMeasurement, TextStyle};
 
 use crate::{
     Button, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, IconGlyph, ResolvedEffectStyle,
-    ResolvedHdrStyle, Transition, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole,
-    WidgetMaterialRole,
+    ResolvedHdrStyle, SemanticTone, Transition, WidgetColorRole, WidgetEffectRole,
+    WidgetLuminanceRole, WidgetMaterialRole,
     controls::{apply_hdr_policy_cap, cap_resolved_hdr_style, draw_icon_glyph},
     paint_theme_shadow, resolve_widget_hdr_style,
 };
-
-const TAB_BAR_DEFAULT_HEIGHT: f32 = 32.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TooltipPlacement {
@@ -375,7 +373,7 @@ impl MenuItem {
         if !self.enabled {
             theme.palette.placeholder
         } else if self.destructive {
-            Color::rgba(0.74, 0.18, 0.18, 1.0)
+            theme.semantic_tone_color(SemanticTone::Danger)
         } else {
             theme.palette.text
         }
@@ -392,11 +390,8 @@ fn virtual_menu_item_id(parent: WidgetId, index: usize) -> WidgetId {
     )
 }
 
-const MENU_MIN_ROW_HEIGHT: f32 = 28.0;
-const MENU_ROW_HEIGHT_REDUCTION: f32 = 6.0;
-
 fn menu_row_height(theme: &DefaultTheme) -> f32 {
-    (theme.metrics.min_height - MENU_ROW_HEIGHT_REDUCTION).max(MENU_MIN_ROW_HEIGHT)
+    theme.metrics.menu_row_height
 }
 
 fn themed_menu_height_for_rows(theme: &DefaultTheme, row_height: f32, rows: usize) -> f32 {
@@ -425,18 +420,14 @@ fn menu_item_semantics_node(
     node
 }
 
-const TOOLBAR_EXTENT: f32 = 52.0;
-const TOOLBAR_PADDING: f32 = 8.0;
-const TOOLBAR_SPACING: f32 = 8.0;
-
 pub struct Toolbar {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     axis: Axis,
     name: Option<String>,
-    extent: f32,
-    padding: Insets,
-    spacing: f32,
+    extent: Option<f32>,
+    padding: Option<Insets>,
+    spacing: Option<f32>,
     background: Option<Color>,
     divider: bool,
     children: WidgetChildren,
@@ -457,9 +448,9 @@ impl Toolbar {
             theme_reader: None,
             axis,
             name: None,
-            extent: TOOLBAR_EXTENT,
-            padding: Insets::all(TOOLBAR_PADDING),
-            spacing: TOOLBAR_SPACING,
+            extent: None,
+            padding: None,
+            spacing: None,
             background: None,
             divider: true,
             children: WidgetChildren::new(),
@@ -486,17 +477,17 @@ impl Toolbar {
     }
 
     pub fn extent(mut self, extent: f32) -> Self {
-        self.extent = extent.max(0.0);
+        self.extent = Some(extent.max(0.0));
         self
     }
 
     pub fn padding(mut self, padding: Insets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
     pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing.max(0.0);
+        self.spacing = Some(spacing.max(0.0));
         self
     }
 
@@ -533,12 +524,25 @@ impl Toolbar {
         self.children.as_mut_slice()
     }
 
-    fn content_bounds(&self, bounds: Rect) -> Rect {
+    fn resolved_extent(&self, metrics: ControlMetrics) -> f32 {
+        self.extent.unwrap_or(metrics.toolbar_extent)
+    }
+
+    fn resolved_padding(&self, metrics: ControlMetrics) -> Insets {
+        self.padding.unwrap_or(metrics.toolbar_padding)
+    }
+
+    fn resolved_spacing(&self, metrics: ControlMetrics) -> f32 {
+        self.spacing.unwrap_or(metrics.toolbar_spacing)
+    }
+
+    fn content_bounds(&self, bounds: Rect, metrics: ControlMetrics) -> Rect {
+        let padding = self.resolved_padding(metrics);
         Rect::new(
-            bounds.x() + self.padding.left,
-            bounds.y() + self.padding.top,
-            (bounds.width() - self.padding.left - self.padding.right).max(0.0),
-            (bounds.height() - self.padding.top - self.padding.bottom).max(0.0),
+            bounds.x() + padding.left,
+            bounds.y() + padding.top,
+            (bounds.width() - padding.left - padding.right).max(0.0),
+            (bounds.height() - padding.top - padding.bottom).max(0.0),
         )
     }
 
@@ -558,9 +562,14 @@ impl Default for Toolbar {
 
 impl Widget for Toolbar {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let extent = self.resolved_extent(metrics);
+        let padding = self.resolved_padding(metrics);
+        let spacing = self.resolved_spacing(metrics);
         let content_cross = match self.axis {
-            Axis::Horizontal => (self.extent - self.padding.top - self.padding.bottom).max(0.0),
-            Axis::Vertical => (self.extent - self.padding.left - self.padding.right).max(0.0),
+            Axis::Horizontal => (extent - padding.top - padding.bottom).max(0.0),
+            Axis::Vertical => (extent - padding.left - padding.right).max(0.0),
         };
         let child_constraints = match self.axis {
             Axis::Horizontal => {
@@ -574,7 +583,7 @@ impl Widget for Toolbar {
         for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
             let child_size = child.measure(ctx, child_constraints);
             if index > 0 {
-                main += self.spacing;
+                main += spacing;
             }
             main += toolbar_main(self.axis, child_size);
             cross = cross.max(toolbar_cross(self.axis, child_size));
@@ -582,14 +591,12 @@ impl Widget for Toolbar {
 
         let natural = match self.axis {
             Axis::Horizontal => Size::new(
-                main + self.padding.left + self.padding.right,
-                self.extent
-                    .max(cross + self.padding.top + self.padding.bottom),
+                main + padding.left + padding.right,
+                extent.max(cross + padding.top + padding.bottom),
             ),
             Axis::Vertical => Size::new(
-                self.extent
-                    .max(cross + self.padding.left + self.padding.right),
-                main + self.padding.top + self.padding.bottom,
+                extent.max(cross + padding.left + padding.right),
+                main + padding.top + padding.bottom,
             ),
         };
         let filled = match self.axis {
@@ -599,10 +606,10 @@ impl Widget for Toolbar {
                 } else {
                     natural.width
                 },
-                self.extent,
+                extent,
             ),
             Axis::Vertical => Size::new(
-                self.extent,
+                extent,
                 if constraints.max.height.is_finite() {
                     constraints.max.height
                 } else {
@@ -615,14 +622,17 @@ impl Widget for Toolbar {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let content = self.content_bounds(bounds);
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let spacing = self.resolved_spacing(metrics);
+        let content = self.content_bounds(bounds, metrics);
         let content_main = toolbar_main(self.axis, content.size);
         let content_cross = toolbar_cross(self.axis, content.size);
         let mut main_offset = 0.0;
 
         for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
             if index > 0 {
-                main_offset += self.spacing;
+                main_offset += spacing;
             }
 
             let measured = child.measured_size();
@@ -687,17 +697,14 @@ impl Widget for Toolbar {
     }
 }
 
-const COMMAND_GROUP_SPACING: f32 = 3.0;
-const COMMAND_GROUP_RADIUS: f32 = 6.0;
-
 pub struct CommandGroup {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     axis: Axis,
     name: Option<String>,
-    padding: Insets,
-    spacing: f32,
-    corner_radius: f32,
+    padding: Option<Insets>,
+    spacing: Option<f32>,
+    corner_radius: Option<f32>,
     background: Option<Color>,
     border: Option<Color>,
     children: WidgetChildren,
@@ -718,9 +725,9 @@ impl CommandGroup {
             theme_reader: None,
             axis,
             name: Some(name.into()),
-            padding: Insets::all(2.0),
-            spacing: COMMAND_GROUP_SPACING,
-            corner_radius: COMMAND_GROUP_RADIUS,
+            padding: None,
+            spacing: None,
+            corner_radius: None,
             background: None,
             border: None,
             children: WidgetChildren::new(),
@@ -747,17 +754,17 @@ impl CommandGroup {
     }
 
     pub fn padding(mut self, padding: Insets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
     pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing.max(0.0);
+        self.spacing = Some(spacing.max(0.0));
         self
     }
 
     pub fn corner_radius(mut self, corner_radius: f32) -> Self {
-        self.corner_radius = corner_radius.max(0.0);
+        self.corner_radius = Some(corner_radius.max(0.0));
         self
     }
 
@@ -794,8 +801,20 @@ impl CommandGroup {
         self.children.as_mut_slice()
     }
 
-    fn content_bounds(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, self.padding)
+    fn resolved_padding(&self, metrics: ControlMetrics) -> Insets {
+        self.padding.unwrap_or(metrics.command_group_padding)
+    }
+
+    fn resolved_spacing(&self, metrics: ControlMetrics) -> f32 {
+        self.spacing.unwrap_or(metrics.command_group_spacing)
+    }
+
+    fn resolved_corner_radius(&self, metrics: ControlMetrics) -> f32 {
+        self.corner_radius.unwrap_or(metrics.command_group_radius)
+    }
+
+    fn content_bounds(&self, bounds: Rect, metrics: ControlMetrics) -> Rect {
+        inset_rect(bounds, self.resolved_padding(metrics))
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -808,13 +827,17 @@ impl CommandGroup {
 
 impl Widget for CommandGroup {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let padding = self.resolved_padding(metrics);
+        let spacing = self.resolved_spacing(metrics);
         let max_width = if constraints.max.width.is_finite() {
-            (constraints.max.width - self.padding.left - self.padding.right).max(0.0)
+            (constraints.max.width - padding.left - padding.right).max(0.0)
         } else {
             f32::INFINITY
         };
         let max_height = if constraints.max.height.is_finite() {
-            (constraints.max.height - self.padding.top - self.padding.bottom).max(0.0)
+            (constraints.max.height - padding.top - padding.bottom).max(0.0)
         } else {
             f32::INFINITY
         };
@@ -825,7 +848,7 @@ impl Widget for CommandGroup {
         for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
             let child_size = child.measure(ctx, child_constraints);
             if index > 0 {
-                main += self.spacing;
+                main += spacing;
             }
             main += toolbar_main(self.axis, child_size);
             cross = cross.max(toolbar_cross(self.axis, child_size));
@@ -833,26 +856,29 @@ impl Widget for CommandGroup {
 
         let natural = match self.axis {
             Axis::Horizontal => Size::new(
-                main + self.padding.left + self.padding.right,
-                cross + self.padding.top + self.padding.bottom,
+                main + padding.left + padding.right,
+                cross + padding.top + padding.bottom,
             ),
             Axis::Vertical => Size::new(
-                cross + self.padding.left + self.padding.right,
-                main + self.padding.top + self.padding.bottom,
+                cross + padding.left + padding.right,
+                main + padding.top + padding.bottom,
             ),
         };
         constraints.clamp(natural)
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let content = self.content_bounds(bounds);
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let spacing = self.resolved_spacing(metrics);
+        let content = self.content_bounds(bounds, metrics);
         let content_main = toolbar_main(self.axis, content.size);
         let content_cross = toolbar_cross(self.axis, content.size);
         let mut main_offset = 0.0;
 
         for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
             if index > 0 {
-                main_offset += self.spacing;
+                main_offset += spacing;
             }
 
             let measured = child.measured_size();
@@ -877,7 +903,7 @@ impl Widget for CommandGroup {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let radius = self
-            .corner_radius
+            .resolved_corner_radius(theme.metrics)
             .min(ctx.bounds().width().min(ctx.bounds().height()) * 0.5);
         let background = self.background.unwrap_or(theme.palette.surface_raised);
         let border = self.border.unwrap_or(theme.palette.border);
@@ -930,9 +956,6 @@ fn toolbar_size(axis: Axis, main: f32, cross: f32) -> Size {
     }
 }
 
-const TOOL_PALETTE_ITEM_SIZE: f32 = 40.0;
-const TOOL_PALETTE_ICON_SIZE: f32 = 20.0;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolPaletteItem {
     icon: IconGlyph,
@@ -969,11 +992,11 @@ pub struct ToolPalette {
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<usize>,
     pressed: Option<usize>,
-    extent: f32,
-    padding: Insets,
-    spacing: f32,
-    item_size: f32,
-    icon_size: f32,
+    extent: Option<f32>,
+    padding: Option<Insets>,
+    spacing: Option<f32>,
+    item_size: Option<f32>,
+    icon_size: Option<f32>,
     background: Option<Color>,
     divider: bool,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
@@ -1000,11 +1023,11 @@ impl ToolPalette {
             selected_reader: None,
             hovered: None,
             pressed: None,
-            extent: TOOLBAR_EXTENT,
-            padding: Insets::all(TOOLBAR_PADDING),
-            spacing: TOOLBAR_SPACING,
-            item_size: TOOL_PALETTE_ITEM_SIZE,
-            icon_size: TOOL_PALETTE_ICON_SIZE,
+            extent: None,
+            padding: None,
+            spacing: None,
+            item_size: None,
+            icon_size: None,
             background: None,
             divider: true,
             on_change: None,
@@ -1054,27 +1077,27 @@ impl ToolPalette {
     }
 
     pub fn extent(mut self, extent: f32) -> Self {
-        self.extent = extent.max(0.0);
+        self.extent = Some(extent.max(0.0));
         self
     }
 
     pub fn padding(mut self, padding: Insets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
     pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing.max(0.0);
+        self.spacing = Some(spacing.max(0.0));
         self
     }
 
     pub fn item_size(mut self, item_size: f32) -> Self {
-        self.item_size = item_size.max(0.0);
+        self.item_size = Some(item_size.max(0.0));
         self
     }
 
     pub fn icon_size(mut self, icon_size: f32) -> Self {
-        self.icon_size = icon_size.max(0.0);
+        self.icon_size = Some(icon_size.max(0.0));
         self
     }
 
@@ -1123,12 +1146,33 @@ impl ToolPalette {
             .unwrap_or(*self.theme)
     }
 
-    fn content_bounds(&self, bounds: Rect) -> Rect {
+    fn resolved_extent(&self, metrics: ControlMetrics) -> f32 {
+        self.extent.unwrap_or(metrics.toolbar_extent)
+    }
+
+    fn resolved_padding(&self, metrics: ControlMetrics) -> Insets {
+        self.padding.unwrap_or(metrics.toolbar_padding)
+    }
+
+    fn resolved_spacing(&self, metrics: ControlMetrics) -> f32 {
+        self.spacing.unwrap_or(metrics.toolbar_spacing)
+    }
+
+    fn resolved_item_size(&self, metrics: ControlMetrics) -> f32 {
+        self.item_size.unwrap_or(metrics.tool_palette_item_size)
+    }
+
+    fn resolved_icon_size(&self, metrics: ControlMetrics) -> f32 {
+        self.icon_size.unwrap_or(metrics.tool_palette_icon_size)
+    }
+
+    fn content_bounds(&self, bounds: Rect, metrics: ControlMetrics) -> Rect {
+        let padding = self.resolved_padding(metrics);
         Rect::new(
-            bounds.x() + self.padding.left,
-            bounds.y() + self.padding.top,
-            (bounds.width() - self.padding.left - self.padding.right).max(0.0),
-            (bounds.height() - self.padding.top - self.padding.bottom).max(0.0),
+            bounds.x() + padding.left,
+            bounds.y() + padding.top,
+            (bounds.width() - padding.left - padding.right).max(0.0),
+            (bounds.height() - padding.top - padding.bottom).max(0.0),
         )
     }
 
@@ -1137,12 +1181,15 @@ impl ToolPalette {
             return None;
         }
 
-        let content = self.content_bounds(bounds);
+        let metrics = self.resolved_theme().metrics;
+        let item_size = self.resolved_item_size(metrics);
+        let spacing = self.resolved_spacing(metrics);
+        let content = self.content_bounds(bounds, metrics);
         let content_main = toolbar_main(self.axis, content.size);
         let content_cross = toolbar_cross(self.axis, content.size);
-        let item_main = self.item_size.min(content_main);
-        let item_cross = self.item_size.min(content_cross);
-        let main_offset = index as f32 * (self.item_size + self.spacing);
+        let item_main = item_size.min(content_main);
+        let item_cross = item_size.min(content_cross);
+        let main_offset = index as f32 * (item_size + spacing);
         if main_offset >= content_main {
             return None;
         }
@@ -1300,17 +1347,21 @@ impl Widget for ToolPalette {
     }
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let item_size = self.resolved_item_size(metrics);
+        let spacing = self.resolved_spacing(metrics);
+        let padding = self.resolved_padding(metrics);
+        let extent = self.resolved_extent(metrics);
         let item_count = self.items.len();
         let main = if item_count == 0 {
             0.0
         } else {
-            (self.item_size * item_count as f32) + (self.spacing * (item_count - 1) as f32)
+            (item_size * item_count as f32) + (spacing * (item_count - 1) as f32)
         };
         let natural = match self.axis {
-            Axis::Horizontal => {
-                Size::new(main + self.padding.left + self.padding.right, self.extent)
-            }
-            Axis::Vertical => Size::new(self.extent, main + self.padding.top + self.padding.bottom),
+            Axis::Horizontal => Size::new(main + padding.left + padding.right, extent),
+            Axis::Vertical => Size::new(extent, main + padding.top + padding.bottom),
         };
         let filled = match self.axis {
             Axis::Horizontal => Size::new(
@@ -1338,6 +1389,8 @@ impl Widget for ToolPalette {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
+        let icon_size = self.resolved_icon_size(metrics);
         let bounds = ctx.bounds();
         ctx.fill_bounds(self.background.unwrap_or(palette.surface));
         if self.divider {
@@ -1364,16 +1417,28 @@ impl Widget for ToolPalette {
             let pressed = self.pressed == Some(index);
             let enabled = item.enabled;
             let base_background = if selected_item {
-                palette.selection
+                mix_color(palette.surface, palette.accent, interaction.selected_blend)
             } else {
                 palette.surface
             };
             let background = if !enabled {
-                mix_color(base_background, palette.surface, 0.72).with_alpha(0.82)
+                mix_color(
+                    base_background,
+                    palette.surface,
+                    interaction.disabled_opacity,
+                )
             } else if pressed {
-                palette.control_active
+                mix_color(
+                    base_background,
+                    palette.control_active,
+                    interaction.pressed_blend * if selected_item { 0.45 } else { 1.0 },
+                )
             } else if hovered {
-                palette.control_hover
+                mix_color(
+                    base_background,
+                    palette.control_hover,
+                    interaction.hover_blend * if selected_item { 0.35 } else { 1.0 },
+                )
             } else {
                 base_background
             };
@@ -1398,7 +1463,7 @@ impl Widget for ToolPalette {
                 (ctx.is_focused() && selected_item).then_some(palette.focus_ring),
             );
             let center = rect_center(rect);
-            let side = self.icon_size.min(rect.width().min(rect.height())).max(0.0);
+            let side = icon_size.min(rect.width().min(rect.height())).max(0.0);
             let icon_rect = Rect::new(center.x - side * 0.5, center.y - side * 0.5, side, side);
             draw_icon_glyph(
                 ctx,
@@ -1475,17 +1540,6 @@ fn tool_palette_item_id(parent: WidgetId, index: usize) -> WidgetId {
     )
 }
 
-const ACTION_CARD_DEFAULT_WIDTH: f32 = 280.0;
-const ACTION_CARD_DEFAULT_HEIGHT: f32 = 104.0;
-const ACTION_CARD_PADDING: Insets = Insets {
-    left: 16.0,
-    top: 14.0,
-    right: 14.0,
-    bottom: 14.0,
-};
-const ACTION_CARD_ICON_BOX_SIZE: f32 = 38.0;
-const ACTION_CARD_ICON_SIZE: f32 = 20.0;
-const ACTION_CARD_TEXT_GAP: f32 = 5.0;
 const ACTION_CARD_HOVER_ANIMATION_SECONDS: f64 = 1.0 / 8.0;
 const ACTION_CARD_PRESS_ANIMATION_SECONDS: f64 = 1.0 / 12.0;
 
@@ -1495,10 +1549,11 @@ pub struct ActionCard {
     title: String,
     description: String,
     icon: Option<IconGlyph>,
+    tone: SemanticTone,
     accent: Option<Color>,
-    padding: Insets,
-    min_width: f32,
-    min_height: f32,
+    padding: Option<Insets>,
+    min_width: Option<f32>,
+    min_height: Option<f32>,
     hovered: bool,
     pressed: bool,
     hover_animation: AnimatedScalar,
@@ -1519,10 +1574,11 @@ impl ActionCard {
             title: title.into(),
             description: description.into(),
             icon: None,
+            tone: SemanticTone::Accent,
             accent: None,
-            padding: ACTION_CARD_PADDING,
-            min_width: ACTION_CARD_DEFAULT_WIDTH,
-            min_height: ACTION_CARD_DEFAULT_HEIGHT,
+            padding: None,
+            min_width: None,
+            min_height: None,
             hovered: false,
             pressed: false,
             hover_animation: AnimatedScalar::new(0.0),
@@ -1565,18 +1621,23 @@ impl ActionCard {
         self
     }
 
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
     pub fn padding(mut self, padding: Insets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
     pub fn min_width(mut self, width: f32) -> Self {
-        self.min_width = width.max(0.0);
+        self.min_width = Some(width.max(0.0));
         self
     }
 
     pub fn min_height(mut self, height: f32) -> Self {
-        self.min_height = height.max(0.0);
+        self.min_height = Some(height.max(0.0));
         self
     }
 
@@ -1622,6 +1683,18 @@ impl ActionCard {
             .as_ref()
             .map(|theme| theme())
             .unwrap_or(*self.theme)
+    }
+
+    fn resolved_padding(&self, metrics: ControlMetrics) -> Insets {
+        self.padding.unwrap_or(metrics.action_card_padding)
+    }
+
+    fn resolved_min_width(&self, metrics: ControlMetrics) -> f32 {
+        self.min_width.unwrap_or(metrics.action_card_min_width)
+    }
+
+    fn resolved_min_height(&self, metrics: ControlMetrics) -> f32 {
+        self.min_height.unwrap_or(metrics.action_card_min_height)
     }
 
     fn activate(&mut self, ctx: &mut EventCtx) {
@@ -1676,17 +1749,17 @@ impl ActionCard {
         }
     }
 
-    fn content_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, self.padding)
+    fn content_rect(&self, bounds: Rect, metrics: ControlMetrics) -> Rect {
+        inset_rect(bounds, self.resolved_padding(metrics))
     }
 
-    fn text_bounds(&self, bounds: Rect) -> Rect {
-        let content = self.content_rect(bounds);
+    fn text_bounds(&self, bounds: Rect, metrics: ControlMetrics) -> Rect {
+        let content = self.content_rect(bounds, metrics);
         let icon_extent = self
             .icon
-            .map(|_| ACTION_CARD_ICON_BOX_SIZE + 12.0)
+            .map(|_| metrics.action_card_icon_box_size + metrics.action_card_icon_gap)
             .unwrap_or(0.0);
-        let trailing = 22.0;
+        let trailing = metrics.action_card_trailing_gap;
         Rect::new(
             content.x() + icon_extent,
             content.y(),
@@ -1825,6 +1898,9 @@ impl Widget for ActionCard {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let padding = self.resolved_padding(metrics);
         let title_style = self.resolved_title_style();
         let description_style = self.resolved_description_style();
         let title = measure_text(ctx, &self.title, &title_style);
@@ -1834,18 +1910,23 @@ impl Widget for ActionCard {
 
         let icon_extent = self
             .icon
-            .map(|_| ACTION_CARD_ICON_BOX_SIZE + 12.0)
+            .map(|_| metrics.action_card_icon_box_size + metrics.action_card_icon_gap)
             .unwrap_or(0.0);
         let text_width = title.width.max(description.width).min(320.0);
         let natural = Size::new(
-            self.min_width
-                .max(self.padding.left + icon_extent + text_width + 22.0 + self.padding.right),
-            self.min_height.max(
-                self.padding.top
+            self.resolved_min_width(metrics).max(
+                padding.left
+                    + icon_extent
+                    + text_width
+                    + metrics.action_card_trailing_gap
+                    + padding.right,
+            ),
+            self.resolved_min_height(metrics).max(
+                padding.top
                     + title.height.max(title_style.line_height)
-                    + ACTION_CARD_TEXT_GAP
+                    + metrics.action_card_text_gap
                     + description.height.max(description_style.line_height)
-                    + self.padding.bottom,
+                    + padding.bottom,
             ),
         );
         constraints.clamp(natural)
@@ -1866,7 +1947,9 @@ impl Widget for ActionCard {
         } else {
             0.0
         };
-        let accent = self.accent.unwrap_or(palette.accent);
+        let accent = self
+            .accent
+            .unwrap_or_else(|| theme.semantic_tone_color(self.tone));
         let mut background = mix_color(palette.control, palette.control_hover, hover);
         background = mix_color(background, palette.control_active, press * 0.55);
         if !enabled {
@@ -1902,12 +1985,23 @@ impl Widget for ActionCard {
         );
 
         let bounds = ctx.bounds();
-        let content = self.content_rect(bounds);
-        let accent_rail = Rect::new(bounds.x(), bounds.y() + 10.0, 3.0, bounds.height() - 20.0);
-        ctx.fill(rounded_rect_path(accent_rail, 1.5), accent.with_alpha(0.78));
+        let content = self.content_rect(bounds, metrics);
+        let accent_inset = metrics.action_card_accent_inset.min(bounds.height() * 0.5);
+        let accent_height = (bounds.height() - accent_inset * 2.0).max(0.0);
+        let accent_rail = Rect::new(
+            bounds.x(),
+            bounds.y() + accent_inset,
+            metrics.action_card_accent_width,
+            accent_height,
+        );
+        ctx.fill(
+            rounded_rect_path(accent_rail, metrics.action_card_accent_width * 0.5),
+            accent.with_alpha(0.78),
+        );
 
         if let Some(icon) = self.icon {
-            let icon_box_size = ACTION_CARD_ICON_BOX_SIZE
+            let icon_box_size = metrics
+                .action_card_icon_box_size
                 .min(content.width())
                 .min(content.height())
                 .max(0.0);
@@ -1926,7 +2020,8 @@ impl Widget for ActionCard {
                 accent.with_alpha(if enabled { 0.42 } else { 0.22 }),
                 StrokeStyle::new(physical_pixels(ctx, 1.0)),
             );
-            let icon_size = ACTION_CARD_ICON_SIZE
+            let icon_size = metrics
+                .action_card_icon_size
                 .min(icon_box.width())
                 .min(icon_box.height())
                 .max(0.0);
@@ -1948,7 +2043,7 @@ impl Widget for ActionCard {
             );
         }
 
-        let text_bounds = self.text_bounds(bounds);
+        let text_bounds = self.text_bounds(bounds, metrics);
         let title_style = self.resolved_title_style();
         let description_style = self.resolved_description_style();
         let title_height = title_style.line_height.max(
@@ -1956,15 +2051,16 @@ impl Widget for ActionCard {
                 .map(|measurement| measurement.height)
                 .unwrap_or(title_style.line_height),
         );
-        let description_height = (text_bounds.height() - title_height - ACTION_CARD_TEXT_GAP)
-            .max(description_style.line_height)
-            .min(description_style.line_height * 2.0);
-        let text_block_height = title_height + ACTION_CARD_TEXT_GAP + description_height;
+        let description_height =
+            (text_bounds.height() - title_height - metrics.action_card_text_gap)
+                .max(description_style.line_height)
+                .min(description_style.line_height * 2.0);
+        let text_block_height = title_height + metrics.action_card_text_gap + description_height;
         let text_y = text_bounds.y() + ((text_bounds.height() - text_block_height) * 0.5).max(0.0);
         let title_rect = Rect::new(text_bounds.x(), text_y, text_bounds.width(), title_height);
         let description_rect = Rect::new(
             text_bounds.x(),
-            title_rect.max_y() + ACTION_CARD_TEXT_GAP,
+            title_rect.max_y() + metrics.action_card_text_gap,
             text_bounds.width(),
             description_height,
         );
@@ -1997,7 +2093,11 @@ impl Widget for ActionCard {
         );
         ctx.pop_clip();
 
-        let chevron_size = 16.0_f32.min(content.width()).min(content.height()).max(0.0);
+        let chevron_size = metrics
+            .action_card_chevron_size
+            .min(content.width())
+            .min(content.height())
+            .max(0.0);
         let chevron = Rect::new(
             content.max_x() - chevron_size,
             content.y() + ((content.height() - chevron_size) * 0.5),
@@ -2053,24 +2153,28 @@ fn set_action_card_animation_target(
     }
 }
 
-const PROPERTY_ROW_LABEL_WIDTH: f32 = 112.0;
-const PROPERTY_ROW_GAP: f32 = 8.0;
-const PROPERTY_ROW_STACKED_GAP: f32 = 6.0;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyRowLayout {
     Stacked,
     Inline,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PropertyRowDefaults {
+    Property,
+    Form,
+}
+
 pub struct PropertyRow {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    defaults: PropertyRowDefaults,
     layout: PropertyRowLayout,
-    label_width: f32,
+    label_width: Option<f32>,
     control_width: Option<f32>,
-    gap: f32,
+    auto_control_width: bool,
+    gap: Option<f32>,
     label_style: Option<TextStyle>,
     child: SingleChild,
     label_measurement: Option<TextMeasurement>,
@@ -2085,10 +2189,12 @@ impl PropertyRow {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            defaults: PropertyRowDefaults::Property,
             layout: PropertyRowLayout::Stacked,
-            label_width: PROPERTY_ROW_LABEL_WIDTH,
+            label_width: None,
             control_width: None,
-            gap: PROPERTY_ROW_STACKED_GAP,
+            auto_control_width: true,
+            gap: None,
             label_style: None,
             child: SingleChild::new(control),
             label_measurement: None,
@@ -2111,9 +2217,6 @@ impl PropertyRow {
 
     pub fn layout(mut self, layout: PropertyRowLayout) -> Self {
         self.layout = layout;
-        if matches!(layout, PropertyRowLayout::Inline) && self.gap == PROPERTY_ROW_STACKED_GAP {
-            self.gap = PROPERTY_ROW_GAP;
-        }
         self
     }
 
@@ -2126,22 +2229,24 @@ impl PropertyRow {
     }
 
     pub fn label_width(mut self, width: f32) -> Self {
-        self.label_width = width.max(0.0);
+        self.label_width = Some(width.max(0.0));
         self
     }
 
     pub fn control_width(mut self, width: f32) -> Self {
         self.control_width = Some(width.max(0.0));
+        self.auto_control_width = false;
         self
     }
 
     pub fn auto_control_width(mut self) -> Self {
         self.control_width = None;
+        self.auto_control_width = true;
         self
     }
 
     pub fn gap(mut self, gap: f32) -> Self {
-        self.gap = gap.max(0.0);
+        self.gap = Some(gap.max(0.0));
         self
     }
 
@@ -2175,6 +2280,40 @@ impl PropertyRow {
             .unwrap_or(*self.theme)
     }
 
+    fn with_form_defaults(mut self) -> Self {
+        self.defaults = PropertyRowDefaults::Form;
+        self.auto_control_width = false;
+        self
+    }
+
+    fn resolved_label_width(&self, metrics: ControlMetrics) -> f32 {
+        self.label_width.unwrap_or(match self.defaults {
+            PropertyRowDefaults::Property => metrics.property_row_label_width,
+            PropertyRowDefaults::Form => metrics.form_row_label_width,
+        })
+    }
+
+    fn resolved_gap(&self, metrics: ControlMetrics) -> f32 {
+        self.gap.unwrap_or(match self.defaults {
+            PropertyRowDefaults::Form => metrics.form_row_gap,
+            PropertyRowDefaults::Property => match self.layout {
+                PropertyRowLayout::Stacked => metrics.property_row_stacked_gap,
+                PropertyRowLayout::Inline => metrics.property_row_inline_gap,
+            },
+        })
+    }
+
+    fn resolved_control_width(&self, metrics: ControlMetrics) -> Option<f32> {
+        if self.auto_control_width {
+            None
+        } else {
+            self.control_width.or_else(|| {
+                matches!(self.defaults, PropertyRowDefaults::Form)
+                    .then_some(metrics.form_row_control_width)
+            })
+        }
+    }
+
     fn label_height(&self, style: &TextStyle) -> f32 {
         self.label_measurement
             .map(|measurement| measurement.height)
@@ -2182,20 +2321,26 @@ impl PropertyRow {
             .max(style.line_height)
     }
 
-    fn child_constraints(&self, constraints: Constraints, label_extent: f32) -> Constraints {
+    fn child_constraints(
+        &self,
+        constraints: Constraints,
+        label_extent: f32,
+        metrics: ControlMetrics,
+    ) -> Constraints {
         let max_width = constraints.max.width;
+        let gap = self.resolved_gap(metrics);
         let available = match self.layout {
             PropertyRowLayout::Stacked => max_width,
             PropertyRowLayout::Inline => {
                 if max_width.is_finite() {
-                    (max_width - label_extent - self.gap).max(0.0)
+                    (max_width - label_extent - gap).max(0.0)
                 } else {
                     f32::INFINITY
                 }
             }
         };
         let width = self
-            .control_width
+            .resolved_control_width(metrics)
             .map(|width| width.min(available).max(0.0));
 
         match width {
@@ -2207,12 +2352,18 @@ impl PropertyRow {
         }
     }
 
-    fn child_width_for_bounds(&self, bounds: Rect, label_extent: f32) -> f32 {
+    fn child_width_for_bounds(
+        &self,
+        bounds: Rect,
+        label_extent: f32,
+        metrics: ControlMetrics,
+    ) -> f32 {
+        let gap = self.resolved_gap(metrics);
         let available = match self.layout {
             PropertyRowLayout::Stacked => bounds.width(),
-            PropertyRowLayout::Inline => (bounds.width() - label_extent - self.gap).max(0.0),
+            PropertyRowLayout::Inline => (bounds.width() - label_extent - gap).max(0.0),
         };
-        self.control_width
+        self.resolved_control_width(metrics)
             .unwrap_or(available)
             .min(available)
             .max(0.0)
@@ -2221,24 +2372,30 @@ impl PropertyRow {
 
 impl Widget for PropertyRow {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let gap = self.resolved_gap(metrics);
         let label_style = self.resolved_label_style();
         let label_measurement = measure_text(ctx, &self.label, &label_style);
         self.label_measurement = Some(label_measurement);
         let label_height = self.label_height(&label_style);
         let label_extent = match self.layout {
             PropertyRowLayout::Stacked => label_measurement.width,
-            PropertyRowLayout::Inline => self.label_width.max(label_measurement.width),
+            PropertyRowLayout::Inline => self
+                .resolved_label_width(metrics)
+                .max(label_measurement.width),
         };
-        let child_size = self
-            .child
-            .measure(ctx, self.child_constraints(constraints, label_extent));
+        let child_size = self.child.measure(
+            ctx,
+            self.child_constraints(constraints, label_extent, metrics),
+        );
         let natural = match self.layout {
             PropertyRowLayout::Stacked => Size::new(
                 label_measurement.width.max(child_size.width),
-                label_height + self.gap + child_size.height,
+                label_height + gap + child_size.height,
             ),
             PropertyRowLayout::Inline => Size::new(
-                label_extent + self.gap + child_size.width,
+                label_extent + gap + child_size.width,
                 label_height.max(child_size.height),
             ),
         };
@@ -2247,25 +2404,31 @@ impl Widget for PropertyRow {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let gap = self.resolved_gap(metrics);
         let label_style = self.resolved_label_style();
         let label_height = self.label_height(&label_style);
         let label_width = match self.layout {
             PropertyRowLayout::Stacked => bounds.width(),
-            PropertyRowLayout::Inline => self.label_width.min(bounds.width()).max(0.0),
+            PropertyRowLayout::Inline => self
+                .resolved_label_width(metrics)
+                .min(bounds.width())
+                .max(0.0),
         };
         let child_measured = self.child.child().measured_size();
-        let child_width = self.child_width_for_bounds(bounds, label_width);
+        let child_width = self.child_width_for_bounds(bounds, label_width, metrics);
         let child_height = child_measured.height.min(bounds.height()).max(0.0);
 
         let child_bounds = match self.layout {
             PropertyRowLayout::Stacked => Rect::new(
                 bounds.x(),
-                bounds.y() + label_height + self.gap,
+                bounds.y() + label_height + gap,
                 child_width,
-                child_height.min((bounds.height() - label_height - self.gap).max(0.0)),
+                child_height.min((bounds.height() - label_height - gap).max(0.0)),
             ),
             PropertyRowLayout::Inline => Rect::new(
-                bounds.x() + label_width + self.gap,
+                bounds.x() + label_width + gap,
                 bounds.y() + ((bounds.height() - child_height) * 0.5).max(0.0),
                 child_width,
                 child_height,
@@ -2275,6 +2438,8 @@ impl Widget for PropertyRow {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let label_style = self.resolved_label_style();
         let label_height = self.label_height(&label_style);
         let bounds = ctx.bounds();
@@ -2285,7 +2450,9 @@ impl Widget for PropertyRow {
             PropertyRowLayout::Inline => Rect::new(
                 bounds.x(),
                 bounds.y() + ((bounds.height() - label_height) * 0.5).max(0.0),
-                self.label_width.min(bounds.width()).max(0.0),
+                self.resolved_label_width(metrics)
+                    .min(bounds.width())
+                    .max(0.0),
                 label_height,
             ),
         };
@@ -2296,6 +2463,8 @@ impl Widget for PropertyRow {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let mut row = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
@@ -2316,7 +2485,9 @@ impl Widget for PropertyRow {
             PropertyRowLayout::Inline => Rect::new(
                 ctx.bounds().x(),
                 ctx.bounds().y() + ((ctx.bounds().height() - label_height) * 0.5).max(0.0),
-                self.label_width.min(ctx.bounds().width()).max(0.0),
+                self.resolved_label_width(metrics)
+                    .min(ctx.bounds().width())
+                    .max(0.0),
                 label_height,
             ),
         };
@@ -2349,22 +2520,6 @@ fn property_row_label_id(parent: WidgetId) -> WidgetId {
     WidgetId::new(TAG | (parent.get().wrapping_mul(271).wrapping_add(1) & LOW_MASK))
 }
 
-const FORM_ROW_LABEL_WIDTH: f32 = 128.0;
-const FORM_ROW_CONTROL_WIDTH: f32 = 340.0;
-const FORM_ROW_GAP: f32 = 12.0;
-const FIELD_GROUP_SPACING: f32 = 8.0;
-const FORM_SECTION_BODY_GAP: f32 = 12.0;
-const FORM_SECTION_HEADER_GAP: f32 = 10.0;
-const FORM_SECTION_DESCRIPTION_GAP: f32 = 3.0;
-const FORM_SECTION_MAX_WIDTH: f32 = 640.0;
-const FORM_SECTION_RADIUS: f32 = 8.0;
-const FORM_SECTION_PADDING: Insets = Insets {
-    left: 14.0,
-    top: 12.0,
-    right: 14.0,
-    bottom: 14.0,
-};
-
 pub struct FormRow {
     row: PropertyRow,
 }
@@ -2377,9 +2532,7 @@ impl FormRow {
         Self {
             row: PropertyRow::new(label, control)
                 .inline()
-                .label_width(FORM_ROW_LABEL_WIDTH)
-                .control_width(FORM_ROW_CONTROL_WIDTH)
-                .gap(FORM_ROW_GAP),
+                .with_form_defaults(),
         }
     }
 
@@ -2467,8 +2620,10 @@ impl Widget for FormRow {
 }
 
 pub struct FieldGroup {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     children: WidgetChildren,
-    spacing: f32,
+    spacing: Option<f32>,
     padding: Insets,
     max_width: Option<f32>,
     fill_width: bool,
@@ -2477,12 +2632,28 @@ pub struct FieldGroup {
 impl FieldGroup {
     pub fn new() -> Self {
         Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             children: WidgetChildren::new(),
-            spacing: FIELD_GROUP_SPACING,
+            spacing: None,
             padding: Insets::ZERO,
             max_width: None,
             fill_width: false,
         }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
     }
 
     pub fn with_child<W>(mut self, child: W) -> Self
@@ -2501,7 +2672,7 @@ impl FieldGroup {
     }
 
     pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing.max(0.0);
+        self.spacing = Some(spacing.max(0.0));
         self
     }
 
@@ -2553,6 +2724,18 @@ impl FieldGroup {
             .max(0.0);
         Rect::new(inset.x(), inset.y(), width, inset.height())
     }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn resolved_spacing(&self) -> f32 {
+        self.spacing
+            .unwrap_or_else(|| self.resolved_theme().metrics.field_group_spacing)
+    }
 }
 
 impl Default for FieldGroup {
@@ -2563,12 +2746,13 @@ impl Default for FieldGroup {
 
 impl Widget for FieldGroup {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let spacing = self.resolved_spacing();
         let content_max_width = self.content_max_width(constraints);
         let mut y: f32 = 0.0;
         let mut width: f32 = 0.0;
         for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
             if index > 0 {
-                y += self.spacing;
+                y += spacing;
             }
             let child_size = child.measure(
                 ctx,
@@ -2592,11 +2776,12 @@ impl Widget for FieldGroup {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let spacing = self.resolved_spacing();
         let content = self.content_rect(bounds);
         let mut y = content.y();
         for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
             if index > 0 {
-                y += self.spacing;
+                y += spacing;
             }
             let measured = child.measured_size();
             let width = if self.fill_width {
@@ -2635,12 +2820,13 @@ pub struct FormSection {
     description_style: Option<TextStyle>,
     header_action: Option<SingleChild>,
     child: SingleChild,
-    padding: Insets,
-    body_gap: f32,
-    header_gap: f32,
-    description_gap: f32,
+    padding: Option<Insets>,
+    body_gap: Option<f32>,
+    header_gap: Option<f32>,
+    description_gap: Option<f32>,
     max_width: Option<f32>,
-    radius: f32,
+    auto_width: bool,
+    radius: Option<f32>,
     elevation: SurfaceElevation,
     fill_width: bool,
     title_measurement: Option<TextMeasurement>,
@@ -2661,12 +2847,13 @@ impl FormSection {
             description_style: None,
             header_action: None,
             child: SingleChild::new(child),
-            padding: FORM_SECTION_PADDING,
-            body_gap: FORM_SECTION_BODY_GAP,
-            header_gap: FORM_SECTION_HEADER_GAP,
-            description_gap: FORM_SECTION_DESCRIPTION_GAP,
-            max_width: Some(FORM_SECTION_MAX_WIDTH),
-            radius: FORM_SECTION_RADIUS,
+            padding: None,
+            body_gap: None,
+            header_gap: None,
+            description_gap: None,
+            max_width: None,
+            auto_width: false,
+            radius: None,
             elevation: SurfaceElevation::Small,
             fill_width: false,
             title_measurement: None,
@@ -2712,27 +2899,29 @@ impl FormSection {
     }
 
     pub fn padding(mut self, padding: Insets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
     pub fn body_gap(mut self, gap: f32) -> Self {
-        self.body_gap = gap.max(0.0);
+        self.body_gap = Some(gap.max(0.0));
         self
     }
 
     pub fn header_gap(mut self, gap: f32) -> Self {
-        self.header_gap = gap.max(0.0);
+        self.header_gap = Some(gap.max(0.0));
         self
     }
 
     pub fn max_width(mut self, width: f32) -> Self {
         self.max_width = Some(width.max(0.0));
+        self.auto_width = false;
         self
     }
 
     pub fn auto_width(mut self) -> Self {
         self.max_width = None;
+        self.auto_width = true;
         self
     }
 
@@ -2742,7 +2931,7 @@ impl FormSection {
     }
 
     pub fn radius(mut self, radius: f32) -> Self {
-        self.radius = radius.max(0.0);
+        self.radius = Some(radius.max(0.0));
         self
     }
 
@@ -2764,6 +2953,35 @@ impl FormSection {
             .as_ref()
             .map(|theme| theme())
             .unwrap_or(*self.theme)
+    }
+
+    fn resolved_padding(&self, metrics: ControlMetrics) -> Insets {
+        self.padding.unwrap_or(metrics.form_section_padding)
+    }
+
+    fn resolved_body_gap(&self, metrics: ControlMetrics) -> f32 {
+        self.body_gap.unwrap_or(metrics.form_section_body_gap)
+    }
+
+    fn resolved_header_gap(&self, metrics: ControlMetrics) -> f32 {
+        self.header_gap.unwrap_or(metrics.form_section_header_gap)
+    }
+
+    fn resolved_description_gap(&self, metrics: ControlMetrics) -> f32 {
+        self.description_gap
+            .unwrap_or(metrics.form_section_description_gap)
+    }
+
+    fn resolved_max_width(&self, metrics: ControlMetrics) -> Option<f32> {
+        if self.auto_width {
+            None
+        } else {
+            Some(self.max_width.unwrap_or(metrics.form_section_max_width))
+        }
+    }
+
+    fn resolved_radius(&self, metrics: ControlMetrics) -> f32 {
+        self.radius.unwrap_or(metrics.form_section_radius).max(0.0)
     }
 
     fn resolved_title_style(&self) -> TextStyle {
@@ -2809,31 +3027,36 @@ impl FormSection {
         let title = self.title_height(title_style);
         let description = self.description_height(description_style);
         if description > 0.0 {
-            title + self.description_gap + description
+            let metrics = self.resolved_theme().metrics;
+            title + self.resolved_description_gap(metrics) + description
         } else {
             title
         }
     }
 
     fn content_max_width(&self, available_width: f32) -> f32 {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let padding = self.resolved_padding(metrics);
         let available = if available_width.is_finite() {
-            (available_width - self.padding.left - self.padding.right).max(0.0)
+            (available_width - padding.left - padding.right).max(0.0)
         } else {
             f32::INFINITY
         };
-        self.max_width
+        self.resolved_max_width(metrics)
             .map(|width| width.min(available))
             .unwrap_or(available)
     }
 
     fn card_rect(&self, bounds: Rect) -> Rect {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let padding = self.resolved_padding(metrics);
         let width = if self.fill_width {
             bounds.width()
         } else {
-            self.max_width
-                .map(|max_width| {
-                    (max_width + self.padding.left + self.padding.right).min(bounds.width())
-                })
+            self.resolved_max_width(metrics)
+                .map(|max_width| (max_width + padding.left + padding.right).min(bounds.width()))
                 .unwrap_or(bounds.width())
         }
         .max(0.0);
@@ -2846,7 +3069,8 @@ impl FormSection {
     }
 
     fn content_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(self.card_rect(bounds), self.padding)
+        let theme = self.resolved_theme();
+        inset_rect(self.card_rect(bounds), self.resolved_padding(theme.metrics))
     }
 
     fn header_height(&self, title_style: &TextStyle, description_style: &TextStyle) -> f32 {
@@ -2862,6 +3086,11 @@ impl FormSection {
 
 impl Widget for FormSection {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let padding = self.resolved_padding(metrics);
+        let body_gap = self.resolved_body_gap(metrics);
+        let header_gap = self.resolved_header_gap(metrics);
         let title_style = self.resolved_title_style();
         let description_style = self.resolved_description_style();
         let title = measure_text(ctx, &self.title, &title_style);
@@ -2887,7 +3116,7 @@ impl Widget for FormSection {
             })
             .unwrap_or(Size::ZERO);
         let action_extent = if self.header_action.is_some() {
-            action_size.width + self.header_gap
+            action_size.width + header_gap
         } else {
             0.0
         };
@@ -2907,19 +3136,18 @@ impl Widget for FormSection {
         let content_width = header_width.max(child_size.width).min(content_max_width);
         let header_height = self.header_height(&title_style, &description_style);
 
-        let mut width = content_width + self.padding.left + self.padding.right;
+        let mut width = content_width + padding.left + padding.right;
         if self.fill_width && constraints.max.width.is_finite() {
             width = constraints.max.width;
         }
-        let height = self.padding.top
-            + header_height
-            + self.body_gap
-            + child_size.height
-            + self.padding.bottom;
+        let height = padding.top + header_height + body_gap + child_size.height + padding.bottom;
         constraints.clamp(Size::new(width, height))
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let body_gap = self.resolved_body_gap(metrics);
         let content = self.content_rect(bounds);
         let title_style = self.resolved_title_style();
         let description_style = self.resolved_description_style();
@@ -2943,7 +3171,7 @@ impl Widget for FormSection {
             ctx,
             Rect::new(
                 content.x(),
-                content.y() + header_height + self.body_gap,
+                content.y() + header_height + body_gap,
                 child_size.width.min(content.width()),
                 child_size.height,
             ),
@@ -2952,8 +3180,11 @@ impl Widget for FormSection {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let card = self.card_rect(ctx.bounds());
-        let radius = self.radius.min(card.width().min(card.height()) * 0.5);
+        let radius = self
+            .resolved_radius(metrics)
+            .min(card.width().min(card.height()) * 0.5);
         let shadow = match self.elevation {
             SurfaceElevation::None => None,
             SurfaceElevation::Small => Some(&theme.shadows.box_shadow.sm),
@@ -2964,16 +3195,8 @@ impl Widget for FormSection {
             paint_theme_shadow(ctx, card, [radius; 4], shadow);
         }
 
-        let background = if theme.surfaces.dark {
-            theme.surfaces.panel
-        } else {
-            Color::rgba(0.925, 0.942, 0.965, 1.0)
-        };
-        let border = if theme.surfaces.dark {
-            theme.surfaces.border
-        } else {
-            Color::rgba(0.700, 0.745, 0.805, 1.0)
-        };
+        let background = theme.surfaces.panel;
+        let border = theme.surfaces.border;
         let shape = rounded_rect_path(card, radius);
         ctx.fill(shape.clone(), background);
         ctx.stroke(
@@ -2982,15 +3205,17 @@ impl Widget for FormSection {
             StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width.max(1.0))),
         );
 
-        let content = inset_rect(card, self.padding);
+        let content = inset_rect(card, self.resolved_padding(metrics));
         let title_style = self.resolved_title_style();
         let description_style = self.resolved_description_style();
         let title_height = self.title_height(&title_style);
         let description_height = self.description_height(&description_style);
+        let header_gap = self.resolved_header_gap(metrics);
+        let description_gap = self.resolved_description_gap(metrics);
         let action_width = self
             .header_action
             .as_ref()
-            .map(|action| action.child().measured_size().width + self.header_gap)
+            .map(|action| action.child().measured_size().width + header_gap)
             .unwrap_or(0.0)
             .min(content.width());
         let text_width = (content.width() - action_width).max(0.0);
@@ -3001,7 +3226,7 @@ impl Widget for FormSection {
         if let Some(description) = &self.description {
             let description_rect = Rect::new(
                 content.x(),
-                title_rect.max_y() + self.description_gap,
+                title_rect.max_y() + description_gap,
                 text_width,
                 description_height,
             );
@@ -3043,14 +3268,12 @@ impl Widget for FormSection {
     }
 }
 
-const PANEL_SECTION_GAP: f32 = 8.0;
-
 pub struct PanelSection {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     title: String,
-    gap: f32,
-    action_gap: f32,
+    gap: Option<f32>,
+    action_gap: Option<f32>,
     title_style: Option<TextStyle>,
     header_action: Option<SingleChild>,
     child: SingleChild,
@@ -3070,8 +3293,8 @@ impl PanelSection {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             title: title.into(),
-            gap: PANEL_SECTION_GAP,
-            action_gap: 6.0,
+            gap: None,
+            action_gap: None,
             title_style: None,
             header_action: None,
             child: SingleChild::new(child),
@@ -3098,7 +3321,7 @@ impl PanelSection {
     }
 
     pub fn gap(mut self, gap: f32) -> Self {
-        self.gap = gap.max(0.0);
+        self.gap = Some(gap.max(0.0));
         self
     }
 
@@ -3116,7 +3339,7 @@ impl PanelSection {
     }
 
     pub fn action_gap(mut self, gap: f32) -> Self {
-        self.action_gap = gap.max(0.0);
+        self.action_gap = Some(gap.max(0.0));
         self
     }
 
@@ -3160,6 +3383,14 @@ impl PanelSection {
             .unwrap_or(*self.theme)
     }
 
+    fn resolved_gap(&self, metrics: ControlMetrics) -> f32 {
+        self.gap.unwrap_or(metrics.panel_section_gap)
+    }
+
+    fn resolved_action_gap(&self, metrics: ControlMetrics) -> f32 {
+        self.action_gap.unwrap_or(metrics.panel_section_action_gap)
+    }
+
     fn title_height(&self, style: &TextStyle) -> f32 {
         self.title_measurement
             .map(|measurement| measurement.height)
@@ -3180,18 +3411,23 @@ impl PanelSection {
         !self.collapsible || self.expanded
     }
 
-    fn disclosure_width(&self) -> f32 {
-        if self.collapsible { 16.0 } else { 0.0 }
+    fn disclosure_width(&self, metrics: ControlMetrics) -> f32 {
+        if self.collapsible {
+            metrics.panel_section_disclosure_size
+        } else {
+            0.0
+        }
     }
 
     fn title_rect(&self, bounds: Rect, header_height: f32, title_height: f32) -> Rect {
+        let metrics = self.resolved_theme().metrics;
         let action_width = self
             .header_action
             .as_ref()
-            .map(|action| action.child().measured_size().width + self.action_gap)
+            .map(|action| action.child().measured_size().width + self.resolved_action_gap(metrics))
             .unwrap_or(0.0)
             .min(bounds.width());
-        let disclosure_width = self.disclosure_width();
+        let disclosure_width = self.disclosure_width(metrics);
         Rect::new(
             bounds.x() + disclosure_width,
             bounds.y() + ((header_height - title_height) * 0.5).max(0.0),
@@ -3207,11 +3443,12 @@ impl PanelSection {
     }
 
     fn header_hit_rect(&self, bounds: Rect) -> Rect {
+        let metrics = self.resolved_theme().metrics;
         let header = self.header_rect(bounds);
         let action_width = self
             .header_action
             .as_ref()
-            .map(|action| action.child().measured_size().width + self.action_gap)
+            .map(|action| action.child().measured_size().width + self.resolved_action_gap(metrics))
             .unwrap_or(0.0)
             .min(header.width());
         Rect::new(
@@ -3316,6 +3553,10 @@ impl Widget for PanelSection {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let gap = self.resolved_gap(metrics);
+        let action_gap = self.resolved_action_gap(metrics);
         let title_style = self.resolved_title_style();
         let title_measurement = measure_text(ctx, &self.title, &title_style);
         self.title_measurement = Some(title_measurement);
@@ -3336,15 +3577,18 @@ impl Widget for PanelSection {
             Size::ZERO
         };
         let header_width = if self.header_action.is_some() {
-            self.disclosure_width() + title_measurement.width + self.action_gap + action_size.width
+            self.disclosure_width(metrics)
+                + title_measurement.width
+                + action_gap
+                + action_size.width
         } else {
-            self.disclosure_width() + title_measurement.width
+            self.disclosure_width(metrics) + title_measurement.width
         };
         let natural = Size::new(
             header_width.max(child_size.width),
             header_height
                 + if self.is_expanded() && child_size.height > 0.0 {
-                    self.gap + child_size.height
+                    gap + child_size.height
                 } else {
                     0.0
                 },
@@ -3354,6 +3598,9 @@ impl Widget for PanelSection {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let gap = self.resolved_gap(metrics);
         let title_style = self.resolved_title_style();
         let header_height = self.header_height(&title_style);
         if let Some(action) = &mut self.header_action {
@@ -3376,7 +3623,7 @@ impl Widget for PanelSection {
         let child_height = if self.is_expanded() {
             child_size
                 .height
-                .min((bounds.height() - header_height - self.gap).max(0.0))
+                .min((bounds.height() - header_height - gap).max(0.0))
         } else {
             0.0
         };
@@ -3384,7 +3631,7 @@ impl Widget for PanelSection {
             ctx,
             Rect::new(
                 bounds.x(),
-                bounds.y() + header_height + self.gap,
+                bounds.y() + header_height + gap,
                 bounds.width().min(child_size.width).max(0.0),
                 child_height,
             ),
@@ -3393,6 +3640,7 @@ impl Widget for PanelSection {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let title_style = self.resolved_title_style();
         let title_height = self.title_height(&title_style);
         let header_height = self.header_height(&title_style);
@@ -3400,13 +3648,22 @@ impl Widget for PanelSection {
         if self.collapsible {
             let header_hit = self.header_hit_rect(ctx.bounds());
             let header_fill = if self.pressed_header {
-                theme.palette.accent.with_alpha(0.10)
+                theme
+                    .palette
+                    .accent
+                    .with_alpha((theme.interaction.selected_blend * 0.48).min(0.14))
             } else if self.hovered_header {
-                theme.palette.accent.with_alpha(0.06)
+                theme
+                    .palette
+                    .accent
+                    .with_alpha((theme.interaction.hover_blend * 0.07).min(0.08))
             } else {
                 theme.palette.surface.with_alpha(0.001)
             };
-            ctx.fill(rounded_rect_path(header_hit, 4.0), header_fill);
+            ctx.fill(
+                rounded_rect_path(header_hit, metrics.indicator_corner_radius),
+                header_fill,
+            );
             paint_panel_section_disclosure(
                 ctx,
                 self.header_rect(ctx.bounds()),
@@ -3414,6 +3671,7 @@ impl Widget for PanelSection {
                 self.hovered_header,
                 self.pressed_header,
                 &theme,
+                metrics.panel_section_disclosure_size,
             );
         }
         ctx.push_clip_rect(title_rect);
@@ -3511,9 +3769,15 @@ fn paint_panel_section_disclosure(
     hovered: bool,
     pressed: bool,
     theme: &DefaultTheme,
+    disclosure_size: f32,
 ) {
     let palette = theme.palette;
-    let center = Point::new(header.x() + 7.0, header.y() + header.height() * 0.5);
+    let center = Point::new(
+        header.x() + disclosure_size * 0.5,
+        header.y() + header.height() * 0.5,
+    );
+    let half = disclosure_size * 0.25;
+    let tip = disclosure_size * 0.22;
     let color = if pressed {
         palette.accent
     } else if hovered {
@@ -3524,29 +3788,25 @@ fn paint_panel_section_disclosure(
     let mut builder = PathBuilder::new();
     if expanded {
         builder
-            .move_to(Point::new(center.x - 4.0, center.y - 2.0))
-            .line_to(Point::new(center.x + 4.0, center.y - 2.0))
-            .line_to(Point::new(center.x, center.y + 3.5));
+            .move_to(Point::new(center.x - half, center.y - tip * 0.55))
+            .line_to(Point::new(center.x + half, center.y - tip * 0.55))
+            .line_to(Point::new(center.x, center.y + tip));
     } else {
         builder
-            .move_to(Point::new(center.x - 2.0, center.y - 4.0))
-            .line_to(Point::new(center.x + 3.5, center.y))
-            .line_to(Point::new(center.x - 2.0, center.y + 4.0));
+            .move_to(Point::new(center.x - tip * 0.55, center.y - half))
+            .line_to(Point::new(center.x + tip, center.y))
+            .line_to(Point::new(center.x - tip * 0.55, center.y + half));
     }
     ctx.fill(builder.build(), color);
 }
-
-const DOCK_PANEL_HEADER_HEIGHT: f32 = 34.0;
-const DOCK_PANEL_HORIZONTAL_PADDING: f32 = 10.0;
-const DOCK_PANEL_VERTICAL_PADDING: f32 = 8.0;
 
 pub struct DockPanel {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: Option<String>,
     title: String,
-    header_height: f32,
-    padding: Insets,
+    header_height: Option<f32>,
+    padding: Option<Insets>,
     background: Option<Color>,
     header_background: Option<Color>,
     child: SingleChild,
@@ -3563,13 +3823,8 @@ impl DockPanel {
             theme_reader: None,
             name: None,
             title: title.into(),
-            header_height: DOCK_PANEL_HEADER_HEIGHT,
-            padding: Insets {
-                left: DOCK_PANEL_HORIZONTAL_PADDING,
-                top: DOCK_PANEL_VERTICAL_PADDING,
-                right: DOCK_PANEL_HORIZONTAL_PADDING,
-                bottom: DOCK_PANEL_VERTICAL_PADDING,
-            },
+            header_height: None,
+            padding: None,
             background: None,
             header_background: None,
             child: SingleChild::new(child),
@@ -3597,12 +3852,12 @@ impl DockPanel {
     }
 
     pub fn header_height(mut self, height: f32) -> Self {
-        self.header_height = height.max(0.0);
+        self.header_height = Some(height.max(0.0));
         self
     }
 
     pub fn padding(mut self, padding: Insets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
@@ -3641,6 +3896,15 @@ impl DockPanel {
             .unwrap_or(*self.theme)
     }
 
+    fn resolved_header_height(&self, metrics: ControlMetrics) -> f32 {
+        self.header_height
+            .unwrap_or(metrics.dock_panel_header_height)
+    }
+
+    fn resolved_padding(&self, metrics: ControlMetrics) -> Insets {
+        self.padding.unwrap_or(metrics.dock_panel_padding)
+    }
+
     fn title_height(&self, style: &TextStyle) -> f32 {
         self.title_measurement
             .map(|measurement| measurement.height)
@@ -3649,30 +3913,42 @@ impl DockPanel {
     }
 
     fn header_rect(&self, bounds: Rect) -> Rect {
-        Rect::new(bounds.x(), bounds.y(), bounds.width(), self.header_height)
+        let theme = self.resolved_theme();
+        Rect::new(
+            bounds.x(),
+            bounds.y(),
+            bounds.width(),
+            self.resolved_header_height(theme.metrics),
+        )
     }
 
     fn content_rect(&self, bounds: Rect) -> Rect {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let header_height = self.resolved_header_height(metrics);
         inset_rect(
             Rect::new(
                 bounds.x(),
-                bounds.y() + self.header_height,
+                bounds.y() + header_height,
                 bounds.width(),
-                (bounds.height() - self.header_height).max(0.0),
+                (bounds.height() - header_height).max(0.0),
             ),
-            self.padding,
+            self.resolved_padding(metrics),
         )
     }
 
     fn child_constraints(&self, constraints: Constraints) -> Constraints {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let padding = self.resolved_padding(metrics);
+        let header_height = self.resolved_header_height(metrics);
         let width = if constraints.max.width.is_finite() {
-            (constraints.max.width - self.padding.left - self.padding.right).max(0.0)
+            (constraints.max.width - padding.left - padding.right).max(0.0)
         } else {
             f32::INFINITY
         };
         let height = if constraints.max.height.is_finite() {
-            (constraints.max.height - self.header_height - self.padding.top - self.padding.bottom)
-                .max(0.0)
+            (constraints.max.height - header_height - padding.top - padding.bottom).max(0.0)
         } else {
             f32::INFINITY
         };
@@ -3682,14 +3958,18 @@ impl DockPanel {
 
 impl Widget for DockPanel {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let padding = self.resolved_padding(metrics);
+        let header_height = self.resolved_header_height(metrics);
         let title_style = self.resolved_title_style();
         let title_measurement = measure_text(ctx, &self.title, &title_style);
         self.title_measurement = Some(title_measurement);
         let child_size = self.child.measure(ctx, self.child_constraints(constraints));
         let natural = Size::new(
-            (title_measurement.width + 2.0 * DOCK_PANEL_HORIZONTAL_PADDING)
-                .max(child_size.width + self.padding.left + self.padding.right),
-            self.header_height + self.padding.top + child_size.height + self.padding.bottom,
+            (title_measurement.width + padding.left + padding.right)
+                .max(child_size.width + padding.left + padding.right),
+            header_height + padding.top + child_size.height + padding.bottom,
         );
 
         constraints.clamp(natural)
@@ -3702,14 +3982,16 @@ impl Widget for DockPanel {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let palette = theme.palette;
+        let metrics = theme.metrics;
+        let padding = self.resolved_padding(metrics);
         let bounds = ctx.bounds();
         let header = self.header_rect(bounds);
         let title_style = self.resolved_title_style();
         let title_height = self.title_height(&title_style);
         let title_rect = Rect::new(
-            header.x() + DOCK_PANEL_HORIZONTAL_PADDING,
+            header.x() + padding.left,
             header.y() + ((header.height() - title_height) * 0.5).max(0.0),
-            (header.width() - 2.0 * DOCK_PANEL_HORIZONTAL_PADDING).max(0.0),
+            (header.width() - padding.left - padding.right).max(0.0),
             title_height,
         );
         let divider_height = physical_pixels(ctx, 1.0);
@@ -3737,6 +4019,8 @@ impl Widget for DockPanel {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let theme = self.resolved_theme();
+        let padding = self.resolved_padding(theme.metrics);
         let mut panel = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
@@ -3752,9 +4036,9 @@ impl Widget for DockPanel {
             dock_panel_title_id(ctx.widget_id()),
             SemanticsRole::Text,
             Rect::new(
-                header.x() + DOCK_PANEL_HORIZONTAL_PADDING,
+                header.x() + padding.left,
                 header.y() + ((header.height() - title_height) * 0.5).max(0.0),
-                (header.width() - 2.0 * DOCK_PANEL_HORIZONTAL_PADDING).max(0.0),
+                (header.width() - padding.left - padding.right).max(0.0),
                 title_height,
             ),
         );
@@ -3782,11 +4066,6 @@ fn dock_panel_title_id(parent: WidgetId) -> WidgetId {
     WidgetId::new(TAG | (parent.get().wrapping_mul(467).wrapping_add(11) & LOW_MASK))
 }
 
-const PRESET_STRIP_ITEM_HEIGHT: f32 = 28.0;
-const PRESET_STRIP_ITEM_MIN_WIDTH: f32 = 44.0;
-const PRESET_STRIP_ITEM_HORIZONTAL_PADDING: f32 = 12.0;
-const PRESET_STRIP_GAP: f32 = 6.0;
-
 pub struct PresetStrip {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -3797,8 +4076,8 @@ pub struct PresetStrip {
     hovered: Option<usize>,
     pressed: Option<usize>,
     item_width: Option<f32>,
-    item_height: f32,
-    gap: f32,
+    item_height: Option<f32>,
+    gap: Option<f32>,
     label_measurements: Vec<TextMeasurement>,
     item_widths: Vec<f32>,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
@@ -3816,8 +4095,8 @@ impl PresetStrip {
             hovered: None,
             pressed: None,
             item_width: None,
-            item_height: PRESET_STRIP_ITEM_HEIGHT,
-            gap: PRESET_STRIP_GAP,
+            item_height: None,
+            gap: None,
             label_measurements: Vec::new(),
             item_widths: Vec::new(),
             on_change: None,
@@ -3872,12 +4151,12 @@ impl PresetStrip {
     }
 
     pub fn item_height(mut self, height: f32) -> Self {
-        self.item_height = height.max(20.0);
+        self.item_height = Some(height.max(20.0));
         self
     }
 
     pub fn gap(mut self, gap: f32) -> Self {
-        self.gap = gap.max(0.0);
+        self.gap = Some(gap.max(0.0));
         self
     }
 
@@ -3908,19 +4187,30 @@ impl PresetStrip {
             .unwrap_or(*self.theme)
     }
 
+    fn resolved_item_height(&self, metrics: ControlMetrics) -> f32 {
+        self.item_height.unwrap_or(metrics.preset_strip_item_height)
+    }
+
+    fn resolved_gap(&self, metrics: ControlMetrics) -> f32 {
+        self.gap.unwrap_or(metrics.preset_strip_gap)
+    }
+
     fn item_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
         if index >= self.presets.len() || self.item_widths.len() != self.presets.len() {
             return None;
         }
 
+        let metrics = self.resolved_theme().metrics;
+        let item_height = self.resolved_item_height(metrics);
+        let gap = self.resolved_gap(metrics);
         let mut x = bounds.x();
         for (current, width) in self.item_widths.iter().enumerate() {
             let available = (bounds.max_x() - x).max(0.0);
-            let rect = Rect::new(x, bounds.y(), width.min(available), self.item_height);
+            let rect = Rect::new(x, bounds.y(), width.min(available), item_height);
             if current == index {
                 return (!rect.is_empty()).then_some(rect);
             }
-            x += *width + self.gap;
+            x += *width + gap;
         }
 
         None
@@ -4047,6 +4337,9 @@ impl Widget for PresetStrip {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let item_height = self.resolved_item_height(metrics);
+        let gap = self.resolved_gap(metrics);
         let style = TextStyle {
             font_size: 12.0,
             line_height: 16.0,
@@ -4062,21 +4355,24 @@ impl Widget for PresetStrip {
             .iter()
             .map(|measurement| {
                 self.item_width.unwrap_or(
-                    (measurement.width + PRESET_STRIP_ITEM_HORIZONTAL_PADDING * 2.0)
-                        .max(PRESET_STRIP_ITEM_MIN_WIDTH),
+                    (measurement.width
+                        + metrics.preset_strip_item_padding.left
+                        + metrics.preset_strip_item_padding.right)
+                        .max(metrics.preset_strip_item_min_width),
                 )
             })
             .collect();
 
         let width = self.item_widths.iter().sum::<f32>()
-            + (self.gap * self.presets.len().saturating_sub(1) as f32);
-        constraints.clamp(Size::new(width, self.item_height))
+            + (gap * self.presets.len().saturating_sub(1) as f32);
+        constraints.clamp(Size::new(width, item_height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
         let selected = self.current_selected();
         let style = TextStyle {
             font_size: 12.0,
@@ -4100,14 +4396,25 @@ impl Widget for PresetStrip {
             let is_selected = selected == Some(index);
             let is_pressed = self.pressed == Some(index);
             let is_hovered = self.hovered == Some(index);
-            let background = if is_selected {
+            let base_background = if is_selected {
                 palette.accent
-            } else if is_pressed {
-                palette.control_active
-            } else if is_hovered {
-                palette.control_hover
             } else {
                 palette.surface
+            };
+            let background = if is_pressed {
+                mix_color(
+                    base_background,
+                    palette.control_active,
+                    interaction.pressed_blend * if is_selected { 0.45 } else { 1.0 },
+                )
+            } else if is_hovered {
+                mix_color(
+                    base_background,
+                    palette.control_hover,
+                    interaction.hover_blend * if is_selected { 0.35 } else { 1.0 },
+                )
+            } else {
+                base_background
             };
             let border = if is_selected {
                 palette.accent_border
@@ -4134,7 +4441,7 @@ impl Widget for PresetStrip {
             let text_rect = centered_text_rect(
                 ctx,
                 rect,
-                Insets::all(4.0),
+                metrics.preset_strip_label_padding,
                 self.label_measurements.get(index).copied(),
                 style.line_height,
             );
@@ -4206,14 +4513,11 @@ fn preset_strip_item_id(parent: WidgetId, index: usize) -> WidgetId {
     )
 }
 
-const STATUS_BAR_HEIGHT: f32 = 28.0;
-const STATUS_BAR_SEGMENT_PADDING: f32 = 10.0;
-const STATUS_BAR_SEGMENT_MIN_WIDTH: f32 = 86.0;
-
 pub struct StatusBarSegment {
     text: String,
     reader: Option<Box<dyn Fn() -> String>>,
-    min_width: f32,
+    min_width: Option<f32>,
+    tone: SemanticTone,
     expand: bool,
 }
 
@@ -4222,7 +4526,8 @@ impl StatusBarSegment {
         Self {
             text: text.into(),
             reader: None,
-            min_width: STATUS_BAR_SEGMENT_MIN_WIDTH,
+            min_width: None,
+            tone: SemanticTone::Neutral,
             expand: false,
         }
     }
@@ -4234,13 +4539,19 @@ impl StatusBarSegment {
         Self {
             text: fallback.into(),
             reader: Some(Box::new(reader)),
-            min_width: STATUS_BAR_SEGMENT_MIN_WIDTH,
+            min_width: None,
+            tone: SemanticTone::Neutral,
             expand: false,
         }
     }
 
     pub fn min_width(mut self, min_width: f32) -> Self {
-        self.min_width = min_width.max(0.0);
+        self.min_width = Some(min_width.max(0.0));
+        self
+    }
+
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
         self
     }
 
@@ -4261,7 +4572,7 @@ pub struct StatusBar {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: Option<String>,
-    height: f32,
+    height: Option<f32>,
     segments: Vec<StatusBarSegment>,
     measured_widths: Vec<f32>,
 }
@@ -4272,7 +4583,7 @@ impl StatusBar {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: None,
-            height: STATUS_BAR_HEIGHT,
+            height: None,
             segments: Vec::new(),
             measured_widths: Vec::new(),
         }
@@ -4298,7 +4609,7 @@ impl StatusBar {
     }
 
     pub fn height(mut self, height: f32) -> Self {
-        self.height = height.max(18.0);
+        self.height = Some(height.max(18.0));
         self
     }
 
@@ -4335,19 +4646,29 @@ impl StatusBar {
             .unwrap_or(*self.theme)
     }
 
-    fn segment_widths(&self) -> Vec<f32> {
+    fn resolved_height(&self, metrics: ControlMetrics) -> f32 {
+        self.height.unwrap_or(metrics.status_bar_height)
+    }
+
+    fn resolved_segment_min_width(segment: &StatusBarSegment, metrics: ControlMetrics) -> f32 {
+        segment
+            .min_width
+            .unwrap_or(metrics.status_bar_segment_min_width)
+    }
+
+    fn segment_widths(&self, metrics: ControlMetrics) -> Vec<f32> {
         if self.measured_widths.len() == self.segments.len() {
             self.measured_widths.clone()
         } else {
             self.segments
                 .iter()
-                .map(|segment| segment.min_width)
+                .map(|segment| Self::resolved_segment_min_width(segment, metrics))
                 .collect()
         }
     }
 
-    fn segment_rects(&self, bounds: Rect) -> Vec<Rect> {
-        let mut widths = self.segment_widths();
+    fn segment_rects(&self, bounds: Rect, metrics: ControlMetrics) -> Vec<Rect> {
+        let mut widths = self.segment_widths(metrics);
         let expandable = self
             .segments
             .iter()
@@ -4487,15 +4808,17 @@ impl Widget for StatusBarHost {
 
 impl Widget for StatusBar {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let text_style = self.text_style();
         self.measured_widths = self
             .segments
             .iter()
             .map(|segment| {
                 let text = segment.text();
-                let measured =
-                    measure_text(ctx, &text, &text_style).width + STATUS_BAR_SEGMENT_PADDING * 2.0;
-                segment.min_width.max(measured.ceil())
+                let measured = measure_text(ctx, &text, &text_style).width
+                    + metrics.status_bar_segment_padding * 2.0;
+                Self::resolved_segment_min_width(segment, metrics).max(measured.ceil())
             })
             .collect();
         let natural_width: f32 = self.measured_widths.iter().sum();
@@ -4505,13 +4828,14 @@ impl Widget for StatusBar {
             } else {
                 natural_width
             },
-            self.height,
+            self.resolved_height(metrics),
         ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let palette = theme.palette;
+        let metrics = theme.metrics;
         let bounds = ctx.bounds();
         ctx.fill_bounds(palette.surface);
         ctx.stroke_rect(
@@ -4524,37 +4848,62 @@ impl Widget for StatusBar {
         for (index, (segment, rect)) in self
             .segments
             .iter()
-            .zip(self.segment_rects(bounds))
+            .zip(self.segment_rects(bounds, metrics))
             .enumerate()
         {
             if rect.is_empty() {
                 continue;
             }
             if index > 0 {
+                let inset = metrics.status_bar_separator_inset.min(rect.height() * 0.5);
                 ctx.stroke_rect(
                     Rect::new(
                         rect.x(),
-                        rect.y() + 6.0,
+                        rect.y() + inset,
                         1.0,
-                        (rect.height() - 12.0).max(0.0),
+                        (rect.height() - inset * 2.0).max(0.0),
                     ),
                     palette.border.with_alpha(0.7),
                     StrokeStyle::new(1.0),
                 );
             }
+            let segment_text = segment.text();
+            let segment_style = if segment.tone == SemanticTone::Neutral {
+                text_style.clone()
+            } else {
+                let tone = theme.semantic_tone_color(segment.tone);
+                let pill = Rect::new(
+                    rect.x() + metrics.status_bar_separator_inset.min(rect.width() * 0.5),
+                    rect.y() + metrics.status_bar_separator_inset.min(rect.height() * 0.5),
+                    (rect.width() - metrics.status_bar_separator_inset * 2.0).max(0.0),
+                    (rect.height() - metrics.status_bar_separator_inset * 2.0).max(0.0),
+                );
+                if !pill.is_empty() {
+                    ctx.fill(
+                        rounded_rect_path(pill, metrics.indicator_corner_radius),
+                        tone.with_alpha(0.12),
+                    );
+                }
+                TextStyle {
+                    color: tone,
+                    ..text_style.clone()
+                }
+            };
             let text_rect = Rect::new(
-                rect.x() + STATUS_BAR_SEGMENT_PADDING,
+                rect.x() + metrics.status_bar_segment_padding,
                 rect.y() + ((rect.height() - text_style.line_height) * 0.5),
-                (rect.width() - STATUS_BAR_SEGMENT_PADDING * 2.0).max(0.0),
+                (rect.width() - metrics.status_bar_segment_padding * 2.0).max(0.0),
                 text_style.line_height,
             );
             ctx.push_clip_rect(text_rect);
-            ctx.draw_text(text_rect, segment.text(), text_style.clone());
+            ctx.draw_text(text_rect, segment_text, segment_style);
             ctx.pop_clip();
         }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
@@ -4566,7 +4915,7 @@ impl Widget for StatusBar {
         for (index, (segment, rect)) in self
             .segments
             .iter()
-            .zip(self.segment_rects(ctx.bounds()))
+            .zip(self.segment_rects(ctx.bounds(), metrics))
             .enumerate()
         {
             let text = segment.text();
@@ -4706,10 +5055,7 @@ impl TabBar {
     }
 
     fn tab_height(&self) -> f32 {
-        self.resolved_theme()
-            .metrics
-            .min_height
-            .max(TAB_BAR_DEFAULT_HEIGHT)
+        self.resolved_theme().metrics.tab_height
     }
 
     fn resolved_gap(&self) -> f32 {
@@ -4865,7 +5211,9 @@ impl Widget for TabBar {
         self.widths = self
             .label_measurements
             .iter()
-            .map(|measurement| (measurement.width + padding.left + padding.right).max(96.0))
+            .map(|measurement| {
+                (measurement.width + padding.left + padding.right).max(theme.metrics.tab_min_width)
+            })
             .collect();
 
         let gap = self.resolved_gap();
@@ -4878,6 +5226,7 @@ impl Widget for TabBar {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
         let tab_padding = metrics.tab_padding;
 
         ctx.fill(
@@ -4892,24 +5241,10 @@ impl Widget for TabBar {
             let selected = self.normalized_selected() == index;
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
-            let background = if selected {
-                palette.surface_raised
-            } else if pressed {
-                palette.control_active
-            } else if hovered {
-                palette.control_hover
-            } else {
-                Color::rgba(0.0, 0.0, 0.0, 0.0)
-            };
-            let border = if selected {
-                palette.border_focus
-            } else if hovered {
-                palette.border_hover
-            } else {
-                Color::rgba(0.78, 0.83, 0.90, 0.0)
-            };
 
-            if selected || hovered || pressed {
+            if let Some((background, border)) =
+                tab_state_visuals(&theme, selected, hovered, pressed)
+            {
                 draw_control_shape(
                     ctx,
                     rect,
@@ -4941,13 +5276,14 @@ impl Widget for TabBar {
             );
 
             if selected {
+                let thickness = interaction.active_indicator_thickness;
                 let accent = Rect::new(
                     rect.x() + tab_padding.left,
-                    rect.max_y() - 3.0,
+                    rect.max_y() - thickness,
                     (rect.width() - tab_padding.left - tab_padding.right).max(0.0),
-                    3.0,
+                    thickness,
                 );
-                ctx.fill(rounded_rect_path(accent, 1.5), palette.accent);
+                ctx.fill(rounded_rect_path(accent, thickness * 0.5), palette.accent);
             }
         }
     }
@@ -5063,7 +5399,7 @@ impl Tabs {
     }
 
     fn header_height(&self) -> f32 {
-        self.resolved_theme().metrics.min_height
+        self.resolved_theme().metrics.tab_height
     }
 
     fn resolved_gap(&self) -> f32 {
@@ -5244,7 +5580,10 @@ impl Widget for Tabs {
         self.widths = self
             .label_measurements
             .iter()
-            .map(|measurement| (measurement.width + tab_padding.left + tab_padding.right).max(96.0))
+            .map(|measurement| {
+                (measurement.width + tab_padding.left + tab_padding.right)
+                    .max(theme.metrics.tab_min_width)
+            })
             .collect();
 
         let gap = self.resolved_gap();
@@ -5336,24 +5675,16 @@ impl Widget for Tabs {
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
 
-            if selected || hovered || pressed {
+            if let Some((background, border)) =
+                tab_state_visuals(&theme, selected, hovered, pressed)
+            {
                 draw_control_shape(
                     ctx,
                     rect,
                     metrics.corner_radius,
                     physical_pixels(ctx, metrics.border_width),
-                    if selected {
-                        palette.surface_raised
-                    } else if pressed {
-                        palette.control_active
-                    } else {
-                        palette.control_hover
-                    },
-                    if selected {
-                        palette.border_focus
-                    } else {
-                        palette.border_hover
-                    },
+                    background,
+                    border,
                 );
             }
 
@@ -5692,6 +6023,7 @@ impl Widget for Menu {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
         let item_padding = metrics.menu_item_padding;
 
         // Cast an elevation shadow behind the raised menu surface before any
@@ -5737,9 +6069,13 @@ impl Widget for Menu {
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
                     if pressed {
-                        palette.control_active
+                        mix_color(
+                            palette.control,
+                            palette.control_active,
+                            interaction.pressed_blend,
+                        )
                     } else {
-                        palette.control_hover
+                        mix_color(palette.control, palette.accent, interaction.selected_blend)
                     },
                 );
             }
@@ -5832,9 +6168,7 @@ impl Widget for Menu {
 
 const PRESENTATION_EPSILON: f32 = 1e-4;
 const TOOLTIP_ANIMATION_SECONDS: f64 = 0.18;
-const TOOLTIP_REVEAL_OFFSET_PX: f32 = 8.0;
 const POPOVER_ANIMATION_SECONDS: f64 = 0.18;
-const POPOVER_REVEAL_OFFSET_PX: f32 = 10.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct AnimatedScalar {
@@ -5927,12 +6261,15 @@ fn tooltip_bubble_rect(
     placement: TooltipPlacement,
 ) -> Rect {
     let measurement = measurement.unwrap_or_else(|| tooltip_fallback_measurement(theme));
-    let width = (measurement.width + 24.0).max(96.0);
-    let height = measurement.height.max(theme.typography.body_line_height) + 18.0;
+    let padding = theme.metrics.tooltip_padding;
+    let width =
+        (measurement.width + padding.left + padding.right).max(theme.metrics.tooltip_min_width);
+    let height =
+        measurement.height.max(theme.typography.body_line_height) + padding.top + padding.bottom;
     let x = trigger_bounds.x() + ((trigger_bounds.width() - width) * 0.5);
     let y = match placement {
-        TooltipPlacement::Above => trigger_bounds.y() - height - 10.0,
-        TooltipPlacement::Below => trigger_bounds.max_y() + 10.0,
+        TooltipPlacement::Above => trigger_bounds.y() - height - theme.metrics.tooltip_gap,
+        TooltipPlacement::Below => trigger_bounds.max_y() + theme.metrics.tooltip_gap,
     };
     Rect::new(x, y, width, height)
 }
@@ -5976,7 +6313,7 @@ impl TooltipPresentationState {
             opacity: self.reveal.value,
             translation: Vector::new(
                 0.0,
-                TOOLTIP_REVEAL_OFFSET_PX * (1.0 - self.reveal.value) * direction,
+                self.theme.metrics.tooltip_reveal_offset * (1.0 - self.reveal.value) * direction,
             ),
         }
     }
@@ -6025,16 +6362,16 @@ impl Widget for TooltipOverlay {
             bubble,
             metrics.corner_radius,
             metrics,
-            Color::rgba(0.10, 0.14, 0.20, 0.96),
-            Color::rgba(0.05, 0.08, 0.12, 1.0),
+            state.theme.surfaces.tooltip,
+            state.theme.surfaces.tooltip_border,
             None,
         );
         let tail = tooltip_tail(state.trigger_bounds, bubble, state.placement);
-        ctx.fill(tail, Color::rgba(0.10, 0.14, 0.20, 0.96));
+        ctx.fill(tail, state.theme.surfaces.tooltip);
         ctx.draw_text(
-            inset_rect(bubble, Insets::all(9.0)),
+            inset_rect(bubble, metrics.tooltip_padding),
             state.text.clone(),
-            state.theme.text_style(Color::rgba(1.0, 1.0, 1.0, 1.0)),
+            state.theme.text_style(state.theme.surfaces.tooltip_text),
         );
     }
 
@@ -6262,7 +6599,10 @@ impl PopoverSurfaceState {
     fn layer_properties(&self) -> LayerProperties {
         LayerProperties {
             opacity: self.reveal.value,
-            translation: Vector::new(0.0, -POPOVER_REVEAL_OFFSET_PX * (1.0 - self.reveal.value)),
+            translation: Vector::new(
+                0.0,
+                -self.theme.metrics.popover_reveal_offset * (1.0 - self.reveal.value),
+            ),
         }
     }
 
@@ -7054,6 +7394,7 @@ impl Widget for ContextMenu {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let palette = theme.palette;
+        let interaction = theme.interaction;
         let item_padding = metrics.menu_item_padding;
         // Elevation shadow behind the raised context-menu surface.
         let surface_radius = metrics.corner_radius + 2.0;
@@ -7091,9 +7432,13 @@ impl Widget for ContextMenu {
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
                     if pressed {
-                        palette.control_active
+                        mix_color(
+                            palette.control,
+                            palette.control_active,
+                            interaction.pressed_blend,
+                        )
                     } else {
-                        palette.control_hover
+                        mix_color(palette.control, palette.accent, interaction.selected_blend)
                     },
                 );
             }
@@ -7225,7 +7570,7 @@ pub struct Dialog {
     shown: bool,
     modal: bool,
     dismiss_on_scrim: bool,
-    max_width: f32,
+    max_width: Option<f32>,
     body: SingleChild,
     actions: WidgetChildren,
     body_frame: Rect,
@@ -7247,7 +7592,7 @@ impl Dialog {
             shown: true,
             modal: true,
             dismiss_on_scrim: false,
-            max_width: 520.0,
+            max_width: None,
             body: SingleChild::new(body),
             actions: WidgetChildren::new(),
             body_frame: Rect::ZERO,
@@ -7284,7 +7629,7 @@ impl Dialog {
     }
 
     pub fn max_width(mut self, max_width: f32) -> Self {
-        self.max_width = max_width.max(280.0);
+        self.max_width = Some(max_width.max(self.theme.metrics.dialog_min_width));
         self
     }
 
@@ -7302,7 +7647,7 @@ impl Dialog {
     {
         self.actions.push(
             Button::new(label.into())
-                .min_width(110.0)
+                .min_width(self.theme.metrics.dialog_action_min_width)
                 .on_press(on_press),
         );
         self
@@ -7314,10 +7659,24 @@ impl Dialog {
     {
         self.actions.push(
             Button::new(label.into())
-                .min_width(110.0)
+                .min_width(self.theme.metrics.dialog_action_min_width)
                 .on_press(on_press),
         );
         self
+    }
+
+    fn resolved_max_width(&self) -> f32 {
+        self.max_width
+            .unwrap_or(self.theme.metrics.dialog_max_width)
+    }
+
+    fn title_style(&self) -> TextStyle {
+        TextStyle {
+            font_size: self.theme.metrics.dialog_title_font_size,
+            line_height: self.theme.metrics.dialog_title_line_height,
+            color: self.theme.palette.text,
+            ..self.theme.body_text_style()
+        }
     }
 
     fn dismiss(&mut self) {
@@ -7382,14 +7741,10 @@ impl Widget for Dialog {
                 420.0
             },
         ));
-        let outer_margin = 24.0;
-        let padding = Insets::all(18.0);
-        let title_style = TextStyle {
-            font_size: 20.0,
-            line_height: 24.0,
-            color: self.theme.palette.text,
-            ..TextStyle::default()
-        };
+        let metrics = self.theme.metrics;
+        let outer_margin = metrics.dialog_outer_margin;
+        let padding = metrics.dialog_padding;
+        let title_style = self.title_style();
         let description_style = self.theme.placeholder_text_style();
         self.title_measurement = Some(measure_text(ctx, &self.title, &title_style));
         self.description_measurement = self
@@ -7398,15 +7753,15 @@ impl Widget for Dialog {
             .map(|text| measure_text(ctx, text, &description_style));
 
         let dialog_width = (viewport.width - (outer_margin * 2.0))
-            .min(self.max_width)
-            .max(280.0);
+            .min(self.resolved_max_width())
+            .max(metrics.dialog_min_width);
         let mut footer_height: f32 = 0.0;
         for button in self.actions.as_mut_slice().iter_mut() {
             let button_size = button.measure(
                 ctx,
                 Constraints::new(
                     Size::ZERO,
-                    Size::new(dialog_width, self.theme.metrics.min_height + 8.0),
+                    Size::new(dialog_width, metrics.min_height + metrics.dialog_action_gap),
                 ),
             );
             footer_height = footer_height.max(button_size.height);
@@ -7420,9 +7775,18 @@ impl Widget for Dialog {
             .description_measurement
             .map(|measurement| measurement.height.max(description_style.line_height))
             .unwrap_or(0.0);
-        let header_gap = if self.description.is_some() { 8.0 } else { 0.0 };
-        let body_top = padding.top + title_height + header_gap + description_height + 14.0;
-        let footer_gap = if self.actions.is_empty() { 0.0 } else { 18.0 };
+        let header_gap = if self.description.is_some() {
+            metrics.dialog_description_gap
+        } else {
+            0.0
+        };
+        let body_top =
+            padding.top + title_height + header_gap + description_height + metrics.dialog_body_gap;
+        let footer_gap = if self.actions.is_empty() {
+            0.0
+        } else {
+            metrics.dialog_footer_gap
+        };
         let body_constraints = Constraints::new(
             Size::ZERO,
             Size::new(
@@ -7465,14 +7829,16 @@ impl Widget for Dialog {
         );
 
         if !self.actions.is_empty() {
-            let padding = Insets::all(18.0);
+            let metrics = self.theme.metrics;
+            let padding = metrics.dialog_padding;
+            let action_gap = metrics.dialog_action_gap;
             let footer_width = self
                 .actions
                 .as_slice()
                 .iter()
                 .map(|button| button.measured_size().width)
                 .sum::<f32>()
-                + (10.0 * self.actions.len().saturating_sub(1) as f32);
+                + (action_gap * self.actions.len().saturating_sub(1) as f32);
             let footer_height = self
                 .actions
                 .as_slice()
@@ -7484,7 +7850,7 @@ impl Widget for Dialog {
             for button in self.actions.as_mut_slice().iter_mut() {
                 let size = button.measured_size();
                 button.arrange(ctx, Rect::new(x, y, size.width, size.height));
-                x += size.width + 10.0;
+                x += size.width + action_gap;
             }
         }
     }
@@ -7497,7 +7863,7 @@ impl Widget for Dialog {
         let dialog = self.dialog_frame.translate(ctx.bounds().origin.to_vector());
 
         if self.modal {
-            ctx.fill_bounds(Color::rgba(0.06, 0.08, 0.12, 0.24));
+            ctx.fill_bounds(self.theme.surfaces.overlay_scrim);
         }
 
         let metrics = self.theme.metrics;
@@ -7521,24 +7887,26 @@ impl Widget for Dialog {
             Some(palette.focus_ring),
         );
 
-        let title_style = TextStyle {
-            font_size: 20.0,
-            line_height: 24.0,
-            color: palette.text,
-            ..TextStyle::default()
-        };
+        let title_style = self.title_style();
         let description_style = self.theme.placeholder_text_style();
-        let text_x = dialog.x() + 18.0;
-        let mut text_y = dialog.y() + 18.0;
+        let padding = metrics.dialog_padding;
+        let text_x = dialog.x() + padding.left;
+        let mut text_y = dialog.y() + padding.top;
+        let text_width = (dialog.width() - padding.left - padding.right).max(0.0);
         ctx.draw_text(
-            Rect::new(text_x, text_y, dialog.width() - 36.0, 28.0),
+            Rect::new(text_x, text_y, text_width, title_style.line_height),
             self.title.clone(),
             title_style,
         );
-        text_y += 24.0;
+        text_y += metrics.dialog_title_line_height;
         if let Some(description) = &self.description {
             ctx.draw_text(
-                Rect::new(text_x, text_y + 8.0, dialog.width() - 36.0, 22.0),
+                Rect::new(
+                    text_x,
+                    text_y + metrics.dialog_description_gap,
+                    text_width,
+                    description_style.line_height,
+                ),
                 description.clone(),
                 description_style,
             );
@@ -7624,6 +7992,9 @@ pub struct ProgressBar {
     min: f64,
     max: f64,
     value: f64,
+    tone: SemanticTone,
+    min_width: Option<f32>,
+    height: Option<f32>,
     show_value: bool,
 }
 
@@ -7636,6 +8007,9 @@ impl ProgressBar {
             min: 0.0,
             max: 1.0,
             value: 0.0,
+            tone: SemanticTone::Accent,
+            min_width: None,
+            height: None,
             show_value: false,
         }
     }
@@ -7666,6 +8040,21 @@ impl ProgressBar {
         self
     }
 
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    pub fn min_width(mut self, min_width: f32) -> Self {
+        self.min_width = Some(min_width.max(0.0));
+        self
+    }
+
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height.max(1.0));
+        self
+    }
+
     pub fn show_value(mut self, show_value: bool) -> Self {
         self.show_value = show_value;
         self
@@ -7690,18 +8079,27 @@ impl ProgressBar {
 impl Widget for ProgressBar {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
-        let min_height = if self.show_value {
-            theme.body_text_style().line_height.max(18.0)
+        let metrics = theme.metrics;
+        let min_height = if let Some(height) = self.height {
+            height
+        } else if self.show_value {
+            metrics
+                .progress_bar_value_height
+                .max(theme.body_text_style().line_height)
         } else {
-            18.0
+            metrics.progress_bar_height
         };
-        constraints.clamp(Size::new(240.0, min_height))
+        constraints.clamp(Size::new(
+            self.min_width.unwrap_or(metrics.progress_bar_min_width),
+            min_height,
+        ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let palette = theme.palette;
+        let (tone, tone_text) = theme.semantic_tone_colors(self.tone);
         draw_control_shape(
             ctx,
             ctx.bounds(),
@@ -7717,20 +8115,17 @@ impl Widget for ProgressBar {
             ctx.bounds().height(),
         );
         if fill.width() > 0.0 {
-            ctx.fill(
-                rounded_rect_path(fill, metrics.corner_radius),
-                palette.accent,
-            );
+            ctx.fill(rounded_rect_path(fill, metrics.corner_radius), tone);
         }
         if self.show_value {
             let label = format!("{:.0}%", self.fraction() * 100.0);
-            let text_style = theme.text_style(palette.accent_text);
+            let text_style = theme.text_style(tone_text);
             let text_measurement = paint_text_measurement(ctx, &label, &text_style);
             ctx.draw_text(
                 centered_text_rect(
                     ctx,
                     ctx.bounds(),
-                    Insets::all(2.0),
+                    metrics.progress_bar_label_padding,
                     Some(text_measurement),
                     text_style.line_height,
                 ),
@@ -7916,6 +8311,46 @@ fn inset_rect(rect: Rect, padding: Insets) -> Rect {
 
 fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
     Path::rounded_rect(rect, radius.min(rect.width().min(rect.height()) * 0.5))
+}
+
+fn tab_state_visuals(
+    theme: &DefaultTheme,
+    selected: bool,
+    hovered: bool,
+    pressed: bool,
+) -> Option<(Color, Color)> {
+    let palette = theme.palette;
+    let interaction = theme.interaction;
+    if selected {
+        Some((
+            mix_color(
+                palette.surface_raised,
+                palette.accent,
+                interaction.tab_selected_blend,
+            ),
+            palette.border_focus,
+        ))
+    } else if pressed {
+        Some((
+            mix_color(
+                palette.control,
+                palette.control_active,
+                interaction.pressed_blend,
+            ),
+            palette.border_hover,
+        ))
+    } else if hovered {
+        Some((
+            mix_color(
+                palette.control,
+                palette.control_hover,
+                interaction.hover_blend,
+            ),
+            palette.border_hover,
+        ))
+    } else {
+        None
+    }
 }
 
 fn draw_control_frame(
@@ -8130,7 +8565,7 @@ mod tests {
         ToolPalette, ToolPaletteItem, Toolbar,
     };
     use crate::FloatingStack;
-    use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken};
+    use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken, SemanticTone};
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
@@ -8162,6 +8597,391 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         runtime.render(window_id).unwrap()
+    }
+
+    #[test]
+    fn density_modes_resize_menu_and_tabs() {
+        let compact = DefaultTheme::compact();
+        let touch = DefaultTheme::touch();
+
+        assert!(
+            render(
+                Menu::new("Actions")
+                    .theme(compact)
+                    .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")])
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    Menu::new("Actions")
+                        .theme(touch)
+                        .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")])
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                TabBar::new("Tabs")
+                    .theme(compact)
+                    .tabs(["Canvas", "Inspector"])
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    TabBar::new("Tabs")
+                        .theme(touch)
+                        .tabs(["Canvas", "Inspector"])
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                Tabs::new("Tabs")
+                    .theme(compact)
+                    .tab("Canvas", crate::Label::new("Canvas"))
+                    .tab("Inspector", crate::Label::new("Inspector"))
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    Tabs::new("Tabs")
+                        .theme(touch)
+                        .tab("Canvas", crate::Label::new("Canvas"))
+                        .tab("Inspector", crate::Label::new("Inspector"))
+                )
+                .frame
+                .viewport
+                .height
+        );
+    }
+
+    #[test]
+    fn density_modes_resize_tool_command_widgets() {
+        let compact = DefaultTheme::compact();
+        let touch = DefaultTheme::touch();
+
+        assert!(
+            render(
+                Toolbar::horizontal()
+                    .theme(compact)
+                    .with_child(crate::Button::new("Undo"))
+                    .with_child(crate::Button::new("Redo"))
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    Toolbar::horizontal()
+                        .theme(touch)
+                        .with_child(crate::Button::new("Undo"))
+                        .with_child(crate::Button::new("Redo"))
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                CommandGroup::horizontal("History")
+                    .theme(compact)
+                    .with_child(crate::Button::new("Undo"))
+                    .with_child(crate::Button::new("Redo"))
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    CommandGroup::horizontal("History")
+                        .theme(touch)
+                        .with_child(crate::Button::new("Undo"))
+                        .with_child(crate::Button::new("Redo"))
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                ToolPalette::vertical("Tools")
+                    .theme(compact)
+                    .item(ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush"))
+                    .item(ToolPaletteItem::new(crate::IconGlyph::Eraser, "Erase"))
+            )
+            .frame
+            .viewport
+            .width
+                < render(
+                    ToolPalette::vertical("Tools")
+                        .theme(touch)
+                        .item(ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush"))
+                        .item(ToolPaletteItem::new(crate::IconGlyph::Eraser, "Erase"))
+                )
+                .frame
+                .viewport
+                .width
+        );
+        assert!(
+            render(
+                PresetStrip::new("Brush presets")
+                    .theme(compact)
+                    .presets(["8 px", "18 px", "36 px"])
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    PresetStrip::new("Brush presets")
+                        .theme(touch)
+                        .presets(["8 px", "18 px", "36 px"])
+                )
+                .frame
+                .viewport
+                .height
+        );
+    }
+
+    #[test]
+    fn density_modes_resize_overlay_widgets() {
+        let compact = DefaultTheme::compact();
+        let touch = DefaultTheme::touch();
+
+        let compact_dialog = render(
+            Dialog::new("Export", crate::Label::new("Export settings"))
+                .theme(compact)
+                .description("Choose file settings"),
+        );
+        let touch_dialog = render(
+            Dialog::new("Export", crate::Label::new("Export settings"))
+                .theme(touch)
+                .description("Choose file settings"),
+        );
+        let compact_bounds = compact_dialog
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("compact dialog semantics present")
+            .bounds;
+        let touch_bounds = touch_dialog
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("touch dialog semantics present")
+            .bounds;
+        assert!(compact_bounds.width() < touch_bounds.width());
+        assert!(compact_bounds.height() < touch_bounds.height());
+
+        let (mut compact_popover, compact_window) = build_runtime(
+            Popover::new(
+                "Options",
+                crate::Button::new("Open"),
+                crate::Label::new("Popover body"),
+            )
+            .theme(compact),
+        );
+        let _ = compact_popover.render(compact_window).unwrap();
+        compact_popover
+            .handle_event(
+                compact_window,
+                primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+            )
+            .unwrap();
+        let compact_output = compact_popover.render(compact_window).unwrap();
+        let compact_offset = overlay_layer_descriptor(&compact_output)
+            .expect("compact popover overlay present")
+            .properties
+            .translation
+            .y
+            .abs();
+
+        let (mut touch_popover, touch_window) = build_runtime(
+            Popover::new(
+                "Options",
+                crate::Button::new("Open"),
+                crate::Label::new("Popover body"),
+            )
+            .theme(touch),
+        );
+        let _ = touch_popover.render(touch_window).unwrap();
+        touch_popover
+            .handle_event(
+                touch_window,
+                primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+            )
+            .unwrap();
+        let touch_output = touch_popover.render(touch_window).unwrap();
+        let touch_offset = overlay_layer_descriptor(&touch_output)
+            .expect("touch popover overlay present")
+            .properties
+            .translation
+            .y
+            .abs();
+        assert!(compact_offset < touch_offset);
+    }
+
+    #[test]
+    fn density_modes_resize_composite_status_widgets() {
+        let compact = DefaultTheme::compact();
+        let touch = DefaultTheme::touch();
+
+        assert!(
+            render(
+                ActionCard::new("Paint", "Pixel canvas workspace")
+                    .theme(compact)
+                    .icon(crate::IconGlyph::Brush)
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    ActionCard::new("Paint", "Pixel canvas workspace")
+                        .theme(touch)
+                        .icon(crate::IconGlyph::Brush)
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                StatusBar::new()
+                    .theme(compact)
+                    .text_segment("Ready")
+                    .text_segment("100%")
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    StatusBar::new()
+                        .theme(touch)
+                        .text_segment("Ready")
+                        .text_segment("100%")
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                ProgressBar::new("Export progress")
+                    .theme(compact)
+                    .value(0.42)
+            )
+            .frame
+            .viewport
+            .height
+                < render(ProgressBar::new("Export progress").theme(touch).value(0.42))
+                    .frame
+                    .viewport
+                    .height
+        );
+    }
+
+    #[test]
+    fn density_modes_resize_form_and_panel_widgets() {
+        let compact = DefaultTheme::compact();
+        let touch = DefaultTheme::touch();
+
+        assert!(
+            render(PropertyRow::new("Opacity", crate::Slider::new("Opacity")).theme(compact))
+                .frame
+                .viewport
+                .height
+                < render(PropertyRow::new("Opacity", crate::Slider::new("Opacity")).theme(touch))
+                    .frame
+                    .viewport
+                    .height
+        );
+        assert!(
+            render(
+                FieldGroup::new()
+                    .theme(compact)
+                    .with_child(crate::Label::new("First"))
+                    .with_child(crate::Label::new("Second"))
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    FieldGroup::new()
+                        .theme(touch)
+                        .with_child(crate::Label::new("First"))
+                        .with_child(crate::Label::new("Second"))
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(FormSection::new("Providers", crate::Label::new("Configured")).theme(compact))
+                .frame
+                .viewport
+                .height
+                < render(
+                    FormSection::new("Providers", crate::Label::new("Configured")).theme(touch)
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(PanelSection::new("Brush", crate::Label::new("Opacity")).theme(compact))
+                .frame
+                .viewport
+                .height
+                < render(PanelSection::new("Brush", crate::Label::new("Opacity")).theme(touch))
+                    .frame
+                    .viewport
+                    .height
+        );
+        assert!(
+            render(
+                DockPanel::new("Tool properties", crate::Label::new("Brush size")).theme(compact)
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    DockPanel::new("Tool properties", crate::Label::new("Brush size")).theme(touch)
+                )
+                .frame
+                .viewport
+                .height
+        );
+    }
+
+    #[test]
+    fn semantic_tones_drive_composite_status_colors() {
+        let theme = DefaultTheme::default();
+
+        let action_card = render(
+            ActionCard::new("Deploy", "Publish release artifacts")
+                .theme(theme)
+                .tone(SemanticTone::Success),
+        );
+        assert!(solid_fill_colors(&action_card).contains(&theme.palette.success.with_alpha(0.78)));
+
+        let status_bar = render(
+            StatusBar::new()
+                .theme(theme)
+                .segment(StatusBarSegment::new("Offline").tone(SemanticTone::Warning)),
+        );
+        assert!(solid_fill_colors(&status_bar).contains(&theme.palette.warning.with_alpha(0.12)));
+
+        let progress_bar = render(
+            ProgressBar::new("Delete progress")
+                .theme(theme)
+                .tone(SemanticTone::Danger)
+                .value(0.5),
+        );
+        assert!(solid_fill_colors(&progress_bar).contains(&theme.palette.danger));
     }
 
     #[test]
@@ -8707,9 +9527,10 @@ mod tests {
                 ),
         );
 
+        let theme = DefaultTheme::default();
         assert!(
-            solid_fill_colors(&output).contains(&Color::rgba(0.925, 0.942, 0.965, 1.0)),
-            "light form section card fill should be present in render scene"
+            solid_fill_colors(&output).contains(&theme.surfaces.panel),
+            "form section card fill should use the surface panel token"
         );
 
         let section = output
@@ -8720,11 +9541,10 @@ mod tests {
                     && node.name.as_deref() == Some("Providers")
             })
             .expect("form section semantics should exist");
+        let padding = theme.metrics.form_section_padding;
         assert!(
             section.bounds.width()
-                <= super::FORM_SECTION_MAX_WIDTH
-                    + super::FORM_SECTION_PADDING.left
-                    + super::FORM_SECTION_PADDING.right
+                <= theme.metrics.form_section_max_width + padding.left + padding.right
         );
         assert!(
             section.bounds.x() > 100.0,
@@ -9144,6 +9964,25 @@ mod tests {
         colors
     }
 
+    fn solid_stroke_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::StrokePath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
+    }
+
     #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
     struct PanelCounters {
         measure: usize,
@@ -9207,6 +10046,84 @@ mod tests {
             tabs.value,
             Some(SemanticsValue::Text("Inspect".to_string()))
         );
+    }
+
+    #[test]
+    fn selected_tab_chrome_uses_interaction_token() {
+        let mut theme = DefaultTheme::default();
+        theme.interaction.tab_selected_blend = 0.31;
+        let selected_fill = super::mix_color(
+            theme.palette.surface_raised,
+            theme.palette.accent,
+            theme.interaction.tab_selected_blend,
+        );
+
+        let tab_bar = render(
+            TabBar::new("Main tabs")
+                .theme(theme)
+                .tabs(["Design", "Inspect"])
+                .selected(1),
+        );
+        assert!(solid_fill_colors(&tab_bar).contains(&selected_fill));
+
+        let tabs = render(
+            Tabs::new("Main tabs")
+                .theme(theme)
+                .selected(1)
+                .tab("Design", crate::Label::new("Design"))
+                .tab("Inspect", crate::Label::new("Inspect")),
+        );
+        assert!(solid_fill_colors(&tabs).contains(&selected_fill));
+    }
+
+    #[test]
+    fn tab_widgets_share_pressed_tab_border() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let press_point = Point::new(
+            theme.metrics.tab_min_width + theme.metrics.tab_gap + 72.0,
+            theme.metrics.tab_height * 0.5,
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            TabBar::new("Main tabs")
+                .theme(theme)
+                .tabs(["Design", "Inspect"]),
+        );
+        runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, press_point, true),
+            )
+            .map_err(|error| error.to_string())?;
+        let tab_bar = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_stroke_colors(&tab_bar).contains(&theme.palette.border_hover));
+
+        let (mut runtime, window_id) = build_runtime(
+            Tabs::new("Main tabs")
+                .theme(theme)
+                .tab("Design", crate::Label::new("Design"))
+                .tab("Inspect", crate::Label::new("Inspect")),
+        );
+        runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, press_point, true),
+            )
+            .map_err(|error| error.to_string())?;
+        let tabs = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_stroke_colors(&tabs).contains(&theme.palette.border_hover));
+
+        Ok(())
     }
 
     #[test]
@@ -9291,7 +10208,10 @@ mod tests {
     #[test]
     fn tab_bar_header_label_visual_center_matches_control_center() {
         let output = render(TabBar::new("Main tabs").tabs(["A", "B"]));
-        assert_eq!(output.frame.viewport.height, super::TAB_BAR_DEFAULT_HEIGHT);
+        assert_eq!(
+            output.frame.viewport.height,
+            DefaultTheme::default().metrics.tab_height
+        );
 
         let text = first_text_run(&output);
         let layout = TextSystem::new()
@@ -9467,15 +10387,74 @@ mod tests {
     }
 
     #[test]
+    fn tooltip_paints_with_surface_tokens() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            16.0,
+            crate::Tooltip::new(
+                "Quick access to common commands",
+                crate::Button::new("Hover for shortcuts").min_width(180.0),
+            )
+            .theme(theme),
+        ));
+
+        let initial = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = initial
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hover for shortcuts")
+            })
+            .expect("tooltip trigger semantics present")
+            .bounds;
+        let hover_point = Point::new(trigger.x() + 12.0, trigger.y() + (trigger.height() * 0.5));
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Move, hover_point, false),
+            )
+            .map_err(|error| error.to_string())?;
+
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&output).contains(&theme.surfaces.tooltip));
+        let mut painted_tooltip_border = false;
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::StrokePath {
+                    brush: Brush::Solid(color),
+                    ..
+                } if *color == theme.surfaces.tooltip_border => {
+                    painted_tooltip_border = true;
+                }
+                _ => {}
+            });
+        assert!(painted_tooltip_border);
+        Ok(())
+    }
+
+    #[test]
     fn tooltip_reveal_animation_updates_layer_properties_until_complete() -> Result<(), String> {
         const TOOLTIP_ANIMATION_SECONDS: f64 = 0.18;
+        let theme = DefaultTheme::default();
 
         let (mut runtime, window_id) = build_runtime(crate::Padding::all(
             16.0,
             crate::Tooltip::new(
                 "Quick access to common commands",
                 crate::Button::new("Hover for shortcuts").min_width(180.0),
-            ),
+            )
+            .theme(theme),
         ));
 
         let initial = runtime
@@ -9509,6 +10488,10 @@ mod tests {
             start_descriptor.properties.translation.y.signum(),
             -1.0,
             "tooltip reveal should start offset upward"
+        );
+        assert_eq!(
+            start_descriptor.properties.translation.y.abs(),
+            theme.metrics.tooltip_reveal_offset
         );
         assert_eq!(start_descriptor.properties.opacity, 0.0);
 
@@ -9822,6 +10805,9 @@ mod tests {
             layer_descriptor_for(&output, dialog.id).expect("dialog layer descriptor present");
 
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Effect);
+        assert!(
+            solid_fill_colors(&output).contains(&DefaultTheme::default().surfaces.overlay_scrim)
+        );
     }
 
     fn sui_widgets_fixture<A, B>(top: A, bottom: B) -> impl Widget

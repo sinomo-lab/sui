@@ -743,8 +743,7 @@ pub struct ScrollBar {
     state: ScrollState,
     axis: ScrollBarAxis,
     name: Option<String>,
-    width: f32,
-    min_thumb_length: f32,
+    width: Option<f32>,
     hovered: bool,
     dragging: bool,
     pointer_id: Option<u64>,
@@ -758,8 +757,7 @@ impl ScrollBar {
             state,
             axis: ScrollBarAxis::Vertical,
             name: None,
-            width: 12.0,
-            min_thumb_length: 28.0,
+            width: None,
             hovered: false,
             dragging: false,
             pointer_id: None,
@@ -785,28 +783,38 @@ impl ScrollBar {
     }
 
     pub fn width(mut self, width: f32) -> Self {
-        self.width = width.max(8.0);
+        self.width = Some(width.max(8.0));
         self
     }
 
+    fn resolved_width(&self) -> f32 {
+        self.width
+            .unwrap_or(self.theme.metrics.scroll_bar_thickness)
+    }
+
+    fn resolved_min_thumb_length(&self) -> f32 {
+        self.theme.metrics.scroll_bar_min_thumb_length
+    }
+
     fn track_rect(&self, bounds: Rect) -> Rect {
+        let width = self.resolved_width();
         match self.axis {
             ScrollBarAxis::Vertical => {
-                let horizontal_inset = ((bounds.width() - self.width) * 0.5).max(0.0);
+                let horizontal_inset = ((bounds.width() - width) * 0.5).max(0.0);
                 Rect::new(
                     bounds.x() + horizontal_inset,
                     bounds.y(),
-                    self.width.min(bounds.width()),
+                    width.min(bounds.width()),
                     bounds.height(),
                 )
             }
             ScrollBarAxis::Horizontal => {
-                let vertical_inset = ((bounds.height() - self.width) * 0.5).max(0.0);
+                let vertical_inset = ((bounds.height() - width) * 0.5).max(0.0);
                 Rect::new(
                     bounds.x(),
                     bounds.y() + vertical_inset,
                     bounds.width(),
-                    self.width.min(bounds.height()),
+                    width.min(bounds.height()),
                 )
             }
         }
@@ -826,7 +834,7 @@ impl ScrollBar {
         let track_extent = self.axis_rect_length(track);
         let ratio = (viewport_extent / content_extent).clamp(0.08, 1.0);
         let thumb_extent = (track_extent * ratio)
-            .max(self.min_thumb_length)
+            .max(self.resolved_min_thumb_length())
             .min(track_extent);
         let max_scroll = (content_extent - viewport_extent).max(0.0);
         let travel = (track_extent - thumb_extent).max(0.0);
@@ -1104,9 +1112,10 @@ impl Widget for ScrollBar {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.state.bind_scroll_bar(ctx.widget_id());
+        let width = self.resolved_width();
         let desired = match self.axis {
             ScrollBarAxis::Vertical => Size::new(
-                self.width,
+                width,
                 if constraints.max.height.is_finite() {
                     constraints.max.height.max(0.0)
                 } else {
@@ -1121,7 +1130,7 @@ impl Widget for ScrollBar {
                     40.0
                 }
                 .max(40.0),
-                self.width,
+                width,
             ),
         };
         constraints.clamp(desired)
@@ -2358,7 +2367,7 @@ mod tests {
         Align, Background, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView,
         SizedBox, Stack, SwitchView, VirtualScrollView,
     };
-    use crate::SplitView;
+    use crate::{DefaultTheme, SplitView};
     use sui_core::{
         Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
         PointerButton, PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode,
@@ -3590,6 +3599,56 @@ mod tests {
                 max: 80.0,
             })
         );
+    }
+
+    #[test]
+    fn scroll_bar_defaults_follow_theme_density_and_width_override() {
+        let compact_state = ScrollState::new();
+        compact_state.sync_metrics(
+            ScrollAxes::Vertical,
+            Size::new(80.0, 40.0),
+            Size::new(80.0, 120.0),
+        );
+        let (compact, _) = render_root(
+            ScrollBar::vertical(compact_state)
+                .theme(DefaultTheme::compact())
+                .name("Compact scroll bar"),
+        );
+
+        let touch_state = ScrollState::new();
+        touch_state.sync_metrics(
+            ScrollAxes::Vertical,
+            Size::new(80.0, 40.0),
+            Size::new(80.0, 120.0),
+        );
+        let (touch, _) = render_root(
+            ScrollBar::vertical(touch_state)
+                .theme(DefaultTheme::touch())
+                .name("Touch scroll bar"),
+        );
+
+        assert_eq!(
+            compact.frame.viewport.width,
+            DefaultTheme::compact().metrics.scroll_bar_thickness
+        );
+        assert_eq!(
+            touch.frame.viewport.width,
+            DefaultTheme::touch().metrics.scroll_bar_thickness
+        );
+        assert!(touch.frame.viewport.width > compact.frame.viewport.width);
+
+        let override_state = ScrollState::new();
+        override_state.sync_metrics(
+            ScrollAxes::Vertical,
+            Size::new(80.0, 40.0),
+            Size::new(80.0, 120.0),
+        );
+        let (overridden, _) = render_root(
+            ScrollBar::vertical(override_state)
+                .theme(DefaultTheme::touch())
+                .width(9.0),
+        );
+        assert_eq!(overridden.frame.viewport.width, 9.0);
     }
 
     #[test]
