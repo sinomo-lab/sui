@@ -37,7 +37,7 @@ pub struct TimelinePlayer {
     compiled: CompiledTimeline,
     compiled_dirty: bool,
     playback: PlaybackState,
-    samples: Vec<SampledAnimationValue>,
+    samples: SampleBuffer,
     invalidations: Vec<AnimationBindingInvalidation>,
 }
 
@@ -50,7 +50,7 @@ impl TimelinePlayer {
             compiled,
             compiled_dirty: false,
             playback: PlaybackState::default(),
-            samples: Vec::with_capacity(sample_capacity),
+            samples: SampleBuffer::with_capacity(sample_capacity),
             invalidations: Vec::with_capacity(sample_capacity),
         }
     }
@@ -101,7 +101,7 @@ impl TimelinePlayer {
         self.ensure_compiled_timeline();
         self.compiled
             .sample_into(self.playback.playhead, &mut self.samples);
-        &self.samples
+        self.samples.samples()
     }
 
     pub fn tick<S>(&mut self, delta_seconds: f64, sink: &mut S) -> TimelineTick<'_>
@@ -116,7 +116,7 @@ impl TimelinePlayer {
         self.invalidations
             .reserve(self.samples.len().saturating_sub(self.invalidations.len()));
 
-        for sample in &self.samples {
+        for sample in self.samples.samples() {
             if sink.apply_animation_value(&sample.binding, sample.value) {
                 self.invalidations.push(AnimationBindingInvalidation {
                     binding: sample.binding.clone(),
@@ -126,7 +126,7 @@ impl TimelinePlayer {
         }
 
         TimelineTick {
-            samples: &self.samples,
+            samples: self.samples.samples(),
             invalidations: &self.invalidations,
             should_continue: self.playback.playing,
         }
@@ -156,8 +156,7 @@ impl TimelinePlayer {
         self.compiled = self.timeline.compile();
         self.compiled_dirty = false;
         let sample_capacity = self.compiled.sample_capacity();
-        self.samples
-            .reserve(sample_capacity.saturating_sub(self.samples.len()));
+        self.samples.reserve_capacity(sample_capacity);
         self.invalidations
             .reserve(sample_capacity.saturating_sub(self.invalidations.len()));
     }

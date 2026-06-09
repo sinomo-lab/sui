@@ -2658,25 +2658,25 @@ fn build_dev_application_with_render_options_and_automation(
 }
 
 fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
-    let mut app = Application::new();
-    register_widget_book_images(&mut app);
-    app.register_image(
-        DEV_SHELL_LOGO_IMAGE_HANDLE,
-        default_sui_logo_image(DEV_SHELL_LOGO_IMAGE_SIZE)
-            .expect("default SUI logo SVG should rasterize for dev shell"),
-    )
-    .expect("dev shell logo SVG should register exactly once");
-    let app = app.window(
-        WindowBuilder::new()
-            .title(WINDOW_TITLE)
-            .root(LivePerformanceRoot::new(
-                WINDOW_TITLE,
-                WINDOW_DESCRIPTION,
-                root,
-            )),
-    );
+    let mut app = App::new();
+    {
+        let mut resources = app.resources();
+        register_widget_book_images(&mut resources);
+        resources
+            .image(
+                DEV_SHELL_LOGO_IMAGE_HANDLE,
+                default_sui_logo_image(DEV_SHELL_LOGO_IMAGE_SIZE)
+                    .expect("default SUI logo SVG should rasterize for dev shell"),
+            )
+            .expect("dev shell logo SVG should register exactly once");
+    }
 
-    app
+    app.window(Window::new(WINDOW_TITLE).root(LivePerformanceRoot::new(
+        WINDOW_TITLE,
+        WINDOW_DESCRIPTION,
+        root,
+    )))
+    .into_application()
 }
 
 pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {

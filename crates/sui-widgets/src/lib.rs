@@ -16,10 +16,12 @@ pub mod theme;
 pub use animation::{
     ANIMATION_DOCUMENT_VERSION, AnimatedValue, AnimationBinding, AnimationBindingInvalidation,
     AnimationDocument, AnimationDocumentFormatError, AnimationEditorCommand, AnimationEditorState,
-    AnimationProperty, AnimationPropertyPath, AnimationSelection, AnimationTargetId,
-    AnimationValue, AnimationValueKind, Blink, Clip, Easing, Interpolate, Keyframe,
-    KeyframeSelection, LoopMode, PlaybackState, Pulse, SampledAnimationValue, SpringF32, Timeline,
-    TimelineBindingSink, TimelinePlayer, TimelineSnap, TimelineTick, Track, Transition,
+    AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSelection,
+    AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, Blink, Clip,
+    CompiledClip, CompiledTimeline, CompiledTrack, Easing, Interpolate, Keyframe,
+    KeyframeSelection, LoopMode, PlaybackState, Pulse, SampleBatch, SampleBuffer,
+    SampledAnimationValue, SharedCompiledTimeline, SpringF32, Timeline, TimelineBindingSink,
+    TimelinePlayer, TimelineSnap, TimelineTick, Track, Transition,
     invalidation_for_animation_property,
 };
 pub use canvas::{

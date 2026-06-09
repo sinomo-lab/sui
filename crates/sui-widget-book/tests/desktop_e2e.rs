@@ -13,12 +13,12 @@ use std::{
 };
 
 use sui::{
-    Alignment, Application, Background, Color, Error, Event, ImeEvent, Insets, Label, Modifiers,
-    NumberInput, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind,
-    RadioButton, RadioGroup, Rect, Result, SceneCommand, ScrollDelta, ScrollView, Select,
-    SemanticsNode, SemanticsRole, SemanticsValue, Size, SizedBox, Slider, SplitView, Stack, Switch,
-    Table, TableColumn, TableRow, TextArea, Vector, VirtualScrollView, WgpuRenderer, WindowBuilder,
-    WindowEvent, WindowId, window_performance_snapshot,
+    Alignment, App, Application, Background, Color, Error, Event, ImeEvent, Insets, Label,
+    Modifiers, NumberInput, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+    PointerKind, RadioButton, RadioGroup, Rect, Result, SceneCommand, ScrollDelta, ScrollView,
+    Select, SemanticsNode, SemanticsRole, SemanticsValue, Size, SizedBox, Slider, SplitView, Stack,
+    Switch, Table, TableColumn, TableRow, TextArea, Vector, VirtualScrollView, WgpuRenderer,
+    Window as SuiWindow, WindowBuilder, WindowEvent, WindowId, window_performance_snapshot,
 };
 use sui_platform::publish_frame_performance;
 use sui_runtime::{
@@ -2343,24 +2343,29 @@ fn scroll_benchmark_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
 }
 
 fn build_widget_book_gallery_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
-    let mut application = Application::new();
-    register_widget_book_images(&mut application);
-    application.window(
-        WindowBuilder::new()
-            .title(sui_widget_book::WINDOW_TITLE)
-            .root(build_widget_book_gallery(state)),
-    )
+    App::new()
+        .with_resources(|resources| {
+            register_widget_book_images(resources);
+            Ok(())
+        })
+        .expect("widget-book image resources should be valid")
+        .window(
+            SuiWindow::new(sui_widget_book::WINDOW_TITLE).root(build_widget_book_gallery(state)),
+        )
+        .into_application()
 }
 
 fn build_widget_book_application_with_overlay(state: Rc<RefCell<WidgetBookState>>) -> Application {
     sui_widget_book::set_widget_book_hdr_theme_mode(sui::HdrThemeMode::Disabled);
 
-    let mut application = Application::new();
-    register_widget_book_images(&mut application);
-    application.window(
-        WindowBuilder::new()
-            .title(sui_widget_book::WINDOW_TITLE)
-            .root(
+    App::new()
+        .with_resources(|resources| {
+            register_widget_book_images(resources);
+            Ok(())
+        })
+        .expect("widget-book image resources should be valid")
+        .window(
+            SuiWindow::new(sui_widget_book::WINDOW_TITLE).root(
                 sui_widget_book::LivePerformanceRoot::new(
                     sui_widget_book::WINDOW_TITLE,
                     sui_widget_book::WINDOW_DESCRIPTION,
@@ -2369,7 +2374,8 @@ fn build_widget_book_application_with_overlay(state: Rc<RefCell<WidgetBookState>
                 .show_performance_overlay()
                 .watch_widget_book_state(state),
             ),
-    )
+        )
+        .into_application()
 }
 
 fn run_widget_book_scroll_benchmark(

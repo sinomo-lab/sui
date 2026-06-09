@@ -60,9 +60,15 @@ The codebase is easiest to understand as three stacked layers plus tooling.
 
 The public Rust facade.
 
-It re-exports the user-facing API from the lower crates, provides the top-level `Application` type, and keeps feature-gated renderer and platform dependencies out of most application code.
+It re-exports the user-facing API from the lower crates and provides the
+top-level `App`, `Window`, `ResourceRegistry`, and `UiHandle` types that normal
+application and demo code should use. `App` is the stable construction facade:
+register resources, add windows, then build a `Runtime` for embedding/tests or
+run the default desktop/web event loop.
 
-This crate currently contains little policy logic. Most runtime policy lives in lower crates.
+The lower-level `Application` and `WindowBuilder` types remain available for
+debugging, tests, benchmarks, and custom embedding, but they are not the primary
+user API. Most runtime policy still lives in lower crates.
 
 ### `sui-core`
 

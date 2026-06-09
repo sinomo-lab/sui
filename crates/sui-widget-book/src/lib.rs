@@ -337,12 +337,12 @@ pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
 }
 
 /// Register the images used by [`build_widget_book_gallery`] onto the given
-/// application. Call this before adding a window that contains the gallery
-/// when you are assembling the application yourself (rather than using
-/// [`build_widget_book_application`]).
-pub fn register_widget_book_images(application: &mut Application) {
-    application
-        .register_image(
+/// application. Call this while configuring app resources when you are
+/// assembling the application yourself rather than using
+/// [`build_widget_book_application`].
+pub fn register_widget_book_images(resources: &mut ResourceRegistry<'_>) {
+    resources
+        .image(
             WIDGET_BOOK_IMAGE_HANDLE,
             RegisteredImage::from_rgba8(72, 72, widget_book_demo_image_pixels())
                 .expect("widget-book demo image is valid RGBA data"),
@@ -353,34 +353,40 @@ pub fn register_widget_book_images(application: &mut Application) {
 pub fn build_widget_book_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
     set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
 
-    let mut application = Application::new();
-    register_widget_book_images(&mut application);
-
-    application.window(
-        WindowBuilder::new().title(WINDOW_TITLE).root(
-            LivePerformanceRoot::new(
-                WINDOW_TITLE,
-                WINDOW_DESCRIPTION,
-                build_widget_book_gallery(Rc::clone(&state)),
-            )
-            .watch_widget_book_state(state),
-        ),
-    )
+    App::new()
+        .with_resources(|resources| {
+            register_widget_book_images(resources);
+            Ok(())
+        })
+        .expect("widget-book image resources should be valid")
+        .window(
+            Window::new(WINDOW_TITLE).root(
+                LivePerformanceRoot::new(
+                    WINDOW_TITLE,
+                    WINDOW_DESCRIPTION,
+                    build_widget_book_gallery(Rc::clone(&state)),
+                )
+                .watch_widget_book_state(state),
+            ),
+        )
+        .into_application()
 }
 
 pub fn build_theme_demo_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
     set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
 
-    Application::new().window(
-        WindowBuilder::new().title(THEME_DEMO_TITLE).root(
-            LivePerformanceRoot::new(
-                THEME_DEMO_TITLE,
-                THEME_DEMO_DESCRIPTION,
-                build_theme_demo_surface(Rc::clone(&state)),
-            )
-            .watch_widget_book_state(state),
-        ),
-    )
+    App::new()
+        .window(
+            Window::new(THEME_DEMO_TITLE).root(
+                LivePerformanceRoot::new(
+                    THEME_DEMO_TITLE,
+                    THEME_DEMO_DESCRIPTION,
+                    build_theme_demo_surface(Rc::clone(&state)),
+                )
+                .watch_widget_book_state(state),
+            ),
+        )
+        .into_application()
 }
 
 #[cfg(feature = "native")]
@@ -4220,15 +4226,15 @@ pub fn build_button_grid_benchmark() -> impl Widget {
 }
 
 pub fn build_button_grid_benchmark_application() -> Application {
-    Application::new().window(
-        WindowBuilder::new()
-            .title(BUTTON_GRID_BENCHMARK_TITLE)
-            .root(LivePerformanceRoot::new(
+    App::new()
+        .window(Window::new(BUTTON_GRID_BENCHMARK_TITLE).root(
+            LivePerformanceRoot::new(
                 BUTTON_GRID_BENCHMARK_TITLE,
                 "Focused benchmark surface for measuring the initial frame cost of a 64-button grid.",
                 build_button_grid_benchmark(),
-            )),
-    )
+            ),
+        ))
+        .into_application()
 }
 
 pub fn build_animation_benchmark() -> impl Widget {
@@ -4244,11 +4250,9 @@ pub fn build_animation_benchmark() -> impl Widget {
 }
 
 pub fn build_animation_benchmark_application() -> Application {
-    Application::new().window(
-        WindowBuilder::new()
-            .title(ANIMATION_BENCHMARK_TITLE)
-            .root(build_animation_benchmark()),
-    )
+    App::new()
+        .window(Window::new(ANIMATION_BENCHMARK_TITLE).root(build_animation_benchmark()))
+        .into_application()
 }
 
 pub fn build_retained_text_benchmark() -> impl Widget {
@@ -4336,11 +4340,9 @@ pub fn build_retained_text_benchmark() -> impl Widget {
 }
 
 pub fn build_retained_text_benchmark_application() -> Application {
-    Application::new().window(
-        WindowBuilder::new()
-            .title(RETAINED_TEXT_BENCHMARK_TITLE)
-            .root(build_retained_text_benchmark()),
-    )
+    App::new()
+        .window(Window::new(RETAINED_TEXT_BENCHMARK_TITLE).root(build_retained_text_benchmark()))
+        .into_application()
 }
 
 pub fn build_text_rendering_comparison_surface() -> impl Widget {
@@ -4408,15 +4410,15 @@ pub fn build_text_rendering_comparison_surface() -> impl Widget {
 }
 
 pub fn build_text_rendering_comparison_application() -> Application {
-    Application::new().window(
-        WindowBuilder::new().title(TEXT_RENDERING_COMPARISON_TITLE).root(
+    App::new()
+        .window(Window::new(TEXT_RENDERING_COMPARISON_TITLE).root(
             LivePerformanceRoot::new(
                 TEXT_RENDERING_COMPARISON_TITLE,
                 "Side-by-side validation surface for grayscale, hinted, darkened, and LCD-oriented text rendering modes.",
                 build_text_rendering_comparison_surface(),
             ),
-        ),
-    )
+        ))
+        .into_application()
 }
 
 pub fn build_color_validation_surface() -> impl Widget {
@@ -4518,15 +4520,15 @@ pub fn build_color_validation_surface() -> impl Widget {
 }
 
 pub fn build_color_validation_application() -> Application {
-    Application::new().window(
-        WindowBuilder::new().title(COLOR_VALIDATION_VIEW_TITLE).root(
+    App::new()
+        .window(Window::new(COLOR_VALIDATION_VIEW_TITLE).root(
             LivePerformanceRoot::new(
                 COLOR_VALIDATION_VIEW_TITLE,
                 "Reference surface for validating wide-gamut color handling, HDR brightness separation, and SDR clipping behavior while native HDR support lands in phases.",
                 build_color_validation_surface(),
             ),
-        ),
-    )
+        ))
+        .into_application()
 }
 
 fn build_color_validation_row(
@@ -4955,15 +4957,15 @@ pub fn build_text_editing_benchmark() -> impl Widget {
 }
 
 pub fn build_text_editing_benchmark_application() -> Application {
-    Application::new().window(
-        WindowBuilder::new().title(TEXT_EDITING_BENCHMARK_TITLE).root(
+    App::new()
+        .window(Window::new(TEXT_EDITING_BENCHMARK_TITLE).root(
             LivePerformanceRoot::new(
                 TEXT_EDITING_BENCHMARK_TITLE,
                 "Focused benchmark surface for editor-style typing, selection, scrolling, and syntax-highlight preview cost.",
                 build_text_editing_benchmark(),
             ),
-        ),
-    )
+        ))
+        .into_application()
 }
 
 fn retained_text_benchmark_section(section_index: usize) -> (String, String) {
@@ -6539,12 +6541,12 @@ mod tests {
         theme_preview_card,
     };
     use sui::{
-        Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
+        App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
         KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
         PresentationLatencyDiagnostics, RenderOutput, RendererSubmissionDiagnostics, Result,
         SceneStatistics, SceneStatisticsDetailMode, ScrollDelta, SemanticsRole, SemanticsValue,
         Size, SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, TextSurfaceOverlayKind,
-        Vector, Widget, WidgetPod, WidgetPodVisitor, WindowBuilder, WindowEvent, WindowId,
+        Vector, Widget, WidgetPod, WidgetPodVisitor, Window, WindowBuilder, WindowEvent, WindowId,
         WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
         window_scene_statistics_detail_mode,
     };
@@ -6571,32 +6573,40 @@ mod tests {
     ) -> Application {
         super::set_widget_book_hdr_theme_mode(sui::HdrThemeMode::Disabled);
 
-        let mut application = Application::new();
-        register_widget_book_images(&mut application);
-
-        application.window(
-            WindowBuilder::new().title(WINDOW_TITLE).root(
-                super::LivePerformanceRoot::new(
-                    WINDOW_TITLE,
-                    super::WINDOW_DESCRIPTION,
-                    build_widget_book_gallery(Rc::clone(&state)),
-                )
-                .show_performance_overlay()
-                .watch_widget_book_state(state),
-            ),
-        )
+        App::new()
+            .with_resources(|resources| {
+                register_widget_book_images(resources);
+                Ok(())
+            })
+            .expect("widget-book image resources should be valid")
+            .window(
+                Window::new(WINDOW_TITLE).root(
+                    super::LivePerformanceRoot::new(
+                        WINDOW_TITLE,
+                        super::WINDOW_DESCRIPTION,
+                        build_widget_book_gallery(Rc::clone(&state)),
+                    )
+                    .show_performance_overlay()
+                    .watch_widget_book_state(state),
+                ),
+            )
+            .into_application()
     }
 
     #[cfg(feature = "artifacts")]
     fn build_gallery_only_widget_book_app() -> Result<TestApp> {
-        let mut application = Application::new();
-        register_widget_book_images(&mut application);
-        let application = application.window(
-            WindowBuilder::new()
-                .title(WINDOW_TITLE)
-                .root(build_widget_book_gallery(default_widget_book_state())),
-        );
-        TestApp::from_runtime(application.build()?)
+        TestApp::from_runtime(
+            App::new()
+                .with_resources(|resources| {
+                    register_widget_book_images(resources);
+                    Ok(())
+                })?
+                .window(
+                    Window::new(WINDOW_TITLE)
+                        .root(build_widget_book_gallery(default_widget_book_state())),
+                )
+                .build()?,
+        )
     }
 
     #[cfg(feature = "artifacts")]

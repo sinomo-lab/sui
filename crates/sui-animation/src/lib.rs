@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use sui_core::{Color, ColorSpace, Point, Rect, Size, Transform, Vector};
 
@@ -773,14 +773,19 @@ where
     T: Copy + Interpolate,
 {
     pub fn sample(&self, time: f64) -> Vec<SampledAnimationValue<T>> {
-        let mut samples = Vec::new();
-        self.sample_into(time, &mut samples);
-        samples
+        let mut buffer = SampleBuffer::new();
+        self.sample_into(time, &mut buffer);
+        buffer.into_samples()
     }
 
-    pub fn sample_into(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
+    pub fn sample_into<'a>(
+        &self,
+        time: f64,
+        samples: &'a mut SampleBuffer<T>,
+    ) -> SampleBatch<'a, T> {
         samples.clear();
-        self.append_samples(time, samples);
+        self.append_samples(time, samples.samples_mut());
+        samples.batch()
     }
 
     fn append_samples(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
@@ -837,17 +842,23 @@ where
     T: Copy + Interpolate,
 {
     pub fn sample(&self, time: f64) -> Vec<SampledAnimationValue<T>> {
-        let mut samples = Vec::new();
-        self.sample_into(time, &mut samples);
-        samples
+        let mut buffer = SampleBuffer::new();
+        self.sample_into(time, &mut buffer);
+        buffer.into_samples()
     }
 
-    pub fn sample_into(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
+    pub fn sample_into<'a>(
+        &self,
+        time: f64,
+        samples: &'a mut SampleBuffer<T>,
+    ) -> SampleBatch<'a, T> {
         let clamped_time = time.clamp(0.0, self.duration.max(0.0));
         samples.clear();
+        let samples_vec = samples.samples_mut();
         for clip in &self.clips {
-            clip.append_samples(clamped_time, samples);
+            clip.append_samples(clamped_time, samples_vec);
         }
+        samples.batch()
     }
 }
 
@@ -858,6 +869,10 @@ where
     pub fn compile(&self) -> CompiledTimeline<T> {
         CompiledTimeline::from_timeline(self)
     }
+
+    pub fn compile_shared(&self) -> SharedCompiledTimeline<T> {
+        self.compile().into_shared()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -866,6 +881,8 @@ pub struct CompiledTimeline<T = AnimationValue> {
     clips: Vec<CompiledClip<T>>,
     sample_capacity: usize,
 }
+
+pub type SharedCompiledTimeline<T = AnimationValue> = Arc<CompiledTimeline<T>>;
 
 impl<T> CompiledTimeline<T>
 where
@@ -888,6 +905,10 @@ where
 }
 
 impl<T> CompiledTimeline<T> {
+    pub fn into_shared(self) -> SharedCompiledTimeline<T> {
+        Arc::new(self)
+    }
+
     pub fn duration(&self) -> f64 {
         self.duration
     }
@@ -903,21 +924,40 @@ impl<T> CompiledTimeline<T> {
 
 impl<T> CompiledTimeline<T>
 where
+    T: Clone,
+{
+    pub fn to_shared(&self) -> SharedCompiledTimeline<T> {
+        Arc::new(self.clone())
+    }
+
+    pub fn player(&self) -> AnimationPlayer<T> {
+        AnimationPlayer::new(self.to_shared())
+    }
+}
+
+impl<T> CompiledTimeline<T>
+where
     T: Copy + Interpolate,
 {
     pub fn sample(&self, time: f64) -> Vec<SampledAnimationValue<T>> {
-        let mut samples = Vec::with_capacity(self.sample_capacity);
-        self.sample_into(time, &mut samples);
-        samples
+        let mut buffer = SampleBuffer::with_capacity(self.sample_capacity);
+        self.sample_into(time, &mut buffer);
+        buffer.into_samples()
     }
 
-    pub fn sample_into(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
+    pub fn sample_into<'a>(
+        &self,
+        time: f64,
+        samples: &'a mut SampleBuffer<T>,
+    ) -> SampleBatch<'a, T> {
         let clamped_time = time.clamp(0.0, self.duration);
         samples.clear();
-        samples.reserve(self.sample_capacity.saturating_sub(samples.len()));
+        samples.reserve_capacity(self.sample_capacity);
+        let samples_vec = samples.samples_mut();
         for clip in &self.clips {
-            clip.append_samples(clamped_time, samples);
+            clip.append_samples(clamped_time, samples_vec);
         }
+        samples.batch()
     }
 }
 
@@ -993,14 +1033,19 @@ where
     T: Copy + Interpolate,
 {
     pub fn sample(&self, time: f64) -> Vec<SampledAnimationValue<T>> {
-        let mut samples = Vec::new();
-        self.sample_into(time, &mut samples);
-        samples
+        let mut buffer = SampleBuffer::new();
+        self.sample_into(time, &mut buffer);
+        buffer.into_samples()
     }
 
-    pub fn sample_into(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
+    pub fn sample_into<'a>(
+        &self,
+        time: f64,
+        samples: &'a mut SampleBuffer<T>,
+    ) -> SampleBatch<'a, T> {
         samples.clear();
-        self.append_samples(time, samples);
+        self.append_samples(time, samples.samples_mut());
+        samples.batch()
     }
 
     fn append_samples(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
@@ -1067,6 +1112,102 @@ pub struct SampledAnimationValue<T = AnimationValue> {
     pub binding: AnimationBinding,
     pub time: f64,
     pub value: T,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SampleBuffer<T = AnimationValue> {
+    samples: Vec<SampledAnimationValue<T>>,
+}
+
+impl<T> SampleBuffer<T> {
+    pub fn new() -> Self {
+        Self {
+            samples: Vec::new(),
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            samples: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.samples.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.samples.capacity()
+    }
+
+    pub fn clear(&mut self) {
+        self.samples.clear();
+    }
+
+    pub fn reserve_capacity(&mut self, target_capacity: usize) {
+        self.samples
+            .reserve(target_capacity.saturating_sub(self.samples.capacity()));
+    }
+
+    pub fn samples(&self) -> &[SampledAnimationValue<T>] {
+        &self.samples
+    }
+
+    pub fn batch(&self) -> SampleBatch<'_, T> {
+        SampleBatch {
+            samples: &self.samples,
+        }
+    }
+
+    pub fn into_samples(self) -> Vec<SampledAnimationValue<T>> {
+        self.samples
+    }
+
+    fn samples_mut(&mut self) -> &mut Vec<SampledAnimationValue<T>> {
+        &mut self.samples
+    }
+}
+
+impl<T> AsRef<[SampledAnimationValue<T>]> for SampleBuffer<T> {
+    fn as_ref(&self) -> &[SampledAnimationValue<T>] {
+        self.samples()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SampleBatch<'a, T = AnimationValue> {
+    samples: &'a [SampledAnimationValue<T>],
+}
+
+impl<'a, T> SampleBatch<'a, T> {
+    pub fn samples(self) -> &'a [SampledAnimationValue<T>] {
+        self.samples
+    }
+
+    pub fn iter(self) -> std::slice::Iter<'a, SampledAnimationValue<T>> {
+        self.samples.iter()
+    }
+
+    pub fn len(self) -> usize {
+        self.samples.len()
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.samples.is_empty()
+    }
+}
+
+impl<'a, T> IntoIterator for SampleBatch<'a, T> {
+    type Item = &'a SampledAnimationValue<T>;
+    type IntoIter = std::slice::Iter<'a, SampledAnimationValue<T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1155,6 +1296,121 @@ impl PlaybackState {
         }
 
         previous_time != self.playhead
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimationPlayer<T = AnimationValue> {
+    timeline: SharedCompiledTimeline<T>,
+    playback: PlaybackState,
+}
+
+impl<T> AnimationPlayer<T> {
+    pub fn new(timeline: SharedCompiledTimeline<T>) -> Self {
+        Self {
+            timeline,
+            playback: PlaybackState::default(),
+        }
+    }
+
+    pub fn from_compiled(timeline: CompiledTimeline<T>) -> Self {
+        Self::new(timeline.into_shared())
+    }
+
+    pub fn timeline(&self) -> &CompiledTimeline<T> {
+        self.timeline.as_ref()
+    }
+
+    pub fn shared_timeline(&self) -> SharedCompiledTimeline<T> {
+        Arc::clone(&self.timeline)
+    }
+
+    pub fn playback(&self) -> PlaybackState {
+        self.playback
+    }
+
+    pub fn playback_mut(&mut self) -> &mut PlaybackState {
+        &mut self.playback
+    }
+
+    pub fn with_loop_mode(mut self, loop_mode: LoopMode) -> Self {
+        self.playback.loop_mode = loop_mode;
+        self
+    }
+
+    pub fn repeat(self) -> Self {
+        self.with_loop_mode(LoopMode::Repeat)
+    }
+
+    pub fn once(self) -> Self {
+        self.with_loop_mode(LoopMode::Once)
+    }
+
+    pub fn with_playback_rate(mut self, playback_rate: f64) -> Self {
+        self.playback.playback_rate = playback_rate;
+        self
+    }
+
+    pub fn play(&mut self) {
+        self.playback.play();
+    }
+
+    pub fn pause(&mut self) {
+        self.playback.pause();
+    }
+
+    pub fn stop(&mut self) {
+        self.playback.stop();
+    }
+
+    pub fn seek(&mut self, time: f64) {
+        self.playback.seek(time, self.timeline.duration());
+    }
+}
+
+impl<T> AnimationPlayer<T>
+where
+    T: Copy + Interpolate,
+{
+    pub fn sample(&self) -> Vec<SampledAnimationValue<T>> {
+        self.timeline.sample(self.playback.playhead)
+    }
+
+    pub fn sample_into<'a>(&self, samples: &'a mut SampleBuffer<T>) -> SampleBatch<'a, T> {
+        self.timeline.sample_into(self.playback.playhead, samples)
+    }
+
+    pub fn tick_into<'a>(
+        &mut self,
+        delta_seconds: f64,
+        samples: &'a mut SampleBuffer<T>,
+    ) -> AnimationTick<'a, T> {
+        let advanced = self.playback.tick(delta_seconds, self.timeline.duration());
+        let samples = self.timeline.sample_into(self.playback.playhead, samples);
+        AnimationTick {
+            samples,
+            playback: self.playback,
+            advanced,
+            should_continue: self.playback.playing,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnimationTick<'a, T = AnimationValue> {
+    pub samples: SampleBatch<'a, T>,
+    pub playback: PlaybackState,
+    pub advanced: bool,
+    pub should_continue: bool,
+}
+
+impl<'a, T> AnimationTick<'a, T> {
+    pub fn samples(self) -> SampleBatch<'a, T> {
+        self.samples
+    }
+
+    pub fn sample_values(self) -> &'a [SampledAnimationValue<T>] {
+        self.samples.samples()
     }
 }
 
@@ -2140,9 +2396,10 @@ fn sample_cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
 mod tests {
     use super::{
         AnimatedValue, AnimationBinding, AnimationDocument, AnimationEditorCommand,
-        AnimationEditorState, AnimationProperty, AnimationPropertyPath, AnimationTargetId,
-        AnimationValue, Blink, Clip, Easing, Interpolate, Keyframe, KeyframeSelection, LoopMode,
-        PlaybackState, Pulse, SpringF32, Timeline, Track, Transition,
+        AnimationEditorState, AnimationPlayer, AnimationProperty, AnimationPropertyPath,
+        AnimationTargetId, AnimationValue, Blink, Clip, Easing, Interpolate, Keyframe,
+        KeyframeSelection, LoopMode, PlaybackState, Pulse, SampleBuffer, SpringF32, Timeline,
+        Track, Transition,
     };
     use sui_core::{Color, ColorSpace, Rect, Transform, Vector};
 
@@ -2246,21 +2503,23 @@ mod tests {
         ]);
         let timeline =
             Timeline::new(1.0).with_clip(Clip::new("intro", 0.0, 1.0).with_track(opacity_track));
-        let mut samples = Vec::with_capacity(8);
+        let mut samples = SampleBuffer::with_capacity(8);
         let initial_capacity = samples.capacity();
 
-        timeline.sample_into(0.5, &mut samples);
-
+        {
+            let batch = timeline.sample_into(0.5, &mut samples);
+            assert_eq!(batch.len(), 1);
+            assert_eq!(batch.samples()[0].clip_id, "intro");
+            assert_eq!(batch.samples()[0].value.as_scalar(), Some(0.5));
+        }
         assert_eq!(samples.capacity(), initial_capacity);
-        assert_eq!(samples.len(), 1);
-        assert_eq!(samples[0].clip_id, "intro");
-        assert_eq!(samples[0].value.as_scalar(), Some(0.5));
 
-        timeline.sample_into(2.0, &mut samples);
-
+        {
+            let batch = timeline.sample_into(2.0, &mut samples);
+            assert_eq!(batch.len(), 1);
+            assert_eq!(batch.samples()[0].value.as_scalar(), Some(0.75));
+        }
         assert_eq!(samples.capacity(), initial_capacity);
-        assert_eq!(samples.len(), 1);
-        assert_eq!(samples[0].value.as_scalar(), Some(0.75));
     }
 
     #[test]
@@ -2295,15 +2554,44 @@ mod tests {
             .with_clip(disabled_clip);
 
         let compiled = timeline.compile();
-        let mut samples = Vec::new();
-        compiled.sample_into(0.5, &mut samples);
+        let mut samples = SampleBuffer::new();
+        let batch = compiled.sample_into(0.5, &mut samples);
 
         assert_eq!(compiled.clips().len(), 1);
         assert_eq!(compiled.sample_capacity(), 1);
-        assert_eq!(samples.len(), 1);
-        assert_eq!(samples[0].clip_id, "intro");
-        assert_eq!(samples[0].binding.property, AnimationProperty::LayerOpacity);
-        assert_eq!(samples[0].value.as_scalar(), Some(0.5));
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch.samples()[0].clip_id, "intro");
+        assert_eq!(
+            batch.samples()[0].binding.property,
+            AnimationProperty::LayerOpacity
+        );
+        assert_eq!(batch.samples()[0].value.as_scalar(), Some(0.5));
+    }
+
+    #[test]
+    fn animation_player_ticks_shared_compiled_timeline_into_sample_buffer() {
+        let timeline = Timeline::new(1.0).with_clip(Clip::new("intro", 0.0, 1.0).with_track(
+            Track::new(opacity_binding()).with_keyframes([
+                Keyframe::new(0.0, AnimationValue::Scalar(0.0)).with_easing(Easing::Linear),
+                Keyframe::new(1.0, AnimationValue::Scalar(1.0)),
+            ]),
+        ));
+        let compiled = timeline.compile_shared();
+        let mut player = AnimationPlayer::new(compiled.clone()).repeat();
+        let mut sibling = AnimationPlayer::new(compiled);
+        let mut samples = SampleBuffer::with_capacity(1);
+        player.play();
+
+        let tick = player.tick_into(0.5, &mut samples);
+
+        assert!(tick.advanced);
+        assert!(tick.should_continue);
+        assert_eq!(tick.playback.playhead, 0.5);
+        assert_eq!(tick.sample_values()[0].value.as_scalar(), Some(0.5));
+
+        sibling.seek(0.25);
+        let batch = sibling.sample_into(&mut samples);
+        assert_eq!(batch.samples()[0].value.as_scalar(), Some(0.25));
     }
 
     #[test]

@@ -7,9 +7,14 @@ use std::{
     sync::Arc,
 };
 
+pub mod app;
 pub mod composites;
 pub mod containers;
 pub mod controls;
+
+#[cfg(any(feature = "desktop", feature = "web"))]
+pub use app::UiHandle;
+pub use app::{App, ResourceRegistry, Window};
 
 pub use composites::{
     BusyIndicator, CommandGroup, ContextMenu, Dialog, DockPanel, FieldGroup, FormRow, FormSection,
@@ -82,10 +87,12 @@ pub use sui_text::{
 pub use sui_widgets::animation::{
     ANIMATION_DOCUMENT_VERSION, AnimatedValue, AnimationBinding, AnimationBindingInvalidation,
     AnimationDocument, AnimationDocumentFormatError, AnimationEditorCommand, AnimationEditorState,
-    AnimationProperty, AnimationPropertyPath, AnimationSelection, AnimationTargetId,
-    AnimationValue, AnimationValueKind, Blink, Clip, Easing, Interpolate, Keyframe,
-    KeyframeSelection, LoopMode, PlaybackState, Pulse, SampledAnimationValue, SpringF32, Timeline,
-    TimelineBindingSink, TimelinePlayer, TimelineSnap, TimelineTick, Track, Transition,
+    AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSelection,
+    AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, Blink, Clip,
+    CompiledClip, CompiledTimeline, CompiledTrack, Easing, Interpolate, Keyframe,
+    KeyframeSelection, LoopMode, PlaybackState, Pulse, SampleBatch, SampleBuffer,
+    SampledAnimationValue, SharedCompiledTimeline, SpringF32, Timeline, TimelineBindingSink,
+    TimelinePlayer, TimelineSnap, TimelineTick, Track, Transition,
     invalidation_for_animation_property,
 };
 pub use sui_widgets::{
@@ -460,15 +467,19 @@ impl Default for Style {
 }
 
 pub mod prelude {
+    #[cfg(any(feature = "desktop", feature = "web"))]
+    pub use crate::UiHandle;
+
     pub use crate::{
         ActionCard, Align, Alignment, AnimatedValue, AnimationBinding, AnimationDocument,
         AnimationDocumentFormatError, AnimationEditorCommand, AnimationEditorState,
-        AnimationProperty, AnimationPropertyPath, AnimationSelection, AnimationTargetId,
-        AnimationValue, AnimationValueKind, Application, ArrangeCtx, AsyncWakeToken, Axis,
-        Background, Blink, Breadcrumb, BreadcrumbItem, Brush, BrushPreview, BrushPreviewShape,
-        BrushPreviewSpec, BusyIndicator, Button, Canvas, CanvasRuler, CanvasRulerAxis, CanvasShape,
-        CanvasStroke, CanvasViewport, Checkbox, Clip, Color, ColorPalette, ColorPaletteSwatch,
-        ColorPicker, ColorSwatch, ComboBox, CommandGroup, Constraints, ContextMenu, ControlMetrics,
+        AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSelection,
+        AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, App, Application,
+        ArrangeCtx, AsyncWakeToken, Axis, Background, Blink, Breadcrumb, BreadcrumbItem, Brush,
+        BrushPreview, BrushPreviewShape, BrushPreviewSpec, BusyIndicator, Button, Canvas,
+        CanvasRuler, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasViewport, Checkbox, Clip,
+        Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSwatch, ComboBox, CommandGroup,
+        CompiledClip, CompiledTimeline, CompiledTrack, Constraints, ContextMenu, ControlMetrics,
         ControlPalette, ControlTypography, DataGrid, DefaultTheme, Dialog, Divider, DockPanel,
         Easing, Event, EventCtx, FieldGroup, FloatingViewConfig, FloatingViewSnapshot,
         FloatingWorkspace, FloatingWorkspaceState, FontFeature, FontFeatures, FontHandle,
@@ -480,20 +491,21 @@ pub mod prelude {
         PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool,
         PlaybackState, Point, PointerEvent, Popover, PresetStrip, ProgressBar, PropertyRow,
         PropertyRowLayout, Pulse, RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage,
-        ResizablePane, Result, SampledAnimationValue, ScrollAxes, ScrollBar, ScrollState,
-        ScrollView, Select, SemanticsCtx, Separator, ShapedText, SingleChild, Size, SizedBox,
-        Slider, SpinBox, Spinner, SplitView, SpringF32, Stack, StatusBar, StatusBarHost,
-        StatusBarSegment, StrokeStyle, Style, Surface, SurfaceBorder, SurfaceElevation,
-        SurfacePalette, SurfaceRole, Switch, SwitchView, TabBar, Table, TableColumn,
-        TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextLayout, TextMeasurement,
-        TextStyle, Theme, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme,
-        ThemeColors, ThemeContainers, ThemeExtension, ThemeExtensions, ThemeFontFamilies,
-        ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii,
-        ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
-        Timeline, TimelineBindingSink, TimelinePlayer, TimelineSnap, TimelineTick, TimerToken,
-        ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement, Track, Transform,
-        Transition, TreeItem, TreeView, VirtualScrollView, WakeEvent, Widget, WidgetChildren,
-        WidgetPod, WidgetShader, WindowBuilder, WindowRenderOptions, containers::Padding,
+        ResizablePane, ResourceRegistry, Result, SampleBatch, SampleBuffer, SampledAnimationValue,
+        ScrollAxes, ScrollBar, ScrollState, ScrollView, Select, SemanticsCtx, Separator,
+        ShapedText, SharedCompiledTimeline, SingleChild, Size, SizedBox, Slider, SpinBox, Spinner,
+        SplitView, SpringF32, Stack, StatusBar, StatusBarHost, StatusBarSegment, StrokeStyle,
+        Style, Surface, SurfaceBorder, SurfaceElevation, SurfacePalette, SurfaceRole, Switch,
+        SwitchView, TabBar, Table, TableColumn, TableColumnAlignment, TableRow, Tabs, TextArea,
+        TextInput, TextLayout, TextMeasurement, TextStyle, Theme, ThemeAspectRatios,
+        ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers,
+        ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
+        ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer,
+        ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking, Timeline, TimelineBindingSink,
+        TimelinePlayer, TimelineSnap, TimelineTick, TimerToken, ToolPalette, ToolPaletteItem,
+        Toolbar, Tooltip, TooltipPlacement, Track, Transform, Transition, TreeItem, TreeView,
+        VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WidgetShader, Window,
+        WindowBuilder, WindowRenderOptions, containers::Padding,
         invalidation_for_animation_property, register_builtin_icon_resources,
         set_window_render_options,
     };
