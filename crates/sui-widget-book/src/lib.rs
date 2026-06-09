@@ -61,6 +61,18 @@ pub const TOOLTIP_TRIGGER_LABEL: &str = "Hover for shortcuts";
 pub const TOOLTIP_TEXT: &str = "Quick access to common commands";
 pub const POPOVER_NAME: &str = "Inline inspector";
 pub const POPOVER_TRIGGER_LABEL: &str = "Open inspector";
+pub const WIDGET_STATES_GALLERY_NAME: &str = "Widget States";
+pub const WIDGET_STATES_BUTTON_LABEL: &str = "States button";
+pub const WIDGET_STATES_ICON_BUTTON_LABEL: &str = "States icon action";
+pub const WIDGET_STATES_TEXT_INPUT_LABEL: &str = "States text input";
+pub const WIDGET_STATES_TEXT_AREA_LABEL: &str = "States text area";
+pub const WIDGET_STATES_SELECT_NAME: &str = "States select";
+pub const WIDGET_STATES_CHECKBOX_LABEL: &str = "States checkbox";
+pub const WIDGET_STATES_SWITCH_LABEL: &str = "States switch";
+pub const WIDGET_STATES_SLIDER_NAME: &str = "States slider";
+pub const WIDGET_STATES_TABS_NAME: &str = "States tabs";
+pub const WIDGET_STATES_MENU_NAME: &str = "States menu";
+pub const WIDGET_STATES_POPOVER_NAME: &str = "States popover";
 pub const DIALOG_TITLE: &str = "Project settings";
 pub const DIALOG_TRIGGER_LABEL: &str = "Toggle project settings";
 pub const PROGRESS_NAME: &str = "Export progress";
@@ -3402,6 +3414,9 @@ pub fn build_widget_book_gallery_with_theme(
                     })),
                 )),
         )
+            .with_child(build_widget_states_gallery_with_theme(Rc::clone(
+                &theme_reader,
+            )))
             .with_child(panel_with_theme(
                 Rc::clone(&theme_reader),
                 "Common controls",
@@ -4124,6 +4139,358 @@ pub fn build_widget_book_gallery_with_theme(
         gallery,
         ScrollBar::vertical(scroll_state).name(GALLERY_SCROLL_BAR_NAME),
     )
+}
+
+fn build_widget_states_gallery_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
+    NamedSection::new(
+        WIDGET_STATES_GALLERY_NAME,
+        panel_with_theme(
+            Rc::clone(&theme_reader),
+            WIDGET_STATES_GALLERY_NAME,
+            "Compact state matrix for the core controls. Each sample uses the same theme tokens so density, alignment, focus chrome, and overlay spacing can be reviewed together.",
+            Stack::vertical()
+                .spacing(16.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    Stack::horizontal()
+                        .spacing(12.0)
+                        .alignment(Alignment::Start)
+                        .with_child(widget_state_group_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Actions",
+                            Stack::vertical()
+                                .spacing(10.0)
+                                .alignment(Alignment::Start)
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Default",
+                                    Button::new(WIDGET_STATES_BUTTON_LABEL)
+                                        .icon(IconGlyph::Check)
+                                        .min_width(170.0)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Selected",
+                                    IconButton::new(
+                                        IconGlyph::Hand,
+                                        WIDGET_STATES_ICON_BUTTON_LABEL,
+                                    )
+                                    .selected(true)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Disabled",
+                                    Button::new("Disabled action")
+                                        .icon(IconGlyph::Lock)
+                                        .min_width(170.0)
+                                        .enabled(false)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                )),
+                        ))
+                        .with_child(widget_state_group_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Text entry",
+                            Stack::vertical()
+                                .spacing(10.0)
+                                .alignment(Alignment::Start)
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Placeholder",
+                                    SizedBox::new().width(240.0).with_child(
+                                        TextInput::new(WIDGET_STATES_TEXT_INPUT_LABEL)
+                                            .placeholder("Search layers")
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                    ),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Value",
+                                    SizedBox::new().width(240.0).with_child(
+                                        TextInput::new("States text input value")
+                                            .value("Layer 08 / mask")
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                    ),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Multiline",
+                                    SizedBox::new().width(240.0).with_child(
+                                        TextArea::new(WIDGET_STATES_TEXT_AREA_LABEL)
+                                            .value("Frame notes\nOpacity ramp is locked")
+                                            .min_height(72.0)
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                    ),
+                                )),
+                        )),
+                )
+                .with_child(
+                    Stack::horizontal()
+                        .spacing(12.0)
+                        .alignment(Alignment::Start)
+                        .with_child(widget_state_group_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Choices",
+                            Stack::vertical()
+                                .spacing(10.0)
+                                .alignment(Alignment::Start)
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Unchecked",
+                                    Checkbox::new(WIDGET_STATES_CHECKBOX_LABEL)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Checked",
+                                    Checkbox::new("States checkbox checked")
+                                        .checked(true)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Switch on",
+                                    Switch::new(WIDGET_STATES_SWITCH_LABEL)
+                                        .on(true)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                )),
+                        ))
+                        .with_child(widget_state_group_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Ranges and selects",
+                            Stack::vertical()
+                                .spacing(10.0)
+                                .alignment(Alignment::Start)
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Low value",
+                                    SizedBox::new().width(240.0).with_child(
+                                        Slider::new(WIDGET_STATES_SLIDER_NAME)
+                                            .range(0.0, 100.0)
+                                            .value(28.0)
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                    ),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Selected",
+                                    SizedBox::new().width(240.0).with_child(
+                                        Select::new(WIDGET_STATES_SELECT_NAME)
+                                            .placeholder("Blend mode")
+                                            .options(BLEND_MODE_OPTIONS)
+                                            .selected(2)
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                    ),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Expanded",
+                                    SizedBox::new().width(240.0).with_child(
+                                        Select::new("States select expanded")
+                                            .options(BLEND_MODE_OPTIONS)
+                                            .selected(1)
+                                            .expanded(true)
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                    ),
+                                )),
+                        )),
+                )
+                .with_child(
+                    Stack::horizontal()
+                        .spacing(12.0)
+                        .alignment(Alignment::Start)
+                        .with_child(widget_state_group_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Navigation",
+                            Stack::vertical()
+                                .spacing(10.0)
+                                .alignment(Alignment::Stretch)
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Tabs",
+                                    SizedBox::new().width(300.0).with_child(
+                                        Tabs::new(WIDGET_STATES_TABS_NAME)
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            ))
+                                            .selected(1)
+                                            .tab(
+                                                "Canvas",
+                                                Label::new("Viewport controls")
+                                                    .font_size(13.0)
+                                                    .line_height(18.0)
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text_muted,
+                                                    )),
+                                            )
+                                            .tab(
+                                                "Inspector",
+                                                Label::new("Selected layer properties")
+                                                    .font_size(13.0)
+                                                    .line_height(18.0)
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text_muted,
+                                                    )),
+                                            )
+                                            .tab(
+                                                "Export",
+                                                Label::new("Preset summary")
+                                                    .font_size(13.0)
+                                                    .line_height(18.0)
+                                                    .color_when(widget_book_theme_color(
+                                                        &theme_reader,
+                                                        |theme| theme.palette.text_muted,
+                                                    )),
+                                            ),
+                                    ),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Menu",
+                                    SizedBox::new().width(260.0).with_child(
+                                        Menu::new(WIDGET_STATES_MENU_NAME)
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            ))
+                                            .highlighted(1)
+                                            .items([
+                                                MenuItem::new("Rename").shortcut("Enter"),
+                                                MenuItem::new("Duplicate").shortcut("Ctrl+D"),
+                                                MenuItem::new("Bake preview").disabled(),
+                                                MenuItem::new("Delete")
+                                                    .separator_before()
+                                                    .destructive(),
+                                            ]),
+                                    ),
+                                )),
+                        ))
+                        .with_child(widget_state_group_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Overlays",
+                            Stack::vertical()
+                                .spacing(10.0)
+                                .alignment(Alignment::Start)
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Closed popover",
+                                    SizedBox::new().width(260.0).with_child(
+                                        Popover::new(
+                                            WIDGET_STATES_POPOVER_NAME,
+                                            Button::new("Open details")
+                                                .min_width(180.0)
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                )),
+                                            Label::new("Hidden until opened"),
+                                        )
+                                        .theme(theme_reader()),
+                                    ),
+                                ))
+                                .with_child(state_sample_with_theme(
+                                    Rc::clone(&theme_reader),
+                                    "Open popover",
+                                    SizedBox::new().width(260.0).with_child(
+                                        Popover::new(
+                                            "States popover open",
+                                            Button::new("Details open")
+                                                .min_width(180.0)
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                )),
+                                            Stack::vertical()
+                                                .spacing(6.0)
+                                                .alignment(Alignment::Start)
+                                                .with_child(
+                                                    Label::new("Layer blend")
+                                                        .font_size(13.0)
+                                                        .line_height(18.0)
+                                                        .color_when(widget_book_theme_color(
+                                                            &theme_reader,
+                                                            |theme| theme.palette.text,
+                                                        )),
+                                                )
+                                                .with_child(
+                                                    Label::new("Screen, 72% opacity")
+                                                        .font_size(12.0)
+                                                        .line_height(16.0)
+                                                        .color_when(widget_book_theme_color(
+                                                            &theme_reader,
+                                                            |theme| theme.palette.text_muted,
+                                                        )),
+                                                ),
+                                        )
+                                        .theme(theme_reader())
+                                        .open(true),
+                                    ),
+                                )),
+                        )),
+                ),
+        ),
+    )
+}
+
+fn widget_state_group_with_theme<W>(
+    theme_reader: WidgetBookThemeReader,
+    title: &'static str,
+    body: W,
+) -> impl Widget
+where
+    W: Widget + 'static,
+{
+    SizedBox::new().width(470.0).with_child(
+        StoryCard::new(
+            Stack::vertical()
+                .spacing(12.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    Label::new(title)
+                        .font_size(14.0)
+                        .line_height(18.0)
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text
+                        })),
+                )
+                .with_child(body),
+        )
+        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+    )
+}
+
+fn state_sample_with_theme<W>(
+    theme_reader: WidgetBookThemeReader,
+    state: &'static str,
+    body: W,
+) -> impl Widget
+where
+    W: Widget + 'static,
+{
+    Stack::vertical()
+        .spacing(5.0)
+        .alignment(Alignment::Start)
+        .with_child(
+            Label::new(state)
+                .font_size(11.0)
+                .line_height(14.0)
+                .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                    theme.palette.text_muted
+                })),
+        )
+        .with_child(body)
 }
 
 #[cfg(test)]
@@ -6531,7 +6898,11 @@ mod tests {
         TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
         TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
         TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
-        TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE, build_animation_benchmark_application,
+        TOOLTIP_TRIGGER_LABEL, WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL,
+        WIDGET_STATES_GALLERY_NAME, WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME,
+        WIDGET_STATES_SELECT_NAME, WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL,
+        WIDGET_STATES_TABS_NAME, WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL,
+        WINDOW_TITLE, build_animation_benchmark_application,
         build_button_grid_benchmark_application, build_color_and_imagery_story,
         build_retained_text_benchmark_application, build_text_editing_benchmark_application,
         build_text_rendering_comparison_application, build_text_validation_surface,
@@ -7805,6 +8176,69 @@ mod tests {
                 "expected the main widget book gallery to omit {removed_section:?}"
             );
         }
+    }
+
+    #[test]
+    fn widget_book_exposes_widget_states_gallery() {
+        let mut runtime = build_widget_book_application(default_widget_book_state())
+            .build()
+            .expect("widget book runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("widget book should render for widget states semantics");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("widget book semantics should exist");
+
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some(WIDGET_STATES_GALLERY_NAME)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(WIDGET_STATES_BUTTON_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some(super::WIDGET_STATES_ICON_BUTTON_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::TextInput
+                && node.name.as_deref() == Some(WIDGET_STATES_TEXT_INPUT_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::TextInput
+                && node.name.as_deref() == Some(WIDGET_STATES_TEXT_AREA_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::ComboBox
+                && node.name.as_deref() == Some(WIDGET_STATES_SELECT_NAME)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::CheckBox
+                && node.name.as_deref() == Some(WIDGET_STATES_CHECKBOX_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Switch
+                && node.name.as_deref() == Some(WIDGET_STATES_SWITCH_LABEL)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Slider
+                && node.name.as_deref() == Some(WIDGET_STATES_SLIDER_NAME)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Tabs
+                && node.name.as_deref() == Some(WIDGET_STATES_TABS_NAME)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Menu
+                && node.name.as_deref() == Some(WIDGET_STATES_MENU_NAME)
+        }));
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::Popover
+                && node.name.as_deref() == Some(WIDGET_STATES_POPOVER_NAME)
+        }));
     }
 
     #[test]

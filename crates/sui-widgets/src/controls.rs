@@ -356,8 +356,8 @@ const PRESS_ANIMATION_SECONDS: f64 = 1.0 / 12.0;
 const TOGGLE_ANIMATION_SECONDS: f64 = 1.0 / 6.0;
 const FOCUS_ANIMATION_SECONDS: f64 = 1.0 / 7.0;
 const CARET_BLINK_PERIOD_SECONDS: f64 = 1.0;
+#[cfg(test)]
 const SELECT_MENU_GAP: f32 = 6.0;
-const SELECT_MENU_EDGE_PADDING: f32 = 8.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectMenuPlacement {
@@ -1177,7 +1177,7 @@ impl Button {
 
     fn resolved_icon_gap(&self) -> f32 {
         self.icon_gap
-            .unwrap_or(self.resolved_theme().metrics.checkbox_gap)
+            .unwrap_or(self.resolved_theme().metrics.icon_label_gap)
             .max(0.0)
     }
 
@@ -3179,7 +3179,7 @@ impl Slider {
 
     fn track_rect(&self, bounds: Rect) -> Rect {
         let theme = self.resolved_theme();
-        let padding = theme.metrics.text_input_padding;
+        let padding = theme.metrics.slider_padding;
         let height = theme.metrics.slider_track_height.max(1.0);
         Rect::new(
             bounds.x() + padding.left,
@@ -4495,6 +4495,16 @@ impl Select {
         self
     }
 
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = expanded;
+        if expanded {
+            self.hovered_option = self.current_selected_index().or(Some(0));
+        } else {
+            self.hovered_option = None;
+        }
+        self
+    }
+
     pub fn selected_when<F>(mut self, selected: F) -> Self
     where
         F: Fn() -> Option<usize> + 'static,
@@ -4573,10 +4583,12 @@ impl Select {
             return SelectMenuPlacement::Below;
         }
 
+        let theme = self.resolved_theme();
         let menu_height = self.menu_height();
         let below_space = (viewport.height - bounds.max_y()).max(0.0);
         let above_space = bounds.y().max(0.0);
-        let comfortable_below = menu_height + SELECT_MENU_GAP + SELECT_MENU_EDGE_PADDING;
+        let comfortable_below =
+            menu_height + theme.metrics.select_menu_gap + theme.metrics.select_menu_edge_padding;
 
         if below_space < comfortable_below && above_space > below_space {
             SelectMenuPlacement::Above
@@ -4586,19 +4598,21 @@ impl Select {
     }
 
     fn menu_rect(&self, bounds: Rect, viewport: Size) -> Rect {
+        let theme = self.resolved_theme();
         let height = self.menu_height();
         let placement = self.menu_placement(bounds, viewport);
         let header = self.header_rect(bounds);
         let mut y = match placement {
-            SelectMenuPlacement::Below => header.max_y() + SELECT_MENU_GAP,
-            SelectMenuPlacement::Above => header.y() - SELECT_MENU_GAP - height,
+            SelectMenuPlacement::Below => header.max_y() + theme.metrics.select_menu_gap,
+            SelectMenuPlacement::Above => header.y() - theme.metrics.select_menu_gap - height,
         };
 
         if viewport.height.is_finite()
-            && viewport.height > (height + (SELECT_MENU_EDGE_PADDING * 2.0))
+            && viewport.height > (height + (theme.metrics.select_menu_edge_padding * 2.0))
         {
-            let min_y = SELECT_MENU_EDGE_PADDING.min(bounds.y());
-            let max_y = (viewport.height - height - SELECT_MENU_EDGE_PADDING).max(0.0);
+            let min_y = theme.metrics.select_menu_edge_padding.min(bounds.y());
+            let max_y =
+                (viewport.height - height - theme.metrics.select_menu_edge_padding).max(0.0);
             y = if min_y <= max_y {
                 y.clamp(min_y, max_y)
             } else {

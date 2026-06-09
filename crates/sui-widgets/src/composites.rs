@@ -392,8 +392,6 @@ fn virtual_menu_item_id(parent: WidgetId, index: usize) -> WidgetId {
     )
 }
 
-const MENU_HORIZONTAL_PADDING: f32 = 6.0;
-const MENU_VERTICAL_PADDING: f32 = 6.0;
 const MENU_MIN_ROW_HEIGHT: f32 = 28.0;
 const MENU_ROW_HEIGHT_REDUCTION: f32 = 6.0;
 
@@ -401,8 +399,8 @@ fn menu_row_height(theme: &DefaultTheme) -> f32 {
     (theme.metrics.min_height - MENU_ROW_HEIGHT_REDUCTION).max(MENU_MIN_ROW_HEIGHT)
 }
 
-fn menu_height_for_rows(row_height: f32, rows: usize) -> f32 {
-    (MENU_VERTICAL_PADDING * 2.0) + (row_height * rows as f32)
+fn themed_menu_height_for_rows(theme: &DefaultTheme, row_height: f32, rows: usize) -> f32 {
+    theme.metrics.menu_padding.top + theme.metrics.menu_padding.bottom + (row_height * rows as f32)
 }
 
 fn menu_item_semantics_node(
@@ -4606,7 +4604,7 @@ pub struct TabBar {
     selected: usize,
     hovered: Option<usize>,
     pressed: Option<usize>,
-    gap: f32,
+    gap: Option<f32>,
     label_measurements: Vec<TextMeasurement>,
     widths: Vec<f32>,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
@@ -4622,7 +4620,7 @@ impl TabBar {
             selected: 0,
             hovered: None,
             pressed: None,
-            gap: 6.0,
+            gap: None,
             label_measurements: Vec::new(),
             widths: Vec::new(),
             on_change: None,
@@ -4663,7 +4661,7 @@ impl TabBar {
     }
 
     pub fn gap(mut self, gap: f32) -> Self {
-        self.gap = gap.max(0.0);
+        self.gap = Some(gap.max(0.0));
         self
     }
 
@@ -4714,6 +4712,12 @@ impl TabBar {
             .max(TAB_BAR_DEFAULT_HEIGHT)
     }
 
+    fn resolved_gap(&self) -> f32 {
+        self.gap
+            .unwrap_or(self.resolved_theme().metrics.tab_gap)
+            .max(0.0)
+    }
+
     fn measured_widths(&self) -> &[f32] {
         &self.widths
     }
@@ -4723,8 +4727,9 @@ impl TabBar {
             return None;
         }
 
+        let gap = self.resolved_gap();
         let base_total =
-            self.widths.iter().sum::<f32>() + (self.gap * self.tabs.len().saturating_sub(1) as f32);
+            self.widths.iter().sum::<f32>() + (gap * self.tabs.len().saturating_sub(1) as f32);
         let extra_per_tab = if bounds.width() > base_total && !self.tabs.is_empty() {
             (bounds.width() - base_total) / self.tabs.len() as f32
         } else {
@@ -4740,7 +4745,7 @@ impl TabBar {
             if current == index {
                 return Some(rect);
             }
-            x += width + self.gap;
+            x += width + gap;
         }
 
         None
@@ -4851,6 +4856,7 @@ impl Widget for TabBar {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
         let style = theme.body_text_style();
+        let padding = theme.metrics.tab_padding;
         self.label_measurements = self
             .tabs
             .iter()
@@ -4859,11 +4865,12 @@ impl Widget for TabBar {
         self.widths = self
             .label_measurements
             .iter()
-            .map(|measurement| (measurement.width + 28.0).max(96.0))
+            .map(|measurement| (measurement.width + padding.left + padding.right).max(96.0))
             .collect();
 
+        let gap = self.resolved_gap();
         let width =
-            self.widths.iter().sum::<f32>() + (self.gap * self.tabs.len().saturating_sub(1) as f32);
+            self.widths.iter().sum::<f32>() + (gap * self.tabs.len().saturating_sub(1) as f32);
         constraints.clamp(Size::new(width.max(160.0), self.tab_height()))
     }
 
@@ -4871,6 +4878,7 @@ impl Widget for TabBar {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let tab_padding = metrics.tab_padding;
 
         ctx.fill(
             rounded_rect_path(ctx.bounds(), metrics.corner_radius),
@@ -4916,7 +4924,7 @@ impl Widget for TabBar {
                 centered_text_rect(
                     ctx,
                     rect,
-                    Insets::all(10.0),
+                    tab_padding,
                     self.label_measurements.get(index).copied(),
                     if selected {
                         theme.text_style(palette.border_focus).line_height
@@ -4934,9 +4942,9 @@ impl Widget for TabBar {
 
             if selected {
                 let accent = Rect::new(
-                    rect.x() + 14.0,
+                    rect.x() + tab_padding.left,
                     rect.max_y() - 3.0,
-                    rect.width() - 28.0,
+                    (rect.width() - tab_padding.left - tab_padding.right).max(0.0),
                     3.0,
                 );
                 ctx.fill(rounded_rect_path(accent, 1.5), palette.accent);
@@ -4976,8 +4984,7 @@ pub struct Tabs {
     pressed: Option<usize>,
     label_measurements: Vec<TextMeasurement>,
     widths: Vec<f32>,
-    gap: f32,
-    panel_gap: f32,
+    gap: Option<f32>,
     panel_frame: Rect,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
 }
@@ -4995,8 +5002,7 @@ impl Tabs {
             pressed: None,
             label_measurements: Vec::new(),
             widths: Vec::new(),
-            gap: 6.0,
-            panel_gap: 12.0,
+            gap: None,
             panel_frame: Rect::ZERO,
             on_change: None,
         }
@@ -5060,6 +5066,12 @@ impl Tabs {
         self.resolved_theme().metrics.min_height
     }
 
+    fn resolved_gap(&self) -> f32 {
+        self.gap
+            .unwrap_or(self.resolved_theme().metrics.tab_gap)
+            .max(0.0)
+    }
+
     fn header_rect(&self, bounds: Rect) -> Rect {
         Rect::new(bounds.x(), bounds.y(), bounds.width(), self.header_height())
     }
@@ -5070,8 +5082,9 @@ impl Tabs {
         }
 
         let header = self.header_rect(bounds);
-        let base_total = self.widths.iter().sum::<f32>()
-            + (self.gap * self.labels.len().saturating_sub(1) as f32);
+        let gap = self.resolved_gap();
+        let base_total =
+            self.widths.iter().sum::<f32>() + (gap * self.labels.len().saturating_sub(1) as f32);
         let extra_per_tab = if header.width() > base_total && !self.labels.is_empty() {
             (header.width() - base_total) / self.labels.len() as f32
         } else {
@@ -5084,7 +5097,7 @@ impl Tabs {
             if current == index {
                 return Some(rect);
             }
-            x += rect.width() + self.gap;
+            x += rect.width() + gap;
         }
 
         None
@@ -5222,6 +5235,7 @@ impl Widget for Tabs {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
         let text_style = theme.body_text_style();
+        let tab_padding = theme.metrics.tab_padding;
         self.label_measurements = self
             .labels
             .iter()
@@ -5230,18 +5244,20 @@ impl Widget for Tabs {
         self.widths = self
             .label_measurements
             .iter()
-            .map(|measurement| (measurement.width + 28.0).max(96.0))
+            .map(|measurement| (measurement.width + tab_padding.left + tab_padding.right).max(96.0))
             .collect();
 
-        let header_width = self.widths.iter().sum::<f32>()
-            + (self.gap * self.labels.len().saturating_sub(1) as f32);
+        let gap = self.resolved_gap();
+        let header_width =
+            self.widths.iter().sum::<f32>() + (gap * self.labels.len().saturating_sub(1) as f32);
         let available_width = if constraints.max.width.is_finite() {
             constraints.max.width.max(header_width)
         } else {
             header_width.max(320.0)
         };
         let header_height = self.header_height();
-        let padding = Insets::all(16.0);
+        let padding = theme.metrics.tab_panel_padding;
+        let panel_gap = theme.metrics.tab_panel_gap;
 
         let panel_constraints = Constraints::new(
             Size::ZERO,
@@ -5250,7 +5266,7 @@ impl Widget for Tabs {
                 if constraints.max.height.is_finite() {
                     (constraints.max.height
                         - header_height
-                        - self.panel_gap
+                        - panel_gap
                         - padding.top
                         - padding.bottom)
                         .max(0.0)
@@ -5270,21 +5286,22 @@ impl Widget for Tabs {
         let content_height = panel_size.height + padding.top + padding.bottom;
         self.panel_frame = Rect::new(
             0.0,
-            header_height + self.panel_gap,
+            header_height + panel_gap,
             content_width,
             content_height,
         );
 
         constraints.clamp(Size::new(
             content_width,
-            header_height + self.panel_gap + content_height,
+            header_height + panel_gap + content_height,
         ))
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let theme = self.resolved_theme();
         let header_height = self.header_height();
-        let padding = Insets::all(16.0);
-        let panel_gap = self.panel_gap;
+        let padding = theme.metrics.tab_panel_padding;
+        let panel_gap = theme.metrics.tab_panel_gap;
         if let Some(panel) = self.selected_panel_mut() {
             let panel_size = panel.measured_size();
             panel.arrange(
@@ -5303,6 +5320,7 @@ impl Widget for Tabs {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let tab_padding = metrics.tab_padding;
         let header = self.header_rect(ctx.bounds());
 
         ctx.fill(
@@ -5343,7 +5361,7 @@ impl Widget for Tabs {
                 centered_text_rect(
                     ctx,
                     rect,
-                    Insets::all(10.0),
+                    tab_padding,
                     self.label_measurements.get(index).copied(),
                     if selected {
                         theme.text_style(palette.border_focus).line_height
@@ -5467,6 +5485,11 @@ impl Menu {
         self
     }
 
+    pub fn highlighted(mut self, index: usize) -> Self {
+        self.highlighted = Some(index);
+        self
+    }
+
     pub fn on_activate<F>(mut self, on_activate: F) -> Self
     where
         F: FnMut(usize, MenuItem) + 'static,
@@ -5511,12 +5534,14 @@ impl Menu {
         if index >= self.items.len() {
             return None;
         }
-        let x = bounds.x() + MENU_HORIZONTAL_PADDING;
-        let y = bounds.y() + MENU_VERTICAL_PADDING + (index as f32 * self.row_height());
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.menu_padding;
+        let x = bounds.x() + padding.left;
+        let y = bounds.y() + padding.top + (index as f32 * self.row_height());
         Some(Rect::new(
             x,
             y,
-            (bounds.width() - (MENU_HORIZONTAL_PADDING * 2.0)).max(0.0),
+            (bounds.width() - padding.left - padding.right).max(0.0),
             self.row_height(),
         ))
     }
@@ -5647,13 +5672,19 @@ impl Widget for Menu {
                 .as_ref()
                 .map(|text| measure_text(ctx, text, &shortcut_style).width)
                 .unwrap_or(0.0);
-            width = width.max(label + shortcut + 64.0);
+            width = width.max(
+                label
+                    + shortcut
+                    + theme.metrics.menu_item_padding.left
+                    + theme.metrics.menu_item_padding.right
+                    + theme.metrics.menu_shortcut_width,
+            );
         }
         self.measured_width = width.max(220.0);
-        let height = menu_height_for_rows(self.row_height(), self.items.len());
+        let height = themed_menu_height_for_rows(&theme, self.row_height(), self.items.len());
         constraints.clamp(Size::new(
             self.measured_width,
-            height.max(menu_height_for_rows(self.row_height(), 1)),
+            height.max(themed_menu_height_for_rows(&theme, self.row_height(), 1)),
         ))
     }
 
@@ -5661,6 +5692,7 @@ impl Widget for Menu {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let item_padding = metrics.menu_item_padding;
 
         // Cast an elevation shadow behind the raised menu surface before any
         // fill so the soft drop shadow is not clipped by the frame.
@@ -5690,7 +5722,7 @@ impl Widget for Menu {
             if item.separator_before {
                 let line = Rect::new(
                     row.x(),
-                    row.y() - (MENU_VERTICAL_PADDING * 0.5),
+                    row.y() - (metrics.menu_padding.top * 0.5),
                     row.width(),
                     1.0,
                 );
@@ -5715,7 +5747,20 @@ impl Widget for Menu {
             ctx.draw_text(
                 vertically_centered_text_rect(
                     ctx,
-                    Rect::new(row.x() + 12.0, row.y(), row.width() - 24.0, row.height()),
+                    Rect::new(
+                        row.x() + item_padding.left,
+                        row.y(),
+                        (row.width()
+                            - item_padding.left
+                            - item_padding.right
+                            - item
+                                .shortcut
+                                .as_ref()
+                                .map(|_| metrics.menu_shortcut_width)
+                                .unwrap_or(0.0))
+                        .max(0.0),
+                        row.height(),
+                    ),
                     Some(label_measurement),
                     label_style.line_height,
                 ),
@@ -5729,7 +5774,12 @@ impl Widget for Menu {
                 ctx.draw_text(
                     vertically_centered_text_rect(
                         ctx,
-                        Rect::new(row.max_x() - 120.0, row.y(), 108.0, row.height()),
+                        Rect::new(
+                            row.max_x() - item_padding.right - metrics.menu_shortcut_width,
+                            row.y(),
+                            metrics.menu_shortcut_width,
+                            row.height(),
+                        ),
                         Some(shortcut_measurement),
                         shortcut_style.line_height,
                     ),
@@ -6186,7 +6236,6 @@ struct PopoverVisuals {
 #[derive(Debug, Clone)]
 struct PopoverSurfaceState {
     theme: DefaultTheme,
-    padding: Insets,
     frame_rect: Rect,
     arrival_active: bool,
     reveal: AnimatedScalar,
@@ -6196,7 +6245,6 @@ impl PopoverSurfaceState {
     fn new() -> Self {
         Self {
             theme: DefaultTheme::default(),
-            padding: Insets::all(14.0),
             frame_rect: Rect::ZERO,
             arrival_active: false,
             reveal: AnimatedScalar::new(0.0),
@@ -6279,7 +6327,7 @@ impl Widget for PopoverSurface {
         if !state.is_presented() {
             return Size::ZERO;
         }
-        let padding = state.padding;
+        let padding = state.theme.metrics.popover_padding;
         drop(state);
 
         let content_constraints = Constraints::new(
@@ -6312,7 +6360,7 @@ impl Widget for PopoverSurface {
                 .arrange(ctx, Rect::from_origin_size(bounds.origin, Size::ZERO));
             return;
         }
-        let padding = state.padding;
+        let padding = state.theme.metrics.popover_padding;
         drop(state);
         let content_size = self.content.child().measured_size();
         self.content.arrange(
@@ -6427,13 +6475,14 @@ impl Popover {
             trigger: SingleChild::new(trigger),
             surface: SingleChild::new(PopoverSurface::new(Rc::clone(&state), content)),
             open: false,
-            gap: 8.0,
+            gap: DefaultTheme::default().metrics.popover_gap,
             arrival_timer: None,
             state,
         }
     }
 
-    pub fn theme(self, theme: DefaultTheme) -> Self {
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.gap = theme.metrics.popover_gap;
         self.state.borrow_mut().theme = theme;
         self
     }
@@ -6784,7 +6833,13 @@ impl ContextMenu {
                 .as_ref()
                 .map(|text| measure_text(ctx, text, &shortcut_style).width)
                 .unwrap_or(0.0);
-            width = width.max(label + shortcut + 64.0);
+            width = width.max(
+                label
+                    + shortcut
+                    + theme.metrics.menu_item_padding.left
+                    + theme.metrics.menu_item_padding.right
+                    + theme.metrics.menu_shortcut_width,
+            );
         }
         width
     }
@@ -6804,13 +6859,15 @@ impl ContextMenu {
         if index >= self.items.len() || !self.open {
             return None;
         }
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.menu_padding;
         let menu = self.frame_rect.translate(bounds.origin.to_vector());
-        let x = menu.x() + MENU_HORIZONTAL_PADDING;
-        let y = menu.y() + MENU_VERTICAL_PADDING + (index as f32 * self.row_height());
+        let x = menu.x() + padding.left;
+        let y = menu.y() + padding.top + (index as f32 * self.row_height());
         Some(Rect::new(
             x,
             y,
-            (menu.width() - (MENU_HORIZONTAL_PADDING * 2.0)).max(0.0),
+            (menu.width() - padding.left - padding.right).max(0.0),
             self.row_height(),
         ))
     }
@@ -6965,12 +7022,14 @@ impl Widget for ContextMenu {
         let trigger_size = self.trigger.measure(ctx, constraints.loosen());
         let mut size = trigger_size;
         if self.open {
+            let theme = self.resolved_theme();
             let width = self.measured_menu_width(ctx).max(trigger_size.width);
-            let height = menu_height_for_rows(self.row_height(), self.items.len());
-            self.frame_rect = Rect::new(0.0, trigger_size.height + 6.0, width, height);
+            let height = themed_menu_height_for_rows(&theme, self.row_height(), self.items.len());
+            let gap = theme.metrics.popover_gap;
+            self.frame_rect = Rect::new(0.0, trigger_size.height + gap, width, height);
             size = Size::new(
                 width.max(trigger_size.width),
-                trigger_size.height + 6.0 + height,
+                trigger_size.height + gap + height,
             );
         } else {
             self.frame_rect = Rect::ZERO;
@@ -6995,6 +7054,7 @@ impl Widget for ContextMenu {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let palette = theme.palette;
+        let item_padding = metrics.menu_item_padding;
         // Elevation shadow behind the raised context-menu surface.
         let surface_radius = metrics.corner_radius + 2.0;
         paint_theme_shadow(ctx, menu, [surface_radius; 4], &theme.shadows.box_shadow.lg);
@@ -7016,7 +7076,7 @@ impl Widget for ContextMenu {
             if item.separator_before {
                 let line = Rect::new(
                     row.x(),
-                    row.y() - (MENU_VERTICAL_PADDING * 0.5),
+                    row.y() - (metrics.menu_padding.top * 0.5),
                     row.width(),
                     1.0,
                 );
@@ -7041,7 +7101,20 @@ impl Widget for ContextMenu {
             ctx.draw_text(
                 vertically_centered_text_rect(
                     ctx,
-                    Rect::new(row.x() + 12.0, row.y(), row.width() - 24.0, row.height()),
+                    Rect::new(
+                        row.x() + item_padding.left,
+                        row.y(),
+                        (row.width()
+                            - item_padding.left
+                            - item_padding.right
+                            - item
+                                .shortcut
+                                .as_ref()
+                                .map(|_| metrics.menu_shortcut_width)
+                                .unwrap_or(0.0))
+                        .max(0.0),
+                        row.height(),
+                    ),
                     Some(label_measurement),
                     label_style.line_height,
                 ),
@@ -7055,7 +7128,12 @@ impl Widget for ContextMenu {
                 ctx.draw_text(
                     vertically_centered_text_rect(
                         ctx,
-                        Rect::new(row.max_x() - 120.0, row.y(), 108.0, row.height()),
+                        Rect::new(
+                            row.max_x() - item_padding.right - metrics.menu_shortcut_width,
+                            row.y(),
+                            metrics.menu_shortcut_width,
+                            row.height(),
+                        ),
                         Some(shortcut_measurement),
                         shortcut_style.line_height,
                     ),
@@ -8047,9 +8125,9 @@ mod tests {
     use super::Tabs;
     use super::{
         ActionCard, CommandGroup, ContextMenu, Dialog, DockPanel, FieldGroup, FormRow, FormSection,
-        MENU_VERTICAL_PADDING, Menu, MenuItem, PanelSection, Popover, PresetStrip, ProgressBar,
-        PropertyRow, PropertyRowLayout, Spinner, StatusBar, StatusBarHost, StatusBarSegment,
-        TabBar, ToolPalette, ToolPaletteItem, Toolbar,
+        Menu, MenuItem, PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow,
+        PropertyRowLayout, Spinner, StatusBar, StatusBarHost, StatusBarSegment, TabBar,
+        ToolPalette, ToolPaletteItem, Toolbar,
     };
     use crate::FloatingStack;
     use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken};
@@ -9248,8 +9326,10 @@ mod tests {
             .expect("menu item text should contain one line");
         let actual_visual_center =
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
-        let row_height = (output.frame.viewport.height - (MENU_VERTICAL_PADDING * 2.0)) / 2.0;
-        let row_center = MENU_VERTICAL_PADDING + (row_height * 0.5);
+        let theme = DefaultTheme::default();
+        let padding = theme.metrics.menu_padding;
+        let row_height = (output.frame.viewport.height - padding.top - padding.bottom) / 2.0;
+        let row_center = padding.top + (row_height * 0.5);
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
     }
@@ -9303,9 +9383,12 @@ mod tests {
             .expect("context menu item text should contain one line");
         let actual_visual_center =
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
-        let menu_height = context.bounds.height() - trigger.height() - 6.0;
-        let row_height = (menu_height - (MENU_VERTICAL_PADDING * 2.0)) / 2.0;
-        let row_center = trigger.max_y() + 6.0 + MENU_VERTICAL_PADDING + (row_height * 0.5);
+        let theme = DefaultTheme::default();
+        let padding = theme.metrics.menu_padding;
+        let gap = theme.metrics.popover_gap;
+        let menu_height = context.bounds.height() - trigger.height() - gap;
+        let row_height = (menu_height - padding.top - padding.bottom) / 2.0;
+        let row_center = trigger.max_y() + gap + padding.top + (row_height * 0.5);
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
         Ok(())
