@@ -9,16 +9,16 @@ pub struct AnimationBindingInvalidation {
     pub kind: InvalidationKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TimelineTick {
-    pub samples: Vec<SampledAnimationValue>,
-    pub invalidations: Vec<AnimationBindingInvalidation>,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimelineTick<'a> {
+    pub samples: &'a [SampledAnimationValue],
+    pub invalidations: &'a [AnimationBindingInvalidation],
     pub should_continue: bool,
 }
 
-impl TimelineTick {
+impl TimelineTick<'_> {
     pub fn request_current_widget_invalidations(&self, ctx: &mut EventCtx) {
-        for invalidation in &self.invalidations {
+        for invalidation in self.invalidations {
             request_invalidation_kind(ctx, invalidation.kind);
         }
         if self.should_continue {
@@ -34,14 +34,24 @@ pub trait TimelineBindingSink {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelinePlayer {
     timeline: Timeline,
+    compiled: CompiledTimeline,
+    compiled_dirty: bool,
     playback: PlaybackState,
+    samples: Vec<SampledAnimationValue>,
+    invalidations: Vec<AnimationBindingInvalidation>,
 }
 
 impl TimelinePlayer {
     pub fn new(timeline: Timeline) -> Self {
+        let compiled = timeline.compile();
+        let sample_capacity = compiled.sample_capacity();
         Self {
             timeline,
+            compiled,
+            compiled_dirty: false,
             playback: PlaybackState::default(),
+            samples: Vec::with_capacity(sample_capacity),
+            invalidations: Vec::with_capacity(sample_capacity),
         }
     }
 
@@ -50,7 +60,13 @@ impl TimelinePlayer {
     }
 
     pub fn timeline_mut(&mut self) -> &mut Timeline {
+        self.compiled_dirty = true;
         &mut self.timeline
+    }
+
+    pub fn set_timeline(&mut self, timeline: Timeline) {
+        self.timeline = timeline;
+        self.recompile_timeline();
     }
 
     pub fn playback(&self) -> PlaybackState {
@@ -81,17 +97,28 @@ impl TimelinePlayer {
         self.timeline.sample(self.playback.playhead)
     }
 
-    pub fn tick<S>(&mut self, delta_seconds: f64, sink: &mut S) -> TimelineTick
+    pub fn sample_reusing_scratch(&mut self) -> &[SampledAnimationValue] {
+        self.ensure_compiled_timeline();
+        self.compiled
+            .sample_into(self.playback.playhead, &mut self.samples);
+        &self.samples
+    }
+
+    pub fn tick<S>(&mut self, delta_seconds: f64, sink: &mut S) -> TimelineTick<'_>
     where
         S: TimelineBindingSink,
     {
-        self.playback.tick(delta_seconds, self.timeline.duration);
-        let samples = self.timeline.sample(self.playback.playhead);
-        let mut invalidations = Vec::new();
+        self.ensure_compiled_timeline();
+        self.playback.tick(delta_seconds, self.compiled.duration());
+        self.compiled
+            .sample_into(self.playback.playhead, &mut self.samples);
+        self.invalidations.clear();
+        self.invalidations
+            .reserve(self.samples.len().saturating_sub(self.invalidations.len()));
 
-        for sample in &samples {
+        for sample in &self.samples {
             if sink.apply_animation_value(&sample.binding, sample.value) {
-                invalidations.push(AnimationBindingInvalidation {
+                self.invalidations.push(AnimationBindingInvalidation {
                     binding: sample.binding.clone(),
                     kind: invalidation_for_animation_property(&sample.binding.property),
                 });
@@ -99,8 +126,8 @@ impl TimelinePlayer {
         }
 
         TimelineTick {
-            samples,
-            invalidations,
+            samples: &self.samples,
+            invalidations: &self.invalidations,
             should_continue: self.playback.playing,
         }
     }
@@ -110,13 +137,29 @@ impl TimelinePlayer {
         delta_seconds: f64,
         sink: &mut S,
         ctx: &mut EventCtx,
-    ) -> TimelineTick
+    ) -> TimelineTick<'_>
     where
         S: TimelineBindingSink,
     {
         let tick = self.tick(delta_seconds, sink);
         tick.request_current_widget_invalidations(ctx);
         tick
+    }
+
+    fn ensure_compiled_timeline(&mut self) {
+        if self.compiled_dirty {
+            self.recompile_timeline();
+        }
+    }
+
+    fn recompile_timeline(&mut self) {
+        self.compiled = self.timeline.compile();
+        self.compiled_dirty = false;
+        let sample_capacity = self.compiled.sample_capacity();
+        self.samples
+            .reserve(sample_capacity.saturating_sub(self.samples.len()));
+        self.invalidations
+            .reserve(sample_capacity.saturating_sub(self.invalidations.len()));
     }
 }
 

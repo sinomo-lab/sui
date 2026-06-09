@@ -33,6 +33,7 @@ pub const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
 pub const BUTTON_GRID_VERTICAL_SCROLL_BAR_NAME: &str = "64 button grid vertical scroll bar";
 pub const BUTTON_GRID_HORIZONTAL_SCROLL_BAR_NAME: &str = "64 button grid horizontal scroll bar";
 pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
+pub const ANIMATION_BENCHMARK_TITLE: &str = "SUI Animation Benchmark";
 pub const TEXT_RENDERING_COMPARISON_TITLE: &str = "SUI Text Rendering Comparison";
 pub const COLOR_VALIDATION_VIEW_TITLE: &str = "SUI HDR and Color Validation";
 pub const TEXT_VALIDATION_VIEW_TITLE: &str = "SUI Text Validation";
@@ -118,10 +119,20 @@ pub const ANIMATION_DEMO_POPOVER_NAME: &str = "Animation demo inspector";
 pub const ANIMATION_DEMO_POPOVER_TRIGGER_LABEL: &str = "Open animation demo inspector";
 pub const TIMELINE_ANIMATION_PREVIEW_NAME: &str = "Timeline animation preview";
 pub const ANIMATION_EDITOR_SURFACE_NAME: &str = "Animation editor surface";
+pub const ANIMATION_BENCHMARK_RETAINED_NAME: &str = "Animation benchmark retained lane";
+pub const ANIMATION_BENCHMARK_REPAINT_NAME: &str = "Animation benchmark repaint lane";
+pub const ANIMATION_BENCHMARK_SCALE_NAME: &str = "Animation benchmark scale grid";
 
 const WIDGET_BOOK_IMAGE_HANDLE: ImageHandle = ImageHandle::new(1);
 const TIMELINE_ANIMATION_PREVIEW_TARGET: &str = "timeline-preview";
 const TIMELINE_ANIMATION_PREVIEW_RADIUS_PATH: &str = "paint.radius";
+const ANIMATION_BENCHMARK_RETAINED_TARGET: &str = "animation-benchmark-retained";
+const ANIMATION_BENCHMARK_REPAINT_TARGET: &str = "animation-benchmark-repaint";
+const ANIMATION_BENCHMARK_SCALE_TARGET_PREFIX: &str = "animation-benchmark-cell-";
+const ANIMATION_BENCHMARK_RADIUS_PATH: &str = "paint.radius";
+const ANIMATION_BENCHMARK_ALPHA_PATH: &str = "paint.alpha";
+const ANIMATION_BENCHMARK_SCALE_CELLS: usize = 96;
+const ANIMATION_BENCHMARK_SCALE_COLUMNS: usize = 12;
 
 const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
 const BLEND_MODE_OPTIONS: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
@@ -1975,6 +1986,616 @@ fn timeline_animation_preview_timeline() -> Timeline {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AnimationBenchmarkRetainedPresentation {
+    opacity: f32,
+    translation: Vector,
+}
+
+impl Default for AnimationBenchmarkRetainedPresentation {
+    fn default() -> Self {
+        Self {
+            opacity: 0.72,
+            translation: Vector::new(-24.0, 0.0),
+        }
+    }
+}
+
+impl TimelineBindingSink for AnimationBenchmarkRetainedPresentation {
+    fn apply_animation_value(&mut self, binding: &AnimationBinding, value: AnimationValue) -> bool {
+        if binding.target.as_str() != ANIMATION_BENCHMARK_RETAINED_TARGET {
+            return false;
+        }
+
+        match (&binding.property, value) {
+            (AnimationProperty::LayerOpacity, AnimationValue::Scalar(value)) => {
+                let value = value.clamp(0.25, 1.0);
+                let changed = (self.opacity - value).abs() > 0.001;
+                self.opacity = value;
+                changed
+            }
+            (AnimationProperty::LayerTranslation, AnimationValue::Vector(value)) => {
+                let changed = self.translation != value;
+                self.translation = value;
+                changed
+            }
+            _ => false,
+        }
+    }
+}
+
+struct AnimationBenchmarkRetainedLane {
+    player: TimelinePlayer,
+    presentation: AnimationBenchmarkRetainedPresentation,
+}
+
+impl AnimationBenchmarkRetainedLane {
+    fn new() -> Self {
+        let mut player = TimelinePlayer::new(animation_benchmark_retained_timeline());
+        player.playback_mut().loop_mode = LoopMode::Repeat;
+        let mut presentation = AnimationBenchmarkRetainedPresentation::default();
+        for sample in player.sample_reusing_scratch() {
+            presentation.apply_animation_value(&sample.binding, sample.value);
+        }
+        Self {
+            player,
+            presentation,
+        }
+    }
+
+    fn start(&mut self, ctx: &mut EventCtx) {
+        if !self.player.playback().playing {
+            self.player.play();
+            ctx.request_animation_frame();
+        }
+    }
+}
+
+impl Widget for AnimationBenchmarkRetainedLane {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                self.start(ctx);
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { delta, .. }) => {
+                let tick = self.player.tick(*delta, &mut self.presentation);
+                tick.request_current_widget_invalidations(ctx);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(920.0, 112.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds();
+        ctx.fill(
+            Path::rounded_rect(bounds, 8.0),
+            Color::rgba(0.10, 0.12, 0.14, 1.0),
+        );
+
+        let rail = Rect::new(
+            bounds.x() + 38.0,
+            bounds.y() + bounds.height() * 0.5 - 3.0,
+            bounds.width() - 76.0,
+            6.0,
+        );
+        ctx.fill(
+            Path::rounded_rect(rail, 3.0),
+            Color::rgba(0.42, 0.47, 0.56, 0.40),
+        );
+
+        let marker = Rect::new(
+            bounds.x() + bounds.width() * 0.5 - 36.0,
+            bounds.y() + 28.0,
+            72.0,
+            44.0,
+        );
+        ctx.fill(
+            Path::rounded_rect(marker, 7.0),
+            Color::rgba(0.34, 0.72, 0.88, 0.88),
+        );
+        ctx.stroke_rect(
+            marker,
+            Color::rgba(0.86, 0.96, 1.0, 0.78),
+            StrokeStyle::new(1.0),
+        );
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    fn layer_properties(&self) -> LayerProperties {
+        LayerProperties::default()
+            .with_opacity(self.presentation.opacity)
+            .with_translation(self.presentation.translation)
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+        node.name = Some(ANIMATION_BENCHMARK_RETAINED_NAME.to_string());
+        node.value = Some(SemanticsValue::Text(format!(
+            "opacity {:.2}, x {:.1}",
+            self.presentation.opacity, self.presentation.translation.x
+        )));
+        ctx.push(node);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AnimationBenchmarkPaintPresentation {
+    fill: Color,
+    radius: f32,
+    alpha: f32,
+}
+
+impl Default for AnimationBenchmarkPaintPresentation {
+    fn default() -> Self {
+        Self {
+            fill: Color::rgba(0.82, 0.33, 0.24, 1.0),
+            radius: 18.0,
+            alpha: 0.76,
+        }
+    }
+}
+
+impl TimelineBindingSink for AnimationBenchmarkPaintPresentation {
+    fn apply_animation_value(&mut self, binding: &AnimationBinding, value: AnimationValue) -> bool {
+        if binding.target.as_str() != ANIMATION_BENCHMARK_REPAINT_TARGET {
+            return false;
+        }
+
+        match (&binding.property, value) {
+            (AnimationProperty::FillColor, AnimationValue::Color(value)) => {
+                let changed = self.fill != value;
+                self.fill = value;
+                changed
+            }
+            (AnimationProperty::Custom(path), AnimationValue::Scalar(value))
+                if path.as_str() == ANIMATION_BENCHMARK_RADIUS_PATH =>
+            {
+                let value = value.max(3.0);
+                let changed = (self.radius - value).abs() > 0.001;
+                self.radius = value;
+                changed
+            }
+            (AnimationProperty::Custom(path), AnimationValue::Scalar(value))
+                if path.as_str() == ANIMATION_BENCHMARK_ALPHA_PATH =>
+            {
+                let value = value.clamp(0.25, 1.0);
+                let changed = (self.alpha - value).abs() > 0.001;
+                self.alpha = value;
+                changed
+            }
+            _ => false,
+        }
+    }
+}
+
+struct AnimationBenchmarkRepaintLane {
+    player: TimelinePlayer,
+    presentation: AnimationBenchmarkPaintPresentation,
+}
+
+impl AnimationBenchmarkRepaintLane {
+    fn new() -> Self {
+        let mut player = TimelinePlayer::new(animation_benchmark_repaint_timeline());
+        player.playback_mut().loop_mode = LoopMode::Repeat;
+        let mut presentation = AnimationBenchmarkPaintPresentation::default();
+        for sample in player.sample_reusing_scratch() {
+            presentation.apply_animation_value(&sample.binding, sample.value);
+        }
+        Self {
+            player,
+            presentation,
+        }
+    }
+
+    fn start(&mut self, ctx: &mut EventCtx) {
+        if !self.player.playback().playing {
+            self.player.play();
+            ctx.request_animation_frame();
+        }
+    }
+}
+
+impl Widget for AnimationBenchmarkRepaintLane {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                self.start(ctx);
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { delta, .. }) => {
+                let tick = self.player.tick(*delta, &mut self.presentation);
+                tick.request_current_widget_invalidations(ctx);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(920.0, 136.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds();
+        ctx.fill(
+            Path::rounded_rect(bounds, 8.0),
+            Color::rgba(0.13, 0.12, 0.11, 1.0),
+        );
+
+        let lanes = 11;
+        for lane in 0..lanes {
+            let t = lane as f32 / (lanes - 1) as f32;
+            let x = bounds.x() + 38.0 + (bounds.width() - 76.0) * t;
+            let y = bounds.y() + bounds.height() * 0.5;
+            let radius = self.presentation.radius * (0.56 + 0.045 * lane as f32);
+            let alpha = (self.presentation.alpha * (1.0 - t * 0.35)).clamp(0.15, 1.0);
+            let color = Color::rgba(
+                (self.presentation.fill.red + t * 0.10).min(1.0),
+                self.presentation.fill.green,
+                (self.presentation.fill.blue + (1.0 - t) * 0.10).min(1.0),
+                alpha,
+            );
+            ctx.fill(Path::circle(Point::new(x, y), radius), color);
+            ctx.stroke(
+                Path::circle(Point::new(x, y), radius + 3.5),
+                Color::rgba(1.0, 1.0, 1.0, 0.20 * alpha),
+                StrokeStyle::new(1.0),
+            );
+        }
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+        node.name = Some(ANIMATION_BENCHMARK_REPAINT_NAME.to_string());
+        node.value = Some(SemanticsValue::Text(format!(
+            "radius {:.1}, alpha {:.2}",
+            self.presentation.radius, self.presentation.alpha
+        )));
+        ctx.push(node);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AnimationBenchmarkCellPresentation {
+    fill: Color,
+    radius: f32,
+    alpha: f32,
+}
+
+impl Default for AnimationBenchmarkCellPresentation {
+    fn default() -> Self {
+        Self {
+            fill: Color::rgba(0.20, 0.48, 0.86, 1.0),
+            radius: 7.0,
+            alpha: 0.7,
+        }
+    }
+}
+
+struct AnimationBenchmarkScalePresentation {
+    cells: Vec<AnimationBenchmarkCellPresentation>,
+}
+
+impl Default for AnimationBenchmarkScalePresentation {
+    fn default() -> Self {
+        Self {
+            cells: vec![
+                AnimationBenchmarkCellPresentation::default();
+                ANIMATION_BENCHMARK_SCALE_CELLS
+            ],
+        }
+    }
+}
+
+impl AnimationBenchmarkScalePresentation {
+    fn cell_index(&self, binding: &AnimationBinding) -> Option<usize> {
+        let index = binding
+            .target
+            .as_str()
+            .strip_prefix(ANIMATION_BENCHMARK_SCALE_TARGET_PREFIX)?
+            .parse::<usize>()
+            .ok()?;
+        (index < self.cells.len()).then_some(index)
+    }
+}
+
+impl TimelineBindingSink for AnimationBenchmarkScalePresentation {
+    fn apply_animation_value(&mut self, binding: &AnimationBinding, value: AnimationValue) -> bool {
+        let Some(index) = self.cell_index(binding) else {
+            return false;
+        };
+        let cell = &mut self.cells[index];
+
+        match (&binding.property, value) {
+            (AnimationProperty::FillColor, AnimationValue::Color(value)) => {
+                let changed = cell.fill != value;
+                cell.fill = value;
+                changed
+            }
+            (AnimationProperty::Custom(path), AnimationValue::Scalar(value))
+                if path.as_str() == ANIMATION_BENCHMARK_RADIUS_PATH =>
+            {
+                let value = value.max(2.0);
+                let changed = (cell.radius - value).abs() > 0.001;
+                cell.radius = value;
+                changed
+            }
+            (AnimationProperty::Custom(path), AnimationValue::Scalar(value))
+                if path.as_str() == ANIMATION_BENCHMARK_ALPHA_PATH =>
+            {
+                let value = value.clamp(0.18, 1.0);
+                let changed = (cell.alpha - value).abs() > 0.001;
+                cell.alpha = value;
+                changed
+            }
+            _ => false,
+        }
+    }
+}
+
+struct AnimationBenchmarkScaleGrid {
+    player: TimelinePlayer,
+    presentation: AnimationBenchmarkScalePresentation,
+}
+
+impl AnimationBenchmarkScaleGrid {
+    fn new() -> Self {
+        let mut player = TimelinePlayer::new(animation_benchmark_scale_timeline());
+        player.playback_mut().loop_mode = LoopMode::Repeat;
+        let mut presentation = AnimationBenchmarkScalePresentation::default();
+        for sample in player.sample_reusing_scratch() {
+            presentation.apply_animation_value(&sample.binding, sample.value);
+        }
+        Self {
+            player,
+            presentation,
+        }
+    }
+
+    fn start(&mut self, ctx: &mut EventCtx) {
+        if !self.player.playback().playing {
+            self.player.play();
+            ctx.request_animation_frame();
+        }
+    }
+}
+
+impl Widget for AnimationBenchmarkScaleGrid {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                self.start(ctx);
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { delta, .. }) => {
+                let tick = self.player.tick(*delta, &mut self.presentation);
+                tick.request_current_widget_invalidations(ctx);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(920.0, 296.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds();
+        ctx.fill(
+            Path::rounded_rect(bounds, 8.0),
+            Color::rgba(0.085, 0.095, 0.11, 1.0),
+        );
+
+        let rows = ANIMATION_BENCHMARK_SCALE_CELLS / ANIMATION_BENCHMARK_SCALE_COLUMNS;
+        let grid = Rect::new(
+            bounds.x() + 20.0,
+            bounds.y() + 18.0,
+            bounds.width() - 40.0,
+            bounds.height() - 36.0,
+        );
+        let cell_width = grid.width() / ANIMATION_BENCHMARK_SCALE_COLUMNS as f32;
+        let cell_height = grid.height() / rows as f32;
+
+        for (index, cell) in self.presentation.cells.iter().enumerate() {
+            let column = index % ANIMATION_BENCHMARK_SCALE_COLUMNS;
+            let row = index / ANIMATION_BENCHMARK_SCALE_COLUMNS;
+            let center = Point::new(
+                grid.x() + cell_width * (column as f32 + 0.5),
+                grid.y() + cell_height * (row as f32 + 0.5),
+            );
+            let bounds = Rect::new(
+                center.x - cell_width * 0.34,
+                center.y - cell_height * 0.30,
+                cell_width * 0.68,
+                cell_height * 0.60,
+            );
+            ctx.fill(
+                Path::rounded_rect(bounds, 5.0),
+                Color::rgba(0.14, 0.16, 0.19, 0.92),
+            );
+            ctx.fill(
+                Path::circle(center, cell.radius),
+                cell.fill.with_alpha(cell.alpha),
+            );
+        }
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+        node.name = Some(ANIMATION_BENCHMARK_SCALE_NAME.to_string());
+        node.value = Some(SemanticsValue::Text(format!(
+            "{} animated cells",
+            self.presentation.cells.len()
+        )));
+        ctx.push(node);
+    }
+}
+
+fn animation_benchmark_retained_timeline() -> Timeline {
+    let target = AnimationTargetId::new(ANIMATION_BENCHMARK_RETAINED_TARGET);
+    let binding = |property| AnimationBinding::new(target.clone(), property);
+
+    Timeline::new(1.4).with_clip(
+        Clip::new("retained-lane", 0.0, 1.4)
+            .with_track(
+                Track::new(binding(AnimationProperty::LayerOpacity)).with_keyframes([
+                    Keyframe::new(0.0, AnimationValue::Scalar(0.44)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(0.7, AnimationValue::Scalar(1.0)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(1.4, AnimationValue::Scalar(0.44)),
+                ]),
+            )
+            .with_track(
+                Track::new(binding(AnimationProperty::LayerTranslation)).with_keyframes([
+                    Keyframe::new(0.0, AnimationValue::Vector(Vector::new(-32.0, 0.0)))
+                        .with_easing(Easing::EaseInOut),
+                    Keyframe::new(0.7, AnimationValue::Vector(Vector::new(32.0, 0.0)))
+                        .with_easing(Easing::EaseInOut),
+                    Keyframe::new(1.4, AnimationValue::Vector(Vector::new(-32.0, 0.0))),
+                ]),
+            ),
+    )
+}
+
+fn animation_benchmark_repaint_timeline() -> Timeline {
+    let target = AnimationTargetId::new(ANIMATION_BENCHMARK_REPAINT_TARGET);
+    let binding = |property| AnimationBinding::new(target.clone(), property);
+
+    Timeline::new(1.2).with_clip(
+        Clip::new("repaint-lane", 0.0, 1.2)
+            .with_track(
+                Track::new(binding(AnimationProperty::FillColor)).with_keyframes([
+                    Keyframe::new(
+                        0.0,
+                        AnimationValue::Color(Color::rgba(0.86, 0.30, 0.22, 1.0)),
+                    )
+                    .with_easing(Easing::EaseInOut),
+                    Keyframe::new(
+                        0.6,
+                        AnimationValue::Color(Color::rgba(0.22, 0.66, 0.82, 1.0)),
+                    )
+                    .with_easing(Easing::EaseInOut),
+                    Keyframe::new(
+                        1.2,
+                        AnimationValue::Color(Color::rgba(0.86, 0.30, 0.22, 1.0)),
+                    ),
+                ]),
+            )
+            .with_track(
+                Track::new(binding(AnimationProperty::Custom(
+                    AnimationPropertyPath::new(ANIMATION_BENCHMARK_RADIUS_PATH),
+                )))
+                .with_keyframes([
+                    Keyframe::new(0.0, AnimationValue::Scalar(14.0)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(0.6, AnimationValue::Scalar(26.0)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(1.2, AnimationValue::Scalar(14.0)),
+                ]),
+            )
+            .with_track(
+                Track::new(binding(AnimationProperty::Custom(
+                    AnimationPropertyPath::new(ANIMATION_BENCHMARK_ALPHA_PATH),
+                )))
+                .with_keyframes([
+                    Keyframe::new(0.0, AnimationValue::Scalar(0.52)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(0.6, AnimationValue::Scalar(1.0)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(1.2, AnimationValue::Scalar(0.52)),
+                ]),
+            ),
+    )
+}
+
+fn animation_benchmark_scale_timeline() -> Timeline {
+    let mut clip = Clip::new("scale-grid", 0.0, 1.8);
+    for index in 0..ANIMATION_BENCHMARK_SCALE_CELLS {
+        let target =
+            AnimationTargetId::new(format!("{ANIMATION_BENCHMARK_SCALE_TARGET_PREFIX}{index}"));
+        let column = index % ANIMATION_BENCHMARK_SCALE_COLUMNS;
+        let row = index / ANIMATION_BENCHMARK_SCALE_COLUMNS;
+        let phase = ((column + row) % 6) as f32 / 6.0;
+        let low_radius = 4.0 + (index % 5) as f32 * 0.35;
+        let high_radius = 9.0 + (index % 7) as f32 * 0.45;
+        let cool = Color::rgba(0.16 + phase * 0.16, 0.42 + phase * 0.16, 0.84, 1.0);
+        let warm = Color::rgba(0.84, 0.36 + phase * 0.18, 0.20 + phase * 0.18, 1.0);
+
+        clip.push_track(
+            Track::new(AnimationBinding::new(
+                target.clone(),
+                AnimationProperty::Custom(AnimationPropertyPath::new(
+                    ANIMATION_BENCHMARK_RADIUS_PATH,
+                )),
+            ))
+            .with_keyframes([
+                Keyframe::new(0.0, AnimationValue::Scalar(low_radius))
+                    .with_easing(Easing::EaseInOut),
+                Keyframe::new(0.9, AnimationValue::Scalar(high_radius))
+                    .with_easing(Easing::EaseInOut),
+                Keyframe::new(1.8, AnimationValue::Scalar(low_radius)),
+            ]),
+        );
+        clip.push_track(
+            Track::new(AnimationBinding::new(
+                target.clone(),
+                AnimationProperty::Custom(AnimationPropertyPath::new(
+                    ANIMATION_BENCHMARK_ALPHA_PATH,
+                )),
+            ))
+            .with_keyframes([
+                Keyframe::new(0.0, AnimationValue::Scalar(0.38 + phase * 0.24))
+                    .with_easing(Easing::EaseInOut),
+                Keyframe::new(0.9, AnimationValue::Scalar(0.82 + phase * 0.14))
+                    .with_easing(Easing::EaseInOut),
+                Keyframe::new(1.8, AnimationValue::Scalar(0.38 + phase * 0.24)),
+            ]),
+        );
+        clip.push_track(
+            Track::new(AnimationBinding::new(target, AnimationProperty::FillColor)).with_keyframes(
+                [
+                    Keyframe::new(0.0, AnimationValue::Color(cool)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(0.9, AnimationValue::Color(warm)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(1.8, AnimationValue::Color(cool)),
+                ],
+            ),
+        );
+    }
+
+    Timeline::new(1.8).with_clip(clip)
+}
+
 #[derive(Debug, Clone, Copy)]
 struct AnimationEditorLayout {
     play_button: Rect,
@@ -2009,7 +2630,7 @@ impl AnimationEditorSurface {
         player.playback_mut().loop_mode = LoopMode::Repeat;
 
         let mut presentation = TimelinePreviewPresentation::default();
-        for sample in player.sample() {
+        for sample in player.sample_reusing_scratch() {
             presentation.apply_animation_value(&sample.binding, sample.value);
         }
 
@@ -2021,7 +2642,8 @@ impl AnimationEditorSurface {
     }
 
     fn sync_player_timeline(&mut self) {
-        *self.player.timeline_mut() = self.editor.document.timeline.clone();
+        self.player
+            .set_timeline(self.editor.document.timeline.clone());
     }
 
     fn toggle_playback(&mut self, ctx: &mut EventCtx) {
@@ -2048,7 +2670,7 @@ impl AnimationEditorSurface {
         self.player.seek(time);
         self.editor
             .apply_command(AnimationEditorCommand::SetPlayhead(time));
-        for sample in self.player.sample() {
+        for sample in self.player.sample_reusing_scratch() {
             self.presentation
                 .apply_animation_value(&sample.binding, sample.value);
         }
@@ -2107,7 +2729,7 @@ impl AnimationEditorSurface {
             })
         {
             self.sync_player_timeline();
-            for sample in self.player.sample() {
+            for sample in self.player.sample_reusing_scratch() {
                 self.presentation
                     .apply_animation_value(&sample.binding, sample.value);
             }
@@ -2158,9 +2780,11 @@ impl Widget for AnimationEditorSurface {
                 }
             }
             Event::Wake(WakeEvent::AnimationFrame { delta, .. }) => {
-                let tick = self.player.tick(*delta, &mut self.presentation);
+                {
+                    let tick = self.player.tick(*delta, &mut self.presentation);
+                    tick.request_current_widget_invalidations(ctx);
+                }
                 self.editor.playback = self.player.playback();
-                tick.request_current_widget_invalidations(ctx);
                 ctx.request_semantics();
                 ctx.set_handled();
             }
@@ -3604,6 +4228,26 @@ pub fn build_button_grid_benchmark_application() -> Application {
                 "Focused benchmark surface for measuring the initial frame cost of a 64-button grid.",
                 build_button_grid_benchmark(),
             )),
+    )
+}
+
+pub fn build_animation_benchmark() -> impl Widget {
+    Padding::all(
+        24.0,
+        Stack::vertical()
+            .spacing(18.0)
+            .alignment(Alignment::Stretch)
+            .with_child(AnimationBenchmarkRetainedLane::new())
+            .with_child(AnimationBenchmarkRepaintLane::new())
+            .with_child(AnimationBenchmarkScaleGrid::new()),
+    )
+}
+
+pub fn build_animation_benchmark_application() -> Application {
+    Application::new().window(
+        WindowBuilder::new()
+            .title(ANIMATION_BENCHMARK_TITLE)
+            .root(build_animation_benchmark()),
     )
 }
 
@@ -5873,8 +6517,10 @@ mod tests {
         StoryCase, artifact_root, configured_widget_book_state, scroll_to_story_target,
     };
     use super::{
-        BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, COLOR_PICKER_NAME,
-        DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME, GALLERY_SCROLL_NAME,
+        ANIMATION_BENCHMARK_REPAINT_NAME, ANIMATION_BENCHMARK_RETAINED_NAME,
+        ANIMATION_BENCHMARK_SCALE_NAME, ANIMATION_BENCHMARK_TITLE, BUTTON_GRID_BENCHMARK_TITLE,
+        BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, COLOR_PICKER_NAME, DIALOG_TITLE,
+        DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME, GALLERY_SCROLL_NAME,
         LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
         LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
         POPOVER_NAME, POPOVER_TRIGGER_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
@@ -5883,13 +6529,14 @@ mod tests {
         TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
         TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
         TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
-        TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE, build_button_grid_benchmark_application,
-        build_color_and_imagery_story, build_retained_text_benchmark_application,
-        build_text_editing_benchmark_application, build_text_rendering_comparison_application,
-        build_text_validation_surface, build_theme_demo_application, build_widget_book_application,
-        build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
-        text_editing_benchmark_document, text_editing_benchmark_style_overlays,
-        text_editing_benchmark_style_spans, theme_preview_card,
+        TOOLTIP_TRIGGER_LABEL, WINDOW_TITLE, build_animation_benchmark_application,
+        build_button_grid_benchmark_application, build_color_and_imagery_story,
+        build_retained_text_benchmark_application, build_text_editing_benchmark_application,
+        build_text_rendering_comparison_application, build_text_validation_surface,
+        build_theme_demo_application, build_widget_book_application, build_widget_book_gallery,
+        default_widget_book_state, register_widget_book_images, text_editing_benchmark_document,
+        text_editing_benchmark_style_overlays, text_editing_benchmark_style_spans,
+        theme_preview_card,
     };
     use sui::{
         Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -6539,6 +7186,44 @@ mod tests {
                 &mut previous_frame_index,
                 "headless button grid resize benchmark",
                 "resize",
+                step,
+            )?;
+            if step >= WARMUP_FRAMES {
+                collected.push(snapshot);
+            }
+        }
+
+        Ok(collected)
+    }
+
+    #[cfg(feature = "artifacts")]
+    fn collect_headless_animation_benchmark_samples(
+        window: &TestWindow,
+    ) -> Result<Vec<WindowPerformanceSnapshot>> {
+        const WARMUP_FRAMES: usize = 12;
+        const MEASURED_FRAMES: usize = 120;
+        const FRAME_DELTA_SECONDS: f64 = 1.0 / 60.0;
+
+        for name in [
+            ANIMATION_BENCHMARK_RETAINED_NAME,
+            ANIMATION_BENCHMARK_REPAINT_NAME,
+            ANIMATION_BENCHMARK_SCALE_NAME,
+        ] {
+            window
+                .get_by_role(SemanticsRole::Button)
+                .with_name(name)
+                .click()?;
+        }
+
+        let mut collected = Vec::with_capacity(MEASURED_FRAMES);
+        let mut previous_frame_index = window.performance_snapshot()?.frame_index;
+        for step in 0..(WARMUP_FRAMES + MEASURED_FRAMES) {
+            window.advance_time(FRAME_DELTA_SECONDS)?;
+            let snapshot = next_headless_benchmark_frame(
+                window,
+                &mut previous_frame_index,
+                "headless animation benchmark",
+                "animation frame",
                 step,
             )?;
             if step >= WARMUP_FRAMES {
@@ -8312,6 +8997,27 @@ mod tests {
 
         print_widget_book_headless_scroll_benchmark_summary(
             "64-Button Headless Resize Benchmark",
+            &samples,
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    #[ignore = "diagnostic benchmark for current headless animation status"]
+    fn animation_headless_current_status_benchmark() -> Result<()> {
+        let _guard = headless_benchmark_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let app = TestApp::from_runtime(build_animation_benchmark_application().build()?)?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        assert_eq!(snapshot.title, ANIMATION_BENCHMARK_TITLE);
+        set_detailed_scene_statistics_mode(&window)?;
+        let samples = collect_headless_animation_benchmark_samples(&window)?;
+
+        print_widget_book_headless_scroll_benchmark_summary(
+            "Animation Headless Benchmark",
             &samples,
         );
         Ok(())

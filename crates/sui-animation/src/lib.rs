@@ -701,6 +701,35 @@ where
     }
 }
 
+fn sample_sorted_keyframes<T>(keyframes: &[Keyframe<T>], time: f64) -> Option<T>
+where
+    T: Copy + Interpolate,
+{
+    let first = keyframes.first()?;
+    let last = keyframes.last()?;
+    if time <= first.time {
+        return Some(first.value);
+    }
+    if time >= last.time {
+        return Some(last.value);
+    }
+
+    let next_index = keyframes.partition_point(|keyframe| keyframe.time < time);
+    let previous_index = next_index.saturating_sub(1);
+    let previous = &keyframes[previous_index];
+    let next = &keyframes[next_index];
+    if (next.time - previous.time).abs() <= f64::EPSILON {
+        return Some(next.value);
+    }
+
+    let progress = ((time - previous.time) / (next.time - previous.time)).clamp(0.0, 1.0);
+    Some(T::interpolate(
+        previous.value,
+        next.value,
+        previous.easing.sample(progress as f32),
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Clip<T = AnimationValue> {
     pub id: String,
@@ -744,22 +773,32 @@ where
     T: Copy + Interpolate,
 {
     pub fn sample(&self, time: f64) -> Vec<SampledAnimationValue<T>> {
+        let mut samples = Vec::new();
+        self.sample_into(time, &mut samples);
+        samples
+    }
+
+    pub fn sample_into(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
+        samples.clear();
+        self.append_samples(time, samples);
+    }
+
+    fn append_samples(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
         if !self.contains_time(time) {
-            return Vec::new();
+            return;
         }
 
         let local_time = time - self.start_time;
-        self.tracks
-            .iter()
-            .filter_map(|track| {
-                track.sample(local_time).map(|value| SampledAnimationValue {
+        for track in &self.tracks {
+            if let Some(value) = track.sample(local_time) {
+                samples.push(SampledAnimationValue {
                     clip_id: self.id.clone(),
                     binding: track.binding.clone(),
                     time,
                     value,
-                })
-            })
-            .collect()
+                });
+            }
+        }
     }
 }
 
@@ -798,11 +837,227 @@ where
     T: Copy + Interpolate,
 {
     pub fn sample(&self, time: f64) -> Vec<SampledAnimationValue<T>> {
+        let mut samples = Vec::new();
+        self.sample_into(time, &mut samples);
+        samples
+    }
+
+    pub fn sample_into(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
         let clamped_time = time.clamp(0.0, self.duration.max(0.0));
-        self.clips
+        samples.clear();
+        for clip in &self.clips {
+            clip.append_samples(clamped_time, samples);
+        }
+    }
+}
+
+impl<T> Timeline<T>
+where
+    T: Clone,
+{
+    pub fn compile(&self) -> CompiledTimeline<T> {
+        CompiledTimeline::from_timeline(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompiledTimeline<T = AnimationValue> {
+    duration: f64,
+    clips: Vec<CompiledClip<T>>,
+    sample_capacity: usize,
+}
+
+impl<T> CompiledTimeline<T>
+where
+    T: Clone,
+{
+    pub fn from_timeline(timeline: &Timeline<T>) -> Self {
+        let clips = timeline
+            .clips
             .iter()
-            .flat_map(|clip| clip.sample(clamped_time))
-            .collect()
+            .filter(|clip| clip.enabled)
+            .filter_map(CompiledClip::from_clip)
+            .collect::<Vec<_>>();
+        let sample_capacity = clips.iter().map(|clip| clip.tracks.len()).sum();
+        Self {
+            duration: timeline.duration.max(0.0),
+            clips,
+            sample_capacity,
+        }
+    }
+}
+
+impl<T> CompiledTimeline<T> {
+    pub fn duration(&self) -> f64 {
+        self.duration
+    }
+
+    pub fn clips(&self) -> &[CompiledClip<T>] {
+        &self.clips
+    }
+
+    pub fn sample_capacity(&self) -> usize {
+        self.sample_capacity
+    }
+}
+
+impl<T> CompiledTimeline<T>
+where
+    T: Copy + Interpolate,
+{
+    pub fn sample(&self, time: f64) -> Vec<SampledAnimationValue<T>> {
+        let mut samples = Vec::with_capacity(self.sample_capacity);
+        self.sample_into(time, &mut samples);
+        samples
+    }
+
+    pub fn sample_into(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
+        let clamped_time = time.clamp(0.0, self.duration);
+        samples.clear();
+        samples.reserve(self.sample_capacity.saturating_sub(samples.len()));
+        for clip in &self.clips {
+            clip.append_samples(clamped_time, samples);
+        }
+    }
+}
+
+impl<T> From<&Timeline<T>> for CompiledTimeline<T>
+where
+    T: Clone,
+{
+    fn from(timeline: &Timeline<T>) -> Self {
+        Self::from_timeline(timeline)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompiledClip<T = AnimationValue> {
+    id: String,
+    start_time: f64,
+    duration: f64,
+    tracks: Vec<CompiledTrack<T>>,
+}
+
+impl<T> CompiledClip<T>
+where
+    T: Clone,
+{
+    fn from_clip(clip: &Clip<T>) -> Option<Self> {
+        let tracks = clip
+            .tracks
+            .iter()
+            .filter(|track| track.enabled && !track.keyframes.is_empty())
+            .map(CompiledTrack::from_track)
+            .collect::<Vec<_>>();
+        if tracks.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            id: clip.id.clone(),
+            start_time: clip.start_time,
+            duration: clip.duration,
+            tracks,
+        })
+    }
+}
+
+impl<T> CompiledClip<T> {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn start_time(&self) -> f64 {
+        self.start_time
+    }
+
+    pub fn duration(&self) -> f64 {
+        self.duration
+    }
+
+    pub fn end_time(&self) -> f64 {
+        self.start_time + self.duration
+    }
+
+    pub fn tracks(&self) -> &[CompiledTrack<T>] {
+        &self.tracks
+    }
+
+    pub fn contains_time(&self, time: f64) -> bool {
+        time >= self.start_time && time <= self.end_time()
+    }
+}
+
+impl<T> CompiledClip<T>
+where
+    T: Copy + Interpolate,
+{
+    pub fn sample(&self, time: f64) -> Vec<SampledAnimationValue<T>> {
+        let mut samples = Vec::new();
+        self.sample_into(time, &mut samples);
+        samples
+    }
+
+    pub fn sample_into(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
+        samples.clear();
+        self.append_samples(time, samples);
+    }
+
+    fn append_samples(&self, time: f64, samples: &mut Vec<SampledAnimationValue<T>>) {
+        if !self.contains_time(time) {
+            return;
+        }
+
+        let local_time = time - self.start_time;
+        for track in &self.tracks {
+            if let Some(value) = track.sample(local_time) {
+                samples.push(SampledAnimationValue {
+                    clip_id: self.id.clone(),
+                    binding: track.binding.clone(),
+                    time,
+                    value,
+                });
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompiledTrack<T = AnimationValue> {
+    binding: AnimationBinding,
+    keyframes: Vec<Keyframe<T>>,
+}
+
+impl<T> CompiledTrack<T>
+where
+    T: Clone,
+{
+    fn from_track(track: &Track<T>) -> Self {
+        let mut keyframes = track.keyframes.clone();
+        keyframes.sort_by(|left, right| left.time.total_cmp(&right.time));
+        Self {
+            binding: track.binding.clone(),
+            keyframes,
+        }
+    }
+}
+
+impl<T> CompiledTrack<T> {
+    pub fn binding(&self) -> &AnimationBinding {
+        &self.binding
+    }
+
+    pub fn keyframes(&self) -> &[Keyframe<T>] {
+        &self.keyframes
+    }
+}
+
+impl<T> CompiledTrack<T>
+where
+    T: Copy + Interpolate,
+{
+    pub fn sample(&self, time: f64) -> Option<T> {
+        sample_sorted_keyframes(&self.keyframes, time)
     }
 }
 
@@ -1981,6 +2236,74 @@ mod tests {
             .as_scalar()
             .expect("opacity sample should be scalar");
         assert!((opacity - 0.625).abs() < 1e-6);
+    }
+
+    #[test]
+    fn timeline_sample_into_reuses_output_storage() {
+        let opacity_track = Track::new(opacity_binding()).with_keyframes([
+            Keyframe::new(0.0, AnimationValue::Scalar(0.25)),
+            Keyframe::new(1.0, AnimationValue::Scalar(0.75)),
+        ]);
+        let timeline =
+            Timeline::new(1.0).with_clip(Clip::new("intro", 0.0, 1.0).with_track(opacity_track));
+        let mut samples = Vec::with_capacity(8);
+        let initial_capacity = samples.capacity();
+
+        timeline.sample_into(0.5, &mut samples);
+
+        assert_eq!(samples.capacity(), initial_capacity);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].clip_id, "intro");
+        assert_eq!(samples[0].value.as_scalar(), Some(0.5));
+
+        timeline.sample_into(2.0, &mut samples);
+
+        assert_eq!(samples.capacity(), initial_capacity);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].value.as_scalar(), Some(0.75));
+    }
+
+    #[test]
+    fn compiled_timeline_sorts_tracks_and_omits_disabled_data() {
+        let opacity_track = Track::new(opacity_binding()).with_keyframes([
+            Keyframe::new(1.0, AnimationValue::Scalar(1.0)),
+            Keyframe::new(0.0, AnimationValue::Scalar(0.0)).with_easing(Easing::Linear),
+        ]);
+        let disabled_track = Track::new(AnimationBinding::new(
+            AnimationTargetId::new("hero-card"),
+            AnimationProperty::FillColor,
+        ))
+        .with_enabled(false)
+        .with_keyframes([
+            Keyframe::new(0.0, AnimationValue::Color(Color::rgba(1.0, 0.0, 0.0, 1.0))),
+            Keyframe::new(1.0, AnimationValue::Color(Color::rgba(0.0, 0.0, 1.0, 1.0))),
+        ]);
+        let disabled_clip = Clip::new("disabled", 0.0, 1.0).with_track(
+            Track::new(opacity_binding()).with_keyframes([
+                Keyframe::new(0.0, AnimationValue::Scalar(0.0)),
+                Keyframe::new(1.0, AnimationValue::Scalar(1.0)),
+            ]),
+        );
+        let mut disabled_clip = disabled_clip;
+        disabled_clip.enabled = false;
+        let timeline = Timeline::new(1.0)
+            .with_clip(
+                Clip::new("intro", 0.0, 1.0)
+                    .with_track(opacity_track)
+                    .with_track(disabled_track),
+            )
+            .with_clip(disabled_clip);
+
+        let compiled = timeline.compile();
+        let mut samples = Vec::new();
+        compiled.sample_into(0.5, &mut samples);
+
+        assert_eq!(compiled.clips().len(), 1);
+        assert_eq!(compiled.sample_capacity(), 1);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].clip_id, "intro");
+        assert_eq!(samples[0].binding.property, AnimationProperty::LayerOpacity);
+        assert_eq!(samples[0].value.as_scalar(), Some(0.5));
     }
 
     #[test]
