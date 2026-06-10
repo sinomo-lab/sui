@@ -1,6 +1,6 @@
 use crate::{
-    Blink, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, Interpolate, ResolvedEffectStyle,
-    ResolvedHdrStyle, ThemeColorScheme, Transition, WidgetColorRole, WidgetLuminanceRole,
+    Blink, ControlMetrics, DefaultTheme, HdrThemeMode, Interpolate, MotionScalar,
+    ResolvedEffectStyle, ResolvedHdrStyle, ThemeColorScheme, WidgetColorRole, WidgetLuminanceRole,
     WidgetMaterialRole,
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
     paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
@@ -352,10 +352,6 @@ impl Widget for Icon {
     }
 }
 
-const HOVER_ANIMATION_SECONDS: f64 = 1.0 / 8.0;
-const PRESS_ANIMATION_SECONDS: f64 = 1.0 / 12.0;
-const TOGGLE_ANIMATION_SECONDS: f64 = 1.0 / 6.0;
-const FOCUS_ANIMATION_SECONDS: f64 = 1.0 / 7.0;
 const CARET_BLINK_PERIOD_SECONDS: f64 = 1.0;
 const SELECT_CHEVRON_SLOT_WIDTH: f32 = 28.0;
 const SELECT_CHEVRON_ICON_SIZE: f32 = 20.0;
@@ -368,75 +364,76 @@ enum SelectMenuPlacement {
     Above,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct AnimatedScalar {
-    value: f32,
-    target: f32,
-    transition: Option<Transition<f32>>,
-}
-
-impl AnimatedScalar {
-    const fn new(value: f32) -> Self {
-        Self {
-            value,
-            target: value,
-            transition: None,
-        }
-    }
-
-    fn current(&self, time: f64) -> f32 {
-        self.transition
-            .map(|transition| transition.sample(time))
-            .unwrap_or(self.value)
-    }
-
-    fn set_target(&mut self, target: f32, time: f64, duration: f64) -> bool {
-        let target = target.clamp(0.0, 1.0);
-        let current = self.current(time);
-        if (current - target).abs() < 1e-4 {
-            self.value = target;
-            self.target = target;
-            self.transition = None;
-            return false;
-        }
-
-        self.value = current;
-        self.target = target;
-        self.transition = Some(Transition::new(
-            current,
-            target,
-            time,
-            duration,
-            Easing::EaseInOut,
-        ));
-        true
-    }
-
-    fn advance(&mut self, time: f64) -> bool {
-        let Some(transition) = self.transition else {
-            return false;
-        };
-
-        self.value = transition.sample(time);
-        if transition.is_complete(time) {
-            self.value = self.target;
-            self.transition = None;
-            return false;
-        }
-
-        true
-    }
-}
+type AnimatedScalar = MotionScalar;
 
 fn set_animation_target(
     animation: &mut AnimatedScalar,
     target: f32,
     duration: f64,
+    easing: crate::Easing,
     ctx: &mut EventCtx,
 ) {
-    if animation.set_target(target, ctx.current_time(), duration) {
-        ctx.request_animation_frame();
-    }
+    animation.set_target_event(target, duration, easing, ctx);
+}
+
+fn set_hover_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.hover_duration(),
+        theme.motion.hover_easing(),
+        ctx,
+    );
+}
+
+fn set_press_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.press_duration(),
+        theme.motion.press_easing(),
+        ctx,
+    );
+}
+
+fn set_toggle_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.toggle_duration(),
+        theme.motion.toggle_easing(),
+        ctx,
+    );
+}
+
+fn set_focus_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.focus_duration(),
+        theme.motion.focus_easing(),
+        ctx,
+    );
 }
 
 fn mix_color(from: Color, to: Color, t: f32) -> Color {
@@ -458,6 +455,7 @@ pub struct IconButton {
     pressed: bool,
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     on_press: Option<Box<dyn FnMut()>>,
     on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
 }
@@ -479,6 +477,7 @@ impl IconButton {
             pressed: false,
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             on_press: None,
             on_press_with_ctx: None,
         }
@@ -602,11 +601,12 @@ impl IconButton {
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
+            let theme = self.resolved_theme();
             self.hovered = hovered;
-            set_animation_target(
+            set_hover_animation_target(
                 &mut self.hover_animation,
                 hovered as u8 as f32,
-                HOVER_ANIMATION_SECONDS,
+                &theme,
                 ctx,
             );
             ctx.request_paint();
@@ -615,7 +615,9 @@ impl IconButton {
     }
 
     fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time) | self.press_animation.advance(time)
+        self.hover_animation.advance(time)
+            | self.press_animation.advance(time)
+            | self.focus_animation.advance(time)
     }
 }
 
@@ -623,10 +625,11 @@ impl Widget for IconButton {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if !self.is_enabled() {
             if self.hovered || self.pressed {
+                let theme = self.resolved_theme();
                 self.hovered = false;
                 self.pressed = false;
-                set_animation_target(&mut self.hover_animation, 0.0, HOVER_ANIMATION_SECONDS, ctx);
-                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
             }
@@ -647,10 +650,11 @@ impl Widget for IconButton {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 self.pressed = true;
                 self.hovered = true;
-                set_animation_target(&mut self.hover_animation, 1.0, HOVER_ANIMATION_SECONDS, ctx);
-                set_animation_target(&mut self.press_animation, 1.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+                set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
@@ -661,17 +665,18 @@ impl Widget for IconButton {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 let hovered = ctx.bounds().contains(pointer.position);
                 let activate = self.pressed && hovered;
                 self.pressed = false;
                 self.hovered = hovered;
-                set_animation_target(
+                set_hover_animation_target(
                     &mut self.hover_animation,
                     hovered as u8 as f32,
-                    HOVER_ANIMATION_SECONDS,
+                    &theme,
                     ctx,
                 );
-                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if activate {
                     self.activate(ctx);
@@ -682,20 +687,11 @@ impl Widget for IconButton {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.pressed {
+                    let theme = self.resolved_theme();
                     self.pressed = false;
                     self.hovered = false;
-                    set_animation_target(
-                        &mut self.hover_animation,
-                        0.0,
-                        HOVER_ANIMATION_SECONDS,
-                        ctx,
-                    );
-                    set_animation_target(
-                        &mut self.press_animation,
-                        0.0,
-                        PRESS_ANIMATION_SECONDS,
-                        ctx,
-                    );
+                    set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+                    set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -744,6 +740,11 @@ impl Widget for IconButton {
         } else {
             0.0
         };
+        let focus_progress = if enabled {
+            self.focus_animation.value
+        } else {
+            0.0
+        };
         let base_background = if selected {
             mix_color(palette.control, palette.accent, interaction.selected_blend)
         } else {
@@ -764,14 +765,17 @@ impl Widget for IconButton {
             press_background,
             press_progress,
         );
-        let border = if !enabled {
+        let border_base = if !enabled {
             palette.border.with_alpha(0.55)
-        } else if ctx.is_focused() {
-            palette.border_focus
         } else if selected {
             mix_color(palette.accent_border, palette.border_hover, hover_progress)
         } else {
             mix_color(palette.border, palette.border_hover, hover_progress)
+        };
+        let border = if enabled {
+            mix_color(border_base, palette.border_focus, focus_progress)
+        } else {
+            border_base
         };
         let background = if enabled {
             background
@@ -788,7 +792,11 @@ impl Widget for IconButton {
             metrics,
             background,
             border,
-            ctx.is_focused().then_some(palette.focus_ring),
+            (focus_progress > 0.0).then_some(
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * focus_progress),
+            ),
         );
         draw_icon_glyph(
             ctx,
@@ -825,7 +833,9 @@ impl Widget for IconButton {
         self.is_enabled()
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -993,6 +1003,7 @@ pub struct Button {
     pressed: bool,
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     label_layout: Option<PersistentTextLayout>,
     enabled: bool,
@@ -1028,6 +1039,7 @@ impl Button {
             pressed: false,
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             label_measurement: None,
             label_layout: None,
             enabled: true,
@@ -1143,11 +1155,12 @@ impl Button {
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
+            let theme = self.resolved_theme();
             self.hovered = hovered;
-            set_animation_target(
+            set_hover_animation_target(
                 &mut self.hover_animation,
                 hovered as u8 as f32,
-                HOVER_ANIMATION_SECONDS,
+                &theme,
                 ctx,
             );
             ctx.request_paint();
@@ -1156,7 +1169,9 @@ impl Button {
     }
 
     fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time) | self.press_animation.advance(time)
+        self.hover_animation.advance(time)
+            | self.press_animation.advance(time)
+            | self.focus_animation.advance(time)
     }
 
     fn is_enabled(&self) -> bool {
@@ -1216,11 +1231,21 @@ impl Button {
         )
     }
 
+    #[cfg(test)]
     fn resolved_visuals(&self, focused: bool) -> ButtonVisuals {
+        self.resolved_visuals_with_focus_progress(focused as u8 as f32)
+    }
+
+    fn resolved_visuals_with_focus_progress(&self, focus_progress: f32) -> ButtonVisuals {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let interaction = theme.interaction;
         let enabled = self.is_enabled();
+        let focus_progress = if enabled {
+            focus_progress.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let hover_progress = if enabled {
             self.hover_animation.value * interaction.hover_blend
         } else {
@@ -1241,18 +1266,21 @@ impl Button {
                 press_progress,
             )
         };
-        let border = if !enabled {
+        let border_base = if !enabled {
             palette
                 .accent_border
                 .with_alpha(interaction.disabled_content_opacity)
-        } else if focused {
-            palette.accent_border_focus
         } else {
             mix_color(
                 palette.accent_border,
                 palette.accent_border_hover,
                 hover_progress,
             )
+        };
+        let border = if enabled {
+            mix_color(border_base, palette.accent_border_focus, focus_progress)
+        } else {
+            border_base
         };
         let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
         let label_color = if enabled {
@@ -1270,7 +1298,11 @@ impl Button {
             return ButtonVisuals {
                 background,
                 border,
-                focus_ring: focused.then_some(palette.focus_ring),
+                focus_ring: (focus_progress > 0.0).then_some(
+                    palette
+                        .focus_ring
+                        .with_alpha(palette.focus_ring.alpha * focus_progress),
+                ),
                 label_color,
                 label_peak_lift,
                 chrome_style: None,
@@ -1300,10 +1332,8 @@ impl Button {
                 press_progress,
             )
         };
-        let hdr_border = if !enabled {
+        let hdr_border_base = if !enabled {
             border
-        } else if focused {
-            focus_style.color
         } else {
             mix_color(
                 palette.accent_border,
@@ -1311,11 +1341,20 @@ impl Button {
                 hover_progress,
             )
         };
+        let hdr_border = if enabled {
+            mix_color(hdr_border_base, focus_style.color, focus_progress)
+        } else {
+            hdr_border_base
+        };
 
         ButtonVisuals {
             background: hdr_background,
             border: hdr_border,
-            focus_ring: focused.then_some(focus_style.color.with_alpha(palette.focus_ring.alpha)),
+            focus_ring: (focus_progress > 0.0).then_some(
+                focus_style
+                    .color
+                    .with_alpha(palette.focus_ring.alpha * focus_progress),
+            ),
             label_color,
             label_peak_lift,
             chrome_style: Some(chrome_style),
@@ -1375,10 +1414,11 @@ impl Widget for Button {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if !self.is_enabled() {
             if self.hovered || self.pressed {
+                let theme = self.resolved_theme();
                 self.hovered = false;
                 self.pressed = false;
-                set_animation_target(&mut self.hover_animation, 0.0, HOVER_ANIMATION_SECONDS, ctx);
-                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
             }
@@ -1399,10 +1439,11 @@ impl Widget for Button {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 self.pressed = true;
                 self.hovered = true;
-                set_animation_target(&mut self.hover_animation, 1.0, HOVER_ANIMATION_SECONDS, ctx);
-                set_animation_target(&mut self.press_animation, 1.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+                set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
@@ -1413,17 +1454,18 @@ impl Widget for Button {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 let hovered = ctx.bounds().contains(pointer.position);
                 let activate = self.pressed && hovered;
                 self.pressed = false;
                 self.hovered = hovered;
-                set_animation_target(
+                set_hover_animation_target(
                     &mut self.hover_animation,
                     hovered as u8 as f32,
-                    HOVER_ANIMATION_SECONDS,
+                    &theme,
                     ctx,
                 );
-                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if activate {
                     self.activate(ctx);
@@ -1434,20 +1476,11 @@ impl Widget for Button {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.pressed {
+                    let theme = self.resolved_theme();
                     self.pressed = false;
                     self.hovered = false;
-                    set_animation_target(
-                        &mut self.hover_animation,
-                        0.0,
-                        HOVER_ANIMATION_SECONDS,
-                        ctx,
-                    );
-                    set_animation_target(
-                        &mut self.press_animation,
-                        0.0,
-                        PRESS_ANIMATION_SECONDS,
-                        ctx,
-                    );
+                    set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+                    set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -1516,7 +1549,7 @@ impl Widget for Button {
         let interaction = theme.interaction;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
-        let visuals = self.resolved_visuals(ctx.is_focused());
+        let visuals = self.resolved_visuals_with_focus_progress(self.focus_animation.value);
         let content_offset =
             Vector::new(0.0, self.press_animation.value * interaction.pressed_offset);
 
@@ -1581,7 +1614,9 @@ impl Widget for Button {
         self.is_enabled()
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -1694,11 +1729,12 @@ impl Checkbox {
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
+            let theme = self.resolved_theme();
             self.hovered = hovered;
-            set_animation_target(
+            set_hover_animation_target(
                 &mut self.hover_animation,
                 hovered as u8 as f32,
-                HOVER_ANIMATION_SECONDS,
+                &theme,
                 ctx,
             );
             ctx.request_paint();
@@ -1758,10 +1794,11 @@ impl Widget for Checkbox {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 self.pressed = true;
                 self.hovered = true;
-                set_animation_target(&mut self.hover_animation, 1.0, HOVER_ANIMATION_SECONDS, ctx);
-                set_animation_target(&mut self.press_animation, 1.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+                set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
@@ -1772,24 +1809,25 @@ impl Widget for Checkbox {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 let hovered = ctx.bounds().contains(pointer.position);
                 let toggle = self.pressed && hovered;
                 self.pressed = false;
                 self.hovered = hovered;
-                set_animation_target(
+                set_hover_animation_target(
                     &mut self.hover_animation,
                     hovered as u8 as f32,
-                    HOVER_ANIMATION_SECONDS,
+                    &theme,
                     ctx,
                 );
-                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if toggle {
                     self.toggle();
-                    set_animation_target(
+                    set_toggle_animation_target(
                         &mut self.toggle_animation,
                         self.checked as u8 as f32,
-                        TOGGLE_ANIMATION_SECONDS,
+                        &theme,
                         ctx,
                     );
                 }
@@ -1799,20 +1837,11 @@ impl Widget for Checkbox {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.pressed {
+                    let theme = self.resolved_theme();
                     self.pressed = false;
                     self.hovered = false;
-                    set_animation_target(
-                        &mut self.hover_animation,
-                        0.0,
-                        HOVER_ANIMATION_SECONDS,
-                        ctx,
-                    );
-                    set_animation_target(
-                        &mut self.press_animation,
-                        0.0,
-                        PRESS_ANIMATION_SECONDS,
-                        ctx,
-                    );
+                    set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+                    set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -1824,11 +1853,12 @@ impl Widget for Checkbox {
                     && ctx.is_focused()
                     && matches!(key.key.as_str(), "Enter" | " ") =>
             {
+                let theme = self.resolved_theme();
                 self.toggle();
-                set_animation_target(
+                set_toggle_animation_target(
                     &mut self.toggle_animation,
                     self.checked as u8 as f32,
-                    TOGGLE_ANIMATION_SECONDS,
+                    &theme,
                     ctx,
                 );
                 ctx.request_paint();
@@ -1968,12 +1998,8 @@ impl Widget for Checkbox {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
-        set_animation_target(
-            &mut self.focus_animation,
-            focused as u8 as f32,
-            FOCUS_ANIMATION_SECONDS,
-            ctx,
-        );
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -1992,6 +2018,7 @@ pub struct Switch {
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
     toggle_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     on_toggle: Option<Box<dyn FnMut(bool)>>,
 }
@@ -2023,6 +2050,7 @@ impl Switch {
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
             toggle_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             label_measurement: None,
             on_toggle: None,
         }
@@ -2112,11 +2140,12 @@ impl Switch {
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
+            let theme = self.resolved_theme();
             self.hovered = hovered;
-            set_animation_target(
+            set_hover_animation_target(
                 &mut self.hover_animation,
                 hovered as u8 as f32,
-                HOVER_ANIMATION_SECONDS,
+                &theme,
                 ctx,
             );
             ctx.request_paint();
@@ -2128,6 +2157,7 @@ impl Switch {
         self.hover_animation.advance(time)
             | self.press_animation.advance(time)
             | self.toggle_animation.advance(time)
+            | self.focus_animation.advance(time)
     }
 
     fn resolved_visuals_for_state(&self, on: bool, focused: bool) -> SwitchVisuals {
@@ -2247,10 +2277,11 @@ impl Widget for Switch {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 self.pressed = true;
                 self.hovered = true;
-                set_animation_target(&mut self.hover_animation, 1.0, HOVER_ANIMATION_SECONDS, ctx);
-                set_animation_target(&mut self.press_animation, 1.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+                set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
@@ -2261,24 +2292,25 @@ impl Widget for Switch {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 let hovered = ctx.bounds().contains(pointer.position);
                 let toggle = self.pressed && hovered;
                 self.pressed = false;
                 self.hovered = hovered;
-                set_animation_target(
+                set_hover_animation_target(
                     &mut self.hover_animation,
                     hovered as u8 as f32,
-                    HOVER_ANIMATION_SECONDS,
+                    &theme,
                     ctx,
                 );
-                set_animation_target(&mut self.press_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if toggle {
                     self.toggle();
-                    set_animation_target(
+                    set_toggle_animation_target(
                         &mut self.toggle_animation,
                         self.on as u8 as f32,
-                        TOGGLE_ANIMATION_SECONDS,
+                        &theme,
                         ctx,
                     );
                 }
@@ -2288,20 +2320,11 @@ impl Widget for Switch {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.pressed {
+                    let theme = self.resolved_theme();
                     self.pressed = false;
                     self.hovered = false;
-                    set_animation_target(
-                        &mut self.hover_animation,
-                        0.0,
-                        HOVER_ANIMATION_SECONDS,
-                        ctx,
-                    );
-                    set_animation_target(
-                        &mut self.press_animation,
-                        0.0,
-                        PRESS_ANIMATION_SECONDS,
-                        ctx,
-                    );
+                    set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+                    set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -2313,11 +2336,12 @@ impl Widget for Switch {
                     && ctx.is_focused()
                     && matches!(key.key.as_str(), "Enter" | " ") =>
             {
+                let theme = self.resolved_theme();
                 self.toggle();
-                set_animation_target(
+                set_toggle_animation_target(
                     &mut self.toggle_animation,
                     self.on as u8 as f32,
-                    TOGGLE_ANIMATION_SECONDS,
+                    &theme,
                     ctx,
                 );
                 ctx.request_paint();
@@ -2369,17 +2393,22 @@ impl Widget for Switch {
         let hover_progress = self.hover_animation.value * interaction.hover_blend;
         let press_progress = self.press_animation.value * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.value;
+        let focus_progress = self.focus_animation.value;
 
         let frame_background = mix_color(
-            mix_color(palette.control, palette.control_hover, hover_progress),
+            mix_color(
+                mix_color(palette.control, palette.control_hover, hover_progress),
+                palette.surface_focus,
+                focus_progress,
+            ),
             palette.control_active,
             press_progress,
         );
-        let frame_border = if ctx.is_focused() {
-            palette.border_focus
-        } else {
-            mix_color(palette.border, palette.border_hover, hover_progress)
-        };
+        let frame_border = mix_color(
+            mix_color(palette.border, palette.border_hover, hover_progress),
+            palette.border_focus,
+            focus_progress,
+        );
 
         draw_control_frame(
             ctx,
@@ -2388,7 +2417,11 @@ impl Widget for Switch {
             metrics,
             frame_background,
             frame_border,
-            ctx.is_focused().then_some(palette.focus_ring),
+            (focus_progress > 0.0).then_some(
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * focus_progress),
+            ),
         );
 
         let thumb_inset = metrics.switch_thumb_inset;
@@ -2470,7 +2503,9 @@ impl Widget for Switch {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -2487,6 +2522,10 @@ pub struct RadioButton {
     gap: Option<f32>,
     hovered: bool,
     pressed: bool,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
+    toggle_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     on_select: Option<Box<dyn FnMut()>>,
 }
@@ -2504,6 +2543,10 @@ impl RadioButton {
             gap: None,
             hovered: false,
             pressed: false,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
+            toggle_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             label_measurement: None,
             on_select: None,
         }
@@ -2511,6 +2554,7 @@ impl RadioButton {
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self.toggle_animation = AnimatedScalar::new(selected as u8 as f32);
         self
     }
 
@@ -2520,6 +2564,7 @@ impl RadioButton {
 
     pub fn set_selected(&mut self, selected: bool) {
         self.selected = selected;
+        self.toggle_animation = AnimatedScalar::new(selected as u8 as f32);
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -2592,8 +2637,13 @@ impl RadioButton {
             .unwrap_or(*self.theme)
     }
 
-    fn activate(&mut self) {
+    fn activate(&mut self, ctx: &mut EventCtx) {
+        let theme = self.resolved_theme();
+        let changed = !self.selected;
         self.selected = true;
+        if changed {
+            set_toggle_animation_target(&mut self.toggle_animation, 1.0, &theme, ctx);
+        }
         if let Some(on_select) = &mut self.on_select {
             on_select();
         }
@@ -2601,10 +2651,24 @@ impl RadioButton {
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
+            let theme = self.resolved_theme();
             self.hovered = hovered;
+            set_hover_animation_target(
+                &mut self.hover_animation,
+                hovered as u8 as f32,
+                &theme,
+                ctx,
+            );
             ctx.request_paint();
             ctx.request_semantics();
         }
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        self.hover_animation.advance(time)
+            | self.press_animation.advance(time)
+            | self.toggle_animation.advance(time)
+            | self.focus_animation.advance(time)
     }
 }
 
@@ -2624,8 +2688,11 @@ impl Widget for RadioButton {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 self.pressed = true;
                 self.hovered = true;
+                set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+                set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
@@ -2636,13 +2703,21 @@ impl Widget for RadioButton {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 let hovered = ctx.bounds().contains(pointer.position);
                 let activate = self.pressed && hovered;
                 self.pressed = false;
                 self.hovered = hovered;
+                set_hover_animation_target(
+                    &mut self.hover_animation,
+                    hovered as u8 as f32,
+                    &theme,
+                    ctx,
+                );
+                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if activate {
-                    self.activate();
+                    self.activate(ctx);
                 }
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -2650,8 +2725,11 @@ impl Widget for RadioButton {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.pressed {
+                    let theme = self.resolved_theme();
                     self.pressed = false;
                     self.hovered = false;
+                    set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+                    set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -2663,10 +2741,16 @@ impl Widget for RadioButton {
                     && ctx.is_focused()
                     && matches!(key.key.as_str(), "Enter" | " ") =>
             {
-                self.activate();
+                self.activate(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -2693,64 +2777,74 @@ impl Widget for RadioButton {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
         let gap = self.resolved_gap();
+        let hover_progress = self.hover_animation.value * interaction.hover_blend;
+        let press_progress = self.press_animation.value * interaction.pressed_blend;
+        let toggle_progress = self.toggle_animation.value;
+        let focus_progress = self.focus_animation.value;
         let indicator = indicator_rect(ctx.bounds(), padding, indicator_size);
         let label_rect = checkbox_label_rect(ctx.bounds(), padding, indicator_size, gap);
+        let frame_background = mix_color(
+            mix_color(
+                mix_color(palette.control, palette.control_hover, hover_progress),
+                palette.surface_focus,
+                focus_progress,
+            ),
+            palette.control_active,
+            press_progress,
+        );
+        let frame_border = mix_color(
+            mix_color(palette.border, palette.border_hover, hover_progress),
+            palette.border_focus,
+            focus_progress,
+        );
 
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            if self.pressed {
-                palette.control_active
-            } else if self.hovered {
-                palette.control_hover
-            } else if ctx.is_focused() {
-                palette.surface_focus
-            } else {
-                palette.control
-            },
-            if ctx.is_focused() {
-                palette.border_focus
-            } else if self.hovered {
-                palette.border_hover
-            } else {
-                palette.border
-            },
-            ctx.is_focused().then_some(palette.focus_ring),
+            frame_background,
+            frame_border,
+            (focus_progress > 0.0).then_some(
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * focus_progress),
+            ),
         );
 
         ctx.fill(
             Path::circle(rect_center(indicator), indicator.width() * 0.5),
-            if self.selected {
-                palette.accent
-            } else if self.hovered {
-                palette.surface_focus
-            } else {
-                palette.control_active
-            },
+            mix_color(
+                mix_color(
+                    palette.control_active,
+                    palette.surface_focus,
+                    hover_progress,
+                ),
+                mix_color(
+                    mix_color(palette.accent, palette.accent_hover, hover_progress),
+                    palette.accent_pressed,
+                    press_progress,
+                ),
+                toggle_progress,
+            ),
         );
         ctx.stroke(
             Path::circle(rect_center(indicator), (indicator.width() * 0.5) - 0.5),
-            if self.selected {
-                palette.accent_border
-            } else if ctx.is_focused() {
-                palette.border_focus
-            } else if self.hovered {
-                palette.border_hover
-            } else {
-                palette.border
-            },
+            mix_color(frame_border, palette.accent_border_focus, toggle_progress),
             StrokeStyle::new(physical_pixels(ctx, metrics.border_width)),
         );
-        if self.selected {
+        if toggle_progress > 0.0 {
             ctx.fill(
-                Path::circle(rect_center(indicator), indicator.width() * 0.22),
-                palette.accent_text,
+                Path::circle(
+                    rect_center(indicator),
+                    indicator.width() * 0.22 * toggle_progress,
+                ),
+                palette.accent_text.with_alpha(toggle_progress),
             );
         }
         let text_rect = aligned_text_rect_for_text(
@@ -2779,7 +2873,9 @@ impl Widget for RadioButton {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -3107,6 +3203,7 @@ pub struct Slider {
     dragging: bool,
     hover_animation: AnimatedScalar,
     drag_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     on_change: Option<Box<dyn FnMut(f64)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, f64)>>,
 }
@@ -3126,6 +3223,7 @@ impl Slider {
             dragging: false,
             hover_animation: AnimatedScalar::new(0.0),
             drag_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             on_change: None,
             on_change_with_ctx: None,
         }
@@ -3267,11 +3365,12 @@ impl Slider {
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
+            let theme = self.resolved_theme();
             self.hovered = hovered;
-            set_animation_target(
+            set_hover_animation_target(
                 &mut self.hover_animation,
                 hovered as u8 as f32,
-                HOVER_ANIMATION_SECONDS,
+                &theme,
                 ctx,
             );
             ctx.request_paint();
@@ -3280,7 +3379,9 @@ impl Slider {
     }
 
     fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time) | self.drag_animation.advance(time)
+        self.hover_animation.advance(time)
+            | self.drag_animation.advance(time)
+            | self.focus_animation.advance(time)
     }
 }
 
@@ -3311,10 +3412,11 @@ impl Widget for Slider {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 self.dragging = true;
                 self.hovered = true;
-                set_animation_target(&mut self.hover_animation, 1.0, HOVER_ANIMATION_SECONDS, ctx);
-                set_animation_target(&mut self.drag_animation, 1.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+                set_press_animation_target(&mut self.drag_animation, 1.0, &theme, ctx);
                 self.set_from_position(ctx, ctx.bounds(), pointer.position);
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
@@ -3326,15 +3428,16 @@ impl Widget for Slider {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 self.dragging = false;
                 self.hovered = ctx.bounds().contains(pointer.position);
-                set_animation_target(
+                set_hover_animation_target(
                     &mut self.hover_animation,
                     self.hovered as u8 as f32,
-                    HOVER_ANIMATION_SECONDS,
+                    &theme,
                     ctx,
                 );
-                set_animation_target(&mut self.drag_animation, 0.0, PRESS_ANIMATION_SECONDS, ctx);
+                set_press_animation_target(&mut self.drag_animation, 0.0, &theme, ctx);
                 self.set_from_position(ctx, ctx.bounds(), pointer.position);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.request_paint();
@@ -3343,20 +3446,11 @@ impl Widget for Slider {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.dragging {
+                    let theme = self.resolved_theme();
                     self.dragging = false;
                     self.hovered = false;
-                    set_animation_target(
-                        &mut self.hover_animation,
-                        0.0,
-                        HOVER_ANIMATION_SECONDS,
-                        ctx,
-                    );
-                    set_animation_target(
-                        &mut self.drag_animation,
-                        0.0,
-                        PRESS_ANIMATION_SECONDS,
-                        ctx,
-                    );
+                    set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+                    set_press_animation_target(&mut self.drag_animation, 0.0, &theme, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -3409,6 +3503,7 @@ impl Widget for Slider {
         let metrics = theme.metrics;
         let hover_progress = self.hover_animation.value;
         let drag_progress = self.drag_animation.value;
+        let focus_progress = self.focus_animation.value;
         let track = self.track_rect(ctx.bounds());
         let active = Rect::new(
             track.x(),
@@ -3424,16 +3519,24 @@ impl Widget for Slider {
             metrics.corner_radius,
             metrics,
             mix_color(
-                palette.control,
-                palette.control_hover,
-                hover_progress.max(drag_progress),
+                mix_color(
+                    palette.control,
+                    palette.control_hover,
+                    hover_progress.max(drag_progress),
+                ),
+                palette.surface_focus,
+                focus_progress,
             ),
-            if ctx.is_focused() {
-                palette.border_focus
-            } else {
-                mix_color(palette.border, palette.border_hover, hover_progress)
-            },
-            ctx.is_focused().then_some(palette.focus_ring),
+            mix_color(
+                mix_color(palette.border, palette.border_hover, hover_progress),
+                palette.border_focus,
+                focus_progress,
+            ),
+            (focus_progress > 0.0).then_some(
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * focus_progress),
+            ),
         );
         ctx.fill(
             rounded_rect_path(track, track.height() * 0.5),
@@ -3481,7 +3584,9 @@ impl Widget for Slider {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -4531,12 +4636,8 @@ impl Widget for TextArea {
             }
             self.caret_visible = false;
         }
-        set_animation_target(
-            &mut self.focus_animation,
-            focused as u8 as f32,
-            FOCUS_ANIMATION_SECONDS,
-            ctx,
-        );
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -5850,12 +5951,8 @@ impl Widget for TextInput {
             }
             self.caret_visible = false;
         }
-        set_animation_target(
-            &mut self.focus_animation,
-            focused as u8 as f32,
-            FOCUS_ANIMATION_SECONDS,
-            ctx,
-        );
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -6168,10 +6265,9 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, FOCUS_ANIMATION_SECONDS,
-        HOVER_ANIMATION_SECONDS, IconButton, IconGlyph, Label, NumberInput,
-        PRESS_ANIMATION_SECONDS, RadioButton, RadioGroup, Select, Separator, Slider, Switch,
-        TOGGLE_ANIMATION_SECONDS, TextArea, TextInput, rect_is_finite,
+        Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, IconButton, IconGlyph, Label,
+        NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, Switch, TextArea,
+        TextInput, rect_is_finite,
     };
     use crate::containers::SizedBox;
     use crate::{HdrThemeMode, SemanticColorToken, WidgetLuminanceRole, resolve_luminance_role};
@@ -6188,6 +6284,22 @@ mod tests {
     };
     use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
     use sui_text::{FontFeature, FontRegistry, TextStyle, TextSystem};
+
+    fn hover_duration() -> f64 {
+        DefaultTheme::default().motion.hover_duration()
+    }
+
+    fn press_duration() -> f64 {
+        DefaultTheme::default().motion.press_duration()
+    }
+
+    fn toggle_duration() -> f64 {
+        DefaultTheme::default().motion.toggle_duration()
+    }
+
+    fn focus_duration() -> f64 {
+        DefaultTheme::default().motion.focus_duration()
+    }
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -6957,7 +7069,7 @@ mod tests {
             primary_pointer(PointerEventKind::Move, Point::new(12.0, 12.0), false),
         )?;
 
-        runtime.tick(HOVER_ANIMATION_SECONDS * 0.5);
+        runtime.tick(hover_duration() * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
         let mid_background = solid_fill_colors(&mid)[0];
@@ -6965,7 +7077,7 @@ mod tests {
         assert_ne!(mid_background, theme.palette.accent_hover);
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
-        runtime.tick(HOVER_ANIMATION_SECONDS);
+        runtime.tick(hover_duration());
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
         let end_background = solid_fill_colors(&end)[0];
@@ -6995,11 +7107,11 @@ mod tests {
             primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false),
         )?;
 
-        runtime.tick(TOGGLE_ANIMATION_SECONDS * 0.5);
+        runtime.tick(toggle_duration() * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
-        runtime.tick(TOGGLE_ANIMATION_SECONDS);
+        runtime.tick(toggle_duration());
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
 
@@ -7023,11 +7135,11 @@ mod tests {
             primary_pointer(PointerEventKind::Move, Point::new(32.0, 16.0), false),
         )?;
 
-        runtime.tick(HOVER_ANIMATION_SECONDS * 0.5);
+        runtime.tick(hover_duration() * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
-        runtime.tick(HOVER_ANIMATION_SECONDS);
+        runtime.tick(hover_duration());
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
@@ -7049,7 +7161,7 @@ mod tests {
             primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false),
         )?;
 
-        runtime.tick(PRESS_ANIMATION_SECONDS * 0.5);
+        runtime.tick(press_duration() * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
         let mid_background = solid_fill_colors(&mid)[0];
@@ -7057,12 +7169,16 @@ mod tests {
         assert_ne!(mid_background, theme.palette.control_hover);
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
-        runtime.tick(HOVER_ANIMATION_SECONDS);
+        runtime.tick(hover_duration());
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
         let end_fills = solid_fill_colors(&end);
         assert_ne!(end_fills, solid_fill_colors(&mid));
         assert!(!end_fills.contains(&theme.palette.control_active));
+        if runtime.next_wakeup_time(window_id)?.is_some() {
+            runtime.tick(focus_duration());
+            assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        }
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
     }
@@ -7135,14 +7251,14 @@ mod tests {
             primary_pointer(PointerEventKind::Up, Point::new(10.0, 10.0), false),
         )?;
 
-        runtime.tick(TOGGLE_ANIMATION_SECONDS * 0.5);
+        runtime.tick(toggle_duration() * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
         let fills = solid_fill_colors(&mid);
         assert!(!fills.is_empty());
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
-        runtime.tick(TOGGLE_ANIMATION_SECONDS);
+        runtime.tick(toggle_duration());
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
         let checkbox = end
@@ -7151,6 +7267,37 @@ mod tests {
             .find(|node| node.role == SemanticsRole::CheckBox)
             .unwrap();
         assert_eq!(checkbox.state.checked, Some(sui_core::ToggleState::Checked));
+        assert_eq!(runtime.next_wakeup_time(window_id)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn radio_button_selection_animation_uses_theme_motion() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(RadioButton::new("Manual"));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(10.0, 10.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(10.0, 10.0), false),
+        )?;
+
+        runtime.tick(toggle_duration() * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert!(runtime.next_wakeup_time(window_id)?.is_some());
+
+        runtime.tick(toggle_duration());
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let end = runtime.render(window_id)?;
+        let radio = end
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::RadioButton)
+            .unwrap();
+        assert!(radio.state.selected);
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
     }
@@ -7432,7 +7579,7 @@ mod tests {
         )?;
         let _ = runtime.render(window_id)?;
 
-        let settled_at = FOCUS_ANIMATION_SECONDS + 0.01;
+        let settled_at = focus_duration() + 0.01;
         runtime.tick(settled_at);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let next = runtime
@@ -7679,7 +7826,7 @@ mod tests {
         let initial = runtime.render(window_id)?;
         assert!(initial.ime_composition_rect.is_some());
 
-        runtime.tick(FOCUS_ANIMATION_SECONDS * 0.5);
+        runtime.tick(focus_duration() * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
         assert!(mid.ime_composition_rect.is_some());

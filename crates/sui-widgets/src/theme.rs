@@ -71,6 +71,54 @@ impl ThemeMotion {
             },
         }
     }
+
+    pub fn hover_duration(&self) -> f64 {
+        f64::from(self.duration_fast)
+    }
+
+    pub fn press_duration(&self) -> f64 {
+        f64::from(self.duration_fast)
+    }
+
+    pub fn focus_duration(&self) -> f64 {
+        f64::from(self.duration_normal)
+    }
+
+    pub fn toggle_duration(&self) -> f64 {
+        f64::from(self.duration_normal)
+    }
+
+    pub fn entrance_duration(&self) -> f64 {
+        f64::from(self.duration_normal)
+    }
+
+    pub fn tab_switch_duration(&self) -> f64 {
+        f64::from(self.duration_fast)
+    }
+
+    pub const fn hover_easing(&self) -> Easing {
+        self.easing_standard
+    }
+
+    pub const fn press_easing(&self) -> Easing {
+        self.easing_standard
+    }
+
+    pub const fn focus_easing(&self) -> Easing {
+        self.easing_decelerate
+    }
+
+    pub const fn toggle_easing(&self) -> Easing {
+        self.easing_emphasized
+    }
+
+    pub const fn entrance_easing(&self) -> Easing {
+        self.easing_decelerate
+    }
+
+    pub const fn tab_switch_easing(&self) -> Easing {
+        self.easing_standard
+    }
 }
 
 impl Default for ThemeMotion {

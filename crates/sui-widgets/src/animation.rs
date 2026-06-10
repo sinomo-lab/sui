@@ -31,6 +31,84 @@ pub trait TimelineBindingSink {
     fn apply_animation_value(&mut self, binding: &AnimationBinding, value: AnimationValue) -> bool;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionScalar {
+    pub value: f32,
+    pub target: f32,
+    transition: Option<Transition<f32>>,
+}
+
+impl MotionScalar {
+    pub const EPSILON: f32 = 1e-4;
+
+    pub const fn new(value: f32) -> Self {
+        Self {
+            value,
+            target: value,
+            transition: None,
+        }
+    }
+
+    pub fn current(&self, time: f64) -> f32 {
+        self.transition
+            .map(|transition| transition.sample(time))
+            .unwrap_or(self.value)
+    }
+
+    pub fn set_target(&mut self, target: f32, time: f64, duration: f64, easing: Easing) -> bool {
+        let target = target.clamp(0.0, 1.0);
+        let current = self.current(time);
+        if (current - target).abs() < Self::EPSILON {
+            self.value = target;
+            self.target = target;
+            self.transition = None;
+            return false;
+        }
+
+        self.value = current;
+        self.target = target;
+        self.transition = Some(Transition::new(current, target, time, duration, easing));
+        true
+    }
+
+    pub fn set_target_event(
+        &mut self,
+        target: f32,
+        duration: f64,
+        easing: Easing,
+        ctx: &mut EventCtx,
+    ) -> bool {
+        let should_animate = self.set_target(target, ctx.current_time(), duration, easing);
+        if should_animate {
+            ctx.request_animation_frame();
+        }
+        should_animate
+    }
+
+    pub fn advance(&mut self, time: f64) -> bool {
+        let Some(transition) = self.transition else {
+            return false;
+        };
+
+        self.value = transition.sample(time);
+        if transition.is_complete(time) {
+            self.value = self.target;
+            self.transition = None;
+            return false;
+        }
+
+        true
+    }
+
+    pub fn changed_since(&self, previous: f32) -> bool {
+        (self.value - previous).abs() > Self::EPSILON
+    }
+
+    pub fn is_presented(&self) -> bool {
+        self.value > Self::EPSILON || self.target > Self::EPSILON || self.transition.is_some()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelinePlayer {
     timeline: Timeline,

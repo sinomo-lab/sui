@@ -15,9 +15,9 @@ use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{FontFeature, FontWeight, TextMeasurement, TextStyle};
 
 use crate::{
-    Button, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, IconGlyph, ResolvedEffectStyle,
-    ResolvedHdrStyle, SemanticTone, ThemeTextToken, Transition, WidgetColorRole, WidgetEffectRole,
-    WidgetLuminanceRole, WidgetMaterialRole,
+    Button, ControlMetrics, DefaultTheme, HdrThemeMode, IconGlyph, Interpolate, MotionScalar,
+    ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, ThemeTextToken, WidgetColorRole,
+    WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
     controls::{apply_hdr_policy_cap, cap_resolved_hdr_style, draw_icon_glyph},
     paint_theme_shadow, resolve_widget_hdr_style,
     text_align::aligned_text_rect_for_text,
@@ -1541,9 +1541,6 @@ fn tool_palette_item_id(parent: WidgetId, index: usize) -> WidgetId {
     )
 }
 
-const ACTION_CARD_HOVER_ANIMATION_SECONDS: f64 = 1.0 / 8.0;
-const ACTION_CARD_PRESS_ANIMATION_SECONDS: f64 = 1.0 / 12.0;
-
 pub struct ActionCard {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -1714,11 +1711,12 @@ impl ActionCard {
         if self.hovered == hovered {
             return;
         }
+        let theme = self.resolved_theme();
         self.hovered = hovered;
-        set_action_card_animation_target(
+        set_action_card_hover_animation_target(
             &mut self.hover_animation,
             hovered as u8 as f32,
-            ACTION_CARD_HOVER_ANIMATION_SECONDS,
+            &theme,
             ctx,
         );
         ctx.request_paint();
@@ -1766,20 +1764,11 @@ impl Widget for ActionCard {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if !self.is_enabled() {
             if self.hovered || self.pressed {
+                let theme = self.resolved_theme();
                 self.hovered = false;
                 self.pressed = false;
-                set_action_card_animation_target(
-                    &mut self.hover_animation,
-                    0.0,
-                    ACTION_CARD_HOVER_ANIMATION_SECONDS,
-                    ctx,
-                );
-                set_action_card_animation_target(
-                    &mut self.press_animation,
-                    0.0,
-                    ACTION_CARD_PRESS_ANIMATION_SECONDS,
-                    ctx,
-                );
+                set_action_card_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+                set_action_card_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
             }
@@ -1800,20 +1789,11 @@ impl Widget for ActionCard {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 self.pressed = true;
                 self.hovered = true;
-                set_action_card_animation_target(
-                    &mut self.hover_animation,
-                    1.0,
-                    ACTION_CARD_HOVER_ANIMATION_SECONDS,
-                    ctx,
-                );
-                set_action_card_animation_target(
-                    &mut self.press_animation,
-                    1.0,
-                    ACTION_CARD_PRESS_ANIMATION_SECONDS,
-                    ctx,
-                );
+                set_action_card_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+                set_action_card_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
@@ -1824,22 +1804,18 @@ impl Widget for ActionCard {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                let theme = self.resolved_theme();
                 let hovered = ctx.bounds().contains(pointer.position);
                 let activate = self.pressed && hovered;
                 self.pressed = false;
                 self.hovered = hovered;
-                set_action_card_animation_target(
+                set_action_card_hover_animation_target(
                     &mut self.hover_animation,
                     hovered as u8 as f32,
-                    ACTION_CARD_HOVER_ANIMATION_SECONDS,
+                    &theme,
                     ctx,
                 );
-                set_action_card_animation_target(
-                    &mut self.press_animation,
-                    0.0,
-                    ACTION_CARD_PRESS_ANIMATION_SECONDS,
-                    ctx,
-                );
+                set_action_card_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if activate {
                     self.activate(ctx);
@@ -1850,18 +1826,19 @@ impl Widget for ActionCard {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.pressed {
+                    let theme = self.resolved_theme();
                     self.pressed = false;
                     self.hovered = false;
-                    set_action_card_animation_target(
+                    set_action_card_hover_animation_target(
                         &mut self.hover_animation,
                         0.0,
-                        ACTION_CARD_HOVER_ANIMATION_SECONDS,
+                        &theme,
                         ctx,
                     );
-                    set_action_card_animation_target(
+                    set_action_card_press_animation_target(
                         &mut self.press_animation,
                         0.0,
-                        ACTION_CARD_PRESS_ANIMATION_SECONDS,
+                        &theme,
                         ctx,
                     );
                     ctx.release_pointer_capture(pointer.pointer_id);
@@ -2158,11 +2135,40 @@ fn set_action_card_animation_target(
     animation: &mut AnimatedScalar,
     target: f32,
     duration: f64,
+    easing: crate::Easing,
     ctx: &mut EventCtx,
 ) {
-    if animation.set_target(target, ctx.current_time(), duration) {
-        ctx.request_animation_frame();
-    }
+    animation.set_target_event(target, duration, easing, ctx);
+}
+
+fn set_action_card_hover_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) {
+    set_action_card_animation_target(
+        animation,
+        target,
+        theme.motion.hover_duration(),
+        theme.motion.hover_easing(),
+        ctx,
+    );
+}
+
+fn set_action_card_press_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) {
+    set_action_card_animation_target(
+        animation,
+        target,
+        theme.motion.press_duration(),
+        theme.motion.press_easing(),
+        ctx,
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4984,6 +4990,8 @@ pub struct TabBar {
     name: String,
     tabs: Vec<String>,
     selected: usize,
+    selection_from: usize,
+    selection_animation: AnimatedScalar,
     hovered: Option<usize>,
     pressed: Option<usize>,
     gap: Option<f32>,
@@ -5000,6 +5008,8 @@ impl TabBar {
             name: name.into(),
             tabs: Vec::new(),
             selected: 0,
+            selection_from: 0,
+            selection_animation: AnimatedScalar::new(1.0),
             hovered: None,
             pressed: None,
             gap: None,
@@ -5039,6 +5049,8 @@ impl TabBar {
 
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = index;
+        self.selection_from = index;
+        self.selection_animation = AnimatedScalar::new(1.0);
         self
     }
 
@@ -5073,14 +5085,23 @@ impl TabBar {
         }
     }
 
-    fn activate(&mut self, index: usize) {
+    fn activate(&mut self, index: usize, ctx: &mut EventCtx) {
         if self.tabs.is_empty() {
             return;
         }
 
         let index = index.min(self.tabs.len() - 1);
         if self.selected != index {
+            let theme = self.resolved_theme();
+            self.selection_from = self.normalized_selected();
             self.selected = index;
+            self.selection_animation = AnimatedScalar::new(0.0);
+            self.selection_animation.set_target_event(
+                1.0,
+                theme.motion.tab_switch_duration(),
+                theme.motion.tab_switch_easing(),
+                ctx,
+            );
             if let Some(on_change) = &mut self.on_change {
                 on_change(index, self.tabs[index].clone());
             }
@@ -5138,7 +5159,7 @@ impl TabBar {
         })
     }
 
-    fn move_selection(&mut self, delta: isize) {
+    fn move_selection(&mut self, delta: isize, ctx: &mut EventCtx) {
         if self.tabs.is_empty() {
             return;
         }
@@ -5146,8 +5167,12 @@ impl TabBar {
         let selected = self.normalized_selected() as isize;
         let last = self.tabs.len() as isize - 1;
         let next = (selected + delta).clamp(0, last) as usize;
-        self.activate(next);
+        self.activate(next, ctx);
         self.hovered = Some(next);
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        self.selection_animation.advance(time)
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -5198,7 +5223,7 @@ impl Widget for TabBar {
                     .filter(|(left, right)| left == right)
                     .map(|(index, _)| index)
                 {
-                    self.activate(index);
+                    self.activate(index, ctx);
                 }
                 self.hovered = hovered;
                 self.pressed = None;
@@ -5218,15 +5243,21 @@ impl Widget for TabBar {
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
-                    "ArrowLeft" | "ArrowUp" => self.move_selection(-1),
-                    "ArrowRight" | "ArrowDown" => self.move_selection(1),
-                    "Home" => self.activate(0),
-                    "End" if !self.tabs.is_empty() => self.activate(self.tabs.len() - 1),
+                    "ArrowLeft" | "ArrowUp" => self.move_selection(-1, ctx),
+                    "ArrowRight" | "ArrowDown" => self.move_selection(1, ctx),
+                    "Home" => self.activate(0, ctx),
+                    "End" if !self.tabs.is_empty() => self.activate(self.tabs.len() - 1, ctx),
                     _ => return,
                 }
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -5310,17 +5341,20 @@ impl Widget for TabBar {
             ctx.push_clip_rect(text_slot);
             ctx.draw_text(text_rect, tab.clone(), text_style);
             ctx.pop_clip();
+        }
 
-            if selected {
-                let thickness = interaction.active_indicator_thickness;
-                let accent = Rect::new(
-                    rect.x() + tab_padding.left,
-                    rect.max_y() - thickness,
-                    (rect.width() - tab_padding.left - tab_padding.right).max(0.0),
-                    thickness,
-                );
-                ctx.fill(rounded_rect_path(accent, thickness * 0.5), palette.accent);
-            }
+        if let Some(accent) = tab_indicator_rect(
+            |index| self.tab_rect(ctx.bounds(), index),
+            self.selection_from,
+            self.normalized_selected(),
+            self.selection_animation.value,
+            tab_padding,
+            interaction.active_indicator_thickness,
+        ) {
+            ctx.fill(
+                rounded_rect_path(accent, accent.height() * 0.5),
+                palette.accent,
+            );
         }
     }
 
@@ -5352,6 +5386,8 @@ pub struct Tabs {
     labels: Vec<String>,
     panels: WidgetChildren,
     selected: usize,
+    selection_from: usize,
+    selection_animation: AnimatedScalar,
     hovered: Option<usize>,
     pressed: Option<usize>,
     label_measurements: Vec<TextMeasurement>,
@@ -5370,6 +5406,8 @@ impl Tabs {
             labels: Vec::new(),
             panels: WidgetChildren::new(),
             selected: 0,
+            selection_from: 0,
+            selection_animation: AnimatedScalar::new(1.0),
             hovered: None,
             pressed: None,
             label_measurements: Vec::new(),
@@ -5396,6 +5434,8 @@ impl Tabs {
 
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = index;
+        self.selection_from = index;
+        self.selection_animation = AnimatedScalar::new(1.0);
         self
     }
 
@@ -5483,21 +5523,30 @@ impl Tabs {
         })
     }
 
-    fn select(&mut self, index: usize) {
+    fn select(&mut self, index: usize, ctx: &mut EventCtx) {
         if self.labels.is_empty() {
             return;
         }
 
         let index = index.min(self.labels.len() - 1);
         if self.selected != index {
+            let theme = self.resolved_theme();
+            self.selection_from = self.normalized_selected();
             self.selected = index;
+            self.selection_animation = AnimatedScalar::new(0.0);
+            self.selection_animation.set_target_event(
+                1.0,
+                theme.motion.tab_switch_duration(),
+                theme.motion.tab_switch_easing(),
+                ctx,
+            );
             if let Some(on_change) = &mut self.on_change {
                 on_change(index, self.labels[index].clone());
             }
         }
     }
 
-    fn move_selection(&mut self, delta: isize) {
+    fn move_selection(&mut self, delta: isize, ctx: &mut EventCtx) {
         if self.labels.is_empty() {
             return;
         }
@@ -5505,7 +5554,11 @@ impl Tabs {
         let next = (self.normalized_selected() as isize + delta)
             .clamp(0, self.labels.len() as isize - 1) as usize;
         self.hovered = Some(next);
-        self.select(next);
+        self.select(next, ctx);
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        self.selection_animation.advance(time)
     }
 
     fn selected_panel(&self) -> Option<&sui_runtime::WidgetPod> {
@@ -5567,7 +5620,7 @@ impl Widget for Tabs {
                         .filter(|(left, right)| left == right)
                         .map(|(index, _)| index)
                     {
-                        self.select(index);
+                        self.select(index, ctx);
                         ctx.request_measure();
                     }
                     self.hovered = hovered;
@@ -5589,16 +5642,22 @@ impl Widget for Tabs {
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
-                    "ArrowLeft" | "ArrowUp" => self.move_selection(-1),
-                    "ArrowRight" | "ArrowDown" => self.move_selection(1),
-                    "Home" => self.select(0),
-                    "End" if !self.labels.is_empty() => self.select(self.labels.len() - 1),
+                    "ArrowLeft" | "ArrowUp" => self.move_selection(-1, ctx),
+                    "ArrowRight" | "ArrowDown" => self.move_selection(1, ctx),
+                    "Home" => self.select(0, ctx),
+                    "End" if !self.labels.is_empty() => self.select(self.labels.len() - 1, ctx),
                     _ => return,
                 }
                 ctx.request_measure();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -5746,6 +5805,20 @@ impl Widget for Tabs {
             ctx.push_clip_rect(text_slot);
             ctx.draw_text(text_rect, label.clone(), text_style);
             ctx.pop_clip();
+        }
+
+        if let Some(accent) = tab_indicator_rect(
+            |index| self.tab_rect(ctx.bounds(), index),
+            self.selection_from,
+            self.normalized_selected(),
+            self.selection_animation.value,
+            tab_padding,
+            theme.interaction.active_indicator_thickness,
+        ) {
+            ctx.fill(
+                rounded_rect_path(accent, accent.height() * 0.5),
+                palette.accent,
+            );
         }
 
         let content = self.panel_frame.translate(ctx.bounds().origin.to_vector());
@@ -6210,75 +6283,7 @@ impl Widget for Menu {
     }
 }
 
-const PRESENTATION_EPSILON: f32 = 1e-4;
-const TOOLTIP_ANIMATION_SECONDS: f64 = 0.18;
-const POPOVER_ANIMATION_SECONDS: f64 = 0.18;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct AnimatedScalar {
-    value: f32,
-    target: f32,
-    transition: Option<Transition<f32>>,
-}
-
-impl AnimatedScalar {
-    const fn new(value: f32) -> Self {
-        Self {
-            value,
-            target: value,
-            transition: None,
-        }
-    }
-
-    fn current(&self, time: f64) -> f32 {
-        self.transition
-            .map(|transition| transition.sample(time))
-            .unwrap_or(self.value)
-    }
-
-    fn set_target(&mut self, target: f32, time: f64, duration: f64) -> bool {
-        let target = target.clamp(0.0, 1.0);
-        let current = self.current(time);
-        if (current - target).abs() < PRESENTATION_EPSILON {
-            self.value = target;
-            self.target = target;
-            self.transition = None;
-            return false;
-        }
-
-        self.value = current;
-        self.target = target;
-        self.transition = Some(Transition::new(
-            current,
-            target,
-            time,
-            duration,
-            Easing::EaseInOut,
-        ));
-        true
-    }
-
-    fn advance(&mut self, time: f64) -> bool {
-        let Some(transition) = self.transition else {
-            return false;
-        };
-
-        self.value = transition.sample(time);
-        if transition.is_complete(time) {
-            self.value = self.target;
-            self.transition = None;
-            return false;
-        }
-
-        true
-    }
-
-    fn is_presented(&self) -> bool {
-        self.value > PRESENTATION_EPSILON
-            || self.target > PRESENTATION_EPSILON
-            || self.transition.is_some()
-    }
-}
+type AnimatedScalar = MotionScalar;
 
 fn request_child_invalidation(ctx: &mut EventCtx, widget_id: WidgetId, kind: InvalidationKind) {
     ctx.request(InvalidationRequest::new(
@@ -6490,11 +6495,13 @@ impl Tooltip {
             return;
         }
         let was_presented = state.is_presented();
+        let motion = state.theme.motion;
         state.hovered = hovered;
         let should_animate = state.reveal.set_target(
             hovered as u8 as f32,
             ctx.current_time(),
-            TOOLTIP_ANIMATION_SECONDS,
+            motion.entrance_duration(),
+            motion.entrance_easing(),
         );
         let is_presented = state.is_presented();
         drop(state);
@@ -6528,7 +6535,7 @@ impl Widget for Tooltip {
                 let was_presented = state.is_presented();
                 let previous = state.reveal.value;
                 let animating = state.reveal.advance(*time);
-                let changed = (state.reveal.value - previous).abs() > PRESENTATION_EPSILON;
+                let changed = state.reveal.changed_since(previous);
                 let is_presented = state.is_presented();
                 drop(state);
 
@@ -6933,10 +6940,12 @@ impl Popover {
         let surface_id = self.surface.child().id();
         let mut state = self.state.borrow_mut();
         let was_presented = state.is_presented();
+        let motion = state.theme.motion;
         let should_animate = state.reveal.set_target(
             open as u8 as f32,
             ctx.current_time(),
-            POPOVER_ANIMATION_SECONDS,
+            motion.entrance_duration(),
+            motion.entrance_easing(),
         );
         let is_presented = state.is_presented();
         drop(state);
@@ -6988,7 +6997,7 @@ impl Widget for Popover {
                 let was_presented = state.is_presented();
                 let previous = state.reveal.value;
                 let animating = state.reveal.advance(*time);
-                let changed = (state.reveal.value - previous).abs() > PRESENTATION_EPSILON;
+                let changed = state.reveal.changed_since(previous);
                 let is_presented = state.is_presented();
                 drop(state);
 
@@ -8422,6 +8431,43 @@ fn inset_rect(rect: Rect, padding: Insets) -> Rect {
 
 fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
     Path::rounded_rect(rect, radius.min(rect.width().min(rect.height()) * 0.5))
+}
+
+fn tab_indicator_rect<F>(
+    mut tab_rect: F,
+    from_index: usize,
+    selected_index: usize,
+    progress: f32,
+    padding: Insets,
+    thickness: f32,
+) -> Option<Rect>
+where
+    F: FnMut(usize) -> Option<Rect>,
+{
+    let to = tab_indicator_from_tab_rect(tab_rect(selected_index)?, padding, thickness);
+    let from = tab_rect(from_index)
+        .map(|rect| tab_indicator_from_tab_rect(rect, padding, thickness))
+        .unwrap_or(to);
+    Some(lerp_rect(from, to, progress))
+}
+
+fn tab_indicator_from_tab_rect(rect: Rect, padding: Insets, thickness: f32) -> Rect {
+    Rect::new(
+        rect.x() + padding.left,
+        rect.max_y() - thickness,
+        (rect.width() - padding.left - padding.right).max(0.0),
+        thickness,
+    )
+}
+
+fn lerp_rect(from: Rect, to: Rect, progress: f32) -> Rect {
+    let progress = progress.clamp(0.0, 1.0);
+    Rect::new(
+        f32::interpolate(from.x(), to.x(), progress),
+        f32::interpolate(from.y(), to.y(), progress),
+        f32::interpolate(from.width(), to.width(), progress),
+        f32::interpolate(from.height(), to.height(), progress),
+    )
 }
 
 fn tab_state_visuals(
@@ -11381,6 +11427,68 @@ mod tests {
     }
 
     #[test]
+    fn tab_bar_switch_animation_uses_theme_motion() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let switch_duration = theme.motion.tab_switch_duration();
+        let second_tab_point = Point::new(
+            theme.metrics.tab_min_width + theme.metrics.tab_gap + 12.0,
+            theme.metrics.tab_height * 0.5,
+        );
+        let (mut runtime, window_id) = build_runtime(
+            TabBar::new("Main tabs")
+                .theme(theme)
+                .tabs(["Design", "Inspect"]),
+        );
+
+        runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, second_tab_point, true),
+            )
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, second_tab_point, false),
+            )
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(switch_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?
+                .is_some()
+        );
+
+        runtime.tick(switch_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let tab_bar = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TabBar)
+            .expect("tab bar semantics present");
+        assert_eq!(
+            tab_bar.value,
+            Some(SemanticsValue::Text("Inspect".to_string()))
+        );
+        assert_eq!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
     fn tabs_render_only_the_active_panel_after_switching() {
         let first = Rc::new(RefCell::new(PanelCounters::default()));
         let second = Rc::new(RefCell::new(PanelCounters::default()));
@@ -12130,8 +12238,8 @@ mod tests {
 
     #[test]
     fn tooltip_reveal_animation_updates_layer_properties_until_complete() -> Result<(), String> {
-        const TOOLTIP_ANIMATION_SECONDS: f64 = 0.18;
         let theme = DefaultTheme::default();
+        let entrance_duration = theme.motion.entrance_duration();
 
         let (mut runtime, window_id) = build_runtime(crate::Padding::all(
             16.0,
@@ -12180,7 +12288,7 @@ mod tests {
         );
         assert_eq!(start_descriptor.properties.opacity, 0.0);
 
-        runtime.tick(TOOLTIP_ANIMATION_SECONDS * 0.5);
+        runtime.tick(entrance_duration * 0.5);
         assert!(handle_ready_events(&mut runtime)? >= 1);
         let mid = runtime
             .render(window_id)
@@ -12201,7 +12309,7 @@ mod tests {
                 .is_some()
         );
 
-        runtime.tick(TOOLTIP_ANIMATION_SECONDS);
+        runtime.tick(entrance_duration);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let settled = runtime
             .render(window_id)
@@ -12222,7 +12330,7 @@ mod tests {
 
     #[test]
     fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(), String> {
-        const POPOVER_ANIMATION_SECONDS: f64 = 0.18;
+        let entrance_duration = DefaultTheme::default().motion.entrance_duration();
 
         let content = Rc::new(RefCell::new(PanelCounters::default()));
         let (mut runtime, window_id) = build_runtime(crate::Padding::all(
@@ -12264,7 +12372,7 @@ mod tests {
         assert_eq!(open_descriptor.properties.opacity, 0.0);
         assert!(open_descriptor.properties.translation.y < 0.0);
 
-        runtime.tick(POPOVER_ANIMATION_SECONDS * 0.5);
+        runtime.tick(entrance_duration * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime
             .render(window_id)
@@ -12286,7 +12394,7 @@ mod tests {
                 .is_some()
         );
 
-        runtime.tick(POPOVER_ANIMATION_SECONDS);
+        runtime.tick(entrance_duration);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let settled = runtime
             .render(window_id)

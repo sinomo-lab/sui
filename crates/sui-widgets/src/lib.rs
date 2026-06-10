@@ -20,7 +20,7 @@ pub use animation::{
     AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSelection,
     AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, Blink, Clip,
     CompiledClip, CompiledTimeline, CompiledTrack, Easing, Interpolate, Keyframe,
-    KeyframeSelection, LoopMode, PlaybackState, Pulse, SampleBatch, SampleBuffer,
+    KeyframeSelection, LoopMode, MotionScalar, PlaybackState, Pulse, SampleBatch, SampleBuffer,
     SampledAnimationValue, SharedCompiledTimeline, SpringF32, Timeline, TimelineBindingSink,
     TimelinePlayer, TimelineSnap, TimelineTick, Track, Transition,
     invalidation_for_animation_property,
