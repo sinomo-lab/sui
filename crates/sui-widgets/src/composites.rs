@@ -7016,6 +7016,7 @@ impl Widget for TooltipOverlay {
             .is_presented()
             .then_some(StackSurfaceOptions {
                 transient: true,
+                hit_test: false,
                 ..StackSurfaceOptions::default()
             })
     }
@@ -7194,6 +7195,7 @@ struct PopoverSurfaceState {
     frame_rect: Rect,
     arrival_active: bool,
     reveal: AnimatedScalar,
+    focus_animation: AnimatedScalar,
 }
 
 impl PopoverSurfaceState {
@@ -7203,6 +7205,7 @@ impl PopoverSurfaceState {
             frame_rect: Rect::ZERO,
             arrival_active: false,
             reveal: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
         }
     }
 
@@ -7356,7 +7359,7 @@ impl Widget for PopoverSurface {
             metrics,
             visuals.background,
             visuals.border,
-            visuals.focus_ring,
+            None,
         );
         if let Some(arrival_effect) = visuals.arrival_effect {
             draw_popover_arrival_overlay(
@@ -7411,10 +7414,78 @@ impl Widget for PopoverSurface {
     }
 }
 
+struct PopoverFocusSurface {
+    state: Rc<RefCell<PopoverSurfaceState>>,
+}
+
+impl PopoverFocusSurface {
+    fn new(state: Rc<RefCell<PopoverSurfaceState>>) -> Self {
+        Self { state }
+    }
+}
+
+impl Widget for PopoverFocusSurface {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
+        let state = self.state.borrow();
+        if state.is_presented() {
+            state.frame_rect.size
+        } else {
+            Size::ZERO
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let state = self.state.borrow();
+        if !state.is_presented() || !state.focus_animation.is_presented() {
+            return;
+        }
+
+        let Some(focus_ring) = state.resolved_visuals().focus_ring else {
+            return;
+        };
+        let progress = state.focus_animation.value;
+        if progress <= AnimatedScalar::EPSILON {
+            return;
+        }
+
+        let metrics = state.theme.metrics;
+        draw_focus_ring_frame(
+            ctx,
+            ctx.bounds(),
+            metrics.corner_radius + 2.0,
+            metrics,
+            focus_ring.with_alpha(focus_ring.alpha * progress),
+        );
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    fn layer_properties(&self) -> LayerProperties {
+        self.state.borrow().layer_properties()
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        let state = self.state.borrow();
+        (state.is_presented() && state.focus_animation.is_presented()).then_some(
+            StackSurfaceOptions {
+                transient: true,
+                hit_test: false,
+                ..StackSurfaceOptions::default()
+            },
+        )
+    }
+}
+
 pub struct Popover {
     name: String,
     trigger: SingleChild,
     surface: SingleChild,
+    focus_surface: SingleChild,
     open: bool,
     gap: f32,
     arrival_timer: Option<TimerToken>,
@@ -7432,6 +7503,7 @@ impl Popover {
             name: name.into(),
             trigger: SingleChild::new(trigger),
             surface: SingleChild::new(PopoverSurface::new(Rc::clone(&state), content)),
+            focus_surface: SingleChild::new(PopoverFocusSurface::new(Rc::clone(&state))),
             open: false,
             gap: DefaultTheme::default().metrics.popover_gap,
             arrival_timer: None,
@@ -7500,6 +7572,7 @@ impl Popover {
 
         self.open = open;
         let surface_id = self.surface.child().id();
+        let focus_surface_id = self.focus_surface.child().id();
         let mut state = self.state.borrow_mut();
         let was_presented = state.is_presented();
         let motion = state.theme.motion;
@@ -7515,6 +7588,7 @@ impl Popover {
         if open || was_presented != is_presented {
             ctx.request_measure();
             request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
+            request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
         }
         if should_animate {
             ctx.request_animation_frame();
@@ -7555,23 +7629,38 @@ impl Widget for Popover {
             }
             Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
                 let surface_id = self.surface.child().id();
+                let focus_surface_id = self.focus_surface.child().id();
                 let mut state = self.state.borrow_mut();
                 let was_presented = state.is_presented();
-                let previous = state.reveal.value;
-                let animating = state.reveal.advance(*time);
-                let changed = state.reveal.changed_since(previous);
+                let was_focus_presented = state.focus_animation.is_presented();
+                let previous_reveal = state.reveal.value;
+                let previous_focus = state.focus_animation.value;
+                let reveal_animating = state.reveal.advance(*time);
+                let focus_animating = state.focus_animation.advance(*time);
+                let reveal_changed = state.reveal.changed_since(previous_reveal);
+                let focus_changed = state.focus_animation.changed_since(previous_focus);
                 let is_presented = state.is_presented();
+                let is_focus_presented = state.focus_animation.is_presented();
                 drop(state);
 
-                if changed {
+                if reveal_changed {
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Transform);
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Effect);
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Transform);
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Effect);
+                }
+                if focus_changed {
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Paint);
                 }
                 if was_presented != is_presented {
                     ctx.request_measure();
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
                 }
-                if animating {
+                if was_focus_presented != is_focus_presented {
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
+                }
+                if reveal_animating || focus_animating {
                     ctx.request_animation_frame();
                 }
                 ctx.set_handled();
@@ -7611,6 +7700,9 @@ impl Widget for Popover {
             .surface
             .measure(ctx, Constraints::new(Size::ZERO, surface_max));
         let presented = self.state.borrow().is_presented();
+        let focus_size = if presented { surface_size } else { Size::ZERO };
+        self.focus_surface
+            .measure(ctx, Constraints::tight(focus_size));
         let size = if presented {
             Size::new(
                 surface_size.width.max(trigger_size.width),
@@ -7641,12 +7733,14 @@ impl Widget for Popover {
         };
         self.state.borrow_mut().frame_rect = surface_bounds;
         self.surface.arrange(ctx, surface_bounds);
+        self.focus_surface.arrange(ctx, surface_bounds);
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         self.trigger.paint(ctx);
         if self.state.borrow().is_presented() {
             self.surface.paint(ctx);
+            self.focus_surface.paint(ctx);
         }
     }
 
@@ -7672,6 +7766,23 @@ impl Widget for Popover {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let focus_surface_id = self.focus_surface.child().id();
+        let mut state = self.state.borrow_mut();
+        let was_focus_presented = state.focus_animation.is_presented();
+        let theme = state.theme;
+        set_focus_animation_target(
+            &mut state.focus_animation,
+            focused as u8 as f32,
+            &theme,
+            ctx,
+        );
+        let is_focus_presented = state.focus_animation.is_presented();
+        drop(state);
+
+        if was_focus_presented != is_focus_presented {
+            request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
+        }
+        request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Paint);
         if !focused && self.open {
             self.set_open(ctx, false);
         }
@@ -7680,15 +7791,17 @@ impl Widget for Popover {
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.trigger.visit_children(visitor);
-        if self.open {
+        if self.open || self.state.borrow().is_presented() {
             self.surface.visit_children(visitor);
+            self.focus_surface.visit_children(visitor);
         }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.trigger.visit_children_mut(visitor);
-        if self.open {
+        if self.open || self.state.borrow().is_presented() {
             self.surface.visit_children_mut(visitor);
+            self.focus_surface.visit_children_mut(visitor);
         }
     }
 }
@@ -7815,11 +7928,7 @@ impl Widget for ContextMenuSurface {
             metrics,
             palette.surface_raised,
             palette.border,
-            (state.focus_animation.value > AnimatedScalar::EPSILON).then_some(
-                palette
-                    .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * state.focus_animation.value),
-            ),
+            None,
         );
 
         for (index, item) in state.items.iter().enumerate() {
@@ -7941,6 +8050,73 @@ impl Widget for ContextMenuSurface {
     }
 }
 
+struct ContextMenuFocusSurface {
+    state: Rc<RefCell<ContextMenuPresentationState>>,
+}
+
+impl ContextMenuFocusSurface {
+    fn new(state: Rc<RefCell<ContextMenuPresentationState>>) -> Self {
+        Self { state }
+    }
+}
+
+impl Widget for ContextMenuFocusSurface {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
+        let state = self.state.borrow();
+        if state.is_presented() {
+            state.frame_rect.size
+        } else {
+            Size::ZERO
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let state = self.state.borrow();
+        if !state.is_presented() || !state.focus_animation.is_presented() {
+            return;
+        }
+
+        let progress = state.focus_animation.value;
+        if progress <= AnimatedScalar::EPSILON {
+            return;
+        }
+
+        let metrics = state.theme.metrics;
+        let palette = state.theme.palette;
+        draw_focus_ring_frame(
+            ctx,
+            ctx.bounds(),
+            metrics.corner_radius + 2.0,
+            metrics,
+            palette
+                .focus_ring
+                .with_alpha(palette.focus_ring.alpha * progress),
+        );
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    fn layer_properties(&self) -> LayerProperties {
+        self.state.borrow().layer_properties()
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        let state = self.state.borrow();
+        (state.is_presented() && state.focus_animation.is_presented()).then_some(
+            StackSurfaceOptions {
+                transient: true,
+                hit_test: false,
+                ..StackSurfaceOptions::default()
+            },
+        )
+    }
+}
+
 pub struct ContextMenu {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -7956,6 +8132,7 @@ pub struct ContextMenu {
     press_animation: AnimatedScalar,
     frame_rect: Rect,
     surface: SingleChild,
+    focus_surface: SingleChild,
     surface_state: Rc<RefCell<ContextMenuPresentationState>>,
     activation_button: PointerButton,
     on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
@@ -7983,6 +8160,9 @@ impl ContextMenu {
             press_animation: AnimatedScalar::new(0.0),
             frame_rect: Rect::ZERO,
             surface: SingleChild::new(ContextMenuSurface::new(Rc::clone(&surface_state))),
+            focus_surface: SingleChild::new(ContextMenuFocusSurface::new(Rc::clone(
+                &surface_state,
+            ))),
             surface_state,
             activation_button: PointerButton::Secondary,
             on_activate: None,
@@ -8213,6 +8393,7 @@ impl ContextMenu {
         self.press_animation = AnimatedScalar::new(0.0);
 
         let surface_id = self.surface.child().id();
+        let focus_surface_id = self.focus_surface.child().id();
         let theme = self.resolved_theme();
         let mut state = self.surface_state.borrow_mut();
         state.theme = theme;
@@ -8242,6 +8423,7 @@ impl ContextMenu {
         if open || was_presented != is_presented {
             ctx.request_measure();
             request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
+            request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
         }
         if should_animate {
             ctx.request_animation_frame();
@@ -8361,8 +8543,10 @@ impl Widget for ContextMenu {
             }
             Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
                 let surface_id = self.surface.child().id();
+                let focus_surface_id = self.focus_surface.child().id();
                 let mut state = self.surface_state.borrow_mut();
                 let was_presented = state.is_presented();
+                let was_focus_presented = state.focus_animation.is_presented();
                 let previous = state.reveal.value;
                 let previous_focus = state.focus_animation.value;
                 let reveal_animating = state.reveal.advance(*time);
@@ -8370,6 +8554,7 @@ impl Widget for ContextMenu {
                 let reveal_changed = state.reveal.changed_since(previous);
                 let focus_changed = state.focus_animation.changed_since(previous_focus);
                 let is_presented = state.is_presented();
+                let is_focus_presented = state.focus_animation.is_presented();
                 drop(state);
 
                 let previous_highlight = self.highlight_animation.value;
@@ -8385,13 +8570,19 @@ impl Widget for ContextMenu {
                 if reveal_changed {
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Transform);
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Effect);
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Transform);
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Effect);
                 }
                 if focus_changed {
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Paint);
                 }
                 if was_presented != is_presented {
                     ctx.request_measure();
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
+                }
+                if was_focus_presented != is_focus_presented {
+                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
                 }
                 if reveal_animating || row_animating || focus_animating {
                     ctx.request_animation_frame();
@@ -8426,6 +8617,8 @@ impl Widget for ContextMenu {
             }
             self.surface
                 .measure(ctx, Constraints::tight(self.frame_rect.size));
+            self.focus_surface
+                .measure(ctx, Constraints::tight(self.frame_rect.size));
             size = Size::new(
                 width.max(trigger_size.width),
                 trigger_size.height + gap + height,
@@ -8450,12 +8643,14 @@ impl Widget for ContextMenu {
         };
         drop(state);
         self.surface.arrange(ctx, surface_bounds);
+        self.focus_surface.arrange(ctx, surface_bounds);
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         self.trigger.paint(ctx);
         if self.surface_state.borrow().is_presented() {
             self.surface.paint(ctx);
+            self.focus_surface.paint(ctx);
         }
     }
 
@@ -8501,9 +8696,10 @@ impl Widget for ContextMenu {
         if !focused && self.open {
             self.set_open(ctx, false);
         }
-        let surface_id = self.surface.child().id();
+        let focus_surface_id = self.focus_surface.child().id();
         {
             let mut state = self.surface_state.borrow_mut();
+            let was_focus_presented = state.focus_animation.is_presented();
             let theme = state.theme;
             set_focus_animation_target(
                 &mut state.focus_animation,
@@ -8511,9 +8707,11 @@ impl Widget for ContextMenu {
                 &theme,
                 ctx,
             );
+            if was_focus_presented != state.focus_animation.is_presented() {
+                request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
+            }
         }
-        request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
-        ctx.request_paint();
+        request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Paint);
         ctx.request_semantics();
     }
 
@@ -8521,6 +8719,7 @@ impl Widget for ContextMenu {
         self.trigger.visit_children(visitor);
         if self.surface_state.borrow().is_presented() {
             self.surface.visit_children(visitor);
+            self.focus_surface.visit_children(visitor);
         }
     }
 
@@ -8528,6 +8727,7 @@ impl Widget for ContextMenu {
         self.trigger.visit_children_mut(visitor);
         if self.surface_state.borrow().is_presented() {
             self.surface.visit_children_mut(visitor);
+            self.focus_surface.visit_children_mut(visitor);
         }
     }
 }
@@ -9519,15 +9719,7 @@ fn draw_control_frame(
     focus_ring: Option<Color>,
 ) {
     if let Some(focus_ring) = focus_ring {
-        let focus_ring_outset = physical_pixels(ctx, metrics.focus_ring_outset);
-        ctx.stroke(
-            rounded_rect_path(
-                bounds.inflate(focus_ring_outset, focus_ring_outset),
-                radius + focus_ring_outset,
-            ),
-            focus_ring,
-            StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
-        );
+        draw_focus_ring_frame(ctx, bounds, radius, metrics, focus_ring);
     }
 
     draw_control_shape(
@@ -9537,6 +9729,24 @@ fn draw_control_frame(
         physical_pixels(ctx, metrics.border_width),
         background,
         border,
+    );
+}
+
+fn draw_focus_ring_frame(
+    ctx: &mut PaintCtx,
+    bounds: Rect,
+    radius: f32,
+    metrics: ControlMetrics,
+    focus_ring: Color,
+) {
+    let focus_ring_outset = physical_pixels(ctx, metrics.focus_ring_outset);
+    ctx.stroke(
+        rounded_rect_path(
+            bounds.inflate(focus_ring_outset, focus_ring_outset),
+            radius + focus_ring_outset,
+        ),
+        focus_ring,
+        StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
     );
 }
 
@@ -9652,7 +9862,9 @@ mod tests {
         Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
         WindowBuilder,
     };
-    use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+    use sui_scene::{
+        Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor, SceneLayerUpdateKind,
+    };
     use sui_text::{FontFeature, FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -12453,7 +12665,7 @@ mod tests {
             .render(window_id)
             .map_err(|error| error.to_string())?;
         assert!(
-            !solid_stroke_colors(&mid).contains(&theme.palette.focus_ring),
+            !contains_approx_color(&solid_stroke_colors(&mid), theme.palette.focus_ring),
             "focus ring should not snap to the settled focus color"
         );
 
@@ -12463,7 +12675,7 @@ mod tests {
             .render(window_id)
             .map_err(|error| error.to_string())?;
         assert!(
-            solid_stroke_colors(&settled).contains(&theme.palette.focus_ring),
+            contains_approx_color(&solid_stroke_colors(&settled), theme.palette.focus_ring),
             "focus ring should settle to the theme focus color"
         );
 
@@ -12562,6 +12774,38 @@ mod tests {
                 _ => {}
             });
         colors
+    }
+
+    fn contains_approx_color(colors: &[Color], expected: Color) -> bool {
+        const CHANNEL_TOLERANCE: f32 = 1.0 / 255.0;
+
+        colors.iter().any(|color| {
+            color.space == expected.space
+                && (color.red - expected.red).abs() <= CHANNEL_TOLERANCE
+                && (color.green - expected.green).abs() <= CHANNEL_TOLERANCE
+                && (color.blue - expected.blue).abs() <= CHANNEL_TOLERANCE
+                && (color.alpha - expected.alpha).abs() <= CHANNEL_TOLERANCE
+        })
+    }
+
+    fn non_hit_test_layer_descriptors(output: &RenderOutput) -> Vec<SceneLayerDescriptor> {
+        let mut descriptors = Vec::new();
+        output.frame.scene.visit_layers(&mut |layer| {
+            if !layer.descriptor.hit_test {
+                descriptors.push(layer.descriptor.clone());
+            }
+        });
+        descriptors
+    }
+
+    fn non_hit_test_layer_owners(output: &RenderOutput) -> Vec<WidgetId> {
+        let mut owners = Vec::new();
+        output.frame.scene.visit_layers(&mut |layer| {
+            if !layer.descriptor.hit_test {
+                owners.push(layer.widget_id());
+            }
+        });
+        owners
     }
 
     #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -13544,6 +13788,97 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_focus_ring_uses_non_hit_test_retained_layer() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let (mut runtime, window_id) = build_runtime(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .theme(theme)
+                .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
+        );
+
+        let closed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("context menu trigger present")
+            .bounds;
+        let trigger_center = Point::new(
+            trigger.x() + (trigger.width() * 0.5),
+            trigger.y() + (trigger.height() * 0.5),
+        );
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, trigger_center);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .map_err(|error| error.to_string())?;
+
+        let opened = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let menu_owner = overlay_layer_owner(&opened).expect("context menu overlay owner present");
+        let overlay =
+            overlay_layer_descriptor(&opened).expect("context menu overlay layer should appear");
+        assert!(overlay.hit_test);
+        let focus_layers = non_hit_test_layer_descriptors(&opened);
+        assert_eq!(
+            focus_layers.len(),
+            1,
+            "context menu focus chrome should be the only non-hit-test layer"
+        );
+        assert_eq!(
+            focus_layers[0].composition_mode,
+            LayerCompositionMode::Normal
+        );
+        let focus_owner = non_hit_test_layer_owners(&opened)
+            .into_iter()
+            .next()
+            .expect("context menu focus layer owner present");
+
+        runtime.tick(focus_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_focus = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
+            "context menu focus ring should not snap to the settled focus color"
+        );
+        assert!(
+            !mid_focus.frame.layer_updates.iter().any(|update| {
+                update.owner == menu_owner && update.kind == SceneLayerUpdateKind::Content
+            }),
+            "context menu rows should stay retained during focus chrome animation"
+        );
+        assert!(
+            mid_focus
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| update.owner == focus_owner),
+            "context menu focus layer should receive the animation update"
+        );
+
+        runtime.tick(focus_duration + 0.01);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_focus = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let settled_strokes = solid_stroke_colors(&settled_focus);
+        assert!(
+            contains_approx_color(&settled_strokes, theme.palette.focus_ring),
+            "context menu focus ring should settle to the theme focus color; strokes={settled_strokes:?}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn context_menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
         let theme = DefaultTheme::default();
         let hover_duration = theme.motion.hover_duration();
@@ -14026,6 +14361,10 @@ mod tests {
             .map_err(|error| error.to_string())?;
         let start_descriptor =
             overlay_layer_descriptor(&start).expect("tooltip overlay layer should appear");
+        assert!(
+            !start_descriptor.hit_test,
+            "tooltip overlay should not intercept pointer hit testing"
+        );
         assert_eq!(
             start_descriptor.properties.translation.y.signum(),
             -1.0,
@@ -14156,6 +14495,102 @@ mod tests {
             content.borrow().paint,
             1,
             "popover content should not repaint on retained-only animation frames"
+        );
+        assert_eq!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?,
+            None
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn popover_focus_ring_animates_without_repainting_retained_content() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let entrance_duration = theme.motion.entrance_duration();
+        let focus_duration = theme.motion.focus_duration();
+
+        let content = Rc::new(RefCell::new(PanelCounters::default()));
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            16.0,
+            Popover::new(
+                "Inline inspector",
+                crate::Button::new("Open inspector").min_width(180.0),
+                SpyPanel::new("popover-content", Rc::clone(&content)),
+            )
+            .theme(theme),
+        ));
+
+        let closed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open inspector")
+            })
+            .expect("popover trigger semantics present")
+            .bounds;
+        assert_eq!(content.borrow().paint, 0);
+
+        let press_point = Point::new(trigger.x() + 12.0, trigger.y() + (trigger.height() * 0.5));
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, press_point, true),
+            )
+            .map_err(|error| error.to_string())?;
+
+        let opened = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let open_descriptor =
+            overlay_layer_descriptor(&opened).expect("popover overlay layer should appear");
+        assert!(open_descriptor.hit_test);
+        let open_focus_layers = non_hit_test_layer_descriptors(&opened);
+        assert_eq!(
+            open_focus_layers.len(),
+            1,
+            "popover focus chrome should be the only non-hit-test layer"
+        );
+        assert_eq!(
+            open_focus_layers[0].composition_mode,
+            LayerCompositionMode::Normal
+        );
+        assert_eq!(content.borrow().paint, 1);
+
+        runtime.tick(focus_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_focus = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
+            "popover focus ring should not snap to the settled focus color"
+        );
+        assert_eq!(
+            content.borrow().paint,
+            1,
+            "popover content should stay retained while focus chrome repaints"
+        );
+
+        runtime.tick(entrance_duration.max(focus_duration) + 0.01);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_focus = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let settled_strokes = solid_stroke_colors(&settled_focus);
+        assert!(
+            contains_approx_color(&settled_strokes, theme.palette.focus_ring),
+            "popover focus ring should settle to the theme focus color; strokes={settled_strokes:?}"
+        );
+        assert_eq!(
+            content.borrow().paint,
+            1,
+            "popover content should not repaint on focus-only animation frames"
         );
         assert_eq!(
             runtime
@@ -14413,6 +14848,74 @@ mod tests {
                 .map_err(|error| error.to_string())?,
             None
         );
+        Ok(())
+    }
+
+    #[test]
+    fn dialog_entrance_animates_without_repainting_retained_body() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let entrance_duration = theme.motion.entrance_duration();
+        let body = Rc::new(RefCell::new(PanelCounters::default()));
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(640.0, 420.0))
+                .with_child(
+                    Dialog::new("Confirm", SpyPanel::new("dialog-body", Rc::clone(&body)))
+                        .theme(theme),
+                ),
+        );
+
+        let start = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let dialog = start
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("dialog semantics present");
+        let start_descriptor =
+            layer_descriptor_for(&start, dialog.id).expect("dialog layer descriptor present");
+        assert_eq!(start_descriptor.properties.opacity, 0.0);
+        assert_eq!(body.borrow().paint, 1);
+
+        runtime.tick(entrance_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let mid_descriptor =
+            layer_descriptor_for(&mid, dialog.id).expect("dialog layer descriptor still present");
+        assert!(mid_descriptor.properties.opacity > 0.0);
+        assert!(mid_descriptor.properties.opacity < 1.0);
+        assert_eq!(
+            body.borrow().paint,
+            1,
+            "dialog body should stay retained while entrance only changes layer properties"
+        );
+
+        runtime.tick(entrance_duration + 0.01);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let settled_descriptor = layer_descriptor_for(&settled, dialog.id)
+            .expect("dialog layer descriptor still present after settling");
+        assert_eq!(
+            settled_descriptor.properties.opacity, 1.0,
+            "dialog entrance should settle to full layer opacity"
+        );
+        assert_eq!(
+            body.borrow().paint,
+            1,
+            "dialog body should not repaint on retained-only entrance frames"
+        );
+        assert_eq!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?,
+            None
+        );
+
         Ok(())
     }
 

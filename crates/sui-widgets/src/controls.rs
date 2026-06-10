@@ -7123,7 +7123,9 @@ mod tests {
         Application, RenderOutput, Runtime, Widget, WindowBuilder, WindowRenderOptions,
         clear_window_render_options, set_window_render_options,
     };
-    use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+    use sui_scene::{
+        Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor, SceneLayerUpdateKind,
+    };
     use sui_text::{FontFeature, FontRegistry, TextStyle, TextSystem};
 
     fn hover_duration() -> f64 {
@@ -7499,6 +7501,16 @@ mod tests {
             }
         });
         descriptor
+    }
+
+    fn overlay_layer_owner(output: &RenderOutput) -> Option<WidgetId> {
+        let mut owner = None;
+        output.frame.scene.visit_layers(&mut |layer| {
+            if layer.descriptor.composition_mode == LayerCompositionMode::Overlay {
+                owner = Some(layer.widget_id());
+            }
+        });
+        owner
     }
 
     fn primary_pointer(kind: PointerEventKind, position: Point, pressed: bool) -> Event {
@@ -10925,6 +10937,7 @@ mod tests {
         let start = runtime.render(window_id)?;
         let start_descriptor =
             overlay_layer_descriptor(&start).expect("select menu overlay layer present");
+        let menu_owner = overlay_layer_owner(&start).expect("select menu overlay owner present");
         assert_eq!(start_descriptor.properties.opacity, 0.0);
         assert!(start_descriptor.properties.translation.y < 0.0);
 
@@ -10939,6 +10952,22 @@ mod tests {
         assert!(
             mid_descriptor.properties.translation.y.abs()
                 < start_descriptor.properties.translation.y.abs()
+        );
+        assert!(
+            mid.frame.layer_updates.iter().any(|update| {
+                update.owner == menu_owner
+                    && matches!(
+                        update.kind,
+                        SceneLayerUpdateKind::Transform | SceneLayerUpdateKind::Effect
+                    )
+            }),
+            "select menu entrance should update retained layer properties"
+        );
+        assert!(
+            !mid.frame.layer_updates.iter().any(|update| {
+                update.owner == menu_owner && update.kind == SceneLayerUpdateKind::Content
+            }),
+            "select menu entrance should not repaint option content"
         );
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
