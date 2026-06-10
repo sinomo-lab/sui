@@ -8309,6 +8309,61 @@ mod tests {
     }
 
     #[test]
+    fn icon_button_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let hover_time = hover_duration();
+        let press_time = press_duration();
+        let (mut runtime, window_id) = build_runtime(IconButton::new(IconGlyph::Brush, "Brush"));
+
+        let _ = runtime.render(window_id)?;
+        let point = Point::new(12.0, 12.0);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, point, false),
+        )?;
+
+        runtime.tick(hover_time * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime.render(window_id)?;
+        let mid_hover_background = solid_fill_colors(&mid_hover)[0];
+        let settled_hover_background = super::mix_color(
+            theme.palette.control,
+            theme.palette.control_hover,
+            theme.interaction.hover_blend,
+        );
+        assert_ne!(mid_hover_background, theme.palette.control);
+        assert_ne!(mid_hover_background, settled_hover_background);
+
+        runtime.tick(hover_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let hover = runtime.render(window_id)?;
+        assert_color_approx_eq(solid_fill_colors(&hover)[0], settled_hover_background);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, point, true),
+        )?;
+
+        runtime.tick(hover_time + (press_time * 0.5));
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime.render(window_id)?;
+        let mid_press_background = solid_fill_colors(&mid_press)[0];
+        let settled_press_background = super::mix_color(
+            settled_hover_background,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+        assert_ne!(mid_press_background, settled_hover_background);
+        assert_ne!(mid_press_background, settled_press_background);
+
+        runtime.tick(hover_time + press_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let press = runtime.render(window_id)?;
+        assert_color_approx_eq(solid_fill_colors(&press)[0], settled_press_background);
+        Ok(())
+    }
+
+    #[test]
     fn icon_button_pressed_animation_decays_after_release() -> Result<()> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) =

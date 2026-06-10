@@ -1316,6 +1316,7 @@ impl Widget for ScrollBar {
 }
 
 pub struct ScrollView {
+    theme: Box<DefaultTheme>,
     name: Option<String>,
     state: Option<ScrollState>,
     overflow_x: Overflow,
@@ -1324,6 +1325,7 @@ pub struct ScrollView {
     viewport_height_hint: bool,
     offset: Vector,
     content_size: Size,
+    focus_animation: AnimatedScalar,
     child: SingleChild,
 }
 
@@ -1333,6 +1335,7 @@ impl ScrollView {
         W: Widget + 'static,
     {
         Self {
+            theme: Box::new(DefaultTheme::default()),
             name: None,
             state: None,
             overflow_x: Overflow::Clip,
@@ -1341,6 +1344,7 @@ impl ScrollView {
             viewport_height_hint: false,
             offset: Vector::ZERO,
             content_size: Size::ZERO,
+            focus_animation: AnimatedScalar::new(0.0),
             child: SingleChild::new(child),
         }
     }
@@ -1402,6 +1406,11 @@ impl ScrollView {
 
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1569,9 +1578,21 @@ impl ScrollView {
             }
         }
     }
+
+    fn advance_focus_animation(&mut self, time: f64, ctx: &mut EventCtx) {
+        let previous = self.focus_animation.value;
+        let animating = self.focus_animation.advance(time);
+        if self.focus_animation.changed_since(previous) {
+            ctx.request_paint();
+        }
+        if animating {
+            ctx.request_animation_frame();
+        }
+    }
 }
 
 pub struct VirtualScrollView {
+    theme: Box<DefaultTheme>,
     name: Option<String>,
     padding: Insets,
     spacing: f32,
@@ -1581,12 +1602,14 @@ pub struct VirtualScrollView {
     content_height: f32,
     item_offsets: Vec<f32>,
     visible_range: Range<usize>,
+    focus_animation: AnimatedScalar,
     children: WidgetChildren,
 }
 
 impl VirtualScrollView {
     pub fn new() -> Self {
         Self {
+            theme: Box::new(DefaultTheme::default()),
             name: None,
             padding: Insets::ZERO,
             spacing: 0.0,
@@ -1596,12 +1619,18 @@ impl VirtualScrollView {
             content_height: 0.0,
             item_offsets: Vec::new(),
             visible_range: 0..0,
+            focus_animation: AnimatedScalar::new(0.0),
             children: WidgetChildren::new(),
         }
     }
 
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
         self
     }
 
@@ -1788,6 +1817,17 @@ impl VirtualScrollView {
         let range = self.visible_range.clone();
         &mut self.children.as_mut_slice()[range]
     }
+
+    fn advance_focus_animation(&mut self, time: f64, ctx: &mut EventCtx) {
+        let previous = self.focus_animation.value;
+        let animating = self.focus_animation.advance(time);
+        if self.focus_animation.changed_since(previous) {
+            ctx.request_paint();
+        }
+        if animating {
+            ctx.request_animation_frame();
+        }
+    }
 }
 
 impl Default for VirtualScrollView {
@@ -1847,6 +1887,10 @@ impl Widget for ScrollView {
                     && ctx.bounds().contains(pointer.position) =>
             {
                 ctx.request_focus();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.advance_focus_animation(*time, ctx);
+                ctx.set_handled();
             }
             _ => {}
         }
@@ -1940,6 +1984,12 @@ impl Widget for ScrollView {
         } else {
             self.child.paint(ctx);
         }
+        draw_focus_ring(
+            ctx,
+            ctx.bounds(),
+            self.theme.as_ref(),
+            self.focus_animation.value,
+        );
     }
 
     fn layer_options(&self) -> LayerOptions {
@@ -1966,7 +2016,14 @@ impl Widget for ScrollView {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        set_focus_animation_target(
+            &mut self.focus_animation,
+            focused as u8 as f32,
+            self.theme.as_ref(),
+            ctx,
+        );
+        ctx.request_paint();
         ctx.request_semantics();
     }
 
@@ -2025,6 +2082,10 @@ impl Widget for VirtualScrollView {
                     && ctx.bounds().contains(pointer.position) =>
             {
                 ctx.request_focus();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.advance_focus_animation(*time, ctx);
+                ctx.set_handled();
             }
             _ => {}
         }
@@ -2137,11 +2198,18 @@ impl Widget for VirtualScrollView {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.push_clip_rect(ctx.bounds());
+        let viewport = self.viewport_rect(ctx.bounds());
+        ctx.push_clip_rect(viewport);
         for child in self.visible_children() {
             child.paint(ctx);
         }
         ctx.pop_clip();
+        draw_focus_ring(
+            ctx,
+            viewport,
+            self.theme.as_ref(),
+            self.focus_animation.value,
+        );
     }
 
     fn layer_options(&self) -> LayerOptions {
@@ -2166,7 +2234,14 @@ impl Widget for VirtualScrollView {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        set_focus_animation_target(
+            &mut self.focus_animation,
+            focused as u8 as f32,
+            self.theme.as_ref(),
+            ctx,
+        );
+        ctx.request_paint();
         ctx.request_semantics();
     }
 
@@ -2309,6 +2384,26 @@ where
             InvalidationKind::Transform,
         ));
     }
+}
+
+fn draw_focus_ring(ctx: &mut PaintCtx, bounds: Rect, theme: &DefaultTheme, progress: f32) {
+    if progress <= AnimatedScalar::EPSILON || bounds.is_empty() {
+        return;
+    }
+
+    let metrics = theme.metrics;
+    let outset = physical_pixels(ctx, metrics.focus_ring_outset);
+    ctx.stroke(
+        Path::rounded_rect(
+            bounds.inflate(outset, outset),
+            metrics.corner_radius + outset,
+        ),
+        theme
+            .palette
+            .focus_ring
+            .with_alpha(theme.palette.focus_ring.alpha * progress),
+        StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
+    );
 }
 
 fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
@@ -3912,6 +4007,99 @@ mod tests {
         assert!(
             contains_approx_color(&settled_strokes, theme.palette.focus_ring),
             "scroll bar focus stroke should settle to the theme focus color; strokes={settled_strokes:?}"
+        );
+    }
+
+    #[test]
+    fn scroll_view_focus_ring_uses_theme_motion() {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let point = Point::new(20.0, 20.0);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(FixedBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .theme(theme),
+            ),
+        );
+
+        let _ = runtime.render(window_id).expect("render should succeed");
+        let mut down = PointerEvent::new(PointerEventKind::Down, point);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .expect("focus event should be handled");
+
+        runtime.tick(focus_duration * 0.5);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let mid_focus = runtime.render(window_id).expect("render should succeed");
+        assert!(
+            !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
+            "scroll view focus ring should not snap to the settled focus color"
+        );
+
+        runtime.tick(focus_duration + 0.01);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let settled_focus = runtime.render(window_id).expect("render should succeed");
+        let settled_strokes = solid_stroke_colors(&settled_focus);
+        assert!(
+            contains_approx_color(&settled_strokes, theme.palette.focus_ring),
+            "scroll view focus ring should settle to the theme focus color; strokes={settled_strokes:?}"
+        );
+    }
+
+    #[test]
+    fn virtual_scroll_view_focus_ring_uses_theme_motion() {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let point = Point::new(20.0, 20.0);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                VirtualScrollView::new()
+                    .theme(theme)
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.3, 0.4, 0.8, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.4, 0.5, 0.9, 1.0),
+                    )),
+            ),
+        );
+
+        let _ = runtime.render(window_id).expect("render should succeed");
+        let mut down = PointerEvent::new(PointerEventKind::Down, point);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .expect("focus event should be handled");
+
+        runtime.tick(focus_duration * 0.5);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let mid_focus = runtime.render(window_id).expect("render should succeed");
+        assert!(
+            !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
+            "virtual scroll view focus ring should not snap to the settled focus color"
+        );
+
+        runtime.tick(focus_duration + 0.01);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let settled_focus = runtime.render(window_id).expect("render should succeed");
+        let settled_strokes = solid_stroke_colors(&settled_focus);
+        assert!(
+            contains_approx_color(&settled_strokes, theme.palette.focus_ring),
+            "virtual scroll view focus ring should settle to the theme focus color; strokes={settled_strokes:?}"
         );
     }
 

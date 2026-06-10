@@ -3484,6 +3484,7 @@ pub struct PanelSection {
     pressed_header: bool,
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
 }
 
 impl PanelSection {
@@ -3507,6 +3508,7 @@ impl PanelSection {
             pressed_header: false,
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
         }
     }
 
@@ -3695,7 +3697,9 @@ impl PanelSection {
     }
 
     fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time) | self.press_animation.advance(time)
+        self.hover_animation.advance(time)
+            | self.press_animation.advance(time)
+            | self.focus_animation.advance(time)
     }
 }
 
@@ -3876,6 +3880,21 @@ impl Widget for PanelSection {
             let header_hit = self.header_hit_rect(ctx.bounds());
             let hover_amount = self.hover_animation.value;
             let press_amount = self.press_animation.value;
+            let focus_amount = self.focus_animation.value;
+            if focus_amount > AnimatedScalar::EPSILON {
+                let outset = physical_pixels(ctx, metrics.focus_ring_outset);
+                ctx.stroke(
+                    rounded_rect_path(
+                        header_hit.inflate(outset, outset),
+                        metrics.indicator_corner_radius + outset,
+                    ),
+                    theme
+                        .palette
+                        .focus_ring
+                        .with_alpha(theme.palette.focus_ring.alpha * focus_amount),
+                    StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
+                );
+            }
             let hover_alpha = (theme.interaction.hover_blend * 0.07 * hover_amount).min(0.08);
             let press_alpha = (theme.interaction.selected_blend * 0.48 * press_amount).min(0.14);
             let header_fill = if press_alpha > 0.0 {
@@ -3972,8 +3991,15 @@ impl Widget for PanelSection {
         self.collapsible
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if self.collapsible {
+            let theme = self.resolved_theme();
+            set_focus_animation_target(
+                &mut self.focus_animation,
+                focused as u8 as f32,
+                &theme,
+                ctx,
+            );
             ctx.request_paint();
             ctx.request_semantics();
         }
@@ -5261,6 +5287,7 @@ pub struct TabBar {
     press_visual: Option<usize>,
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     gap: Option<f32>,
     label_measurements: Vec<TextMeasurement>,
     widths: Vec<f32>,
@@ -5283,6 +5310,7 @@ impl TabBar {
             press_visual: None,
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             gap: None,
             label_measurements: Vec::new(),
             widths: Vec::new(),
@@ -5458,7 +5486,8 @@ impl TabBar {
         {
             self.press_visual = None;
         }
-        selection_animating | hover_animating | press_animating
+        let focus_animating = self.focus_animation.advance(time);
+        selection_animating | hover_animating | press_animating | focus_animating
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -5627,6 +5656,21 @@ impl Widget for TabBar {
             palette.control,
         );
 
+        let focus_progress = self.focus_animation.value;
+        if focus_progress > AnimatedScalar::EPSILON {
+            let outset = physical_pixels(ctx, metrics.focus_ring_outset);
+            ctx.stroke(
+                rounded_rect_path(
+                    ctx.bounds().inflate(outset, outset),
+                    metrics.corner_radius + outset,
+                ),
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * focus_progress),
+                StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
+            );
+        }
+
         for (index, tab) in self.tabs.iter().enumerate() {
             let Some(rect) = self.tab_rect(ctx.bounds(), index) else {
                 continue;
@@ -5705,7 +5749,9 @@ impl Widget for TabBar {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -5726,6 +5772,7 @@ pub struct Tabs {
     press_visual: Option<usize>,
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     label_measurements: Vec<TextMeasurement>,
     widths: Vec<f32>,
     gap: Option<f32>,
@@ -5750,6 +5797,7 @@ impl Tabs {
             press_visual: None,
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             label_measurements: Vec::new(),
             widths: Vec::new(),
             gap: None,
@@ -5913,7 +5961,8 @@ impl Tabs {
         {
             self.press_visual = None;
         }
-        selection_animating | hover_animating | press_animating
+        let focus_animating = self.focus_animation.advance(time);
+        selection_animating | hover_animating | press_animating | focus_animating
     }
 
     fn selected_panel(&self) -> Option<&sui_runtime::WidgetPod> {
@@ -6161,6 +6210,21 @@ impl Widget for Tabs {
             palette.control,
         );
 
+        let focus_progress = self.focus_animation.value;
+        if focus_progress > AnimatedScalar::EPSILON {
+            let outset = physical_pixels(ctx, metrics.focus_ring_outset);
+            ctx.stroke(
+                rounded_rect_path(
+                    header.inflate(outset, outset),
+                    metrics.corner_radius + outset,
+                ),
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * focus_progress),
+                StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
+            );
+        }
+
         for (index, label) in self.labels.iter().enumerate() {
             let Some(rect) = self.tab_rect(ctx.bounds(), index) else {
                 continue;
@@ -6256,7 +6320,9 @@ impl Widget for Tabs {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -7638,6 +7704,7 @@ struct ContextMenuPresentationState {
     frame_rect: Rect,
     row_height: f32,
     reveal: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     highlight_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
 }
@@ -7655,6 +7722,7 @@ impl ContextMenuPresentationState {
             frame_rect: Rect::ZERO,
             row_height: menu_row_height(&theme),
             reveal: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             highlight_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
         }
@@ -7747,7 +7815,11 @@ impl Widget for ContextMenuSurface {
             metrics,
             palette.surface_raised,
             palette.border,
-            Some(palette.focus_ring),
+            (state.focus_animation.value > AnimatedScalar::EPSILON).then_some(
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * state.focus_animation.value),
+            ),
         );
 
         for (index, item) in state.items.iter().enumerate() {
@@ -8292,8 +8364,11 @@ impl Widget for ContextMenu {
                 let mut state = self.surface_state.borrow_mut();
                 let was_presented = state.is_presented();
                 let previous = state.reveal.value;
+                let previous_focus = state.focus_animation.value;
                 let reveal_animating = state.reveal.advance(*time);
+                let focus_animating = state.focus_animation.advance(*time);
                 let reveal_changed = state.reveal.changed_since(previous);
+                let focus_changed = state.focus_animation.changed_since(previous_focus);
                 let is_presented = state.is_presented();
                 drop(state);
 
@@ -8311,11 +8386,14 @@ impl Widget for ContextMenu {
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Transform);
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Effect);
                 }
+                if focus_changed {
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
+                }
                 if was_presented != is_presented {
                     ctx.request_measure();
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
                 }
-                if reveal_animating || row_animating {
+                if reveal_animating || row_animating || focus_animating {
                     ctx.request_animation_frame();
                 }
                 ctx.set_handled();
@@ -8423,6 +8501,18 @@ impl Widget for ContextMenu {
         if !focused && self.open {
             self.set_open(ctx, false);
         }
+        let surface_id = self.surface.child().id();
+        {
+            let mut state = self.surface_state.borrow_mut();
+            let theme = state.theme;
+            set_focus_animation_target(
+                &mut state.focus_animation,
+                focused as u8 as f32,
+                &theme,
+                ctx,
+            );
+        }
+        request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -8457,6 +8547,7 @@ pub struct Dialog {
     title_measurement: Option<TextMeasurement>,
     description_measurement: Option<TextMeasurement>,
     reveal: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     entrance_started: bool,
     on_dismiss: Option<Box<dyn FnMut()>>,
 }
@@ -8481,6 +8572,7 @@ impl Dialog {
             title_measurement: None,
             description_measurement: None,
             reveal: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             entrance_started: false,
             on_dismiss: None,
         }
@@ -8500,6 +8592,7 @@ impl Dialog {
         self.shown = shown;
         if !shown {
             self.reveal = AnimatedScalar::new(0.0);
+            self.focus_animation = AnimatedScalar::new(0.0);
             self.entrance_started = false;
         }
         self
@@ -8605,10 +8698,26 @@ impl Widget for Dialog {
                         ctx.request_transform();
                     }
                 }
-                if animating {
+                let previous_focus = self.focus_animation.value;
+                let focus_animating = self.focus_animation.advance(*time);
+                if self.focus_animation.changed_since(previous_focus) {
+                    ctx.request_paint();
+                }
+                if animating || focus_animating {
                     ctx.request_animation_frame();
                 }
                 ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self
+                        .dialog_frame
+                        .translate(ctx.bounds().origin.to_vector())
+                        .contains(pointer.position) =>
+            {
+                ctx.request_focus();
+                ctx.request_semantics();
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -8644,6 +8753,7 @@ impl Widget for Dialog {
             self.dialog_frame = Rect::ZERO;
             self.body_frame = Rect::ZERO;
             self.reveal = AnimatedScalar::new(0.0);
+            self.focus_animation = AnimatedScalar::new(0.0);
             self.entrance_started = false;
             return Size::ZERO;
         }
@@ -8804,7 +8914,11 @@ impl Widget for Dialog {
             metrics,
             palette.surface_raised,
             palette.border,
-            Some(palette.focus_ring),
+            (self.focus_animation.value > AnimatedScalar::EPSILON).then_some(
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.value),
+            ),
         );
 
         let title_style = self.title_style();
@@ -8916,7 +9030,13 @@ impl Widget for Dialog {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        set_focus_animation_target(
+            &mut self.focus_animation,
+            focused as u8 as f32,
+            &self.theme,
+            ctx,
+        );
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -10018,8 +10138,48 @@ mod tests {
         )?;
 
         assert_focus_ring_uses_theme_motion(
+            crate::SizedBox::new()
+                .size(Size::new(260.0, 92.0))
+                .with_child(
+                    PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
+                        .collapsible(true)
+                        .collapsed(),
+                ),
+            Point::new(24.0, 18.0),
+        )?;
+
+        assert_focus_ring_uses_theme_motion(
             Menu::new("App menu").items([MenuItem::new("New File"), MenuItem::new("Open...")]),
             Point::new(24.0, 24.0),
+        )?;
+
+        assert_focus_ring_uses_theme_motion(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .activation_button(PointerButton::Primary)
+                .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
+            Point::new(24.0, 24.0),
+        )?;
+
+        assert_focus_ring_uses_theme_motion(
+            TabBar::new("Views").tabs(["Layers", "Assets"]),
+            Point::new(24.0, 18.0),
+        )?;
+
+        assert_focus_ring_uses_theme_motion(
+            Tabs::new("Inspector")
+                .tab("Style", crate::Label::new("Style"))
+                .tab("Layout", crate::Label::new("Layout")),
+            Point::new(24.0, 18.0),
+        )?;
+
+        assert_focus_ring_uses_theme_motion(
+            crate::SizedBox::new()
+                .size(Size::new(640.0, 420.0))
+                .with_child(Dialog::new(
+                    "Confirm",
+                    crate::Label::new("Apply the change?"),
+                )),
+            Point::new(320.0, 210.0),
         )
     }
 
@@ -12745,6 +12905,7 @@ mod tests {
     fn tab_bar_switch_animation_uses_theme_motion() -> Result<(), String> {
         let theme = DefaultTheme::default();
         let switch_duration = theme.motion.tab_switch_duration();
+        let focus_duration = theme.motion.focus_duration();
         let second_tab_point = Point::new(
             theme.metrics.tab_min_width + theme.metrics.tab_gap + 12.0,
             theme.metrics.tab_height * 0.5,
@@ -12794,6 +12955,10 @@ mod tests {
             tab_bar.value,
             Some(SemanticsValue::Text("Inspect".to_string()))
         );
+        if focus_duration > switch_duration {
+            runtime.tick(focus_duration);
+            assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        }
         assert_eq!(
             runtime
                 .next_wakeup_time(window_id)
