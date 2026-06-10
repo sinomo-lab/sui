@@ -12593,6 +12593,13 @@ mod tests {
         found.expect("text draw command present")
     }
 
+    fn slow_normal_motion_theme() -> DefaultTheme {
+        let mut theme = DefaultTheme::default();
+        theme.motion.duration_fast = 0.0;
+        theme.motion.duration_normal = 0.6;
+        theme
+    }
+
     fn text_transform_dx_for(output: &RenderOutput, text: &str) -> Option<f32> {
         fn find_in_commands(
             output: &RenderOutput,
@@ -13880,9 +13887,11 @@ mod tests {
 
     #[test]
     fn context_menu_entrance_uses_theme_motion_layer_properties() -> Result<(), String> {
-        let duration = DefaultTheme::default().motion.entrance_duration();
+        let theme = slow_normal_motion_theme();
+        let duration = theme.motion.entrance_duration();
         let (mut runtime, window_id) = build_runtime(
             ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .theme(theme)
                 .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
         );
 
@@ -13918,6 +13927,7 @@ mod tests {
             .expect("context menu semantics present");
         let start_descriptor =
             overlay_layer_descriptor(&start).expect("context menu overlay layer should appear");
+        let menu_owner = overlay_layer_owner(&start).expect("context menu overlay owner present");
         assert_eq!(start_descriptor.properties.opacity, 0.0);
         assert!(start_descriptor.properties.translation.y < 0.0);
         assert!(
@@ -13938,6 +13948,22 @@ mod tests {
         assert!(
             mid_descriptor.properties.translation.y.abs()
                 < start_descriptor.properties.translation.y.abs()
+        );
+        assert!(
+            mid.frame.layer_updates.iter().any(|update| {
+                update.owner == menu_owner
+                    && matches!(
+                        update.kind,
+                        SceneLayerUpdateKind::Transform | SceneLayerUpdateKind::Effect
+                    )
+            }),
+            "context menu entrance should update retained layer properties"
+        );
+        assert!(
+            !mid.frame.layer_updates.iter().any(|update| {
+                update.owner == menu_owner && update.kind == SceneLayerUpdateKind::Content
+            }),
+            "context menu entrance should not repaint menu content"
         );
         assert!(
             runtime
@@ -14595,7 +14621,8 @@ mod tests {
 
     #[test]
     fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(), String> {
-        let entrance_duration = DefaultTheme::default().motion.entrance_duration();
+        let theme = slow_normal_motion_theme();
+        let entrance_duration = theme.motion.entrance_duration();
 
         let content = Rc::new(RefCell::new(PanelCounters::default()));
         let (mut runtime, window_id) = build_runtime(crate::Padding::all(
@@ -14604,7 +14631,8 @@ mod tests {
                 "Inline inspector",
                 crate::Button::new("Open inspector").min_width(180.0),
                 SpyPanel::new("popover-content", Rc::clone(&content)),
-            ),
+            )
+            .theme(theme),
         ));
 
         let closed = runtime
@@ -14966,14 +14994,14 @@ mod tests {
 
     #[test]
     fn modal_dialog_entrance_uses_theme_motion_effect_layer_properties() -> Result<(), String> {
-        let duration = DefaultTheme::default().motion.entrance_duration();
+        let theme = slow_normal_motion_theme();
+        let duration = theme.motion.entrance_duration();
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(640.0, 420.0))
-                .with_child(Dialog::new(
-                    "Confirm",
-                    crate::Label::new("Apply the change?"),
-                )),
+                .with_child(
+                    Dialog::new("Confirm", crate::Label::new("Apply the change?")).theme(theme),
+                ),
         );
 
         let start = runtime
@@ -15030,7 +15058,7 @@ mod tests {
 
     #[test]
     fn dialog_entrance_animates_without_repainting_retained_body() -> Result<(), String> {
-        let theme = DefaultTheme::default();
+        let theme = slow_normal_motion_theme();
         let entrance_duration = theme.motion.entrance_duration();
         let body = Rc::new(RefCell::new(PanelCounters::default()));
         let (mut runtime, window_id) = build_runtime(

@@ -7148,11 +7148,15 @@ mod tests {
         DefaultTheme::default().motion.entrance_duration()
     }
 
-    fn slow_toggle_theme() -> DefaultTheme {
+    fn slow_normal_motion_theme() -> DefaultTheme {
         let mut theme = DefaultTheme::default();
         theme.motion.duration_fast = 0.0;
         theme.motion.duration_normal = 0.6;
         theme
+    }
+
+    fn slow_toggle_theme() -> DefaultTheme {
+        slow_normal_motion_theme()
     }
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -10929,10 +10933,12 @@ mod tests {
 
     #[test]
     fn expanded_select_menu_entrance_uses_theme_motion_layer_properties() -> Result<()> {
-        let duration = entrance_duration();
+        let theme = slow_normal_motion_theme();
+        let duration = theme.motion.entrance_duration();
         let (mut runtime, window_id) = build_runtime(crate::Padding::all(
             12.0,
             Select::new("Mode")
+                .theme(theme)
                 .placeholder("Choose mode")
                 .options(["Draft", "Final", "Review"]),
         ));
