@@ -1,9 +1,9 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use sui_core::{
-    Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path, Point,
+    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path, Point,
     PointerButton, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
+    SemanticsRole, SemanticsValue, Size, Vector, WakeEvent, WidgetId,
 };
 use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
 use sui_runtime::{
@@ -13,7 +13,7 @@ use sui_runtime::{
 };
 use sui_scene::{Brush, LayerCompositionMode, StrokeStyle};
 
-use crate::DefaultTheme;
+use crate::{DefaultTheme, MotionScalar};
 
 pub struct Padding {
     insets: Insets,
@@ -738,6 +738,75 @@ struct ScrollBarMetrics {
     max_scroll: f32,
 }
 
+type AnimatedScalar = MotionScalar;
+
+fn set_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    duration: f64,
+    easing: crate::Easing,
+    ctx: &mut EventCtx,
+) -> bool {
+    animation.set_target_event(target, duration, easing, ctx)
+}
+
+fn set_hover_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.hover_duration(),
+        theme.motion.hover_easing(),
+        ctx,
+    )
+}
+
+fn set_press_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.press_duration(),
+        theme.motion.press_easing(),
+        ctx,
+    )
+}
+
+fn set_focus_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.focus_duration(),
+        theme.motion.focus_easing(),
+        ctx,
+    )
+}
+
+fn mix_color(from: Color, to: Color, amount: f32) -> Color {
+    let amount = amount.clamp(0.0, 1.0);
+    Color::new(
+        from.space,
+        from.red + (to.red - from.red) * amount,
+        from.green + (to.green - from.green) * amount,
+        from.blue + (to.blue - from.blue) * amount,
+        from.alpha + (to.alpha - from.alpha) * amount,
+    )
+    .clamped()
+}
+
 pub struct ScrollBar {
     theme: Box<DefaultTheme>,
     state: ScrollState,
@@ -746,6 +815,9 @@ pub struct ScrollBar {
     width: Option<f32>,
     hovered: bool,
     dragging: bool,
+    hover_animation: AnimatedScalar,
+    drag_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     pointer_id: Option<u64>,
     drag_thumb_offset: f32,
 }
@@ -760,6 +832,9 @@ impl ScrollBar {
             width: None,
             hovered: false,
             dragging: false,
+            hover_animation: AnimatedScalar::new(0.0),
+            drag_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             pointer_id: None,
             drag_thumb_offset: 0.0,
         }
@@ -907,9 +982,40 @@ impl ScrollBar {
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
+            let theme = self.theme.as_ref();
             self.hovered = hovered;
+            set_hover_animation_target(&mut self.hover_animation, hovered as u8 as f32, theme, ctx);
             ctx.request_paint();
             ctx.request_semantics();
+        }
+    }
+
+    fn set_dragging(&mut self, dragging: bool, ctx: &mut EventCtx) {
+        if self.dragging != dragging {
+            let theme = self.theme.as_ref();
+            self.dragging = dragging;
+            set_press_animation_target(&mut self.drag_animation, dragging as u8 as f32, theme, ctx);
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
+    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
+        let previous_hover = self.hover_animation.value;
+        let previous_drag = self.drag_animation.value;
+        let previous_focus = self.focus_animation.value;
+        let animating = self.hover_animation.advance(time)
+            | self.drag_animation.advance(time)
+            | self.focus_animation.advance(time);
+        let changed = self.hover_animation.changed_since(previous_hover)
+            || self.drag_animation.changed_since(previous_drag)
+            || self.focus_animation.changed_since(previous_focus);
+
+        if changed {
+            ctx.request_paint();
+        }
+        if animating {
+            ctx.request_animation_frame();
         }
     }
 
@@ -1022,9 +1128,9 @@ impl Widget for ScrollBar {
                     return;
                 };
 
-                self.dragging = true;
+                self.set_hovered(true, ctx);
+                self.set_dragging(true, ctx);
                 self.pointer_id = Some(pointer.pointer_id);
-                self.hovered = true;
                 self.drag_thumb_offset = if metrics.thumb.contains(pointer.position) {
                     self.pointer_position(pointer.position) - self.axis_rect_start(metrics.thumb)
                 } else {
@@ -1059,24 +1165,20 @@ impl Widget for ScrollBar {
                         self.drag_thumb_offset,
                     );
                 }
-                self.dragging = false;
+                self.set_dragging(false, ctx);
                 self.pointer_id = None;
-                self.hovered = ctx.bounds().contains(pointer.position);
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Cancel
                     && self.pointer_id == Some(pointer.pointer_id) =>
             {
-                self.dragging = false;
+                self.set_dragging(false, ctx);
                 self.pointer_id = None;
-                self.hovered = false;
+                self.set_hovered(false, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
@@ -1105,6 +1207,9 @@ impl Widget for ScrollBar {
                     }
                     ctx.set_handled();
                 }
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.advance_animations(*time, ctx);
             }
             _ => {}
         }
@@ -1152,22 +1257,24 @@ impl Widget for ScrollBar {
         );
         ctx.fill(
             Path::rounded_rect(thumb, thumb_radius),
-            if self.dragging {
-                palette.accent_pressed
-            } else if self.hovered || ctx.is_focused() {
-                palette.accent_hover
-            } else {
-                palette.border_hover
-            }
+            mix_color(
+                mix_color(
+                    palette.border_hover,
+                    palette.accent_hover,
+                    self.hover_animation.value.max(self.focus_animation.value),
+                ),
+                palette.accent_pressed,
+                self.drag_animation.value,
+            )
             .with_alpha(0.95),
         );
         ctx.stroke(
             Path::rounded_rect(thumb, thumb_radius),
-            if ctx.is_focused() {
-                palette.focus_ring
-            } else {
-                palette.border.with_alpha(0.9)
-            },
+            mix_color(
+                palette.border.with_alpha(0.9),
+                palette.focus_ring,
+                self.focus_animation.value,
+            ),
             StrokeStyle::new(physical_pixels(ctx, self.theme.metrics.border_width).max(1.0)),
         );
     }
@@ -1200,7 +1307,9 @@ impl Widget for ScrollBar {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.theme.as_ref();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -2370,8 +2479,8 @@ mod tests {
     use crate::{DefaultTheme, SplitView};
     use sui_core::{
         Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
-        PointerButton, PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsNode,
-        SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
+        PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, ScrollDelta,
+        SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
     };
     use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
     use sui_runtime::{
@@ -2819,6 +2928,36 @@ mod tests {
             .unwrap();
         let window_id = runtime.window_ids()[0];
         (runtime, window_id)
+    }
+
+    fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::FillPath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
+    }
+
+    fn handle_ready_events(runtime: &mut Runtime) -> usize {
+        let ready = runtime.drain_ready_events();
+        let count = ready.len();
+        for (ready_window, event) in ready {
+            runtime
+                .handle_event(ready_window, event)
+                .expect("ready event should be handled");
+        }
+        count
     }
 
     #[test]
@@ -3649,6 +3788,60 @@ mod tests {
                 .width(9.0),
         );
         assert_eq!(overridden.frame.viewport.width, 9.0);
+    }
+
+    #[test]
+    fn scroll_bar_hover_and_drag_use_theme_motion() {
+        let theme = DefaultTheme::default();
+        let state = ScrollState::new();
+        state.sync_metrics(
+            ScrollAxes::Vertical,
+            Size::new(80.0, 40.0),
+            Size::new(80.0, 120.0),
+        );
+        let point = Point::new(theme.metrics.scroll_bar_thickness * 0.5, 8.0);
+        let expected_hover =
+            super::mix_color(theme.palette.border_hover, theme.palette.accent_hover, 1.0)
+                .with_alpha(0.95);
+        let expected_drag = theme.palette.accent_pressed.with_alpha(0.95);
+        let (mut runtime, window_id) =
+            build_runtime(ScrollBar::vertical(state).theme(theme).name("Scroll bar"));
+
+        let _ = runtime.render(window_id).expect("render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)),
+            )
+            .expect("hover event should be handled");
+
+        runtime.tick(theme.motion.hover_duration() * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime), 1);
+        let mid_hover = runtime.render(window_id).expect("render should succeed");
+        assert!(!solid_fill_colors(&mid_hover).contains(&expected_hover));
+
+        runtime.tick(theme.motion.hover_duration());
+        assert_eq!(handle_ready_events(&mut runtime), 1);
+        let settled_hover = runtime.render(window_id).expect("render should succeed");
+        assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, point);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .expect("drag event should be handled");
+
+        runtime.tick(theme.motion.hover_duration() + theme.motion.press_duration() * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime), 1);
+        let mid_drag = runtime.render(window_id).expect("render should succeed");
+        assert!(!solid_fill_colors(&mid_drag).contains(&expected_drag));
+
+        runtime.tick(theme.motion.hover_duration() + theme.motion.press_duration());
+        assert_eq!(handle_ready_events(&mut runtime), 1);
+        let settled_drag = runtime.render(window_id).expect("render should succeed");
+        assert!(solid_fill_colors(&settled_drag).contains(&expected_drag));
     }
 
     #[test]

@@ -997,6 +997,7 @@ pub struct ToolPalette {
     press_visual: Option<usize>,
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     extent: Option<f32>,
     padding: Option<Insets>,
     spacing: Option<f32>,
@@ -1032,6 +1033,7 @@ impl ToolPalette {
             press_visual: None,
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             extent: None,
             padding: None,
             spacing: None,
@@ -1330,7 +1332,7 @@ impl ToolPalette {
             self.press_visual = None;
         }
 
-        hover_animating | press_animating
+        hover_animating | press_animating | self.focus_animation.advance(time)
     }
 }
 
@@ -1546,7 +1548,11 @@ impl Widget for ToolPalette {
                 metrics,
                 background,
                 border,
-                (ctx.is_focused() && selected_item).then_some(palette.focus_ring),
+                (self.focus_animation.value > AnimatedScalar::EPSILON && selected_item).then_some(
+                    palette
+                        .focus_ring
+                        .with_alpha(palette.focus_ring.alpha * self.focus_animation.value),
+                ),
             );
             let center = rect_center(rect);
             let side = icon_size.min(rect.width().min(rect.height())).max(0.0);
@@ -1613,7 +1619,9 @@ impl Widget for ToolPalette {
         self.items.iter().any(|item| item.enabled)
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -1647,6 +1655,7 @@ pub struct ActionCard {
     pressed: bool,
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     title_measurement: Option<TextMeasurement>,
     description_measurement: Option<TextMeasurement>,
     enabled: bool,
@@ -1672,6 +1681,7 @@ impl ActionCard {
             pressed: false,
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             title_measurement: None,
             description_measurement: None,
             enabled: true,
@@ -1815,7 +1825,9 @@ impl ActionCard {
     }
 
     fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time) | self.press_animation.advance(time)
+        self.hover_animation.advance(time)
+            | self.press_animation.advance(time)
+            | self.focus_animation.advance(time)
     }
 
     fn resolved_title_style(&self) -> TextStyle {
@@ -2042,7 +2054,11 @@ impl Widget for ActionCard {
             metrics,
             background,
             border,
-            (ctx.is_focused() && enabled).then_some(palette.focus_ring),
+            (self.focus_animation.value > AnimatedScalar::EPSILON && enabled).then_some(
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.value),
+            ),
         );
 
         let bounds = ctx.bounds();
@@ -2216,7 +2232,9 @@ impl Widget for ActionCard {
         self.is_enabled()
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -2258,6 +2276,21 @@ fn set_press_animation_target(
         target,
         theme.motion.press_duration(),
         theme.motion.press_easing(),
+        ctx,
+    )
+}
+
+fn set_focus_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.focus_duration(),
+        theme.motion.focus_easing(),
         ctx,
     )
 }
@@ -4270,6 +4303,7 @@ pub struct PresetStrip {
     press_visual: Option<usize>,
     hover_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     item_width: Option<f32>,
     item_height: Option<f32>,
     gap: Option<f32>,
@@ -4293,6 +4327,7 @@ impl PresetStrip {
             press_visual: None,
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             item_width: None,
             item_height: None,
             gap: None,
@@ -4519,7 +4554,7 @@ impl PresetStrip {
             self.press_visual = None;
         }
 
-        hover_animating | press_animating
+        hover_animating | press_animating | self.focus_animation.advance(time)
     }
 }
 
@@ -4635,10 +4670,12 @@ impl Widget for PresetStrip {
         let selected = self.current_selected();
         let style = text_token_style(&theme, theme.text.xs, palette.text);
 
-        if ctx.is_focused() {
+        if self.focus_animation.value > AnimatedScalar::EPSILON {
             ctx.stroke(
                 rounded_rect_path(ctx.bounds().inflate(2.0, 2.0), metrics.corner_radius + 2.0),
-                palette.focus_ring,
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.value),
                 StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
             );
         }
@@ -4752,7 +4789,9 @@ impl Widget for PresetStrip {
         !self.presets.is_empty()
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -6246,6 +6285,7 @@ pub struct Menu {
     press_visual: Option<usize>,
     highlight_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     measured_width: f32,
     focus_on_pointer_down: bool,
     on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
@@ -6265,6 +6305,7 @@ impl Menu {
             press_visual: None,
             highlight_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             measured_width: 220.0,
             focus_on_pointer_down: true,
             on_activate: None,
@@ -6462,7 +6503,7 @@ impl Menu {
             self.press_visual = None;
         }
 
-        highlight_animating | press_animating
+        highlight_animating | press_animating | self.focus_animation.advance(time)
     }
 }
 
@@ -6597,7 +6638,11 @@ impl Widget for Menu {
             metrics,
             palette.surface_raised,
             palette.border,
-            ctx.is_focused().then_some(palette.focus_ring),
+            (self.focus_animation.value > AnimatedScalar::EPSILON).then_some(
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.value),
+            ),
         );
 
         for (index, item) in self.items.iter().enumerate() {
@@ -6726,7 +6771,9 @@ impl Widget for Menu {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -9941,6 +9988,42 @@ mod tests {
     }
 
     #[test]
+    fn composite_focus_rings_use_theme_motion() -> Result<(), String> {
+        assert_focus_ring_uses_theme_motion(
+            crate::SizedBox::new()
+                .size(Size::new(112.0, 44.0))
+                .with_child(
+                    ToolPalette::horizontal("Tools")
+                        .items([
+                            ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush"),
+                            ToolPaletteItem::new(crate::IconGlyph::Eraser, "Erase"),
+                        ])
+                        .selected(0),
+                ),
+            Point::new(18.0, 18.0),
+        )?;
+
+        assert_focus_ring_uses_theme_motion(
+            crate::SizedBox::new()
+                .size(Size::new(260.0, 92.0))
+                .with_child(ActionCard::new("Paint", "Pixel canvas workspace")),
+            Point::new(18.0, 18.0),
+        )?;
+
+        assert_focus_ring_uses_theme_motion(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 40.0))
+                .with_child(PresetStrip::new("Brush presets").presets(["8 px", "18 px"])),
+            Point::new(24.0, 18.0),
+        )?;
+
+        assert_focus_ring_uses_theme_motion(
+            Menu::new("App menu").items([MenuItem::new("New File"), MenuItem::new("Open...")]),
+            Point::new(24.0, 24.0),
+        )
+    }
+
+    #[test]
     fn density_modes_resize_form_and_panel_widgets() {
         let compact = DefaultTheme::compact();
         let touch = DefaultTheme::touch();
@@ -12181,6 +12264,50 @@ mod tests {
             run.style.line_height,
             token.line_height
         );
+    }
+
+    fn assert_focus_ring_uses_theme_motion<W>(root: W, position: Point) -> Result<(), String>
+    where
+        W: Widget + 'static,
+    {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let (mut runtime, window_id) = build_runtime(root);
+        let _ = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, position, true),
+            )
+            .map_err(|error| error.to_string())?;
+        let _ = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(focus_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_stroke_colors(&mid).contains(&theme.palette.focus_ring),
+            "focus ring should not snap to the settled focus color"
+        );
+
+        runtime.tick(focus_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            solid_stroke_colors(&settled).contains(&theme.palette.focus_ring),
+            "focus ring should settle to the theme focus color"
+        );
+
+        Ok(())
     }
 
     fn layer_descriptor_for(

@@ -3,7 +3,7 @@ use std::{fmt, rc::Rc};
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
     SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState, Vector,
-    WidgetId,
+    WakeEvent, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
@@ -13,7 +13,7 @@ use sui_runtime::{
 use sui_text::{FontFeature, TextMeasurement, TextStyle};
 
 use crate::{
-    DefaultTheme,
+    DefaultTheme, MotionScalar,
     controls::{IconGlyph, draw_icon_glyph},
     text_align::{aligned_text_rect_for_text, vertically_centered_text_rect_y},
 };
@@ -112,6 +112,8 @@ pub struct ListView {
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<usize>,
     pressed: Option<usize>,
+    hover_motion: IndexedInteractionMotion<usize>,
+    press_motion: IndexedInteractionMotion<usize>,
     row_height: Option<f32>,
     scroll_y: f32,
     row_heights: Vec<f32>,
@@ -131,6 +133,8 @@ impl ListView {
             selected_reader: None,
             hovered: None,
             pressed: None,
+            hover_motion: IndexedInteractionMotion::new(),
+            press_motion: IndexedInteractionMotion::new(),
             row_height: None,
             scroll_y: 0.0,
             row_heights: Vec::new(),
@@ -330,6 +334,42 @@ impl ListView {
         self.activate(next);
         self.ensure_visible(viewport_height, next);
     }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+
+        self.hovered = hovered;
+        let theme = self.resolved_theme();
+        self.hover_motion.set_hover_target(hovered, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+
+        self.pressed = pressed;
+        let theme = self.resolved_theme();
+        self.press_motion.set_press_target(pressed, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
+        let (hover_changed, hover_active) = self.hover_motion.advance(time);
+        let (press_changed, press_active) = self.press_motion.advance(time);
+
+        if hover_changed || press_changed {
+            ctx.request_paint();
+        }
+        if hover_active || press_active {
+            ctx.request_animation_frame();
+        }
+    }
 }
 
 impl Widget for ListView {
@@ -340,11 +380,7 @@ impl Widget for ListView {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = self.row_at_position(ctx.bounds(), pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(hovered, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Scroll
@@ -371,12 +407,10 @@ impl Widget for ListView {
                 if row.is_some_and(|index| self.row_has_child(index)) {
                     return;
                 }
-                self.pressed = row;
-                self.hovered = self.pressed;
+                self.set_hovered(row, ctx);
+                self.set_pressed(row, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -397,27 +431,24 @@ impl Widget for ListView {
                         self.activate(index);
                     }
                 }
-                self.hovered = hovered;
-                self.pressed = None;
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.advance_animations(*time, ctx);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
@@ -618,14 +649,17 @@ impl Widget for ListView {
             }
             let row = Rect::new(viewport.x(), y, viewport.width(), row_height);
             let selected = self.current_selected() == Some(index);
-            let hovered = self.hovered == Some(index);
-            let pressed = self.pressed == Some(index);
+            let hover_amount = self.hover_motion.amount_for(&index);
+            let press_amount = self.press_motion.amount_for(&index);
 
-            if selected || hovered || pressed {
+            if selected
+                || hover_amount > AnimatedScalar::EPSILON
+                || press_amount > AnimatedScalar::EPSILON
+            {
                 if let Some(highlight) = row_highlight_rect(row, viewport) {
                     ctx.fill_rect(
                         highlight,
-                        data_row_state_fill(&theme, selected, hovered, pressed),
+                        data_row_state_fill(&theme, selected, hover_amount, press_amount),
                     );
                 }
             }
@@ -975,6 +1009,8 @@ pub struct LayerList {
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<LayerListHit>,
     pressed: Option<LayerListHit>,
+    hover_motion: IndexedInteractionMotion<LayerListHit>,
+    press_motion: IndexedInteractionMotion<LayerListHit>,
     row_height: Option<f32>,
     on_select: Option<Box<dyn FnMut(usize, String)>>,
     on_select_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
@@ -995,6 +1031,8 @@ impl LayerList {
             selected_reader: None,
             hovered: None,
             pressed: None,
+            hover_motion: IndexedInteractionMotion::new(),
+            press_motion: IndexedInteractionMotion::new(),
             row_height: None,
             on_select: None,
             on_select_with_ctx: None,
@@ -1284,6 +1322,42 @@ impl LayerList {
         let last = self.layers.len() as isize - 1;
         self.select(ctx, (current + delta).clamp(0, last) as usize);
     }
+
+    fn set_hovered(&mut self, hovered: Option<LayerListHit>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+
+        self.hovered = hovered;
+        let theme = self.resolved_theme();
+        self.hover_motion.set_hover_target(hovered, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<LayerListHit>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+
+        self.pressed = pressed;
+        let theme = self.resolved_theme();
+        self.press_motion.set_press_target(pressed, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
+        let (hover_changed, hover_active) = self.hover_motion.advance(time);
+        let (press_changed, press_active) = self.press_motion.advance(time);
+
+        if hover_changed || press_changed {
+            ctx.request_paint();
+        }
+        if hover_active || press_active {
+            ctx.request_animation_frame();
+        }
+    }
 }
 
 impl Widget for LayerList {
@@ -1293,23 +1367,18 @@ impl Widget for LayerList {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = self.hit_at(ctx.bounds(), pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(hovered, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                self.hovered = self.hit_at(ctx.bounds(), pointer.position);
-                self.pressed = self.hovered;
+                let hovered = self.hit_at(ctx.bounds(), pointer.position);
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(hovered, ctx);
                 if self.pressed.is_some() {
                     ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -1330,27 +1399,24 @@ impl Widget for LayerList {
                         LayerListHit::Lock(index) => self.toggle_lock(ctx, index),
                     }
                 }
-                self.hovered = hovered;
-                self.pressed = None;
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.advance_animations(*time, ctx);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
@@ -1432,32 +1498,38 @@ impl Widget for LayerList {
             let locked = layer.current_locked();
             let detail = layer.current_detail();
             let selected = self.current_selected() == Some(index);
-            let row_hovered = self.hovered == Some(LayerListHit::Row(index));
-            let row_pressed = self.pressed == Some(LayerListHit::Row(index));
-            if selected || row_hovered || row_pressed {
+            let row_hit = LayerListHit::Row(index);
+            let row_hover_amount = self.hover_motion.amount_for(&row_hit);
+            let row_press_amount = self.press_motion.amount_for(&row_hit);
+            if selected
+                || row_hover_amount > AnimatedScalar::EPSILON
+                || row_press_amount > AnimatedScalar::EPSILON
+            {
                 if let Some(highlight) = row_highlight_rect(row, viewport) {
                     ctx.fill_rect(
                         highlight,
-                        data_row_state_fill(&theme, selected, row_hovered, row_pressed),
+                        data_row_state_fill(&theme, selected, row_hover_amount, row_press_amount),
                     );
                 }
             }
 
+            let visibility_hit = LayerListHit::Visibility(index);
             paint_layer_visibility_button(
                 ctx,
                 self.visibility_rect(row),
                 &theme,
                 visible,
-                self.hovered == Some(LayerListHit::Visibility(index)),
-                self.pressed == Some(LayerListHit::Visibility(index)),
+                self.hover_motion.amount_for(&visibility_hit),
+                self.press_motion.amount_for(&visibility_hit),
             );
+            let lock_hit = LayerListHit::Lock(index);
             paint_layer_lock_button(
                 ctx,
                 self.lock_rect(row),
                 &theme,
                 locked,
-                self.hovered == Some(LayerListHit::Lock(index)),
-                self.pressed == Some(LayerListHit::Lock(index)),
+                self.hover_motion.amount_for(&lock_hit),
+                self.press_motion.amount_for(&lock_hit),
             );
             paint_layer_thumbnail(
                 ctx,
@@ -1676,6 +1748,8 @@ pub struct TreeView {
     selected: Option<Vec<usize>>,
     hovered: Option<Vec<usize>>,
     pressed: Option<Vec<usize>>,
+    hover_motion: IndexedInteractionMotion<Vec<usize>>,
+    press_motion: IndexedInteractionMotion<Vec<usize>>,
     row_height: Option<f32>,
     scroll_y: f32,
     on_change: Option<Box<dyn FnMut(Vec<usize>, String)>>,
@@ -1691,6 +1765,8 @@ impl TreeView {
             selected: None,
             hovered: None,
             pressed: None,
+            hover_motion: IndexedInteractionMotion::new(),
+            press_motion: IndexedInteractionMotion::new(),
             row_height: None,
             scroll_y: 0.0,
             on_change: None,
@@ -1828,6 +1904,42 @@ impl TreeView {
         }
         self.scroll_y = self.clamp_scroll(viewport_height, self.scroll_y);
     }
+
+    fn set_hovered(&mut self, hovered: Option<Vec<usize>>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+
+        self.hovered = hovered.clone();
+        let theme = self.resolved_theme();
+        self.hover_motion.set_hover_target(hovered, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<Vec<usize>>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+
+        self.pressed = pressed.clone();
+        let theme = self.resolved_theme();
+        self.press_motion.set_press_target(pressed, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
+        let (hover_changed, hover_active) = self.hover_motion.advance(time);
+        let (press_changed, press_active) = self.press_motion.advance(time);
+
+        if hover_changed || press_changed {
+            ctx.request_paint();
+        }
+        if hover_active || press_active {
+            ctx.request_animation_frame();
+        }
+    }
 }
 
 impl Widget for TreeView {
@@ -1839,11 +1951,7 @@ impl Widget for TreeView {
                 let hovered = self
                     .row_at_position(ctx.bounds(), pointer.position)
                     .map(|row| row.path);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(hovered, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Scroll
@@ -1866,14 +1974,13 @@ impl Widget for TreeView {
                     && pointer.button == Some(PointerButton::Primary)
                     && viewport.contains(pointer.position) =>
             {
-                self.pressed = self
+                let pressed = self
                     .row_at_position(ctx.bounds(), pointer.position)
                     .map(|row| row.path);
-                self.hovered = self.pressed.clone();
+                self.set_hovered(pressed.clone(), ctx);
+                self.set_pressed(pressed, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -1908,27 +2015,24 @@ impl Widget for TreeView {
                         self.select_path(&row.path);
                     }
                 }
-                self.hovered = hovered_row.map(|row| row.path);
-                self.pressed = None;
+                self.set_hovered(hovered_row.map(|row| row.path), ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.advance_animations(*time, ctx);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 let rows = self.visible_rows();
@@ -2060,14 +2164,21 @@ impl Widget for TreeView {
             let y = viewport.y() + (index as f32 * row_height) - self.scroll_y;
             let row_rect = Rect::new(viewport.x(), y, viewport.width(), row_height);
             let selected = self.selected.as_deref() == Some(row.path.as_slice());
-            let hovered = self.hovered.as_deref() == Some(row.path.as_slice());
-            let pressed = self.pressed.as_deref() == Some(row.path.as_slice());
+            let hover_amount = self
+                .hover_motion
+                .amount_for_by(|path| path.as_slice() == row.path.as_slice());
+            let press_amount = self
+                .press_motion
+                .amount_for_by(|path| path.as_slice() == row.path.as_slice());
 
-            if selected || hovered || pressed {
+            if selected
+                || hover_amount > AnimatedScalar::EPSILON
+                || press_amount > AnimatedScalar::EPSILON
+            {
                 if let Some(highlight) = row_highlight_rect(row_rect, viewport) {
                     ctx.fill_rect(
                         highlight,
-                        data_row_state_fill(&theme, selected, hovered, pressed),
+                        data_row_state_fill(&theme, selected, hover_amount, press_amount),
                     );
                 }
             }
@@ -2233,6 +2344,8 @@ pub struct Table {
     selected: Option<usize>,
     hovered: Option<usize>,
     pressed: Option<usize>,
+    hover_motion: IndexedInteractionMotion<usize>,
+    press_motion: IndexedInteractionMotion<usize>,
     row_height: Option<f32>,
     header_height: Option<f32>,
     scroll_y: f32,
@@ -2251,6 +2364,8 @@ impl Table {
             selected: None,
             hovered: None,
             pressed: None,
+            hover_motion: IndexedInteractionMotion::new(),
+            press_motion: IndexedInteractionMotion::new(),
             row_height: None,
             header_height: None,
             scroll_y: 0.0,
@@ -2412,6 +2527,42 @@ impl Table {
             on_change(index);
         }
     }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+
+        self.hovered = hovered;
+        let theme = self.resolved_theme();
+        self.hover_motion.set_hover_target(hovered, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+
+        self.pressed = pressed;
+        let theme = self.resolved_theme();
+        self.press_motion.set_press_target(pressed, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
+        let (hover_changed, hover_active) = self.hover_motion.advance(time);
+        let (press_changed, press_active) = self.press_motion.advance(time);
+
+        if hover_changed || press_changed {
+            ctx.request_paint();
+        }
+        if hover_active || press_active {
+            ctx.request_animation_frame();
+        }
+    }
 }
 
 impl Widget for Table {
@@ -2421,11 +2572,7 @@ impl Widget for Table {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = self.row_at_position(ctx.bounds(), pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(hovered, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Scroll && body.contains(pointer.position) =>
@@ -2447,12 +2594,11 @@ impl Widget for Table {
                     && pointer.button == Some(PointerButton::Primary)
                     && body.contains(pointer.position) =>
             {
-                self.pressed = self.row_at_position(ctx.bounds(), pointer.position);
-                self.hovered = self.pressed;
+                let pressed = self.row_at_position(ctx.bounds(), pointer.position);
+                self.set_hovered(pressed, ctx);
+                self.set_pressed(pressed, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -2468,27 +2614,24 @@ impl Widget for Table {
                 {
                     self.activate(index);
                 }
-                self.hovered = hovered;
-                self.pressed = None;
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.advance_animations(*time, ctx);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 if self.rows.is_empty() {
@@ -2603,10 +2746,13 @@ impl Widget for Table {
             let row_y = body.y() + (row_index as f32 * row_height) - self.scroll_y;
             let row_rect = Rect::new(body.x(), row_y, body.width(), row_height);
             let selected = self.selected == Some(row_index);
-            let hovered = self.hovered == Some(row_index);
-            let pressed = self.pressed == Some(row_index);
-            let background = if selected || pressed || hovered {
-                data_row_state_fill(&theme, selected, hovered, pressed)
+            let hover_amount = self.hover_motion.amount_for(&row_index);
+            let press_amount = self.press_motion.amount_for(&row_index);
+            let background = if selected
+                || hover_amount > AnimatedScalar::EPSILON
+                || press_amount > AnimatedScalar::EPSILON
+            {
+                data_row_state_fill(&theme, selected, hover_amount, press_amount)
             } else if row_index % 2 == 0 {
                 palette.surface.with_alpha(0.88)
             } else {
@@ -2709,6 +2855,8 @@ pub struct Breadcrumb {
     focused_index: usize,
     hovered: Option<usize>,
     pressed: Option<usize>,
+    hover_motion: IndexedInteractionMotion<usize>,
+    press_motion: IndexedInteractionMotion<usize>,
     measured_widths: Vec<f32>,
     on_activate: Option<Box<dyn FnMut(usize, String)>>,
 }
@@ -2724,6 +2872,8 @@ impl Breadcrumb {
             focused_index: 0,
             hovered: None,
             pressed: None,
+            hover_motion: IndexedInteractionMotion::new(),
+            press_motion: IndexedInteractionMotion::new(),
             measured_widths: Vec::new(),
             on_activate: None,
         }
@@ -2826,6 +2976,42 @@ impl Breadcrumb {
                 .is_some_and(|rect| rect.contains(position))
         })
     }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+
+        self.hovered = hovered;
+        let theme = self.resolved_theme();
+        self.hover_motion.set_hover_target(hovered, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+
+        self.pressed = pressed;
+        let theme = self.resolved_theme();
+        self.press_motion.set_press_target(pressed, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
+        let (hover_changed, hover_active) = self.hover_motion.advance(time);
+        let (press_changed, press_active) = self.press_motion.advance(time);
+
+        if hover_changed || press_changed {
+            ctx.request_paint();
+        }
+        if hover_active || press_active {
+            ctx.request_animation_frame();
+        }
+    }
 }
 
 impl Widget for Breadcrumb {
@@ -2833,22 +3019,17 @@ impl Widget for Breadcrumb {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = self.item_at(ctx.bounds(), pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(hovered, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                self.pressed = self.item_at(ctx.bounds(), pointer.position);
-                self.hovered = self.pressed;
+                let pressed = self.item_at(ctx.bounds(), pointer.position);
+                self.set_hovered(pressed, ctx);
+                self.set_pressed(pressed, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -2864,27 +3045,24 @@ impl Widget for Breadcrumb {
                 {
                     self.activate(index);
                 }
-                self.hovered = hovered;
-                self.pressed = None;
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.advance_animations(*time, ctx);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 if self.items.is_empty() {
@@ -2943,13 +3121,17 @@ impl Widget for Breadcrumb {
             };
             let current = self.normalized_current() == index;
             let focused = ctx.is_focused() && self.focused_index == index;
-            let hovered = self.hovered == Some(index);
-            let pressed = self.pressed == Some(index);
+            let hover_amount = self.hover_motion.amount_for(&index);
+            let press_amount = self.press_motion.amount_for(&index);
 
-            if current || hovered || pressed || focused {
+            if current
+                || focused
+                || hover_amount > AnimatedScalar::EPSILON
+                || press_amount > AnimatedScalar::EPSILON
+            {
                 ctx.fill(
                     rounded_rect_path(rect, theme.metrics.corner_radius),
-                    data_row_state_fill(&theme, current || focused, hovered, pressed),
+                    data_row_state_fill(&theme, current || focused, hover_amount, press_amount),
                 );
             }
 
@@ -3342,11 +3524,143 @@ fn mix_color(from: Color, to: Color, amount: f32) -> Color {
     .clamped()
 }
 
+type AnimatedScalar = MotionScalar;
+
+fn set_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    duration: f64,
+    easing: crate::Easing,
+    ctx: &mut EventCtx,
+) -> bool {
+    animation.set_target_event(target, duration, easing, ctx)
+}
+
+fn set_hover_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.hover_duration(),
+        theme.motion.hover_easing(),
+        ctx,
+    )
+}
+
+fn set_press_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.press_duration(),
+        theme.motion.press_easing(),
+        ctx,
+    )
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct IndexedInteractionMotion<T>
+where
+    T: Clone + PartialEq,
+{
+    visual: Option<T>,
+    animation: AnimatedScalar,
+}
+
+impl<T> IndexedInteractionMotion<T>
+where
+    T: Clone + PartialEq,
+{
+    const fn new() -> Self {
+        Self {
+            visual: None,
+            animation: AnimatedScalar::new(0.0),
+        }
+    }
+
+    fn set_hover_target(
+        &mut self,
+        target: Option<T>,
+        theme: &DefaultTheme,
+        ctx: &mut EventCtx,
+    ) -> bool {
+        self.set_target(target, theme, ctx, |animation, target, theme, ctx| {
+            set_hover_animation_target(animation, target, theme, ctx)
+        })
+    }
+
+    fn set_press_target(
+        &mut self,
+        target: Option<T>,
+        theme: &DefaultTheme,
+        ctx: &mut EventCtx,
+    ) -> bool {
+        self.set_target(target, theme, ctx, |animation, target, theme, ctx| {
+            set_press_animation_target(animation, target, theme, ctx)
+        })
+    }
+
+    fn set_target(
+        &mut self,
+        target: Option<T>,
+        theme: &DefaultTheme,
+        ctx: &mut EventCtx,
+        set_animation: impl FnOnce(&mut AnimatedScalar, f32, &DefaultTheme, &mut EventCtx) -> bool,
+    ) -> bool {
+        match target {
+            Some(target) => {
+                if self.visual.as_ref() != Some(&target) {
+                    self.visual = Some(target);
+                    self.animation = AnimatedScalar::new(0.0);
+                }
+                set_animation(&mut self.animation, 1.0, theme, ctx)
+            }
+            None => {
+                let changed = set_animation(&mut self.animation, 0.0, theme, ctx);
+                if !changed && !self.animation.is_presented() {
+                    self.visual = None;
+                }
+                changed
+            }
+        }
+    }
+
+    fn amount_for(&self, key: &T) -> f32 {
+        self.amount_for_by(|visual| visual == key)
+    }
+
+    fn amount_for_by(&self, matches: impl FnOnce(&T) -> bool) -> f32 {
+        self.visual
+            .as_ref()
+            .filter(|visual| matches(visual))
+            .map(|_| self.animation.value)
+            .unwrap_or(0.0)
+    }
+
+    fn advance(&mut self, time: f64) -> (bool, bool) {
+        let previous = self.animation.value;
+        let active = self.animation.advance(time);
+        let changed = self.animation.changed_since(previous);
+        if !self.animation.is_presented() {
+            self.visual = None;
+        }
+        (changed, active)
+    }
+}
+
 fn data_row_state_fill(
     theme: &DefaultTheme,
     selected: bool,
-    hovered: bool,
-    pressed: bool,
+    hover_amount: f32,
+    press_amount: f32,
 ) -> Color {
     let palette = theme.palette;
     let interaction = theme.interaction;
@@ -3356,17 +3670,17 @@ fn data_row_state_fill(
             palette.accent,
             interaction.selected_blend * 0.18,
         )
-    } else if pressed {
+    } else if press_amount > AnimatedScalar::EPSILON {
         mix_color(
             palette.control,
             palette.control_active,
-            interaction.pressed_blend,
+            interaction.pressed_blend * press_amount,
         )
-    } else if hovered {
+    } else if hover_amount > AnimatedScalar::EPSILON {
         mix_color(
             palette.control,
             palette.control_hover,
-            interaction.hover_blend,
+            interaction.hover_blend * hover_amount,
         )
     } else {
         palette.control
@@ -3430,14 +3744,14 @@ fn paint_layer_visibility_button(
     rect: Rect,
     theme: &DefaultTheme,
     visible: bool,
-    hovered: bool,
-    pressed: bool,
+    hover_amount: f32,
+    press_amount: f32,
 ) {
     let palette = theme.palette;
-    if hovered || pressed {
+    if hover_amount > AnimatedScalar::EPSILON || press_amount > AnimatedScalar::EPSILON {
         ctx.fill(
             rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
-            data_row_state_fill(theme, false, hovered, pressed),
+            data_row_state_fill(theme, false, hover_amount, press_amount),
         );
     }
 
@@ -3487,14 +3801,14 @@ fn paint_layer_lock_button(
     rect: Rect,
     theme: &DefaultTheme,
     locked: bool,
-    hovered: bool,
-    pressed: bool,
+    hover_amount: f32,
+    press_amount: f32,
 ) {
     let palette = theme.palette;
-    if hovered || pressed {
+    if hover_amount > AnimatedScalar::EPSILON || press_amount > AnimatedScalar::EPSILON {
         ctx.fill(
             rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
-            data_row_state_fill(theme, false, hovered, pressed),
+            data_row_state_fill(theme, false, hover_amount, press_amount),
         );
     }
 
@@ -3821,7 +4135,7 @@ mod tests {
 
     fn selected_highlight_rects(output: &RenderOutput) -> Vec<Rect> {
         let theme = DefaultTheme::default();
-        let selected_brush = Brush::Solid(super::data_row_state_fill(&theme, true, false, false));
+        let selected_brush = Brush::Solid(super::data_row_state_fill(&theme, true, 0.0, 0.0));
         let mut rects = Vec::new();
         output
             .frame
@@ -4028,6 +4342,176 @@ mod tests {
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, position);
         scroll.scroll_delta = Some(ScrollDelta::Pixels(delta));
         Event::Pointer(scroll)
+    }
+
+    fn handle_ready_events(runtime: &mut Runtime) -> Result<usize> {
+        let ready = runtime.drain_ready_events();
+        let count = ready.len();
+        for (ready_window, event) in ready {
+            runtime.handle_event(ready_window, event)?;
+        }
+        Ok(count)
+    }
+
+    fn assert_pointer_hover_and_press_use_theme_motion(
+        runtime: &mut Runtime,
+        window_id: sui_core::WindowId,
+        position: Point,
+        theme: &DefaultTheme,
+    ) -> Result<()> {
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = super::data_row_state_fill(theme, false, 1.0, 0.0);
+        let expected_press = super::data_row_state_fill(theme, false, 0.0, 1.0);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, position, false),
+        )?;
+        runtime.tick(hover_duration * 0.5);
+        assert_eq!(handle_ready_events(runtime)?, 1);
+        let mid_hover = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_hover).contains(&expected_hover),
+            "hover fill should not snap to the settled hover color"
+        );
+
+        runtime.tick(hover_duration);
+        assert_eq!(handle_ready_events(runtime)?, 1);
+        let settled_hover = runtime.render(window_id)?;
+        assert!(
+            solid_fill_colors(&settled_hover).contains(&expected_hover),
+            "hover fill should settle to the theme interaction color"
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.tick(hover_duration + press_duration * 0.5);
+        assert_eq!(handle_ready_events(runtime)?, 1);
+        let mid_press = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_press).contains(&expected_press),
+            "press fill should not snap to the settled pressed color"
+        );
+
+        runtime.tick(hover_duration + press_duration);
+        assert_eq!(handle_ready_events(runtime)?, 1);
+        let settled_press = runtime.render(window_id)?;
+        assert!(
+            solid_fill_colors(&settled_press).contains(&expected_press),
+            "press fill should settle to the theme interaction color"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn list_view_row_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(260.0).height(140.0).with_child(
+                ListView::new("Assets").theme(theme).items([
+                    ListItem::new("First"),
+                    ListItem::new("Second"),
+                    ListItem::new("Third"),
+                ]),
+            ));
+
+        let output = runtime.render(window_id)?;
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Second")
+            })
+            .expect("second row semantics present");
+
+        assert_pointer_hover_and_press_use_theme_motion(
+            &mut runtime,
+            window_id,
+            rect_center(row.bounds),
+            &theme,
+        )
+    }
+
+    #[test]
+    fn layer_list_action_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(280.0).height(120.0).with_child(
+                LayerList::new("Layers")
+                    .theme(theme)
+                    .layers([LayerListItem::new("Paint"), LayerListItem::new("Ink")]),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let visibility = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hide Paint layer")
+            })
+            .expect("visibility button semantics present");
+
+        assert_pointer_hover_and_press_use_theme_motion(
+            &mut runtime,
+            window_id,
+            rect_center(visibility.bounds),
+            &theme,
+        )
+    }
+
+    #[test]
+    fn table_row_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let position = Point::new(
+            theme.metrics.data_viewport_padding.left + 24.0,
+            theme.metrics.data_viewport_padding.top
+                + theme.metrics.table_header_height
+                + theme.metrics.select_menu_gap
+                + theme.metrics.table_row_height * 0.5,
+        );
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(360.0).height(180.0).with_child(
+                Table::new("Objects")
+                    .theme(theme)
+                    .columns([TableColumn::new("Name"), TableColumn::new("State")])
+                    .rows([
+                        TableRow::new(["Canvas", "Visible"]),
+                        TableRow::new(["Lighting", "Locked"]),
+                    ]),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+        assert_pointer_hover_and_press_use_theme_motion(&mut runtime, window_id, position, &theme)
+    }
+
+    #[test]
+    fn breadcrumb_item_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(Breadcrumb::new("Path").theme(theme).items([
+            BreadcrumbItem::new("Workspace"),
+            BreadcrumbItem::new("Project"),
+            BreadcrumbItem::new("Scene"),
+        ]));
+
+        let output = runtime.render(window_id)?;
+        let project_label = text_rects_for(&output, "Project")
+            .into_iter()
+            .next()
+            .expect("project label should render");
+
+        assert_pointer_hover_and_press_use_theme_motion(
+            &mut runtime,
+            window_id,
+            rect_center(project_label),
+            &theme,
+        )
     }
 
     #[test]
