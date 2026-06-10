@@ -992,7 +992,11 @@ pub struct ToolPalette {
     selected: Option<usize>,
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<usize>,
+    hover_visual: Option<usize>,
     pressed: Option<usize>,
+    press_visual: Option<usize>,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
     extent: Option<f32>,
     padding: Option<Insets>,
     spacing: Option<f32>,
@@ -1023,7 +1027,11 @@ impl ToolPalette {
             selected: None,
             selected_reader: None,
             hovered: None,
+            hover_visual: None,
             pressed: None,
+            press_visual: None,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
             extent: None,
             padding: None,
             spacing: None,
@@ -1254,30 +1262,94 @@ impl ToolPalette {
             }
         }
     }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.hovered = hovered;
+        if let Some(index) = hovered {
+            self.hover_visual = Some(index);
+            self.hover_animation = AnimatedScalar::new(0.0);
+            set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+        } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
+            self.hover_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.pressed = pressed;
+        if let Some(index) = pressed {
+            self.press_visual = Some(index);
+            self.press_animation = AnimatedScalar::new(0.0);
+            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
+        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
+            self.press_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn hover_amount_for(&self, index: usize) -> f32 {
+        if self.hover_visual == Some(index) {
+            self.hover_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn press_amount_for(&self, index: usize) -> f32 {
+        if self.press_visual == Some(index) {
+            self.press_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        let hover_animating = self.hover_animation.advance(time);
+        if !hover_animating
+            && self.hovered.is_none()
+            && self.hover_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.hover_visual = None;
+        }
+
+        let press_animating = self.press_animation.advance(time);
+        if !press_animating
+            && self.pressed.is_none()
+            && self.press_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.press_visual = None;
+        }
+
+        hover_animating | press_animating
+    }
 }
 
 impl Widget for ToolPalette {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = self.hit_at(ctx.bounds(), pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(self.hit_at(ctx.bounds(), pointer.position), ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                self.hovered = self.hit_at(ctx.bounds(), pointer.position);
-                self.pressed = self.hovered;
+                let hovered = self.hit_at(ctx.bounds(), pointer.position);
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(hovered, ctx);
                 if self.pressed.is_some() {
                     ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -1294,25 +1366,19 @@ impl Widget for ToolPalette {
                 {
                     self.select(ctx, index);
                 }
-                self.hovered = hovered;
-                self.pressed = None;
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -1342,6 +1408,12 @@ impl Widget for ToolPalette {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -1415,7 +1487,8 @@ impl Widget for ToolPalette {
             };
             let selected_item = selected == Some(index);
             let hovered = self.hovered == Some(index);
-            let pressed = self.pressed == Some(index);
+            let hover_amount = self.hover_amount_for(index);
+            let press_amount = self.press_amount_for(index);
             let enabled = item.enabled;
             let base_background = if selected_item {
                 mix_color(palette.surface, palette.accent, interaction.selected_blend)
@@ -1428,17 +1501,29 @@ impl Widget for ToolPalette {
                     palette.surface,
                     interaction.disabled_opacity,
                 )
-            } else if pressed {
+            } else if press_amount > 0.0 {
                 mix_color(
-                    base_background,
+                    if hover_amount > 0.0 {
+                        mix_color(
+                            base_background,
+                            palette.control_hover,
+                            interaction.hover_blend
+                                * if selected_item { 0.35 } else { 1.0 }
+                                * hover_amount,
+                        )
+                    } else {
+                        base_background
+                    },
                     palette.control_active,
-                    interaction.pressed_blend * if selected_item { 0.45 } else { 1.0 },
+                    interaction.pressed_blend
+                        * if selected_item { 0.45 } else { 1.0 }
+                        * press_amount,
                 )
-            } else if hovered {
+            } else if hover_amount > 0.0 {
                 mix_color(
                     base_background,
                     palette.control_hover,
-                    interaction.hover_blend * if selected_item { 0.35 } else { 1.0 },
+                    interaction.hover_blend * if selected_item { 0.35 } else { 1.0 } * hover_amount,
                 )
             } else {
                 base_background
@@ -1449,7 +1534,7 @@ impl Widget for ToolPalette {
                 palette.border_focus
             } else if selected_item {
                 palette.accent_border
-            } else if hovered {
+            } else if hovered || hover_amount > 0.0 || press_amount > 0.0 {
                 palette.border_hover
             } else {
                 palette.border
@@ -1465,7 +1550,13 @@ impl Widget for ToolPalette {
             );
             let center = rect_center(rect);
             let side = icon_size.min(rect.width().min(rect.height())).max(0.0);
-            let icon_rect = Rect::new(center.x - side * 0.5, center.y - side * 0.5, side, side);
+            let pressed_offset = press_amount * interaction.pressed_offset;
+            let icon_rect = Rect::new(
+                center.x - side * 0.5,
+                center.y - side * 0.5 + pressed_offset,
+                side,
+                side,
+            );
             draw_icon_glyph(
                 ctx,
                 item.icon,
@@ -2131,6 +2222,46 @@ impl Widget for ActionCard {
     }
 }
 
+fn set_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    duration: f64,
+    easing: crate::Easing,
+    ctx: &mut EventCtx,
+) -> bool {
+    animation.set_target_event(target, duration, easing, ctx)
+}
+
+fn set_hover_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.hover_duration(),
+        theme.motion.hover_easing(),
+        ctx,
+    )
+}
+
+fn set_press_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.press_duration(),
+        theme.motion.press_easing(),
+        ctx,
+    )
+}
+
 fn set_action_card_animation_target(
     animation: &mut AnimatedScalar,
     target: f32,
@@ -2138,7 +2269,7 @@ fn set_action_card_animation_target(
     easing: crate::Easing,
     ctx: &mut EventCtx,
 ) {
-    animation.set_target_event(target, duration, easing, ctx);
+    set_animation_target(animation, target, duration, easing, ctx);
 }
 
 fn set_action_card_hover_animation_target(
@@ -3318,6 +3449,8 @@ pub struct PanelSection {
     expanded: bool,
     hovered_header: bool,
     pressed_header: bool,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
 }
 
 impl PanelSection {
@@ -3339,6 +3472,8 @@ impl PanelSection {
             expanded: true,
             hovered_header: false,
             pressed_header: false,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
         }
     }
 
@@ -3498,10 +3633,36 @@ impl PanelSection {
         }
 
         self.expanded = !self.expanded;
-        self.pressed_header = false;
+        self.set_pressed_header(false, ctx);
         ctx.request_measure();
         ctx.request_paint();
         ctx.request_semantics();
+    }
+
+    fn set_hovered_header(&mut self, hovered: bool, ctx: &mut EventCtx) {
+        if self.hovered_header == hovered {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.hovered_header = hovered;
+        set_hover_animation_target(&mut self.hover_animation, hovered as u8 as f32, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed_header(&mut self, pressed: bool, ctx: &mut EventCtx) {
+        if self.pressed_header == pressed {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.pressed_header = pressed;
+        set_press_animation_target(&mut self.press_animation, pressed as u8 as f32, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        self.hover_animation.advance(time) | self.press_animation.advance(time)
     }
 }
 
@@ -3516,11 +3677,7 @@ impl Widget for PanelSection {
                 let hovered = self
                     .header_hit_rect(ctx.bounds())
                     .contains(pointer.position);
-                if hovered != self.hovered_header {
-                    self.hovered_header = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered_header(hovered, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -3529,12 +3686,10 @@ impl Widget for PanelSection {
                         .header_hit_rect(ctx.bounds())
                         .contains(pointer.position) =>
             {
-                self.hovered_header = true;
-                self.pressed_header = true;
+                self.set_hovered_header(true, ctx);
+                self.set_pressed_header(true, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -3548,27 +3703,19 @@ impl Widget for PanelSection {
                 if hovered {
                     self.toggle(ctx);
                 }
-                self.hovered_header = hovered;
-                self.pressed_header = false;
+                self.set_hovered_header(hovered, ctx);
+                self.set_pressed_header(false, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered_header {
-                    self.hovered_header = false;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered_header(false, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.pressed_header || self.hovered_header {
-                    self.hovered_header = false;
-                    self.pressed_header = false;
+                    self.set_hovered_header(false, ctx);
+                    self.set_pressed_header(false, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -3580,6 +3727,12 @@ impl Widget for PanelSection {
                     }
                     _ => {}
                 }
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -3688,16 +3841,14 @@ impl Widget for PanelSection {
         );
         if self.collapsible {
             let header_hit = self.header_hit_rect(ctx.bounds());
-            let header_fill = if self.pressed_header {
-                theme
-                    .palette
-                    .accent
-                    .with_alpha((theme.interaction.selected_blend * 0.48).min(0.14))
-            } else if self.hovered_header {
-                theme
-                    .palette
-                    .accent
-                    .with_alpha((theme.interaction.hover_blend * 0.07).min(0.08))
+            let hover_amount = self.hover_animation.value;
+            let press_amount = self.press_animation.value;
+            let hover_alpha = (theme.interaction.hover_blend * 0.07 * hover_amount).min(0.08);
+            let press_alpha = (theme.interaction.selected_blend * 0.48 * press_amount).min(0.14);
+            let header_fill = if press_alpha > 0.0 {
+                theme.palette.accent.with_alpha(press_alpha)
+            } else if hover_alpha > 0.0 {
+                theme.palette.accent.with_alpha(hover_alpha)
             } else {
                 theme.palette.surface.with_alpha(0.001)
             };
@@ -3709,8 +3860,8 @@ impl Widget for PanelSection {
                 ctx,
                 self.header_rect(ctx.bounds()),
                 self.expanded,
-                self.hovered_header,
-                self.pressed_header,
+                hover_amount,
+                press_amount,
                 &theme,
                 metrics.panel_section_disclosure_size,
             );
@@ -3807,8 +3958,8 @@ fn paint_panel_section_disclosure(
     ctx: &mut PaintCtx,
     header: Rect,
     expanded: bool,
-    hovered: bool,
-    pressed: bool,
+    hover_amount: f32,
+    press_amount: f32,
     theme: &DefaultTheme,
     disclosure_size: f32,
 ) {
@@ -3819,13 +3970,9 @@ fn paint_panel_section_disclosure(
     );
     let half = disclosure_size * 0.25;
     let tip = disclosure_size * 0.22;
-    let color = if pressed {
-        palette.accent
-    } else if hovered {
-        palette.text
-    } else {
-        palette.text.with_alpha(0.68)
-    };
+    let base_color = palette.text.with_alpha(0.68);
+    let hover_color = mix_color(base_color, palette.text, hover_amount);
+    let color = mix_color(hover_color, palette.accent, press_amount);
     let mut builder = PathBuilder::new();
     if expanded {
         builder
@@ -4118,7 +4265,11 @@ pub struct PresetStrip {
     selected: Option<usize>,
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<usize>,
+    hover_visual: Option<usize>,
     pressed: Option<usize>,
+    press_visual: Option<usize>,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
     item_width: Option<f32>,
     item_height: Option<f32>,
     gap: Option<f32>,
@@ -4137,7 +4288,11 @@ impl PresetStrip {
             selected: None,
             selected_reader: None,
             hovered: None,
+            hover_visual: None,
             pressed: None,
+            press_visual: None,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
             item_width: None,
             item_height: None,
             gap: None,
@@ -4296,36 +4451,97 @@ impl PresetStrip {
         self.current_selected()
             .and_then(|index| self.presets.get(index).cloned())
     }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.hovered = hovered;
+        if let Some(index) = hovered {
+            self.hover_visual = Some(index);
+            self.hover_animation = AnimatedScalar::new(0.0);
+            set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+        } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
+            self.hover_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.pressed = pressed;
+        if let Some(index) = pressed {
+            self.press_visual = Some(index);
+            self.press_animation = AnimatedScalar::new(0.0);
+            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
+        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
+            self.press_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn hover_amount_for(&self, index: usize) -> f32 {
+        if self.hover_visual == Some(index) {
+            self.hover_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn press_amount_for(&self, index: usize) -> f32 {
+        if self.press_visual == Some(index) {
+            self.press_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        let hover_animating = self.hover_animation.advance(time);
+        if !hover_animating
+            && self.hovered.is_none()
+            && self.hover_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.hover_visual = None;
+        }
+
+        let press_animating = self.press_animation.advance(time);
+        if !press_animating
+            && self.pressed.is_none()
+            && self.press_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.press_visual = None;
+        }
+
+        hover_animating | press_animating
+    }
 }
 
 impl Widget for PresetStrip {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = self.item_at(ctx.bounds(), pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(self.item_at(ctx.bounds(), pointer.position), ctx);
             }
             Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                self.hovered = self.item_at(ctx.bounds(), pointer.position);
-                self.pressed = self.hovered;
+                let hovered = self.item_at(ctx.bounds(), pointer.position);
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(hovered, ctx);
                 if self.hovered.is_some() {
                     ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -4342,19 +4558,16 @@ impl Widget for PresetStrip {
                 {
                     self.activate(index);
                 }
-                self.hovered = hovered;
-                self.pressed = None;
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -4374,6 +4587,12 @@ impl Widget for PresetStrip {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -4429,31 +4648,35 @@ impl Widget for PresetStrip {
                 continue;
             };
             let is_selected = selected == Some(index);
-            let is_pressed = self.pressed == Some(index);
             let is_hovered = self.hovered == Some(index);
+            let hover_amount = self.hover_amount_for(index);
+            let press_amount = self.press_amount_for(index);
             let base_background = if is_selected {
                 palette.accent
             } else {
                 palette.surface
             };
-            let background = if is_pressed {
-                mix_color(
-                    base_background,
-                    palette.control_active,
-                    interaction.pressed_blend * if is_selected { 0.45 } else { 1.0 },
-                )
-            } else if is_hovered {
+            let hover_background = if hover_amount > 0.0 {
                 mix_color(
                     base_background,
                     palette.control_hover,
-                    interaction.hover_blend * if is_selected { 0.35 } else { 1.0 },
+                    interaction.hover_blend * if is_selected { 0.35 } else { 1.0 } * hover_amount,
                 )
             } else {
                 base_background
             };
+            let background = if press_amount > 0.0 {
+                mix_color(
+                    hover_background,
+                    palette.control_active,
+                    interaction.pressed_blend * if is_selected { 0.45 } else { 1.0 } * press_amount,
+                )
+            } else {
+                hover_background
+            };
             let border = if is_selected {
                 palette.accent_border
-            } else if is_hovered {
+            } else if is_hovered || hover_amount > 0.0 || press_amount > 0.0 {
                 palette.border_hover
             } else {
                 palette.border
@@ -4474,13 +4697,14 @@ impl Widget for PresetStrip {
             );
 
             let text_slot = inset_rect(rect, metrics.preset_strip_label_padding);
+            let pressed_offset = press_amount * interaction.pressed_offset;
             let text_style = TextStyle {
                 color: text_color,
                 ..style.clone()
             };
             let text_rect = aligned_text_rect_for_text(
                 ctx,
-                text_slot,
+                text_slot.translate(Vector::new(0.0, pressed_offset)),
                 preset,
                 &text_style,
                 text_style.line_height,
@@ -4993,7 +5217,11 @@ pub struct TabBar {
     selection_from: usize,
     selection_animation: AnimatedScalar,
     hovered: Option<usize>,
+    hover_visual: Option<usize>,
     pressed: Option<usize>,
+    press_visual: Option<usize>,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
     gap: Option<f32>,
     label_measurements: Vec<TextMeasurement>,
     widths: Vec<f32>,
@@ -5011,7 +5239,11 @@ impl TabBar {
             selection_from: 0,
             selection_animation: AnimatedScalar::new(1.0),
             hovered: None,
+            hover_visual: None,
             pressed: None,
+            press_visual: None,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
             gap: None,
             label_measurements: Vec::new(),
             widths: Vec::new(),
@@ -5168,11 +5400,26 @@ impl TabBar {
         let last = self.tabs.len() as isize - 1;
         let next = (selected + delta).clamp(0, last) as usize;
         self.activate(next, ctx);
-        self.hovered = Some(next);
+        self.set_hovered(Some(next), ctx);
     }
 
     fn advance_animations(&mut self, time: f64) -> bool {
-        self.selection_animation.advance(time)
+        let selection_animating = self.selection_animation.advance(time);
+        let hover_animating = self.hover_animation.advance(time);
+        if !hover_animating
+            && self.hovered.is_none()
+            && self.hover_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.hover_visual = None;
+        }
+        let press_animating = self.press_animation.advance(time);
+        if !press_animating
+            && self.pressed.is_none()
+            && self.press_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.press_visual = None;
+        }
+        selection_animating | hover_animating | press_animating
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -5181,35 +5428,76 @@ impl TabBar {
             .map(|theme| theme())
             .unwrap_or(*self.theme)
     }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.hovered = hovered;
+        if let Some(index) = hovered {
+            self.hover_visual = Some(index);
+            self.hover_animation = AnimatedScalar::new(0.0);
+            set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+        } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
+            self.hover_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.pressed = pressed;
+        if let Some(index) = pressed {
+            self.press_visual = Some(index);
+            self.press_animation = AnimatedScalar::new(0.0);
+            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
+        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
+            self.press_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn hover_amount_for(&self, index: usize) -> f32 {
+        if self.hover_visual == Some(index) {
+            self.hover_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn press_amount_for(&self, index: usize) -> f32 {
+        if self.press_visual == Some(index) {
+            self.press_animation.value
+        } else {
+            0.0
+        }
+    }
 }
 
 impl Widget for TabBar {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = self.tab_at(ctx.bounds(), pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(self.tab_at(ctx.bounds(), pointer.position), ctx);
             }
             Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                self.hovered = self.tab_at(ctx.bounds(), pointer.position);
-                self.pressed = self.hovered;
+                let hovered = self.tab_at(ctx.bounds(), pointer.position);
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(hovered, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -5225,19 +5513,16 @@ impl Widget for TabBar {
                 {
                     self.activate(index, ctx);
                 }
-                self.hovered = hovered;
-                self.pressed = None;
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -5310,10 +5595,17 @@ impl Widget for TabBar {
             let selected = self.normalized_selected() == index;
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
+            let hover_amount = self.hover_amount_for(index);
+            let press_amount = self.press_amount_for(index);
 
-            if let Some((background, border)) =
-                tab_state_visuals(&theme, selected, hovered, pressed)
-            {
+            if let Some((background, border)) = tab_state_visuals(
+                &theme,
+                selected,
+                hovered,
+                pressed,
+                hover_amount,
+                press_amount,
+            ) {
                 draw_control_shape(
                     ctx,
                     rect,
@@ -5330,9 +5622,10 @@ impl Widget for TabBar {
                 label_style.clone()
             };
             let text_slot = inset_rect(rect, tab_padding);
+            let pressed_offset = press_amount * interaction.pressed_offset;
             let text_rect = aligned_text_rect_for_text(
                 ctx,
-                text_slot,
+                text_slot.translate(Vector::new(0.0, pressed_offset)),
                 tab,
                 &text_style,
                 text_style.line_height,
@@ -5389,7 +5682,11 @@ pub struct Tabs {
     selection_from: usize,
     selection_animation: AnimatedScalar,
     hovered: Option<usize>,
+    hover_visual: Option<usize>,
     pressed: Option<usize>,
+    press_visual: Option<usize>,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
     label_measurements: Vec<TextMeasurement>,
     widths: Vec<f32>,
     gap: Option<f32>,
@@ -5409,7 +5706,11 @@ impl Tabs {
             selection_from: 0,
             selection_animation: AnimatedScalar::new(1.0),
             hovered: None,
+            hover_visual: None,
             pressed: None,
+            press_visual: None,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
             label_measurements: Vec::new(),
             widths: Vec::new(),
             gap: None,
@@ -5553,12 +5854,27 @@ impl Tabs {
 
         let next = (self.normalized_selected() as isize + delta)
             .clamp(0, self.labels.len() as isize - 1) as usize;
-        self.hovered = Some(next);
+        self.set_hovered(Some(next), ctx);
         self.select(next, ctx);
     }
 
     fn advance_animations(&mut self, time: f64) -> bool {
-        self.selection_animation.advance(time)
+        let selection_animating = self.selection_animation.advance(time);
+        let hover_animating = self.hover_animation.advance(time);
+        if !hover_animating
+            && self.hovered.is_none()
+            && self.hover_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.hover_visual = None;
+        }
+        let press_animating = self.press_animation.advance(time);
+        if !press_animating
+            && self.pressed.is_none()
+            && self.press_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.press_visual = None;
+        }
+        selection_animating | hover_animating | press_animating
     }
 
     fn selected_panel(&self) -> Option<&sui_runtime::WidgetPod> {
@@ -5576,36 +5892,77 @@ impl Tabs {
             .map(|theme| theme())
             .unwrap_or(*self.theme)
     }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.hovered = hovered;
+        if let Some(index) = hovered {
+            self.hover_visual = Some(index);
+            self.hover_animation = AnimatedScalar::new(0.0);
+            set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+        } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
+            self.hover_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.pressed = pressed;
+        if let Some(index) = pressed {
+            self.press_visual = Some(index);
+            self.press_animation = AnimatedScalar::new(0.0);
+            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
+        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
+            self.press_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn hover_amount_for(&self, index: usize) -> f32 {
+        if self.hover_visual == Some(index) {
+            self.hover_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn press_amount_for(&self, index: usize) -> f32 {
+        if self.press_visual == Some(index) {
+            self.press_animation.value
+        } else {
+            0.0
+        }
+    }
 }
 
 impl Widget for Tabs {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = self.tab_at(ctx.bounds(), pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(self.tab_at(ctx.bounds(), pointer.position), ctx);
             }
             Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary)
                     && self.header_rect(ctx.bounds()).contains(pointer.position) =>
             {
-                self.hovered = self.tab_at(ctx.bounds(), pointer.position);
-                self.pressed = self.hovered;
+                let hovered = self.tab_at(ctx.bounds(), pointer.position);
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(hovered, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -5623,20 +5980,17 @@ impl Widget for Tabs {
                         self.select(index, ctx);
                         ctx.request_measure();
                     }
-                    self.hovered = hovered;
-                    self.pressed = None;
+                    self.set_hovered(hovered, ctx);
+                    self.set_pressed(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -5754,6 +6108,7 @@ impl Widget for Tabs {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
         let tab_padding = metrics.tab_padding;
         let header = self.header_rect(ctx.bounds());
         let label_style = theme.body_text_style();
@@ -5774,10 +6129,17 @@ impl Widget for Tabs {
             let selected = self.normalized_selected() == index;
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
+            let hover_amount = self.hover_amount_for(index);
+            let press_amount = self.press_amount_for(index);
 
-            if let Some((background, border)) =
-                tab_state_visuals(&theme, selected, hovered, pressed)
-            {
+            if let Some((background, border)) = tab_state_visuals(
+                &theme,
+                selected,
+                hovered,
+                pressed,
+                hover_amount,
+                press_amount,
+            ) {
                 draw_control_shape(
                     ctx,
                     rect,
@@ -5794,9 +6156,10 @@ impl Widget for Tabs {
                 label_style.clone()
             };
             let text_slot = inset_rect(rect, tab_padding);
+            let pressed_offset = press_amount * interaction.pressed_offset;
             let text_rect = aligned_text_rect_for_text(
                 ctx,
-                text_slot,
+                text_slot.translate(Vector::new(0.0, pressed_offset)),
                 label,
                 &text_style,
                 text_style.line_height,
@@ -5813,7 +6176,7 @@ impl Widget for Tabs {
             self.normalized_selected(),
             self.selection_animation.value,
             tab_padding,
-            theme.interaction.active_indicator_thickness,
+            interaction.active_indicator_thickness,
         ) {
             ctx.fill(
                 rounded_rect_path(accent, accent.height() * 0.5),
@@ -5878,7 +6241,11 @@ pub struct Menu {
     name: String,
     items: Vec<MenuItem>,
     highlighted: Option<usize>,
+    highlight_visual: Option<usize>,
     pressed: Option<usize>,
+    press_visual: Option<usize>,
+    highlight_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
     measured_width: f32,
     focus_on_pointer_down: bool,
     on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
@@ -5893,7 +6260,11 @@ impl Menu {
             name: name.into(),
             items: Vec::new(),
             highlighted: None,
+            highlight_visual: None,
             pressed: None,
+            press_visual: None,
+            highlight_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
             measured_width: 220.0,
             focus_on_pointer_down: true,
             on_activate: None,
@@ -5930,6 +6301,8 @@ impl Menu {
 
     pub fn highlighted(mut self, index: usize) -> Self {
         self.highlighted = Some(index);
+        self.highlight_visual = Some(index);
+        self.highlight_animation = AnimatedScalar::new(1.0);
         self
     }
 
@@ -5997,7 +6370,7 @@ impl Menu {
         })
     }
 
-    fn move_highlight(&mut self, delta: isize) {
+    fn move_highlight(&mut self, delta: isize, ctx: &mut EventCtx) {
         if self.items.is_empty() {
             return;
         }
@@ -6012,7 +6385,7 @@ impl Menu {
             }
             index = next;
         }
-        self.highlighted = Some(index as usize);
+        self.set_highlighted(Some(index as usize), ctx);
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -6021,33 +6394,99 @@ impl Menu {
             .map(|theme| theme())
             .unwrap_or(*self.theme)
     }
+
+    fn set_highlighted(&mut self, highlighted: Option<usize>, ctx: &mut EventCtx) {
+        if self.highlighted == highlighted {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.highlighted = highlighted;
+        if let Some(index) = highlighted {
+            self.highlight_visual = Some(index);
+            self.highlight_animation = AnimatedScalar::new(0.0);
+            set_hover_animation_target(&mut self.highlight_animation, 1.0, &theme, ctx);
+        } else if !set_hover_animation_target(&mut self.highlight_animation, 0.0, &theme, ctx) {
+            self.highlight_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.pressed = pressed;
+        if let Some(index) = pressed {
+            self.press_visual = Some(index);
+            self.press_animation = AnimatedScalar::new(0.0);
+            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
+        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
+            self.press_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn highlight_amount_for(&self, index: usize) -> f32 {
+        if self.highlight_visual == Some(index) {
+            self.highlight_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn press_amount_for(&self, index: usize) -> f32 {
+        if self.press_visual == Some(index) {
+            self.press_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        let highlight_animating = self.highlight_animation.advance(time);
+        if !highlight_animating
+            && self.highlighted.is_none()
+            && self.highlight_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.highlight_visual = None;
+        }
+
+        let press_animating = self.press_animation.advance(time);
+        if !press_animating
+            && self.pressed.is_none()
+            && self.press_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.press_visual = None;
+        }
+
+        highlight_animating | press_animating
+    }
 }
 
 impl Widget for Menu {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let highlighted = self.item_at(ctx.bounds(), pointer.position);
-                if highlighted != self.highlighted {
-                    self.highlighted = highlighted;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_highlighted(self.item_at(ctx.bounds(), pointer.position), ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                self.highlighted = self.item_at(ctx.bounds(), pointer.position);
-                self.pressed = self
-                    .highlighted
-                    .filter(|index| self.items.get(*index).is_some_and(|item| item.enabled));
+                let highlighted = self.item_at(ctx.bounds(), pointer.position);
+                self.set_highlighted(highlighted, ctx);
+                self.set_pressed(
+                    highlighted
+                        .filter(|index| self.items.get(*index).is_some_and(|item| item.enabled)),
+                    ctx,
+                );
                 if self.focus_on_pointer_down {
                     ctx.request_focus();
                 }
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -6063,30 +6502,27 @@ impl Widget for Menu {
                 {
                     self.activate(ctx, index);
                 }
-                self.highlighted = highlighted;
-                self.pressed = None;
+                self.set_highlighted(highlighted, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
-                    "ArrowDown" => self.move_highlight(1),
-                    "ArrowUp" => self.move_highlight(-1),
+                    "ArrowDown" => self.move_highlight(1, ctx),
+                    "ArrowUp" => self.move_highlight(-1, ctx),
                     "Home" => {
-                        self.highlighted = self.items.iter().position(|item| item.enabled);
+                        self.set_highlighted(self.items.iter().position(|item| item.enabled), ctx);
                     }
                     "End" => {
-                        self.highlighted = self.items.iter().rposition(|item| item.enabled);
+                        self.set_highlighted(self.items.iter().rposition(|item| item.enabled), ctx);
                     }
                     "Enter" | " " => {
                         if let Some(index) = self.highlighted {
@@ -6098,6 +6534,12 @@ impl Widget for Menu {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -6174,7 +6616,8 @@ impl Widget for Menu {
             }
 
             let highlighted = self.highlighted == Some(index);
-            let pressed = self.pressed == Some(index);
+            let highlight_amount = self.highlight_amount_for(index);
+            let press_amount = self.press_amount_for(index);
             let label_style = theme.text_style(item.text_color(&theme));
             let label_slot = Rect::new(
                 row.x() + item_padding.left,
@@ -6190,18 +6633,24 @@ impl Widget for Menu {
                 .max(0.0),
                 row.height(),
             );
-            if highlighted || pressed {
+            if highlighted || highlight_amount > 0.0 || press_amount > 0.0 {
+                let highlight_background = mix_color(
+                    palette.control,
+                    palette.accent,
+                    interaction.selected_blend * highlight_amount,
+                );
+                let background = if press_amount > 0.0 {
+                    mix_color(
+                        highlight_background,
+                        palette.control_active,
+                        interaction.pressed_blend * press_amount,
+                    )
+                } else {
+                    highlight_background
+                };
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
-                    if pressed {
-                        mix_color(
-                            palette.control,
-                            palette.control_active,
-                            interaction.pressed_blend,
-                        )
-                    } else {
-                        mix_color(palette.control, palette.accent, interaction.selected_blend)
-                    },
+                    background,
                 );
             }
 
@@ -7136,10 +7585,14 @@ struct ContextMenuPresentationState {
     theme: DefaultTheme,
     items: Vec<MenuItem>,
     highlighted: Option<usize>,
+    highlight_visual: Option<usize>,
     pressed: Option<usize>,
+    press_visual: Option<usize>,
     frame_rect: Rect,
     row_height: f32,
     reveal: AnimatedScalar,
+    highlight_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
 }
 
 impl ContextMenuPresentationState {
@@ -7149,10 +7602,14 @@ impl ContextMenuPresentationState {
             theme,
             items: Vec::new(),
             highlighted: None,
+            highlight_visual: None,
             pressed: None,
+            press_visual: None,
             frame_rect: Rect::ZERO,
             row_height: menu_row_height(&theme),
             reveal: AnimatedScalar::new(0.0),
+            highlight_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
         }
     }
 
@@ -7182,6 +7639,22 @@ impl ContextMenuPresentationState {
                 0.0,
                 -self.theme.metrics.popover_reveal_offset * (1.0 - self.reveal.value),
             ),
+        }
+    }
+
+    fn highlight_amount_for(&self, index: usize) -> f32 {
+        if self.highlight_visual == Some(index) {
+            self.highlight_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn press_amount_for(&self, index: usize) -> f32 {
+        if self.press_visual == Some(index) {
+            self.press_animation.value
+        } else {
+            0.0
         }
     }
 }
@@ -7246,7 +7719,8 @@ impl Widget for ContextMenuSurface {
             }
 
             let highlighted = state.highlighted == Some(index);
-            let pressed = state.pressed == Some(index);
+            let highlight_amount = state.highlight_amount_for(index);
+            let press_amount = state.press_amount_for(index);
             let label_style = theme.text_style(item.text_color(&theme));
             let label_slot = Rect::new(
                 row.x() + item_padding.left,
@@ -7262,18 +7736,24 @@ impl Widget for ContextMenuSurface {
                 .max(0.0),
                 row.height(),
             );
-            if highlighted || pressed {
+            if highlighted || highlight_amount > 0.0 || press_amount > 0.0 {
+                let highlight_background = mix_color(
+                    palette.control,
+                    palette.accent,
+                    interaction.selected_blend * highlight_amount,
+                );
+                let background = if press_amount > 0.0 {
+                    mix_color(
+                        highlight_background,
+                        palette.control_active,
+                        interaction.pressed_blend * press_amount,
+                    )
+                } else {
+                    highlight_background
+                };
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
-                    if pressed {
-                        mix_color(
-                            palette.control,
-                            palette.control_active,
-                            interaction.pressed_blend,
-                        )
-                    } else {
-                        mix_color(palette.control, palette.accent, interaction.selected_blend)
-                    },
+                    background,
                 );
             }
 
@@ -7350,7 +7830,11 @@ pub struct ContextMenu {
     items: Vec<MenuItem>,
     open: bool,
     highlighted: Option<usize>,
+    highlight_visual: Option<usize>,
     pressed: Option<usize>,
+    press_visual: Option<usize>,
+    highlight_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
     frame_rect: Rect,
     surface: SingleChild,
     surface_state: Rc<RefCell<ContextMenuPresentationState>>,
@@ -7373,7 +7857,11 @@ impl ContextMenu {
             items: Vec::new(),
             open: false,
             highlighted: None,
+            highlight_visual: None,
             pressed: None,
+            press_visual: None,
+            highlight_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
             frame_rect: Rect::ZERO,
             surface: SingleChild::new(ContextMenuSurface::new(Rc::clone(&surface_state))),
             surface_state,
@@ -7500,7 +7988,11 @@ impl ContextMenu {
         state.theme = theme;
         state.items = self.items.clone();
         state.highlighted = self.highlighted;
+        state.highlight_visual = self.highlight_visual;
         state.pressed = self.pressed;
+        state.press_visual = self.press_visual;
+        state.highlight_animation = self.highlight_animation;
+        state.press_animation = self.press_animation;
         state.frame_rect = self.frame_rect.translate(bounds.origin.to_vector());
         state.row_height = self.row_height();
     }
@@ -7508,15 +8000,80 @@ impl ContextMenu {
     fn refresh_surface_interaction_state(&self, ctx: &mut EventCtx) {
         let surface_id = self.surface.child().id();
         let mut state = self.surface_state.borrow_mut();
-        let changed = state.highlighted != self.highlighted || state.pressed != self.pressed;
+        let changed = state.highlighted != self.highlighted
+            || state.highlight_visual != self.highlight_visual
+            || state.pressed != self.pressed
+            || state.press_visual != self.press_visual
+            || state.highlight_animation != self.highlight_animation
+            || state.press_animation != self.press_animation;
         state.highlighted = self.highlighted;
+        state.highlight_visual = self.highlight_visual;
         state.pressed = self.pressed;
+        state.press_visual = self.press_visual;
+        state.highlight_animation = self.highlight_animation;
+        state.press_animation = self.press_animation;
         let presented = state.is_presented();
         drop(state);
 
         if changed && presented {
             request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
         }
+    }
+
+    fn set_highlighted(&mut self, highlighted: Option<usize>, ctx: &mut EventCtx) {
+        if self.highlighted == highlighted {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.highlighted = highlighted;
+        if let Some(index) = highlighted {
+            self.highlight_visual = Some(index);
+            self.highlight_animation = AnimatedScalar::new(0.0);
+            set_hover_animation_target(&mut self.highlight_animation, 1.0, &theme, ctx);
+        } else if !set_hover_animation_target(&mut self.highlight_animation, 0.0, &theme, ctx) {
+            self.highlight_visual = None;
+        }
+        self.refresh_surface_interaction_state(ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.pressed = pressed;
+        if let Some(index) = pressed {
+            self.press_visual = Some(index);
+            self.press_animation = AnimatedScalar::new(0.0);
+            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
+        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
+            self.press_visual = None;
+        }
+        self.refresh_surface_interaction_state(ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn advance_row_animations(&mut self, time: f64) -> bool {
+        let highlight_animating = self.highlight_animation.advance(time);
+        if !highlight_animating
+            && self.highlighted.is_none()
+            && self.highlight_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.highlight_visual = None;
+        }
+
+        let press_animating = self.press_animation.advance(time);
+        if !press_animating
+            && self.pressed.is_none()
+            && self.press_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.press_visual = None;
+        }
+
+        highlight_animating | press_animating
     }
 
     fn set_open(&mut self, ctx: &mut EventCtx, open: bool) {
@@ -7530,7 +8087,11 @@ impl ContextMenu {
         } else {
             None
         };
+        self.highlight_visual = self.highlighted;
+        self.highlight_animation = AnimatedScalar::new(self.highlighted.is_some() as u8 as f32);
         self.pressed = None;
+        self.press_visual = None;
+        self.press_animation = AnimatedScalar::new(0.0);
 
         let surface_id = self.surface.child().id();
         let theme = self.resolved_theme();
@@ -7538,7 +8099,11 @@ impl ContextMenu {
         state.theme = theme;
         state.items = self.items.clone();
         state.highlighted = self.highlighted;
+        state.highlight_visual = self.highlight_visual;
         state.pressed = self.pressed;
+        state.press_visual = self.press_visual;
+        state.highlight_animation = self.highlight_animation;
+        state.press_animation = self.press_animation;
         let was_presented = state.is_presented();
         let should_animate = if open {
             let motion = theme.motion;
@@ -7586,13 +8151,7 @@ impl Widget for ContextMenu {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move && self.open => {
-                let highlighted = self.item_at(ctx.bounds(), pointer.position);
-                if highlighted != self.highlighted {
-                    self.highlighted = highlighted;
-                    self.refresh_surface_interaction_state(ctx);
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_highlighted(self.item_at(ctx.bounds(), pointer.position), ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -7609,16 +8168,15 @@ impl Widget for ContextMenu {
                     && self.open =>
             {
                 if let Some(index) = self.item_at(ctx.bounds(), pointer.position) {
-                    self.highlighted = Some(index);
-                    self.pressed = self
-                        .items
-                        .get(index)
-                        .filter(|item| item.enabled)
-                        .map(|_| index);
+                    self.set_highlighted(Some(index), ctx);
+                    self.set_pressed(
+                        self.items
+                            .get(index)
+                            .filter(|item| item.enabled)
+                            .map(|_| index),
+                        ctx,
+                    );
                     ctx.request_pointer_capture(pointer.pointer_id);
-                    self.refresh_surface_interaction_state(ctx);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 } else if !self.trigger_rect().contains(pointer.position) {
                     self.set_open(ctx, false);
@@ -7639,19 +8197,14 @@ impl Widget for ContextMenu {
                     self.activate(ctx, index);
                     self.set_open(ctx, false);
                 }
-                self.pressed = None;
-                self.refresh_surface_interaction_state(ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.refresh_surface_interaction_state(ctx);
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -7662,14 +8215,14 @@ impl Widget for ContextMenu {
                     "ArrowDown" => {
                         let mut menu = Menu::new("temp").items(self.items.clone());
                         menu.highlighted = self.highlighted;
-                        menu.move_highlight(1);
-                        self.highlighted = menu.highlighted;
+                        menu.move_highlight(1, ctx);
+                        self.set_highlighted(menu.highlighted, ctx);
                     }
                     "ArrowUp" => {
                         let mut menu = Menu::new("temp").items(self.items.clone());
                         menu.highlighted = self.highlighted;
-                        menu.move_highlight(-1);
-                        self.highlighted = menu.highlighted;
+                        menu.move_highlight(-1, ctx);
+                        self.set_highlighted(menu.highlighted, ctx);
                     }
                     "Enter" | " " => {
                         if let Some(index) = self.highlighted {
@@ -7692,12 +8245,22 @@ impl Widget for ContextMenu {
                 let mut state = self.surface_state.borrow_mut();
                 let was_presented = state.is_presented();
                 let previous = state.reveal.value;
-                let animating = state.reveal.advance(*time);
-                let changed = state.reveal.changed_since(previous);
+                let reveal_animating = state.reveal.advance(*time);
+                let reveal_changed = state.reveal.changed_since(previous);
                 let is_presented = state.is_presented();
                 drop(state);
 
-                if changed {
+                let previous_highlight = self.highlight_animation.value;
+                let previous_press = self.press_animation.value;
+                let row_animating = self.advance_row_animations(*time);
+                let row_changed = self.highlight_animation.changed_since(previous_highlight)
+                    || self.press_animation.changed_since(previous_press);
+                if row_changed {
+                    self.refresh_surface_interaction_state(ctx);
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
+                }
+
+                if reveal_changed {
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Transform);
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Effect);
                 }
@@ -7705,7 +8268,7 @@ impl Widget for ContextMenu {
                     ctx.request_measure();
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
                 }
-                if animating {
+                if reveal_animating || row_animating {
                     ctx.request_animation_frame();
                 }
                 ctx.set_handled();
@@ -7728,7 +8291,11 @@ impl Widget for ContextMenu {
                 state.theme = theme;
                 state.items = self.items.clone();
                 state.highlighted = self.highlighted;
+                state.highlight_visual = self.highlight_visual;
                 state.pressed = self.pressed;
+                state.press_visual = self.press_visual;
+                state.highlight_animation = self.highlight_animation;
+                state.press_animation = self.press_animation;
                 state.frame_rect = Rect::from_origin_size(Point::ZERO, self.frame_rect.size);
                 state.row_height = self.row_height();
             }
@@ -8730,6 +9297,8 @@ fn tab_state_visuals(
     selected: bool,
     hovered: bool,
     pressed: bool,
+    hover_amount: f32,
+    press_amount: f32,
 ) -> Option<(Color, Color)> {
     let palette = theme.palette;
     let interaction = theme.interaction;
@@ -8742,21 +9311,29 @@ fn tab_state_visuals(
             ),
             palette.border_focus,
         ))
-    } else if pressed {
+    } else if pressed || press_amount > 0.0 {
         Some((
             mix_color(
-                palette.control,
+                if hover_amount > 0.0 {
+                    mix_color(
+                        palette.control,
+                        palette.control_hover,
+                        interaction.hover_blend * hover_amount,
+                    )
+                } else {
+                    palette.control
+                },
                 palette.control_active,
-                interaction.pressed_blend,
+                interaction.pressed_blend * press_amount,
             ),
             palette.border_hover,
         ))
-    } else if hovered {
+    } else if hovered || hover_amount > 0.0 {
         Some((
             mix_color(
                 palette.control,
                 palette.control_hover,
-                interaction.hover_blend,
+                interaction.hover_blend * hover_amount,
             ),
             palette.border_hover,
         ))
@@ -9912,6 +10489,92 @@ mod tests {
     }
 
     #[test]
+    fn preset_strip_hover_and_press_use_theme_motion() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = super::mix_color(
+            theme.palette.surface,
+            theme.palette.control_hover,
+            theme.interaction.hover_blend,
+        );
+        let expected_press = super::mix_color(
+            expected_hover,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(220.0, 32.0))
+                .with_child(
+                    PresetStrip::new("Brush presets")
+                        .theme(theme)
+                        .presets(["8 px", "18 px", "36 px"]),
+                ),
+        );
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let preset = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("18 px")
+            })
+            .expect("target preset button should exist");
+        let position = super::rect_center(preset.bounds);
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime
+            .handle_event(window_id, Event::Pointer(move_event))
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_hover).contains(&expected_hover),
+            "hover fill should not snap to the settled hover color"
+        );
+
+        runtime.tick(hover_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, position, true),
+            )
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration + press_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_press).contains(&expected_press),
+            "press fill should not snap to the settled pressed color"
+        );
+
+        runtime.tick(hover_duration + press_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_press).contains(&expected_press));
+
+        Ok(())
+    }
+
+    #[test]
     fn status_bar_exposes_dynamic_segment_semantics() {
         let zoom = Rc::new(RefCell::new("Zoom 35%".to_string()));
         let zoom_reader = Rc::clone(&zoom);
@@ -10291,6 +10954,92 @@ mod tests {
                 && node.name.as_deref() == Some("Fill tool")
                 && node.state.selected
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn tool_palette_hover_and_press_use_theme_motion() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = super::mix_color(
+            theme.palette.surface,
+            theme.palette.control_hover,
+            theme.interaction.hover_blend,
+        );
+        let expected_press = super::mix_color(
+            expected_hover,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(64.0, 180.0))
+                .with_child(ToolPalette::vertical("Paint tools").theme(theme).items([
+                    ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
+                    ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
+                    ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
+                ])),
+        );
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let eraser = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Eraser tool")
+            })
+            .expect("eraser tool button semantics should exist");
+        let position = super::rect_center(eraser.bounds);
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime
+            .handle_event(window_id, Event::Pointer(move_event))
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_hover).contains(&expected_hover),
+            "tool hover fill should not snap to the settled hover color"
+        );
+
+        runtime.tick(hover_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, position, true),
+            )
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration + press_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_press).contains(&expected_press),
+            "tool press fill should not snap to the settled pressed color"
+        );
+
+        runtime.tick(hover_duration + press_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_press).contains(&expected_press));
+
         Ok(())
     }
 
@@ -11031,6 +11780,85 @@ mod tests {
     }
 
     #[test]
+    fn collapsible_panel_section_header_motion_uses_theme_motion() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = theme
+            .palette
+            .accent
+            .with_alpha((theme.interaction.hover_blend * 0.07).min(0.08));
+        let expected_press = theme
+            .palette
+            .accent
+            .with_alpha((theme.interaction.selected_blend * 0.48).min(0.14));
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 120.0))
+                .with_child(
+                    PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
+                        .theme(theme)
+                        .collapsible(true)
+                        .collapsed(),
+                ),
+        );
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let title = text_run_for(&output, "Advanced color");
+        let position = super::rect_center(title.rect);
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime
+            .handle_event(window_id, Event::Pointer(move_event))
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_hover).contains(&expected_hover),
+            "panel header hover fill should not snap to the settled hover color"
+        );
+
+        runtime.tick(hover_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, position, true),
+            )
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration + press_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_press).contains(&expected_press),
+            "panel header press fill should not snap to the settled pressed color"
+        );
+
+        runtime.tick(hover_duration + press_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_press).contains(&expected_press));
+
+        Ok(())
+    }
+
+    #[test]
     fn panel_section_title_id_is_javascript_safe() {
         let id = super::panel_section_title_id(WidgetId::new(402)).get();
 
@@ -11682,6 +12510,111 @@ mod tests {
     }
 
     #[test]
+    fn tab_hover_and_press_chrome_use_theme_motion() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = super::mix_color(
+            theme.palette.control,
+            theme.palette.control_hover,
+            theme.interaction.hover_blend,
+        );
+        let expected_press = super::mix_color(
+            expected_hover,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+
+        fn assert_tab_header_motion<W>(
+            root: W,
+            hover_duration: f64,
+            press_duration: f64,
+            expected_hover: Color,
+            expected_press: Color,
+        ) -> Result<(), String>
+        where
+            W: Widget + 'static,
+        {
+            let (mut runtime, window_id) = build_runtime(root);
+            let initial = runtime
+                .render(window_id)
+                .map_err(|error| error.to_string())?;
+            let second_tab_point = super::rect_center(text_run_for(&initial, "Inspect").rect);
+
+            let mut move_event = PointerEvent::new(PointerEventKind::Move, second_tab_point);
+            move_event.pointer_id = 1;
+            runtime
+                .handle_event(window_id, Event::Pointer(move_event))
+                .map_err(|error| error.to_string())?;
+
+            runtime.tick(hover_duration * 0.5);
+            assert_eq!(handle_ready_events(&mut runtime)?, 1);
+            let mid_hover = runtime
+                .render(window_id)
+                .map_err(|error| error.to_string())?;
+            assert!(
+                !solid_fill_colors(&mid_hover).contains(&expected_hover),
+                "tab hover fill should not snap to the settled hover color"
+            );
+
+            runtime.tick(hover_duration);
+            assert_eq!(handle_ready_events(&mut runtime)?, 1);
+            let settled_hover = runtime
+                .render(window_id)
+                .map_err(|error| error.to_string())?;
+            assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+            runtime
+                .handle_event(
+                    window_id,
+                    primary_pointer(PointerEventKind::Down, second_tab_point, true),
+                )
+                .map_err(|error| error.to_string())?;
+
+            runtime.tick(hover_duration + press_duration * 0.5);
+            assert_eq!(handle_ready_events(&mut runtime)?, 1);
+            let mid_press = runtime
+                .render(window_id)
+                .map_err(|error| error.to_string())?;
+            assert!(
+                !solid_fill_colors(&mid_press).contains(&expected_press),
+                "tab press fill should not snap to the settled pressed color"
+            );
+
+            runtime.tick(hover_duration + press_duration);
+            assert_eq!(handle_ready_events(&mut runtime)?, 1);
+            let settled_press = runtime
+                .render(window_id)
+                .map_err(|error| error.to_string())?;
+            assert!(solid_fill_colors(&settled_press).contains(&expected_press));
+
+            Ok(())
+        }
+
+        assert_tab_header_motion(
+            TabBar::new("Main tabs")
+                .theme(theme)
+                .tabs(["Design", "Inspect"]),
+            hover_duration,
+            press_duration,
+            expected_hover,
+            expected_press,
+        )?;
+        assert_tab_header_motion(
+            Tabs::new("Main tabs")
+                .theme(theme)
+                .tab("Design", crate::Label::new("Design"))
+                .tab("Inspect", crate::Label::new("Inspect")),
+            hover_duration,
+            press_duration,
+            expected_hover,
+            expected_press,
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
     fn tab_bar_switch_animation_uses_theme_motion() -> Result<(), String> {
         let theme = DefaultTheme::default();
         let switch_duration = theme.motion.tab_switch_duration();
@@ -11869,6 +12802,88 @@ mod tests {
         let row_center = padding.top + (row_height * 0.5);
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = super::mix_color(
+            theme.palette.control,
+            theme.palette.accent,
+            theme.interaction.selected_blend,
+        );
+        let expected_press = super::mix_color(
+            expected_hover,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+        let (mut runtime, window_id) = build_runtime(
+            Menu::new("App menu")
+                .theme(theme)
+                .items([MenuItem::new("New File"), MenuItem::new("Open...")]),
+        );
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let item = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("New File")
+            })
+            .expect("menu item semantics should exist");
+        let position = super::rect_center(item.bounds);
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime
+            .handle_event(window_id, Event::Pointer(move_event))
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_hover).contains(&expected_hover),
+            "menu hover fill should not snap to the settled highlighted color"
+        );
+
+        runtime.tick(hover_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, position, true),
+            )
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration + press_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_press).contains(&expected_press),
+            "menu press fill should not snap to the settled pressed color"
+        );
+
+        runtime.tick(hover_duration + press_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_press).contains(&expected_press));
+
+        Ok(())
     }
 
     #[test]
@@ -12233,6 +13248,107 @@ mod tests {
                 .map_err(|error| error.to_string())?,
             None
         );
+        Ok(())
+    }
+
+    #[test]
+    fn context_menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = super::mix_color(
+            theme.palette.control,
+            theme.palette.accent,
+            theme.interaction.selected_blend,
+        );
+        let expected_press = super::mix_color(
+            expected_hover,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+        let (mut runtime, window_id) = build_runtime(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .theme(theme)
+                .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
+        );
+
+        let closed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("context menu trigger present")
+            .bounds;
+        let trigger_center = super::rect_center(trigger);
+        let mut secondary_down = PointerEvent::new(PointerEventKind::Down, trigger_center);
+        secondary_down.pointer_id = 1;
+        secondary_down.button = Some(PointerButton::Secondary);
+        secondary_down.buttons = PointerButtons::new(2);
+        runtime
+            .handle_event(window_id, Event::Pointer(secondary_down))
+            .map_err(|error| error.to_string())?;
+
+        let opened = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let duplicate = opened
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Duplicate")
+            })
+            .expect("duplicate menu item semantics should exist");
+        let position = super::rect_center(duplicate.bounds);
+
+        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
+        move_event.pointer_id = 1;
+        runtime
+            .handle_event(window_id, Event::Pointer(move_event))
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_hover).contains(&expected_hover),
+            "context menu hover fill should not snap to the settled highlighted color"
+        );
+
+        runtime.tick(hover_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_hover = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, position, true),
+            )
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(hover_duration + press_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !solid_fill_colors(&mid_press).contains(&expected_press),
+            "context menu press fill should not snap to the settled pressed color"
+        );
+
+        runtime.tick(hover_duration + press_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_press = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&settled_press).contains(&expected_press));
+
         Ok(())
     }
 

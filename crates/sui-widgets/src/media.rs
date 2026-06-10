@@ -1,7 +1,7 @@
 use sui_core::{
     Color, ColorSpace, Event, ImageHandle, KeyState, Path, PathBuilder, Point, PointerButton,
     PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
-    WidgetId,
+    WakeEvent, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
@@ -9,7 +9,7 @@ use sui_scene::{ImageSource, StrokeStyle, WidgetShader};
 use sui_text::{FontFeature, TextStyle};
 
 use crate::{
-    ControlMetrics, DefaultTheme, ThemeDensity, ThemeTextToken,
+    ControlMetrics, DefaultTheme, MotionScalar, ThemeDensity, ThemeTextToken,
     text_align::aligned_text_rect_for_text,
 };
 
@@ -229,6 +229,9 @@ pub struct ColorSwatch {
     size: Option<Size>,
     hovered: bool,
     pressed: bool,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     read_only: bool,
     on_press: Option<Box<dyn FnMut(Color)>>,
 }
@@ -244,6 +247,9 @@ impl ColorSwatch {
             size: None,
             hovered: false,
             pressed: false,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             read_only: false,
             on_press: None,
         }
@@ -316,6 +322,42 @@ impl ColorSwatch {
             theme.metrics.color_swatch_height,
         ))
     }
+
+    fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
+        if self.hovered != hovered {
+            let theme = self.resolved_theme();
+            self.hovered = hovered;
+            set_hover_animation_target(
+                &mut self.hover_animation,
+                hovered as u8 as f32,
+                &theme,
+                ctx,
+            );
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
+    fn set_pressed(&mut self, pressed: bool, ctx: &mut EventCtx) {
+        if self.pressed != pressed {
+            let theme = self.resolved_theme();
+            self.pressed = pressed;
+            set_press_animation_target(
+                &mut self.press_animation,
+                pressed as u8 as f32,
+                &theme,
+                ctx,
+            );
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        self.hover_animation.advance(time)
+            | self.press_animation.advance(time)
+            | self.focus_animation.advance(time)
+    }
 }
 
 impl Widget for ColorSwatch {
@@ -339,24 +381,17 @@ impl Widget for ColorSwatch {
 
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = ctx.bounds().contains(pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary)
                     && ctx.bounds().contains(pointer.position) =>
             {
-                self.pressed = true;
-                self.hovered = true;
+                self.set_pressed(true, ctx);
+                self.set_hovered(true, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -367,27 +402,19 @@ impl Widget for ColorSwatch {
                 if self.pressed && hovered {
                     self.activate();
                 }
-                self.pressed = false;
-                self.hovered = hovered;
+                self.set_pressed(false, ctx);
+                self.set_hovered(hovered, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered {
-                    self.hovered = false;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(false, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.pressed {
-                    self.pressed = false;
-                    self.hovered = false;
+                    self.set_pressed(false, ctx);
+                    self.set_hovered(false, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                 }
             }
             Event::Keyboard(key)
@@ -399,6 +426,12 @@ impl Widget for ColorSwatch {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -413,11 +446,7 @@ impl Widget for ColorSwatch {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let palette = theme.palette;
-        let pressed_offset = if self.pressed {
-            theme.interaction.pressed_offset
-        } else {
-            0.0
-        };
+        let pressed_offset = self.press_animation.value * theme.interaction.pressed_offset;
         let body = Rect::new(
             ctx.bounds().x(),
             ctx.bounds().y() + pressed_offset,
@@ -429,27 +458,33 @@ impl Widget for ColorSwatch {
         let inner_radius = (outer_radius - inner_inset).max(0.0);
         let color = self.current_color();
 
-        if ctx.is_focused() {
+        if self.focus_animation.value > 0.0 {
             let focus_outset = metrics.focus_ring_outset;
             ctx.stroke(
                 rounded_rect_path(
                     ctx.bounds().inflate(focus_outset, focus_outset),
                     outer_radius + focus_outset,
                 ),
-                palette.focus_ring,
+                palette.focus_ring.with_alpha(self.focus_animation.value),
                 StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
             );
         }
 
-        if self.pressed {
+        if self.press_animation.value > 0.0 {
             ctx.fill(
                 rounded_rect_path(ctx.bounds(), outer_radius),
-                palette.control_active,
+                mix_color(
+                    palette.control_hover,
+                    palette.control_active,
+                    self.press_animation.value,
+                ),
             );
-        } else if self.hovered {
+        } else if self.hover_animation.value > 0.0 {
             ctx.fill(
                 rounded_rect_path(ctx.bounds(), outer_radius),
-                palette.control_hover,
+                palette
+                    .control_hover
+                    .with_alpha(self.hover_animation.value * palette.control_hover.alpha),
             );
         }
 
@@ -462,7 +497,7 @@ impl Widget for ColorSwatch {
             rounded_rect_path(body, outer_radius),
             if ctx.is_focused() {
                 palette.border_focus
-            } else if self.hovered {
+            } else if self.hovered || self.hover_animation.value > 0.0 {
                 palette.border_hover
             } else if self.read_only {
                 palette
@@ -491,7 +526,9 @@ impl Widget for ColorSwatch {
         !self.read_only
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -528,7 +565,12 @@ pub struct ColorPalette {
     selected: Option<usize>,
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<usize>,
+    hover_visual: Option<usize>,
     pressed: Option<usize>,
+    press_visual: Option<usize>,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     columns: usize,
     swatch_size: Option<f32>,
     gap: Option<f32>,
@@ -545,7 +587,12 @@ impl ColorPalette {
             selected: None,
             selected_reader: None,
             hovered: None,
+            hover_visual: None,
             pressed: None,
+            press_visual: None,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             columns: 8,
             swatch_size: None,
             gap: None,
@@ -701,7 +748,7 @@ impl ColorPalette {
         }
     }
 
-    fn move_selection(&mut self, delta: isize) {
+    fn move_selection(&mut self, delta: isize, ctx: &mut EventCtx) {
         if self.swatches.is_empty() {
             return;
         }
@@ -709,7 +756,7 @@ impl ColorPalette {
         let current = self.current_selected().unwrap_or(0) as isize;
         let last = self.swatches.len() as isize - 1;
         let next = (current + delta).clamp(0, last) as usize;
-        self.hovered = Some(next);
+        self.set_hovered(Some(next), ctx);
         self.activate(next);
     }
 
@@ -718,6 +765,74 @@ impl ColorPalette {
             .and_then(|index| self.swatches.get(index))
             .map(|swatch| format!("{} {}", swatch.name, format_color(swatch.color)))
     }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.hovered = hovered;
+        if let Some(index) = hovered {
+            self.hover_visual = Some(index);
+            self.hover_animation = AnimatedScalar::new(0.0);
+            set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+        } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
+            self.hover_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.pressed = pressed;
+        if let Some(index) = pressed {
+            self.press_visual = Some(index);
+            self.press_animation = AnimatedScalar::new(0.0);
+            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
+        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
+            self.press_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn hover_amount_for(&self, index: usize) -> f32 {
+        if self.hover_visual == Some(index) {
+            self.hover_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn press_amount_for(&self, index: usize) -> f32 {
+        if self.press_visual == Some(index) {
+            self.press_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        let hover_animating = self.hover_animation.advance(time);
+        if !hover_animating
+            && self.hovered.is_none()
+            && self.hover_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.hover_visual = None;
+        }
+        let press_animating = self.press_animation.advance(time);
+        if !press_animating
+            && self.pressed.is_none()
+            && self.press_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.press_visual = None;
+        }
+        hover_animating | press_animating | self.focus_animation.advance(time)
+    }
 }
 
 impl Widget for ColorPalette {
@@ -725,31 +840,22 @@ impl Widget for ColorPalette {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let theme = self.resolved_theme();
-                let hovered = self.swatch_at(ctx.bounds(), pointer.position, &theme);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(self.swatch_at(ctx.bounds(), pointer.position, &theme), ctx);
             }
             Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
-                if self.hovered.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 let theme = self.resolved_theme();
-                self.hovered = self.swatch_at(ctx.bounds(), pointer.position, &theme);
-                self.pressed = self.hovered;
+                let hovered = self.swatch_at(ctx.bounds(), pointer.position, &theme);
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(hovered, ctx);
                 if self.hovered.is_some() {
                     ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -767,29 +873,26 @@ impl Widget for ColorPalette {
                 {
                     self.activate(index);
                 }
-                self.hovered = hovered;
-                self.pressed = None;
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
-                    self.hovered = None;
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
+                    self.set_hovered(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 let columns = self.grid_columns() as isize;
                 match key.key.as_str() {
-                    "ArrowLeft" => self.move_selection(-1),
-                    "ArrowRight" => self.move_selection(1),
-                    "ArrowUp" => self.move_selection(-columns),
-                    "ArrowDown" => self.move_selection(columns),
+                    "ArrowLeft" => self.move_selection(-1, ctx),
+                    "ArrowRight" => self.move_selection(1, ctx),
+                    "ArrowUp" => self.move_selection(-columns, ctx),
+                    "ArrowDown" => self.move_selection(columns, ctx),
                     "Home" => self.activate(0),
                     "End" if !self.swatches.is_empty() => self.activate(self.swatches.len() - 1),
                     "Enter" | " " => {
@@ -802,6 +905,12 @@ impl Widget for ColorPalette {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -828,14 +937,14 @@ impl Widget for ColorPalette {
         let radius = metrics.corner_radius.min(swatch_size * 0.25);
         let selected = self.current_selected();
 
-        if ctx.is_focused() {
+        if self.focus_animation.value > 0.0 {
             let focus_outset = metrics.focus_ring_outset;
             ctx.stroke(
                 rounded_rect_path(
                     ctx.bounds().inflate(focus_outset, focus_outset),
                     radius + focus_outset,
                 ),
-                palette.focus_ring,
+                palette.focus_ring.with_alpha(self.focus_animation.value),
                 StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
             );
         }
@@ -846,12 +955,9 @@ impl Widget for ColorPalette {
             };
             let selected = selected == Some(index);
             let hovered = self.hovered == Some(index);
-            let pressed = self.pressed == Some(index);
-            let pressed_offset = if pressed {
-                interaction.pressed_offset
-            } else {
-                0.0
-            };
+            let hover_amount = self.hover_amount_for(index);
+            let press_amount = self.press_amount_for(index);
+            let pressed_offset = press_amount * interaction.pressed_offset;
             let body = Rect::new(
                 rect.x(),
                 rect.y() + pressed_offset,
@@ -860,7 +966,7 @@ impl Widget for ColorPalette {
             );
             let ring = if selected {
                 palette.accent_border
-            } else if hovered {
+            } else if hovered || hover_amount > 0.0 || press_amount > 0.0 {
                 palette.border_hover
             } else {
                 palette.border
@@ -877,15 +983,34 @@ impl Widget for ColorPalette {
             } + pressed_offset * 0.5;
             let fill_rect = inset_rect(body, Insets::all(fill_inset));
 
+            let base_background = if selected {
+                mix_color(palette.control, palette.accent, interaction.selected_blend)
+            } else {
+                palette.control
+            };
+            let hover_background = if hover_amount > 0.0 {
+                mix_color(
+                    base_background,
+                    palette.control_hover,
+                    interaction.hover_blend * hover_amount,
+                )
+            } else {
+                base_background
+            };
+            let background = if press_amount > 0.0 {
+                mix_color(
+                    hover_background,
+                    palette.control_active,
+                    interaction.pressed_blend * press_amount,
+                )
+            } else {
+                hover_background
+            };
+
             if selected {
-                ctx.fill(
-                    rounded_rect_path(body, radius),
-                    mix_color(palette.control, palette.accent, interaction.selected_blend),
-                );
-            } else if pressed {
-                ctx.fill(rounded_rect_path(rect, radius), palette.control_active);
-            } else if hovered {
-                ctx.fill(rounded_rect_path(rect, radius), palette.control_hover);
+                ctx.fill(rounded_rect_path(body, radius), background);
+            } else if hover_amount > 0.0 || press_amount > 0.0 {
+                ctx.fill(rounded_rect_path(rect, radius), background);
             }
             draw_checkerboard(ctx, fill_rect, metrics.color_palette_checker_size, &theme);
             ctx.fill(
@@ -937,7 +1062,9 @@ impl Widget for ColorPalette {
         !self.swatches.is_empty()
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -2857,6 +2984,63 @@ fn mix_color(from: Color, to: Color, amount: f32) -> Color {
     )
 }
 
+type AnimatedScalar = MotionScalar;
+
+fn set_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    duration: f64,
+    easing: crate::Easing,
+    ctx: &mut EventCtx,
+) -> bool {
+    animation.set_target_event(target, duration, easing, ctx)
+}
+
+fn set_hover_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.hover_duration(),
+        theme.motion.hover_easing(),
+        ctx,
+    )
+}
+
+fn set_press_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.press_duration(),
+        theme.motion.press_easing(),
+        ctx,
+    )
+}
+
+fn set_focus_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.focus_duration(),
+        theme.motion.focus_easing(),
+        ctx,
+    )
+}
+
 fn fit_rect(bounds: Rect, source: Size, fit: ImageFit) -> Rect {
     if bounds.is_empty() || source.is_empty() {
         return bounds;
@@ -3086,6 +3270,15 @@ mod tests {
             pointer_kind: sui_core::PointerKind::Mouse,
             is_primary: true,
         })
+    }
+
+    fn handle_ready_events(runtime: &mut Runtime) -> Result<usize> {
+        let ready = runtime.drain_ready_events();
+        let count = ready.len();
+        for (window_id, event) in ready {
+            runtime.handle_event(window_id, event)?;
+        }
+        Ok(count)
     }
 
     fn solid_fill_colors(output: &sui_runtime::RenderOutput) -> Vec<Color> {
@@ -3336,6 +3529,65 @@ mod tests {
     }
 
     #[test]
+    fn color_swatch_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = theme.palette.control_hover;
+        let expected_press = super::mix_color(
+            expected_hover,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+        let (mut runtime, window_id) =
+            build_runtime(ColorSwatch::new("Accent", Color::rgba(0.2, 0.4, 0.8, 1.0)).theme(theme));
+
+        let output = runtime.render(window_id)?;
+        let swatch = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ColorSwatch)
+            .expect("color swatch semantics present");
+        let position = rect_center(swatch.bounds);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, position, false),
+        )?;
+        runtime.tick(hover_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_hover).contains(&expected_hover),
+            "swatch hover fill should not snap to the settled hover color"
+        );
+
+        runtime.tick(hover_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_hover = runtime.render(window_id)?;
+        assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.tick(hover_duration + press_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_press).contains(&expected_press),
+            "swatch press fill should not snap to the settled pressed color"
+        );
+
+        runtime.tick(hover_duration + press_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_press = runtime.render(window_id)?;
+        assert!(solid_fill_colors(&settled_press).contains(&expected_press));
+
+        Ok(())
+    }
+
+    #[test]
     fn color_swatch_read_only_color_when_syncs_external_value() -> Result<()> {
         let color = Rc::new(RefCell::new(Color::rgba(0.08, 0.22, 0.78, 1.0)));
         let color_reader = Rc::clone(&color);
@@ -3541,6 +3793,74 @@ mod tests {
                 && node.name.as_deref() == Some("Mint")
                 && node.state.selected
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn color_palette_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = super::mix_color(
+            theme.palette.control,
+            theme.palette.control_hover,
+            theme.interaction.hover_blend,
+        );
+        let expected_press = super::mix_color(
+            expected_hover,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+        let (mut runtime, window_id) =
+            build_runtime(ColorPalette::new("Brush palette").theme(theme).swatches([
+                ColorPaletteSwatch::new("Ink", Color::rgba(0.08, 0.10, 0.15, 1.0)),
+                ColorPaletteSwatch::new("Ocean", Color::rgba(0.08, 0.22, 0.78, 1.0)),
+                ColorPaletteSwatch::new("Mint", Color::rgba(0.28, 0.78, 0.58, 1.0)),
+            ]));
+        let output = runtime.render(window_id)?;
+        let mint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some("Mint")
+            })
+            .expect("target swatch semantics present");
+        let position = rect_center(mint.bounds);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, position, false),
+        )?;
+        runtime.tick(hover_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_hover).contains(&expected_hover),
+            "palette swatch hover fill should not snap to the settled hover color"
+        );
+
+        runtime.tick(hover_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_hover = runtime.render(window_id)?;
+        assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.tick(hover_duration + press_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_press).contains(&expected_press),
+            "palette swatch press fill should not snap to the settled pressed color"
+        );
+
+        runtime.tick(hover_duration + press_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_press = runtime.render(window_id)?;
+        assert!(solid_fill_colors(&settled_press).contains(&expected_press));
+
         Ok(())
     }
 

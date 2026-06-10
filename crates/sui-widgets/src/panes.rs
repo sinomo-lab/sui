@@ -1,7 +1,7 @@
 use sui_core::{
-    Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
+    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
     PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
-    SemanticsValue, Size, WidgetId,
+    SemanticsValue, Size, WakeEvent, WidgetId,
 };
 use sui_layout::{Axis, Constraints};
 use sui_runtime::{
@@ -12,10 +12,78 @@ use sui_runtime::{
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 
 use crate::{
-    DefaultTheme,
+    DefaultTheme, MotionScalar,
     containers::{ScrollBar, ScrollState, ScrollView},
     text_align::aligned_text_rect_for_text,
 };
+
+type AnimatedScalar = MotionScalar;
+
+fn set_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    duration: f64,
+    easing: crate::Easing,
+    ctx: &mut EventCtx,
+) -> bool {
+    animation.set_target_event(target, duration, easing, ctx)
+}
+
+fn set_hover_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.hover_duration(),
+        theme.motion.hover_easing(),
+        ctx,
+    )
+}
+
+fn set_press_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.press_duration(),
+        theme.motion.press_easing(),
+        ctx,
+    )
+}
+
+fn set_focus_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.focus_duration(),
+        theme.motion.focus_easing(),
+        ctx,
+    )
+}
+
+fn mix_color(from: Color, to: Color, amount: f32) -> Color {
+    let t = amount.clamp(0.0, 1.0);
+    Color::new(
+        from.space,
+        from.red + (to.red - from.red) * t,
+        from.green + (to.green - from.green) * t,
+        from.blue + (to.blue - from.blue) * t,
+        from.alpha + (to.alpha - from.alpha) * t,
+    )
+}
 
 pub type ResizablePane = SplitView;
 
@@ -966,6 +1034,9 @@ pub struct SplitView {
     first: SingleChild,
     second: SingleChild,
     hovered: bool,
+    hover_animation: AnimatedScalar,
+    drag_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     drag_pointer: Option<u64>,
     divider_bounds: Rect,
     on_change: Option<Box<dyn FnMut(f32)>>,
@@ -988,6 +1059,9 @@ impl SplitView {
             first: SingleChild::new(first),
             second: SingleChild::new(second),
             hovered: false,
+            hover_animation: AnimatedScalar::new(0.0),
+            drag_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             drag_pointer: None,
             divider_bounds: Rect::ZERO,
             on_change: None,
@@ -1116,10 +1190,30 @@ impl SplitView {
 
     fn update_hover(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
+            let theme = *self.theme;
             self.hovered = hovered;
+            set_hover_animation_target(
+                &mut self.hover_animation,
+                hovered as u8 as f32,
+                &theme,
+                ctx,
+            );
             ctx.request_paint();
             ctx.request_semantics();
         }
+    }
+
+    fn set_dragging(&mut self, dragging: bool, ctx: &mut EventCtx) {
+        let theme = *self.theme;
+        set_press_animation_target(&mut self.drag_animation, dragging as u8 as f32, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        self.hover_animation.advance(time)
+            | self.drag_animation.advance(time)
+            | self.focus_animation.advance(time)
     }
 
     fn set_ratio_from_position(&mut self, bounds: Rect, position: Point) {
@@ -1181,13 +1275,12 @@ impl Widget for SplitView {
                         .contains(pointer.position) =>
             {
                 self.drag_pointer = Some(pointer.pointer_id);
-                self.hovered = true;
+                self.update_hover(true, ctx);
+                self.set_dragging(true, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
                 self.set_ratio_from_position(ctx.bounds(), pointer.position);
                 ctx.request_arrange();
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -1196,12 +1289,13 @@ impl Widget for SplitView {
                     && self.drag_pointer == Some(pointer.pointer_id) =>
             {
                 self.drag_pointer = None;
-                self.hovered = self
-                    .divider_hit_rect(ctx.bounds())
-                    .contains(pointer.position);
+                self.set_dragging(false, ctx);
+                self.update_hover(
+                    self.divider_hit_rect(ctx.bounds())
+                        .contains(pointer.position),
+                    ctx,
+                );
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -1209,10 +1303,9 @@ impl Widget for SplitView {
                     && self.drag_pointer == Some(pointer.pointer_id) =>
             {
                 self.drag_pointer = None;
-                self.hovered = false;
+                self.set_dragging(false, ctx);
+                self.update_hover(false, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
@@ -1248,6 +1341,12 @@ impl Widget for SplitView {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
             }
             _ => {}
         }
@@ -1325,11 +1424,17 @@ impl Widget for SplitView {
         let palette = self.theme.palette;
         let metrics = self.theme.metrics;
         let divider_bounds = self.divider_rect(ctx.bounds());
-        let divider_color = if self.drag_pointer.is_some() || self.hovered || ctx.is_focused() {
-            palette.border_focus
-        } else {
-            palette.border
-        };
+        let hover_color = mix_color(
+            palette.border,
+            palette.border_hover,
+            self.hover_animation.value,
+        );
+        let focus_color = mix_color(
+            hover_color,
+            palette.border_focus,
+            self.focus_animation.value,
+        );
+        let divider_color = mix_color(focus_color, palette.border_focus, self.drag_animation.value);
 
         ctx.fill_rect(divider_bounds, divider_color);
         if self.resolved_divider_thickness() > metrics.border_width.max(1.0) {
@@ -1356,7 +1461,9 @@ impl Widget for SplitView {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = *self.theme;
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -1798,7 +1905,7 @@ mod tests {
         Application, EventCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx,
         StackOrderPolicy, Widget, WindowBuilder,
     };
-    use sui_scene::{SceneCommand, SceneLayerUpdateKind};
+    use sui_scene::{Brush, SceneCommand, SceneLayerUpdateKind};
     use sui_text::{FontRegistry, TextSystem};
 
     struct ColorFill {
@@ -1945,6 +2052,33 @@ mod tests {
         })
     }
 
+    fn handle_ready_events(runtime: &mut Runtime) -> Result<usize> {
+        let ready = runtime.drain_ready_events();
+        let count = ready.len();
+        for (window_id, event) in ready {
+            runtime.handle_event(window_id, event)?;
+        }
+        Ok(count)
+    }
+
+    fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRect {
+                brush: Brush::Solid(color),
+                ..
+            }
+            | SceneCommand::FillPath {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                colors.push(*color);
+            }
+        });
+        colors
+    }
+
     fn render_rgba(
         runtime: &mut Runtime,
         renderer: &mut WgpuRenderer,
@@ -2054,6 +2188,64 @@ mod tests {
             splitter.value,
             Some(SemanticsValue::Number(value)) if value > 0.65
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn split_view_divider_hover_and_drag_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let hover_duration = theme.motion.hover_duration();
+        let press_duration = theme.motion.press_duration();
+        let expected_hover = theme.palette.border_hover;
+        let expected_drag = theme.palette.border_focus;
+        let divider_x = 100.0 + theme.metrics.split_view_divider_thickness * 0.5;
+        let divider_point = Point::new(divider_x, 20.0);
+        let (mut runtime, window_id) = build_runtime(
+            SplitView::new(
+                Axis::Horizontal,
+                SizedBox::new().width(100.0).height(40.0),
+                SizedBox::new().width(100.0).height(40.0),
+            )
+            .theme(theme)
+            .min_first(40.0)
+            .min_second(40.0),
+        );
+
+        runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, divider_point, false),
+        )?;
+        runtime.tick(hover_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_hover).contains(&expected_hover),
+            "split divider hover should not snap to the settled hover color"
+        );
+
+        runtime.tick(hover_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_hover = runtime.render(window_id)?;
+        assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, divider_point, true),
+        )?;
+        runtime.tick(hover_duration + press_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_drag = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_drag).contains(&expected_drag),
+            "split divider drag should not snap to the settled drag color"
+        );
+
+        runtime.tick(hover_duration + press_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_drag = runtime.render(window_id)?;
+        assert!(solid_fill_colors(&settled_drag).contains(&expected_drag));
+
         Ok(())
     }
 
