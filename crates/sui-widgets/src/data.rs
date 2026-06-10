@@ -114,6 +114,7 @@ pub struct ListView {
     pressed: Option<usize>,
     hover_motion: IndexedInteractionMotion<usize>,
     press_motion: IndexedInteractionMotion<usize>,
+    focus_animation: AnimatedScalar,
     row_height: Option<f32>,
     scroll_y: f32,
     row_heights: Vec<f32>,
@@ -135,6 +136,7 @@ impl ListView {
             pressed: None,
             hover_motion: IndexedInteractionMotion::new(),
             press_motion: IndexedInteractionMotion::new(),
+            focus_animation: AnimatedScalar::new(0.0),
             row_height: None,
             scroll_y: 0.0,
             row_heights: Vec::new(),
@@ -362,11 +364,12 @@ impl ListView {
     fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
         let (hover_changed, hover_active) = self.hover_motion.advance(time);
         let (press_changed, press_active) = self.press_motion.advance(time);
+        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
 
-        if hover_changed || press_changed {
+        if hover_changed || press_changed || focus_changed {
             ctx.request_paint();
         }
-        if hover_active || press_active {
+        if hover_active || press_active || focus_active {
             ctx.request_animation_frame();
         }
     }
@@ -636,7 +639,7 @@ impl Widget for ListView {
         let label_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
 
-        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
         ctx.push_clip_rect(viewport);
 
         for index in 0..self.items.len() {
@@ -841,7 +844,9 @@ impl Widget for ListView {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -1011,6 +1016,7 @@ pub struct LayerList {
     pressed: Option<LayerListHit>,
     hover_motion: IndexedInteractionMotion<LayerListHit>,
     press_motion: IndexedInteractionMotion<LayerListHit>,
+    focus_animation: AnimatedScalar,
     row_height: Option<f32>,
     on_select: Option<Box<dyn FnMut(usize, String)>>,
     on_select_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
@@ -1033,6 +1039,7 @@ impl LayerList {
             pressed: None,
             hover_motion: IndexedInteractionMotion::new(),
             press_motion: IndexedInteractionMotion::new(),
+            focus_animation: AnimatedScalar::new(0.0),
             row_height: None,
             on_select: None,
             on_select_with_ctx: None,
@@ -1350,11 +1357,12 @@ impl LayerList {
     fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
         let (hover_changed, hover_active) = self.hover_motion.advance(time);
         let (press_changed, press_active) = self.press_motion.advance(time);
+        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
 
-        if hover_changed || press_changed {
+        if hover_changed || press_changed || focus_changed {
             ctx.request_paint();
         }
-        if hover_active || press_active {
+        if hover_active || press_active || focus_active {
             ctx.request_animation_frame();
         }
     }
@@ -1487,7 +1495,7 @@ impl Widget for LayerList {
         let label_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
 
-        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
         ctx.push_clip_rect(viewport);
 
         for (index, layer) in self.layers.iter().enumerate() {
@@ -1681,7 +1689,9 @@ impl Widget for LayerList {
         !self.layers.is_empty()
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -1750,6 +1760,7 @@ pub struct TreeView {
     pressed: Option<Vec<usize>>,
     hover_motion: IndexedInteractionMotion<Vec<usize>>,
     press_motion: IndexedInteractionMotion<Vec<usize>>,
+    focus_animation: AnimatedScalar,
     row_height: Option<f32>,
     scroll_y: f32,
     on_change: Option<Box<dyn FnMut(Vec<usize>, String)>>,
@@ -1767,6 +1778,7 @@ impl TreeView {
             pressed: None,
             hover_motion: IndexedInteractionMotion::new(),
             press_motion: IndexedInteractionMotion::new(),
+            focus_animation: AnimatedScalar::new(0.0),
             row_height: None,
             scroll_y: 0.0,
             on_change: None,
@@ -1932,11 +1944,12 @@ impl TreeView {
     fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
         let (hover_changed, hover_active) = self.hover_motion.advance(time);
         let (press_changed, press_active) = self.press_motion.advance(time);
+        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
 
-        if hover_changed || press_changed {
+        if hover_changed || press_changed || focus_changed {
             ctx.request_paint();
         }
-        if hover_active || press_active {
+        if hover_active || press_active || focus_active {
             ctx.request_animation_frame();
         }
     }
@@ -2152,7 +2165,7 @@ impl Widget for TreeView {
         let row_height = self.resolved_row_height();
         let rows = self.visible_rows();
 
-        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
         ctx.push_clip_rect(viewport);
 
         let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
@@ -2261,7 +2274,9 @@ impl Widget for TreeView {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -2346,6 +2361,7 @@ pub struct Table {
     pressed: Option<usize>,
     hover_motion: IndexedInteractionMotion<usize>,
     press_motion: IndexedInteractionMotion<usize>,
+    focus_animation: AnimatedScalar,
     row_height: Option<f32>,
     header_height: Option<f32>,
     scroll_y: f32,
@@ -2366,6 +2382,7 @@ impl Table {
             pressed: None,
             hover_motion: IndexedInteractionMotion::new(),
             press_motion: IndexedInteractionMotion::new(),
+            focus_animation: AnimatedScalar::new(0.0),
             row_height: None,
             header_height: None,
             scroll_y: 0.0,
@@ -2555,11 +2572,12 @@ impl Table {
     fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
         let (hover_changed, hover_active) = self.hover_motion.advance(time);
         let (press_changed, press_active) = self.press_motion.advance(time);
+        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
 
-        if hover_changed || press_changed {
+        if hover_changed || press_changed || focus_changed {
             ctx.request_paint();
         }
-        if hover_active || press_active {
+        if hover_active || press_active || focus_active {
             ctx.request_animation_frame();
         }
     }
@@ -2702,7 +2720,7 @@ impl Widget for Table {
         );
         let row_height = self.resolved_row_height();
 
-        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
         ctx.fill(
             rounded_rect_path(header, metrics.corner_radius),
             palette.control,
@@ -2825,7 +2843,9 @@ impl Widget for Table {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -2857,6 +2877,7 @@ pub struct Breadcrumb {
     pressed: Option<usize>,
     hover_motion: IndexedInteractionMotion<usize>,
     press_motion: IndexedInteractionMotion<usize>,
+    focus_animation: AnimatedScalar,
     measured_widths: Vec<f32>,
     on_activate: Option<Box<dyn FnMut(usize, String)>>,
 }
@@ -2874,6 +2895,7 @@ impl Breadcrumb {
             pressed: None,
             hover_motion: IndexedInteractionMotion::new(),
             press_motion: IndexedInteractionMotion::new(),
+            focus_animation: AnimatedScalar::new(0.0),
             measured_widths: Vec::new(),
             on_activate: None,
         }
@@ -3004,11 +3026,12 @@ impl Breadcrumb {
     fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
         let (hover_changed, hover_active) = self.hover_motion.advance(time);
         let (press_changed, press_active) = self.press_motion.advance(time);
+        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
 
-        if hover_changed || press_changed {
+        if hover_changed || press_changed || focus_changed {
             ctx.request_paint();
         }
-        if hover_active || press_active {
+        if hover_active || press_active || focus_active {
             ctx.request_animation_frame();
         }
     }
@@ -3113,7 +3136,7 @@ impl Widget for Breadcrumb {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let palette = theme.palette;
-        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
 
         for (index, item) in self.items.iter().enumerate() {
             let Some(rect) = self.item_rect(ctx.bounds(), index) else {
@@ -3184,7 +3207,9 @@ impl Widget for Breadcrumb {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -3290,21 +3315,29 @@ fn chevron_path(rect: Rect) -> Path {
     builder.build()
 }
 
-fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focused: bool) {
+fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focus_progress: f32) {
     let palette = theme.palette;
+    let metrics = theme.metrics;
+    let focus_progress = focus_progress.clamp(0.0, 1.0);
     ctx.fill(
-        rounded_rect_path(rect, theme.metrics.corner_radius),
+        rounded_rect_path(rect, metrics.corner_radius),
         palette.surface,
     );
     ctx.stroke(
-        rounded_rect_path(rect, theme.metrics.corner_radius),
-        if focused {
-            palette.border_focus
-        } else {
-            palette.border
-        },
-        sui_scene::StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+        rounded_rect_path(rect, metrics.corner_radius),
+        mix_color(palette.border, palette.border_focus, focus_progress),
+        sui_scene::StrokeStyle::new(metrics.border_width.max(1.0)),
     );
+    if focus_progress > AnimatedScalar::EPSILON {
+        let outset = metrics.focus_ring_outset;
+        ctx.stroke(
+            rounded_rect_path(rect.inflate(outset, outset), metrics.corner_radius + outset),
+            palette
+                .focus_ring
+                .with_alpha(palette.focus_ring.alpha * focus_progress),
+            sui_scene::StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
+        );
+    }
 }
 
 fn draw_vertical_scroll_thumb(
@@ -3564,6 +3597,27 @@ fn set_press_animation_target(
         theme.motion.press_easing(),
         ctx,
     )
+}
+
+fn set_focus_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) -> bool {
+    set_animation_target(
+        animation,
+        target,
+        theme.motion.focus_duration(),
+        theme.motion.focus_easing(),
+        ctx,
+    )
+}
+
+fn advance_scalar(animation: &mut AnimatedScalar, time: f64) -> (bool, bool) {
+    let previous = animation.value;
+    let active = animation.advance(time);
+    (animation.changed_since(previous), active)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -4353,6 +4407,40 @@ mod tests {
         Ok(count)
     }
 
+    fn assert_focus_surface_uses_theme_motion<W>(root: W, position: Point) -> Result<()>
+    where
+        W: Widget + 'static,
+    {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let (mut runtime, window_id) = build_runtime(root);
+        let _ = runtime.render(window_id)?;
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        let _ = runtime.render(window_id)?;
+
+        runtime.tick(focus_duration * 0.5);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let mid = runtime.render(window_id)?;
+        assert!(
+            !solid_stroke_colors(&mid).contains(&theme.palette.focus_ring),
+            "data focus ring should not snap to the settled focus color"
+        );
+
+        runtime.tick(focus_duration);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let settled = runtime.render(window_id)?;
+        assert!(
+            solid_stroke_colors(&settled).contains(&theme.palette.focus_ring),
+            "data focus ring should settle to the theme focus color"
+        );
+
+        Ok(())
+    }
+
     fn assert_pointer_hover_and_press_use_theme_motion(
         runtime: &mut Runtime,
         window_id: sui_core::WindowId,
@@ -4405,6 +4493,49 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn data_focus_surfaces_use_theme_motion() -> Result<()> {
+        assert_focus_surface_uses_theme_motion(
+            SizedBox::new().width(260.0).height(120.0).with_child(
+                ListView::new("Assets").items([ListItem::new("First"), ListItem::new("Second")]),
+            ),
+            Point::new(24.0, 24.0),
+        )?;
+
+        assert_focus_surface_uses_theme_motion(
+            SizedBox::new().width(280.0).height(120.0).with_child(
+                LayerList::new("Layers")
+                    .layers([LayerListItem::new("Paint"), LayerListItem::new("Ink")]),
+            ),
+            Point::new(24.0, 24.0),
+        )?;
+
+        assert_focus_surface_uses_theme_motion(
+            SizedBox::new().width(260.0).height(120.0).with_child(
+                TreeView::new("Scene").items([TreeItem::new("Canvas"), TreeItem::new("Lighting")]),
+            ),
+            Point::new(24.0, 24.0),
+        )?;
+
+        assert_focus_surface_uses_theme_motion(
+            SizedBox::new().width(280.0).height(140.0).with_child(
+                Table::new("Objects")
+                    .columns([TableColumn::new("Name")])
+                    .rows([TableRow::new(["Canvas"]), TableRow::new(["Lighting"])]),
+            ),
+            Point::new(24.0, 58.0),
+        )?;
+
+        assert_focus_surface_uses_theme_motion(
+            Breadcrumb::new("Path").items([
+                BreadcrumbItem::new("Scene"),
+                BreadcrumbItem::new("Layers"),
+                BreadcrumbItem::new("Ink"),
+            ]),
+            Point::new(24.0, 18.0),
+        )
     }
 
     #[test]

@@ -2949,6 +2949,36 @@ mod tests {
         colors
     }
 
+    fn solid_stroke_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::StrokePath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
+    }
+
+    fn contains_approx_color(colors: &[Color], expected: Color) -> bool {
+        const CHANNEL_TOLERANCE: f32 = 1.0 / 255.0;
+        colors.iter().any(|color| {
+            color.space == expected.space
+                && (color.red - expected.red).abs() <= CHANNEL_TOLERANCE
+                && (color.green - expected.green).abs() <= CHANNEL_TOLERANCE
+                && (color.blue - expected.blue).abs() <= CHANNEL_TOLERANCE
+                && (color.alpha - expected.alpha).abs() <= CHANNEL_TOLERANCE
+        })
+    }
+
     fn handle_ready_events(runtime: &mut Runtime) -> usize {
         let ready = runtime.drain_ready_events();
         let count = ready.len();
@@ -3842,6 +3872,47 @@ mod tests {
         assert_eq!(handle_ready_events(&mut runtime), 1);
         let settled_drag = runtime.render(window_id).expect("render should succeed");
         assert!(solid_fill_colors(&settled_drag).contains(&expected_drag));
+    }
+
+    #[test]
+    fn scroll_bar_focus_stroke_uses_theme_motion() {
+        let theme = DefaultTheme::default();
+        let state = ScrollState::new();
+        state.sync_metrics(
+            ScrollAxes::Vertical,
+            Size::new(80.0, 40.0),
+            Size::new(80.0, 120.0),
+        );
+        let point = Point::new(theme.metrics.scroll_bar_thickness * 0.5, 8.0);
+        let (mut runtime, window_id) =
+            build_runtime(ScrollBar::vertical(state).theme(theme).name("Scroll bar"));
+
+        let _ = runtime.render(window_id).expect("render should succeed");
+        let mut down = PointerEvent::new(PointerEventKind::Down, point);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .expect("focus event should be handled");
+        let _ = runtime.render(window_id).expect("render should succeed");
+
+        runtime.tick(theme.motion.focus_duration() * 0.5);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let mid_focus = runtime.render(window_id).expect("render should succeed");
+        assert!(
+            !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
+            "scroll bar focus stroke should not snap to the settled focus color"
+        );
+
+        runtime.tick(theme.motion.focus_duration() + 0.01);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let settled_focus = runtime.render(window_id).expect("render should succeed");
+        let settled_strokes = solid_stroke_colors(&settled_focus);
+        assert!(
+            contains_approx_color(&settled_strokes, theme.palette.focus_ring),
+            "scroll bar focus stroke should settle to the theme focus color; strokes={settled_strokes:?}"
+        );
     }
 
     #[test]

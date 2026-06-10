@@ -1408,6 +1408,7 @@ pub struct ColorPicker {
     compact: bool,
     encoding_dropdown_open: bool,
     active: Option<ActiveChannel>,
+    focus_animation: AnimatedScalar,
     color_reader: Option<Box<dyn Fn() -> Color>>,
     on_change: Option<Box<dyn FnMut(Color)>>,
 }
@@ -1454,6 +1455,7 @@ impl ColorPicker {
             compact: false,
             encoding_dropdown_open: false,
             active: None,
+            focus_animation: AnimatedScalar::new(0.0),
             color_reader: None,
             on_change: None,
         }
@@ -2319,6 +2321,15 @@ impl Widget for ColorPicker {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                let (changed, active) = advance_scalar(&mut self.focus_animation, *time);
+                if changed {
+                    ctx.request_paint();
+                }
+                if active {
+                    ctx.request_animation_frame();
+                }
+            }
             _ => {}
         }
     }
@@ -2337,7 +2348,7 @@ impl Widget for ColorPicker {
         let map = self.saturation_value_rect(ctx.bounds());
         let encoding = self.encoding_rect(ctx.bounds());
 
-        draw_surface(ctx, ctx.bounds(), &theme, ctx.is_focused());
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
         paint_picker_header(
             ctx,
             self.current_swatch_rect(ctx.bounds()),
@@ -2515,7 +2526,9 @@ impl Widget for ColorPicker {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -3041,6 +3054,12 @@ fn set_focus_animation_target(
     )
 }
 
+fn advance_scalar(animation: &mut AnimatedScalar, time: f64) -> (bool, bool) {
+    let previous = animation.value;
+    let active = animation.advance(time);
+    (animation.changed_since(previous), active)
+}
+
 fn fit_rect(bounds: Rect, source: Size, fit: ImageFit) -> Rect {
     if bounds.is_empty() || source.is_empty() {
         return bounds;
@@ -3077,20 +3096,35 @@ fn paint_marker(ctx: &mut PaintCtx, center: Point, color: Color, theme: &Default
     ctx.stroke(Path::circle(center, 5.0), color, StrokeStyle::new(1.5));
 }
 
-fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focused: bool) {
+fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focus_progress: f32) {
+    let focus_progress = focus_progress.clamp(0.0, 1.0);
     ctx.fill(
         rounded_rect_path(rect, theme.metrics.corner_radius),
         theme.palette.surface,
     );
     ctx.stroke(
         rounded_rect_path(rect, theme.metrics.corner_radius),
-        if focused {
-            theme.palette.border_focus
-        } else {
-            theme.palette.border
-        },
+        mix_color(
+            theme.palette.border,
+            theme.palette.border_focus,
+            focus_progress,
+        ),
         StrokeStyle::new(theme.metrics.border_width.max(1.0)),
     );
+    if focus_progress > AnimatedScalar::EPSILON {
+        let outset = theme.metrics.focus_ring_outset;
+        ctx.stroke(
+            rounded_rect_path(
+                rect.inflate(outset, outset),
+                theme.metrics.corner_radius + outset,
+            ),
+            theme
+                .palette
+                .focus_ring
+                .with_alpha(theme.palette.focus_ring.alpha * focus_progress),
+            StrokeStyle::new(theme.metrics.focus_ring_width.max(1.0)),
+        );
+    }
 }
 
 fn draw_checkerboard(ctx: &mut PaintCtx, rect: Rect, cell_size: f32, theme: &DefaultTheme) {
@@ -4033,6 +4067,38 @@ mod tests {
             picker.value,
             Some(SemanticsValue::Text(format_color(changed_color)))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_focus_surface_uses_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let (mut runtime, window_id) = build_runtime(ColorPicker::new("Accent picker"));
+        let _ = runtime.render(window_id)?;
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(360.0, 126.0), true),
+        )?;
+        let _ = runtime.render(window_id)?;
+
+        runtime.tick(focus_duration * 0.5);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let mid = runtime.render(window_id)?;
+        assert!(
+            !solid_stroke_colors(&mid).contains(&theme.palette.focus_ring),
+            "color picker focus ring should not snap to the settled focus color"
+        );
+
+        runtime.tick(focus_duration);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let settled = runtime.render(window_id)?;
+        assert!(
+            solid_stroke_colors(&settled).contains(&theme.palette.focus_ring),
+            "color picker focus ring should settle to the theme focus color"
+        );
+
         Ok(())
     }
 
