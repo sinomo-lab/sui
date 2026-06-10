@@ -1919,11 +1919,15 @@ impl Widget for Checkbox {
             palette.control_active,
             press_progress,
         );
-        let border = if ctx.is_focused() {
-            palette.border_focus
-        } else {
-            mix_color(palette.border, palette.border_hover, hover_progress)
-        };
+        let border = mix_color(
+            mix_color(
+                palette.border,
+                palette.border_hover,
+                self.hover_animation.value,
+            ),
+            palette.border_focus,
+            focus_progress,
+        );
         let indicator = indicator_rect(ctx.bounds(), padding, indicator_size);
         let label_rect = checkbox_label_rect(ctx.bounds(), padding, indicator_size, gap);
 
@@ -2174,41 +2178,46 @@ impl Switch {
         let interaction = theme.interaction;
         let hover_t = self.hover_animation.value * interaction.hover_blend;
         let press_t = self.press_animation.value * interaction.pressed_blend;
-        let frame_background = if self.pressed {
-            palette.control_active
-        } else if self.hovered {
-            palette.control_hover
-        } else if focused {
-            palette.surface_focus
+        let frame_background = mix_color(
+            mix_color(
+                palette.control,
+                palette.control_hover,
+                self.hover_animation.value,
+            ),
+            palette.control_active,
+            press_t,
+        );
+        let frame_background = if focused {
+            mix_color(frame_background, palette.surface_focus, 0.5)
         } else {
-            palette.control
+            frame_background
         };
-        let frame_border = if focused {
-            palette.border_focus
-        } else if self.hovered {
-            palette.border_hover
-        } else {
-            palette.border
-        };
+        let frame_border = mix_color(
+            mix_color(
+                palette.border,
+                palette.border_hover,
+                self.hover_animation.value,
+            ),
+            palette.border_focus,
+            focused as u8 as f32,
+        );
         let baseline_track_color = if on {
-            if self.pressed {
-                mix_color(palette.accent, palette.accent_pressed, press_t)
-            } else if self.hovered {
-                mix_color(palette.accent, palette.accent_hover, hover_t)
-            } else {
-                palette.accent
-            }
-        } else if self.hovered {
-            mix_color(palette.surface_focus, palette.control_active, hover_t)
+            mix_color(
+                mix_color(palette.accent, palette.accent_hover, hover_t),
+                palette.accent_pressed,
+                press_t,
+            )
         } else {
-            palette.surface_focus
+            mix_color(palette.surface_focus, palette.control_active, hover_t)
         };
         let baseline_track_border = if on {
             palette.accent_border
-        } else if self.hovered {
-            palette.border_hover
         } else {
-            palette.border
+            mix_color(
+                palette.border,
+                palette.border_hover,
+                self.hover_animation.value,
+            )
         };
         let thumb_color = if matches!(
             theme.colors.scheme,
@@ -2245,13 +2254,11 @@ impl Switch {
         SwitchVisuals {
             frame_background,
             frame_border,
-            track_color: if self.pressed {
-                mix_color(palette.accent, palette.accent_pressed, press_t)
-            } else if self.hovered {
-                mix_color(palette.accent, palette.accent_hover, hover_t)
-            } else {
-                indicator_style.color
-            },
+            track_color: mix_color(
+                mix_color(indicator_style.color, palette.accent_hover, hover_t),
+                palette.accent_pressed,
+                press_t,
+            ),
             track_border: if focused {
                 indicator_style.color
             } else {
@@ -2897,6 +2904,13 @@ pub struct RadioGroup {
     selected: Option<usize>,
     hovered: Option<usize>,
     pressed: Option<usize>,
+    hover_visual: Option<usize>,
+    press_visual: Option<usize>,
+    selected_visual: Option<usize>,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
+    selection_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
     label_measurements: Vec<TextMeasurement>,
     spacing: f32,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
@@ -2912,6 +2926,13 @@ impl RadioGroup {
             selected: None,
             hovered: None,
             pressed: None,
+            hover_visual: None,
+            press_visual: None,
+            selected_visual: None,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
+            selection_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
             label_measurements: Vec::new(),
             spacing: 6.0,
             on_change: None,
@@ -2948,6 +2969,8 @@ impl RadioGroup {
 
     pub fn selected(mut self, selected: usize) -> Self {
         self.selected = Some(selected);
+        self.selected_visual = Some(selected);
+        self.selection_animation = AnimatedScalar::new(1.0);
         self
     }
 
@@ -2980,12 +3003,22 @@ impl RadioGroup {
         })
     }
 
-    fn select(&mut self, index: usize) {
-        self.selected = Some(index.min(self.options.len().saturating_sub(1)));
+    fn select(&mut self, index: usize, ctx: &mut EventCtx) {
+        if self.options.is_empty() {
+            return;
+        }
+
+        let selected = index.min(self.options.len().saturating_sub(1));
+        let changed = self.selected != Some(selected);
+        self.selected = Some(selected);
+        if changed || self.selected_visual != Some(selected) {
+            let theme = self.resolved_theme();
+            self.selected_visual = Some(selected);
+            self.selection_animation = AnimatedScalar::new(0.0);
+            set_toggle_animation_target(&mut self.selection_animation, 1.0, &theme, ctx);
+        }
         if let Some(on_change) = &mut self.on_change {
-            if let Some(selected) = self.selected {
-                on_change(selected, self.options[selected].clone());
-            }
+            on_change(selected, self.options[selected].clone());
         }
     }
 
@@ -2995,25 +3028,123 @@ impl RadioGroup {
             .map(|theme| theme())
             .unwrap_or(*self.theme)
     }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered && self.hover_visual == hovered {
+            return;
+        }
+
+        let theme = self.resolved_theme();
+        self.hovered = hovered;
+        match hovered {
+            Some(index) => {
+                if self.hover_visual != Some(index) {
+                    self.hover_visual = Some(index);
+                    self.hover_animation = AnimatedScalar::new(0.0);
+                }
+                set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+            }
+            None => {
+                set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
+            }
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed && self.press_visual == pressed {
+            return;
+        }
+
+        let theme = self.resolved_theme();
+        self.pressed = pressed;
+        match pressed {
+            Some(index) => {
+                if self.press_visual != Some(index) {
+                    self.press_visual = Some(index);
+                    self.press_animation = AnimatedScalar::new(0.0);
+                }
+                set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
+            }
+            None => {
+                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
+            }
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn hover_progress_for(&self, index: usize) -> f32 {
+        if self.hover_visual == Some(index) {
+            self.hover_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn press_progress_for(&self, index: usize) -> f32 {
+        if self.press_visual == Some(index) {
+            self.press_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn selection_progress_for(&self, index: usize) -> f32 {
+        if self.selected_visual == Some(index) {
+            self.selection_animation.value
+        } else if self.selected == Some(index) {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    fn advance_animations(&mut self, time: f64) -> (bool, bool) {
+        let previous_hover = self.hover_animation.value;
+        let previous_press = self.press_animation.value;
+        let previous_selection = self.selection_animation.value;
+        let previous_focus = self.focus_animation.value;
+        let active = self.hover_animation.advance(time)
+            | self.press_animation.advance(time)
+            | self.selection_animation.advance(time)
+            | self.focus_animation.advance(time);
+        let changed = self.hover_animation.changed_since(previous_hover)
+            || self.press_animation.changed_since(previous_press)
+            || self.selection_animation.changed_since(previous_selection)
+            || self.focus_animation.changed_since(previous_focus);
+
+        if self.hovered.is_none() && !self.hover_animation.is_presented() {
+            self.hover_visual = None;
+        }
+        if self.pressed.is_none() && !self.press_animation.is_presented() {
+            self.press_visual = None;
+        }
+
+        (changed, active)
+    }
 }
 
 impl Widget for RadioGroup {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = self.option_at(ctx.bounds(), pointer.position);
-                if hovered != self.hovered {
-                    self.hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
+                self.set_hovered(self.option_at(ctx.bounds(), pointer.position), ctx);
+            }
+            Event::Pointer(pointer) if matches!(pointer.kind, PointerEventKind::Enter) => {
+                self.set_hovered(self.option_at(ctx.bounds(), pointer.position), ctx);
+            }
+            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
+                self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                self.hovered = self.option_at(ctx.bounds(), pointer.position);
-                self.pressed = self.hovered;
+                let hovered = self.option_at(ctx.bounds(), pointer.position);
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(hovered, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_paint();
@@ -3029,18 +3160,19 @@ impl Widget for RadioGroup {
                     .pressed
                     .zip(hovered)
                     .filter(|(pressed, hovered)| pressed == hovered);
-                self.hovered = hovered;
-                self.pressed = None;
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if let Some((index, _)) = activate {
-                    self.select(index);
+                    self.select(index, ctx);
                 }
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.take().is_some() {
+                if self.pressed.is_some() {
+                    self.set_pressed(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -3063,12 +3195,22 @@ impl Widget for RadioGroup {
                 };
 
                 if let Some(next) = next {
-                    self.hovered = Some(next);
-                    self.select(next);
+                    self.set_hovered(Some(next), ctx);
+                    self.select(next, ctx);
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
                 }
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                let (changed, active) = self.advance_animations(*time);
+                if changed {
+                    ctx.request_paint();
+                }
+                if active {
+                    ctx.request_animation_frame();
+                }
+                ctx.set_handled();
             }
             _ => {}
         }
@@ -3103,11 +3245,28 @@ impl Widget for RadioGroup {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let interaction = theme.interaction;
+        let focus_progress = self.focus_animation.value;
         let row_padding = Insets {
             top: 0.0,
             bottom: 0.0,
             ..metrics.checkbox_padding
         };
+
+        if focus_progress > AnimatedScalar::EPSILON {
+            let outset = physical_pixels(ctx, metrics.focus_ring_outset);
+            ctx.stroke(
+                rounded_rect_path(
+                    ctx.bounds().inflate(outset, outset),
+                    metrics.corner_radius + outset,
+                ),
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * focus_progress),
+                StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
+            );
+        }
+
         for (index, option) in self.options.iter().enumerate() {
             let row = self.row_rect(ctx.bounds(), index);
             let indicator = indicator_rect(row, row_padding, metrics.checkbox_indicator_size);
@@ -3117,15 +3276,30 @@ impl Widget for RadioGroup {
                 metrics.checkbox_indicator_size,
                 metrics.checkbox_gap,
             );
-            let hovered = self.hovered == Some(index);
-            let selected = self.selected == Some(index);
-            let background = if self.pressed == Some(index) {
-                palette.control_active
-            } else if hovered {
-                palette.control_hover
-            } else {
-                palette.control
-            };
+            let hover_progress = self.hover_progress_for(index);
+            let press_progress = self.press_progress_for(index);
+            let selection_progress = self.selection_progress_for(index);
+            let hover_amount = hover_progress * interaction.hover_blend;
+            let press_amount = press_progress * interaction.pressed_blend;
+            let background = mix_color(
+                mix_color(palette.control, palette.control_hover, hover_amount),
+                palette.control_active,
+                press_amount,
+            );
+            let border = mix_color(
+                mix_color(palette.border, palette.border_hover, hover_progress),
+                palette.accent_border,
+                selection_progress,
+            );
+            let indicator_fill = mix_color(
+                mix_color(palette.control_active, palette.surface_focus, hover_amount),
+                mix_color(
+                    mix_color(palette.accent, palette.accent_hover, hover_amount),
+                    palette.accent_pressed,
+                    press_amount,
+                ),
+                selection_progress,
+            );
 
             draw_control_shape(
                 ctx,
@@ -3133,35 +3307,24 @@ impl Widget for RadioGroup {
                 metrics.corner_radius,
                 physical_pixels(ctx, metrics.border_width),
                 background,
-                if selected {
-                    palette.accent_border
-                } else if hovered {
-                    palette.border_hover
-                } else {
-                    palette.border
-                },
+                border,
             );
             ctx.fill(
                 Path::circle(rect_center(indicator), indicator.width() * 0.5),
-                if selected {
-                    palette.accent
-                } else {
-                    palette.control_active
-                },
+                indicator_fill,
             );
             ctx.stroke(
                 Path::circle(rect_center(indicator), (indicator.width() * 0.5) - 0.5),
-                if selected {
-                    palette.accent_border
-                } else {
-                    palette.border
-                },
+                border,
                 StrokeStyle::new(physical_pixels(ctx, metrics.border_width)),
             );
-            if selected {
+            if selection_progress > AnimatedScalar::EPSILON {
                 ctx.fill(
-                    Path::circle(rect_center(indicator), indicator.width() * 0.22),
-                    palette.accent_text,
+                    Path::circle(
+                        rect_center(indicator),
+                        indicator.width() * 0.22 * selection_progress,
+                    ),
+                    palette.accent_text.with_alpha(selection_progress),
                 );
             }
             let text_style = theme.body_text_style();
@@ -3193,7 +3356,10 @@ impl Widget for RadioGroup {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
+        ctx.request_paint();
         ctx.request_semantics();
     }
 }
@@ -4859,6 +5025,8 @@ struct SelectMenuPresentationState {
     options: Vec<String>,
     selected: Option<usize>,
     hovered: Option<usize>,
+    hover_visual: Option<usize>,
+    hover_animation: AnimatedScalar,
     placement: SelectMenuPlacement,
     menu_bounds: Rect,
     reveal: AnimatedScalar,
@@ -4871,6 +5039,8 @@ impl SelectMenuPresentationState {
             options: Vec::new(),
             selected: None,
             hovered: None,
+            hover_visual: None,
+            hover_animation: AnimatedScalar::new(0.0),
             placement: SelectMenuPlacement::Below,
             menu_bounds: Rect::ZERO,
             reveal: AnimatedScalar::new(0.0),
@@ -4892,6 +5062,64 @@ impl SelectMenuPresentationState {
             bounds.width(),
             self.row_height(),
         )
+    }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, animate: bool, ctx: &mut EventCtx) -> bool {
+        if self.hovered == hovered && self.hover_visual == hovered {
+            return false;
+        }
+
+        self.hovered = hovered;
+        match hovered {
+            Some(index) => {
+                if self.hover_visual != Some(index) {
+                    self.hover_visual = Some(index);
+                    self.hover_animation = AnimatedScalar::new(0.0);
+                }
+                if animate {
+                    set_hover_animation_target(&mut self.hover_animation, 1.0, &self.theme, ctx);
+                } else {
+                    self.hover_animation = AnimatedScalar::new(1.0);
+                }
+            }
+            None => {
+                if animate {
+                    set_hover_animation_target(&mut self.hover_animation, 0.0, &self.theme, ctx);
+                } else {
+                    self.hover_animation = AnimatedScalar::new(0.0);
+                    self.hover_visual = None;
+                }
+            }
+        }
+        true
+    }
+
+    fn sync_hovered_without_animation(&mut self, hovered: Option<usize>) -> bool {
+        if self.hovered == hovered && self.hover_visual == hovered {
+            return false;
+        }
+        self.hovered = hovered;
+        self.hover_visual = hovered;
+        self.hover_animation = AnimatedScalar::new(hovered.is_some() as u8 as f32);
+        true
+    }
+
+    fn advance_hover(&mut self, time: f64) -> (bool, bool) {
+        let previous = self.hover_animation.value;
+        let active = self.hover_animation.advance(time);
+        let changed = self.hover_animation.changed_since(previous);
+        if self.hovered.is_none() && !self.hover_animation.is_presented() {
+            self.hover_visual = None;
+        }
+        (changed, active)
+    }
+
+    fn hover_progress_for(&self, index: usize) -> f32 {
+        if self.hover_visual == Some(index) {
+            self.hover_animation.value
+        } else {
+            0.0
+        }
     }
 
     fn layer_properties(&self) -> LayerProperties {
@@ -4920,6 +5148,54 @@ impl SelectMenuSurface {
 }
 
 impl Widget for SelectMenuSurface {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer)
+                if matches!(
+                    pointer.kind,
+                    PointerEventKind::Move | PointerEventKind::Enter
+                ) =>
+            {
+                let mut state = self.state.borrow_mut();
+                let bounds = state.menu_bounds;
+                let hovered = bounds.contains(pointer.position).then(|| {
+                    state.options.iter().enumerate().find_map(|(index, _)| {
+                        state
+                            .row_rect(index, bounds)
+                            .contains(pointer.position)
+                            .then_some(index)
+                    })
+                });
+                let changed = state.set_hovered(hovered.flatten(), true, ctx);
+                drop(state);
+                if changed {
+                    ctx.request_paint();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                let mut state = self.state.borrow_mut();
+                let changed = state.set_hovered(None, true, ctx);
+                drop(state);
+                if changed {
+                    ctx.request_paint();
+                }
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                let mut state = self.state.borrow_mut();
+                let (changed, active) = state.advance_hover(*time);
+                drop(state);
+                if changed {
+                    ctx.request_paint();
+                }
+                if active {
+                    ctx.request_animation_frame();
+                }
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
     fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
         let state = self.state.borrow();
         if state.is_presented() {
@@ -4953,16 +5229,25 @@ impl Widget for SelectMenuSurface {
         for (index, option) in state.options.iter().enumerate() {
             let row = state.row_rect(index, menu);
             let selected = state.selected == Some(index);
-            let hovered = state.hovered == Some(index);
+            let hover_progress = state.hover_progress_for(index);
             let text_style = theme.body_text_style();
-            if hovered || selected {
+            if hover_progress > AnimatedScalar::EPSILON || selected {
+                let background = if selected {
+                    mix_color(
+                        palette.selection,
+                        palette.control_hover,
+                        hover_progress * theme.interaction.hover_blend,
+                    )
+                } else {
+                    mix_color(
+                        palette.surface_raised,
+                        palette.control_hover,
+                        hover_progress,
+                    )
+                };
                 ctx.fill(
                     rounded_rect_path(row.inflate(-4.0, -4.0), metrics.corner_radius - 2.0),
-                    if hovered {
-                        palette.control_hover
-                    } else {
-                        palette.selection
-                    },
+                    background,
                 );
             }
             let text_slot = horizontal_text_inset_rect(row, metrics.text_input_padding);
@@ -5270,7 +5555,9 @@ impl Select {
         state.theme = self.resolved_theme();
         state.options = self.options.clone();
         state.selected = self.current_selected_index();
-        state.hovered = self.hovered_option;
+        if state.hovered != self.hovered_option {
+            state.sync_hovered_without_animation(self.hovered_option);
+        }
         state.placement = self.menu_placement(bounds, viewport);
         state.menu_bounds = self.menu_rect(bounds, viewport);
     }
@@ -5280,9 +5567,10 @@ impl Select {
         let hovered = self.hovered_option;
         let surface_id = self.menu_surface.child().id();
         let mut state = self.menu_state.borrow_mut();
-        let changed = state.selected != selected || state.hovered != hovered;
+        let selected_changed = state.selected != selected;
         state.selected = selected;
-        state.hovered = hovered;
+        let hover_changed = state.set_hovered(hovered, true, ctx);
+        let changed = selected_changed || hover_changed;
         let presented = state.is_presented();
         drop(state);
 
@@ -5308,6 +5596,7 @@ impl Select {
         let mut state = self.menu_state.borrow_mut();
         state.theme = theme;
         let was_presented = state.is_presented();
+        state.sync_hovered_without_animation(self.hovered_option);
         let should_animate = if expanded {
             let motion = theme.motion;
             state.reveal.set_target(
@@ -5352,7 +5641,8 @@ impl Select {
             );
             let surface_id = self.menu_surface.child().id();
             let mut state = self.menu_state.borrow_mut();
-            state.hovered = hovered_option;
+            state.theme = theme;
+            state.set_hovered(hovered_option, true, ctx);
             let presented = state.is_presented();
             drop(state);
             if presented {
@@ -5409,8 +5699,12 @@ impl Widget for Select {
                     ctx,
                 );
             }
-            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
-                self.set_hover_state(false, None, ctx);
+            Event::Pointer(pointer) if matches!(pointer.kind, PointerEventKind::Leave) => {
+                self.set_hover_state(
+                    false,
+                    self.option_at(ctx.bounds(), ctx.dpi().viewport, pointer.position),
+                    ctx,
+                );
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -5497,7 +5791,7 @@ impl Widget for Select {
                                 .unwrap_or_else(|| self.current_selected_index().unwrap_or(0))
                                 .saturating_add(1)
                                 .min(self.options.len() - 1);
-                            self.hovered_option = Some(next);
+                            self.set_hover_state(self.hovered_header, Some(next), ctx);
                         } else {
                             let next = self
                                 .current_selected_index()
@@ -5513,7 +5807,7 @@ impl Widget for Select {
                                 .hovered_option
                                 .unwrap_or_else(|| self.current_selected_index().unwrap_or(0))
                                 .saturating_sub(1);
-                            self.hovered_option = Some(next);
+                            self.set_hover_state(self.hovered_header, Some(next), ctx);
                         } else {
                             let next = self.current_selected_index().unwrap_or(0).saturating_sub(1);
                             self.select_index(ctx, next);
@@ -5535,6 +5829,7 @@ impl Widget for Select {
                 let mut state = self.menu_state.borrow_mut();
                 let was_presented = state.is_presented();
                 let previous = state.reveal.value;
+                let (hover_changed, hover_animating) = state.advance_hover(*time);
                 let animating = state.reveal.advance(*time);
                 let changed = state.reveal.changed_since(previous);
                 let is_presented = state.is_presented();
@@ -5548,10 +5843,13 @@ impl Widget for Select {
                     ctx.request_measure();
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
                 }
+                if hover_changed {
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
+                }
                 if header_changed {
                     ctx.request_paint();
                 }
-                if animating || header_animating {
+                if animating || header_animating || hover_animating {
                     ctx.request_animation_frame();
                 }
                 ctx.set_handled();
@@ -5583,7 +5881,9 @@ impl Widget for Select {
                 state.theme = theme;
                 state.options = self.options.clone();
                 state.selected = self.current_selected_index();
-                state.hovered = self.hovered_option;
+                if state.hovered != self.hovered_option {
+                    state.sync_hovered_without_animation(self.hovered_option);
+                }
                 state.menu_bounds = Rect::from_origin_size(Point::ZERO, menu_size);
             }
             self.menu_surface
@@ -5696,7 +5996,7 @@ impl Widget for Select {
         node.name = Some(self.name.clone());
         node.value = Some(SemanticsValue::Text(self.current_label()));
         node.state.focused = ctx.is_focused();
-        node.state.hovered = self.hovered_header || self.hovered_option.is_some();
+        node.state.hovered = self.hovered_header || self.menu_state.borrow().hovered.is_some();
         node.state.expanded = Some(self.expanded);
         node.actions = vec![
             SemanticsAction::Focus,
@@ -7003,6 +7303,37 @@ mod tests {
         colors
     }
 
+    fn solid_stroke_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect {
+                    brush: Brush::Solid(color),
+                    ..
+                }
+                | SceneCommand::StrokePath {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                _ => {}
+            });
+        colors
+    }
+
+    fn assert_color_approx_eq(actual: Color, expected: Color) {
+        const CHANNEL_TOLERANCE: f32 = 1.0 / 255.0;
+        assert_eq!(actual.space, expected.space);
+        assert!(
+            (actual.red - expected.red).abs() <= CHANNEL_TOLERANCE
+                && (actual.green - expected.green).abs() <= CHANNEL_TOLERANCE
+                && (actual.blue - expected.blue).abs() <= CHANNEL_TOLERANCE
+                && (actual.alpha - expected.alpha).abs() <= CHANNEL_TOLERANCE,
+            "color {actual:?} did not match {expected:?} within one channel step"
+        );
+    }
+
     fn text_run_for(output: &RenderOutput, text: &str) -> sui_text::TextRun {
         let mut found = None;
         output.frame.scene.visit_commands(&mut |command| {
@@ -7686,6 +8017,61 @@ mod tests {
     }
 
     #[test]
+    fn switch_track_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let hover_time = hover_duration();
+        let press_time = press_duration();
+        let (mut runtime, window_id) = build_runtime(Switch::new("Wifi").on(true));
+
+        let _ = runtime.render(window_id)?;
+        let point = Point::new(12.0, 12.0);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, point, false),
+        )?;
+
+        runtime.tick(hover_time * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime.render(window_id)?;
+        let mid_hover_track = solid_fill_colors(&mid_hover)[1];
+        let settled_hover_track = super::mix_color(
+            theme.palette.accent,
+            theme.palette.accent_hover,
+            theme.interaction.hover_blend,
+        );
+        assert_ne!(mid_hover_track, theme.palette.accent);
+        assert_ne!(mid_hover_track, settled_hover_track);
+
+        runtime.tick(hover_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let hover = runtime.render(window_id)?;
+        assert_eq!(solid_fill_colors(&hover)[1], settled_hover_track);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, point, true),
+        )?;
+
+        runtime.tick(hover_time + (press_time * 0.5));
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime.render(window_id)?;
+        let mid_press_track = solid_fill_colors(&mid_press)[1];
+        let settled_press_track = super::mix_color(
+            settled_hover_track,
+            theme.palette.accent_pressed,
+            theme.interaction.pressed_blend,
+        );
+        assert_ne!(mid_press_track, settled_hover_track);
+        assert_ne!(mid_press_track, settled_press_track);
+
+        runtime.tick(hover_time + press_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let press = runtime.render(window_id)?;
+        assert_eq!(solid_fill_colors(&press)[1], settled_press_track);
+        Ok(())
+    }
+
+    #[test]
     fn slider_thumb_hover_animation_requests_followup_frames_until_complete() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(Slider::new("Gain"));
 
@@ -7747,6 +8133,70 @@ mod tests {
                 theme.palette.control_hover,
                 theme.interaction.hover_blend
             )
+        );
+        assert_eq!(runtime.next_wakeup_time(window_id)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn expanded_select_option_hover_animation_uses_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            12.0,
+            Select::new("Mode").placeholder("Choose mode").options([
+                "Automatic",
+                "Linear",
+                "Gamma",
+            ]),
+        ));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(20.0, 20.0), false),
+        )?;
+
+        let entrance_time = entrance_duration();
+        let hover_time = hover_duration();
+        runtime.tick(entrance_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let expanded = runtime.render(window_id)?;
+        let select = expanded
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after expand");
+        let option_point = Point::new(
+            select.bounds.x() + 20.0,
+            select.bounds.max_y() + super::SELECT_MENU_GAP + (select.bounds.height() * 1.5),
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, option_point, false),
+        )?;
+
+        runtime.tick(entrance_time + (hover_time * 0.5));
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid = runtime.render(window_id)?;
+        let mid_fills = solid_fill_colors(&mid);
+        assert!(
+            !mid_fills.contains(&theme.palette.control_hover),
+            "expanded select option hover should not snap directly to the settled hover token"
+        );
+        assert!(runtime.next_wakeup_time(window_id)?.is_some());
+
+        runtime.tick(entrance_time + hover_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled = runtime.render(window_id)?;
+        let settled_fills = solid_fill_colors(&settled);
+        assert!(
+            settled_fills.contains(&theme.palette.control_hover),
+            "expanded select option hover should settle to the theme hover token; fills={settled_fills:?}, expected={:?}",
+            theme.palette.control_hover
         );
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
@@ -7985,6 +8435,90 @@ mod tests {
     }
 
     #[test]
+    fn checkbox_focus_border_uses_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(Checkbox::new("Subscribe"));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(10.0, 10.0), true),
+        )?;
+
+        runtime.tick(focus_duration() * 0.5);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let mid_focus = runtime.render(window_id)?;
+        assert!(
+            !solid_stroke_colors(&mid_focus).contains(&theme.palette.border_focus),
+            "checkbox focus border should not snap to the settled focus border color"
+        );
+
+        runtime.tick(focus_duration());
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let settled_focus = runtime.render(window_id)?;
+        assert!(
+            solid_stroke_colors(&settled_focus).contains(&theme.palette.border_focus),
+            "checkbox focus border should settle to the theme focus border color"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checkbox_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let hover_time = hover_duration();
+        let press_time = press_duration();
+        let (mut runtime, window_id) = build_runtime(Checkbox::new("Subscribe"));
+
+        let _ = runtime.render(window_id)?;
+        let point = Point::new(10.0, 10.0);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, point, false),
+        )?;
+
+        runtime.tick(hover_time * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime.render(window_id)?;
+        let mid_hover_background = solid_fill_colors(&mid_hover)[0];
+        let settled_hover_background = super::mix_color(
+            theme.palette.control,
+            theme.palette.control_hover,
+            theme.interaction.hover_blend,
+        );
+        assert_ne!(mid_hover_background, theme.palette.control);
+        assert_ne!(mid_hover_background, settled_hover_background);
+
+        runtime.tick(hover_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let hover = runtime.render(window_id)?;
+        assert_color_approx_eq(solid_fill_colors(&hover)[0], settled_hover_background);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, point, true),
+        )?;
+
+        runtime.tick(hover_time + (press_time * 0.5));
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime.render(window_id)?;
+        let mid_press_background = solid_fill_colors(&mid_press)[0];
+        let settled_press_background = super::mix_color(
+            settled_hover_background,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+        assert_ne!(mid_press_background, settled_hover_background);
+        assert_ne!(mid_press_background, settled_press_background);
+
+        runtime.tick(hover_time + press_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let press = runtime.render(window_id)?;
+        assert_color_approx_eq(solid_fill_colors(&press)[0], settled_press_background);
+        Ok(())
+    }
+
+    #[test]
     fn radio_button_selection_animation_uses_theme_motion() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(RadioButton::new("Manual"));
 
@@ -8012,6 +8546,168 @@ mod tests {
             .unwrap();
         assert!(radio.state.selected);
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn radio_button_hover_and_press_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let hover_time = hover_duration();
+        let press_time = press_duration();
+        let (mut runtime, window_id) = build_runtime(RadioButton::new("Manual").selected(true));
+
+        let _ = runtime.render(window_id)?;
+        let point = Point::new(10.0, 10.0);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, point, false),
+        )?;
+
+        runtime.tick(hover_time * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_hover = runtime.render(window_id)?;
+        let mid_hover_indicator = solid_fill_colors(&mid_hover)[1];
+        let settled_hover_indicator = super::mix_color(
+            theme.palette.accent,
+            theme.palette.accent_hover,
+            theme.interaction.hover_blend,
+        );
+        assert_ne!(mid_hover_indicator, theme.palette.accent);
+        assert_ne!(mid_hover_indicator, settled_hover_indicator);
+
+        runtime.tick(hover_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let hover = runtime.render(window_id)?;
+        assert_color_approx_eq(solid_fill_colors(&hover)[1], settled_hover_indicator);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, point, true),
+        )?;
+
+        runtime.tick(hover_time + (press_time * 0.5));
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_press = runtime.render(window_id)?;
+        let mid_press_indicator = solid_fill_colors(&mid_press)[1];
+        let settled_press_indicator = super::mix_color(
+            settled_hover_indicator,
+            theme.palette.accent_pressed,
+            theme.interaction.pressed_blend,
+        );
+        assert_ne!(mid_press_indicator, settled_hover_indicator);
+        assert_ne!(mid_press_indicator, settled_press_indicator);
+
+        runtime.tick(hover_time + press_time);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let press = runtime.render(window_id)?;
+        assert_color_approx_eq(solid_fill_colors(&press)[1], settled_press_indicator);
+        Ok(())
+    }
+
+    #[test]
+    fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let hover_time = hover_duration();
+        let press_time = press_duration();
+        let toggle_time = toggle_duration();
+        let (mut runtime, window_id) =
+            build_runtime(RadioGroup::new("Mode").options(["Manual", "Automatic"]));
+
+        let _ = runtime.render(window_id)?;
+        let row_point = Point::new(10.0, 10.0);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, row_point, false),
+        )?;
+
+        runtime.tick(hover_time * 0.5);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let mid_hover = runtime.render(window_id)?;
+        let mid_hover_background = solid_fill_colors(&mid_hover)[0];
+        let settled_hover_background = super::mix_color(
+            theme.palette.control,
+            theme.palette.control_hover,
+            theme.interaction.hover_blend,
+        );
+        assert_ne!(mid_hover_background, theme.palette.control);
+        assert_ne!(mid_hover_background, settled_hover_background);
+
+        runtime.tick(hover_time);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let hover = runtime.render(window_id)?;
+        assert_eq!(solid_fill_colors(&hover)[0], settled_hover_background);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, row_point, true),
+        )?;
+        runtime.tick(hover_time + (press_time * 0.5));
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let mid_press = runtime.render(window_id)?;
+        let mid_press_background = solid_fill_colors(&mid_press)[0];
+        let settled_press_background = super::mix_color(
+            settled_hover_background,
+            theme.palette.control_active,
+            theme.interaction.pressed_blend,
+        );
+        assert_ne!(mid_press_background, settled_hover_background);
+        assert_ne!(mid_press_background, settled_press_background);
+
+        runtime.tick(hover_time + press_time);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let press = runtime.render(window_id)?;
+        assert_eq!(solid_fill_colors(&press)[0], settled_press_background);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, row_point, false),
+        )?;
+        let selection_start = hover_time + press_time;
+        runtime.tick(selection_start + (toggle_time * 0.5));
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let mid_selection = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_selection).contains(&theme.palette.accent_text),
+            "radio group selection dot should not snap directly to the settled selected color"
+        );
+
+        runtime.tick(selection_start + toggle_time);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let selected = runtime.render(window_id)?;
+        assert!(
+            solid_fill_colors(&selected).contains(&theme.palette.accent_text),
+            "radio group selection dot should settle to the theme selected text color"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn radio_group_focus_ring_uses_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) =
+            build_runtime(RadioGroup::new("Mode").options(["Manual", "Automatic"]));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(10.0, 10.0), true),
+        )?;
+
+        runtime.tick(focus_duration() * 0.5);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let mid_focus = runtime.render(window_id)?;
+        assert!(
+            !solid_stroke_colors(&mid_focus).contains(&theme.palette.focus_ring),
+            "radio group focus ring should not snap to the settled focus color"
+        );
+
+        runtime.tick(focus_duration());
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+        let settled_focus = runtime.render(window_id)?;
+        assert!(
+            solid_stroke_colors(&settled_focus).contains(&theme.palette.focus_ring),
+            "radio group focus ring should settle to the theme focus color"
+        );
         Ok(())
     }
 
