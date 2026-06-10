@@ -7148,6 +7148,13 @@ mod tests {
         DefaultTheme::default().motion.entrance_duration()
     }
 
+    fn slow_toggle_theme() -> DefaultTheme {
+        let mut theme = DefaultTheme::default();
+        theme.motion.duration_fast = 0.0;
+        theme.motion.duration_normal = 0.6;
+        theme
+    }
+
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
         W: Widget + 'static,
@@ -7998,7 +8005,9 @@ mod tests {
 
     #[test]
     fn switch_thumb_animation_tracks_progress_and_completion() -> Result<()> {
-        let (mut runtime, window_id) = build_runtime(Switch::new("Wifi"));
+        let theme = slow_toggle_theme();
+        let toggle_time = theme.motion.toggle_duration();
+        let (mut runtime, window_id) = build_runtime(Switch::new("Wifi").theme(theme));
 
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
@@ -8010,11 +8019,11 @@ mod tests {
             primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false),
         )?;
 
-        runtime.tick(toggle_duration() * 0.5);
+        runtime.tick(toggle_time * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
-        runtime.tick(toggle_duration());
+        runtime.tick(toggle_time);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
 
@@ -8469,7 +8478,9 @@ mod tests {
 
     #[test]
     fn checkbox_check_indicator_animation_progresses_deterministically() -> Result<()> {
-        let (mut runtime, window_id) = build_runtime(Checkbox::new("Subscribe"));
+        let theme = slow_toggle_theme();
+        let toggle_time = theme.motion.toggle_duration();
+        let (mut runtime, window_id) = build_runtime(Checkbox::new("Subscribe").theme(theme));
 
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
@@ -8481,14 +8492,14 @@ mod tests {
             primary_pointer(PointerEventKind::Up, Point::new(10.0, 10.0), false),
         )?;
 
-        runtime.tick(toggle_duration() * 0.5);
+        runtime.tick(toggle_time * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
         let fills = solid_fill_colors(&mid);
         assert!(!fills.is_empty());
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
-        runtime.tick(toggle_duration());
+        runtime.tick(toggle_time);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
         let checkbox = end
@@ -8587,7 +8598,9 @@ mod tests {
 
     #[test]
     fn radio_button_selection_animation_uses_theme_motion() -> Result<()> {
-        let (mut runtime, window_id) = build_runtime(RadioButton::new("Manual"));
+        let theme = slow_toggle_theme();
+        let toggle_time = theme.motion.toggle_duration();
+        let (mut runtime, window_id) = build_runtime(RadioButton::new("Manual").theme(theme));
 
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
@@ -8599,11 +8612,11 @@ mod tests {
             primary_pointer(PointerEventKind::Up, Point::new(10.0, 10.0), false),
         )?;
 
-        runtime.tick(toggle_duration() * 0.5);
+        runtime.tick(toggle_time * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
-        runtime.tick(toggle_duration());
+        runtime.tick(toggle_time);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
         let radio = end

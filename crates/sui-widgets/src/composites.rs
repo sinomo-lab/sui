@@ -6298,7 +6298,21 @@ impl Widget for Tabs {
             None,
         );
         if let Some(panel) = self.selected_panel() {
-            panel.paint(ctx);
+            let panel_translation = tab_panel_transition_translation(
+                self.selection_from,
+                self.normalized_selected(),
+                self.selection_animation.value,
+                metrics,
+            );
+            if panel_translation == Vector::ZERO {
+                panel.paint(ctx);
+            } else {
+                ctx.push_clip_rect(content);
+                ctx.translate(panel_translation);
+                panel.paint(ctx);
+                ctx.pop_transform();
+                ctx.pop_clip();
+            }
         }
     }
 
@@ -9649,6 +9663,29 @@ fn tab_indicator_from_tab_rect(rect: Rect, padding: Insets, thickness: f32) -> R
     )
 }
 
+fn tab_panel_transition_translation(
+    from_index: usize,
+    selected_index: usize,
+    progress: f32,
+    metrics: ControlMetrics,
+) -> Vector {
+    if from_index == selected_index {
+        return Vector::ZERO;
+    }
+
+    let remaining = 1.0 - progress.clamp(0.0, 1.0);
+    if remaining <= AnimatedScalar::EPSILON {
+        return Vector::ZERO;
+    }
+
+    let direction = if selected_index > from_index {
+        1.0
+    } else {
+        -1.0
+    };
+    Vector::new(direction * metrics.tab_panel_gap * remaining, 0.0)
+}
+
 fn lerp_rect(from: Rect, to: Rect, progress: f32) -> Rect {
     let progress = progress.clamp(0.0, 1.0);
     Rect::new(
@@ -12556,6 +12593,62 @@ mod tests {
         found.expect("text draw command present")
     }
 
+    fn text_transform_dx_for(output: &RenderOutput, text: &str) -> Option<f32> {
+        fn find_in_commands(
+            output: &RenderOutput,
+            text: &str,
+            commands: &[SceneCommand],
+            inherited_dx: f32,
+            stack: &mut Vec<f32>,
+        ) -> Option<f32> {
+            let mut current_dx = inherited_dx;
+            for command in commands {
+                match command {
+                    SceneCommand::PushTransform { transform } => {
+                        stack.push(current_dx);
+                        current_dx += transform.dx;
+                    }
+                    SceneCommand::PopTransform => {
+                        current_dx = stack.pop().unwrap_or(inherited_dx);
+                    }
+                    SceneCommand::DrawText(run) if run.text == text => {
+                        return Some(current_dx);
+                    }
+                    SceneCommand::DrawShapedText(run) => {
+                        if run
+                            .resolve(output.frame.text_layout_registry.as_ref())
+                            .is_some_and(|layout| layout.text() == text)
+                        {
+                            return Some(current_dx);
+                        }
+                    }
+                    SceneCommand::Layer(layer) => {
+                        if let Some(dx) = find_in_commands(
+                            output,
+                            text,
+                            layer.scene.commands(),
+                            current_dx + layer.descriptor.properties.translation.x,
+                            stack,
+                        ) {
+                            return Some(dx);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            None
+        }
+
+        find_in_commands(
+            output,
+            text,
+            output.frame.scene.commands(),
+            0.0,
+            &mut Vec::new(),
+        )
+    }
+
     fn clip_rect_for_text(output: &RenderOutput, text: &str) -> Rect {
         let mut stack = Vec::new();
         let mut found = None;
@@ -13146,19 +13239,40 @@ mod tests {
     }
 
     #[test]
-    fn tab_bar_switch_animation_uses_theme_motion() -> Result<(), String> {
-        let theme = DefaultTheme::default();
+    fn tab_switch_animation_uses_theme_motion() -> Result<(), String> {
+        let mut theme = DefaultTheme::default();
+        theme.motion.duration_fast = 0.6;
+        theme.motion.duration_normal = 0.0;
         let switch_duration = theme.motion.tab_switch_duration();
-        let focus_duration = theme.motion.focus_duration();
-        let second_tab_point = Point::new(
-            theme.metrics.tab_min_width + theme.metrics.tab_gap + 12.0,
-            theme.metrics.tab_height * 0.5,
-        );
-        let (mut runtime, window_id) = build_runtime(
+
+        assert_keyboard_tab_switch_uses_duration(
             TabBar::new("Main tabs")
                 .theme(theme)
                 .tabs(["Design", "Inspect"]),
-        );
+            SemanticsRole::TabBar,
+            switch_duration,
+        )?;
+        assert_keyboard_tab_switch_uses_duration(
+            Tabs::new("Main tabs")
+                .theme(theme)
+                .tab("Design", crate::Label::new("Design panel"))
+                .tab("Inspect", crate::Label::new("Inspect panel")),
+            SemanticsRole::Tabs,
+            switch_duration,
+        )?;
+
+        Ok(())
+    }
+
+    fn assert_keyboard_tab_switch_uses_duration<W>(
+        widget: W,
+        role: SemanticsRole,
+        switch_duration: f64,
+    ) -> Result<(), String>
+    where
+        W: Widget + 'static,
+    {
+        let (mut runtime, window_id) = build_runtime(widget);
 
         runtime
             .render(window_id)
@@ -13166,13 +13280,23 @@ mod tests {
         runtime
             .handle_event(
                 window_id,
-                primary_pointer(PointerEventKind::Down, second_tab_point, true),
+                Event::Keyboard(KeyboardEvent::new("Tab", KeyState::Pressed)),
             )
             .map_err(|error| error.to_string())?;
+        runtime.tick(0.0);
+        let _ = handle_ready_events(&mut runtime)?;
+        assert!(
+            runtime
+                .focused_widget(window_id)
+                .map_err(|error| error.to_string())?
+                .is_some(),
+            "tab widget should receive keyboard focus before arrow-key switching"
+        );
+
         runtime
             .handle_event(
                 window_id,
-                primary_pointer(PointerEventKind::Up, second_tab_point, false),
+                Event::Keyboard(KeyboardEvent::new("ArrowRight", KeyState::Pressed)),
             )
             .map_err(|error| error.to_string())?;
 
@@ -13182,7 +13306,8 @@ mod tests {
             runtime
                 .next_wakeup_time(window_id)
                 .map_err(|error| error.to_string())?
-                .is_some()
+                .is_some(),
+            "tab switch should still be animating at half of the custom theme duration"
         );
 
         runtime.tick(switch_duration);
@@ -13190,25 +13315,77 @@ mod tests {
         let output = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
-        let tab_bar = output
+        let tabs = output
             .semantics
             .iter()
-            .find(|node| node.role == SemanticsRole::TabBar)
-            .expect("tab bar semantics present");
+            .find(|node| node.role == role)
+            .expect("tab semantics present");
         assert_eq!(
-            tab_bar.value,
+            tabs.value,
             Some(SemanticsValue::Text("Inspect".to_string()))
         );
-        if focus_duration > switch_duration {
-            runtime.tick(focus_duration);
-            assert_eq!(handle_ready_events(&mut runtime)?, 1);
-        }
         assert_eq!(
             runtime
                 .next_wakeup_time(window_id)
                 .map_err(|error| error.to_string())?,
             None
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tabs_panel_body_slides_during_theme_switch_motion() -> Result<(), String> {
+        let mut theme = DefaultTheme::default();
+        theme.motion.duration_fast = 0.6;
+        theme.motion.duration_normal = 0.0;
+        let switch_duration = theme.motion.tab_switch_duration();
+        let (mut runtime, window_id) = build_runtime(
+            Tabs::new("Main tabs")
+                .theme(theme)
+                .tab("Design", crate::Label::new("Design panel"))
+                .tab("Inspect", crate::Label::new("Inspect panel")),
+        );
+
+        runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("Tab", KeyState::Pressed)),
+            )
+            .map_err(|error| error.to_string())?;
+        runtime.tick(0.0);
+        let _ = handle_ready_events(&mut runtime)?;
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("ArrowRight", KeyState::Pressed)),
+            )
+            .map_err(|error| error.to_string())?;
+
+        runtime.tick(switch_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let mid_dx = text_transform_dx_for(&mid, "Inspect panel")
+            .expect("incoming panel text should be painted");
+        assert!(
+            mid_dx > 0.0,
+            "forward tab switch should slide the incoming panel in from the right; dx={mid_dx}"
+        );
+
+        runtime.tick(switch_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let settled_dx = text_transform_dx_for(&settled, "Inspect panel")
+            .expect("settled panel text should be painted");
+        assert_eq!(settled_dx, 0.0);
+
         Ok(())
     }
 
