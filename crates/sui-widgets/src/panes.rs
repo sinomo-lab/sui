@@ -1895,9 +1895,9 @@ mod tests {
     use crate::DefaultTheme;
     use crate::containers::SizedBox;
     use sui_core::{
-        Color, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        Result, ScrollDelta, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
-        WindowEvent,
+        Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
+        PointerEventKind, Rect, Result, ScrollDelta, SemanticsNode, SemanticsRole, SemanticsValue,
+        Size, Vector, WidgetId, WindowEvent,
     };
     use sui_layout::{Axis, Constraints};
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
@@ -2079,6 +2079,18 @@ mod tests {
         colors
     }
 
+    fn contains_approx_color(colors: &[Color], expected: Color) -> bool {
+        const CHANNEL_TOLERANCE: f32 = 1.0 / 255.0;
+
+        colors.iter().any(|color| {
+            color.space == expected.space
+                && (color.red - expected.red).abs() <= CHANNEL_TOLERANCE
+                && (color.green - expected.green).abs() <= CHANNEL_TOLERANCE
+                && (color.blue - expected.blue).abs() <= CHANNEL_TOLERANCE
+                && (color.alpha - expected.alpha).abs() <= CHANNEL_TOLERANCE
+        })
+    }
+
     fn render_rgba(
         runtime: &mut Runtime,
         renderer: &mut WgpuRenderer,
@@ -2245,6 +2257,48 @@ mod tests {
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let settled_drag = runtime.render(window_id)?;
         assert!(solid_fill_colors(&settled_drag).contains(&expected_drag));
+
+        Ok(())
+    }
+
+    #[test]
+    fn split_view_divider_focus_uses_theme_motion() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let expected_focus = theme.palette.border_focus;
+        let (mut runtime, window_id) = build_runtime(
+            SplitView::new(
+                Axis::Horizontal,
+                SizedBox::new().width(100.0).height(40.0),
+                SizedBox::new().width(100.0).height(40.0),
+            )
+            .theme(theme)
+            .min_first(40.0)
+            .min_second(40.0),
+        );
+
+        runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Tab", KeyState::Pressed)),
+        )?;
+
+        runtime.tick(focus_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid_focus = runtime.render(window_id)?;
+        assert!(
+            !solid_fill_colors(&mid_focus).contains(&expected_focus),
+            "split divider focus should not snap to the settled focus color"
+        );
+
+        runtime.tick(focus_duration + 0.01);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled_focus = runtime.render(window_id)?;
+        let settled_fills = solid_fill_colors(&settled_focus);
+        assert!(
+            contains_approx_color(&settled_fills, expected_focus),
+            "split divider focus should settle to {expected_focus:?}; fills={settled_fills:?}"
+        );
 
         Ok(())
     }

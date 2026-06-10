@@ -3,18 +3,62 @@ use std::{cell::RefCell, rc::Rc};
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, PathElement, Point, PointerButton, PointerEventKind,
     Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
-    Transform, Vector,
+    Transform, Vector, WakeEvent,
 };
 use sui_layout::Constraints;
 use sui_runtime::{ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::{ImageSampling, ImageSource, RegisteredImage, StrokeStyle};
 use sui_text::{FontFeature, TextMeasurement, TextStyle};
 
-use crate::{DefaultTheme, text_align::aligned_text_rect_for_text};
+use crate::{DefaultTheme, animation::MotionScalar, text_align::aligned_text_rect_for_text};
 
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
 const PIXEL_CANVAS_HISTORY_LIMIT: usize = 32;
 const CANVAS_RULER_MAX_TICKS: usize = 400;
+
+type AnimatedScalar = MotionScalar;
+
+fn set_focus_animation_target(
+    animation: &mut AnimatedScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) {
+    animation.set_target_event(
+        target,
+        theme.motion.focus_duration(),
+        theme.motion.focus_easing(),
+        ctx,
+    );
+}
+
+fn draw_focus_ring(ctx: &mut PaintCtx, bounds: Rect, theme: &DefaultTheme, progress: f32) {
+    if progress <= AnimatedScalar::EPSILON || bounds.is_empty() {
+        return;
+    }
+
+    let metrics = theme.metrics;
+    let outset = physical_pixels(ctx, metrics.focus_ring_outset);
+    ctx.stroke(
+        Path::rounded_rect(
+            bounds.inflate(outset, outset),
+            metrics.corner_radius + outset,
+        ),
+        theme
+            .palette
+            .focus_ring
+            .with_alpha(theme.palette.focus_ring.alpha * progress),
+        StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
+    );
+}
+
+fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
+    if value <= 0.0 {
+        return 0.0;
+    }
+
+    ctx.dpi().physical_pixels_to_logical(value)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanvasRulerAxis {
@@ -362,6 +406,7 @@ pub struct Canvas {
     active_stroke: Option<Vec<Point>>,
     drag: Option<CanvasDrag>,
     draw_stroke: CanvasStroke,
+    focus_animation: AnimatedScalar,
     desired_size: Size,
 }
 
@@ -377,6 +422,7 @@ impl Canvas {
             active_stroke: None,
             drag: None,
             draw_stroke: CanvasStroke::new(theme.palette.accent, 2.5),
+            focus_animation: AnimatedScalar::new(0.0),
             desired_size: Size::new(520.0, 360.0),
         }
     }
@@ -618,6 +664,12 @@ impl Widget for Canvas {
                 Self::request_interaction_update(ctx);
                 ctx.set_handled();
             }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.focus_animation.advance(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
+            }
             _ => {}
         }
     }
@@ -671,6 +723,7 @@ impl Widget for Canvas {
             }
         }
         ctx.pop_clip();
+        draw_focus_ring(ctx, ctx.bounds(), &theme, self.focus_animation.value);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -693,7 +746,9 @@ impl Widget for Canvas {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         Self::request_interaction_update(ctx);
     }
 }
@@ -1435,6 +1490,7 @@ pub struct PixelCanvas {
     undo_stack: Vec<Vec<PixelEdit>>,
     redo_stack: Vec<Vec<PixelEdit>>,
     has_visible_pixels: bool,
+    focus_animation: AnimatedScalar,
     desired_size: Size,
     fit_on_first_layout: bool,
     initial_fit_applied: bool,
@@ -1458,6 +1514,7 @@ impl PixelCanvas {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             has_visible_pixels: false,
+            focus_animation: AnimatedScalar::new(0.0),
             desired_size: Size::new(520.0, 360.0),
             fit_on_first_layout: false,
             initial_fit_applied: false,
@@ -2242,6 +2299,12 @@ impl Widget for PixelCanvas {
                 Self::request_interaction_update(ctx);
                 ctx.set_handled();
             }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.focus_animation.advance(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
+            }
             _ => {}
         }
     }
@@ -2344,6 +2407,7 @@ impl Widget for PixelCanvas {
             StrokeStyle::new(1.0),
         );
         ctx.pop_clip();
+        draw_focus_ring(ctx, ctx.bounds(), &theme, self.focus_animation.value);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2395,7 +2459,9 @@ impl Widget for PixelCanvas {
         true
     }
 
-    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         Self::request_interaction_update(ctx);
     }
 }
@@ -3058,6 +3124,17 @@ mod tests {
         runtime.render(window_id).expect("render should succeed")
     }
 
+    fn handle_ready_events(runtime: &mut Runtime) -> usize {
+        let ready = runtime.drain_ready_events();
+        let count = ready.len();
+        for (window_id, event) in ready {
+            runtime
+                .handle_event(window_id, event)
+                .expect("ready event should be handled");
+        }
+        count
+    }
+
     fn primary_pointer(kind: PointerEventKind, position: Point, pressed: bool) -> Event {
         let mut buttons = PointerButtons::NONE;
         if pressed {
@@ -3150,6 +3227,18 @@ mod tests {
             }
         });
         colors
+    }
+
+    fn contains_approx_color(colors: &[Color], expected: Color) -> bool {
+        const CHANNEL_TOLERANCE: f32 = 1.0 / 255.0;
+
+        colors.iter().any(|color| {
+            color.space == expected.space
+                && (color.red - expected.red).abs() <= CHANNEL_TOLERANCE
+                && (color.green - expected.green).abs() <= CHANNEL_TOLERANCE
+                && (color.blue - expected.blue).abs() <= CHANNEL_TOLERANCE
+                && (color.alpha - expected.alpha).abs() <= CHANNEL_TOLERANCE
+        })
     }
 
     fn numeric_text_runs(output: &RenderOutput) -> Vec<sui_text::TextRun> {
@@ -3666,6 +3755,78 @@ mod tests {
         assert!(strokes.contains(&theme.surfaces.canvas_grid));
         assert!(strokes.contains(&theme.surfaces.canvas_axis_x));
         assert!(strokes.contains(&theme.surfaces.canvas_axis_y));
+    }
+
+    #[test]
+    fn canvas_focus_ring_uses_theme_motion() {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(160.0, 120.0))
+                .with_child(Canvas::new("Vector").theme(theme)),
+        );
+
+        let _ = runtime.render(window_id).expect("render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(30.0, 30.0), true),
+            )
+            .expect("focus event should be handled");
+
+        runtime.tick(focus_duration * 0.5);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let mid_focus = runtime.render(window_id).expect("render should succeed");
+        assert!(
+            !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
+            "canvas focus ring should not snap to the settled focus color"
+        );
+
+        runtime.tick(focus_duration + 0.01);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let settled_focus = runtime.render(window_id).expect("render should succeed");
+        let settled_strokes = solid_stroke_colors(&settled_focus);
+        assert!(
+            contains_approx_color(&settled_strokes, theme.palette.focus_ring),
+            "canvas focus ring should settle to the theme focus color; strokes={settled_strokes:?}"
+        );
+    }
+
+    #[test]
+    fn pixel_canvas_focus_ring_uses_theme_motion() {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(160.0, 120.0))
+                .with_child(PixelCanvas::new("Paint", 8, 8).theme(theme)),
+        );
+
+        let _ = runtime.render(window_id).expect("render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(30.0, 30.0), true),
+            )
+            .expect("focus event should be handled");
+
+        runtime.tick(focus_duration * 0.5);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let mid_focus = runtime.render(window_id).expect("render should succeed");
+        assert!(
+            !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
+            "pixel canvas focus ring should not snap to the settled focus color"
+        );
+
+        runtime.tick(focus_duration + 0.01);
+        assert!(handle_ready_events(&mut runtime) >= 1);
+        let settled_focus = runtime.render(window_id).expect("render should succeed");
+        let settled_strokes = solid_stroke_colors(&settled_focus);
+        assert!(
+            contains_approx_color(&settled_strokes, theme.palette.focus_ring),
+            "pixel canvas focus ring should settle to the theme focus color; strokes={settled_strokes:?}"
+        );
     }
 
     #[test]

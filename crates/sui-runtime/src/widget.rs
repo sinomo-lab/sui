@@ -132,6 +132,7 @@ impl Default for StackHostOptions {
 pub struct StackSurfaceOptions {
     pub dynamic_ordering: bool,
     pub transient: bool,
+    pub hit_test: bool,
 }
 
 impl Default for StackSurfaceOptions {
@@ -139,6 +140,7 @@ impl Default for StackSurfaceOptions {
         Self {
             dynamic_ordering: true,
             transient: false,
+            hit_test: true,
         }
     }
 }

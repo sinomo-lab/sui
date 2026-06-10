@@ -854,6 +854,7 @@ pub struct WidgetNodeSnapshot {
     pub transient_owner_surface: Option<WidgetId>,
     pub is_stack_host: bool,
     pub is_stack_surface: bool,
+    pub hit_test: bool,
     pub stack_order_policy: StackOrderPolicy,
     pub accepts_focus: bool,
     pub focused: bool,
@@ -1210,7 +1211,7 @@ impl WindowState {
 
         let scene = self.last_frame.as_ref().map(|frame| &frame.scene)?;
         let descriptor = collect_scene_layers(scene).get(&focused)?.clone();
-        descriptor.paint_bounds.contains(point).then_some(focused)
+        (descriptor.hit_test && descriptor.paint_bounds.contains(point)).then_some(focused)
     }
 
     fn current_widget_matches_hit_test_phase(
@@ -1218,6 +1219,9 @@ impl WindowState {
         widget_id: WidgetId,
         target_phase: HitTestCompositionPhase,
     ) -> bool {
+        if !self.graph.node(widget_id).is_some_and(|node| node.hit_test) {
+            return false;
+        }
         let Some(composition_mode) = self.current_widget_composition_mode(widget_id) else {
             return false;
         };
@@ -2734,6 +2738,7 @@ impl WindowState {
                 layer.descriptor.stack_order = node.stack_surface_order;
                 layer.descriptor.transient_owner_surface = node.transient_owner_surface;
                 layer.descriptor.is_stack_surface = node.is_stack_surface;
+                layer.descriptor.hit_test = node.hit_test;
             }
         });
         scene.reorder_stack_surfaces();
@@ -3058,6 +3063,7 @@ impl WidgetGraph {
         let is_direct_child_of_host = parent == Some(resolved_host);
         let is_stack_surface =
             emits_layer && (surface_options.is_some() || is_direct_child_of_host);
+        let hit_test = surface_options.is_none_or(|options| options.hit_test);
         let resolved_surface = if is_stack_surface {
             id
         } else {
@@ -3119,6 +3125,7 @@ impl WidgetGraph {
                 transient_owner_surface,
                 is_stack_host,
                 is_stack_surface,
+                hit_test,
                 stack_order_policy: resolved_policy,
                 accepts_focus: pod.accepts_focus(),
                 focused: Some(id) == focused_widget,
@@ -3128,7 +3135,7 @@ impl WidgetGraph {
 
     fn hit_test_node(&self, widget_id: WidgetId, point: Point) -> Option<WidgetId> {
         let node = self.node(widget_id)?;
-        if !node.geometry.input_bounds.contains(point) {
+        if !node.hit_test || !node.geometry.input_bounds.contains(point) {
             return None;
         }
 
@@ -3324,6 +3331,9 @@ fn scene_hit_test_for_phase(
         if !layer.descriptor.paint_bounds.contains(point) {
             continue;
         }
+        if !layer.descriptor.hit_test {
+            continue;
+        }
 
         if let Some(hit) = scene_hit_test_for_phase(&layer.scene, point, target_phase, layer_phase)
         {
@@ -3411,8 +3421,8 @@ mod tests {
     use super::{
         Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
         PaintBoundaryMode, PaintCtx, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
-        Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor,
-        WidgetPodVisitor, WindowBuilder, WindowIcon, WindowRenderOptions,
+        StackSurfaceOptions, Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot,
+        WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowIcon, WindowRenderOptions,
         set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
     };
     use sui_core::{
@@ -3421,7 +3431,9 @@ mod tests {
         SemanticsNode, SemanticsRole, Size, TimerToken, Vector, WakeEvent, WindowEvent,
     };
     use sui_layout::Constraints;
-    use sui_scene::{LayerProperties, RegisteredImage, SceneCommand, SceneLayerUpdateKind};
+    use sui_scene::{
+        LayerCompositionMode, LayerProperties, RegisteredImage, SceneCommand, SceneLayerUpdateKind,
+    };
     use sui_text::{PersistentTextLayout, RegisteredFont, TextStyle};
 
     #[derive(Default)]
@@ -3600,6 +3612,101 @@ mod tests {
                 ctx.bounds().inflate(self.bleed.x.abs(), self.bleed.y.abs()),
                 self.color,
             );
+        }
+    }
+
+    struct PointerCountingLeaf {
+        pointer_downs: Rc<RefCell<usize>>,
+    }
+
+    impl Widget for PointerCountingLeaf {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if matches!(
+                event,
+                Event::Pointer(pointer)
+                    if pointer.kind == PointerEventKind::Down
+                        && pointer.button == Some(PointerButton::Primary)
+            ) {
+                *self.pointer_downs.borrow_mut() += 1;
+                ctx.set_handled();
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::rgba(0.15, 0.35, 0.58, 1.0));
+        }
+    }
+
+    struct NonHitTestOverlayLeaf;
+
+    impl Widget for NonHitTestOverlayLeaf {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::rgba(0.9, 0.2, 0.2, 0.35));
+        }
+
+        fn layer_options(&self) -> LayerOptions {
+            LayerOptions {
+                paint_boundary: PaintBoundaryMode::Explicit,
+                composition_mode: LayerCompositionMode::Overlay,
+            }
+        }
+
+        fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+            Some(StackSurfaceOptions {
+                hit_test: false,
+                ..StackSurfaceOptions::default()
+            })
+        }
+    }
+
+    struct OverlayPassThroughRoot {
+        children: WidgetChildren,
+    }
+
+    impl OverlayPassThroughRoot {
+        fn new(pointer_downs: Rc<RefCell<usize>>) -> Self {
+            let mut children = WidgetChildren::with_capacity(2);
+            children.push(PointerCountingLeaf { pointer_downs });
+            children.push(NonHitTestOverlayLeaf);
+            Self { children }
+        }
+    }
+
+    impl Widget for OverlayPassThroughRoot {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.children
+                .measure_child(0, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            self.children
+                .measure_child(1, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            let child_bounds = Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0);
+            self.children.arrange_child(0, ctx, child_bounds);
+            self.children.arrange_child(1, ctx, child_bounds);
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            self.children.paint(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.children.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.children.visit_children_mut(visitor);
         }
     }
 
@@ -4563,6 +4670,40 @@ mod tests {
         assert_eq!(graph.stack_hosts.len(), 1);
         assert_eq!(graph.stack_hosts[0].host, graph.root);
         assert_eq!(graph.stack_hosts[0].surfaces, vec![child.id]);
+    }
+
+    #[test]
+    fn non_hit_test_stack_surface_allows_underlying_pointer_target() {
+        let pointer_downs = Rc::new(RefCell::new(0));
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Overlay pass-through")
+                    .root(OverlayPassThroughRoot::new(Rc::clone(&pointer_downs))),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let mut runtime = runtime;
+
+        let output = runtime.render(window_id).unwrap();
+        let mut overlay_hit_test = None;
+        output.frame.scene.visit_layers(&mut |layer| {
+            if layer.descriptor.composition_mode == LayerCompositionMode::Overlay {
+                overlay_hit_test = Some(layer.descriptor.hit_test);
+            }
+        });
+        assert_eq!(overlay_hit_test, Some(false));
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 36.0));
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        assert_eq!(*pointer_downs.borrow(), 1);
     }
 
     #[test]

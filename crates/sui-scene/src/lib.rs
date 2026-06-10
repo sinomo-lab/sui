@@ -185,6 +185,7 @@ pub struct SceneLayerDescriptor {
     pub bounds: Rect,
     pub content_bounds: Rect,
     pub paint_bounds: Rect,
+    pub hit_test: bool,
     pub properties: LayerProperties,
     pub stack_host: WidgetId,
     pub stack_order: usize,
@@ -201,6 +202,7 @@ impl SceneLayerDescriptor {
             bounds,
             content_bounds: bounds,
             paint_bounds: bounds,
+            hit_test: true,
             properties: LayerProperties::default(),
             stack_host: owner,
             stack_order: 0,
@@ -217,6 +219,11 @@ impl SceneLayerDescriptor {
 
     pub const fn with_paint_bounds(mut self, paint_bounds: Rect) -> Self {
         self.paint_bounds = paint_bounds;
+        self
+    }
+
+    pub const fn with_hit_test(mut self, hit_test: bool) -> Self {
+        self.hit_test = hit_test;
         self
     }
 
