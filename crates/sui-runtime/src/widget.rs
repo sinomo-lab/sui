@@ -380,6 +380,7 @@ impl WidgetPod {
         self.layout_state.measure_valid = true;
         self.layout_state.arranged_bounds = Rect::from_origin_size(origin, size);
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
+        parent_ctx.extend_wake_requests(child_ctx.take_wake_requests());
         size
     }
 
@@ -1084,7 +1085,9 @@ pub struct MeasureCtx {
     widget_id: WidgetId,
     bounds: Rect,
     layout: LayoutContext,
+    current_time: f64,
     invalidations: Vec<InvalidationRequest>,
+    wake_requests: Vec<WakeRequest>,
     scope: Rc<MeasureScope>,
     /// Whether the pod this ctx belongs to is inside a forced subtree.
     force: bool,
@@ -1103,6 +1106,7 @@ impl MeasureCtx {
             widget_id,
             bounds,
             layout,
+            0.0,
             Rc::new(MeasureScope::force_all()),
             true,
         )
@@ -1113,6 +1117,7 @@ impl MeasureCtx {
         widget_id: WidgetId,
         bounds: Rect,
         layout: LayoutContext,
+        current_time: f64,
         scope: Rc<MeasureScope>,
         force: bool,
     ) -> Self {
@@ -1121,7 +1126,9 @@ impl MeasureCtx {
             widget_id,
             bounds,
             layout,
+            current_time,
             invalidations: Vec::new(),
+            wake_requests: Vec::new(),
             scope,
             force,
         }
@@ -1145,7 +1152,7 @@ impl MeasureCtx {
         )
     }
 
-    pub(crate) fn new_scoped(
+    pub(crate) fn new_scoped_at(
         window_id: WindowId,
         widget_id: WidgetId,
         bounds: Rect,
@@ -1154,12 +1161,14 @@ impl MeasureCtx {
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
         scope: Rc<MeasureScope>,
+        current_time: f64,
     ) -> Self {
         Self::with_layout_scoped(
             window_id,
             widget_id,
             bounds,
             LayoutContext::new(dpi_info, text_system, font_registry, image_registry),
+            current_time,
             scope,
             false,
         )
@@ -1184,6 +1193,7 @@ impl MeasureCtx {
             widget_id,
             bounds,
             self.layout.clone(),
+            self.current_time,
             Rc::clone(&self.scope),
             force,
         )
@@ -1207,6 +1217,10 @@ impl MeasureCtx {
 
     pub const fn dpi(&self) -> DpiInfo {
         self.layout.dpi()
+    }
+
+    pub const fn current_time(&self) -> f64 {
+        self.current_time
     }
 
     pub fn request(&mut self, request: InvalidationRequest) {
@@ -1233,6 +1247,12 @@ impl MeasureCtx {
         self.request_widget(InvalidationKind::Semantics);
     }
 
+    pub fn request_animation_frame(&mut self) {
+        self.wake_requests.push(WakeRequest::RequestAnimationFrame {
+            target: self.widget_id,
+        });
+    }
+
     pub fn invalidations(&self) -> &[InvalidationRequest] {
         &self.invalidations
     }
@@ -1241,8 +1261,16 @@ impl MeasureCtx {
         std::mem::take(&mut self.invalidations)
     }
 
+    pub(crate) fn take_wake_requests(&mut self) -> Vec<WakeRequest> {
+        std::mem::take(&mut self.wake_requests)
+    }
+
     pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {
         self.invalidations.extend(invalidations);
+    }
+
+    pub(crate) fn extend_wake_requests(&mut self, wake_requests: Vec<WakeRequest>) {
+        self.wake_requests.extend(wake_requests);
     }
 
     fn request_widget(&mut self, kind: InvalidationKind) {
@@ -2061,7 +2089,7 @@ mod tests {
     }
 
     fn scoped_measure_ctx(root_id: WidgetId, scope: MeasureScope) -> MeasureCtx {
-        MeasureCtx::new_scoped(
+        MeasureCtx::new_scoped_at(
             WindowId::new(1),
             root_id,
             Rect::ZERO,
@@ -2070,6 +2098,7 @@ mod tests {
             Arc::new(FontRegistry::new()),
             Arc::new(ImageRegistry::new()),
             Rc::new(scope),
+            0.0,
         )
     }
 

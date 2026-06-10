@@ -2682,7 +2682,7 @@ impl WindowState {
     ) -> Vec<InvalidationRequest> {
         let constraints = self.measure_constraints();
         let scope = self.build_measure_scope(invalidations);
-        let mut measure_ctx = MeasureCtx::new_scoped(
+        let mut measure_ctx = MeasureCtx::new_scoped_at(
             self.id,
             self.root.id(),
             self.root.bounds(),
@@ -2691,6 +2691,7 @@ impl WindowState {
             font_registry,
             image_registry,
             scope,
+            self.last_tick_time,
         );
         let measured_root = if self.schedule.measure || self.viewport.is_none() {
             self.root.measure(&mut measure_ctx, constraints)
@@ -2711,6 +2712,7 @@ impl WindowState {
         self.refresh_graph();
 
         let mut invalidations = measure_ctx.take_invalidations();
+        self.apply_wake_requests(measure_ctx.take_wake_requests());
         invalidations.extend(arrange_ctx.take_invalidations());
         invalidations
     }

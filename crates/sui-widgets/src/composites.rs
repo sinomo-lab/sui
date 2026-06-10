@@ -7131,6 +7131,217 @@ impl Widget for Popover {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ContextMenuPresentationState {
+    theme: DefaultTheme,
+    items: Vec<MenuItem>,
+    highlighted: Option<usize>,
+    pressed: Option<usize>,
+    frame_rect: Rect,
+    row_height: f32,
+    reveal: AnimatedScalar,
+}
+
+impl ContextMenuPresentationState {
+    fn new() -> Self {
+        let theme = DefaultTheme::default();
+        Self {
+            theme,
+            items: Vec::new(),
+            highlighted: None,
+            pressed: None,
+            frame_rect: Rect::ZERO,
+            row_height: menu_row_height(&theme),
+            reveal: AnimatedScalar::new(0.0),
+        }
+    }
+
+    fn is_presented(&self) -> bool {
+        self.reveal.is_presented()
+    }
+
+    fn item_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        if index >= self.items.len() {
+            return None;
+        }
+        let padding = self.theme.metrics.menu_padding;
+        let x = bounds.x() + padding.left;
+        let y = bounds.y() + padding.top + (index as f32 * self.row_height);
+        Some(Rect::new(
+            x,
+            y,
+            (bounds.width() - padding.left - padding.right).max(0.0),
+            self.row_height,
+        ))
+    }
+
+    fn layer_properties(&self) -> LayerProperties {
+        LayerProperties {
+            opacity: self.reveal.value,
+            translation: Vector::new(
+                0.0,
+                -self.theme.metrics.popover_reveal_offset * (1.0 - self.reveal.value),
+            ),
+        }
+    }
+}
+
+struct ContextMenuSurface {
+    state: Rc<RefCell<ContextMenuPresentationState>>,
+}
+
+impl ContextMenuSurface {
+    fn new(state: Rc<RefCell<ContextMenuPresentationState>>) -> Self {
+        Self { state }
+    }
+}
+
+impl Widget for ContextMenuSurface {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
+        let state = self.state.borrow();
+        if state.is_presented() {
+            state.frame_rect.size
+        } else {
+            Size::ZERO
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let state = self.state.borrow();
+        if !state.is_presented() {
+            return;
+        }
+
+        let menu = ctx.bounds();
+        let theme = state.theme;
+        let metrics = theme.metrics;
+        let palette = theme.palette;
+        let interaction = theme.interaction;
+        let item_padding = metrics.menu_item_padding;
+        let surface_radius = metrics.corner_radius + 2.0;
+        paint_theme_shadow(ctx, menu, [surface_radius; 4], &theme.shadows.box_shadow.lg);
+        draw_control_frame(
+            ctx,
+            menu,
+            surface_radius,
+            metrics,
+            palette.surface_raised,
+            palette.border,
+            Some(palette.focus_ring),
+        );
+
+        for (index, item) in state.items.iter().enumerate() {
+            let Some(row) = state.item_rect(menu, index) else {
+                continue;
+            };
+
+            if item.separator_before {
+                let line = Rect::new(
+                    row.x(),
+                    row.y() - (metrics.menu_padding.top * 0.5),
+                    row.width(),
+                    1.0,
+                );
+                ctx.fill(rounded_rect_path(line, 0.5), palette.border);
+            }
+
+            let highlighted = state.highlighted == Some(index);
+            let pressed = state.pressed == Some(index);
+            let label_style = theme.text_style(item.text_color(&theme));
+            let label_slot = Rect::new(
+                row.x() + item_padding.left,
+                row.y(),
+                (row.width()
+                    - item_padding.left
+                    - item_padding.right
+                    - item
+                        .shortcut
+                        .as_ref()
+                        .map(|_| metrics.menu_shortcut_width)
+                        .unwrap_or(0.0))
+                .max(0.0),
+                row.height(),
+            );
+            if highlighted || pressed {
+                ctx.fill(
+                    rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
+                    if pressed {
+                        mix_color(
+                            palette.control,
+                            palette.control_active,
+                            interaction.pressed_blend,
+                        )
+                    } else {
+                        mix_color(palette.control, palette.accent, interaction.selected_blend)
+                    },
+                );
+            }
+
+            ctx.push_clip_rect(label_slot);
+            ctx.draw_text(
+                aligned_text_rect_for_text(
+                    ctx,
+                    label_slot,
+                    &item.label,
+                    &label_style,
+                    label_style.line_height,
+                    0.0,
+                ),
+                item.label.clone(),
+                label_style,
+            );
+            ctx.pop_clip();
+
+            if let Some(shortcut) = &item.shortcut {
+                let shortcut_style = theme.placeholder_text_style();
+                let shortcut_slot = Rect::new(
+                    row.max_x() - item_padding.right - metrics.menu_shortcut_width,
+                    row.y(),
+                    metrics.menu_shortcut_width,
+                    row.height(),
+                );
+                let shortcut_rect = aligned_text_rect_for_text(
+                    ctx,
+                    shortcut_slot,
+                    shortcut,
+                    &shortcut_style,
+                    shortcut_style.line_height,
+                    1.0,
+                );
+                ctx.push_clip_rect(shortcut_slot);
+                ctx.draw_text(shortcut_rect, shortcut.clone(), shortcut_style);
+                ctx.pop_clip();
+            }
+        }
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        let presented = self.state.borrow().is_presented();
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: if presented {
+                LayerCompositionMode::Overlay
+            } else {
+                LayerCompositionMode::Normal
+            },
+        }
+    }
+
+    fn layer_properties(&self) -> LayerProperties {
+        self.state.borrow().layer_properties()
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.state
+            .borrow()
+            .is_presented()
+            .then_some(StackSurfaceOptions {
+                transient: true,
+                ..StackSurfaceOptions::default()
+            })
+    }
+}
+
 pub struct ContextMenu {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -7141,6 +7352,8 @@ pub struct ContextMenu {
     highlighted: Option<usize>,
     pressed: Option<usize>,
     frame_rect: Rect,
+    surface: SingleChild,
+    surface_state: Rc<RefCell<ContextMenuPresentationState>>,
     activation_button: PointerButton,
     on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
     on_activate_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, MenuItem)>>,
@@ -7151,6 +7364,7 @@ impl ContextMenu {
     where
         W: Widget + 'static,
     {
+        let surface_state = Rc::new(RefCell::new(ContextMenuPresentationState::new()));
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
@@ -7161,6 +7375,8 @@ impl ContextMenu {
             highlighted: None,
             pressed: None,
             frame_rect: Rect::ZERO,
+            surface: SingleChild::new(ContextMenuSurface::new(Rc::clone(&surface_state))),
+            surface_state,
             activation_button: PointerButton::Secondary,
             on_activate: None,
             on_activate_with_ctx: None,
@@ -7278,6 +7494,78 @@ impl ContextMenu {
         })
     }
 
+    fn sync_surface_state(&self, bounds: Rect) {
+        let theme = self.resolved_theme();
+        let mut state = self.surface_state.borrow_mut();
+        state.theme = theme;
+        state.items = self.items.clone();
+        state.highlighted = self.highlighted;
+        state.pressed = self.pressed;
+        state.frame_rect = self.frame_rect.translate(bounds.origin.to_vector());
+        state.row_height = self.row_height();
+    }
+
+    fn refresh_surface_interaction_state(&self, ctx: &mut EventCtx) {
+        let surface_id = self.surface.child().id();
+        let mut state = self.surface_state.borrow_mut();
+        let changed = state.highlighted != self.highlighted || state.pressed != self.pressed;
+        state.highlighted = self.highlighted;
+        state.pressed = self.pressed;
+        let presented = state.is_presented();
+        drop(state);
+
+        if changed && presented {
+            request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
+        }
+    }
+
+    fn set_open(&mut self, ctx: &mut EventCtx, open: bool) {
+        if self.open == open {
+            return;
+        }
+
+        self.open = open;
+        self.highlighted = if open {
+            self.items.iter().position(|item| item.enabled)
+        } else {
+            None
+        };
+        self.pressed = None;
+
+        let surface_id = self.surface.child().id();
+        let theme = self.resolved_theme();
+        let mut state = self.surface_state.borrow_mut();
+        state.theme = theme;
+        state.items = self.items.clone();
+        state.highlighted = self.highlighted;
+        state.pressed = self.pressed;
+        let was_presented = state.is_presented();
+        let should_animate = if open {
+            let motion = theme.motion;
+            state.reveal.set_target(
+                1.0,
+                ctx.current_time(),
+                motion.entrance_duration(),
+                motion.entrance_easing(),
+            )
+        } else {
+            state.reveal = AnimatedScalar::new(0.0);
+            false
+        };
+        let is_presented = state.is_presented();
+        drop(state);
+
+        if open || was_presented != is_presented {
+            ctx.request_measure();
+            request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
+        }
+        if should_animate {
+            ctx.request_animation_frame();
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
     fn activate(&mut self, ctx: &mut EventCtx, index: usize) {
         let Some(item) = self.items.get(index).cloned() else {
             return;
@@ -7301,6 +7589,7 @@ impl Widget for ContextMenu {
                 let highlighted = self.item_at(ctx.bounds(), pointer.position);
                 if highlighted != self.highlighted {
                     self.highlighted = highlighted;
+                    self.refresh_surface_interaction_state(ctx);
                     ctx.request_paint();
                     ctx.request_semantics();
                 }
@@ -7310,17 +7599,8 @@ impl Widget for ContextMenu {
                     && pointer.button == Some(self.activation_button)
                     && self.trigger_rect().contains(pointer.position) =>
             {
-                self.open = !self.open;
-                self.highlighted = if self.open {
-                    self.items.iter().position(|item| item.enabled)
-                } else {
-                    None
-                };
-                self.pressed = None;
+                self.set_open(ctx, !self.open);
                 ctx.request_focus();
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -7336,15 +7616,12 @@ impl Widget for ContextMenu {
                         .filter(|item| item.enabled)
                         .map(|_| index);
                     ctx.request_pointer_capture(pointer.pointer_id);
+                    self.refresh_surface_interaction_state(ctx);
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
                 } else if !self.trigger_rect().contains(pointer.position) {
-                    self.open = false;
-                    self.highlighted = None;
-                    ctx.request_measure();
-                    ctx.request_paint();
-                    ctx.request_semantics();
+                    self.set_open(ctx, false);
                 }
             }
             Event::Pointer(pointer)
@@ -7360,11 +7637,10 @@ impl Widget for ContextMenu {
                     .map(|(index, _)| index)
                 {
                     self.activate(ctx, index);
-                    self.open = false;
-                    self.highlighted = None;
-                    ctx.request_measure();
+                    self.set_open(ctx, false);
                 }
                 self.pressed = None;
+                self.refresh_surface_interaction_state(ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -7372,6 +7648,7 @@ impl Widget for ContextMenu {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
                 if self.pressed.take().is_some() {
+                    self.refresh_surface_interaction_state(ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -7397,19 +7674,40 @@ impl Widget for ContextMenu {
                     "Enter" | " " => {
                         if let Some(index) = self.highlighted {
                             self.activate(ctx, index);
-                            self.open = false;
-                            ctx.request_measure();
+                            self.set_open(ctx, false);
                         }
                     }
                     "Escape" => {
-                        self.open = false;
-                        self.highlighted = None;
-                        ctx.request_measure();
+                        self.set_open(ctx, false);
                     }
                     _ => return,
                 }
+                self.refresh_surface_interaction_state(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                let surface_id = self.surface.child().id();
+                let mut state = self.surface_state.borrow_mut();
+                let was_presented = state.is_presented();
+                let previous = state.reveal.value;
+                let animating = state.reveal.advance(*time);
+                let changed = state.reveal.changed_since(previous);
+                let is_presented = state.is_presented();
+                drop(state);
+
+                if changed {
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Transform);
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Effect);
+                }
+                if was_presented != is_presented {
+                    ctx.request_measure();
+                    request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
+                }
+                if animating {
+                    ctx.request_animation_frame();
+                }
                 ctx.set_handled();
             }
             _ => {}
@@ -7425,6 +7723,17 @@ impl Widget for ContextMenu {
             let height = themed_menu_height_for_rows(&theme, self.row_height(), self.items.len());
             let gap = theme.metrics.popover_gap;
             self.frame_rect = Rect::new(0.0, trigger_size.height + gap, width, height);
+            {
+                let mut state = self.surface_state.borrow_mut();
+                state.theme = theme;
+                state.items = self.items.clone();
+                state.highlighted = self.highlighted;
+                state.pressed = self.pressed;
+                state.frame_rect = Rect::from_origin_size(Point::ZERO, self.frame_rect.size);
+                state.row_height = self.row_height();
+            }
+            self.surface
+                .measure(ctx, Constraints::tight(self.frame_rect.size));
             size = Size::new(
                 width.max(trigger_size.width),
                 trigger_size.height + gap + height,
@@ -7440,134 +7749,22 @@ impl Widget for ContextMenu {
             ctx,
             Rect::from_origin_size(bounds.origin, self.trigger.child().measured_size()),
         );
+        self.sync_surface_state(bounds);
+        let state = self.surface_state.borrow();
+        let surface_bounds = if state.is_presented() {
+            state.frame_rect
+        } else {
+            Rect::from_origin_size(bounds.origin, Size::ZERO)
+        };
+        drop(state);
+        self.surface.arrange(ctx, surface_bounds);
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         self.trigger.paint(ctx);
-        if !self.open {
-            return;
+        if self.surface_state.borrow().is_presented() {
+            self.surface.paint(ctx);
         }
-
-        let menu = self.frame_rect.translate(ctx.bounds().origin.to_vector());
-        let theme = self.resolved_theme();
-        let metrics = theme.metrics;
-        let palette = theme.palette;
-        let interaction = theme.interaction;
-        let item_padding = metrics.menu_item_padding;
-        // Elevation shadow behind the raised context-menu surface.
-        let surface_radius = metrics.corner_radius + 2.0;
-        paint_theme_shadow(ctx, menu, [surface_radius; 4], &theme.shadows.box_shadow.lg);
-        draw_control_frame(
-            ctx,
-            menu,
-            surface_radius,
-            metrics,
-            palette.surface_raised,
-            palette.border,
-            Some(palette.focus_ring),
-        );
-
-        for (index, item) in self.items.iter().enumerate() {
-            let Some(row) = self.item_rect(ctx.bounds(), index) else {
-                continue;
-            };
-
-            if item.separator_before {
-                let line = Rect::new(
-                    row.x(),
-                    row.y() - (metrics.menu_padding.top * 0.5),
-                    row.width(),
-                    1.0,
-                );
-                ctx.fill(rounded_rect_path(line, 0.5), palette.border);
-            }
-
-            let highlighted = self.highlighted == Some(index);
-            let pressed = self.pressed == Some(index);
-            let label_style = theme.text_style(item.text_color(&theme));
-            let label_slot = Rect::new(
-                row.x() + item_padding.left,
-                row.y(),
-                (row.width()
-                    - item_padding.left
-                    - item_padding.right
-                    - item
-                        .shortcut
-                        .as_ref()
-                        .map(|_| metrics.menu_shortcut_width)
-                        .unwrap_or(0.0))
-                .max(0.0),
-                row.height(),
-            );
-            if highlighted || pressed {
-                ctx.fill(
-                    rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
-                    if pressed {
-                        mix_color(
-                            palette.control,
-                            palette.control_active,
-                            interaction.pressed_blend,
-                        )
-                    } else {
-                        mix_color(palette.control, palette.accent, interaction.selected_blend)
-                    },
-                );
-            }
-
-            ctx.push_clip_rect(label_slot);
-            ctx.draw_text(
-                aligned_text_rect_for_text(
-                    ctx,
-                    label_slot,
-                    &item.label,
-                    &label_style,
-                    label_style.line_height,
-                    0.0,
-                ),
-                item.label.clone(),
-                label_style,
-            );
-            ctx.pop_clip();
-
-            if let Some(shortcut) = &item.shortcut {
-                let shortcut_style = theme.placeholder_text_style();
-                let shortcut_slot = Rect::new(
-                    row.max_x() - item_padding.right - metrics.menu_shortcut_width,
-                    row.y(),
-                    metrics.menu_shortcut_width,
-                    row.height(),
-                );
-                let shortcut_rect = aligned_text_rect_for_text(
-                    ctx,
-                    shortcut_slot,
-                    shortcut,
-                    &shortcut_style,
-                    shortcut_style.line_height,
-                    1.0,
-                );
-                ctx.push_clip_rect(shortcut_slot);
-                ctx.draw_text(shortcut_rect, shortcut.clone(), shortcut_style);
-                ctx.pop_clip();
-            }
-        }
-    }
-
-    fn layer_options(&self) -> LayerOptions {
-        LayerOptions {
-            paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: if self.open {
-                LayerCompositionMode::Overlay
-            } else {
-                LayerCompositionMode::Normal
-            },
-        }
-    }
-
-    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.open.then_some(StackSurfaceOptions {
-            transient: true,
-            ..StackSurfaceOptions::default()
-        })
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -7610,8 +7807,7 @@ impl Widget for ContextMenu {
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         if !focused && self.open {
-            self.open = false;
-            ctx.request_measure();
+            self.set_open(ctx, false);
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -7619,10 +7815,16 @@ impl Widget for ContextMenu {
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.trigger.visit_children(visitor);
+        if self.surface_state.borrow().is_presented() {
+            self.surface.visit_children(visitor);
+        }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.trigger.visit_children_mut(visitor);
+        if self.surface_state.borrow().is_presented() {
+            self.surface.visit_children_mut(visitor);
+        }
     }
 }
 
@@ -7640,6 +7842,8 @@ pub struct Dialog {
     dialog_frame: Rect,
     title_measurement: Option<TextMeasurement>,
     description_measurement: Option<TextMeasurement>,
+    reveal: AnimatedScalar,
+    entrance_started: bool,
     on_dismiss: Option<Box<dyn FnMut()>>,
 }
 
@@ -7662,6 +7866,8 @@ impl Dialog {
             dialog_frame: Rect::ZERO,
             title_measurement: None,
             description_measurement: None,
+            reveal: AnimatedScalar::new(0.0),
+            entrance_started: false,
             on_dismiss: None,
         }
     }
@@ -7678,6 +7884,10 @@ impl Dialog {
 
     pub fn shown(mut self, shown: bool) -> Self {
         self.shown = shown;
+        if !shown {
+            self.reveal = AnimatedScalar::new(0.0);
+            self.entrance_started = false;
+        }
         self
     }
 
@@ -7747,6 +7957,22 @@ impl Dialog {
             on_dismiss();
         }
     }
+
+    fn ensure_entrance_started(&mut self, ctx: &mut MeasureCtx) {
+        if self.entrance_started {
+            return;
+        }
+        self.entrance_started = true;
+        let motion = self.theme.motion;
+        if self.reveal.set_target(
+            1.0,
+            ctx.current_time(),
+            motion.entrance_duration(),
+            motion.entrance_easing(),
+        ) {
+            ctx.request_animation_frame();
+        }
+    }
 }
 
 impl Widget for Dialog {
@@ -7756,6 +7982,20 @@ impl Widget for Dialog {
         }
 
         match event {
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                let previous = self.reveal.value;
+                let animating = self.reveal.advance(*time);
+                if self.reveal.changed_since(previous) {
+                    ctx.request_effect();
+                    if !self.modal {
+                        ctx.request_transform();
+                    }
+                }
+                if animating {
+                    ctx.request_animation_frame();
+                }
+                ctx.set_handled();
+            }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary)
@@ -7789,8 +8029,11 @@ impl Widget for Dialog {
         if !self.shown {
             self.dialog_frame = Rect::ZERO;
             self.body_frame = Rect::ZERO;
+            self.reveal = AnimatedScalar::new(0.0);
+            self.entrance_started = false;
             return Size::ZERO;
         }
+        self.ensure_entrance_started(ctx);
 
         let viewport = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
@@ -8015,6 +8258,18 @@ impl Widget for Dialog {
                 LayerCompositionMode::Normal
             },
         }
+    }
+
+    fn layer_properties(&self) -> LayerProperties {
+        let translation = if self.modal {
+            Vector::ZERO
+        } else {
+            Vector::new(
+                0.0,
+                self.theme.metrics.popover_reveal_offset * (1.0 - self.reveal.value),
+            )
+        };
+        LayerProperties::new(self.reveal.value, translation)
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
@@ -8646,7 +8901,7 @@ mod tests {
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
-        Size, WidgetId,
+        Size, Vector, WidgetId,
     };
     use sui_layout::Constraints;
     use sui_runtime::{
@@ -11896,6 +12151,92 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_entrance_uses_theme_motion_layer_properties() -> Result<(), String> {
+        let duration = DefaultTheme::default().motion.entrance_duration();
+        let (mut runtime, window_id) = build_runtime(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
+        );
+
+        let closed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(overlay_layer_descriptor(&closed).is_none());
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("context menu trigger present")
+            .bounds;
+        let trigger_center = Point::new(
+            trigger.x() + (trigger.width() * 0.5),
+            trigger.y() + (trigger.height() * 0.5),
+        );
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, trigger_center);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .map_err(|error| error.to_string())?;
+
+        let start = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let context = start
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ContextMenu)
+            .expect("context menu semantics present");
+        let start_descriptor =
+            overlay_layer_descriptor(&start).expect("context menu overlay layer should appear");
+        assert_eq!(start_descriptor.properties.opacity, 0.0);
+        assert!(start_descriptor.properties.translation.y < 0.0);
+        assert!(
+            layer_descriptor_for(&start, context.id).is_none(),
+            "the context menu owner should not fade or translate the trigger"
+        );
+
+        runtime.tick(duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let mid_descriptor =
+            overlay_layer_descriptor(&mid).expect("context menu overlay layer should stay active");
+        assert!(mid_descriptor.properties.opacity > 0.0);
+        assert!(mid_descriptor.properties.opacity < 1.0);
+        assert!(mid_descriptor.properties.translation.y < 0.0);
+        assert!(
+            mid_descriptor.properties.translation.y.abs()
+                < start_descriptor.properties.translation.y.abs()
+        );
+        assert!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?
+                .is_some()
+        );
+
+        runtime.tick(duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let settled_descriptor =
+            overlay_layer_descriptor(&settled).expect("context menu overlay layer should remain");
+        assert_eq!(settled_descriptor.properties.opacity, 1.0);
+        assert_eq!(settled_descriptor.properties.translation.y, 0.0);
+        assert_eq!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
     fn progress_bar_value_text_visual_center_matches_control_center() {
         let output = render_isolated(
             ProgressBar::new("Export progress")
@@ -12601,6 +12942,93 @@ mod tests {
         assert!(
             solid_fill_colors(&output).contains(&DefaultTheme::default().surfaces.overlay_scrim)
         );
+    }
+
+    #[test]
+    fn modal_dialog_entrance_uses_theme_motion_effect_layer_properties() -> Result<(), String> {
+        let duration = DefaultTheme::default().motion.entrance_duration();
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(640.0, 420.0))
+                .with_child(Dialog::new(
+                    "Confirm",
+                    crate::Label::new("Apply the change?"),
+                )),
+        );
+
+        let start = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let dialog = start
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("dialog semantics present");
+        let start_descriptor =
+            layer_descriptor_for(&start, dialog.id).expect("dialog layer descriptor present");
+        assert_eq!(
+            start_descriptor.composition_mode,
+            LayerCompositionMode::Effect
+        );
+        assert_eq!(start_descriptor.properties.opacity, 0.0);
+        assert_eq!(start_descriptor.properties.translation, Vector::ZERO);
+        assert!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?
+                .is_some()
+        );
+
+        runtime.tick(duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let mid = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let mid_descriptor =
+            layer_descriptor_for(&mid, dialog.id).expect("dialog layer descriptor still present");
+        assert!(mid_descriptor.properties.opacity > 0.0);
+        assert!(mid_descriptor.properties.opacity < 1.0);
+        assert_eq!(mid_descriptor.properties.translation, Vector::ZERO);
+
+        runtime.tick(duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let settled = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let settled_descriptor = layer_descriptor_for(&settled, dialog.id)
+            .expect("dialog layer descriptor still present after settling");
+        assert_eq!(settled_descriptor.properties.opacity, 1.0);
+        assert_eq!(settled_descriptor.properties.translation, Vector::ZERO);
+        assert_eq!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn non_modal_dialog_entrance_uses_overlay_translation() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(640.0, 420.0))
+                .with_child(
+                    Dialog::new("Inspector", crate::Label::new("Layer settings")).modal(false),
+                ),
+        );
+
+        let dialog = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("dialog semantics present");
+        let descriptor =
+            layer_descriptor_for(&output, dialog.id).expect("dialog layer descriptor present");
+
+        assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
+        assert_eq!(descriptor.properties.opacity, 0.0);
+        assert!(descriptor.properties.translation.y > 0.0);
     }
 
     fn sui_widgets_fixture<A, B>(top: A, bottom: B) -> impl Widget
