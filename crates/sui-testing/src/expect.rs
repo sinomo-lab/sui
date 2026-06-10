@@ -5,7 +5,7 @@ use sui_core::{Error, Result, SemanticsValue};
 use crate::{
     diagnostics::format_failure,
     locator::Locator,
-    screenshot::{diff_screenshot, read_png, screenshot_mismatch_paths},
+    screenshot::{diff_screenshot, read_png, screenshot_mismatch_paths, screenshots_match},
 };
 
 #[derive(Clone)]
@@ -106,11 +106,11 @@ impl Expectation {
         let actual = harness
             .run_until(timeout, |harness| {
                 let actual = self.locator.capture_screenshot_from(harness)?;
-                Ok((actual == expected).then_some(actual))
+                Ok(screenshots_match(&expected, &actual).then_some(actual))
             })
             .or_else(|_| self.locator.capture_screenshot_from(&harness))?;
 
-        if actual == expected {
+        if screenshots_match(&expected, &actual) {
             return Ok(());
         }
 

@@ -1093,6 +1093,7 @@ mod tests {
             layout_handle: shaped_layout.handle(),
             layout_version: shaped_layout.version(),
             bounds: shaped_layout.measurement().bounds,
+            color_override: None,
         });
         let shaped_window = SceneCommand::DrawShapedTextWindow(ShapedTextWindow::new(
             Point::new(4.0, 8.0),

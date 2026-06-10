@@ -1429,6 +1429,7 @@ fn scene_has_draw_content(scene: &Scene) -> bool {
                 | SceneCommand::StrokePath { .. }
                 | SceneCommand::DrawText(_)
                 | SceneCommand::DrawShapedText(_)
+                | SceneCommand::DrawShapedTextWindow(_)
                 | SceneCommand::DrawImage { .. }
                 | SceneCommand::DrawImageQuad { .. }
                 | SceneCommand::DrawShaderRect { .. }
@@ -1621,6 +1622,7 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
             text.layout_handle.get().hash(hasher);
             text.layout_version.get().hash(hasher);
             hash_rect(hasher, text.bounds);
+            hash_optional_color(text.color_override, hasher);
         }
         SceneCommand::DrawShapedTextWindow(text) => {
             15u8.hash(hasher);
@@ -1630,6 +1632,7 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
             text.line_range.start.hash(hasher);
             text.line_range.end.hash(hasher);
             hash_rect(hasher, text.bounds);
+            hash_optional_color(text.color_override, hasher);
         }
         SceneCommand::DrawImage { rect, source } => {
             7u8.hash(hasher);
@@ -1827,6 +1830,17 @@ fn hash_color(color: Color, hasher: &mut DefaultHasher) {
     color.green.to_bits().hash(hasher);
     color.blue.to_bits().hash(hasher);
     color.alpha.to_bits().hash(hasher);
+}
+
+fn hash_optional_color(color: Option<Color>, hasher: &mut DefaultHasher) {
+    match color {
+        Some(color) => {
+            1u8.hash(hasher);
+            hash_color(color, hasher);
+            hash_color_space(color.space, hasher);
+        }
+        None => 0u8.hash(hasher),
+    }
 }
 
 fn hash_color_space(space: ColorSpace, hasher: &mut DefaultHasher) {

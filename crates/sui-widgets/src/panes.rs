@@ -14,6 +14,7 @@ use sui_scene::{LayerCompositionMode, StrokeStyle};
 use crate::{
     DefaultTheme,
     containers::{ScrollBar, ScrollState, ScrollView},
+    text_align::aligned_text_rect_for_text,
 };
 
 pub type ResizablePane = SplitView;
@@ -744,16 +745,24 @@ impl Widget for FloatingViewSurface {
             let title_bar = floating_view_title_bar_rect(&self.theme, ctx.bounds());
             ctx.fill_rect(title_bar, palette.control_active);
             let title_padding = metrics.floating_view_title_padding;
-            ctx.draw_text(
-                Rect::new(
-                    title_bar.x() + title_padding.left,
-                    title_bar.y() + title_padding.top,
-                    (title_bar.width() - title_padding.left - title_padding.right).max(0.0),
-                    (title_bar.height() - title_padding.top - title_padding.bottom).max(0.0),
-                ),
-                view.title,
-                self.theme.text_style(palette.text),
+            let text_slot = Rect::new(
+                title_bar.x() + title_padding.left,
+                title_bar.y() + title_padding.top,
+                (title_bar.width() - title_padding.left - title_padding.right).max(0.0),
+                (title_bar.height() - title_padding.top - title_padding.bottom).max(0.0),
             );
+            let title_style = self.theme.text_style(palette.text);
+            let title_rect = aligned_text_rect_for_text(
+                ctx,
+                text_slot,
+                &view.title,
+                &title_style,
+                title_style.line_height,
+                0.0,
+            );
+            ctx.push_clip_rect(text_slot);
+            ctx.draw_text(title_rect, view.title, title_style);
+            ctx.pop_clip();
         }
         self.host.paint(ctx);
         if !view.maximized {
@@ -1790,6 +1799,7 @@ mod tests {
         StackOrderPolicy, Widget, WindowBuilder,
     };
     use sui_scene::{SceneCommand, SceneLayerUpdateKind};
+    use sui_text::{FontRegistry, TextSystem};
 
     struct ColorFill {
         color: Color,
@@ -1955,6 +1965,39 @@ mod tests {
             pixels[index + 2],
             pixels[index + 3],
         ]
+    }
+
+    fn text_run_for(output: &RenderOutput, text: &str) -> sui_text::TextRun {
+        let mut found = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if found.is_some() {
+                return;
+            }
+            found = match command {
+                SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
+                SceneCommand::DrawShapedText(run) => run
+                    .resolve(output.frame.text_layout_registry.as_ref())
+                    .filter(|layout| layout.text() == text)
+                    .map(|layout| sui_text::TextRun {
+                        rect: Rect::new(
+                            run.origin.x,
+                            run.origin.y,
+                            layout.box_size().width,
+                            layout.box_size().height,
+                        ),
+                        text: layout.text().to_string(),
+                        style: layout.style().clone(),
+                    }),
+                _ => None,
+            };
+        });
+        found.expect("text draw command present")
+    }
+
+    fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
+        let top = -measurement.cap_height.unwrap_or(measurement.ascent);
+        let bottom = measurement.descent * 0.5;
+        (top + bottom) * 0.5
     }
 
     fn scene_layer_widget_ids(scene: &sui_scene::Scene) -> Vec<WidgetId> {
@@ -2606,6 +2649,123 @@ mod tests {
             .expect("content graph node present after scroll");
 
         assert!(after_bounds.x() < before_bounds.x() - 40.0);
+        Ok(())
+    }
+
+    #[test]
+    fn floating_workspace_title_label_visual_center_matches_title_slot_center() -> Result<()> {
+        let default_theme = DefaultTheme::default();
+        let mut constrained_theme = default_theme;
+        constrained_theme.metrics.floating_view_title_padding = sui_layout::Padding {
+            left: 10.0,
+            top: 9.0,
+            right: 10.0,
+            bottom: 9.0,
+        };
+        let state = FloatingWorkspaceState::new();
+        let mut workspace = FloatingWorkspace::new(state.clone()).theme(constrained_theme);
+        let view_bounds = Rect::new(24.0, 24.0, 240.0, 180.0);
+        workspace.push_view(
+            FloatingViewConfig::new("Inspector", view_bounds),
+            ColorFill::new(Color::rgba(0.22, 0.48, 0.72, 1.0)),
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(520.0)
+                .height(360.0)
+                .with_child(workspace),
+        );
+        let output = runtime.render(window_id)?;
+        let text = text_run_for(&output, "Inspector");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("floating view title should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("floating view title should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let title_bar = super::floating_view_title_bar_rect(&constrained_theme, view_bounds);
+        let padding = constrained_theme.metrics.floating_view_title_padding;
+        let title_slot = Rect::new(
+            title_bar.x() + padding.left,
+            title_bar.y() + padding.top,
+            (title_bar.width() - padding.left - padding.right).max(0.0),
+            (title_bar.height() - padding.top - padding.bottom).max(0.0),
+        );
+        let slot_center = title_slot.y() + (title_slot.height() * 0.5);
+
+        assert!(
+            (actual_visual_center - slot_center).abs() <= 0.75,
+            "floating title visual center {actual_visual_center} did not match slot center {slot_center}; text rect {:?}, title slot {:?}",
+            text.rect,
+            title_slot
+        );
+        assert_eq!(
+            text.style.line_height,
+            default_theme
+                .text_style(default_theme.palette.text)
+                .line_height
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn floating_workspace_title_label_preserves_tall_measurement() -> Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 28.0;
+        theme.typography.body_line_height = 12.0;
+        theme.metrics.floating_view_title_bar_height = 68.0;
+        theme.metrics.floating_view_title_padding = sui_layout::Padding {
+            left: 12.0,
+            top: 8.0,
+            right: 12.0,
+            bottom: 8.0,
+        };
+
+        let state = FloatingWorkspaceState::new();
+        let mut workspace = FloatingWorkspace::new(state.clone()).theme(theme);
+        let view_bounds = Rect::new(24.0, 24.0, 260.0, 190.0);
+        workspace.push_view(
+            FloatingViewConfig::new("Inspector", view_bounds),
+            ColorFill::new(Color::rgba(0.22, 0.48, 0.72, 1.0)),
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(520.0)
+                .height(360.0)
+                .with_child(workspace),
+        );
+        let output = runtime.render(window_id)?;
+        let text = text_run_for(&output, "Inspector");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("floating view title should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("floating view title should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let title_bar = super::floating_view_title_bar_rect(&theme, view_bounds);
+        let padding = theme.metrics.floating_view_title_padding;
+        let title_slot = Rect::new(
+            title_bar.x() + padding.left,
+            title_bar.y() + padding.top,
+            (title_bar.width() - padding.left - padding.right).max(0.0),
+            (title_bar.height() - padding.top - padding.bottom).max(0.0),
+        );
+        let slot_center = title_slot.y() + (title_slot.height() * 0.5);
+
+        assert_eq!(text.style.font_size, 28.0);
+        assert_eq!(text.style.line_height, 12.0);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+        assert!((text.rect.x() - title_slot.x()).abs() < 0.75);
+        assert!((actual_visual_center - slot_center).abs() <= 0.75);
         Ok(())
     }
 

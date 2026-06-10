@@ -8,9 +8,9 @@ use sui_core::{
 use sui_layout::Constraints;
 use sui_runtime::{ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::{ImageSampling, ImageSource, RegisteredImage, StrokeStyle};
-use sui_text::TextStyle;
+use sui_text::{FontFeature, TextMeasurement, TextStyle};
 
-use crate::DefaultTheme;
+use crate::{DefaultTheme, text_align::aligned_text_rect_for_text};
 
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
 const PIXEL_CANVAS_HISTORY_LIMIT: usize = 32;
@@ -2681,30 +2681,71 @@ fn paint_canvas_ruler_label(
     axis: CanvasRulerAxis,
     position: f32,
     value: f32,
-    style: TextStyle,
+    mut style: TextStyle,
     padding: sui_layout::Padding,
     max_width: f32,
 ) {
+    style.features.enable(FontFeature::TABULAR_FIGURES);
+
     let label = format!("{value:.0}");
-    let rect = match axis {
+    let measurement = paint_text_measurement(ctx, &label, &style);
+    let available_height = (bounds.height() - padding.top - padding.bottom).max(0.0);
+    let slot = match axis {
         CanvasRulerAxis::Horizontal => Rect::new(
             position + padding.left,
             bounds.y() + padding.top,
             max_width.min((bounds.max_x() - position - padding.left).max(0.0)),
-            style.line_height,
+            available_height,
         ),
-        CanvasRulerAxis::Vertical => Rect::new(
-            bounds.x() + padding.left,
-            position + padding.top,
-            (bounds.width() - padding.left - padding.right).max(0.0),
-            style.line_height,
-        ),
+        CanvasRulerAxis::Vertical => {
+            let height = style
+                .line_height
+                .max(measurement.height)
+                .min(available_height);
+            let min_y = bounds.y() + padding.top;
+            let max_y = (bounds.max_y() - padding.bottom - height).max(min_y);
+            Rect::new(
+                bounds.x() + padding.left,
+                (position - (height * 0.5)).clamp(min_y, max_y),
+                max_width.min((bounds.width() - padding.left - padding.right).max(0.0)),
+                height,
+            )
+        }
     };
 
-    let estimated_width = label.chars().count() as f32 * style.font_size * 0.58;
-    if estimated_width <= rect.width() && rect.width() > 0.0 && rect.height() > 0.0 {
+    if slot.width() <= 0.0 || slot.height() <= 0.0 {
+        return;
+    }
+
+    if measurement.width <= slot.width() {
+        let width = measurement.width.min(slot.width()).max(0.0);
+        let rect = aligned_text_rect_for_text(
+            ctx,
+            Rect::new(slot.x(), slot.y(), width, slot.height()),
+            &label,
+            &style,
+            style.line_height,
+            0.0,
+        );
         ctx.draw_text(rect, label, style);
     }
+}
+
+fn paint_text_measurement(ctx: &PaintCtx, text: &str, style: &TextStyle) -> TextMeasurement {
+    ctx.measure_text(text.to_string(), style.clone())
+        .unwrap_or(TextMeasurement {
+            width: text.chars().count() as f32 * style.font_size * 0.58,
+            height: style.line_height,
+            bounds: Rect::new(
+                0.0,
+                0.0,
+                text.chars().count() as f32 * style.font_size * 0.58,
+                style.line_height,
+            ),
+            ascent: style.font_size * 0.8,
+            descent: style.font_size * 0.2,
+            cap_height: Some(style.font_size),
+        })
 }
 
 fn stroke_line(ctx: &mut PaintCtx, from: Point, to: Point, color: Color, width: f32) {
@@ -2985,7 +3026,7 @@ mod tests {
         Canvas, CanvasRuler, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas,
         PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasState, PixelCanvasTool, PixelColor,
     };
-    use crate::DefaultTheme;
+    use crate::{CanvasRulerAxis, DefaultTheme, ThemeTextToken};
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
         PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsRole,
@@ -2993,6 +3034,9 @@ mod tests {
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
     use sui_scene::{Brush, ImageSampling, SceneCommand};
+    use sui_text::{FontFeature, FontRegistry, TextSystem};
+
+    const RGBA_CHANNEL_TOLERANCE: u8 = 1;
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -3108,11 +3152,116 @@ mod tests {
         colors
     }
 
+    fn numeric_text_runs(output: &RenderOutput) -> Vec<sui_text::TextRun> {
+        let mut runs = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::DrawText(text_run)
+                    if text_run
+                        .text
+                        .chars()
+                        .all(|character| character.is_ascii_digit()) =>
+                {
+                    runs.push(text_run.clone());
+                }
+                SceneCommand::DrawShapedText(text) => {
+                    if let Some(layout) = text.resolve(output.frame.text_layout_registry.as_ref())
+                        && layout
+                            .text()
+                            .chars()
+                            .all(|character| character.is_ascii_digit())
+                    {
+                        runs.push(sui_text::TextRun {
+                            rect: Rect::new(
+                                text.origin.x,
+                                text.origin.y,
+                                layout.box_size().width,
+                                layout.box_size().height,
+                            ),
+                            text: layout.text().to_string(),
+                            style: layout.style().clone(),
+                        });
+                    }
+                }
+                _ => {}
+            });
+
+        runs
+    }
+
+    fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
+        let top = -measurement.cap_height.unwrap_or(measurement.ascent);
+        let bottom = measurement.descent * 0.5;
+
+        (top + bottom) * 0.5
+    }
+
+    fn rgba_channels_match(actual: &[u8], expected: [u8; 4]) -> bool {
+        actual.len() == 4
+            && actual
+                .iter()
+                .zip(expected.iter())
+                .all(|(actual, expected)| actual.abs_diff(*expected) <= RGBA_CHANNEL_TOLERANCE)
+    }
+
+    fn assert_rgba_channels_near(actual: &[u8], expected: [u8; 4]) {
+        assert_eq!(
+            actual.len(),
+            4,
+            "expected exactly one RGBA pixel, got {} channels",
+            actual.len()
+        );
+        for channel in 0..4 {
+            assert!(
+                actual[channel].abs_diff(expected[channel]) <= RGBA_CHANNEL_TOLERANCE,
+                "channel {channel} differed by more than {RGBA_CHANNEL_TOLERANCE}: got {}, expected {}",
+                actual[channel],
+                expected[channel]
+            );
+        }
+    }
+
+    fn assert_rgba_buffers_near(actual: &[u8], expected: &[u8]) {
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "RGBA buffer length mismatch: got {}, expected {}",
+            actual.len(),
+            expected.len()
+        );
+        assert_eq!(
+            actual.len() % 4,
+            0,
+            "RGBA buffer length must be divisible by 4"
+        );
+
+        for (pixel_index, (actual_pixel, expected_pixel)) in actual
+            .chunks_exact(4)
+            .zip(expected.chunks_exact(4))
+            .enumerate()
+        {
+            for channel in 0..4 {
+                assert!(
+                    actual_pixel[channel].abs_diff(expected_pixel[channel])
+                        <= RGBA_CHANNEL_TOLERANCE,
+                    "pixel {pixel_index} channel {channel} differed by more than {RGBA_CHANNEL_TOLERANCE}: got {}, expected {}",
+                    actual_pixel[channel],
+                    expected_pixel[channel]
+                );
+            }
+        }
+    }
+
+    fn alpha_matches(pixel: &[u8], expected: u8) -> bool {
+        pixel
+            .get(3)
+            .is_some_and(|alpha| alpha.abs_diff(expected) <= RGBA_CHANNEL_TOLERANCE)
+    }
+
     fn pixel_matches_color(pixel: &[u8], color: PixelColor) -> bool {
-        pixel[0] == color.red
-            && pixel[1] == color.green
-            && pixel[2] == color.blue
-            && pixel[3] == color.alpha
+        rgba_channels_match(pixel, [color.red, color.green, color.blue, color.alpha])
     }
 
     #[test]
@@ -3216,6 +3365,289 @@ mod tests {
             touch.metrics.canvas_ruler_extent
         );
         assert_eq!(ruler_height(&override_output, "Override ruler"), 18.0);
+    }
+
+    #[test]
+    fn canvas_ruler_numeric_labels_use_tabular_figures_and_optical_centering() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(420.0, theme.metrics.canvas_ruler_extent))
+                .with_child(
+                    CanvasRuler::horizontal("Horizontal ruler", Size::new(1920.0, 1080.0))
+                        .viewport(
+                            CanvasViewport::new().pan(Vector::new(750.0, 0.0)),
+                            Size::new(420.0, 260.0),
+                        ),
+                ),
+        );
+        let text = numeric_text_runs(&output)
+            .into_iter()
+            .next()
+            .expect("ruler should draw at least one numeric label");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("ruler label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("ruler label should contain one line");
+        let measurement = layout.measurement();
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(measurement);
+        let slot_center = theme.metrics.canvas_ruler_label_padding.top
+            + (theme.metrics.canvas_ruler_extent
+                - theme.metrics.canvas_ruler_label_padding.top
+                - theme.metrics.canvas_ruler_label_padding.bottom)
+                * 0.5;
+
+        assert!(
+            text.style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        assert!(
+            (text.rect.width() - measurement.width).abs() < 0.75,
+            "ruler label rect should use measured width: rect={:?}, measurement={measurement:?}",
+            text.rect
+        );
+        assert!(
+            (actual_visual_center - slot_center).abs() < 0.75,
+            "ruler label visual center {actual_visual_center} did not match slot center {slot_center}; text rect {:?}",
+            text.rect
+        );
+    }
+
+    #[test]
+    fn horizontal_canvas_ruler_preserves_tall_label_measurements() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 32.0,
+            line_height: 12.0,
+        };
+        theme.metrics.canvas_ruler_label_max_width = 120.0;
+
+        let extent = 96.0;
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(420.0, extent))
+                .with_child(
+                    CanvasRuler::horizontal("Tall horizontal ruler", Size::new(1920.0, 1080.0))
+                        .theme(theme)
+                        .extent(extent)
+                        .viewport(
+                            CanvasViewport::new().pan(Vector::new(750.0, 0.0)),
+                            Size::new(420.0, 260.0),
+                        ),
+                ),
+        );
+        let text = numeric_text_runs(&output)
+            .into_iter()
+            .next()
+            .expect("horizontal ruler should draw at least one numeric label");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("ruler label should shape");
+        let measurement = layout.measurement();
+        let line = layout
+            .lines()
+            .first()
+            .expect("ruler label should contain one line");
+        let slot_center = theme.metrics.canvas_ruler_label_padding.top
+            + (extent
+                - theme.metrics.canvas_ruler_label_padding.top
+                - theme.metrics.canvas_ruler_label_padding.bottom)
+                * 0.5;
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(measurement);
+
+        assert_eq!(text.style.font_size, theme.text.xs.size);
+        assert_eq!(text.style.line_height, theme.text.xs.line_height);
+        assert!(
+            text.rect.height() >= measurement.height - 0.01,
+            "horizontal ruler label rect should preserve measured glyph height: rect={:?}, measurement={measurement:?}",
+            text.rect
+        );
+        assert!(
+            text.rect.height() > text.style.line_height,
+            "test should exercise a measurement taller than line-height: rect={:?}, style={:?}",
+            text.rect,
+            text.style
+        );
+        assert!(
+            (actual_visual_center - slot_center).abs() < 0.75,
+            "horizontal ruler tall label visual center {actual_visual_center} did not match slot center {slot_center}; text rect {:?}",
+            text.rect
+        );
+    }
+
+    #[test]
+    fn vertical_canvas_ruler_numeric_labels_center_on_tick_position() {
+        let theme = DefaultTheme::default();
+        let document_size = Size::new(1920.0, 1080.0);
+        let viewport = CanvasViewport::new();
+        let viewport_size = Size::new(260.0, 420.0);
+        let extent = 72.0;
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(extent, 420.0))
+                .with_child(
+                    CanvasRuler::vertical("Vertical ruler", document_size)
+                        .extent(extent)
+                        .viewport(viewport, viewport_size),
+                ),
+        );
+        let bounds = Rect::new(0.0, 0.0, extent, 420.0);
+        let canvas_bounds =
+            super::ruler_canvas_bounds(bounds, CanvasRulerAxis::Vertical, viewport_size);
+        let document_origin = Point::new(document_size.width * 0.5, document_size.height * 0.5);
+        let padding = theme.metrics.canvas_ruler_label_padding;
+        let text = numeric_text_runs(&output)
+            .into_iter()
+            .find(|run| {
+                let Ok(value) = run.text.parse::<f32>() else {
+                    return false;
+                };
+                let tick_y = super::ruler_tick_screen_position(
+                    CanvasRulerAxis::Vertical,
+                    value,
+                    document_size,
+                    viewport,
+                    canvas_bounds,
+                    document_origin,
+                );
+
+                tick_y > bounds.y() + padding.top + run.style.line_height
+                    && tick_y < bounds.max_y() - padding.bottom - run.style.line_height
+            })
+            .expect("vertical ruler should draw an unclamped numeric label");
+        let value = text
+            .text
+            .parse::<f32>()
+            .expect("numeric ruler label should parse");
+        let expected_tick_y = super::ruler_tick_screen_position(
+            CanvasRulerAxis::Vertical,
+            value,
+            document_size,
+            viewport,
+            canvas_bounds,
+            document_origin,
+        );
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("ruler label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("ruler label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+
+        assert!(
+            text.style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        assert!(
+            (actual_visual_center - expected_tick_y).abs() < 0.75,
+            "vertical ruler label visual center {actual_visual_center} did not match tick {expected_tick_y}; text rect {:?}",
+            text.rect
+        );
+    }
+
+    #[test]
+    fn vertical_canvas_ruler_preserves_tall_label_measurements() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 32.0,
+            line_height: 12.0,
+        };
+        theme.metrics.canvas_ruler_label_max_width = 120.0;
+
+        let document_size = Size::new(1920.0, 1080.0);
+        let viewport = CanvasViewport::new();
+        let viewport_size = Size::new(260.0, 420.0);
+        let extent = 96.0;
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(extent, 420.0))
+                .with_child(
+                    CanvasRuler::vertical("Tall vertical ruler", document_size)
+                        .theme(theme)
+                        .extent(extent)
+                        .viewport(viewport, viewport_size),
+                ),
+        );
+        let bounds = Rect::new(0.0, 0.0, extent, 420.0);
+        let canvas_bounds =
+            super::ruler_canvas_bounds(bounds, CanvasRulerAxis::Vertical, viewport_size);
+        let document_origin = Point::new(document_size.width * 0.5, document_size.height * 0.5);
+        let padding = theme.metrics.canvas_ruler_label_padding;
+        let text_system = TextSystem::new();
+        let text = numeric_text_runs(&output)
+            .into_iter()
+            .find(|run| {
+                let Ok(value) = run.text.parse::<f32>() else {
+                    return false;
+                };
+                let Ok(layout) = text_system.shape_text_run(run, &FontRegistry::new()) else {
+                    return false;
+                };
+                let tick_y = super::ruler_tick_screen_position(
+                    CanvasRulerAxis::Vertical,
+                    value,
+                    document_size,
+                    viewport,
+                    canvas_bounds,
+                    document_origin,
+                );
+                let height = run.style.line_height.max(layout.measurement().height);
+
+                tick_y > bounds.y() + padding.top + height
+                    && tick_y < bounds.max_y() - padding.bottom - height
+            })
+            .expect("vertical ruler should draw an unclamped tall numeric label");
+        let value = text
+            .text
+            .parse::<f32>()
+            .expect("numeric ruler label should parse");
+        let expected_tick_y = super::ruler_tick_screen_position(
+            CanvasRulerAxis::Vertical,
+            value,
+            document_size,
+            viewport,
+            canvas_bounds,
+            document_origin,
+        );
+        let layout = text_system
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("ruler label should shape");
+        let measurement = layout.measurement();
+        let line = layout
+            .lines()
+            .first()
+            .expect("ruler label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(measurement);
+
+        assert!(
+            text.rect.height() >= measurement.height - 0.01,
+            "vertical ruler label rect should preserve measured glyph height: rect={:?}, measurement={measurement:?}",
+            text.rect
+        );
+        assert!(
+            text.rect.height() > text.style.line_height,
+            "test should exercise a measurement taller than line-height: rect={:?}, style={:?}",
+            text.rect,
+            text.style
+        );
+        assert!(
+            (actual_visual_center - expected_tick_y).abs() < 0.75,
+            "vertical ruler tall label visual center {actual_visual_center} did not match tick {expected_tick_y}; text rect {:?}",
+            text.rect
+        );
     }
 
     #[test]
@@ -3363,7 +3795,7 @@ mod tests {
         let painted = image
             .bytes()
             .chunks_exact(4)
-            .filter(|pixel| pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 0 && pixel[3] == 255)
+            .filter(|pixel| rgba_channels_match(pixel, [255, 0, 0, 255]))
             .count();
         assert_eq!(painted, 9);
         Ok(())
@@ -3392,7 +3824,7 @@ mod tests {
         )?;
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
 
-        assert_eq!(&pixels[0..4], &[255, 0, 255, 255]);
+        assert_rgba_channels_near(&pixels[0..4], [255, 0, 255, 255]);
         Ok(())
     }
 
@@ -3416,7 +3848,7 @@ mod tests {
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
         let painted = pixels
             .chunks_exact(4)
-            .filter(|pixel| pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 0 && pixel[3] == 255)
+            .filter(|pixel| rgba_channels_match(pixel, [255, 0, 0, 255]))
             .count();
 
         assert_eq!(painted, 5);
@@ -3461,7 +3893,7 @@ mod tests {
         let transparent = image
             .bytes()
             .chunks_exact(4)
-            .filter(|pixel| pixel[3] == 0)
+            .filter(|pixel| alpha_matches(pixel, 0))
             .count();
         assert_eq!(transparent, 1);
         Ok(())
@@ -3497,7 +3929,7 @@ mod tests {
         let red = image
             .bytes()
             .chunks_exact(4)
-            .filter(|pixel| pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 0 && pixel[3] == 255)
+            .filter(|pixel| rgba_channels_match(pixel, [255, 0, 0, 255]))
             .count();
         assert_eq!(red, 64);
         Ok(())
@@ -3525,7 +3957,7 @@ mod tests {
         runtime.handle_event(window_id, command_key("z"))?;
         let painted_after_undo = rendered_pixel_bytes(&runtime.render(window_id)?)
             .chunks_exact(4)
-            .any(|pixel| pixel[3] != 0);
+            .any(|pixel| !alpha_matches(pixel, 0));
         assert!(!painted_after_undo);
 
         runtime.handle_event(window_id, command_key("y"))?;
@@ -3560,7 +3992,7 @@ mod tests {
         )?;
         let painted_after_undo = rendered_pixel_bytes(&runtime.render(window_id)?)
             .chunks_exact(4)
-            .any(|pixel| pixel[3] != 0);
+            .any(|pixel| !alpha_matches(pixel, 0));
         assert!(!painted_after_undo);
         assert!(state.can_redo());
         Ok(())
@@ -3583,7 +4015,7 @@ mod tests {
             Event::Window(WindowEvent::Resized(Size::new(521.0, 361.0))),
         )?;
         let cleared = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert!(cleared.chunks_exact(4).all(|pixel| pixel[3] == 0));
+        assert!(cleared.chunks_exact(4).all(|pixel| alpha_matches(pixel, 0)));
         assert!(state.can_undo());
 
         state.request_undo();
@@ -3592,7 +4024,11 @@ mod tests {
             Event::Window(WindowEvent::Resized(Size::new(522.0, 362.0))),
         )?;
         let restored = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert!(restored.chunks_exact(4).all(|pixel| pixel[3] == 255));
+        assert!(
+            restored
+                .chunks_exact(4)
+                .all(|pixel| alpha_matches(pixel, 255))
+        );
         assert!(state.can_redo());
         Ok(())
     }
@@ -3648,7 +4084,8 @@ mod tests {
             primary_pointer(PointerEventKind::Up, Point::new(260.0, 180.0), false),
         )?;
 
-        assert_eq!(rendered_pixel_bytes(&runtime.render(window_id)?), before);
+        let after = rendered_pixel_bytes(&runtime.render(window_id)?);
+        assert_rgba_buffers_near(&after, &before);
         assert!(!state.can_undo());
         Ok(())
     }
@@ -3666,7 +4103,7 @@ mod tests {
         let expected = [paper.red, paper.green, paper.blue, paper.alpha];
 
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert_eq!(&pixels[0..4], &expected);
+        assert_rgba_channels_near(&pixels[0..4], expected);
 
         state.request_export_snapshot();
         runtime.handle_event(
@@ -3676,7 +4113,7 @@ mod tests {
         let snapshot = state
             .latest_export_snapshot()
             .expect("hidden layer export should publish a snapshot");
-        assert_eq!(&snapshot.rgba8()[0..4], &expected);
+        assert_rgba_channels_near(&snapshot.rgba8()[0..4], expected);
         Ok(())
     }
 
@@ -3696,7 +4133,7 @@ mod tests {
         let expected = [paper.red, paper.green, paper.blue, paper.alpha];
 
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert_eq!(&pixels[0..4], &expected);
+        assert_rgba_channels_near(&pixels[0..4], expected);
 
         state.request_export_snapshot();
         runtime.handle_event(
@@ -3706,7 +4143,7 @@ mod tests {
         let snapshot = state
             .latest_export_snapshot()
             .expect("hidden layer export should publish a snapshot");
-        assert_eq!(&snapshot.rgba8()[0..4], &expected);
+        assert_rgba_channels_near(&snapshot.rgba8()[0..4], expected);
         Ok(())
     }
 
@@ -3727,10 +4164,7 @@ mod tests {
         );
 
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert_eq!(
-            &pixels[0..4],
-            &[half.red, half.green, half.blue, half.alpha]
-        );
+        assert_rgba_channels_near(&pixels[0..4], [half.red, half.green, half.blue, half.alpha]);
 
         state.set_display_opacity(1.0);
         state.set_display_blend_mode(PixelCanvasBlendMode::Multiply);
@@ -3744,9 +4178,9 @@ mod tests {
             PixelCanvasBlendMode::Multiply,
         );
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert_eq!(
+        assert_rgba_channels_near(
             &pixels[0..4],
-            &[multiply.red, multiply.green, multiply.blue, multiply.alpha]
+            [multiply.red, multiply.green, multiply.blue, multiply.alpha],
         );
         Ok(())
     }
@@ -3759,7 +4193,7 @@ mod tests {
             build_runtime(PixelCanvas::new("Paint", 1, 1).state(state.clone()));
 
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert_eq!(&pixels[0..4], &[0, 0, 0, 0]);
+        assert_rgba_channels_near(&pixels[0..4], [0, 0, 0, 0]);
 
         state.request_export_snapshot();
         runtime.handle_event(
@@ -3769,7 +4203,7 @@ mod tests {
         let snapshot = state
             .latest_export_snapshot()
             .expect("hidden paper export should publish a snapshot");
-        assert_eq!(&snapshot.rgba8()[0..4], &[0, 0, 0, 0]);
+        assert_rgba_channels_near(&snapshot.rgba8()[0..4], [0, 0, 0, 0]);
         Ok(())
     }
 
@@ -3787,7 +4221,7 @@ mod tests {
         let expected = [paper.red, paper.green, paper.blue, paper.alpha];
 
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert_eq!(&pixels[0..4], &expected);
+        assert_rgba_channels_near(&pixels[0..4], expected);
         Ok(())
     }
 
@@ -3822,7 +4256,7 @@ mod tests {
         assert_eq!(snapshot.width(), 2);
         assert_eq!(snapshot.height(), 2);
         assert_eq!(snapshot.byte_len(), 16);
-        assert_eq!(&snapshot.rgba8()[0..4], &[255, 0, 0, 255]);
+        assert_rgba_channels_near(&snapshot.rgba8()[0..4], [255, 0, 0, 255]);
         assert_eq!(snapshot.revision(), 1);
         Ok(())
     }

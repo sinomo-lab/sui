@@ -6,7 +6,10 @@ mod widget;
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use sui_core::{
@@ -48,6 +51,8 @@ pub use widget::{
     WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
+
+static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct WindowBuilder {
     title: String,
@@ -390,7 +395,6 @@ impl Default for Application {
 pub const EXTERNAL_WAKE_KIND: &str = "sui.external.wake";
 
 pub struct Runtime {
-    next_window_id: u64,
     next_font_id: u64,
     next_image_id: u64,
     font_registry: Arc<FontRegistry>,
@@ -416,7 +420,6 @@ impl Runtime {
         image_registry: Arc<ImageRegistry>,
     ) -> Self {
         Self {
-            next_window_id: 1,
             next_font_id: next_font_id.max(1),
             next_image_id: next_image_id.max(1),
             font_registry,
@@ -446,6 +449,7 @@ impl Runtime {
         };
 
         self.windows.remove(window_index);
+        clear_window_performance_snapshot(window_id);
         Ok(())
     }
 
@@ -679,9 +683,7 @@ impl Runtime {
     }
 
     fn alloc_window_id(&mut self) -> WindowId {
-        let id = WindowId::new(self.next_window_id);
-        self.next_window_id += 1;
-        id
+        WindowId::new(NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed))
     }
 
     fn window(&self, window_id: WindowId) -> Result<&WindowState> {
@@ -3408,7 +3410,8 @@ mod tests {
         Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
         PaintBoundaryMode, PaintCtx, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
         Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor,
-        WidgetPodVisitor, WindowBuilder, WindowIcon, set_window_scene_statistics_detail_mode,
+        WidgetPodVisitor, WindowBuilder, WindowIcon, WindowRenderOptions,
+        set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
@@ -4261,6 +4264,24 @@ mod tests {
             Some(&override_icon)
         );
         assert_eq!(runtime.window_icon(window_ids[1]).unwrap(), None);
+    }
+
+    #[test]
+    fn independent_runtimes_allocate_distinct_window_ids() {
+        let first = Application::new()
+            .window(WindowBuilder::new().title("First").root(FocusLeaf {
+                counters: Rc::new(RefCell::new(Counters::default())),
+            }))
+            .build()
+            .unwrap();
+        let second = Application::new()
+            .window(WindowBuilder::new().title("Second").root(FocusLeaf {
+                counters: Rc::new(RefCell::new(Counters::default())),
+            }))
+            .build()
+            .unwrap();
+
+        assert_ne!(first.window_ids()[0], second.window_ids()[0]);
     }
 
     #[test]
@@ -5307,10 +5328,13 @@ mod tests {
     #[test]
     fn removing_a_window_tears_down_runtime_state() {
         let (mut runtime, window_id, _, _) = build_runtime();
+        set_window_render_options(window_id, WindowRenderOptions::new(false, 1.0));
+        assert!(window_render_options(window_id).is_some());
 
         runtime.remove_window(window_id).unwrap();
 
         assert!(runtime.window_ids().is_empty());
+        assert!(window_render_options(window_id).is_none());
         assert!(runtime.needs_render(window_id).is_err());
         assert!(runtime.focus_state(window_id).is_err());
         assert!(runtime.render(window_id).is_err());

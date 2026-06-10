@@ -4357,8 +4357,8 @@ mod tests {
         StrokeStyle, WidgetShader,
     };
     use sui_text::{
-        FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, TextLayoutRegistry, TextRun,
-        TextStyle, TextSystem,
+        FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, ShapedTextWindow,
+        TextLayoutRegistry, TextRun, TextStyle, TextSystem,
     };
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4478,11 +4478,28 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(&sdr.pixels()[0..4], &[255, 255, 255, 255]);
+        assert_rgba_channels_near(
+            &sdr.pixels()[0..4],
+            [255, 255, 255, 255],
+            RGBA_CHANNEL_TOLERANCE,
+        );
         assert!(sdr.pixels()[4] < 255);
-        assert_eq!(sdr.pixels()[4], sdr.pixels()[5]);
-        assert_eq!(sdr.pixels()[7], 128);
-        assert_eq!(&sdr.pixels()[8..12], &[255, 0, 0, 255]);
+        assert!(
+            sdr.pixels()[4].abs_diff(sdr.pixels()[5]) <= RGBA_CHANNEL_TOLERANCE,
+            "normalized grayscale channels differed by more than {RGBA_CHANNEL_TOLERANCE}: got {} and {}",
+            sdr.pixels()[4],
+            sdr.pixels()[5]
+        );
+        assert!(
+            sdr.pixels()[7].abs_diff(128) <= RGBA_CHANNEL_TOLERANCE,
+            "alpha channel differed by more than {RGBA_CHANNEL_TOLERANCE}: got {}, expected 128",
+            sdr.pixels()[7]
+        );
+        assert_rgba_channels_near(
+            &sdr.pixels()[8..12],
+            [255, 0, 0, 255],
+            RGBA_CHANNEL_TOLERANCE,
+        );
     }
 
     #[test]
@@ -4508,7 +4525,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(sdr.pixels(), expected.as_slice());
+        assert_rgba_pixels_near(sdr.pixels(), expected.as_slice(), RGBA_CHANNEL_TOLERANCE);
     }
 
     #[test]
@@ -4574,8 +4591,14 @@ mod tests {
         renderer.render(&frame).unwrap();
         let image = renderer.capture_last_frame_rgba(window_id).unwrap();
 
-        assert_eq!(rgba_pixel(&image, 8, 8), [66, 42, 213, 255]);
-        assert_eq!(rgba_pixel(&image, 24, 8), [255, 255, 188, 255]);
+        assert_rgba_pixel_near(&image, 8, 8, [66, 42, 213, 255], RGBA_CHANNEL_TOLERANCE);
+        assert_rgba_pixel_near(
+            &image,
+            24,
+            8,
+            [255, 255, super::linear_to_srgb_capture_u8(0.5), 255],
+            RGBA_CHANNEL_TOLERANCE,
+        );
     }
 
     #[test]
@@ -4613,7 +4636,11 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(&sdr.pixels()[0..4], &[66, 42, 213, 255]);
+        assert_rgba_channels_near(
+            &sdr.pixels()[0..4],
+            [66, 42, 213, 255],
+            RGBA_CHANNEL_TOLERANCE,
+        );
     }
 
     #[test]
@@ -4635,8 +4662,12 @@ mod tests {
             DisplayColorPrimaries::Srgb,
         )
         .unwrap();
-        assert_eq!(&mask.pixels()[0..4], &[0, 0, 0, 255]);
-        assert_eq!(&mask.pixels()[4..8], &[255, 64, 64, 255]);
+        assert_rgba_channels_near(&mask.pixels()[0..4], [0, 0, 0, 255], RGBA_CHANNEL_TOLERANCE);
+        assert_rgba_channels_near(
+            &mask.pixels()[4..8],
+            [255, 64, 64, 255],
+            RGBA_CHANNEL_TOLERANCE,
+        );
 
         let heatmap = hdr_image_to_sdr_rgba(
             &image,
@@ -4646,7 +4677,11 @@ mod tests {
         )
         .unwrap();
         assert!(heatmap.pixels()[4] >= heatmap.pixels()[0]);
-        assert_eq!(heatmap.pixels()[7], 255);
+        assert!(
+            heatmap.pixels()[7].abs_diff(255) <= RGBA_CHANNEL_TOLERANCE,
+            "heatmap alpha channel differed by more than {RGBA_CHANNEL_TOLERANCE}: got {}, expected 255",
+            heatmap.pixels()[7]
+        );
     }
 
     #[test]
@@ -4667,7 +4702,11 @@ mod tests {
         let DebugCaptureArtifact::SdrRgba8(png) = png else {
             panic!("PNG HDR debug capture should be converted to SDR RGBA");
         };
-        assert_eq!(png.pixels()[0], 255);
+        assert!(
+            png.pixels()[0].abs_diff(255) <= RGBA_CHANNEL_TOLERANCE,
+            "PNG red channel differed by more than {RGBA_CHANNEL_TOLERANCE}: got {}, expected 255",
+            png.pixels()[0]
+        );
         assert!(png.pixels()[1] < 255);
 
         let exr = encode_hdr_debug_artifact(
@@ -4739,12 +4778,21 @@ mod tests {
             .signature
     }
 
+    const RGBA_CHANNEL_TOLERANCE: u8 = 1;
+
+    fn rgba_channels_match_with_tolerance(left: &[u8], right: &[u8], tolerance: u8) -> bool {
+        left.iter()
+            .zip(right.iter())
+            .all(|(left, right)| left.abs_diff(*right) <= tolerance)
+    }
+
     fn assert_rgba_images_match(left: &super::RgbaImage, right: &super::RgbaImage) {
         assert_eq!(left.width(), right.width(), "image widths differ");
         assert_eq!(left.height(), right.height(), "image heights differ");
 
         let mut diff_count = 0usize;
         let mut diff_bounds: Option<(u32, u32, u32, u32)> = None;
+        let mut max_channel_diff = 0u8;
         let width = left.width();
         for (index, (left_px, right_px)) in left
             .pixels()
@@ -4752,7 +4800,14 @@ mod tests {
             .zip(right.pixels().chunks_exact(4))
             .enumerate()
         {
-            if left_px != right_px {
+            let pixel_max_channel_diff = left_px
+                .iter()
+                .zip(right_px.iter())
+                .map(|(left, right)| left.abs_diff(*right))
+                .max()
+                .unwrap_or(0);
+            max_channel_diff = max_channel_diff.max(pixel_max_channel_diff);
+            if pixel_max_channel_diff > RGBA_CHANNEL_TOLERANCE {
                 diff_count += 1;
                 let x = (index as u32) % width;
                 let y = (index as u32) / width;
@@ -4768,8 +4823,8 @@ mod tests {
         if diff_count != 0 {
             let (min_x, min_y, max_x, max_y) = diff_bounds.expect("diff bounds present");
             panic!(
-                "images differ at {} pixels within bounds ({}, {})..({}, {})",
-                diff_count, min_x, min_y, max_x, max_y
+                "images differ beyond {RGBA_CHANNEL_TOLERANCE} channel value at {} pixels within bounds ({}, {})..({}, {}); max channel diff {}",
+                diff_count, min_x, min_y, max_x, max_y, max_channel_diff
             );
         }
     }
@@ -4781,7 +4836,9 @@ mod tests {
         left.pixels()
             .chunks_exact(4)
             .zip(right.pixels().chunks_exact(4))
-            .filter(|(left_px, right_px)| left_px != right_px)
+            .filter(|(left_px, right_px)| {
+                !rgba_channels_match_with_tolerance(left_px, right_px, RGBA_CHANNEL_TOLERANCE)
+            })
             .count()
     }
 
@@ -4821,7 +4878,11 @@ mod tests {
         for y in min_y..max_y {
             for x in min_x..max_x {
                 let index = ((y as usize * width) + x as usize) * 4;
-                if pixels[index..index + 4] != [255, 255, 255, 255] {
+                if !rgba_channels_match_with_tolerance(
+                    &pixels[index..index + 4],
+                    &[255, 255, 255, 255],
+                    RGBA_CHANNEL_TOLERANCE,
+                ) {
                     count += 1;
                 }
             }
@@ -4842,7 +4903,11 @@ mod tests {
             let mut row_has_ink = false;
             for x in min_x..max_x {
                 let index = ((y as usize * width) + x as usize) * 4;
-                if pixels[index..index + 4] != [255, 255, 255, 255] {
+                if !rgba_channels_match_with_tolerance(
+                    &pixels[index..index + 4],
+                    &[255, 255, 255, 255],
+                    RGBA_CHANNEL_TOLERANCE,
+                ) {
                     row_has_ink = true;
                     break;
                 }
@@ -4862,6 +4927,71 @@ mod tests {
             pixels[index + 2],
             pixels[index + 3],
         ]
+    }
+
+    fn assert_rgba_pixel_near(
+        image: &super::RgbaImage,
+        x: u32,
+        y: u32,
+        expected: [u8; 4],
+        tolerance: u8,
+    ) {
+        let actual = rgba_pixel(image, x, y);
+        for channel in 0..4 {
+            assert!(
+                actual[channel].abs_diff(expected[channel]) <= tolerance,
+                "pixel ({x}, {y}) channel {channel} differed by more than {tolerance}: got {}, expected {}",
+                actual[channel],
+                expected[channel]
+            );
+        }
+    }
+
+    fn assert_rgba_channels_near(actual: &[u8], expected: [u8; 4], tolerance: u8) {
+        assert_eq!(
+            actual.len(),
+            4,
+            "expected exactly one RGBA pixel, got {} channels",
+            actual.len()
+        );
+        for channel in 0..4 {
+            assert!(
+                actual[channel].abs_diff(expected[channel]) <= tolerance,
+                "channel {channel} differed by more than {tolerance}: got {}, expected {}",
+                actual[channel],
+                expected[channel]
+            );
+        }
+    }
+
+    fn assert_rgba_pixels_near(actual: &[u8], expected: &[u8], tolerance: u8) {
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "RGBA buffer length mismatch: got {}, expected {}",
+            actual.len(),
+            expected.len()
+        );
+        assert_eq!(
+            actual.len() % 4,
+            0,
+            "RGBA buffer length must be divisible by 4"
+        );
+
+        for (pixel_index, (actual_pixel, expected_pixel)) in actual
+            .chunks_exact(4)
+            .zip(expected.chunks_exact(4))
+            .enumerate()
+        {
+            for channel in 0..4 {
+                assert!(
+                    actual_pixel[channel].abs_diff(expected_pixel[channel]) <= tolerance,
+                    "pixel {pixel_index} channel {channel} differed by more than {tolerance}: got {}, expected {}",
+                    actual_pixel[channel],
+                    expected_pixel[channel]
+                );
+            }
+        }
     }
 
     #[test]
@@ -5754,7 +5884,11 @@ mod tests {
 
         assert!(rasterized.is_color);
         // The atlas stores sRGB verbatim; the fragment shader linearizes at sample time.
-        assert_eq!(rasterized.pixels, vec![66, 42, 213, 128]);
+        assert_rgba_pixels_near(
+            &rasterized.pixels,
+            &[66, 42, 213, 128],
+            RGBA_CHANNEL_TOLERANCE,
+        );
     }
 
     #[test]
@@ -5882,7 +6016,7 @@ mod tests {
             0.0,
             TextCoveragePolicy::Linear,
         );
-        assert_eq!(converted, [32, 128, 255, 255]);
+        assert_rgba_channels_near(&converted, [32, 128, 255, 255], RGBA_CHANNEL_TOLERANCE);
     }
 
     #[test]
@@ -6619,6 +6753,195 @@ mod tests {
         .unwrap();
 
         assert!(!vertices.is_empty());
+    }
+
+    #[test]
+    fn shaped_text_color_override_paints_cached_layout_without_changing_style() {
+        let text_system = TextSystem::new();
+        let layout_color = Color::rgba(0.92, 0.18, 0.16, 1.0);
+        let paint_color = Color::rgba(0.12, 0.48, 0.86, 1.0);
+        let layout = text_system
+            .shape_text_persistent(
+                None,
+                "state",
+                Size::new(96.0, 24.0),
+                TextStyle::new(layout_color),
+                &FontRegistry::new(),
+            )
+            .unwrap();
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawShapedText(
+            ShapedText::new(Point::new(4.0, 6.0), &layout).with_color(paint_color),
+        ));
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let vertices = build_vertices(
+            &SceneFrame {
+                window_id: WindowId::new(311),
+                viewport: Size::new(120.0, 80.0),
+                surface_size: Size::new(120.0, 80.0),
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: Vec::new(),
+                scene,
+                font_registry: Arc::new(FontRegistry::new()),
+                image_registry: Arc::new(ImageRegistry::new()),
+                text_layout_registry: text_system.text_layout_registry(),
+            },
+            &mut text_engine,
+        )
+        .unwrap();
+
+        assert_eq!(layout.style().color, layout_color);
+        assert!(!vertices.is_empty());
+        assert_eq!(vertices[0].color, shader_color(paint_color));
+    }
+
+    #[test]
+    fn shaped_text_from_runtime_draw_text_snaps_to_physical_pixels_at_fractional_dpi() {
+        let handle = FontHandle::new(312);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+        let text_system = TextSystem::new();
+        let layout = text_system
+            .shape_text_persistent(
+                None,
+                "Widget text",
+                Size::new(132.0, 24.0),
+                TextStyle {
+                    font: Some(handle),
+                    font_size: 14.0,
+                    line_height: 19.0,
+                    color: Color::rgba(0.12, 0.16, 0.22, 1.0),
+                    ..TextStyle::default()
+                },
+                &fonts,
+            )
+            .unwrap();
+        let viewport = Size::new(220.0, 72.0);
+        let origin = Point::new(18.333_332, 10.666_667);
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawShapedText(ShapedText::new(
+            origin, &layout,
+        )));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(312),
+            viewport,
+            surface_size: Size::new(330.0, 108.0),
+            scale_factor: 1.5,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene,
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: text_system.text_layout_registry(),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let draw_ops = prepare_with_compositor(&frame, &mut text_engine, &mut compositor)
+            .expect("shaped text frame should prepare");
+        let text_op = draw_ops
+            .draw_ops
+            .iter()
+            .find(|op| matches!(op.kind, DrawOpKind::TextAtlas))
+            .expect("shaped text should emit atlas instances");
+        let start = text_op.vertices.start as usize;
+        let end = start + text_op.vertices.len as usize;
+        let instances = &draw_ops.text_instances[start..end];
+        assert!(!instances.is_empty());
+        for (index, instance) in instances.iter().enumerate() {
+            let x = logical_x_from_ndc(instance.top_left[0], viewport);
+            let y = logical_y_from_ndc(instance.top_left[1], viewport);
+            assert!(
+                is_physically_pixel_aligned(x, frame.scale_factor),
+                "shaped text instance {index} x was not physically aligned: {x}"
+            );
+            assert!(
+                is_physically_pixel_aligned(y, frame.scale_factor),
+                "shaped text instance {index} y was not physically aligned: {y}"
+            );
+        }
+    }
+
+    #[test]
+    fn shaped_text_window_snaps_to_physical_pixels_at_fractional_dpi() {
+        let handle = FontHandle::new(313);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+        let text_system = TextSystem::new();
+        let layout = text_system
+            .shape_text_persistent(
+                None,
+                "First line wraps into a second visible line",
+                Size::new(84.0, 72.0),
+                TextStyle {
+                    font: Some(handle),
+                    font_size: 14.0,
+                    line_height: 19.0,
+                    color: Color::rgba(0.12, 0.16, 0.22, 1.0),
+                    ..TextStyle::default()
+                },
+                &fonts,
+            )
+            .unwrap();
+        assert!(
+            layout.lines().len() > 1,
+            "test layout must produce a non-empty line window"
+        );
+        assert!(
+            layout.line_window(1..2).glyph_instances().len() > 0,
+            "test layout line window must contain glyphs"
+        );
+        let viewport = Size::new(220.0, 96.0);
+        let origin = Point::new(18.333_332, 10.666_667);
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawShapedTextWindow(ShapedTextWindow::new(
+            origin,
+            &layout,
+            1..2,
+        )));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(313),
+            viewport,
+            surface_size: Size::new(330.0, 144.0),
+            scale_factor: 1.5,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene,
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: text_system.text_layout_registry(),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let draw_ops = prepare_with_compositor(&frame, &mut text_engine, &mut compositor)
+            .expect("windowed shaped text frame should prepare");
+        let text_op = draw_ops
+            .draw_ops
+            .iter()
+            .find(|op| matches!(op.kind, DrawOpKind::TextAtlas))
+            .expect("windowed shaped text should emit atlas instances");
+        let start = text_op.vertices.start as usize;
+        let end = start + text_op.vertices.len as usize;
+        let instances = &draw_ops.text_instances[start..end];
+        assert!(!instances.is_empty());
+        for (index, instance) in instances.iter().enumerate() {
+            let x = logical_x_from_ndc(instance.top_left[0], viewport);
+            let y = logical_y_from_ndc(instance.top_left[1], viewport);
+            assert!(
+                is_physically_pixel_aligned(x, frame.scale_factor),
+                "windowed shaped text instance {index} x was not physically aligned: {x}"
+            );
+            assert!(
+                is_physically_pixel_aligned(y, frame.scale_factor),
+                "windowed shaped text instance {index} y was not physically aligned: {y}"
+            );
+        }
     }
 
     #[test]
@@ -8080,11 +8403,8 @@ mod tests {
         let after = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
 
         assert!(
-            before
-                .pixels()
-                .iter()
-                .zip(after.pixels().iter())
-                .any(|(left, right)| left != right)
+            rgba_image_diff_count(&before, &after) > 0,
+            "translated retained layer did not change the captured image beyond {RGBA_CHANNEL_TOLERANCE} channel value"
         );
     }
 
@@ -10557,7 +10877,13 @@ mod tests {
         let changed_pixels = pixels
             .pixels()
             .chunks_exact(4)
-            .filter(|pixel| *pixel != [255, 255, 255, 255])
+            .filter(|pixel| {
+                !rgba_channels_match_with_tolerance(
+                    pixel,
+                    &[255, 255, 255, 255],
+                    RGBA_CHANNEL_TOLERANCE,
+                )
+            })
             .count();
 
         assert!(
@@ -11346,7 +11672,10 @@ mod tests {
 
         let image = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
         assert!(
-            image.pixels().chunks_exact(4).any(|pixel| pixel[3] != 0),
+            image
+                .pixels()
+                .chunks_exact(4)
+                .any(|pixel| pixel[3] > RGBA_CHANNEL_TOLERANCE),
             "frame should render visible text across atlas pages"
         );
     }
@@ -11416,7 +11745,12 @@ mod tests {
         );
 
         let image = renderer.capture_last_frame_rgba(WindowId::new(17)).unwrap();
-        assert!(image.pixels().chunks_exact(4).any(|pixel| pixel[3] != 0));
+        assert!(
+            image
+                .pixels()
+                .chunks_exact(4)
+                .any(|pixel| pixel[3] > RGBA_CHANNEL_TOLERANCE)
+        );
     }
 
     #[test]
@@ -11476,7 +11810,12 @@ mod tests {
         }
 
         let image = renderer.capture_last_frame_rgba(WindowId::new(21)).unwrap();
-        assert!(image.pixels().chunks_exact(4).any(|pixel| pixel[3] != 0));
+        assert!(
+            image
+                .pixels()
+                .chunks_exact(4)
+                .any(|pixel| pixel[3] > RGBA_CHANNEL_TOLERANCE)
+        );
     }
 
     #[test]

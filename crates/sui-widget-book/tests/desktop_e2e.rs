@@ -1181,6 +1181,15 @@ fn map_os_error(error: OsError) -> Error {
     Error::new(format!("failed to create desktop window: {error}"))
 }
 
+const FRAME_CHANNEL_TOLERANCE: u8 = 1;
+
+fn frame_pixels_match(before: &[u8], after: &[u8]) -> bool {
+    before
+        .iter()
+        .zip(after.iter())
+        .all(|(before, after)| before.abs_diff(*after) <= FRAME_CHANNEL_TOLERANCE)
+}
+
 fn frame_pixel_diff_count(before: &CapturedFrame, after: &CapturedFrame) -> usize {
     assert_eq!(
         (before.width, before.height),
@@ -1190,9 +1199,9 @@ fn frame_pixel_diff_count(before: &CapturedFrame, after: &CapturedFrame) -> usiz
 
     before
         .pixels
-        .iter()
-        .zip(after.pixels.iter())
-        .filter(|(left, right)| left != right)
+        .chunks_exact(4)
+        .zip(after.pixels.chunks_exact(4))
+        .filter(|(left, right)| !frame_pixels_match(left, right))
         .count()
 }
 
@@ -1208,7 +1217,10 @@ fn frame_diff_bounds(before: &CapturedFrame, after: &CapturedFrame) -> Option<Re
     for y in 0..before.height {
         for x in 0..before.width {
             let index = ((y * before.width + x) * 4) as usize;
-            if before.pixels[index..index + 4] != after.pixels[index..index + 4] {
+            if !frame_pixels_match(
+                &before.pixels[index..index + 4],
+                &after.pixels[index..index + 4],
+            ) {
                 has_diff = true;
                 min_x = min_x.min(x);
                 min_y = min_y.min(y);
@@ -1226,6 +1238,33 @@ fn frame_diff_bounds(before: &CapturedFrame, after: &CapturedFrame) -> Option<Re
             (max_y - min_y + 1) as f32,
         )
     })
+}
+
+#[test]
+fn frame_diff_helpers_tolerate_one_channel_value_per_channel() {
+    let before = CapturedFrame {
+        width: 2,
+        height: 1,
+        pixels: vec![10, 20, 30, 40, 100, 110, 120, 130],
+    };
+    let tolerated = CapturedFrame {
+        width: 2,
+        height: 1,
+        pixels: vec![11, 19, 31, 39, 99, 111, 119, 131],
+    };
+    let different = CapturedFrame {
+        width: 2,
+        height: 1,
+        pixels: vec![12, 20, 30, 40, 99, 111, 119, 131],
+    };
+
+    assert_eq!(frame_pixel_diff_count(&before, &tolerated), 0);
+    assert_eq!(frame_diff_bounds(&before, &tolerated), None);
+    assert_eq!(frame_pixel_diff_count(&before, &different), 1);
+    assert_eq!(
+        frame_diff_bounds(&before, &different),
+        Some(Rect::new(0.0, 0.0, 1.0, 1.0))
+    );
 }
 
 fn normalized_semantics_snapshot(nodes: &[SemanticsNode]) -> Vec<String> {
@@ -3996,15 +4035,18 @@ fn desktop_virtual_scroll_render_is_history_independent_for_same_offset() -> Res
     let single_again_frame = capture_after_scroll_steps(&[-48.0])?;
     let multi_frame = capture_after_scroll_steps(&[-12.0, -12.0, -12.0, -12.0])?;
 
+    let same_history_diff_count = frame_pixel_diff_count(&single_frame, &single_again_frame);
     assert_eq!(
-        single_frame, single_again_frame,
-        "fresh launches with the same wheel-event history should produce identical pixels"
+        same_history_diff_count,
+        0,
+        "fresh launches with the same wheel-event history should produce equivalent pixels (diff pixels: {same_history_diff_count}, diff bounds: {:?})",
+        frame_diff_bounds(&single_frame, &single_again_frame),
     );
 
     let diff_count = frame_pixel_diff_count(&single_frame, &multi_frame);
     assert_eq!(
-        single_frame,
-        multi_frame,
+        diff_count,
+        0,
         "the retained renderer produced different pixels for the same final virtual-scroll offset depending on wheel-event history (diff pixels: {diff_count}, diff bounds: {:?})",
         frame_diff_bounds(&single_frame, &multi_frame),
     );

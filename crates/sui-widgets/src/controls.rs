@@ -4,6 +4,7 @@ use crate::{
     WidgetMaterialRole,
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
     paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
+    text_align::{aligned_text_rect_for_layout, aligned_text_rect_for_text},
 };
 use std::collections::BTreeSet;
 use sui_core::{
@@ -15,10 +16,10 @@ use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_lucide::LucideIcon;
 use sui_runtime::{
     EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    StackSurfaceOptions, Widget, window_render_options,
+    StackSurfaceOptions, Widget,
 };
 use sui_scene::{ImageSource, LayerCompositionMode, StrokeStyle};
-use sui_text::{PersistentTextLayout, TextMeasurement, TextStyle};
+use sui_text::{FontFeature, PersistentTextLayout, TextMeasurement, TextStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconGlyph {
@@ -356,6 +357,8 @@ const PRESS_ANIMATION_SECONDS: f64 = 1.0 / 12.0;
 const TOGGLE_ANIMATION_SECONDS: f64 = 1.0 / 6.0;
 const FOCUS_ANIMATION_SECONDS: f64 = 1.0 / 7.0;
 const CARET_BLINK_PERIOD_SECONDS: f64 = 1.0;
+const SELECT_CHEVRON_SLOT_WIDTH: f32 = 28.0;
+const SELECT_CHEVRON_ICON_SIZE: f32 = 20.0;
 #[cfg(test)]
 const SELECT_MENU_GAP: f32 = 6.0;
 
@@ -957,7 +960,11 @@ impl Widget for Label {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.draw_text(ctx.bounds(), self.current_text(), self.resolved_style());
+        let text = self.current_text();
+        let style = self.resolved_style();
+        let text_rect =
+            aligned_text_rect_for_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
+        ctx.draw_text(text_rect, text, style);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1320,13 +1327,14 @@ impl Button {
         ctx: &PaintCtx,
         bounds: Rect,
         padding: Insets,
-        line_height: f32,
+        text_style: &TextStyle,
     ) -> (Option<Rect>, Rect) {
+        let line_height = text_style.line_height;
         let content = inset_rect(bounds, padding);
         let Some((icon_size, icon_gap)) = self.icon_extent() else {
             return (
                 None,
-                centered_text_rect(ctx, bounds, padding, self.label_measurement, line_height),
+                aligned_text_rect_for_text(ctx, content, &self.label, text_style, line_height, 0.5),
             );
         };
 
@@ -1358,7 +1366,7 @@ impl Button {
         );
         (
             Some(icon_rect),
-            vertically_centered_text_rect(ctx, label_base, measurement, line_height),
+            aligned_text_rect_for_text(ctx, label_base, &self.label, text_style, line_height, 0.0),
         )
     }
 }
@@ -1470,19 +1478,23 @@ impl Widget for Button {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
+        let measured = measure_text(ctx, &self.label, &text_style);
         let label_layout = ctx
             .layout()
             .shape_text_persistent(
                 self.label_layout.as_ref().map(|layout| layout.handle()),
                 self.label.clone(),
-                Size::new(f32::INFINITY, text_style.line_height.max(1.0)),
+                Size::new(
+                    f32::INFINITY,
+                    measured.height.max(text_style.line_height).max(1.0),
+                ),
                 text_style.clone(),
             )
             .ok();
         let measurement = label_layout
             .as_ref()
             .map(|layout| layout.measurement())
-            .unwrap_or_else(|| measure_text(ctx, &self.label, &text_style));
+            .unwrap_or(measured);
         self.label_measurement = Some(measurement);
         self.label_layout = label_layout;
 
@@ -1518,7 +1530,7 @@ impl Widget for Button {
             visuals.focus_ring,
         );
         let (icon_rect, label_rect) =
-            self.button_content_rects(ctx, ctx.bounds(), padding, text_style.line_height);
+            self.button_content_rects(ctx, ctx.bounds(), padding, &text_style);
         let label_rect = label_rect.translate(content_offset);
         if let (Some(icon), Some(icon_rect)) = (self.icon, icon_rect) {
             draw_icon_glyph(
@@ -1533,9 +1545,10 @@ impl Widget for Button {
         {
             let layout_bounds = layout.measurement().bounds;
             ctx.push_clip_rect(label_rect);
-            ctx.draw_persistent_text_layout(
+            ctx.draw_persistent_text_layout_with_color(
                 Point::new(label_rect.x() - layout_bounds.x(), label_rect.y()),
                 layout,
+                visuals.label_color,
             );
             ctx.pop_clip();
             return;
@@ -1925,16 +1938,15 @@ impl Widget for Checkbox {
                 StrokeStyle::new(physical_pixels(ctx, interaction.active_indicator_thickness)),
             );
         }
-        ctx.draw_text(
-            vertically_centered_text_rect(
-                ctx,
-                label_rect,
-                self.label_measurement,
-                text_style.line_height,
-            ),
-            self.label.clone(),
-            text_style,
+        let text_rect = aligned_text_rect_for_text(
+            ctx,
+            label_rect,
+            &self.label,
+            &text_style,
+            text_style.line_height,
+            0.0,
         );
+        ctx.draw_text(text_rect, self.label.clone(), text_style);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2425,19 +2437,19 @@ impl Widget for Switch {
             Path::circle(rect_center(thumb), thumb.width() * 0.5),
             visuals.thumb_color,
         );
-        ctx.draw_text(
-            vertically_centered_text_rect(
-                ctx,
-                label_rect,
-                self.label_measurement,
-                text_style.line_height,
-            ),
-            self.label.clone(),
-            TextStyle {
-                color: visuals.label_color,
-                ..text_style
-            },
+        let text_style = TextStyle {
+            color: visuals.label_color,
+            ..text_style
+        };
+        let text_rect = aligned_text_rect_for_text(
+            ctx,
+            label_rect,
+            &self.label,
+            &text_style,
+            text_style.line_height,
+            0.0,
         );
+        ctx.draw_text(text_rect, self.label.clone(), text_style);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2741,16 +2753,15 @@ impl Widget for RadioButton {
                 palette.accent_text,
             );
         }
-        ctx.draw_text(
-            vertically_centered_text_rect(
-                ctx,
-                label_rect,
-                self.label_measurement,
-                text_style.line_height,
-            ),
-            self.label.clone(),
-            text_style,
+        let text_rect = aligned_text_rect_for_text(
+            ctx,
+            label_rect,
+            &self.label,
+            &text_style,
+            text_style.line_height,
+            0.0,
         );
+        ctx.draw_text(text_rect, self.label.clone(), text_style);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2988,16 +2999,17 @@ impl Widget for RadioGroup {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
+        let row_padding = Insets {
+            top: 0.0,
+            bottom: 0.0,
+            ..metrics.checkbox_padding
+        };
         for (index, option) in self.options.iter().enumerate() {
             let row = self.row_rect(ctx.bounds(), index);
-            let indicator = indicator_rect(
-                row,
-                metrics.checkbox_padding,
-                metrics.checkbox_indicator_size,
-            );
+            let indicator = indicator_rect(row, row_padding, metrics.checkbox_indicator_size);
             let label_rect = checkbox_label_rect(
                 row,
-                metrics.checkbox_padding,
+                row_padding,
                 metrics.checkbox_indicator_size,
                 metrics.checkbox_gap,
             );
@@ -3049,16 +3061,15 @@ impl Widget for RadioGroup {
                 );
             }
             let text_style = theme.body_text_style();
-            ctx.draw_text(
-                vertically_centered_text_rect(
-                    ctx,
-                    label_rect,
-                    self.label_measurements.get(index).copied(),
-                    text_style.line_height,
-                ),
-                option.clone(),
-                text_style,
+            let text_rect = aligned_text_rect_for_text(
+                ctx,
+                label_rect,
+                option,
+                &text_style,
+                text_style.line_height,
+                0.0,
             );
+            ctx.draw_text(text_rect, option.clone(), text_style);
         }
     }
 
@@ -3582,7 +3593,7 @@ impl NumberInput {
     }
 
     fn text_style(&self) -> TextStyle {
-        self.resolved_theme().body_text_style()
+        numeric_text_style(self.resolved_theme().body_text_style())
     }
 
     fn sync_external_value(&mut self) {
@@ -3749,7 +3760,6 @@ impl Widget for NumberInput {
         let stepper = number_input_stepper_rect(ctx.bounds(), metrics);
         let text_style = self.text_style();
         let buffer = self.display_buffer();
-        let measurement = paint_text_measurement(ctx, &buffer, &text_style);
 
         draw_control_frame(
             ctx,
@@ -3773,11 +3783,15 @@ impl Widget for NumberInput {
             ctx.is_focused().then_some(palette.focus_ring),
         );
 
-        ctx.draw_text(
-            vertically_centered_text_rect(ctx, content, Some(measurement), text_style.line_height),
-            buffer.clone(),
-            text_style,
+        let text_rect = aligned_text_rect_for_text(
+            ctx,
+            content,
+            &buffer,
+            &text_style,
+            text_style.line_height,
+            1.0,
         );
+        ctx.draw_text(text_rect, buffer.clone(), text_style);
         ctx.stroke(
             line_path(
                 Point::new(stepper.x(), ctx.bounds().y() + 6.0),
@@ -3810,8 +3824,7 @@ impl Widget for NumberInput {
         );
 
         if ctx.is_focused() {
-            let caret_x = content.x()
-                + measure_text_width_estimate(&buffer, self.text_style().font_size.max(1.0));
+            let caret_x = text_rect.max_x();
             let caret_width = physical_pixels(ctx, metrics.caret_width);
             let caret = Rect::new(
                 caret_x.min((content.max_x() - caret_width).max(content.x())),
@@ -3864,6 +3877,7 @@ pub struct TextArea {
     editor: EditorState,
     clipboard: String,
     placeholder: String,
+    read_only: bool,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     min_width: Option<f32>,
@@ -3889,6 +3903,7 @@ impl TextArea {
             editor: EditorState::new(),
             clipboard: String::new(),
             placeholder: String::new(),
+            read_only: false,
             text_style: None,
             padding: None,
             min_width: None,
@@ -3945,6 +3960,11 @@ impl TextArea {
         self
     }
 
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
     pub fn value(mut self, value: impl Into<String>) -> Self {
         self.editor.set_text(value);
         self
@@ -3998,6 +4018,17 @@ impl TextArea {
         self.text_style
             .clone()
             .unwrap_or_else(|| self.resolved_theme().body_text_style())
+    }
+
+    fn display_text_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
+        if self.input_text().is_empty() {
+            theme.placeholder_text_style()
+        } else if self.read_only {
+            theme.text_style(theme.palette.text_muted)
+        } else {
+            self.resolved_text_style()
+        }
     }
 
     fn resolved_padding(&self) -> Insets {
@@ -4097,6 +4128,13 @@ impl TextArea {
     }
 
     fn reset_caret_blink(&mut self, ctx: &mut EventCtx) {
+        if self.read_only {
+            if let Some(token) = self.caret_timer.take() {
+                ctx.cancel_timer(token);
+            }
+            self.caret_visible = false;
+            return;
+        }
         self.caret_visible = self.focused;
         self.arm_caret_blink(ctx);
     }
@@ -4128,30 +4166,47 @@ impl Widget for TextArea {
                 ctx.set_handled();
             }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
-                self.execute_editor_command(ctx, EditorCommand::StartComposition);
+                if !self.read_only {
+                    self.execute_editor_command(ctx, EditorCommand::StartComposition);
+                }
             }
             Event::Ime(ImeEvent::CompositionUpdate { text, cursor_range }) if ctx.is_focused() => {
-                self.execute_editor_command(
-                    ctx,
-                    EditorCommand::UpdateComposition {
-                        text: text.clone(),
-                        cursor_range: cursor_range.clone(),
-                    },
-                );
+                if !self.read_only {
+                    self.execute_editor_command(
+                        ctx,
+                        EditorCommand::UpdateComposition {
+                            text: text.clone(),
+                            cursor_range: cursor_range.clone(),
+                        },
+                    );
+                }
             }
             Event::Ime(ImeEvent::CompositionCommit { text }) if ctx.is_focused() => {
-                self.execute_editor_command(ctx, EditorCommand::CommitComposition(text.clone()));
+                if !self.read_only {
+                    self.execute_editor_command(
+                        ctx,
+                        EditorCommand::CommitComposition(text.clone()),
+                    );
+                }
             }
             Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() => {
-                self.execute_editor_command(ctx, EditorCommand::EndComposition);
+                if !self.read_only {
+                    self.execute_editor_command(ctx, EditorCommand::EndComposition);
+                }
             }
             Event::Keyboard(key)
-                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Backspace" =>
+                if !self.read_only
+                    && key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && key.key == "Backspace" =>
             {
                 self.execute_editor_command(ctx, EditorCommand::DeleteBackward);
             }
             Event::Keyboard(key)
-                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Delete" =>
+                if !self.read_only
+                    && key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && key.key == "Delete" =>
             {
                 self.execute_editor_command(ctx, EditorCommand::DeleteForward);
             }
@@ -4170,7 +4225,7 @@ impl Widget for TextArea {
                         on_submit(&text);
                     }
                     ctx.set_handled();
-                } else {
+                } else if !self.read_only {
                     self.execute_editor_command(ctx, EditorCommand::InsertText("\n".to_string()));
                 }
             }
@@ -4179,11 +4234,15 @@ impl Widget for TextArea {
                 let command = match key.key.as_str() {
                     "a" | "A" if command_modifier => EditorCommand::SelectAll,
                     "c" | "C" if command_modifier => EditorCommand::Copy,
-                    "x" | "X" if command_modifier => EditorCommand::Cut,
-                    "v" | "V" if command_modifier => EditorCommand::Paste(self.clipboard.clone()),
-                    "z" | "Z" if command_modifier && key.modifiers.shift => EditorCommand::Redo,
-                    "z" | "Z" if command_modifier => EditorCommand::Undo,
-                    "y" | "Y" if command_modifier => EditorCommand::Redo,
+                    "x" | "X" if command_modifier && !self.read_only => EditorCommand::Cut,
+                    "v" | "V" if command_modifier && !self.read_only => {
+                        EditorCommand::Paste(self.clipboard.clone())
+                    }
+                    "z" | "Z" if command_modifier && key.modifiers.shift && !self.read_only => {
+                        EditorCommand::Redo
+                    }
+                    "z" | "Z" if command_modifier && !self.read_only => EditorCommand::Undo,
+                    "y" | "Y" if command_modifier && !self.read_only => EditorCommand::Redo,
                     "ArrowLeft" if command_modifier => EditorCommand::MoveWordLeft {
                         extend: key.modifiers.shift,
                     },
@@ -4216,9 +4275,11 @@ impl Widget for TextArea {
                         extend: key.modifiers.shift,
                         lines: 8,
                     },
-                    _ if self.editor.composition().is_none() => keyboard_text(key)
-                        .map(|text| EditorCommand::InsertText(text.to_string()))
-                        .unwrap_or(EditorCommand::Noop),
+                    _ if !self.read_only && self.editor.composition().is_none() => {
+                        keyboard_text(key)
+                            .map(|text| EditorCommand::InsertText(text.to_string()))
+                            .unwrap_or(EditorCommand::Noop)
+                    }
                     _ => EditorCommand::Noop,
                 };
                 if !matches!(command, EditorCommand::Noop) {
@@ -4260,40 +4321,64 @@ impl Widget for TextArea {
         } else {
             (min_size.width - padding.left - padding.right).max(0.0)
         };
-        let theme = self.resolved_theme();
         let display_text = self.display_text();
         let input_text = self.input_text();
-        let display_style = if input_text.is_empty() {
-            theme.placeholder_text_style()
-        } else {
-            text_style.clone()
-        };
-        let display_box = Size::new(content_width.max(1.0), display_style.line_height.max(1.0));
-        let input_box = Size::new(content_width.max(1.0), text_style.line_height.max(1.0));
+        let display_style = self.display_text_style();
+        let display_min_height = display_style.line_height.max(1.0);
+        let input_min_height = text_style.line_height.max(1.0);
+        let display_box = Size::new(content_width.max(1.0), display_min_height);
+        let input_box = Size::new(content_width.max(1.0), input_min_height);
 
-        let display_layout = ctx
+        let mut display_layout = ctx
             .layout()
             .shape_text_persistent(
                 self.display_layout.as_ref().map(|layout| layout.handle()),
-                display_text,
+                display_text.clone(),
                 display_box,
-                display_style,
+                display_style.clone(),
             )
             .ok();
-        let input_layout = ctx
+        if let Some(required_height) = display_layout
+            .as_ref()
+            .map(|layout| layout.measurement().height.max(display_min_height).max(1.0))
+            .filter(|height| *height > display_box.height + 0.01)
+            && let Ok(layout) = ctx.layout().shape_text_persistent(
+                self.display_layout.as_ref().map(|layout| layout.handle()),
+                display_text,
+                Size::new(content_width.max(1.0), required_height),
+                display_style.clone(),
+            )
+        {
+            display_layout = Some(layout);
+        }
+
+        let mut input_layout = ctx
             .layout()
             .shape_text_persistent(
                 self.input_layout.as_ref().map(|layout| layout.handle()),
-                input_text,
+                input_text.clone(),
                 input_box,
                 text_style.clone(),
             )
             .ok();
+        if let Some(required_height) = input_layout
+            .as_ref()
+            .map(|layout| layout.measurement().height.max(input_min_height).max(1.0))
+            .filter(|height| *height > input_box.height + 0.01)
+            && let Ok(layout) = ctx.layout().shape_text_persistent(
+                self.input_layout.as_ref().map(|layout| layout.handle()),
+                input_text,
+                Size::new(content_width.max(1.0), required_height),
+                text_style.clone(),
+            )
+        {
+            input_layout = Some(layout);
+        }
 
         let measured_height = display_layout
             .as_ref()
-            .map(|layout| layout.measurement().height.max(text_style.line_height))
-            .unwrap_or(text_style.line_height);
+            .map(|layout| layout.measurement().height.max(display_style.line_height))
+            .unwrap_or(display_style.line_height);
         self.display_layout = display_layout;
         self.input_layout = input_layout;
 
@@ -4315,20 +4400,19 @@ impl Widget for TextArea {
         let content = inset_rect(ctx.bounds(), padding);
         let focus_progress = self.focus_animation.value;
 
+        let base_background = if self.read_only {
+            palette.surface
+        } else if self.hovered {
+            palette.control_hover
+        } else {
+            palette.control
+        };
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            mix_color(
-                if self.hovered {
-                    palette.control_hover
-                } else {
-                    palette.control
-                },
-                palette.surface_focus,
-                focus_progress,
-            ),
+            mix_color(base_background, palette.surface_focus, focus_progress),
             mix_color(
                 if self.hovered {
                     palette.border_hover
@@ -4351,7 +4435,7 @@ impl Widget for TextArea {
             ctx.pop_clip();
         }
 
-        if self.focused {
+        if self.focused && !self.read_only {
             let text_style = self.resolved_text_style();
             let caret_width = physical_pixels(ctx, metrics.caret_width);
             let fallback_caret = Rect::new(
@@ -4399,23 +4483,31 @@ impl Widget for TextArea {
             caret_offset: display_selection.focus.utf8_offset,
             selection: SemanticsTextRange::new(selection.start, selection.end),
             multiline: true,
-            readonly: false,
+            readonly: self.read_only,
             scroll_x: 0.0,
             scroll_y: 0.0,
         });
-        node.actions = vec![
-            SemanticsAction::Focus,
-            SemanticsAction::SetValue,
-            SemanticsAction::SetSelection,
-            SemanticsAction::InsertText,
-            SemanticsAction::DeleteBackward,
-            SemanticsAction::DeleteForward,
-            SemanticsAction::Copy,
-            SemanticsAction::Cut,
-            SemanticsAction::Paste,
-            SemanticsAction::Undo,
-            SemanticsAction::Redo,
-        ];
+        node.actions = if self.read_only {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::SetSelection,
+                SemanticsAction::Copy,
+            ]
+        } else {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::SetValue,
+                SemanticsAction::SetSelection,
+                SemanticsAction::InsertText,
+                SemanticsAction::DeleteBackward,
+                SemanticsAction::DeleteForward,
+                SemanticsAction::Copy,
+                SemanticsAction::Cut,
+                SemanticsAction::Paste,
+                SemanticsAction::Undo,
+                SemanticsAction::Redo,
+            ]
+        };
         ctx.push(node);
     }
 
@@ -4853,14 +4945,16 @@ impl Widget for Select {
         let theme = self.resolved_theme();
         let padding = theme.metrics.text_input_padding;
         let text_style = theme.body_text_style();
-        let widest = self
+        let widest_option = self
             .options
             .iter()
-            .chain(std::iter::once(&self.placeholder))
             .map(|label| measure_text(ctx, label, &text_style).width)
             .fold(0.0, f32::max);
-        let width = (widest + padding.left + padding.right + 24.0)
-            .max(theme.metrics.button_min_width + 40.0);
+        let placeholder_width =
+            measure_text(ctx, &self.placeholder, &theme.placeholder_text_style()).width;
+        let widest = widest_option.max(placeholder_width);
+        let width = (widest + padding.left + padding.right + SELECT_CHEVRON_SLOT_WIDTH)
+            .max(theme.metrics.button_min_width + SELECT_CHEVRON_SLOT_WIDTH + padding.right);
         let height = self.header_height();
 
         constraints.clamp(Size::new(width, height))
@@ -4878,12 +4972,23 @@ impl Widget for Select {
         } else {
             theme.body_text_style()
         };
-        let text_measurement = paint_text_measurement(ctx, &label, &text_style);
-        let text_rect = vertically_centered_text_rect(
+        let text_slot = Rect::new(
+            header.x() + metrics.text_input_padding.left,
+            header.y(),
+            (header.width()
+                - metrics.text_input_padding.left
+                - metrics.text_input_padding.right
+                - SELECT_CHEVRON_SLOT_WIDTH)
+                .max(0.0),
+            header.height(),
+        );
+        let text_rect = aligned_text_rect_for_text(
             ctx,
-            horizontal_text_inset_rect(header, metrics.text_input_padding),
-            Some(text_measurement),
+            text_slot,
+            &label,
+            &text_style,
             text_style.line_height,
+            0.0,
         );
 
         draw_control_frame(
@@ -4907,7 +5012,9 @@ impl Widget for Select {
             },
             ctx.is_focused().then_some(palette.focus_ring),
         );
+        ctx.push_clip_rect(text_slot);
         ctx.draw_text(text_rect, label, text_style);
+        ctx.pop_clip();
         draw_icon_glyph(
             ctx,
             if self.expanded {
@@ -4915,7 +5022,7 @@ impl Widget for Select {
             } else {
                 IconGlyph::ChevronDown
             },
-            Rect::new(header.max_x() - 28.0, header.y(), 20.0, header.height()),
+            select_chevron_icon_rect(header),
             palette.text,
         );
 
@@ -4939,7 +5046,6 @@ impl Widget for Select {
                 let selected = current_selected == Some(index);
                 let hovered = self.hovered_option == Some(index);
                 let text_style = theme.body_text_style();
-                let text_measurement = paint_text_measurement(ctx, option, &text_style);
                 if hovered || selected {
                     ctx.fill(
                         rounded_rect_path(row.inflate(-4.0, -4.0), metrics.corner_radius - 2.0),
@@ -4950,16 +5056,18 @@ impl Widget for Select {
                         },
                     );
                 }
-                ctx.draw_text(
-                    vertically_centered_text_rect(
-                        ctx,
-                        horizontal_text_inset_rect(row, metrics.text_input_padding),
-                        Some(text_measurement),
-                        text_style.line_height,
-                    ),
-                    option.clone(),
-                    text_style,
+                let text_slot = horizontal_text_inset_rect(row, metrics.text_input_padding);
+                let text_rect = aligned_text_rect_for_text(
+                    ctx,
+                    text_slot,
+                    option,
+                    &text_style,
+                    text_style.line_height,
+                    0.0,
                 );
+                ctx.push_clip_rect(text_slot);
+                ctx.draw_text(text_rect, option.clone(), text_style);
+                ctx.pop_clip();
             }
             ctx.pop_clip();
         }
@@ -5024,6 +5132,7 @@ pub struct TextInput {
     editor: EditorState,
     clipboard: String,
     placeholder: String,
+    read_only: bool,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     min_width: Option<f32>,
@@ -5050,6 +5159,7 @@ impl TextInput {
             editor: EditorState::new(),
             clipboard: String::new(),
             placeholder: String::new(),
+            read_only: false,
             text_style: None,
             padding: None,
             min_width: None,
@@ -5111,6 +5221,11 @@ impl TextInput {
         self
     }
 
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
     pub fn value(mut self, value: impl Into<String>) -> Self {
         self.editor.set_text(single_line_text(value.into()));
         self
@@ -5146,6 +5261,17 @@ impl TextInput {
             self.placeholder.clone()
         } else {
             input
+        }
+    }
+
+    fn display_text_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
+        if self.input_text().is_empty() {
+            theme.placeholder_text_style()
+        } else if self.read_only {
+            theme.text_style(theme.palette.text_muted)
+        } else {
+            self.resolved_text_style()
         }
     }
 
@@ -5226,6 +5352,13 @@ impl TextInput {
     }
 
     fn reset_caret_blink(&mut self, ctx: &mut EventCtx) {
+        if self.read_only {
+            if let Some(token) = self.caret_timer.take() {
+                ctx.cancel_timer(token);
+            }
+            self.caret_visible = false;
+            return;
+        }
         self.caret_visible = self.focused;
         self.arm_caret_blink(ctx);
     }
@@ -5263,6 +5396,27 @@ impl TextInput {
             .map(|theme| theme())
             .unwrap_or(*self.theme)
     }
+
+    fn single_line_layout_rect(
+        &self,
+        ctx: &PaintCtx,
+        content: Rect,
+        layout: &PersistentTextLayout,
+        line_height: f32,
+    ) -> Rect {
+        aligned_text_rect_for_layout(ctx, content, layout.layout(), line_height, 0.0)
+    }
+
+    fn single_line_text_rect(
+        &self,
+        ctx: &PaintCtx,
+        content: Rect,
+        text: &str,
+        style: &TextStyle,
+        line_height: f32,
+    ) -> Rect {
+        aligned_text_rect_for_text(ctx, content, text, style, line_height, 0.0)
+    }
 }
 
 impl Widget for TextInput {
@@ -5289,33 +5443,47 @@ impl Widget for TextInput {
                 ctx.set_handled();
             }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
-                self.execute_editor_command(ctx, EditorCommand::StartComposition);
+                if !self.read_only {
+                    self.execute_editor_command(ctx, EditorCommand::StartComposition);
+                }
             }
             Event::Ime(ImeEvent::CompositionUpdate { text, cursor_range }) if ctx.is_focused() => {
-                self.execute_editor_command(
-                    ctx,
-                    EditorCommand::UpdateComposition {
-                        text: single_line_text(text.clone()),
-                        cursor_range: cursor_range.clone(),
-                    },
-                );
+                if !self.read_only {
+                    self.execute_editor_command(
+                        ctx,
+                        EditorCommand::UpdateComposition {
+                            text: single_line_text(text.clone()),
+                            cursor_range: cursor_range.clone(),
+                        },
+                    );
+                }
             }
             Event::Ime(ImeEvent::CompositionCommit { text }) if ctx.is_focused() => {
-                self.execute_editor_command(
-                    ctx,
-                    EditorCommand::CommitComposition(single_line_text(text.clone())),
-                );
+                if !self.read_only {
+                    self.execute_editor_command(
+                        ctx,
+                        EditorCommand::CommitComposition(single_line_text(text.clone())),
+                    );
+                }
             }
             Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() => {
-                self.execute_editor_command(ctx, EditorCommand::EndComposition);
+                if !self.read_only {
+                    self.execute_editor_command(ctx, EditorCommand::EndComposition);
+                }
             }
             Event::Keyboard(key)
-                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Backspace" =>
+                if !self.read_only
+                    && key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && key.key == "Backspace" =>
             {
                 self.execute_editor_command(ctx, EditorCommand::DeleteBackward);
             }
             Event::Keyboard(key)
-                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Delete" =>
+                if !self.read_only
+                    && key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && key.key == "Delete" =>
             {
                 self.execute_editor_command(ctx, EditorCommand::DeleteForward);
             }
@@ -5378,14 +5546,20 @@ impl Widget for TextInput {
                 let command = match key.key.as_str() {
                     "a" | "A" if command_modifier => EditorCommand::SelectAll,
                     "c" | "C" if command_modifier => EditorCommand::Copy,
-                    "x" | "X" if command_modifier => EditorCommand::Cut,
-                    "v" | "V" if command_modifier => EditorCommand::Paste(self.clipboard.clone()),
-                    "z" | "Z" if command_modifier && key.modifiers.shift => EditorCommand::Redo,
-                    "z" | "Z" if command_modifier => EditorCommand::Undo,
-                    "y" | "Y" if command_modifier => EditorCommand::Redo,
-                    _ if self.editor.composition().is_none() => keyboard_text(key)
-                        .map(|text| EditorCommand::InsertText(single_line_text(text)))
-                        .unwrap_or(EditorCommand::Noop),
+                    "x" | "X" if command_modifier && !self.read_only => EditorCommand::Cut,
+                    "v" | "V" if command_modifier && !self.read_only => {
+                        EditorCommand::Paste(self.clipboard.clone())
+                    }
+                    "z" | "Z" if command_modifier && key.modifiers.shift && !self.read_only => {
+                        EditorCommand::Redo
+                    }
+                    "z" | "Z" if command_modifier && !self.read_only => EditorCommand::Undo,
+                    "y" | "Y" if command_modifier && !self.read_only => EditorCommand::Redo,
+                    _ if !self.read_only && self.editor.composition().is_none() => {
+                        keyboard_text(key)
+                            .map(|text| EditorCommand::InsertText(single_line_text(text)))
+                            .unwrap_or(EditorCommand::Noop)
+                    }
                     _ => EditorCommand::Noop,
                 };
                 if !matches!(command, EditorCommand::Noop) {
@@ -5419,25 +5593,39 @@ impl Widget for TextInput {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let theme = self.resolved_theme();
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
         let visible_text = self.visible_text();
         let input_text = self.input_text();
-        let display_style = if input_text.is_empty() {
-            theme.placeholder_text_style()
+        let display_style = self.display_text_style();
+        let measured_visible = measure_text(ctx, &visible_text, &display_style);
+        let measured_input = if input_text.is_empty() {
+            TextMeasurement {
+                width: 0.0,
+                height: measured_visible.height,
+                bounds: Rect::new(0.0, 0.0, 0.0, measured_visible.height),
+                ascent: measured_visible.ascent,
+                descent: measured_visible.descent,
+                cap_height: measured_visible.cap_height,
+            }
         } else {
-            text_style.clone()
+            measure_text(ctx, &input_text, &text_style)
         };
-        let line_box = Size::new(f32::INFINITY, text_style.line_height.max(1.0));
+        let display_line_height = display_style
+            .line_height
+            .max(measured_visible.height)
+            .max(1.0);
+        let input_line_height = text_style.line_height.max(measured_input.height).max(1.0);
+        let display_line_box = Size::new(f32::INFINITY, display_line_height);
+        let input_line_box = Size::new(f32::INFINITY, input_line_height);
         let display_layout = ctx
             .layout()
             .shape_text_persistent(
                 self.display_layout.as_ref().map(|layout| layout.handle()),
                 visible_text.clone(),
-                line_box,
-                display_style,
+                display_line_box,
+                display_style.clone(),
             )
             .ok();
         let input_layout = ctx
@@ -5445,7 +5633,7 @@ impl Widget for TextInput {
             .shape_text_persistent(
                 self.input_layout.as_ref().map(|layout| layout.handle()),
                 input_text.clone(),
-                line_box,
+                input_line_box,
                 text_style.clone(),
             )
             .ok();
@@ -5453,24 +5641,11 @@ impl Widget for TextInput {
         let visible_measurement = display_layout
             .as_ref()
             .map(|layout| layout.measurement())
-            .unwrap_or_else(|| measure_text(ctx, &visible_text, &text_style));
+            .unwrap_or(measured_visible);
         let input_measurement = input_layout
             .as_ref()
             .map(|layout| layout.measurement())
-            .unwrap_or_else(|| {
-                if input_text.is_empty() {
-                    TextMeasurement {
-                        width: 0.0,
-                        height: visible_measurement.height,
-                        bounds: Rect::new(0.0, 0.0, 0.0, visible_measurement.height),
-                        ascent: visible_measurement.ascent,
-                        descent: visible_measurement.descent,
-                        cap_height: visible_measurement.cap_height,
-                    }
-                } else {
-                    measure_text(ctx, &input_text, &text_style)
-                }
-            });
+            .unwrap_or(measured_input);
 
         self.visible_measurement = Some(visible_measurement);
         self.input_measurement = Some(input_measurement);
@@ -5478,9 +5653,10 @@ impl Widget for TextInput {
         self.input_layout = input_layout;
 
         let width = (visible_measurement.width + padding.left + padding.right).max(min_size.width);
-        let height =
-            (visible_measurement.height.max(text_style.line_height) + padding.top + padding.bottom)
-                .max(min_size.height);
+        let height = (visible_measurement.height.max(display_style.line_height)
+            + padding.top
+            + padding.bottom)
+            .max(min_size.height);
 
         constraints.clamp(Size::new(width, height))
     }
@@ -5492,15 +5668,14 @@ impl Widget for TextInput {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let focus_progress = self.focus_animation.value;
-        let background = mix_color(
-            if self.hovered {
-                palette.control_hover
-            } else {
-                palette.control
-            },
-            palette.surface_focus,
-            focus_progress,
-        );
+        let base_background = if self.read_only {
+            palette.surface
+        } else if self.hovered {
+            palette.control_hover
+        } else {
+            palette.control
+        };
+        let background = mix_color(base_background, palette.surface_focus, focus_progress);
         let border = mix_color(
             if self.hovered {
                 palette.border_hover
@@ -5530,16 +5705,28 @@ impl Widget for TextInput {
         ctx.push_clip_rect(content_rect);
         if let Some(layout) = &self.display_layout {
             let layout_bounds = layout.measurement().bounds;
+            let layout_rect =
+                self.single_line_layout_rect(ctx, content_rect, layout, layout.style().line_height);
             ctx.draw_persistent_text_layout(
-                Point::new(content_rect.x() - layout_bounds.x(), content_rect.y()),
+                Point::new(layout_rect.x() - layout_bounds.x(), layout_rect.y()),
                 layout,
             );
         } else {
-            ctx.draw_text(
+            let display_style = self.display_text_style();
+            let text_rect = self.single_line_text_rect(
+                ctx,
                 content_rect,
+                &display_text,
+                &display_style,
+                display_style.line_height,
+            );
+            ctx.draw_text(
+                text_rect,
                 display_text,
                 if placeholder {
                     theme.placeholder_text_style()
+                } else if self.read_only {
+                    theme.text_style(palette.text_muted)
                 } else {
                     text_style.clone()
                 },
@@ -5547,25 +5734,41 @@ impl Widget for TextInput {
         }
         ctx.pop_clip();
 
-        if self.focused {
+        if self.focused && !self.read_only {
             let caret_width = physical_pixels(ctx, metrics.caret_width);
+            let input_text = self.input_text();
+            let input_text_rect = self
+                .input_layout
+                .as_ref()
+                .map(|layout| {
+                    self.single_line_layout_rect(ctx, content_rect, layout, text_style.line_height)
+                })
+                .unwrap_or_else(|| {
+                    self.single_line_text_rect(
+                        ctx,
+                        content_rect,
+                        &input_text,
+                        &text_style,
+                        text_style.line_height,
+                    )
+                });
             let caret_rect = self
                 .input_layout
                 .as_ref()
                 .map(|layout| {
                     layout
                         .caret_rect(self.display_caret_offset())
-                        .translate(content_rect.origin.to_vector())
+                        .translate(input_text_rect.origin.to_vector())
                 })
                 .unwrap_or(Rect::new(
-                    content_rect.x()
+                    input_text_rect.x()
                         + self
                             .input_measurement
                             .map(|measurement| measurement.width)
                             .unwrap_or(0.0),
-                    content_rect.y(),
+                    input_text_rect.y(),
                     caret_width,
-                    content_rect.height().max(text_style.line_height),
+                    input_text_rect.height().max(text_style.line_height),
                 ));
             let caret_rect = Rect::new(
                 caret_rect
@@ -5599,23 +5802,31 @@ impl Widget for TextInput {
             caret_offset: display_selection.focus.utf8_offset,
             selection: SemanticsTextRange::new(selection.start, selection.end),
             multiline: false,
-            readonly: false,
+            readonly: self.read_only,
             scroll_x: 0.0,
             scroll_y: 0.0,
         });
-        node.actions = vec![
-            SemanticsAction::Focus,
-            SemanticsAction::SetValue,
-            SemanticsAction::SetSelection,
-            SemanticsAction::InsertText,
-            SemanticsAction::DeleteBackward,
-            SemanticsAction::DeleteForward,
-            SemanticsAction::Copy,
-            SemanticsAction::Cut,
-            SemanticsAction::Paste,
-            SemanticsAction::Undo,
-            SemanticsAction::Redo,
-        ];
+        node.actions = if self.read_only {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::SetSelection,
+                SemanticsAction::Copy,
+            ]
+        } else {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::SetValue,
+                SemanticsAction::SetSelection,
+                SemanticsAction::InsertText,
+                SemanticsAction::DeleteBackward,
+                SemanticsAction::DeleteForward,
+                SemanticsAction::Copy,
+                SemanticsAction::Cut,
+                SemanticsAction::Paste,
+                SemanticsAction::Undo,
+                SemanticsAction::Redo,
+            ]
+        };
         ctx.push(node);
     }
 
@@ -5663,16 +5874,9 @@ fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeas
         })
 }
 
-fn paint_text_measurement(ctx: &PaintCtx, text: &str, style: &TextStyle) -> TextMeasurement {
-    ctx.measure_text(text.to_string(), style.clone())
-        .unwrap_or(TextMeasurement {
-            width: 0.0,
-            height: style.line_height,
-            bounds: Rect::new(0.0, 0.0, 0.0, style.line_height),
-            ascent: style.font_size,
-            descent: 0.0,
-            cap_height: Some(style.font_size),
-        })
+fn numeric_text_style(mut style: TextStyle) -> TextStyle {
+    style.features.enable(FontFeature::TABULAR_FIGURES);
+    style
 }
 
 fn single_line_text(text: impl Into<String>) -> String {
@@ -5728,9 +5932,9 @@ fn switch_label_rect(bounds: Rect, padding: Insets, metrics: ControlMetrics, gap
     let x = bounds.x() + padding.left + metrics.switch_track_width + gap;
     Rect::new(
         x,
-        bounds.y() + padding.top,
+        bounds.y(),
         (bounds.width() - (x - bounds.x()) - padding.right).max(0.0),
-        (bounds.height() - padding.top - padding.bottom).max(0.0),
+        bounds.height(),
     )
 }
 
@@ -5741,6 +5945,12 @@ fn horizontal_text_inset_rect(bounds: Rect, padding: Insets) -> Rect {
         (bounds.width() - padding.left - padding.right).max(0.0),
         bounds.height(),
     )
+}
+
+fn select_chevron_icon_rect(header: Rect) -> Rect {
+    let x = header.max_x() - SELECT_CHEVRON_SLOT_WIDTH
+        + ((SELECT_CHEVRON_SLOT_WIDTH - SELECT_CHEVRON_ICON_SIZE).max(0.0) * 0.5);
+    Rect::new(x, header.y(), SELECT_CHEVRON_ICON_SIZE, header.height())
 }
 
 fn number_input_stepper_rect(bounds: Rect, metrics: ControlMetrics) -> Rect {
@@ -5788,10 +5998,6 @@ fn format_number(value: f64, precision: usize) -> String {
 
 fn is_numeric_input_char(ch: char) -> bool {
     ch.is_ascii_digit() || matches!(ch, '.' | '-' | '+')
-}
-
-fn measure_text_width_estimate(text: &str, font_size: f32) -> f32 {
-    text.chars().count() as f32 * font_size * 0.62
 }
 
 /// Draw an [`IconGlyph`] tinted `color`, centered and fit within `bounds`. Exposed for bespoke
@@ -5930,14 +6136,16 @@ fn inset_rect(rect: Rect, padding: Insets) -> Rect {
 
 fn indicator_rect(bounds: Rect, padding: Insets, indicator_size: f32) -> Rect {
     let x = bounds.x() + padding.left;
-    let y = bounds.y() + ((bounds.height() - indicator_size) * 0.5);
+    let content = inset_rect(bounds, padding);
+    let y = content.y() + ((content.height() - indicator_size) * 0.5);
     Rect::new(x, y, indicator_size, indicator_size)
 }
 
 fn checkbox_label_rect(bounds: Rect, padding: Insets, indicator_size: f32, gap: f32) -> Rect {
     let x = bounds.x() + padding.left + indicator_size + gap;
     let width = (bounds.width() - padding.left - padding.right - indicator_size - gap).max(0.0);
-    Rect::new(x, bounds.y(), width, bounds.height())
+    let content = inset_rect(bounds, padding);
+    Rect::new(x, content.y(), width, content.height())
 }
 
 fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
@@ -5955,79 +6163,6 @@ fn rect_is_finite(rect: Rect) -> bool {
         && rect.height().is_finite()
 }
 
-fn centered_text_rect(
-    ctx: &PaintCtx,
-    bounds: Rect,
-    padding: Insets,
-    measurement: Option<TextMeasurement>,
-    line_height: f32,
-) -> Rect {
-    let rect = Rect::new(
-        bounds.x() + padding.left,
-        bounds.y(),
-        (bounds.width() - padding.left - padding.right).max(0.0),
-        bounds.height(),
-    );
-    let Some(measurement) = measurement else {
-        return rect;
-    };
-
-    let width = measurement.width.min(rect.width());
-    let height = line_height.max(measurement.height).min(rect.height());
-
-    Rect::new(
-        rect.x() + ((rect.width() - width) * 0.5),
-        vertically_centered_text_rect_y(ctx, rect, measurement, height),
-        width,
-        height,
-    )
-}
-
-fn vertically_centered_text_rect(
-    ctx: &PaintCtx,
-    rect: Rect,
-    measurement: Option<TextMeasurement>,
-    line_height: f32,
-) -> Rect {
-    let Some(measurement) = measurement else {
-        return rect;
-    };
-
-    let height = line_height.max(measurement.height).min(rect.height());
-
-    Rect::new(
-        rect.x(),
-        vertically_centered_text_rect_y(ctx, rect, measurement, height),
-        rect.width(),
-        height,
-    )
-}
-
-fn vertically_centered_text_rect_y(
-    ctx: &PaintCtx,
-    rect: Rect,
-    measurement: TextMeasurement,
-    height: f32,
-) -> f32 {
-    let optical_centering = window_render_options(ctx.window_id())
-        .map(|options| options.optical_vertical_text_alignment_enabled)
-        .unwrap_or(true);
-    let top = if optical_centering {
-        -measurement.cap_height.unwrap_or(measurement.ascent)
-    } else {
-        -measurement.ascent
-    };
-    let bottom = if optical_centering {
-        measurement.descent * 0.5
-    } else {
-        measurement.descent
-    };
-    let visual_center = (top + bottom) * 0.5;
-    let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
-    let leading_above = ((height - (measurement.ascent + measurement.descent)).max(0.0)) * 0.5;
-    baseline - measurement.ascent - leading_above
-}
-
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
@@ -6042,16 +6177,17 @@ mod tests {
     use crate::{HdrThemeMode, SemanticColorToken, WidgetLuminanceRole, resolve_luminance_role};
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
-        PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsRole,
-        SemanticsTextRange, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
+        PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsAction,
+        SemanticsRole, SemanticsTextRange, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
+    use sui_layout::Padding as TestPadding;
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
         Application, RenderOutput, Runtime, Widget, WindowBuilder, WindowRenderOptions,
         clear_window_render_options, set_window_render_options,
     };
     use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
-    use sui_text::{FontRegistry, TextSystem};
+    use sui_text::{FontFeature, FontRegistry, TextStyle, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -6070,6 +6206,23 @@ mod tests {
         W: Widget + 'static,
     {
         let (mut runtime, window_id) = build_runtime(root);
+        runtime.render(window_id).unwrap()
+    }
+
+    fn render_isolated<W>(root: W) -> RenderOutput
+    where
+        W: Widget + 'static,
+    {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Unused")
+                    .root(Label::new("Unused")),
+            )
+            .window(WindowBuilder::new().title("Controls").root(root))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[1];
         runtime.render(window_id).unwrap()
     }
 
@@ -6194,12 +6347,12 @@ mod tests {
     }
 
     fn text_run_for(output: &RenderOutput, text: &str) -> sui_text::TextRun {
-        output
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
+        let mut found = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if found.is_some() {
+                return;
+            }
+            found = match command {
                 SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
                 SceneCommand::DrawShapedText(run) => run
                     .resolve(output.frame.text_layout_registry.as_ref())
@@ -6214,9 +6367,55 @@ mod tests {
                         text: layout.text().to_string(),
                         style: layout.style().clone(),
                     }),
+                SceneCommand::DrawShapedTextWindow(run) => run
+                    .resolve(output.frame.text_layout_registry.as_ref())
+                    .filter(|layout| layout.text() == text)
+                    .map(|layout| sui_text::TextRun {
+                        rect: run.translated_bounds(),
+                        text: layout.text().to_string(),
+                        style: layout.style().clone(),
+                    }),
                 _ => None,
-            })
-            .expect("text draw command present")
+            };
+        });
+        found.expect("text draw command present")
+    }
+
+    fn draw_clip_rect_for(output: &RenderOutput, text: &str) -> Rect {
+        let mut stack = Vec::new();
+        let mut found = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if found.is_some() {
+                return;
+            }
+            match command {
+                SceneCommand::PushClip { rect } => stack.push(*rect),
+                SceneCommand::PopClip => {
+                    stack.pop();
+                }
+                SceneCommand::DrawText(run) if run.text == text => {
+                    found = stack.last().copied();
+                }
+                SceneCommand::DrawShapedText(run) => {
+                    if run
+                        .resolve(output.frame.text_layout_registry.as_ref())
+                        .is_some_and(|layout| layout.text() == text)
+                    {
+                        found = stack.last().copied();
+                    }
+                }
+                SceneCommand::DrawShapedTextWindow(run) => {
+                    if run
+                        .resolve(output.frame.text_layout_registry.as_ref())
+                        .is_some_and(|layout| layout.text() == text)
+                    {
+                        found = stack.last().copied();
+                    }
+                }
+                _ => {}
+            }
+        });
+        found.expect("text draw command should have an active clip")
     }
 
     fn shaped_text_layout_for(output: &RenderOutput, text: &str) -> sui_text::TextLayout {
@@ -6252,6 +6451,38 @@ mod tests {
 
     fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
         visual_center(measurement, true)
+    }
+
+    fn text_run_visual_center(run: &sui_text::TextRun) -> f32 {
+        let layout = TextSystem::new()
+            .shape_text_run(run, &FontRegistry::new())
+            .expect("text run should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("text run should contain a line");
+        run.rect.y() + line.baseline + optical_visual_center(layout.measurement())
+    }
+
+    fn assert_tall_body_text_centered(
+        output: &RenderOutput,
+        text: &str,
+        theme: DefaultTheme,
+        expected_center_y: f32,
+    ) {
+        let run = text_run_for(output, text);
+        let layout = shaped_text_layout_for(output, text);
+
+        assert_eq!(run.style.font_size, theme.typography.body_font_size);
+        assert_eq!(run.style.line_height, theme.typography.body_line_height);
+        assert!(run.rect.height() >= layout.measurement().height - 0.01);
+        assert!(run.rect.height() > run.style.line_height);
+        assert!(
+            (text_run_visual_center(&run) - expected_center_y).abs() < 0.75,
+            "{text} visual center should match {expected_center_y}; rect={:?}, measurement={:?}",
+            run.rect,
+            layout.measurement()
+        );
     }
 
     fn layer_descriptor_for(
@@ -6355,6 +6586,81 @@ mod tests {
     }
 
     #[test]
+    fn label_visual_center_matches_tall_allocation_center() {
+        let output = render(
+            SizedBox::new()
+                .width(160.0)
+                .height(48.0)
+                .with_child(Label::new("Body")),
+        );
+        let text = text_run_for(&output, "Body");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("label text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("label text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let allocation_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - allocation_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn label_preserves_tall_measurement_in_compact_line_box() {
+        let mut style = DefaultTheme::default().body_text_style();
+        style.font_size = 30.0;
+        style.line_height = 10.0;
+
+        let output = render(
+            SizedBox::new()
+                .width(160.0)
+                .height(48.0)
+                .with_child(Label::new("Body").style(style.clone())),
+        );
+        let text = text_run_for(&output, "Body");
+        let layout = shaped_text_layout_for(&output, "Body");
+        let allocation_center = output.frame.viewport.height * 0.5;
+
+        assert_eq!(text.style.font_size, style.font_size);
+        assert_eq!(text.style.line_height, style.line_height);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+        assert!((text_run_visual_center(&text) - allocation_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn label_window_option_keeps_geometric_label_centered() {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(160.0)
+                .height(48.0)
+                .with_child(Label::new("Body")),
+        );
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(true, 1.0).with_optical_vertical_text_alignment_enabled(false),
+        );
+        let output = runtime.render(window_id).unwrap();
+        clear_window_render_options(window_id);
+        let text = text_run_for(&output, "Body");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("label text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("label text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + visual_center(layout.measurement(), false);
+        let allocation_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - allocation_center).abs() < 0.75);
+    }
+
+    #[test]
     fn button_activates_on_primary_pointer_click() -> Result<()> {
         let activations = Rc::new(RefCell::new(0usize));
         let on_press = Rc::clone(&activations);
@@ -6417,9 +6723,31 @@ mod tests {
     }
 
     #[test]
+    fn button_cached_label_uses_visual_color_without_changing_layout_metrics() {
+        let text_color = Color::rgba(0.18, 0.42, 0.91, 1.0);
+        let output = render(Button::new("Apply").text_style(TextStyle {
+            font_size: 17.0,
+            line_height: 29.0,
+            color: text_color,
+            ..TextStyle::default()
+        }));
+
+        let shaped = first_shaped_text(&output);
+        let layout = shaped
+            .resolve(output.frame.text_layout_registry.as_ref())
+            .expect("button label layout should resolve");
+
+        assert_eq!(layout.style().font_size, 17.0);
+        assert_eq!(layout.style().line_height, 29.0);
+        assert_eq!(layout.style().color, text_color);
+        assert_eq!(shaped.color_override, Some(text_color));
+    }
+
+    #[test]
     fn button_with_icon_keeps_label_semantics_and_paints_icon() {
         let plain = render(Button::new("Export").min_width(96.0));
-        let with_icon = render(
+        let icon_handle = IconGlyph::Download.lucide_icon().handle();
+        let with_icon = render_isolated(
             Button::new("Export")
                 .icon(IconGlyph::Download)
                 .min_width(96.0),
@@ -6435,6 +6763,78 @@ mod tests {
             with_icon.frame.scene.commands().len() > plain.frame.scene.commands().len(),
             "icon button should add visible icon ink"
         );
+        let icon_rect = with_icon
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawImage { rect, source } if source.image == icon_handle => {
+                    Some(*rect)
+                }
+                _ => None,
+            })
+            .expect("button icon should paint as a Lucide image");
+        let text = text_run_for(&with_icon, "Export");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("button label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("button label should contain one line");
+        let label_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let icon_center = icon_rect.y() + (icon_rect.height() * 0.5);
+
+        assert!((label_visual_center - icon_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn button_with_icon_preserves_tall_label_measurement_and_icon_centering() {
+        let text_style = TextStyle {
+            font_size: 28.0,
+            line_height: 12.0,
+            color: Color::rgba(0.95, 0.98, 1.0, 1.0),
+            ..TextStyle::default()
+        };
+        let icon_handle = IconGlyph::Download.lucide_icon().handle();
+        let output = render_isolated(
+            Button::new("Export")
+                .icon(IconGlyph::Download)
+                .text_style(text_style.clone())
+                .min_width(220.0)
+                .min_height(64.0),
+        );
+        let icon_rect = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawImage { rect, source } if source.image == icon_handle => {
+                    Some(*rect)
+                }
+                _ => None,
+            })
+            .expect("button icon should paint as a Lucide image");
+        let text = text_run_for(&output, "Export");
+        let layout = shaped_text_layout_for(&output, "Export");
+        let line = layout
+            .lines()
+            .first()
+            .expect("button label should contain one line");
+        let label_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let icon_center = icon_rect.y() + (icon_rect.height() * 0.5);
+        let control_center = output.frame.viewport.height * 0.5;
+
+        assert_eq!(text.style.font_size, text_style.font_size);
+        assert_eq!(text.style.line_height, text_style.line_height);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+        assert!((label_visual_center - icon_center).abs() < 0.75);
+        assert!((label_visual_center - control_center).abs() < 0.75);
     }
 
     #[test]
@@ -6787,6 +7187,45 @@ mod tests {
     }
 
     #[test]
+    fn checkbox_indicator_and_label_respect_asymmetric_padding() {
+        let theme = DefaultTheme::default();
+        let padding = TestPadding {
+            left: 8.0,
+            top: 4.0,
+            right: 8.0,
+            bottom: 22.0,
+        };
+        let output = render(Checkbox::new("Visible").padding(padding));
+        let checkbox = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::CheckBox)
+            .expect("checkbox semantics should exist");
+        let content_center = checkbox.bounds.y()
+            + padding.top
+            + ((checkbox.bounds.height() - padding.top - padding.bottom) * 0.5);
+        let text = text_run_for(&output, "Visible");
+        let mut indicator_bounds = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if indicator_bounds.is_some() {
+                return;
+            }
+            if let SceneCommand::FillPath { path, .. } = command {
+                let bounds = path.bounds();
+                if (bounds.width() - theme.metrics.checkbox_indicator_size).abs() < 0.75
+                    && (bounds.height() - theme.metrics.checkbox_indicator_size).abs() < 0.75
+                {
+                    indicator_bounds = Some(bounds);
+                }
+            }
+        });
+        let indicator = indicator_bounds.expect("checkbox indicator should paint");
+
+        assert!((text_run_visual_center(&text) - content_center).abs() < 0.75);
+        assert!((super::rect_center(indicator).y - content_center).abs() < 0.75);
+    }
+
+    #[test]
     fn text_input_caret_blink_toggles_visibility_as_time_advances() -> Result<()> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) =
@@ -6840,6 +7279,144 @@ mod tests {
 
         assert!(fill_colors.iter().any(|color| *color == caret_color));
         assert!(!fill_colors.iter().any(|color| *color == accent_text));
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_text_visual_center_matches_tall_control_center() {
+        let output = render(
+            TextInput::new("Name")
+                .value("Ada")
+                .min_width(180.0)
+                .min_height(52.0),
+        );
+        let text = text_run_for(&output, "Ada");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("text input value should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("text input value should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let control_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn text_input_value_preserves_tall_measurement_and_centering() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 30.0;
+        theme.typography.body_line_height = 10.0;
+        let output = render(
+            TextInput::new("Name")
+                .theme(theme)
+                .value("Ada")
+                .min_width(180.0)
+                .min_height(56.0),
+        );
+
+        assert_tall_body_text_centered(&output, "Ada", theme, output.frame.viewport.height * 0.5);
+    }
+
+    #[test]
+    fn text_input_placeholder_visual_center_matches_tall_control_center() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            TextInput::new("Name")
+                .placeholder("Type a name")
+                .min_width(180.0)
+                .min_height(52.0),
+        );
+        let text = text_run_for(&output, "Type a name");
+        let control_center = output.frame.viewport.height * 0.5;
+
+        assert_eq!(text.style.color, theme.placeholder_text_style().color);
+        assert!((text_run_visual_center(&text) - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn text_input_placeholder_preserves_tall_measurement_and_centering() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 30.0;
+        theme.typography.body_line_height = 10.0;
+        let output = render(
+            TextInput::new("Name")
+                .theme(theme)
+                .placeholder("Type a name")
+                .min_width(180.0)
+                .min_height(56.0),
+        );
+        let text = text_run_for(&output, "Type a name");
+
+        assert_eq!(text.style.color, theme.placeholder_text_style().color);
+        assert_tall_body_text_centered(
+            &output,
+            "Type a name",
+            theme,
+            output.frame.viewport.height * 0.5,
+        );
+    }
+
+    #[test]
+    fn text_input_read_only_uses_muted_text_and_blocks_mutation() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("Locked")
+                .min_height(52.0)
+                .read_only()
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(40.0, 16.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit {
+                text: "!".to_string(),
+            }),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Backspace", KeyState::Pressed)),
+        )?;
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text input semantics present");
+        let editable = input
+            .editable_text
+            .as_ref()
+            .expect("text input should expose editable semantics");
+
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Text("Locked".to_string()))
+        );
+        assert!(editable.readonly);
+        assert!(input.actions.contains(&SemanticsAction::Copy));
+        assert!(!input.actions.contains(&SemanticsAction::InsertText));
+        assert!(!input.actions.contains(&SemanticsAction::SetValue));
+        assert!(changes.borrow().is_empty());
+        let text = text_run_for(&output, "Locked");
+        assert_eq!(text.style.color, theme.palette.text_muted);
+        assert!(
+            (text_run_visual_center(&text) - (input.bounds.y() + input.bounds.height() * 0.5))
+                .abs()
+                < 0.75
+        );
+        assert!(!solid_fill_colors(&output).contains(&theme.palette.caret));
+        assert!(output.ime_composition_rect.is_none());
         Ok(())
     }
 
@@ -6947,6 +7524,123 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn text_area_read_only_exposes_readonly_semantics_and_blocks_mutation() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) =
+            build_runtime(TextArea::new("Notes").value("Pinned\nNotes").read_only());
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed)),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Backspace", KeyState::Pressed)),
+        )?;
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text area semantics present");
+        let editable = input
+            .editable_text
+            .as_ref()
+            .expect("text area should expose editable semantics");
+
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Text("Pinned\nNotes".to_string()))
+        );
+        assert!(editable.readonly);
+        assert!(editable.multiline);
+        assert!(input.actions.contains(&SemanticsAction::Copy));
+        assert!(!input.actions.contains(&SemanticsAction::InsertText));
+        assert!(!input.actions.contains(&SemanticsAction::DeleteBackward));
+        assert_eq!(
+            text_run_for(&output, "Pinned\nNotes").style.color,
+            theme.palette.text_muted
+        );
+        assert!(!solid_fill_colors(&output).contains(&theme.palette.caret));
+        assert!(output.ime_composition_rect.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn text_area_placeholder_uses_placeholder_style_and_top_line_slot() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            TextArea::new("Notes")
+                .placeholder("Write notes")
+                .min_width(260.0)
+                .min_height(96.0),
+        );
+        let text = text_run_for(&output, "Write notes");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("text area placeholder should shape");
+
+        assert_eq!(text.style.color, theme.placeholder_text_style().color);
+        assert!((text.rect.y() - theme.metrics.text_input_padding.top).abs() < 0.75);
+        assert!(
+            (layout.box_size().height - text.style.line_height).abs() < 0.75,
+            "placeholder line box should use the placeholder line height"
+        );
+    }
+
+    #[test]
+    fn text_area_placeholder_preserves_tall_measurement_in_top_line_slot() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 30.0;
+        theme.typography.body_line_height = 10.0;
+        let output = render(
+            TextArea::new("Notes")
+                .theme(theme)
+                .placeholder("Write notes")
+                .min_width(260.0)
+                .min_height(96.0),
+        );
+        let text = text_run_for(&output, "Write notes");
+        let layout = shaped_text_layout_for(&output, "Write notes");
+
+        assert_eq!(text.style.color, theme.placeholder_text_style().color);
+        assert_eq!(text.style.font_size, theme.typography.body_font_size);
+        assert_eq!(text.style.line_height, theme.typography.body_line_height);
+        assert!((text.rect.y() - theme.metrics.text_input_padding.top).abs() < 0.75);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+    }
+
+    #[test]
+    fn text_area_read_only_value_preserves_tall_measurement_and_muted_text() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 30.0;
+        theme.typography.body_line_height = 10.0;
+        let output = render(
+            TextArea::new("Notes")
+                .theme(theme)
+                .value("Pinned notes")
+                .read_only()
+                .min_width(260.0)
+                .min_height(96.0),
+        );
+        let text = text_run_for(&output, "Pinned notes");
+        let layout = shaped_text_layout_for(&output, "Pinned notes");
+
+        assert_eq!(text.style.color, theme.palette.text_muted);
+        assert_eq!(text.style.font_size, theme.typography.body_font_size);
+        assert_eq!(text.style.line_height, theme.typography.body_line_height);
+        assert!((text.rect.y() - theme.metrics.text_input_padding.top).abs() < 0.75);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
     }
 
     #[test]
@@ -7357,6 +8051,36 @@ mod tests {
     }
 
     #[test]
+    fn button_label_visual_center_respects_asymmetric_padding() {
+        let padding = TestPadding {
+            left: 12.0,
+            top: 4.0,
+            right: 12.0,
+            bottom: 20.0,
+        };
+        let output = render(
+            Button::new("Go")
+                .padding(padding)
+                .min_width(140.0)
+                .min_height(64.0),
+        );
+        let text = first_shaped_text(&output);
+        let layout = text
+            .resolve(output.frame.text_layout_registry.as_ref())
+            .expect("button label layout should resolve");
+        let line = layout
+            .lines()
+            .first()
+            .expect("button label should contain one line");
+        let actual_visual_center =
+            text.origin.y + line.baseline + optical_visual_center(layout.measurement());
+        let content_center =
+            padding.top + ((output.frame.viewport.height - padding.top - padding.bottom) * 0.5);
+
+        assert!((actual_visual_center - content_center).abs() < 0.75);
+    }
+
+    #[test]
     fn button_persistent_label_visual_center_matches_control_center() {
         let output = render(Button::new("Apply").min_width(140.0));
         let text = first_shaped_text(&output);
@@ -7390,6 +8114,29 @@ mod tests {
         let control_center = output.frame.viewport.height * 0.5;
 
         assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn switch_label_visual_center_ignores_asymmetric_padding() {
+        let output = render(Switch::new("Wifi").padding(TestPadding {
+            left: 8.0,
+            top: 0.0,
+            right: 8.0,
+            bottom: 18.0,
+        }));
+        let text = first_text_run(&output);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("switch label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("switch label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let track_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - track_center).abs() < 0.75);
     }
 
     #[test]
@@ -7540,6 +8287,46 @@ mod tests {
         let row_center = DefaultTheme::default().metrics.min_height * 0.5;
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn toggle_and_radio_labels_preserve_tall_measurements_and_control_centering() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm.size = 28.0;
+        theme.text.sm.line_height = 10.0;
+        theme.sync_derived_fields();
+        theme.metrics.min_height = 56.0;
+
+        let checkbox = render(Checkbox::new("Accept").theme(theme));
+        assert_tall_body_text_centered(
+            &checkbox,
+            "Accept",
+            theme,
+            checkbox.frame.viewport.height * 0.5,
+        );
+
+        let switch = render(Switch::new("Wifi").theme(theme));
+        assert_tall_body_text_centered(&switch, "Wifi", theme, switch.frame.viewport.height * 0.5);
+
+        let radio_button = render(RadioButton::new("Option A").theme(theme));
+        assert_tall_body_text_centered(
+            &radio_button,
+            "Option A",
+            theme,
+            radio_button.frame.viewport.height * 0.5,
+        );
+
+        let radio_group = render(
+            RadioGroup::new("Choices")
+                .theme(theme)
+                .options(["Alpha", "Beta"]),
+        );
+        assert_tall_body_text_centered(
+            &radio_group,
+            "Alpha",
+            theme,
+            theme.metrics.min_height * 0.5,
+        );
     }
 
     #[test]
@@ -8029,6 +8816,76 @@ mod tests {
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
         let control_center = output.frame.viewport.height * 0.5;
 
+        assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn number_input_value_uses_tabular_figures_and_end_alignment() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            SizedBox::new()
+                .width(180.0)
+                .with_child(NumberInput::new("Count").precision(0).value(12.0)),
+        );
+        let text = text_run_for(&output, "12");
+        let spinbox = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::SpinBox)
+            .expect("number input semantics present");
+        let content_right = spinbox.bounds.max_x()
+            - theme.metrics.number_input_stepper_width
+            - theme.metrics.text_input_padding.right;
+
+        assert!(
+            text.style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        assert!((text.rect.max_x() - content_right).abs() < 1.0);
+    }
+
+    #[test]
+    fn number_input_value_preserves_tall_measurement_and_end_alignment() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 28.0;
+        theme.typography.body_line_height = 12.0;
+        theme.metrics.min_height = 64.0;
+        let metrics = theme.metrics;
+        let output = render_isolated(
+            SizedBox::new().width(220.0).height(64.0).with_child(
+                NumberInput::new("Count")
+                    .theme(theme)
+                    .precision(0)
+                    .value(12.0),
+            ),
+        );
+        let text = text_run_for(&output, "12");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("number input text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("number input text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let spinbox = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::SpinBox)
+            .expect("number input semantics present");
+        let content_right = spinbox.bounds.max_x()
+            - metrics.number_input_stepper_width
+            - metrics.text_input_padding.right;
+
+        assert_eq!(text.style.font_size, 28.0);
+        assert_eq!(text.style.line_height, 12.0);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+        assert!((text.rect.max_x() - content_right).abs() < 1.0);
+        let control_center = spinbox.bounds.y() + (spinbox.bounds.height() * 0.5);
         assert!((actual_visual_center - control_center).abs() < 0.75);
     }
 
@@ -8695,6 +9552,183 @@ mod tests {
         let control_center = output.frame.viewport.height * 0.5;
 
         assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn select_chevron_icon_centers_in_reserved_slot() {
+        let output = render(
+            SizedBox::new().width(220.0).with_child(
+                Select::new("Mode")
+                    .options(["Automatic", "Linear"])
+                    .selected(0),
+            ),
+        );
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present");
+        let slot = Rect::new(
+            select.bounds.max_x() - super::SELECT_CHEVRON_SLOT_WIDTH,
+            select.bounds.y(),
+            super::SELECT_CHEVRON_SLOT_WIDTH,
+            select.bounds.height(),
+        );
+        let mut chevron = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if chevron.is_some() {
+                return;
+            }
+            chevron = match command {
+                SceneCommand::DrawImage { rect, .. }
+                    if slot.contains(super::rect_center(*rect))
+                        && (rect.width() - super::SELECT_CHEVRON_ICON_SIZE).abs() < 0.75
+                        && (rect.height() - super::SELECT_CHEVRON_ICON_SIZE).abs() < 0.75 =>
+                {
+                    Some(*rect)
+                }
+                _ => chevron,
+            };
+        });
+        let chevron = chevron.expect("select chevron should paint as a Lucide image");
+
+        assert!((super::rect_center(chevron).x - super::rect_center(slot).x).abs() < 0.75);
+        assert!((super::rect_center(chevron).y - super::rect_center(slot).y).abs() < 0.75);
+        assert!((chevron.width() - super::SELECT_CHEVRON_ICON_SIZE).abs() < 0.75);
+        assert!((chevron.height() - super::SELECT_CHEVRON_ICON_SIZE).abs() < 0.75);
+    }
+
+    #[test]
+    fn select_header_placeholder_clips_before_chevron_slot() {
+        let theme = DefaultTheme::default();
+        let placeholder = "Choose an extremely detailed rendering pipeline preset";
+        let output =
+            render(SizedBox::new().width(180.0).with_child(
+                Select::new("Mode").placeholder(placeholder).options([
+                    "Automatic",
+                    "Linear",
+                    "Gamma",
+                ]),
+            ));
+        let select = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present");
+        let text = text_run_for(&output, placeholder);
+        let clip = draw_clip_rect_for(&output, placeholder);
+        let expected_clip_max_x = select.bounds.max_x()
+            - theme.metrics.text_input_padding.right
+            - super::SELECT_CHEVRON_SLOT_WIDTH;
+
+        assert_eq!(text.style.color, theme.placeholder_text_style().color);
+        assert!((clip.max_x() - expected_clip_max_x).abs() < 0.75);
+        assert!(clip.max_x() <= select.bounds.max_x() - super::SELECT_CHEVRON_SLOT_WIDTH + 0.75);
+        assert!(
+            (text_run_visual_center(&text) - (select.bounds.y() + select.bounds.height() * 0.5))
+                .abs()
+                < 0.75
+        );
+    }
+
+    #[test]
+    fn select_header_and_options_preserve_tall_measurement_centering() -> Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm.size = 28.0;
+        theme.text.sm.line_height = 10.0;
+        theme.sync_derived_fields();
+        theme.metrics.min_height = 52.0;
+        let placeholder = "Choose mode";
+        let option = "Automatic";
+        let (mut runtime, window_id) = build_runtime(
+            Select::new("Mode")
+                .theme(theme)
+                .placeholder(placeholder)
+                .options([option, "Linear", "Gamma"]),
+        );
+
+        let collapsed = runtime.render(window_id)?;
+        let select = collapsed
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present");
+        let placeholder_text = text_run_for(&collapsed, placeholder);
+        let placeholder_layout = shaped_text_layout_for(&collapsed, placeholder);
+        let placeholder_clip = draw_clip_rect_for(&collapsed, placeholder);
+        let expected_clip_max_x = select.bounds.max_x()
+            - theme.metrics.text_input_padding.right
+            - super::SELECT_CHEVRON_SLOT_WIDTH;
+
+        assert_eq!(
+            placeholder_text.style.font_size,
+            theme.typography.body_font_size
+        );
+        assert_eq!(
+            placeholder_text.style.line_height,
+            theme.typography.body_line_height
+        );
+        assert_eq!(
+            placeholder_text.style.color,
+            theme.placeholder_text_style().color
+        );
+        assert!(placeholder_text.rect.height() >= placeholder_layout.measurement().height - 0.01);
+        assert!(placeholder_text.rect.height() > placeholder_text.style.line_height);
+        assert!((placeholder_clip.max_x() - expected_clip_max_x).abs() < 0.75);
+        assert!(
+            (text_run_visual_center(&placeholder_text) - super::rect_center(select.bounds).y).abs()
+                < 0.75,
+            "select placeholder should visually center in the header; rect={:?}, bounds={:?}, measurement={:?}",
+            placeholder_text.rect,
+            select.bounds,
+            placeholder_layout.measurement()
+        );
+
+        let header_point = super::rect_center(select.bounds);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, header_point, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, header_point, false),
+        )?;
+
+        let expanded = runtime.render(window_id)?;
+        let select = expanded
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .expect("select semantics present after expand");
+        let option_text = text_run_for(&expanded, option);
+        let option_layout = shaped_text_layout_for(&expanded, option);
+        let option_clip = draw_clip_rect_for(&expanded, option);
+        let row = Rect::new(
+            select.bounds.x(),
+            select.bounds.max_y() + super::SELECT_MENU_GAP,
+            select.bounds.width(),
+            select.bounds.height(),
+        );
+        let expected_option_clip =
+            super::horizontal_text_inset_rect(row, theme.metrics.text_input_padding);
+
+        assert_eq!(option_text.style.font_size, theme.typography.body_font_size);
+        assert_eq!(
+            option_text.style.line_height,
+            theme.typography.body_line_height
+        );
+        assert!(option_text.rect.height() >= option_layout.measurement().height - 0.01);
+        assert!(option_text.rect.height() > option_text.style.line_height);
+        assert!((option_clip.x() - expected_option_clip.x()).abs() < 0.75);
+        assert!((option_clip.max_x() - expected_option_clip.max_x()).abs() < 0.75);
+        assert!(
+            (text_run_visual_center(&option_text) - super::rect_center(row).y).abs() < 0.75,
+            "select option should visually center in its row; rect={:?}, row={:?}, measurement={:?}",
+            option_text.rect,
+            row,
+            option_layout.measurement()
+        );
+        Ok(())
     }
 
     #[test]

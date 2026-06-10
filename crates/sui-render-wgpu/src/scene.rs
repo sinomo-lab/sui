@@ -1826,6 +1826,7 @@ impl TextEngine {
             state,
             Point::new(text.rect.x(), text.rect.y()),
             &layout,
+            None,
             viewport,
             raster_scale_factor,
         )
@@ -1857,6 +1858,7 @@ impl TextEngine {
             state,
             text.origin,
             layout,
+            text.color_override,
             viewport,
             raster_scale_factor,
         )
@@ -1889,6 +1891,7 @@ impl TextEngine {
             text.origin,
             layout,
             text.line_range.clone(),
+            text.color_override,
             viewport,
             raster_scale_factor,
         )
@@ -1900,6 +1903,7 @@ impl TextEngine {
         state: &SceneRasterState,
         origin: Point,
         layout: &TextLayout,
+        color_override: Option<Color>,
         viewport: Size,
         raster_scale_factor: f32,
     ) -> Result<()> {
@@ -1917,6 +1921,7 @@ impl TextEngine {
             state,
             origin,
             layout.glyph_instances(),
+            color_override,
             viewport,
             raster_scale_factor,
         )
@@ -1929,6 +1934,7 @@ impl TextEngine {
         origin: Point,
         layout: &TextLayout,
         line_range: std::ops::Range<usize>,
+        color_override: Option<Color>,
         viewport: Size,
         raster_scale_factor: f32,
     ) -> Result<()> {
@@ -1951,6 +1957,7 @@ impl TextEngine {
             state,
             origin,
             line_window.glyph_instances(),
+            color_override,
             viewport,
             raster_scale_factor,
         )
@@ -1962,6 +1969,7 @@ impl TextEngine {
         state: &SceneRasterState,
         origin: Point,
         glyphs: I,
+        color_override: Option<Color>,
         viewport: Size,
         raster_scale_factor: f32,
     ) -> Result<()>
@@ -1980,9 +1988,8 @@ impl TextEngine {
             let glyph_face = glyph.face;
             let face_key = GlyphFaceCacheKey::new(glyph_face);
             let glyph_style = glyph.style;
-            let coverage_policy = self
-                .coverage_policy
-                .resolved_for_text_color(glyph_style.color);
+            let glyph_color = color_override.unwrap_or(glyph_style.color);
+            let coverage_policy = self.coverage_policy.resolved_for_text_color(glyph_color);
             let mut translated_glyph = glyph.glyph.clone();
             translated_glyph.origin_x += origin.x;
             translated_glyph.origin_y += origin.y;
@@ -2009,7 +2016,7 @@ impl TextEngine {
                 if let Some(instance) = build_text_atlas_instance(
                     atlas,
                     &translated_glyph,
-                    glyph_style.color,
+                    glyph_color,
                     state.current_transform,
                     state.pixel_snap_offset,
                     viewport,

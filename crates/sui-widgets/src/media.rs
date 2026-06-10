@@ -6,9 +6,12 @@ use sui_core::{
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::{ImageSource, StrokeStyle, WidgetShader};
-use sui_text::TextStyle;
+use sui_text::{FontFeature, TextStyle};
 
-use crate::{ControlMetrics, DefaultTheme, ThemeDensity};
+use crate::{
+    ControlMetrics, DefaultTheme, ThemeDensity, ThemeTextToken,
+    text_align::aligned_text_rect_for_text,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFit {
@@ -1137,23 +1140,29 @@ impl Widget for BrushPreview {
         draw_checkerboard(ctx, track, metrics.brush_preview_checker_size, &theme);
         paint_brush_preview_stroke(ctx, track, spec, preview_color);
 
-        let text_rect = Rect::new(
+        let text_slot = Rect::new(
             sample.x(),
             sample.max_y() - metrics.brush_preview_text_height,
             sample.width(),
             metrics.brush_preview_text_height,
         );
-        ctx.push_clip_rect(text_rect);
-        ctx.draw_text(
-            text_rect,
-            Self::value_text(&self.kind, spec),
-            TextStyle {
-                font_size: metrics.brush_preview_text_font_size,
-                line_height: metrics.brush_preview_text_line_height,
-                color: palette.text.with_alpha(0.72),
-                ..theme.body_text_style()
-            },
+        let value_text = Self::value_text(&self.kind, spec);
+        let text_style = TextStyle {
+            font_size: metrics.brush_preview_text_font_size,
+            line_height: metrics.brush_preview_text_line_height,
+            color: palette.text.with_alpha(0.72),
+            ..theme.body_text_style()
+        };
+        let text_rect = aligned_text_rect_for_text(
+            ctx,
+            text_slot,
+            &value_text,
+            &text_style,
+            text_style.line_height,
+            0.0,
         );
+        ctx.push_clip_rect(text_slot);
+        ctx.draw_text(text_rect, value_text, text_style);
         ctx.pop_clip();
     }
 
@@ -2582,68 +2591,65 @@ fn paint_labeled_row_text(
     value_color: Color,
 ) {
     let text = theme.text.xs;
-    let line_height = text.line_height.min(rect.height()).max(1.0);
-    let y = rect.y() + ((rect.height() - line_height) * 0.5);
+    let paint_line_height = text.line_height.min(rect.height()).max(1.0);
     let label_width = (theme.metrics.icon_size + theme.spacing * 2.0).max(20.0);
     let value_width = (rect.width() * 0.36).clamp(56.0, 96.0);
-    ctx.draw_text(
-        Rect::new(rect.x() + theme.spacing * 1.5, y, label_width, line_height),
-        label.to_string(),
-        TextStyle {
-            font_size: text.size,
-            line_height,
-            color: theme.palette.accent_text,
-            ..TextStyle::default()
-        },
+    let label_style = text_token_style(text, theme.palette.accent_text);
+    let value_style = numeric_text_style(text_token_style(text, value_color));
+    let label_slot = Rect::new(
+        rect.x() + theme.spacing * 1.5,
+        rect.y(),
+        label_width,
+        rect.height(),
     );
-    ctx.draw_text(
-        Rect::new(
-            rect.max_x() - value_width - theme.spacing,
-            y,
-            value_width,
-            line_height,
-        ),
-        value_text.to_string(),
-        TextStyle {
-            font_size: text.size.min(11.0),
-            line_height,
-            color: value_color,
-            ..TextStyle::default()
-        },
+    let value_slot = Rect::new(
+        rect.max_x() - value_width - theme.spacing,
+        rect.y(),
+        value_width,
+        rect.height(),
     );
+    let label_rect =
+        aligned_text_rect_for_text(ctx, label_slot, label, &label_style, paint_line_height, 0.0);
+    let value_rect = aligned_text_rect_for_text(
+        ctx,
+        value_slot,
+        value_text,
+        &value_style,
+        paint_line_height,
+        1.0,
+    );
+    ctx.push_clip_rect(label_slot);
+    ctx.draw_text(label_rect, label.to_string(), label_style);
+    ctx.pop_clip();
+    ctx.push_clip_rect(value_slot);
+    ctx.draw_text(value_rect, value_text.to_string(), value_style);
+    ctx.pop_clip();
 }
 
 fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &str) {
     let metrics = theme.metrics;
     let radius = metrics.corner_radius;
     let text = theme.text.xs;
-    let line_height = text.line_height.min(rect.height()).max(1.0);
-    let text_y = rect.y() + ((rect.height() - line_height) * 0.5);
+    let paint_line_height = text.line_height.min(rect.height()).max(1.0);
     let padding = metrics.text_input_padding;
+    let style = text_token_style(text, theme.palette.text);
+    let text_slot = Rect::new(
+        rect.x() + padding.left.max(theme.spacing * 2.0),
+        rect.y(),
+        rect.width() - padding.left.max(theme.spacing * 2.0) - metrics.icon_size - theme.spacing,
+        rect.height(),
+    );
+    let text_rect =
+        aligned_text_rect_for_text(ctx, text_slot, label, &style, paint_line_height, 0.0);
     ctx.fill(rounded_rect_path(rect, radius), theme.palette.control);
     ctx.stroke(
         rounded_rect_path(rect, radius),
         theme.palette.border_focus,
         StrokeStyle::new(metrics.border_width.max(1.0)),
     );
-    ctx.draw_text(
-        Rect::new(
-            rect.x() + padding.left.max(theme.spacing * 2.0),
-            text_y,
-            rect.width()
-                - padding.left.max(theme.spacing * 2.0)
-                - metrics.icon_size
-                - theme.spacing,
-            line_height,
-        ),
-        label.to_string(),
-        TextStyle {
-            font_size: text.size,
-            line_height,
-            color: theme.palette.text,
-            ..TextStyle::default()
-        },
-    );
+    ctx.push_clip_rect(text_slot);
+    ctx.draw_text(text_rect, label.to_string(), style);
+    ctx.pop_clip();
     ctx.stroke(
         dropdown_chevron_path(rect),
         theme.palette.placeholder,
@@ -2661,7 +2667,7 @@ fn paint_encoding_menu(
     let metrics = theme.metrics;
     let radius = metrics.corner_radius;
     let text = theme.text.xs;
-    let line_height = text.line_height.min(row_height).max(1.0);
+    let paint_line_height = text.line_height.min(row_height).max(1.0);
     ctx.fill(
         rounded_rect_path(rect, radius),
         theme.palette.surface_raised,
@@ -2702,34 +2708,34 @@ fn paint_encoding_menu(
                 theme.palette.border_focus,
             );
         }
-        let text_y = row.y() + ((row.height() - line_height) * 0.5);
-        ctx.draw_text(
-            Rect::new(
-                row.x() + metrics.menu_item_padding.left + theme.spacing * 1.5,
-                text_y,
-                row.width()
-                    - metrics.menu_item_padding.left
-                    - metrics.menu_item_padding.right
-                    - theme.spacing * 2.0,
-                line_height,
-            ),
-            editing_space_label(space),
-            TextStyle {
-                font_size: text.size,
-                line_height,
-                color: if space == selected {
-                    theme.palette.accent_text
-                } else {
-                    theme.palette.text
-                },
-                ..TextStyle::default()
+        let label = editing_space_label(space);
+        let style = text_token_style(
+            text,
+            if space == selected {
+                theme.palette.accent_text
+            } else {
+                theme.palette.text
             },
         );
+        let text_slot = Rect::new(
+            row.x() + metrics.menu_item_padding.left + theme.spacing * 1.5,
+            row.y(),
+            row.width()
+                - metrics.menu_item_padding.left
+                - metrics.menu_item_padding.right
+                - theme.spacing * 2.0,
+            row.height(),
+        );
+        let text_rect =
+            aligned_text_rect_for_text(ctx, text_slot, label, &style, paint_line_height, 0.0);
+        ctx.push_clip_rect(text_slot);
+        ctx.draw_text(text_rect, label, style);
+        ctx.pop_clip();
     }
 }
 
 fn dropdown_chevron_path(rect: Rect) -> Path {
-    let center = Point::new(rect.max_x() - 14.0, rect.y() + rect.height() * 0.5 + 1.0);
+    let center = Point::new(rect.max_x() - 14.0, rect.y() + rect.height() * 0.5);
     let half_width = 4.0;
     let half_height = 2.5;
     let mut path = PathBuilder::new();
@@ -2742,9 +2748,17 @@ fn dropdown_chevron_path(rect: Rect) -> Path {
 fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: &str) {
     let metrics = theme.metrics;
     let text = theme.text.xs;
-    let line_height = text.line_height.min(rect.height()).max(1.0);
-    let text_y = rect.y() + ((rect.height() - line_height) * 0.5);
+    let paint_line_height = text.line_height.min(rect.height()).max(1.0);
     let padding = metrics.text_input_padding;
+    let style = text_token_style(text, theme.palette.text);
+    let text_slot = Rect::new(
+        rect.x() + padding.left.max(theme.spacing * 2.0),
+        rect.y(),
+        rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
+        rect.height(),
+    );
+    let text_rect =
+        aligned_text_rect_for_text(ctx, text_slot, value, &style, paint_line_height, 0.0);
     ctx.fill(
         rounded_rect_path(rect, metrics.corner_radius),
         theme.palette.control,
@@ -2754,29 +2768,25 @@ fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: 
         theme.palette.border,
         StrokeStyle::new(metrics.border_width.max(1.0)),
     );
-    ctx.draw_text(
-        Rect::new(
-            rect.x() + padding.left.max(theme.spacing * 2.0),
-            text_y,
-            rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
-            line_height,
-        ),
-        value.to_string(),
-        TextStyle {
-            font_size: text.size,
-            line_height,
-            color: theme.palette.text,
-            ..TextStyle::default()
-        },
-    );
+    ctx.push_clip_rect(text_slot);
+    ctx.draw_text(text_rect, value.to_string(), style);
+    ctx.pop_clip();
 }
 
 fn paint_disabled_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: &str) {
     let metrics = theme.metrics;
     let text = theme.text.xs;
-    let line_height = text.line_height.min(rect.height()).max(1.0);
-    let text_y = rect.y() + ((rect.height() - line_height) * 0.5);
+    let paint_line_height = text.line_height.min(rect.height()).max(1.0);
     let padding = metrics.text_input_padding;
+    let style = text_token_style(text, theme.palette.placeholder);
+    let text_slot = Rect::new(
+        rect.x() + padding.left.max(theme.spacing * 2.0),
+        rect.y(),
+        rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
+        rect.height(),
+    );
+    let text_rect =
+        aligned_text_rect_for_text(ctx, text_slot, value, &style, paint_line_height, 0.0);
     ctx.fill(
         rounded_rect_path(rect, metrics.corner_radius),
         mix_color(theme.palette.control, theme.palette.surface, 0.5)
@@ -2787,21 +2797,9 @@ fn paint_disabled_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, va
         theme.palette.border,
         StrokeStyle::new(metrics.border_width.max(1.0)),
     );
-    ctx.draw_text(
-        Rect::new(
-            rect.x() + padding.left.max(theme.spacing * 2.0),
-            text_y,
-            rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
-            line_height,
-        ),
-        value.to_string(),
-        TextStyle {
-            font_size: text.size,
-            line_height,
-            color: theme.palette.placeholder,
-            ..TextStyle::default()
-        },
-    );
+    ctx.push_clip_rect(text_slot);
+    ctx.draw_text(text_rect, value.to_string(), style);
+    ctx.pop_clip();
 }
 
 fn point_in_wheel_ring(rect: Rect, position: Point) -> bool {
@@ -3025,6 +3023,20 @@ fn inset_rect(rect: Rect, padding: Insets) -> Rect {
     )
 }
 
+fn numeric_text_style(mut style: TextStyle) -> TextStyle {
+    style.features.enable(FontFeature::TABULAR_FIGURES);
+    style
+}
+
+fn text_token_style(token: ThemeTextToken, color: Color) -> TextStyle {
+    TextStyle {
+        font_size: token.size.max(1.0),
+        line_height: token.line_height.max(1.0),
+        color,
+        ..TextStyle::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
@@ -3034,7 +3046,7 @@ mod tests {
         ColorPaletteSwatch, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image,
         color_picker_child_semantics_id, format_color, hsv_to_rgb, rgb_to_hsv,
     };
-    use crate::DefaultTheme;
+    use crate::{DefaultTheme, ThemeTextToken};
     use sui_core::{
         Color, ColorSpace, Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, Result, SemanticsAction, SemanticsRole, SemanticsValue, Size,
@@ -3042,6 +3054,7 @@ mod tests {
     };
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
     use sui_scene::{Brush, RegisteredImage, SceneCommand};
+    use sui_text::{FontFeature, FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -3109,6 +3122,104 @@ mod tests {
             }
         });
         colors
+    }
+
+    fn stroke_path_bounds_with_color_and_width(
+        output: &sui_runtime::RenderOutput,
+        color: Color,
+        width: f32,
+    ) -> Vec<Rect> {
+        let mut bounds = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::StrokePath {
+                path,
+                brush: Brush::Solid(stroke_color),
+                stroke,
+            } = command
+            {
+                if *stroke_color == color && (stroke.width - width).abs() < 0.01 {
+                    bounds.push(path.bounds());
+                }
+            }
+        });
+        bounds
+    }
+
+    fn text_run_for(output: &sui_runtime::RenderOutput, text: &str) -> sui_text::TextRun {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
+                SceneCommand::DrawShapedText(run) => run
+                    .resolve(output.frame.text_layout_registry.as_ref())
+                    .filter(|layout| layout.text() == text)
+                    .map(|layout| sui_text::TextRun {
+                        rect: Rect::new(
+                            run.origin.x,
+                            run.origin.y,
+                            layout.box_size().width,
+                            layout.box_size().height,
+                        ),
+                        text: layout.text().to_string(),
+                        style: layout.style().clone(),
+                    }),
+                _ => None,
+            })
+            .expect("text draw command present")
+    }
+
+    fn text_visual_center_for(output: &sui_runtime::RenderOutput, text: &str) -> f32 {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(run) if run.text == text => {
+                    let layout = TextSystem::new()
+                        .shape_text_run(run, &FontRegistry::new())
+                        .expect("text run should shape");
+                    let line = layout
+                        .lines()
+                        .first()
+                        .expect("text run should contain one line");
+                    Some(run.rect.y() + line.baseline + optical_visual_center(layout.measurement()))
+                }
+                SceneCommand::DrawShapedText(run) => {
+                    let layout = run.resolve(output.frame.text_layout_registry.as_ref())?;
+                    if layout.text() != text {
+                        return None;
+                    }
+                    let line = layout
+                        .lines()
+                        .first()
+                        .expect("shaped text should contain one line");
+                    Some(run.origin.y + line.baseline + optical_visual_center(layout.measurement()))
+                }
+                _ => None,
+            })
+            .expect("text draw command present")
+    }
+
+    fn rect_center(rect: Rect) -> Point {
+        Point::new(
+            rect.x() + rect.width() * 0.5,
+            rect.y() + rect.height() * 0.5,
+        )
+    }
+
+    fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
+        let top = -measurement.cap_height.unwrap_or(measurement.ascent);
+        let bottom = measurement.descent * 0.5;
+        (top + bottom) * 0.5
+    }
+
+    fn assert_text_run_uses_token(run: &sui_text::TextRun, token: ThemeTextToken) {
+        assert_eq!(run.style.font_size, token.size);
+        assert_eq!(run.style.line_height, token.line_height);
     }
 
     #[test]
@@ -3471,6 +3582,97 @@ mod tests {
             }
         });
         assert!(fill_count > 3);
+
+        let value_text = "Square brush, 22 px, 75% opacity";
+        let text = text_run_for(&output, value_text);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("brush preview value should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("brush preview value should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let theme = DefaultTheme::default();
+        let metrics = theme.metrics;
+        let bounds = Rect::new(0.0, 0.0, 220.0, 64.0);
+        let content = super::inset_rect(bounds, metrics.brush_preview_padding);
+        let swatch_width = metrics.brush_preview_swatch_width.min(content.width());
+        let sample = Rect::new(
+            content.x() + swatch_width + metrics.brush_preview_swatch_gap,
+            content.y(),
+            (content.width() - swatch_width - metrics.brush_preview_swatch_gap).max(0.0),
+            content.height(),
+        );
+        let text_slot = Rect::new(
+            sample.x(),
+            sample.max_y() - metrics.brush_preview_text_height,
+            sample.width(),
+            metrics.brush_preview_text_height,
+        );
+        let slot_center = text_slot.y() + (text_slot.height() * 0.5);
+
+        assert!((actual_visual_center - slot_center).abs() < 0.75);
+        Ok(())
+    }
+
+    #[test]
+    fn brush_preview_value_preserves_tall_measurement_and_slot_centering() -> Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.metrics.brush_preview_text_font_size = 28.0;
+        theme.metrics.brush_preview_text_line_height = 10.0;
+        theme.metrics.brush_preview_text_height = 44.0;
+        theme.metrics.brush_preview_min_width = 420.0;
+        theme.metrics.brush_preview_min_height = 96.0;
+        let metrics = theme.metrics;
+        let value_text = "Round brush, 8 px, 100% opacity";
+
+        let (mut runtime, window_id) = build_runtime(
+            BrushPreview::new("Brush preview")
+                .theme(theme)
+                .spec(BrushPreviewSpec::new(
+                    Color::rgba(0.10, 0.30, 0.90, 1.0),
+                    8.0,
+                    1.0,
+                    BrushPreviewShape::Round,
+                ))
+                .size(Size::new(420.0, 96.0)),
+        );
+        let output = runtime.render(window_id)?;
+        let text = text_run_for(&output, value_text);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("brush preview value should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("brush preview value should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let bounds = Rect::new(0.0, 0.0, 420.0, 96.0);
+        let content = super::inset_rect(bounds, metrics.brush_preview_padding);
+        let swatch_width = metrics.brush_preview_swatch_width.min(content.width());
+        let sample = Rect::new(
+            content.x() + swatch_width + metrics.brush_preview_swatch_gap,
+            content.y(),
+            (content.width() - swatch_width - metrics.brush_preview_swatch_gap).max(0.0),
+            content.height(),
+        );
+        let text_slot = Rect::new(
+            sample.x(),
+            sample.max_y() - metrics.brush_preview_text_height,
+            sample.width(),
+            metrics.brush_preview_text_height,
+        );
+        let slot_center = text_slot.y() + (text_slot.height() * 0.5);
+
+        assert_eq!(text.style.font_size, 28.0);
+        assert_eq!(text.style.line_height, 10.0);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+        assert!((text.rect.x() - text_slot.x()).abs() < 0.75);
+        assert!((actual_visual_center - slot_center).abs() < 0.75);
         Ok(())
     }
 
@@ -3779,6 +3981,42 @@ mod tests {
     }
 
     #[test]
+    fn color_picker_encoding_chevron_is_centered_in_selector() -> Result<()> {
+        let picker = ColorPicker::from_color("Accent picker", Color::rgba(0.25, 0.50, 0.75, 0.80));
+        let (mut runtime, window_id) = build_runtime(picker);
+        let output = runtime.render(window_id)?;
+        let bounds = Rect::new(
+            0.0,
+            0.0,
+            output.frame.viewport.width,
+            output.frame.viewport.height,
+        );
+        let layout_picker =
+            ColorPicker::from_color("Accent picker", Color::rgba(0.25, 0.50, 0.75, 0.80));
+        let encoding = layout_picker.encoding_rect(bounds);
+        let theme = DefaultTheme::default();
+        let chevron =
+            stroke_path_bounds_with_color_and_width(&output, theme.palette.placeholder, 1.4)
+                .into_iter()
+                .find(|rect| {
+                    encoding.contains(Point::new(
+                        rect.x() + rect.width() * 0.5,
+                        rect.y() + rect.height() * 0.5,
+                    )) && (rect.width() - 8.0).abs() < 0.75
+                        && (rect.height() - 5.0).abs() < 0.75
+                })
+                .expect("encoding selector chevron stroke should render");
+        let chevron_center_y = chevron.y() + chevron.height() * 0.5;
+        let selector_center_y = encoding.y() + encoding.height() * 0.5;
+
+        assert!(
+            (chevron_center_y - selector_center_y).abs() < 0.75,
+            "encoding chevron center {chevron_center_y} did not match selector center {selector_center_y}; chevron={chevron:?}, selector={encoding:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn color_picker_saturation_value_plane_uses_hdr_slider_curve() {
         let mut picker = ColorPicker::from_color(
             "Accent picker",
@@ -3833,6 +4071,182 @@ mod tests {
             changed_color.red
         );
         assert_eq!(changed_color.space, ColorSpace::LinearSrgb);
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_numeric_rows_use_tabular_figures_and_end_alignment() -> Result<()> {
+        let color = Color::rgba(0.25, 0.50, 0.75, 0.80);
+        let (mut runtime, window_id) =
+            build_runtime(ColorPicker::from_color("Accent picker", color));
+        let output = runtime.render(window_id)?;
+        let run = text_run_for(&output, "0.250");
+        let bounds = Rect::new(
+            0.0,
+            0.0,
+            output.frame.viewport.width,
+            output.frame.viewport.height,
+        );
+        let picker = ColorPicker::from_color("Accent picker", color);
+        let row = picker.rgb_row_rect(bounds, 0);
+        let theme = DefaultTheme::default();
+        let expected_right = row.max_x() - theme.spacing;
+
+        assert!(
+            run.style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        assert!((run.rect.max_x() - expected_right).abs() < 1.0);
+        assert!(run.rect.height() <= theme.text.xs.line_height + 0.01);
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_numeric_rows_preserve_tall_measurements_and_row_center() -> Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 28.0,
+            line_height: 12.0,
+        };
+        theme.metrics.color_picker_row_height = 48.0;
+        let color = Color::rgba(0.25, 0.50, 0.75, 0.80);
+        let (mut runtime, window_id) =
+            build_runtime(ColorPicker::from_color("Accent picker", color).theme(theme));
+        let output = runtime.render(window_id)?;
+        let label = text_run_for(&output, "R");
+        let value = text_run_for(&output, "0.250");
+        let layout = TextSystem::new()
+            .shape_text_run(&value, &FontRegistry::new())
+            .expect("color picker numeric value should shape");
+        let bounds = Rect::new(
+            0.0,
+            0.0,
+            output.frame.viewport.width,
+            output.frame.viewport.height,
+        );
+        let picker = ColorPicker::from_color("Accent picker", color).theme(theme);
+        let row = picker.rgb_row_rect(bounds, 0);
+        let expected_right = row.max_x() - theme.spacing;
+        let row_center = row.y() + row.height() * 0.5;
+        let value_center = text_visual_center_for(&output, "0.250");
+
+        assert!(value.rect.height() >= layout.measurement().height - 0.01);
+        assert!(value.rect.height() > value.style.line_height);
+        assert!((value.rect.max_x() - expected_right).abs() < 1.0);
+        assert!(
+            (value_center - row_center).abs() < 0.75,
+            "color picker numeric value center {value_center} did not match row center {row_center}; value rect {:?}, row {:?}, measurement {:?}",
+            value.rect,
+            row,
+            layout.measurement()
+        );
+        let label_center = text_visual_center_for(&output, "R");
+        let label_layout = TextSystem::new()
+            .shape_text_run(&label, &FontRegistry::new())
+            .expect("color picker channel label should shape");
+        assert!(
+            (value_center - label_center).abs() < 0.75,
+            "color picker numeric value center {value_center} and channel label center {label_center} should share a visual baseline; label rect {:?}, label measurement {:?}",
+            label.rect,
+            label_layout.measurement()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_text_styles_follow_theme_xs_token() -> Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 13.5,
+            line_height: 31.0,
+        };
+        let (mut runtime, window_id) = build_runtime(
+            ColorPicker::from_color("Accent picker", Color::rgba(0.25, 0.50, 0.75, 0.80))
+                .theme(theme),
+        );
+        let output = runtime.render(window_id)?;
+        let label = text_run_for(&output, "R");
+        let value = text_run_for(&output, "0.250");
+
+        assert_text_run_uses_token(&label, theme.text.xs);
+        assert_text_run_uses_token(&value, theme.text.xs);
+        assert!(
+            value
+                .style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_picker_dropdown_and_fields_preserve_tall_text_measurements() -> Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 28.0,
+            line_height: 10.0,
+        };
+        theme.metrics.color_picker_top_bar_height = 56.0;
+        theme.metrics.color_picker_field_height = 46.0;
+        theme.metrics.color_picker_encoding_menu_row_height = 46.0;
+        let color = Color::new(ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0);
+        let (mut runtime, window_id) =
+            build_runtime(ColorPicker::from_color("Accent picker", color).theme(theme));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(300.0, 40.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(300.0, 40.0), false),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let bounds = Rect::new(
+            0.0,
+            0.0,
+            output.frame.viewport.width,
+            output.frame.viewport.height,
+        );
+        let picker = ColorPicker::from_color("Accent picker", color).theme(theme);
+        let selector = picker.encoding_rect(bounds);
+        let menu_item = picker.encoding_option_rect(bounds, 0);
+        let hex = picker.hex_rect(bounds);
+        let selector_run = text_run_for(&output, "BT709 Linear");
+        let menu_run = text_run_for(&output, "sRGB");
+        let hex_run = text_run_for(&output, "HDR hex unavailable");
+        let measured_height = |run: &sui_text::TextRun| {
+            TextSystem::new()
+                .shape_text_run(run, &FontRegistry::new())
+                .expect("color picker control text should shape")
+                .measurement()
+                .height
+        };
+
+        assert_text_run_uses_token(&selector_run, theme.text.xs);
+        assert_text_run_uses_token(&menu_run, theme.text.xs);
+        assert_text_run_uses_token(&hex_run, theme.text.xs);
+        assert_eq!(hex_run.style.color, theme.palette.placeholder);
+        assert!(selector_run.rect.height() >= measured_height(&selector_run) - 0.01);
+        assert!(menu_run.rect.height() >= measured_height(&menu_run) - 0.01);
+        assert!(hex_run.rect.height() >= measured_height(&hex_run) - 0.01);
+        assert!(selector_run.rect.height() > selector_run.style.line_height);
+        assert!(menu_run.rect.height() > menu_run.style.line_height);
+        assert!(hex_run.rect.height() > hex_run.style.line_height);
+        assert!(
+            (text_visual_center_for(&output, "BT709 Linear") - rect_center(selector).y).abs()
+                < 0.75
+        );
+        assert!((text_visual_center_for(&output, "sRGB") - rect_center(menu_item).y).abs() < 0.75);
+        assert!(
+            (text_visual_center_for(&output, "HDR hex unavailable") - rect_center(hex).y).abs()
+                < 0.75
+        );
         Ok(())
     }
 

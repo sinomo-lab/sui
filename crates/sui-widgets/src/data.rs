@@ -8,13 +8,14 @@ use sui_core::{
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
     ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
-    WidgetPodMutVisitor, WidgetPodVisitor, window_render_options,
+    WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_text::{TextMeasurement, TextStyle};
+use sui_text::{FontFeature, TextMeasurement, TextStyle};
 
 use crate::{
     DefaultTheme,
     controls::{IconGlyph, draw_icon_glyph},
+    text_align::{aligned_text_rect_for_text, vertically_centered_text_rect_y},
 };
 
 pub struct ListItem {
@@ -673,16 +674,15 @@ impl Widget for ListView {
                     ..label_style.clone()
                 };
                 let leading_measurement = paint_text_measurement(ctx, leading, &leading_style);
-                let leading_rect = Rect::new(
-                    text_x,
-                    vertically_centered_text_rect_y(
-                        ctx,
-                        row,
-                        leading_measurement,
-                        leading_style.line_height,
-                    ),
-                    leading_measurement.width,
+                let leading_slot =
+                    Rect::new(text_x, row.y(), leading_measurement.width, row.height());
+                let leading_rect = aligned_text_rect_for_text(
+                    ctx,
+                    leading_slot,
+                    leading,
+                    &leading_style,
                     leading_style.line_height,
+                    0.0,
                 );
                 ctx.draw_text(leading_rect, leading.clone(), leading_style);
                 text_x += leading_measurement.width + metrics.data_row_icon_gap;
@@ -744,21 +744,18 @@ impl Widget for ListView {
                 ctx.draw_text(detail_rect, detail.clone(), detail_style.clone());
                 ctx.pop_clip();
             }
-            if let (Some(trailing), Some(rect), Some(measurement)) =
-                (&item.trailing, trailing_rect, trailing_measurement)
-            {
+            if let (Some(trailing), Some(rect)) = (&item.trailing, trailing_rect) {
                 let style = if selected {
-                    theme.text_style(palette.border_focus)
+                    TextStyle {
+                        color: palette.border_focus,
+                        ..detail_style.clone()
+                    }
                 } else {
                     detail_style.clone()
                 };
-                let trailing_text_rect = Rect::new(
-                    rect.x(),
-                    vertically_centered_text_rect_y(ctx, rect, measurement, style.line_height),
-                    rect.width(),
-                    style.line_height,
-                );
-                ctx.push_clip_rect(trailing_text_rect);
+                let trailing_text_rect =
+                    aligned_text_rect_for_text(ctx, rect, trailing, &style, style.line_height, 1.0);
+                ctx.push_clip_rect(rect);
                 ctx.draw_text(trailing_text_rect, trailing.clone(), style);
                 ctx.pop_clip();
             }
@@ -2172,6 +2169,7 @@ pub struct TableColumn {
     width: Option<f32>,
     min_width: f32,
     alignment: TableColumnAlignment,
+    numeric: bool,
 }
 
 impl TableColumn {
@@ -2181,6 +2179,7 @@ impl TableColumn {
             width: None,
             min_width: 96.0,
             alignment: TableColumnAlignment::Start,
+            numeric: false,
         }
     }
 
@@ -2196,6 +2195,12 @@ impl TableColumn {
 
     pub fn alignment(mut self, alignment: TableColumnAlignment) -> Self {
         self.alignment = alignment;
+        self
+    }
+
+    pub fn numeric(mut self) -> Self {
+        self.alignment = TableColumnAlignment::End;
+        self.numeric = true;
         self
     }
 }
@@ -2360,17 +2365,23 @@ impl Table {
         let theme = self.resolved_theme();
         let header_style = theme.text_style(theme.palette.placeholder);
         let body_style = theme.body_text_style();
+        let numeric_style = numeric_text_style(body_style.clone());
         self.column_widths = self
             .columns
             .iter()
             .enumerate()
             .map(|(index, column)| {
                 let measured_title = measure_text(ctx, &column.title, &header_style).width;
+                let cell_style = if column.numeric {
+                    &numeric_style
+                } else {
+                    &body_style
+                };
                 let measured_cells = self
                     .rows
                     .iter()
                     .filter_map(|row| row.cells.get(index))
-                    .map(|cell| measure_text(ctx, cell, &body_style).width)
+                    .map(|cell| measure_text(ctx, cell, cell_style).width)
                     .fold(0.0, f32::max);
                 column.width.unwrap_or(
                     (measured_title.max(measured_cells) + (theme.metrics.table_cell_padding * 2.0))
@@ -2529,7 +2540,15 @@ impl Widget for Table {
         let metrics = theme.metrics;
         let header_style = theme.text_style(palette.placeholder);
         let body_style = theme.body_text_style();
-        let selected_body_style = theme.text_style(palette.border_focus);
+        let numeric_body_style = numeric_text_style(body_style.clone());
+        let selected_body_style = TextStyle {
+            color: palette.border_focus,
+            ..body_style.clone()
+        };
+        let selected_numeric_body_style = TextStyle {
+            color: palette.border_focus,
+            ..numeric_body_style.clone()
+        };
         let body = self.body_rect(ctx.bounds());
         let padding = metrics.data_viewport_padding;
         let header = Rect::new(
@@ -2608,15 +2627,22 @@ impl Widget for Table {
                     .unwrap_or(&column.min_width);
                 let cell_rect = Rect::new(cell_x, row_rect.y(), width, row_rect.height());
                 if let Some(value) = self.rows[row_index].cells.get(column_index) {
+                    let style = if column.numeric {
+                        if selected {
+                            selected_numeric_body_style.clone()
+                        } else {
+                            numeric_body_style.clone()
+                        }
+                    } else if selected {
+                        selected_body_style.clone()
+                    } else {
+                        body_style.clone()
+                    };
                     draw_aligned_text(
                         ctx,
                         horizontal_inset_rect(cell_rect, metrics.table_cell_padding),
                         value,
-                        &if selected {
-                            selected_body_style.clone()
-                        } else {
-                            body_style.clone()
-                        },
+                        &style,
                         column.alignment,
                     );
                 }
@@ -3144,22 +3170,25 @@ fn draw_aligned_text(
     style: &TextStyle,
     alignment: TableColumnAlignment,
 ) {
-    let measurement = paint_text_measurement(ctx, text, style);
-    let estimated = estimate_text_width(text, style);
-    let width = rect.width().max(estimated);
-    let x = match alignment {
-        TableColumnAlignment::Start => rect.x(),
-        TableColumnAlignment::Center => rect.x() + ((rect.width() - estimated) * 0.5).max(0.0),
-        TableColumnAlignment::End => rect.max_x() - estimated.max(0.0),
+    let horizontal_alignment = match alignment {
+        TableColumnAlignment::Start => 0.0,
+        TableColumnAlignment::Center => 0.5,
+        TableColumnAlignment::End => 1.0,
     };
-    let height = style.line_height.min(rect.height());
-    let y = vertically_centered_text_rect_y(ctx, rect, measurement, height);
-    ctx.draw_text(
-        Rect::new(x, y, width, height),
-        text.to_string(),
-        style.clone(),
+    let text_rect = aligned_text_rect_for_text(
+        ctx,
+        rect,
+        text,
+        style,
+        style.line_height,
+        horizontal_alignment,
     );
+    ctx.push_clip_rect(rect);
+    ctx.draw_text(text_rect, text.to_string(), style.clone());
+    ctx.pop_clip();
 }
+
+const TWO_LINE_ROW_TEXT_GAP: f32 = 6.0;
 
 fn row_text_rects(
     ctx: &PaintCtx,
@@ -3171,14 +3200,17 @@ fn row_text_rects(
 ) -> (Rect, Option<Rect>) {
     match secondary_line_height {
         Some(secondary_line_height) => {
-            let total_height = primary_line_height + secondary_line_height + 2.0;
+            let secondary_measurement = secondary_measurement.unwrap_or(primary_measurement);
+            let primary_height = primary_line_height.max(primary_measurement.height);
+            let secondary_height = secondary_line_height.max(secondary_measurement.height);
+            let total_height = primary_height + secondary_height + TWO_LINE_ROW_TEXT_GAP;
             let top = rect.y() + ((rect.height() - total_height) * 0.5).max(0.0);
-            let primary_rect = Rect::new(rect.x(), top, rect.width(), primary_line_height);
+            let primary_rect = Rect::new(rect.x(), top, rect.width(), primary_height);
             let secondary_rect = Rect::new(
                 rect.x(),
-                top + primary_line_height + 2.0,
+                top + primary_height + TWO_LINE_ROW_TEXT_GAP,
                 rect.width(),
-                secondary_line_height,
+                secondary_height,
             );
             (
                 Rect::new(
@@ -3187,7 +3219,7 @@ fn row_text_rects(
                         ctx,
                         primary_rect,
                         primary_measurement,
-                        primary_line_height,
+                        primary_height,
                     ),
                     primary_rect.width(),
                     primary_rect.height(),
@@ -3197,8 +3229,8 @@ fn row_text_rects(
                     vertically_centered_text_rect_y(
                         ctx,
                         secondary_rect,
-                        secondary_measurement.unwrap_or(primary_measurement),
-                        secondary_line_height,
+                        secondary_measurement,
+                        secondary_height,
                     ),
                     secondary_rect.width(),
                     secondary_rect.height(),
@@ -3206,7 +3238,9 @@ fn row_text_rects(
             )
         }
         None => {
-            let height = primary_line_height.min(rect.height());
+            let height = primary_line_height
+                .max(primary_measurement.height)
+                .min(rect.height());
             let y = vertically_centered_text_rect_y(ctx, rect, primary_measurement, height);
             (Rect::new(rect.x(), y, rect.width(), height), None)
         }
@@ -3214,7 +3248,7 @@ fn row_text_rects(
 }
 
 fn two_line_row_height(primary_line_height: f32, secondary_line_height: f32) -> f32 {
-    primary_line_height + secondary_line_height + 6.0
+    primary_line_height + secondary_line_height + TWO_LINE_ROW_TEXT_GAP
 }
 
 fn horizontal_inset_rect(rect: Rect, inset: f32) -> Rect {
@@ -3228,6 +3262,11 @@ fn horizontal_inset_rect(rect: Rect, inset: f32) -> Rect {
 
 fn estimate_text_width(text: &str, style: &TextStyle) -> f32 {
     text.chars().count() as f32 * style.font_size * 0.56
+}
+
+fn numeric_text_style(mut style: TextStyle) -> TextStyle {
+    style.features.enable(FontFeature::TABULAR_FIGURES);
+    style
 }
 
 fn measure_list_item_leading_width(
@@ -3270,37 +3309,12 @@ fn paint_text_measurement(ctx: &PaintCtx, text: &str, style: &TextStyle) -> Text
         })
 }
 
-fn vertically_centered_text_rect_y(
-    ctx: &PaintCtx,
-    rect: Rect,
-    measurement: TextMeasurement,
-    height: f32,
-) -> f32 {
-    let optical_centering = window_render_options(ctx.window_id())
-        .map(|options| options.optical_vertical_text_alignment_enabled)
-        .unwrap_or(true);
-    let top = if optical_centering {
-        -measurement.cap_height.unwrap_or(measurement.ascent)
-    } else {
-        -measurement.ascent
-    };
-    let bottom = if optical_centering {
-        measurement.descent * 0.5
-    } else {
-        measurement.descent
-    };
-    let visual_center = (top + bottom) * 0.5;
-    let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
-    let leading_above = ((height - (measurement.ascent + measurement.descent)).max(0.0)) * 0.5;
-    baseline - measurement.ascent - leading_above
-}
-
 fn caption_style(theme: &DefaultTheme) -> TextStyle {
     TextStyle {
-        font_size: (theme.typography.body_font_size - 1.0).max(11.0),
-        line_height: (theme.typography.body_line_height - 2.0).max(14.0),
+        font_size: theme.text.xs.size.max(1.0),
+        line_height: theme.text.xs.line_height.max(1.0),
         color: theme.palette.placeholder,
-        ..TextStyle::default()
+        ..theme.body_text_style()
     }
 }
 
@@ -3584,9 +3598,9 @@ mod tests {
 
     use super::{
         Breadcrumb, BreadcrumbItem, DefaultTheme, LayerList, LayerListItem, ListItem, ListView,
-        Table, TableColumn, TableRow, TreeItem, TreeView,
+        Table, TableColumn, TableColumnAlignment, TableRow, TreeItem, TreeView,
     };
-    use crate::{Button, Label, ScrollView, SizedBox, Stack};
+    use crate::{Button, Label, ScrollView, SizedBox, Stack, ThemeTextToken};
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
         PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsAction,
@@ -3594,7 +3608,7 @@ mod tests {
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
     use sui_scene::{Brush, SceneCommand};
-    use sui_text::{FontRegistry, TextSystem};
+    use sui_text::{FontFeature, FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -3893,6 +3907,88 @@ mod tests {
         let top = -measurement.cap_height.unwrap_or(measurement.ascent);
         let bottom = measurement.descent * 0.5;
         (top + bottom) * 0.5
+    }
+
+    fn rect_center(rect: Rect) -> Point {
+        Point::new(
+            rect.x() + rect.width() * 0.5,
+            rect.y() + rect.height() * 0.5,
+        )
+    }
+
+    fn text_run_visual_center(run: &sui_text::TextRun) -> f32 {
+        let layout = TextSystem::new()
+            .shape_text_run(run, &FontRegistry::new())
+            .expect("text run should shape");
+        let line = layout.lines().first().expect("text run should have a line");
+        run.rect.y() + line.baseline + optical_visual_center(layout.measurement())
+    }
+
+    fn text_visual_center_for(output: &RenderOutput, text: &str) -> f32 {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawText(run) if run.text == text => {
+                    Some(text_run_visual_center(run))
+                }
+                SceneCommand::DrawShapedText(run) => {
+                    let layout = run.resolve(output.frame.text_layout_registry.as_ref())?;
+                    if layout.text() != text {
+                        return None;
+                    }
+                    let line = layout.lines().first().expect("text run should have a line");
+                    Some(run.origin.y + line.baseline + optical_visual_center(layout.measurement()))
+                }
+                _ => None,
+            })
+            .expect("text draw command present")
+    }
+
+    fn assert_two_line_row_text_matches_slots(
+        output: &RenderOutput,
+        label: &str,
+        detail: &str,
+        row: Rect,
+    ) {
+        let label = text_runs_for(output, label)
+            .into_iter()
+            .next()
+            .expect("row label draw command present");
+        let detail = text_runs_for(output, detail)
+            .into_iter()
+            .next()
+            .expect("row detail draw command present");
+        let total_height =
+            label.style.line_height + detail.style.line_height + super::TWO_LINE_ROW_TEXT_GAP;
+        let top = row.y() + ((row.height() - total_height) * 0.5).max(0.0);
+        let label_slot_center = top + (label.style.line_height * 0.5);
+        let detail_slot_center = top
+            + label.style.line_height
+            + super::TWO_LINE_ROW_TEXT_GAP
+            + (detail.style.line_height * 0.5);
+
+        assert!((text_run_visual_center(&label) - label_slot_center).abs() < 0.75);
+        assert!((text_run_visual_center(&detail) - detail_slot_center).abs() < 0.75);
+    }
+
+    fn assert_text_run_uses_token(run: &sui_text::TextRun, token: ThemeTextToken) {
+        assert!(
+            (run.style.font_size - token.size).abs() < 0.001,
+            "text '{}' used font size {}, expected token size {}",
+            run.text,
+            run.style.font_size,
+            token.size
+        );
+        assert!(
+            (run.style.line_height - token.line_height).abs() < 0.001,
+            "text '{}' used line height {}, expected token line height {}",
+            run.text,
+            run.style.line_height,
+            token.line_height
+        );
     }
 
     fn vertical_scroll_thumb_rects(output: &RenderOutput) -> Vec<Rect> {
@@ -4214,6 +4310,29 @@ mod tests {
                 .iter()
                 .any(|width| (*width - 3.25).abs() < f32::EPSILON)
         );
+    }
+
+    #[test]
+    fn layer_list_label_and_detail_visual_centers_match_row_slots() {
+        let output = render(
+            SizedBox::new().width(280.0).height(64.0).with_child(
+                LayerList::new("Layers").layer(
+                    LayerListItem::new("Paint")
+                        .detail("Normal / 100%")
+                        .thumbnail(Color::rgba(0.16, 0.31, 0.88, 1.0)),
+                ),
+            ),
+        );
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("layer row semantics present")
+            .bounds;
+
+        assert_two_line_row_text_matches_slots(&output, "Paint", "Normal / 100%", row);
     }
 
     #[test]
@@ -4619,6 +4738,105 @@ mod tests {
     }
 
     #[test]
+    fn table_numeric_column_uses_tabular_figures_and_shared_right_edge() {
+        let output = render(
+            SizedBox::new().width(360.0).height(140.0).with_child(
+                Table::new("Materials")
+                    .columns([
+                        TableColumn::new("Name"),
+                        TableColumn::new("Passes").numeric(),
+                    ])
+                    .rows([
+                        TableRow::new(["Glass", "3"]),
+                        TableRow::new(["Water", "128"]),
+                    ]),
+            ),
+        );
+        let short = text_runs_for(&output, "3")
+            .into_iter()
+            .find(|run| {
+                run.style
+                    .features
+                    .iter()
+                    .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES)
+            })
+            .expect("short numeric cell should be tabular");
+        let long = text_runs_for(&output, "128")
+            .into_iter()
+            .next()
+            .expect("long numeric cell should render");
+
+        assert!(
+            long.style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        assert!((short.rect.max_x() - long.rect.max_x()).abs() < 0.75);
+    }
+
+    #[test]
+    fn selected_table_cells_preserve_body_metrics_and_numeric_alignment() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 13.0;
+        theme.typography.body_line_height = 21.0;
+        let output = render(
+            SizedBox::new().width(360.0).height(140.0).with_child(
+                Table::new("Materials")
+                    .theme(theme)
+                    .columns([
+                        TableColumn::new("Name"),
+                        TableColumn::new("Passes").numeric(),
+                    ])
+                    .rows([
+                        TableRow::new(["Glass", "8642"]),
+                        TableRow::new(["Water", "7"]),
+                    ])
+                    .selected(0),
+            ),
+        );
+        let selected_label = text_runs_for(&output, "Glass")
+            .into_iter()
+            .next()
+            .expect("selected text cell should render");
+        let selected_number = text_runs_for(&output, "8642")
+            .into_iter()
+            .next()
+            .expect("selected numeric cell should render");
+        let unselected_number = text_runs_for(&output, "7")
+            .into_iter()
+            .next()
+            .expect("unselected numeric cell should render");
+
+        assert_eq!(selected_label.style.color, theme.palette.border_focus);
+        assert_eq!(
+            selected_label.style.font_size,
+            theme.typography.body_font_size
+        );
+        assert_eq!(
+            selected_label.style.line_height,
+            theme.typography.body_line_height
+        );
+        assert_eq!(selected_number.style.color, theme.palette.border_focus);
+        assert_eq!(
+            selected_number.style.font_size,
+            theme.typography.body_font_size
+        );
+        assert_eq!(
+            selected_number.style.line_height,
+            theme.typography.body_line_height
+        );
+        assert!(
+            selected_number
+                .style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        assert!((selected_number.rect.max_x() - unselected_number.rect.max_x()).abs() < 0.75);
+    }
+
+    #[test]
     fn collection_and_path_widgets_theme_when_paints_dark_tokens() {
         let theme = DefaultTheme::dark();
         let list = render(
@@ -4744,6 +4962,95 @@ mod tests {
     }
 
     #[test]
+    fn list_view_label_and_detail_visual_centers_match_row_slots() {
+        let theme = DefaultTheme::default();
+        let output = render(SizedBox::new().width(320.0).height(72.0).with_child(
+            ListView::new("Assets").item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
+        ));
+        let label = text_runs_for(&output, "Hero texture")
+            .into_iter()
+            .next()
+            .expect("list row label draw command present");
+        let detail = text_runs_for(&output, "2048 x 2048 RGBA")
+            .into_iter()
+            .next()
+            .expect("list row detail draw command present");
+        let viewport_padding = theme.metrics.data_viewport_padding;
+        let row_height = theme
+            .metrics
+            .list_row_height
+            .max(super::two_line_row_height(
+                label.style.line_height,
+                detail.style.line_height,
+            ));
+        let row = Rect::new(
+            viewport_padding.left,
+            viewport_padding.top,
+            (output.frame.viewport.width - viewport_padding.left - viewport_padding.right).max(0.0),
+            row_height,
+        );
+
+        assert_two_line_row_text_matches_slots(&output, "Hero texture", "2048 x 2048 RGBA", row);
+    }
+
+    #[test]
+    fn data_detail_text_styles_follow_theme_xs_token() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 10.5,
+            line_height: 17.5,
+        };
+        theme.sync_derived_fields();
+
+        let list = render(
+            SizedBox::new().width(320.0).height(72.0).with_child(
+                ListView::new("Assets")
+                    .theme(theme)
+                    .item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
+            ),
+        );
+        assert_text_run_uses_token(
+            &text_runs_for(&list, "2048 x 2048 RGBA")
+                .into_iter()
+                .next()
+                .expect("list detail should render"),
+            theme.text.xs,
+        );
+
+        let layer = render(
+            SizedBox::new().width(280.0).height(72.0).with_child(
+                LayerList::new("Layers").theme(theme).layer(
+                    LayerListItem::new("Paint")
+                        .detail("Normal / 100%")
+                        .thumbnail(Color::rgba(0.16, 0.31, 0.88, 1.0)),
+                ),
+            ),
+        );
+        assert_text_run_uses_token(
+            &text_runs_for(&layer, "Normal / 100%")
+                .into_iter()
+                .next()
+                .expect("layer detail should render"),
+            theme.text.xs,
+        );
+
+        let tree = render(
+            SizedBox::new().width(320.0).height(72.0).with_child(
+                TreeView::new("Scene")
+                    .theme(theme)
+                    .item(TreeItem::new("Environment").detail("Visible")),
+            ),
+        );
+        assert_text_run_uses_token(
+            &text_runs_for(&tree, "Visible")
+                .into_iter()
+                .next()
+                .expect("tree detail should render"),
+            theme.text.xs,
+        );
+    }
+
+    #[test]
     fn list_view_long_label_clips_to_single_line() {
         let title = "What tools are available to you when the session title is very long";
         let output = render(
@@ -4778,6 +5085,38 @@ mod tests {
         let detail = text_rects_for(&output, "Visible")[0];
 
         assert!(label.max_y() <= detail.y());
+    }
+
+    #[test]
+    fn tree_view_label_and_detail_visual_centers_match_row_slots() {
+        let theme = DefaultTheme::default();
+        let output = render(SizedBox::new().width(320.0).height(72.0).with_child(
+            TreeView::new("Scene").item(TreeItem::new("Environment").detail("Visible")),
+        ));
+        let label = text_runs_for(&output, "Environment")
+            .into_iter()
+            .next()
+            .expect("tree row label draw command present");
+        let detail = text_runs_for(&output, "Visible")
+            .into_iter()
+            .next()
+            .expect("tree row detail draw command present");
+        let viewport_padding = theme.metrics.data_viewport_padding;
+        let row_height = theme
+            .metrics
+            .tree_row_height
+            .max(super::two_line_row_height(
+                label.style.line_height,
+                detail.style.line_height,
+            ));
+        let row = Rect::new(
+            viewport_padding.left,
+            viewport_padding.top,
+            (output.frame.viewport.width - viewport_padding.left - viewport_padding.right).max(0.0),
+            row_height,
+        );
+
+        assert_two_line_row_text_matches_slots(&output, "Environment", "Visible", row);
     }
 
     #[test]
@@ -4990,6 +5329,88 @@ mod tests {
     }
 
     #[test]
+    fn table_aligned_text_preserves_tall_measurements_and_cell_alignment() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 28.0;
+        theme.typography.body_line_height = 12.0;
+        theme.metrics.table_header_height = 44.0;
+        theme.metrics.table_row_height = 48.0;
+
+        let output = render(
+            SizedBox::new().width(360.0).height(136.0).with_child(
+                Table::new("Materials")
+                    .theme(theme)
+                    .columns([
+                        TableColumn::new("Name")
+                            .width(180.0)
+                            .alignment(TableColumnAlignment::Center),
+                        TableColumn::new("Passes").width(120.0).numeric(),
+                    ])
+                    .rows([TableRow::new(["Glass", "128"])]),
+            ),
+        );
+        let header = text_runs_for(&output, "Name")
+            .into_iter()
+            .next()
+            .expect("centered table header should render");
+        let header_clip = draw_clip_rects_for(&output, "Name")
+            .into_iter()
+            .next()
+            .expect("centered table header should be clipped to its cell");
+        let cell = text_runs_for(&output, "Glass")
+            .into_iter()
+            .next()
+            .expect("table cell should render");
+        let cell_clip = draw_clip_rects_for(&output, "Glass")
+            .into_iter()
+            .next()
+            .expect("table cell should be clipped to its cell");
+        let numeric = text_runs_for(&output, "128")
+            .into_iter()
+            .next()
+            .expect("numeric table cell should render");
+        let numeric_clip = draw_clip_rects_for(&output, "128")
+            .into_iter()
+            .next()
+            .expect("numeric table cell should be clipped to its cell");
+        let measured_height = |run: &sui_text::TextRun| {
+            TextSystem::new()
+                .shape_text_run(run, &FontRegistry::new())
+                .expect("table text should shape")
+                .measurement()
+                .height
+        };
+
+        assert!(header.rect.height() >= measured_height(&header) - 0.01);
+        assert!(cell.rect.height() >= measured_height(&cell) - 0.01);
+        assert!(numeric.rect.height() >= measured_height(&numeric) - 0.01);
+        assert!(
+            (rect_center(header.rect).x - rect_center(header_clip).x).abs() < 0.75,
+            "centered table header should align to cell center: text={:?}, cell={:?}",
+            header.rect,
+            header_clip
+        );
+        assert!(
+            (numeric.rect.max_x() - numeric_clip.max_x()).abs() < 0.75,
+            "numeric table cell should align to trailing edge: text={:?}, cell={:?}",
+            numeric.rect,
+            numeric_clip
+        );
+        assert!(
+            (text_visual_center_for(&output, "Name") - rect_center(header_clip).y).abs() < 0.75,
+            "centered table header should be optically centered in its cell"
+        );
+        assert!(
+            (text_visual_center_for(&output, "Glass") - rect_center(cell_clip).y).abs() < 0.75,
+            "table body cell should be optically centered in its cell"
+        );
+        assert!(
+            (text_visual_center_for(&output, "128") - rect_center(numeric_clip).y).abs() < 0.75,
+            "numeric table body cell should be optically centered in its cell"
+        );
+    }
+
+    #[test]
     fn non_scrollable_table_allows_wheel_to_bubble_to_parent_scroll_view() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new()
@@ -5088,16 +5509,31 @@ mod tests {
             BreadcrumbItem::new("Scene"),
         ]));
 
-        let label = text_rects_for(&output, "Workspace")[0];
+        let run = text_runs_for(&output, "Workspace")
+            .into_iter()
+            .next()
+            .expect("breadcrumb label draw command present");
         let theme = DefaultTheme::default();
         let line_height = theme.body_text_style().line_height;
         let available_height = (theme.metrics.breadcrumb_height
             - theme.metrics.breadcrumb_item_padding.top
             - theme.metrics.breadcrumb_item_padding.bottom)
             .max(0.0);
+        let layout = TextSystem::new()
+            .shape_text_run(&run, &FontRegistry::new())
+            .expect("breadcrumb label should shape");
+        let line = layout.lines().first().expect("breadcrumb line present");
+        let actual_visual_center =
+            run.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let slot_center = theme.metrics.breadcrumb_item_padding.top + (available_height * 0.5);
 
-        assert!((label.height() - line_height.min(available_height)).abs() < 0.001);
-        assert!(label.width() > 0.0);
+        assert!((run.rect.height() - line_height.min(available_height)).abs() < 0.001);
+        assert!(run.rect.width() > 0.0);
+        assert!(
+            (actual_visual_center - slot_center).abs() < 0.75,
+            "breadcrumb label visual center {actual_visual_center} did not match slot center {slot_center}; text rect {:?}",
+            run.rect
+        );
     }
 
     #[test]
@@ -5125,5 +5561,205 @@ mod tests {
         let row_center = output.frame.viewport.height * 0.5;
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn list_row_text_preserves_tall_measurement_in_compact_line_box() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 28.0;
+        theme.typography.body_line_height = 12.0;
+        theme.metrics.list_row_height = 52.0;
+
+        let output = render(
+            SizedBox::new().width(320.0).height(72.0).with_child(
+                ListView::new("Assets")
+                    .theme(theme)
+                    .item(ListItem::new("Glass")),
+            ),
+        );
+        let run = text_runs_for(&output, "Glass")
+            .into_iter()
+            .next()
+            .expect("list row label draw command present");
+        let layout = TextSystem::new()
+            .shape_text_run(&run, &FontRegistry::new())
+            .expect("list row label should shape");
+        let row_center =
+            theme.metrics.data_viewport_padding.top + theme.metrics.list_row_height * 0.5;
+
+        assert!(
+            run.rect.height() >= layout.measurement().height - 0.01,
+            "list row text rect should preserve measured glyph height: rect={:?}, measurement={:?}",
+            run.rect,
+            layout.measurement()
+        );
+        assert!(
+            run.rect.height() > run.style.line_height,
+            "test theme should exercise measured-height preservation"
+        );
+        assert!(
+            (text_run_visual_center(&run) - row_center).abs() < 0.75,
+            "list row label visual center should remain row-centered"
+        );
+    }
+
+    #[test]
+    fn list_row_leading_and_trailing_text_align_to_row_center_and_edge() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            SizedBox::new().width(260.0).with_child(
+                ListView::new("Assets").item(
+                    ListItem::new("Hero texture")
+                        .leading_text("A")
+                        .trailing("42"),
+                ),
+            ),
+        );
+        let leading = text_runs_for(&output, "A")
+            .into_iter()
+            .next()
+            .expect("leading text draw command present");
+        let trailing = text_runs_for(&output, "42")
+            .into_iter()
+            .next()
+            .expect("trailing text draw command present");
+        let text_system = TextSystem::new();
+        let leading_layout = text_system
+            .shape_text_run(&leading, &FontRegistry::new())
+            .expect("leading text should shape");
+        let trailing_layout = text_system
+            .shape_text_run(&trailing, &FontRegistry::new())
+            .expect("trailing text should shape");
+        let leading_line = leading_layout
+            .lines()
+            .first()
+            .expect("leading line present");
+        let trailing_line = trailing_layout
+            .lines()
+            .first()
+            .expect("trailing line present");
+        let leading_visual_center = leading.rect.y()
+            + leading_line.baseline
+            + optical_visual_center(leading_layout.measurement());
+        let trailing_visual_center = trailing.rect.y()
+            + trailing_line.baseline
+            + optical_visual_center(trailing_layout.measurement());
+        let row_center = output.frame.viewport.height * 0.5;
+        let trailing_edge = output.frame.viewport.width
+            - theme.metrics.data_viewport_padding.right
+            - theme.metrics.data_row_padding.right;
+
+        assert!((leading_visual_center - row_center).abs() < 0.75);
+        assert!((trailing_visual_center - row_center).abs() < 0.75);
+        assert!(
+            (trailing.rect.max_x() - trailing_edge).abs() < 0.75,
+            "trailing text max_x {} did not align to content edge {trailing_edge}",
+            trailing.rect.max_x()
+        );
+    }
+
+    #[test]
+    fn list_row_leading_and_trailing_text_preserve_tall_measurements() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 28.0;
+        theme.typography.body_line_height = 12.0;
+        theme.text.xs = ThemeTextToken {
+            size: 26.0,
+            line_height: 10.0,
+        };
+        theme.metrics.list_row_height = 64.0;
+
+        let output = render(
+            SizedBox::new().width(320.0).height(88.0).with_child(
+                ListView::new("Assets").theme(theme).item(
+                    ListItem::new("Hero texture")
+                        .leading_text("A")
+                        .trailing("42"),
+                ),
+            ),
+        );
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ListItem)
+            .expect("list row semantics present")
+            .bounds;
+        let leading = text_runs_for(&output, "A")
+            .into_iter()
+            .next()
+            .expect("leading text draw command present");
+        let trailing = text_runs_for(&output, "42")
+            .into_iter()
+            .next()
+            .expect("trailing text draw command present");
+        let leading_layout = TextSystem::new()
+            .shape_text_run(&leading, &FontRegistry::new())
+            .expect("leading text should shape");
+        let trailing_layout = TextSystem::new()
+            .shape_text_run(&trailing, &FontRegistry::new())
+            .expect("trailing text should shape");
+        let trailing_clip = draw_clip_rects_for(&output, "42")
+            .into_iter()
+            .next()
+            .expect("trailing text should be clipped to reserved slot");
+        let row_center = row.y() + (row.height() * 0.5);
+        let trailing_edge = row.max_x() - theme.metrics.data_row_padding.right;
+
+        assert_eq!(leading.style.font_size, 28.0);
+        assert_eq!(leading.style.line_height, 12.0);
+        assert_text_run_uses_token(&trailing, theme.text.xs);
+        assert!(leading.rect.height() >= leading_layout.measurement().height - 0.01);
+        assert!(trailing.rect.height() >= trailing_layout.measurement().height - 0.01);
+        assert!(leading.rect.height() > leading.style.line_height);
+        assert!(trailing.rect.height() > trailing.style.line_height);
+        assert!((text_run_visual_center(&leading) - row_center).abs() < 0.75);
+        assert!((text_run_visual_center(&trailing) - row_center).abs() < 0.75);
+        assert!((trailing.rect.max_x() - trailing_edge).abs() < 0.75);
+        assert!((trailing_clip.max_x() - trailing_edge).abs() < 0.75);
+    }
+
+    #[test]
+    fn selected_list_row_trailing_text_preserves_caption_metrics() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 10.5,
+            line_height: 17.5,
+        };
+        theme.sync_derived_fields();
+        let output = render(
+            SizedBox::new().width(260.0).with_child(
+                ListView::new("Assets")
+                    .theme(theme)
+                    .selected(0)
+                    .item(ListItem::new("Hero texture").trailing("42")),
+            ),
+        );
+        let trailing = text_runs_for(&output, "42")
+            .into_iter()
+            .next()
+            .expect("selected trailing text draw command present");
+        let trailing_layout = TextSystem::new()
+            .shape_text_run(&trailing, &FontRegistry::new())
+            .expect("selected trailing text should shape");
+        let trailing_line = trailing_layout
+            .lines()
+            .first()
+            .expect("selected trailing line present");
+        let trailing_visual_center = trailing.rect.y()
+            + trailing_line.baseline
+            + optical_visual_center(trailing_layout.measurement());
+        let row_center = output.frame.viewport.height * 0.5;
+        let trailing_edge = output.frame.viewport.width
+            - theme.metrics.data_viewport_padding.right
+            - theme.metrics.data_row_padding.right;
+
+        assert_text_run_uses_token(&trailing, theme.text.xs);
+        assert_eq!(trailing.style.color, theme.palette.border_focus);
+        assert!((trailing_visual_center - row_center).abs() < 0.75);
+        assert!(
+            (trailing.rect.max_x() - trailing_edge).abs() < 0.75,
+            "selected trailing text max_x {} did not align to content edge {trailing_edge}",
+            trailing.rect.max_x()
+        );
     }
 }

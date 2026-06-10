@@ -22,6 +22,7 @@ use crate::{
         EditorCommand, EditorCommandResult, EditorState, clamp_to_grapheme_boundary,
         selection_range,
     },
+    text_align::aligned_text_rect_for_text,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +63,8 @@ impl TextSurfaceStyleOverlay {
 pub struct TextSurface {
     theme: Box<DefaultTheme>,
     name: String,
+    placeholder: String,
+    read_only: bool,
     editor: EditorState,
     clipboard: String,
     text_style: Option<TextStyle>,
@@ -91,6 +94,8 @@ impl TextSurface {
         Self {
             theme: Box::new(DefaultTheme::default()),
             name: name.into(),
+            placeholder: String::new(),
+            read_only: false,
             editor: EditorState::new(),
             clipboard: String::new(),
             text_style: None,
@@ -188,6 +193,16 @@ impl TextSurface {
         self
     }
 
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = placeholder.into();
+        self
+    }
+
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
     pub fn current_value(&self) -> &str {
         self.editor.document().text()
     }
@@ -209,6 +224,24 @@ impl TextSurface {
         self.text_style
             .clone()
             .unwrap_or_else(|| self.theme.body_text_style())
+    }
+
+    fn display_text_style(&self) -> TextStyle {
+        let mut style = self.resolved_text_style();
+        if self.read_only {
+            style.color = self.theme.palette.text_muted;
+        }
+        style
+    }
+
+    fn placeholder_text_style(&self) -> TextStyle {
+        let mut style = self.resolved_text_style();
+        style.color = self.theme.palette.placeholder;
+        style
+    }
+
+    fn should_show_placeholder(&self) -> bool {
+        self.display_text().is_empty() && !self.placeholder.is_empty()
     }
 
     fn resolved_padding(&self) -> Insets {
@@ -687,15 +720,35 @@ impl TextSurface {
     }
 
     fn line_height(&self) -> f32 {
+        let base_line_height = self.resolved_text_style().line_height;
         self.line_layouts
             .iter()
-            .map(|layout| {
-                layout
-                    .measurement()
-                    .height
-                    .max(self.resolved_text_style().line_height)
-            })
-            .fold(self.resolved_text_style().line_height, f32::max)
+            .map(|layout| self.line_layout_height(layout, base_line_height))
+            .fold(base_line_height, f32::max)
+    }
+
+    fn line_layout_height(&self, layout: &PersistentTextLayout, base_line_height: f32) -> f32 {
+        layout.measurement().height.max(base_line_height)
+    }
+
+    fn line_layout_y_offset(
+        &self,
+        layout: &PersistentTextLayout,
+        base_line_height: f32,
+        slot_height: f32,
+    ) -> f32 {
+        ((slot_height - self.line_layout_height(layout, base_line_height)).max(0.0)) * 0.5
+    }
+
+    fn line_origin_y(
+        &self,
+        line_index: usize,
+        layout: &PersistentTextLayout,
+        base_line_height: f32,
+        slot_height: f32,
+    ) -> f32 {
+        line_index as f32 * slot_height
+            + self.line_layout_y_offset(layout, base_line_height, slot_height)
     }
 
     fn line_index_for_offset(&self, offset: usize) -> usize {
@@ -722,11 +775,12 @@ impl TextSurface {
                 .utf8_offset
                 .saturating_sub(self.line_offsets[line_index])
                 .min(self.line_lengths[line_index]);
-            return Some(
-                layout
-                    .caret_rect(local_offset)
-                    .translate(Vector::new(0.0, line_index as f32 * self.line_height())),
-            );
+            let base_line_height = self.resolved_text_style().line_height;
+            let slot_height = self.line_height();
+            return Some(layout.caret_rect(local_offset).translate(Vector::new(
+                0.0,
+                self.line_origin_y(line_index, layout, base_line_height, slot_height),
+            )));
         }
 
         self.layout.as_ref().map(|layout| layout.caret(cursor).rect)
@@ -736,6 +790,8 @@ impl TextSurface {
         if !self.line_layouts.is_empty() {
             let mut rects = Vec::new();
             let range = selection_range(selection, self.display_text().len());
+            let base_line_height = self.resolved_text_style().line_height;
+            let slot_height = self.line_height();
             for (line_index, layout) in self.line_layouts.iter().enumerate() {
                 let line_start = self.line_offsets[line_index];
                 let line_end = line_start + self.line_lengths[line_index];
@@ -750,7 +806,10 @@ impl TextSurface {
                         ..selection_end.saturating_sub(line_start),
                 );
                 rects.extend(local_rects.into_iter().map(|rect| {
-                    rect.translate(Vector::new(0.0, line_index as f32 * self.line_height()))
+                    rect.translate(Vector::new(
+                        0.0,
+                        self.line_origin_y(line_index, layout, base_line_height, slot_height),
+                    ))
                 }));
             }
             return rects;
@@ -855,10 +914,12 @@ impl Widget for TextSurface {
                     ctx.set_handled();
                 }
             }
-            Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
+            Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() && !self.read_only => {
                 self.execute_editor_command(ctx, EditorCommand::StartComposition);
             }
-            Event::Ime(ImeEvent::CompositionUpdate { text, cursor_range }) if ctx.is_focused() => {
+            Event::Ime(ImeEvent::CompositionUpdate { text, cursor_range })
+                if ctx.is_focused() && !self.read_only =>
+            {
                 self.execute_editor_command(
                     ctx,
                     EditorCommand::UpdateComposition {
@@ -867,10 +928,12 @@ impl Widget for TextSurface {
                     },
                 );
             }
-            Event::Ime(ImeEvent::CompositionCommit { text }) if ctx.is_focused() => {
+            Event::Ime(ImeEvent::CompositionCommit { text })
+                if ctx.is_focused() && !self.read_only =>
+            {
                 self.execute_editor_command(ctx, EditorCommand::CommitComposition(text.clone()));
             }
-            Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() => {
+            Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() && !self.read_only => {
                 self.execute_editor_command(ctx, EditorCommand::EndComposition);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
@@ -878,15 +941,21 @@ impl Widget for TextSurface {
                 let result = match key.key.as_str() {
                     "a" | "A" if command_modifier => self.editor.execute(EditorCommand::SelectAll),
                     "c" | "C" if command_modifier => self.editor.execute(EditorCommand::Copy),
-                    "x" | "X" if command_modifier => self.editor.execute(EditorCommand::Cut),
-                    "v" | "V" if command_modifier => self
+                    "x" | "X" if command_modifier && !self.read_only => {
+                        self.editor.execute(EditorCommand::Cut)
+                    }
+                    "v" | "V" if command_modifier && !self.read_only => self
                         .editor
                         .execute(EditorCommand::Paste(self.clipboard.clone())),
-                    "z" | "Z" if command_modifier && key.modifiers.shift => {
+                    "z" | "Z" if command_modifier && key.modifiers.shift && !self.read_only => {
                         self.editor.execute(EditorCommand::Redo)
                     }
-                    "z" | "Z" if command_modifier => self.editor.execute(EditorCommand::Undo),
-                    "y" | "Y" if command_modifier => self.editor.execute(EditorCommand::Redo),
+                    "z" | "Z" if command_modifier && !self.read_only => {
+                        self.editor.execute(EditorCommand::Undo)
+                    }
+                    "y" | "Y" if command_modifier && !self.read_only => {
+                        self.editor.execute(EditorCommand::Redo)
+                    }
                     "ArrowLeft" if command_modifier => {
                         self.editor.execute(EditorCommand::MoveWordLeft {
                             extend: key.modifiers.shift,
@@ -937,12 +1006,16 @@ impl Widget for TextSurface {
                             self.content_viewport_size(ctx.bounds()).height,
                         )
                     }
-                    "Backspace" => self.editor.execute(EditorCommand::DeleteBackward),
-                    "Delete" => self.editor.execute(EditorCommand::DeleteForward),
-                    "Enter" => self
+                    "Backspace" if !self.read_only => {
+                        self.editor.execute(EditorCommand::DeleteBackward)
+                    }
+                    "Delete" if !self.read_only => {
+                        self.editor.execute(EditorCommand::DeleteForward)
+                    }
+                    "Enter" if !self.read_only => self
                         .editor
                         .execute(EditorCommand::InsertText("\n".to_string())),
-                    _ if self.editor.composition().is_none() => {
+                    _ if !self.read_only && self.editor.composition().is_none() => {
                         if let Some(text) = keyboard_text(key) {
                             self.editor
                                 .execute(EditorCommand::InsertText(text.to_string()))
@@ -972,11 +1045,11 @@ impl Widget for TextSurface {
         };
 
         let display_text = self.display_text();
+        let line_style = self.display_text_style();
         let line_box_size = Size::new(
             self.layout_box_size(available_width).width,
-            self.resolved_text_style().line_height.max(1.0),
+            line_style.line_height.max(1.0),
         );
-        let line_style = self.resolved_text_style();
         let mut line_layout_failed = false;
 
         if self.editor.composition().is_none() {
@@ -1104,14 +1177,14 @@ impl Widget for TextSurface {
                     self.layout.as_ref().map(|layout| layout.handle()),
                     display_text,
                     self.layout_box_size(available_width),
-                    self.resolved_text_style(),
+                    line_style,
                 )
                 .ok()
         } else {
             None
         };
 
-        let natural_content_size = if !self.line_layouts.is_empty() {
+        let mut natural_content_size = if !self.line_layouts.is_empty() {
             self.multi_line_content_size()
         } else {
             self.layout
@@ -1119,6 +1192,18 @@ impl Widget for TextSurface {
                 .map(layout_content_size)
                 .unwrap_or(Size::new(min_size.width, min_size.height))
         };
+        if self.should_show_placeholder() {
+            let placeholder_style = self.placeholder_text_style();
+            if let Ok(measurement) = ctx
+                .layout()
+                .measure_text(self.placeholder.clone(), placeholder_style.clone())
+            {
+                natural_content_size.width = natural_content_size.width.max(measurement.width);
+                natural_content_size.height = natural_content_size
+                    .height
+                    .max(measurement.height.max(placeholder_style.line_height));
+            }
+        }
         let natural = Size::new(
             natural_content_size.width + padding.left + padding.right,
             natural_content_size.height + padding.top + padding.bottom,
@@ -1151,7 +1236,9 @@ impl Widget for TextSurface {
         let palette = self.theme.palette;
         let metrics = self.theme.metrics;
         let content = self.content_rect(ctx.bounds());
-        let background = if ctx.is_focused() {
+        let background = if self.read_only {
+            palette.surface
+        } else if ctx.is_focused() {
             palette.surface_focus
         } else if self.hovered {
             palette.control_hover
@@ -1191,15 +1278,17 @@ impl Widget for TextSurface {
         let selection_rects = self.selection_rects_for_display(&display_selection);
         let current_caret = self.caret_rect_for_cursor(display_selection.focus);
         let current_line_index = self.line_index_for_offset(display_selection.focus.utf8_offset);
+        let base_line_height = self.resolved_text_style().line_height;
+        let slot_height = self.line_height();
 
         ctx.push_clip_rect(content);
 
         if selection_rects.is_empty() {
             let line_rect = Rect::new(
                 content.x(),
-                origin.y + current_line_index as f32 * self.line_height(),
+                origin.y + current_line_index as f32 * slot_height,
                 content.width(),
-                self.line_height(),
+                slot_height,
             );
             ctx.fill(
                 Path::rounded_rect(line_rect, 0.0),
@@ -1218,14 +1307,36 @@ impl Widget for TextSurface {
             }
         }
 
+        if self.should_show_placeholder() {
+            let placeholder_style = self.placeholder_text_style();
+            let placeholder_slot = Rect::new(
+                origin.x,
+                origin.y,
+                content.width(),
+                slot_height.max(placeholder_style.line_height),
+            );
+            let placeholder_rect = aligned_text_rect_for_text(
+                ctx,
+                placeholder_slot,
+                &self.placeholder,
+                &placeholder_style,
+                placeholder_style.line_height,
+                0.0,
+            );
+            ctx.draw_text(
+                placeholder_rect,
+                self.placeholder.clone(),
+                placeholder_style,
+            );
+        }
+
         if !self.line_layouts.is_empty() {
             for line_index in line_range {
                 if let Some(layout) = self.line_layouts.get(line_index) {
+                    let line_y =
+                        self.line_origin_y(line_index, layout, base_line_height, slot_height);
                     ctx.draw_persistent_text_layout(
-                        Point::new(
-                            origin.x,
-                            origin.y + (line_index as f32 * self.line_height()),
-                        ),
+                        Point::new(origin.x, origin.y + line_y),
                         layout,
                     );
                 }
@@ -1234,7 +1345,7 @@ impl Widget for TextSurface {
             ctx.draw_persistent_text_layout_window(origin, layout, line_range);
         }
 
-        if ctx.is_focused() {
+        if ctx.is_focused() && !self.read_only {
             let Some(current_caret) = current_caret else {
                 ctx.pop_clip();
                 return;
@@ -1273,23 +1384,31 @@ impl Widget for TextSurface {
             caret_offset: display_selection.focus.utf8_offset,
             selection: SemanticsTextRange::new(selection.start, selection.end),
             multiline: true,
-            readonly: false,
+            readonly: self.read_only,
             scroll_x: self.editor.scroll_x(),
             scroll_y: self.editor.scroll_y(),
         });
-        node.actions = vec![
-            SemanticsAction::Focus,
-            SemanticsAction::SetValue,
-            SemanticsAction::SetSelection,
-            SemanticsAction::InsertText,
-            SemanticsAction::DeleteBackward,
-            SemanticsAction::DeleteForward,
-            SemanticsAction::Copy,
-            SemanticsAction::Cut,
-            SemanticsAction::Paste,
-            SemanticsAction::Undo,
-            SemanticsAction::Redo,
-        ];
+        node.actions = if self.read_only {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::SetSelection,
+                SemanticsAction::Copy,
+            ]
+        } else {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::SetValue,
+                SemanticsAction::SetSelection,
+                SemanticsAction::InsertText,
+                SemanticsAction::DeleteBackward,
+                SemanticsAction::DeleteForward,
+                SemanticsAction::Copy,
+                SemanticsAction::Cut,
+                SemanticsAction::Paste,
+                SemanticsAction::Undo,
+                SemanticsAction::Redo,
+            ]
+        };
         ctx.push(node);
     }
 
@@ -1488,6 +1607,13 @@ mod tests {
         colors
     }
 
+    fn assert_approx_eq(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 0.01,
+            "expected {actual} to be within 0.01 of {expected}"
+        );
+    }
+
     #[test]
     fn text_surface_submits_only_visible_line_windows() {
         let long_text = (0..24)
@@ -1554,6 +1680,125 @@ mod tests {
 
         assert!(after_window.start >= before_window.start);
         assert_ne!(after_window, before_window);
+    }
+
+    #[test]
+    fn text_surface_centers_shorter_line_layouts_in_global_line_slots() {
+        let mut base_style = TextStyle::new(Color::BLACK);
+        base_style.font_size = 14.0;
+        base_style.line_height = 18.0;
+        let mut tall_style = TextStyle::new(Color::BLACK);
+        tall_style.font_size = 28.0;
+        tall_style.line_height = 36.0;
+        let value = "tiny\nheader";
+        let tall_range = "tiny\n".len()..value.len();
+        let surface = TextSurface::new("Editor")
+            .text_style(base_style.clone())
+            .value(value)
+            .style_overlays(vec![TextSurfaceStyleOverlay::new(
+                tall_range.clone(),
+                tall_style,
+                TextSurfaceOverlayKind::Syntax,
+            )]);
+
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(260.0, 96.0))
+                .with_child(surface),
+        );
+        let output = runtime.render(window_id).expect("render should succeed");
+        let shaped = shaped_text_commands(&output);
+        let registry = output.frame.text_layout_registry.as_ref();
+        let first = shaped
+            .iter()
+            .find(|text| {
+                text.resolve(registry)
+                    .is_some_and(|layout| layout.text() == "tiny")
+            })
+            .expect("first line should draw");
+        let second = shaped
+            .iter()
+            .find(|text| {
+                text.resolve(registry)
+                    .is_some_and(|layout| layout.text() == "header")
+            })
+            .expect("second line should draw");
+        let first_layout = first
+            .resolve(registry)
+            .expect("first layout should resolve");
+        let second_layout = second
+            .resolve(registry)
+            .expect("second layout should resolve");
+        let first_height = first_layout
+            .measurement()
+            .height
+            .max(base_style.line_height);
+        let second_height = second_layout
+            .measurement()
+            .height
+            .max(base_style.line_height);
+        let slot_height = first_height.max(second_height);
+        assert!(
+            first_height < slot_height,
+            "fixture should produce a shorter first line"
+        );
+
+        let first_offset = (slot_height - first_height) * 0.5;
+        let second_offset = (slot_height - second_height) * 0.5;
+        let first_row_top = second.origin.y - slot_height - second_offset;
+        assert_approx_eq(first.origin.y, first_row_top + first_offset);
+
+        let text_system = sui_text::TextSystem::new();
+        let mut geometry_surface = TextSurface::new("Editor")
+            .text_style(base_style.clone())
+            .value(value);
+        geometry_surface.line_layouts = vec![
+            text_system
+                .shape_text_persistent(
+                    None,
+                    "tiny",
+                    Size::new(240.0, base_style.line_height),
+                    base_style.clone(),
+                    &sui_text::FontRegistry::new(),
+                )
+                .expect("first line should shape"),
+            text_system
+                .shape_text_persistent(
+                    None,
+                    "header",
+                    Size::new(240.0, base_style.line_height),
+                    TextStyle {
+                        font_size: 28.0,
+                        line_height: 36.0,
+                        ..base_style.clone()
+                    },
+                    &sui_text::FontRegistry::new(),
+                )
+                .expect("second line should shape"),
+        ];
+        geometry_surface.line_offsets = vec![0, "tiny\n".len()];
+        geometry_surface.line_lengths = vec!["tiny".len(), "header".len()];
+        let local_caret = geometry_surface.line_layouts[0].caret_rect(0);
+        let local_selection = geometry_surface.line_layouts[0].selection_rects(0.."tiny".len());
+        let base_line_height = geometry_surface.resolved_text_style().line_height;
+        let slot_height = geometry_surface.line_height();
+        let first_origin_y = geometry_surface.line_origin_y(
+            0,
+            &geometry_surface.line_layouts[0],
+            base_line_height,
+            slot_height,
+        );
+        let caret = geometry_surface
+            .caret_rect_for_cursor(TextCursor::new(0))
+            .expect("caret should resolve");
+        let selection = geometry_surface.selection_rects_for_display(&TextSelection::new(
+            TextCursor::new(0),
+            TextCursor::new("tiny".len()),
+        ));
+
+        assert_approx_eq(caret.y(), first_origin_y + local_caret.y());
+        assert_eq!(selection.len(), local_selection.len());
+        assert_approx_eq(selection[0].y(), first_origin_y + local_selection[0].y());
     }
 
     #[test]
@@ -1649,6 +1894,135 @@ mod tests {
 
         assert!(fill_colors.iter().any(|color| *color == caret_color));
         assert!(!fill_colors.iter().any(|color| *color == accent_text));
+    }
+
+    #[test]
+    fn text_surface_placeholder_uses_placeholder_style_without_editable_value() {
+        let mut theme = DefaultTheme::default();
+        theme.palette.placeholder = Color::rgba(0.42, 0.47, 0.55, 1.0);
+        let placeholder_color = theme.palette.placeholder;
+        let mut text_style = theme.body_text_style();
+        text_style.font_size = 28.0;
+        text_style.line_height = 12.0;
+
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(280.0, 96.0))
+                .with_child(
+                    TextSurface::new("Editor")
+                        .theme(theme)
+                        .text_style(text_style.clone())
+                        .placeholder("Write notes"),
+                ),
+        );
+        let output = runtime.render(window_id).expect("render should succeed");
+        let registry = output.frame.text_layout_registry.as_ref();
+        let placeholder = shaped_text_commands(&output)
+            .into_iter()
+            .find_map(|text| {
+                text.resolve(registry)
+                    .filter(|layout| layout.text() == "Write notes")
+                    .cloned()
+            })
+            .expect("placeholder text should draw");
+        let node = text_input_node(&output);
+
+        assert_eq!(node.value, Some(SemanticsValue::Text(String::new())));
+        assert_eq!(placeholder.style().color, placeholder_color);
+        assert_eq!(placeholder.style().font_size, text_style.font_size);
+        assert_eq!(placeholder.style().line_height, text_style.line_height);
+        assert!(placeholder.measurement().height > text_style.line_height);
+    }
+
+    #[test]
+    fn text_surface_read_only_uses_muted_text_and_blocks_mutation() {
+        let mut theme = DefaultTheme::default();
+        theme.palette.text_muted = Color::rgba(0.36, 0.40, 0.47, 1.0);
+        let muted = theme.palette.text_muted;
+        let caret = theme.palette.caret;
+        let mut text_style = theme.body_text_style();
+        text_style.font_size = 24.0;
+        text_style.line_height = 13.0;
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(280.0, 96.0))
+                .with_child(
+                    TextSurface::new("Editor")
+                        .theme(theme)
+                        .text_style(text_style.clone())
+                        .value("Pinned")
+                        .read_only()
+                        .on_change(move |value| on_change.borrow_mut().push(value)),
+                ),
+        );
+
+        runtime
+            .render(window_id)
+            .expect("initial render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(32.0, 24.0), true),
+            )
+            .expect("focus click should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                Event::Ime(ImeEvent::CompositionCommit {
+                    text: " edited".to_string(),
+                }),
+            )
+            .expect("read-only ime commit should be ignored");
+        runtime
+            .handle_event(window_id, key_event("Backspace"))
+            .expect("read-only backspace should be ignored");
+        runtime
+            .handle_event(window_id, command_key_event("x"))
+            .expect("read-only cut should be ignored");
+        let output = runtime.render(window_id).expect("render should succeed");
+        let node = text_input_node(&output);
+        let editable = node
+            .editable_text
+            .as_ref()
+            .expect("editable text semantics should be present");
+        let registry = output.frame.text_layout_registry.as_ref();
+        let text = shaped_text_commands(&output)
+            .into_iter()
+            .find_map(|text| {
+                text.resolve(registry)
+                    .filter(|layout| layout.text() == "Pinned")
+                    .cloned()
+            })
+            .expect("read-only value should draw");
+        let fill_colors = solid_fill_colors(&output);
+
+        assert_eq!(node.value, Some(SemanticsValue::Text("Pinned".to_string())));
+        assert!(editable.readonly);
+        assert!(node.actions.contains(&SemanticsAction::Focus));
+        assert!(node.actions.contains(&SemanticsAction::SetSelection));
+        assert!(node.actions.contains(&SemanticsAction::Copy));
+        for action in [
+            SemanticsAction::SetValue,
+            SemanticsAction::InsertText,
+            SemanticsAction::DeleteBackward,
+            SemanticsAction::DeleteForward,
+            SemanticsAction::Cut,
+            SemanticsAction::Paste,
+            SemanticsAction::Undo,
+            SemanticsAction::Redo,
+        ] {
+            assert!(
+                !node.actions.contains(&action),
+                "read-only surface should not expose {action:?}"
+            );
+        }
+        assert_eq!(text.style().color, muted);
+        assert_eq!(text.style().font_size, text_style.font_size);
+        assert_eq!(text.style().line_height, text_style.line_height);
+        assert!(changes.borrow().is_empty());
+        assert!(!fill_colors.iter().any(|color| *color == caret));
     }
 
     #[test]

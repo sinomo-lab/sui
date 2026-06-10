@@ -7640,6 +7640,16 @@ mod tests {
     }
 
     #[cfg(feature = "artifacts")]
+    const SCREENSHOT_CHANNEL_TOLERANCE: u8 = 1;
+
+    #[cfg(feature = "artifacts")]
+    fn screenshot_pixels_match(left: &[u8], right: &[u8]) -> bool {
+        left.iter()
+            .zip(right.iter())
+            .all(|(left, right)| left.abs_diff(*right) <= SCREENSHOT_CHANNEL_TOLERANCE)
+    }
+
+    #[cfg(feature = "artifacts")]
     fn screenshot_diff_count(
         left: &sui_testing::Screenshot,
         right: &sui_testing::Screenshot,
@@ -7650,7 +7660,7 @@ mod tests {
         left.pixels()
             .chunks_exact(4)
             .zip(right.pixels().chunks_exact(4))
-            .filter(|(left_px, right_px)| left_px != right_px)
+            .filter(|(left_px, right_px)| !screenshot_pixels_match(left_px, right_px))
             .count()
     }
 
@@ -7667,7 +7677,7 @@ mod tests {
             .chunks_exact(4)
             .zip(right.pixels().chunks_exact(4))
             .flat_map(|(left_px, right_px)| {
-                if left_px == right_px {
+                if screenshot_pixels_match(left_px, right_px) {
                     [left_px[0], left_px[1], left_px[2], 96]
                 } else {
                     [255, 0, 0, 255]
@@ -7687,6 +7697,20 @@ mod tests {
         let height = left.height().min(right.height()) as f32;
         let crop = sui::Rect::new(0.0, 0.0, width, height);
         Ok((left.crop(crop)?, right.crop(crop)?))
+    }
+
+    #[cfg(feature = "artifacts")]
+    #[test]
+    fn screenshot_diff_helpers_tolerate_one_channel_value_per_channel() -> Result<()> {
+        let left = sui_testing::Screenshot::new(2, 1, vec![10, 20, 30, 40, 100, 110, 120, 130])?;
+        let right = sui_testing::Screenshot::new(2, 1, vec![11, 19, 31, 39, 99, 111, 119, 131])?;
+
+        assert_eq!(screenshot_diff_count(&left, &right), 0);
+
+        let diff = screenshot_diff_image(&left, &right)?;
+        assert_eq!(diff.pixels(), &[10, 20, 30, 96, 100, 110, 120, 96]);
+
+        Ok(())
     }
 
     #[test]

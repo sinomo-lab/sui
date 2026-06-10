@@ -10,6 +10,7 @@ mod editor;
 pub mod hdr_theme;
 pub mod media;
 pub mod panes;
+mod text_align;
 pub mod text_surface;
 pub mod theme;
 

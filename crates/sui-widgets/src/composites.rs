@@ -9,17 +9,18 @@ use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_runtime::{
     ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
     SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor,
-    WidgetPodVisitor, window_render_options,
+    WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
-use sui_text::{FontWeight, TextMeasurement, TextStyle};
+use sui_text::{FontFeature, FontWeight, TextMeasurement, TextStyle};
 
 use crate::{
     Button, ControlMetrics, DefaultTheme, Easing, HdrThemeMode, IconGlyph, ResolvedEffectStyle,
-    ResolvedHdrStyle, SemanticTone, Transition, WidgetColorRole, WidgetEffectRole,
+    ResolvedHdrStyle, SemanticTone, ThemeTextToken, Transition, WidgetColorRole, WidgetEffectRole,
     WidgetLuminanceRole, WidgetMaterialRole,
     controls::{apply_hdr_policy_cap, cap_resolved_hdr_style, draw_icon_glyph},
     paint_theme_shadow, resolve_widget_hdr_style,
+    text_align::aligned_text_rect_for_text,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1731,22 +1732,14 @@ impl ActionCard {
     fn resolved_title_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
         TextStyle {
-            font_size: 14.0,
-            line_height: 18.0,
-            color: theme.palette.text,
             weight: FontWeight::SEMIBOLD,
-            ..theme.body_text_style()
+            ..text_token_style(&theme, theme.text.sm, theme.palette.text)
         }
     }
 
     fn resolved_description_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
-        TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            color: theme.palette.placeholder,
-            ..theme.body_text_style()
-        }
+        text_token_style(&theme, theme.text.xs, theme.palette.placeholder)
     }
 
     fn content_rect(&self, bounds: Rect, metrics: ControlMetrics) -> Rect {
@@ -2051,45 +2044,64 @@ impl Widget for ActionCard {
                 .map(|measurement| measurement.height)
                 .unwrap_or(title_style.line_height),
         );
+        let description_min_height = description_style.line_height.max(
+            self.description_measurement
+                .map(|measurement| measurement.height)
+                .unwrap_or(description_style.line_height),
+        );
         let description_height =
             (text_bounds.height() - title_height - metrics.action_card_text_gap)
-                .max(description_style.line_height)
-                .min(description_style.line_height * 2.0);
+                .max(description_min_height)
+                .min((description_style.line_height * 2.0).max(description_min_height));
         let text_block_height = title_height + metrics.action_card_text_gap + description_height;
         let text_y = text_bounds.y() + ((text_bounds.height() - text_block_height) * 0.5).max(0.0);
-        let title_rect = Rect::new(text_bounds.x(), text_y, text_bounds.width(), title_height);
-        let description_rect = Rect::new(
+        let title_slot = Rect::new(text_bounds.x(), text_y, text_bounds.width(), title_height);
+        let description_slot = Rect::new(
             text_bounds.x(),
-            title_rect.max_y() + metrics.action_card_text_gap,
+            title_slot.max_y() + metrics.action_card_text_gap,
             text_bounds.width(),
             description_height,
         );
-        ctx.push_clip_rect(title_rect);
-        ctx.draw_text(
-            title_rect,
-            self.title.clone(),
-            TextStyle {
-                color: if enabled {
-                    palette.text
-                } else {
-                    palette.text.with_alpha(0.45)
-                },
-                ..title_style
+        let title_paint_style = TextStyle {
+            color: if enabled {
+                palette.text
+            } else {
+                palette.text.with_alpha(0.45)
             },
+            ..title_style
+        };
+        let description_paint_style = TextStyle {
+            color: if enabled {
+                palette.placeholder
+            } else {
+                palette.placeholder.with_alpha(0.45)
+            },
+            ..description_style
+        };
+        let title_rect = aligned_text_rect_for_text(
+            ctx,
+            title_slot,
+            &self.title,
+            &title_paint_style,
+            title_paint_style.line_height,
+            0.0,
         );
+        let description_rect = aligned_text_rect_for_text(
+            ctx,
+            description_slot,
+            &self.description,
+            &description_paint_style,
+            description_paint_style.line_height,
+            0.0,
+        );
+        ctx.push_clip_rect(title_slot);
+        ctx.draw_text(title_rect, self.title.clone(), title_paint_style);
         ctx.pop_clip();
-        ctx.push_clip_rect(description_rect);
+        ctx.push_clip_rect(description_slot);
         ctx.draw_text(
             description_rect,
             self.description.clone(),
-            TextStyle {
-                color: if enabled {
-                    palette.placeholder
-                } else {
-                    palette.placeholder.with_alpha(0.45)
-                },
-                ..description_style
-            },
+            description_paint_style,
         );
         ctx.pop_clip();
 
@@ -2265,12 +2277,9 @@ impl PropertyRow {
 
     fn resolved_label_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
-        self.label_style.clone().unwrap_or_else(|| TextStyle {
-            font_size: 13.0,
-            line_height: 18.0,
-            color: theme.palette.text_muted,
-            ..theme.body_text_style()
-        })
+        self.label_style
+            .clone()
+            .unwrap_or_else(|| text_token_style(&theme, theme.text.sm, theme.palette.text_muted))
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -2456,8 +2465,16 @@ impl Widget for PropertyRow {
                 label_height,
             ),
         };
+        let text_rect = aligned_text_rect_for_text(
+            ctx,
+            label_rect,
+            &self.label,
+            &label_style,
+            label_style.line_height,
+            0.0,
+        );
         ctx.push_clip_rect(label_rect);
-        ctx.draw_text(label_rect, self.label.clone(), label_style);
+        ctx.draw_text(text_rect, self.label.clone(), label_style);
         ctx.pop_clip();
         self.child.paint(ctx);
     }
@@ -2987,22 +3004,16 @@ impl FormSection {
     fn resolved_title_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
         self.title_style.clone().unwrap_or_else(|| TextStyle {
-            font_size: 13.0,
-            line_height: 18.0,
             weight: FontWeight::SEMIBOLD,
-            color: theme.surfaces.text,
-            ..theme.body_text_style()
+            ..text_token_style(&theme, theme.text.sm, theme.surfaces.text)
         })
     }
 
     fn resolved_description_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
-        self.description_style.clone().unwrap_or_else(|| TextStyle {
-            font_size: 11.5,
-            line_height: 16.0,
-            color: theme.surfaces.text_muted,
-            ..theme.body_text_style()
-        })
+        self.description_style
+            .clone()
+            .unwrap_or_else(|| text_token_style(&theme, theme.text.xs, theme.surfaces.text_muted))
     }
 
     fn title_height(&self, style: &TextStyle) -> f32 {
@@ -3219,18 +3230,37 @@ impl Widget for FormSection {
             .unwrap_or(0.0)
             .min(content.width());
         let text_width = (content.width() - action_width).max(0.0);
-        let title_rect = Rect::new(content.x(), content.y(), text_width, title_height);
-        ctx.push_clip_rect(title_rect);
+        let text_block_height = self.text_block_height(&title_style, &description_style);
+        let header_height = self.header_height(&title_style, &description_style);
+        let text_y = content.y() + ((header_height - text_block_height) * 0.5).max(0.0);
+        let title_slot = Rect::new(content.x(), text_y, text_width, title_height);
+        let title_rect = aligned_text_rect_for_text(
+            ctx,
+            title_slot,
+            &self.title,
+            &title_style,
+            title_style.line_height,
+            0.0,
+        );
+        ctx.push_clip_rect(title_slot);
         ctx.draw_text(title_rect, self.title.clone(), title_style);
         ctx.pop_clip();
         if let Some(description) = &self.description {
-            let description_rect = Rect::new(
+            let description_slot = Rect::new(
                 content.x(),
-                title_rect.max_y() + description_gap,
+                title_slot.max_y() + description_gap,
                 text_width,
                 description_height,
             );
-            ctx.push_clip_rect(description_rect);
+            let description_rect = aligned_text_rect_for_text(
+                ctx,
+                description_slot,
+                description,
+                &description_style,
+                description_style.line_height,
+                0.0,
+            );
+            ctx.push_clip_rect(description_slot);
             ctx.draw_text(description_rect, description.clone(), description_style);
             ctx.pop_clip();
         }
@@ -3368,12 +3398,9 @@ impl PanelSection {
 
     fn resolved_title_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
-        self.title_style.clone().unwrap_or_else(|| TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            color: theme.palette.text_muted,
-            ..theme.body_text_style()
-        })
+        self.title_style
+            .clone()
+            .unwrap_or_else(|| text_token_style(&theme, theme.text.xs, theme.palette.text_muted))
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -3644,7 +3671,15 @@ impl Widget for PanelSection {
         let title_style = self.resolved_title_style();
         let title_height = self.title_height(&title_style);
         let header_height = self.header_height(&title_style);
-        let title_rect = self.title_rect(ctx.bounds(), header_height, title_height);
+        let title_slot = self.title_rect(ctx.bounds(), header_height, title_height);
+        let title_rect = aligned_text_rect_for_text(
+            ctx,
+            title_slot,
+            &self.title,
+            &title_style,
+            title_style.line_height,
+            0.0,
+        );
         if self.collapsible {
             let header_hit = self.header_hit_rect(ctx.bounds());
             let header_fill = if self.pressed_header {
@@ -3674,7 +3709,7 @@ impl Widget for PanelSection {
                 metrics.panel_section_disclosure_size,
             );
         }
-        ctx.push_clip_rect(title_rect);
+        ctx.push_clip_rect(title_slot);
         ctx.draw_text(title_rect, self.title.clone(), title_style);
         ctx.pop_clip();
         if let Some(action) = &self.header_action {
@@ -3881,12 +3916,7 @@ impl DockPanel {
 
     fn resolved_title_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
-        TextStyle {
-            font_size: 13.0,
-            line_height: 18.0,
-            color: theme.palette.text,
-            ..theme.body_text_style()
-        }
+        text_token_style(&theme, theme.text.sm, theme.palette.text)
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -3988,11 +4018,19 @@ impl Widget for DockPanel {
         let header = self.header_rect(bounds);
         let title_style = self.resolved_title_style();
         let title_height = self.title_height(&title_style);
-        let title_rect = Rect::new(
+        let title_slot = Rect::new(
             header.x() + padding.left,
             header.y() + ((header.height() - title_height) * 0.5).max(0.0),
             (header.width() - padding.left - padding.right).max(0.0),
             title_height,
+        );
+        let title_rect = aligned_text_rect_for_text(
+            ctx,
+            title_slot,
+            &self.title,
+            &title_style,
+            title_style.line_height,
+            0.0,
         );
         let divider_height = physical_pixels(ctx, 1.0);
 
@@ -4011,7 +4049,7 @@ impl Widget for DockPanel {
             ),
             palette.border,
         );
-        ctx.push_clip_rect(title_rect);
+        ctx.push_clip_rect(title_slot);
         ctx.draw_text(title_rect, self.title.clone(), title_style);
         ctx.pop_clip();
 
@@ -4340,11 +4378,7 @@ impl Widget for PresetStrip {
         let metrics = theme.metrics;
         let item_height = self.resolved_item_height(metrics);
         let gap = self.resolved_gap(metrics);
-        let style = TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            ..theme.body_text_style()
-        };
+        let style = text_token_style(&theme, theme.text.xs, theme.palette.text);
         self.label_measurements = self
             .presets
             .iter()
@@ -4374,12 +4408,7 @@ impl Widget for PresetStrip {
         let metrics = theme.metrics;
         let interaction = theme.interaction;
         let selected = self.current_selected();
-        let style = TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            color: palette.text,
-            ..theme.body_text_style()
-        };
+        let style = text_token_style(&theme, theme.text.xs, palette.text);
 
         if ctx.is_focused() {
             ctx.stroke(
@@ -4438,22 +4467,21 @@ impl Widget for PresetStrip {
                 border,
             );
 
-            let text_rect = centered_text_rect(
+            let text_slot = inset_rect(rect, metrics.preset_strip_label_padding);
+            let text_style = TextStyle {
+                color: text_color,
+                ..style.clone()
+            };
+            let text_rect = aligned_text_rect_for_text(
                 ctx,
-                rect,
-                metrics.preset_strip_label_padding,
-                self.label_measurements.get(index).copied(),
-                style.line_height,
+                text_slot,
+                preset,
+                &text_style,
+                text_style.line_height,
+                0.5,
             );
-            ctx.push_clip_rect(text_rect);
-            ctx.draw_text(
-                text_rect,
-                preset.clone(),
-                TextStyle {
-                    color: text_color,
-                    ..style.clone()
-                },
-            );
+            ctx.push_clip_rect(text_slot);
+            ctx.draw_text(text_rect, preset.clone(), text_style);
             ctx.pop_clip();
         }
     }
@@ -4631,12 +4659,7 @@ impl StatusBar {
 
     fn text_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
-        TextStyle {
-            font_size: 12.0,
-            line_height: 18.0,
-            color: theme.palette.placeholder,
-            ..theme.body_text_style()
-        }
+        text_token_style(&theme, theme.text.xs, theme.palette.placeholder)
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -4816,7 +4839,8 @@ impl Widget for StatusBar {
             .iter()
             .map(|segment| {
                 let text = segment.text();
-                let measured = measure_text(ctx, &text, &text_style).width
+                let segment_style = numeric_text_style_if_numeric(&text, text_style.clone());
+                let measured = measure_text(ctx, &text, &segment_style).width
                     + metrics.status_bar_segment_padding * 2.0;
                 Self::resolved_segment_min_width(segment, metrics).max(measured.ceil())
             })
@@ -4889,13 +4913,22 @@ impl Widget for StatusBar {
                     ..text_style.clone()
                 }
             };
-            let text_rect = Rect::new(
+            let segment_style = numeric_text_style_if_numeric(&segment_text, segment_style);
+            let content_rect = Rect::new(
                 rect.x() + metrics.status_bar_segment_padding,
-                rect.y() + ((rect.height() - text_style.line_height) * 0.5),
+                rect.y(),
                 (rect.width() - metrics.status_bar_segment_padding * 2.0).max(0.0),
-                text_style.line_height,
+                rect.height(),
             );
-            ctx.push_clip_rect(text_rect);
+            let text_rect = aligned_text_rect_for_text(
+                ctx,
+                content_rect,
+                &segment_text,
+                &segment_style,
+                segment_style.line_height,
+                0.0,
+            );
+            ctx.push_clip_rect(content_rect);
             ctx.draw_text(text_rect, segment_text, segment_style);
             ctx.pop_clip();
         }
@@ -5228,6 +5261,11 @@ impl Widget for TabBar {
         let metrics = theme.metrics;
         let interaction = theme.interaction;
         let tab_padding = metrics.tab_padding;
+        let label_style = theme.body_text_style();
+        let selected_label_style = TextStyle {
+            color: palette.border_focus,
+            ..label_style.clone()
+        };
 
         ctx.fill(
             rounded_rect_path(ctx.bounds(), metrics.corner_radius),
@@ -5255,25 +5293,23 @@ impl Widget for TabBar {
                 );
             }
 
-            ctx.draw_text(
-                centered_text_rect(
-                    ctx,
-                    rect,
-                    tab_padding,
-                    self.label_measurements.get(index).copied(),
-                    if selected {
-                        theme.text_style(palette.border_focus).line_height
-                    } else {
-                        theme.body_text_style().line_height
-                    },
-                ),
-                tab.clone(),
-                if selected {
-                    theme.text_style(palette.border_focus)
-                } else {
-                    theme.body_text_style()
-                },
+            let text_style = if selected {
+                selected_label_style.clone()
+            } else {
+                label_style.clone()
+            };
+            let text_slot = inset_rect(rect, tab_padding);
+            let text_rect = aligned_text_rect_for_text(
+                ctx,
+                text_slot,
+                tab,
+                &text_style,
+                text_style.line_height,
+                0.5,
             );
+            ctx.push_clip_rect(text_slot);
+            ctx.draw_text(text_rect, tab.clone(), text_style);
+            ctx.pop_clip();
 
             if selected {
                 let thickness = interaction.active_indicator_thickness;
@@ -5661,6 +5697,11 @@ impl Widget for Tabs {
         let metrics = theme.metrics;
         let tab_padding = metrics.tab_padding;
         let header = self.header_rect(ctx.bounds());
+        let label_style = theme.body_text_style();
+        let selected_label_style = TextStyle {
+            color: palette.border_focus,
+            ..label_style.clone()
+        };
 
         ctx.fill(
             rounded_rect_path(header, metrics.corner_radius),
@@ -5688,25 +5729,23 @@ impl Widget for Tabs {
                 );
             }
 
-            ctx.draw_text(
-                centered_text_rect(
-                    ctx,
-                    rect,
-                    tab_padding,
-                    self.label_measurements.get(index).copied(),
-                    if selected {
-                        theme.text_style(palette.border_focus).line_height
-                    } else {
-                        theme.body_text_style().line_height
-                    },
-                ),
-                label.clone(),
-                if selected {
-                    theme.text_style(palette.border_focus)
-                } else {
-                    theme.body_text_style()
-                },
+            let text_style = if selected {
+                selected_label_style.clone()
+            } else {
+                label_style.clone()
+            };
+            let text_slot = inset_rect(rect, tab_padding);
+            let text_rect = aligned_text_rect_for_text(
+                ctx,
+                text_slot,
+                label,
+                &text_style,
+                text_style.line_height,
+                0.5,
             );
+            ctx.push_clip_rect(text_slot);
+            ctx.draw_text(text_rect, label.clone(), text_style);
+            ctx.pop_clip();
         }
 
         let content = self.panel_frame.translate(ctx.bounds().origin.to_vector());
@@ -6064,7 +6103,20 @@ impl Widget for Menu {
             let highlighted = self.highlighted == Some(index);
             let pressed = self.pressed == Some(index);
             let label_style = theme.text_style(item.text_color(&theme));
-            let label_measurement = paint_text_measurement(ctx, &item.label, &label_style);
+            let label_slot = Rect::new(
+                row.x() + item_padding.left,
+                row.y(),
+                (row.width()
+                    - item_padding.left
+                    - item_padding.right
+                    - item
+                        .shortcut
+                        .as_ref()
+                        .map(|_| metrics.menu_shortcut_width)
+                        .unwrap_or(0.0))
+                .max(0.0),
+                row.height(),
+            );
             if highlighted || pressed {
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
@@ -6080,48 +6132,40 @@ impl Widget for Menu {
                 );
             }
 
+            ctx.push_clip_rect(label_slot);
             ctx.draw_text(
-                vertically_centered_text_rect(
+                aligned_text_rect_for_text(
                     ctx,
-                    Rect::new(
-                        row.x() + item_padding.left,
-                        row.y(),
-                        (row.width()
-                            - item_padding.left
-                            - item_padding.right
-                            - item
-                                .shortcut
-                                .as_ref()
-                                .map(|_| metrics.menu_shortcut_width)
-                                .unwrap_or(0.0))
-                        .max(0.0),
-                        row.height(),
-                    ),
-                    Some(label_measurement),
+                    label_slot,
+                    &item.label,
+                    &label_style,
                     label_style.line_height,
+                    0.0,
                 ),
                 item.label.clone(),
                 label_style,
             );
+            ctx.pop_clip();
 
             if let Some(shortcut) = &item.shortcut {
                 let shortcut_style = theme.placeholder_text_style();
-                let shortcut_measurement = paint_text_measurement(ctx, shortcut, &shortcut_style);
-                ctx.draw_text(
-                    vertically_centered_text_rect(
-                        ctx,
-                        Rect::new(
-                            row.max_x() - item_padding.right - metrics.menu_shortcut_width,
-                            row.y(),
-                            metrics.menu_shortcut_width,
-                            row.height(),
-                        ),
-                        Some(shortcut_measurement),
-                        shortcut_style.line_height,
-                    ),
-                    shortcut.clone(),
-                    shortcut_style,
+                let shortcut_slot = Rect::new(
+                    row.max_x() - item_padding.right - metrics.menu_shortcut_width,
+                    row.y(),
+                    metrics.menu_shortcut_width,
+                    row.height(),
                 );
+                let shortcut_rect = aligned_text_rect_for_text(
+                    ctx,
+                    shortcut_slot,
+                    shortcut,
+                    &shortcut_style,
+                    shortcut_style.line_height,
+                    1.0,
+                );
+                ctx.push_clip_rect(shortcut_slot);
+                ctx.draw_text(shortcut_rect, shortcut.clone(), shortcut_style);
+                ctx.pop_clip();
             }
         }
     }
@@ -6368,11 +6412,19 @@ impl Widget for TooltipOverlay {
         );
         let tail = tooltip_tail(state.trigger_bounds, bubble, state.placement);
         ctx.fill(tail, state.theme.surfaces.tooltip);
-        ctx.draw_text(
-            inset_rect(bubble, metrics.tooltip_padding),
-            state.text.clone(),
-            state.theme.text_style(state.theme.surfaces.tooltip_text),
+        let text_style = state.theme.text_style(state.theme.surfaces.tooltip_text);
+        let text_slot = inset_rect(bubble, metrics.tooltip_padding);
+        let text_rect = aligned_text_rect_for_text(
+            ctx,
+            text_slot,
+            &state.text,
+            &text_style,
+            text_style.line_height,
+            0.0,
         );
+        ctx.push_clip_rect(text_slot);
+        ctx.draw_text(text_rect, state.text.clone(), text_style);
+        ctx.pop_clip();
     }
 
     fn layer_options(&self) -> LayerOptions {
@@ -6499,11 +6551,8 @@ impl Widget for Tooltip {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let mut state = self.state.borrow_mut();
-        state.measurement = Some(measure_text(
-            ctx,
-            &state.text,
-            &state.theme.placeholder_text_style(),
-        ));
+        let text_style = state.theme.text_style(state.theme.surfaces.tooltip_text);
+        state.measurement = Some(measure_text(ctx, &state.text, &text_style));
         drop(state);
         self.child.measure(ctx, constraints)
     }
@@ -7427,7 +7476,20 @@ impl Widget for ContextMenu {
             let highlighted = self.highlighted == Some(index);
             let pressed = self.pressed == Some(index);
             let label_style = theme.text_style(item.text_color(&theme));
-            let label_measurement = paint_text_measurement(ctx, &item.label, &label_style);
+            let label_slot = Rect::new(
+                row.x() + item_padding.left,
+                row.y(),
+                (row.width()
+                    - item_padding.left
+                    - item_padding.right
+                    - item
+                        .shortcut
+                        .as_ref()
+                        .map(|_| metrics.menu_shortcut_width)
+                        .unwrap_or(0.0))
+                .max(0.0),
+                row.height(),
+            );
             if highlighted || pressed {
                 ctx.fill(
                     rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
@@ -7443,48 +7505,40 @@ impl Widget for ContextMenu {
                 );
             }
 
+            ctx.push_clip_rect(label_slot);
             ctx.draw_text(
-                vertically_centered_text_rect(
+                aligned_text_rect_for_text(
                     ctx,
-                    Rect::new(
-                        row.x() + item_padding.left,
-                        row.y(),
-                        (row.width()
-                            - item_padding.left
-                            - item_padding.right
-                            - item
-                                .shortcut
-                                .as_ref()
-                                .map(|_| metrics.menu_shortcut_width)
-                                .unwrap_or(0.0))
-                        .max(0.0),
-                        row.height(),
-                    ),
-                    Some(label_measurement),
+                    label_slot,
+                    &item.label,
+                    &label_style,
                     label_style.line_height,
+                    0.0,
                 ),
                 item.label.clone(),
                 label_style,
             );
+            ctx.pop_clip();
 
             if let Some(shortcut) = &item.shortcut {
                 let shortcut_style = theme.placeholder_text_style();
-                let shortcut_measurement = paint_text_measurement(ctx, shortcut, &shortcut_style);
-                ctx.draw_text(
-                    vertically_centered_text_rect(
-                        ctx,
-                        Rect::new(
-                            row.max_x() - item_padding.right - metrics.menu_shortcut_width,
-                            row.y(),
-                            metrics.menu_shortcut_width,
-                            row.height(),
-                        ),
-                        Some(shortcut_measurement),
-                        shortcut_style.line_height,
-                    ),
-                    shortcut.clone(),
-                    shortcut_style,
+                let shortcut_slot = Rect::new(
+                    row.max_x() - item_padding.right - metrics.menu_shortcut_width,
+                    row.y(),
+                    metrics.menu_shortcut_width,
+                    row.height(),
                 );
+                let shortcut_rect = aligned_text_rect_for_text(
+                    ctx,
+                    shortcut_slot,
+                    shortcut,
+                    &shortcut_style,
+                    shortcut_style.line_height,
+                    1.0,
+                );
+                ctx.push_clip_rect(shortcut_slot);
+                ctx.draw_text(shortcut_rect, shortcut.clone(), shortcut_style);
+                ctx.pop_clip();
             }
         }
     }
@@ -7891,25 +7945,46 @@ impl Widget for Dialog {
         let description_style = self.theme.placeholder_text_style();
         let padding = metrics.dialog_padding;
         let text_x = dialog.x() + padding.left;
-        let mut text_y = dialog.y() + padding.top;
+        let text_y = dialog.y() + padding.top;
         let text_width = (dialog.width() - padding.left - padding.right).max(0.0);
-        ctx.draw_text(
-            Rect::new(text_x, text_y, text_width, title_style.line_height),
-            self.title.clone(),
-            title_style,
+        let title_height = self
+            .title_measurement
+            .map(|measurement| measurement.height.max(title_style.line_height))
+            .unwrap_or(title_style.line_height);
+        let title_slot = Rect::new(text_x, text_y, text_width, title_height);
+        let title_rect = aligned_text_rect_for_text(
+            ctx,
+            title_slot,
+            &self.title,
+            &title_style,
+            title_style.line_height,
+            0.0,
         );
-        text_y += metrics.dialog_title_line_height;
+        ctx.push_clip_rect(title_slot);
+        ctx.draw_text(title_rect, self.title.clone(), title_style);
+        ctx.pop_clip();
         if let Some(description) = &self.description {
-            ctx.draw_text(
-                Rect::new(
-                    text_x,
-                    text_y + metrics.dialog_description_gap,
-                    text_width,
-                    description_style.line_height,
-                ),
-                description.clone(),
-                description_style,
+            let description_height = self
+                .description_measurement
+                .map(|measurement| measurement.height.max(description_style.line_height))
+                .unwrap_or(description_style.line_height);
+            let description_slot = Rect::new(
+                text_x,
+                title_slot.max_y() + metrics.dialog_description_gap,
+                text_width,
+                description_height,
             );
+            let description_rect = aligned_text_rect_for_text(
+                ctx,
+                description_slot,
+                description,
+                &description_style,
+                description_style.line_height,
+                0.0,
+            );
+            ctx.push_clip_rect(description_slot);
+            ctx.draw_text(description_rect, description.clone(), description_style);
+            ctx.pop_clip();
         }
 
         self.body.paint(ctx);
@@ -8119,19 +8194,24 @@ impl Widget for ProgressBar {
         }
         if self.show_value {
             let label = format!("{:.0}%", self.fraction() * 100.0);
-            let text_style = theme.text_style(tone_text);
-            let text_measurement = paint_text_measurement(ctx, &label, &text_style);
-            ctx.draw_text(
-                centered_text_rect(
-                    ctx,
-                    ctx.bounds(),
-                    metrics.progress_bar_label_padding,
-                    Some(text_measurement),
-                    text_style.line_height,
-                ),
-                label,
-                text_style,
+            let text_style = numeric_text_style(theme.text_style(tone_text));
+            let label_padding = Insets {
+                top: 0.0,
+                bottom: 0.0,
+                ..metrics.progress_bar_label_padding
+            };
+            let label_slot = inset_rect(ctx.bounds(), label_padding);
+            let text_rect = aligned_text_rect_for_text(
+                ctx,
+                label_slot,
+                &label,
+                &text_style,
+                text_style.line_height,
+                0.5,
             );
+            ctx.push_clip_rect(label_slot);
+            ctx.draw_text(text_rect, label, text_style);
+            ctx.pop_clip();
         }
     }
 
@@ -8211,12 +8291,21 @@ impl Spinner {
 impl Widget for Spinner {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
-        let label_width = self
+        let text_style = theme.body_text_style();
+        let label_measurement = self
             .label
             .as_ref()
-            .map(|label| measure_text(ctx, label, &theme.body_text_style()).width + 12.0)
+            .map(|label| measure_text(ctx, label, &text_style));
+        let label_width = label_measurement
+            .map(|measurement| measurement.width + 12.0)
             .unwrap_or(0.0);
-        constraints.clamp(Size::new(self.size + label_width, self.size.max(20.0)))
+        let label_height = label_measurement
+            .map(|measurement| measurement.height.max(text_style.line_height))
+            .unwrap_or(0.0);
+        constraints.clamp(Size::new(
+            self.size + label_width,
+            self.size.max(20.0).max(label_height),
+        ))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -8243,16 +8332,24 @@ impl Widget for Spinner {
         }
 
         if let Some(label) = &self.label {
-            ctx.draw_text(
-                Rect::new(
-                    indicator.max_x() + 12.0,
-                    ctx.bounds().y(),
-                    ctx.bounds().width() - indicator.width() - 12.0,
-                    ctx.bounds().height(),
-                ),
-                label.clone(),
-                theme.body_text_style(),
+            let text_style = theme.body_text_style();
+            let text_slot = Rect::new(
+                indicator.max_x() + 12.0,
+                ctx.bounds().y(),
+                ctx.bounds().width() - indicator.width() - 12.0,
+                ctx.bounds().height(),
             );
+            let text_rect = aligned_text_rect_for_text(
+                ctx,
+                text_slot,
+                label,
+                &text_style,
+                text_style.line_height,
+                0.0,
+            );
+            ctx.push_clip_rect(text_slot);
+            ctx.draw_text(text_rect, label.clone(), text_style);
+            ctx.pop_clip();
         }
     }
 
@@ -8281,16 +8378,30 @@ fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeas
         })
 }
 
-fn paint_text_measurement(ctx: &PaintCtx, text: &str, style: &TextStyle) -> TextMeasurement {
-    ctx.measure_text(text.to_string(), style.clone())
-        .unwrap_or(TextMeasurement {
-            width: 0.0,
-            height: style.line_height,
-            bounds: Rect::new(0.0, 0.0, 0.0, style.line_height),
-            ascent: style.font_size,
-            descent: 0.0,
-            cap_height: Some(style.font_size),
-        })
+fn text_token_style(theme: &DefaultTheme, token: ThemeTextToken, color: Color) -> TextStyle {
+    TextStyle {
+        font_size: token.size.max(1.0),
+        line_height: token.line_height.max(1.0),
+        color,
+        ..theme.body_text_style()
+    }
+}
+
+fn numeric_text_style(mut style: TextStyle) -> TextStyle {
+    style.features.enable(FontFeature::TABULAR_FIGURES);
+    style
+}
+
+fn numeric_text_style_if_numeric(text: &str, style: TextStyle) -> TextStyle {
+    if text_contains_ascii_digit(text) {
+        numeric_text_style(style)
+    } else {
+        style
+    }
+}
+
+fn text_contains_ascii_digit(text: &str) -> bool {
+    text.chars().any(|c| c.is_ascii_digit())
 }
 
 fn rect_center(rect: Rect) -> Point {
@@ -8473,86 +8584,6 @@ fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
     ctx.dpi().physical_pixels_to_logical(value)
 }
 
-fn centered_text_rect(
-    ctx: &PaintCtx,
-    bounds: Rect,
-    padding: Insets,
-    measurement: Option<TextMeasurement>,
-    line_height: f32,
-) -> Rect {
-    let rect = Rect::new(
-        bounds.x() + padding.left,
-        bounds.y(),
-        (bounds.width() - padding.left - padding.right).max(0.0),
-        bounds.height(),
-    );
-    let Some(measurement) = measurement else {
-        return rect;
-    };
-
-    let width = measurement.width.min(rect.width());
-    let height = line_height.max(measurement.height).min(rect.height());
-    let optical_centering = window_render_options(ctx.window_id())
-        .map(|options| options.optical_vertical_text_alignment_enabled)
-        .unwrap_or(true);
-    let top = if optical_centering {
-        -measurement.cap_height.unwrap_or(measurement.ascent)
-    } else {
-        -measurement.ascent
-    };
-    let bottom = if optical_centering {
-        measurement.descent * 0.5
-    } else {
-        measurement.descent
-    };
-    let visual_center = (top + bottom) * 0.5;
-    let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
-    let leading_above = ((height - (measurement.ascent + measurement.descent)).max(0.0)) * 0.5;
-
-    Rect::new(
-        rect.x() + ((rect.width() - width) * 0.5),
-        baseline - measurement.ascent - leading_above,
-        width,
-        height,
-    )
-}
-
-fn vertically_centered_text_rect(
-    ctx: &PaintCtx,
-    rect: Rect,
-    measurement: Option<TextMeasurement>,
-    line_height: f32,
-) -> Rect {
-    let Some(measurement) = measurement else {
-        return rect;
-    };
-
-    let height = line_height.max(measurement.height).min(rect.height());
-    let optical_centering = window_render_options(ctx.window_id())
-        .map(|options| options.optical_vertical_text_alignment_enabled)
-        .unwrap_or(true);
-    let top = if optical_centering {
-        -measurement.cap_height.unwrap_or(measurement.ascent)
-    } else {
-        -measurement.ascent
-    };
-    let bottom = if optical_centering {
-        measurement.descent * 0.5
-    } else {
-        measurement.descent
-    };
-    let visual_center = (top + bottom) * 0.5;
-    let baseline = rect.y() + (rect.height() * 0.5) - visual_center;
-    let leading_above = ((height - (measurement.ascent + measurement.descent)).max(0.0)) * 0.5;
-
-    Rect::new(
-        rect.x(),
-        baseline - measurement.ascent - leading_above,
-        rect.width(),
-        height,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
@@ -8565,7 +8596,7 @@ mod tests {
         ToolPalette, ToolPaletteItem, Toolbar,
     };
     use crate::FloatingStack;
-    use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken, SemanticTone};
+    use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken, SemanticTone, ThemeTextToken};
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
@@ -8577,7 +8608,7 @@ mod tests {
         WindowBuilder,
     };
     use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
-    use sui_text::{FontRegistry, TextSystem};
+    use sui_text::{FontFeature, FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -8596,6 +8627,23 @@ mod tests {
         W: Widget + 'static,
     {
         let (mut runtime, window_id) = build_runtime(root);
+        runtime.render(window_id).unwrap()
+    }
+
+    fn render_isolated<W>(root: W) -> RenderOutput
+    where
+        W: Widget + 'static,
+    {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Unused")
+                    .root(crate::Label::new("Unused")),
+            )
+            .window(WindowBuilder::new().title("Composites").root(root))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[1];
         runtime.render(window_id).unwrap()
     }
 
@@ -8826,6 +8874,136 @@ mod tests {
     }
 
     #[test]
+    fn dialog_title_and_description_visual_centers_match_header_slots() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            Dialog::new("Export", crate::Label::new("Export settings"))
+                .theme(theme)
+                .description("Choose file settings"),
+        );
+        let dialog = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("dialog semantics present")
+            .bounds;
+
+        let title = text_run_for(&output, "Export");
+        let title_layout = TextSystem::new()
+            .shape_text_run(&title, &FontRegistry::new())
+            .expect("dialog title should shape");
+        let title_line = title_layout
+            .lines()
+            .first()
+            .expect("dialog title should contain one line");
+        let title_visual_center = title.rect.y()
+            + title_line.baseline
+            + optical_visual_center(title_layout.measurement());
+
+        let description = text_run_for(&output, "Choose file settings");
+        let description_layout = TextSystem::new()
+            .shape_text_run(&description, &FontRegistry::new())
+            .expect("dialog description should shape");
+        let description_line = description_layout
+            .lines()
+            .first()
+            .expect("dialog description should contain one line");
+        let description_visual_center = description.rect.y()
+            + description_line.baseline
+            + optical_visual_center(description_layout.measurement());
+
+        let metrics = theme.metrics;
+        let padding = metrics.dialog_padding;
+        let text_width = (dialog.width() - padding.left - padding.right).max(0.0);
+        let title_height = title
+            .style
+            .line_height
+            .max(title_layout.measurement().height);
+        let description_height = description
+            .style
+            .line_height
+            .max(description_layout.measurement().height);
+        let title_slot = Rect::new(
+            dialog.x() + padding.left,
+            dialog.y() + padding.top,
+            text_width,
+            title_height,
+        );
+        let description_slot = Rect::new(
+            dialog.x() + padding.left,
+            title_slot.max_y() + metrics.dialog_description_gap,
+            text_width,
+            description_height,
+        );
+
+        assert!((title_visual_center - super::rect_center(title_slot).y).abs() < 0.75);
+        assert!((description_visual_center - super::rect_center(description_slot).y).abs() < 0.75);
+    }
+
+    #[test]
+    fn dialog_header_text_preserves_tall_measurements_in_compact_line_boxes() {
+        let mut theme = DefaultTheme::default();
+        theme.metrics.dialog_title_font_size = 32.0;
+        theme.metrics.dialog_title_line_height = 12.0;
+        theme.typography.body_font_size = 28.0;
+        theme.typography.body_line_height = 10.0;
+
+        let output = render(
+            Dialog::new("Export", crate::Label::new("Export settings"))
+                .theme(theme)
+                .description("Choose file settings"),
+        );
+        let dialog = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("dialog semantics present")
+            .bounds;
+        let title = text_run_for(&output, "Export");
+        let title_layout = TextSystem::new()
+            .shape_text_run(&title, &FontRegistry::new())
+            .expect("dialog title should shape");
+        let description = text_run_for(&output, "Choose file settings");
+        let description_layout = TextSystem::new()
+            .shape_text_run(&description, &FontRegistry::new())
+            .expect("dialog description should shape");
+        let metrics = theme.metrics;
+        let padding = metrics.dialog_padding;
+        let text_width = (dialog.width() - padding.left - padding.right).max(0.0);
+        let title_height = title
+            .style
+            .line_height
+            .max(title_layout.measurement().height);
+        let description_height = description
+            .style
+            .line_height
+            .max(description_layout.measurement().height);
+        let title_slot = Rect::new(
+            dialog.x() + padding.left,
+            dialog.y() + padding.top,
+            text_width,
+            title_height,
+        );
+        let description_slot = Rect::new(
+            dialog.x() + padding.left,
+            title_slot.max_y() + metrics.dialog_description_gap,
+            text_width,
+            description_height,
+        );
+
+        assert!(title.rect.height() >= title_layout.measurement().height - 0.01);
+        assert!(title.rect.height() > title.style.line_height);
+        assert!(description.rect.height() >= description_layout.measurement().height - 0.01);
+        assert!(description.rect.height() > description.style.line_height);
+        assert_eq!(description.style.color, theme.palette.placeholder);
+        assert!((text_run_visual_center(&title) - super::rect_center(title_slot).y).abs() < 0.75);
+        assert!(
+            (text_run_visual_center(&description) - super::rect_center(description_slot).y).abs()
+                < 0.75
+        );
+    }
+
+    #[test]
     fn density_modes_resize_composite_status_widgets() {
         let compact = DefaultTheme::compact();
         let touch = DefaultTheme::touch();
@@ -9020,6 +9198,260 @@ mod tests {
     }
 
     #[test]
+    fn action_card_text_visual_centers_match_title_and_description_slots() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 104.0))
+                .with_child(
+                    ActionCard::new("Paint", "Pixel canvas workspace")
+                        .theme(theme)
+                        .icon(crate::IconGlyph::Brush),
+                ),
+        );
+        let card = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Paint")
+            })
+            .expect("action card should expose button semantics");
+
+        let title = text_run_for(&output, "Paint");
+        let title_layout = TextSystem::new()
+            .shape_text_run(&title, &FontRegistry::new())
+            .expect("action card title should shape");
+        let title_line = title_layout
+            .lines()
+            .first()
+            .expect("action card title should contain one line");
+        let title_visual_center = title.rect.y()
+            + title_line.baseline
+            + optical_visual_center(title_layout.measurement());
+
+        let description = text_run_for(&output, "Pixel canvas workspace");
+        let description_layout = TextSystem::new()
+            .shape_text_run(&description, &FontRegistry::new())
+            .expect("action card description should shape");
+        let description_line = description_layout
+            .lines()
+            .first()
+            .expect("action card description should contain one line");
+        let description_visual_center = description.rect.y()
+            + description_line.baseline
+            + optical_visual_center(description_layout.measurement());
+
+        let metrics = theme.metrics;
+        let content = super::inset_rect(card.bounds, metrics.action_card_padding);
+        let icon_extent = metrics.action_card_icon_box_size + metrics.action_card_icon_gap;
+        let text_bounds = Rect::new(
+            content.x() + icon_extent,
+            content.y(),
+            (content.width() - icon_extent - metrics.action_card_trailing_gap).max(0.0),
+            content.height(),
+        );
+        let title_height = title
+            .style
+            .line_height
+            .max(title_layout.measurement().height);
+        let description_height =
+            (text_bounds.height() - title_height - metrics.action_card_text_gap)
+                .max(description.style.line_height)
+                .min(description.style.line_height * 2.0);
+        let text_block_height = title_height + metrics.action_card_text_gap + description_height;
+        let text_y = text_bounds.y() + ((text_bounds.height() - text_block_height) * 0.5).max(0.0);
+        let title_slot = Rect::new(text_bounds.x(), text_y, text_bounds.width(), title_height);
+        let description_slot = Rect::new(
+            text_bounds.x(),
+            title_slot.max_y() + metrics.action_card_text_gap,
+            text_bounds.width(),
+            description_height,
+        );
+
+        assert!((title_visual_center - super::rect_center(title_slot).y).abs() < 0.75);
+        assert!((description_visual_center - super::rect_center(description_slot).y).abs() < 0.75);
+    }
+
+    #[test]
+    fn action_card_text_preserves_tall_measurements_in_compact_line_boxes() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 32.0,
+            line_height: 12.0,
+        };
+        theme.text.xs = ThemeTextToken {
+            size: 32.0,
+            line_height: 12.0,
+        };
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(360.0, 148.0))
+                .with_child(
+                    ActionCard::new("Paint", "Glyph box")
+                        .theme(theme)
+                        .icon(crate::IconGlyph::Brush),
+                ),
+        );
+        let card = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Paint")
+            })
+            .expect("action card should expose button semantics");
+        let description = text_run_for(&output, "Glyph box");
+        let description_layout = TextSystem::new()
+            .shape_text_run(&description, &FontRegistry::new())
+            .expect("action card description should shape");
+        let title = text_run_for(&output, "Paint");
+        let title_layout = TextSystem::new()
+            .shape_text_run(&title, &FontRegistry::new())
+            .expect("action card title should shape");
+        let metrics = theme.metrics;
+        let content = super::inset_rect(card.bounds, metrics.action_card_padding);
+        let icon_extent = metrics.action_card_icon_box_size + metrics.action_card_icon_gap;
+        let text_bounds = Rect::new(
+            content.x() + icon_extent,
+            content.y(),
+            (content.width() - icon_extent - metrics.action_card_trailing_gap).max(0.0),
+            content.height(),
+        );
+        let title_height = title
+            .style
+            .line_height
+            .max(title_layout.measurement().height);
+        let description_min_height = description
+            .style
+            .line_height
+            .max(description_layout.measurement().height);
+        let description_height =
+            (text_bounds.height() - title_height - metrics.action_card_text_gap)
+                .max(description_min_height)
+                .min((description.style.line_height * 2.0).max(description_min_height));
+        let text_block_height = title_height + metrics.action_card_text_gap + description_height;
+        let text_y = text_bounds.y() + ((text_bounds.height() - text_block_height) * 0.5).max(0.0);
+        let title_slot = Rect::new(text_bounds.x(), text_y, text_bounds.width(), title_height);
+        let description_slot = Rect::new(
+            text_bounds.x(),
+            text_y + title_height + metrics.action_card_text_gap,
+            text_bounds.width(),
+            description_height,
+        );
+
+        assert_text_run_uses_token(&title, theme.text.sm);
+        assert!(
+            title.rect.height() >= title_layout.measurement().height - 0.01,
+            "action card title rect should preserve measured glyph height: rect={:?}, measurement={:?}",
+            title.rect,
+            title_layout.measurement()
+        );
+        assert!(
+            title.rect.height() > title.style.line_height,
+            "test theme should exercise a title measurement taller than line-height"
+        );
+        assert!(
+            (text_run_visual_center(&title) - super::rect_center(title_slot).y).abs() < 0.75,
+            "title text should remain optically centered in its slot"
+        );
+        assert_text_run_uses_token(&description, theme.text.xs);
+        assert!(
+            description.rect.height() >= description_layout.measurement().height - 0.01,
+            "action card description rect should preserve measured glyph height: rect={:?}, measurement={:?}",
+            description.rect,
+            description_layout.measurement()
+        );
+        assert!(
+            description.rect.height() > description.style.line_height * 2.0,
+            "test theme should exercise measured-height preservation beyond the old two-line cap"
+        );
+        assert!(
+            (text_run_visual_center(&description) - super::rect_center(description_slot).y).abs()
+                < 0.75,
+            "description text should remain optically centered in its slot"
+        );
+        assert!(
+            description.rect.y() >= text_bounds.y(),
+            "description should stay inside action card text bounds"
+        );
+        assert!(
+            description.rect.max_y() <= text_bounds.max_y() + 0.75,
+            "description should stay inside action card text bounds"
+        );
+    }
+
+    #[test]
+    fn composite_default_text_styles_follow_theme_text_tokens() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 11.0,
+            line_height: 15.0,
+        };
+        theme.text.sm = ThemeTextToken {
+            size: 15.0,
+            line_height: 23.0,
+        };
+        theme.sync_derived_fields();
+
+        let action_card = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 112.0))
+                .with_child(ActionCard::new("Token action", "Token action detail").theme(theme)),
+        );
+        assert_text_run_uses_token(&text_run_for(&action_card, "Token action"), theme.text.sm);
+        assert_text_run_uses_token(
+            &text_run_for(&action_card, "Token action detail"),
+            theme.text.xs,
+        );
+
+        let property_row = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 64.0))
+                .with_child(
+                    PropertyRow::new("Token property", crate::Button::new("Edit"))
+                        .theme(theme)
+                        .inline(),
+                ),
+        );
+        assert_text_run_uses_token(
+            &text_run_for(&property_row, "Token property"),
+            theme.text.sm,
+        );
+
+        let form_section = render(
+            crate::SizedBox::new()
+                .size(Size::new(360.0, 140.0))
+                .with_child(
+                    FormSection::new("Token section", crate::Button::new("Apply"))
+                        .theme(theme)
+                        .description("Token section detail"),
+                ),
+        );
+        assert_text_run_uses_token(&text_run_for(&form_section, "Token section"), theme.text.sm);
+        assert_text_run_uses_token(
+            &text_run_for(&form_section, "Token section detail"),
+            theme.text.xs,
+        );
+
+        let preset_strip = render(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 44.0))
+                .with_child(
+                    PresetStrip::new("Brush")
+                        .theme(theme)
+                        .preset("Token preset"),
+                ),
+        );
+        assert_text_run_uses_token(&text_run_for(&preset_strip, "Token preset"), theme.text.xs);
+
+        let status_bar = render(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 32.0))
+                .with_child(StatusBar::new().theme(theme).text_segment("Token status")),
+        );
+        assert_text_run_uses_token(&text_run_for(&status_bar, "Token status"), theme.text.xs);
+    }
+
+    #[test]
     fn preset_strip_exposes_selected_preset_semantics() {
         let output = render(
             crate::SizedBox::new()
@@ -9053,6 +9485,77 @@ mod tests {
         assert_eq!(
             selected.value,
             Some(SemanticsValue::Text("18 px".to_string()))
+        );
+    }
+
+    #[test]
+    fn preset_strip_label_clips_to_padded_item_slot() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(220.0, 40.0))
+                .with_child(
+                    PresetStrip::new("Brush presets")
+                        .item_width(180.0)
+                        .preset("Soft"),
+                ),
+        );
+        let preset = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some("Soft"))
+            .expect("preset button semantics should exist");
+        let text = text_run_for(&output, "Soft");
+        let clip = clip_rect_for_text(&output, "Soft");
+        let expected_clip =
+            super::inset_rect(preset.bounds, theme.metrics.preset_strip_label_padding);
+
+        assert!(
+            clip.width() > text.rect.width(),
+            "clip should cover the padded item slot rather than the measured text rect"
+        );
+        assert!((clip.x() - expected_clip.x()).abs() < 0.75);
+        assert!((clip.y() - expected_clip.y()).abs() < 0.75);
+        assert!((clip.width() - expected_clip.width()).abs() < 0.75);
+        assert!((clip.height() - expected_clip.height()).abs() < 0.75);
+    }
+
+    #[test]
+    fn preset_strip_label_preserves_tall_measurements_and_item_centering() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 28.0,
+            line_height: 12.0,
+        };
+        theme.sync_derived_fields();
+
+        let output = render_isolated(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 56.0))
+                .with_child(
+                    PresetStrip::new("Brush presets")
+                        .theme(theme)
+                        .item_height(56.0)
+                        .item_width(180.0)
+                        .preset("Soft"),
+                ),
+        );
+        let preset = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some("Soft"))
+            .expect("preset button semantics should exist");
+        let text = text_run_for(&output, "Soft");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("preset label should shape");
+
+        assert_text_run_uses_token(&text, theme.text.xs);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+        assert!(
+            (text_visual_center_for(&output, "Soft") - super::rect_center(preset.bounds).y).abs()
+                < 0.75
         );
     }
 
@@ -9158,6 +9661,120 @@ mod tests {
             layer.bounds.width() > 220.0,
             "expected status segment width to grow from text measurement, got {:?}",
             layer.bounds
+        );
+    }
+
+    #[test]
+    fn status_bar_numeric_segments_use_tabular_figures_without_forcing_plain_labels() {
+        let output = render(
+            StatusBar::new()
+                .name("Editor status")
+                .segment(StatusBarSegment::new("Ready").min_width(80.0))
+                .segment(StatusBarSegment::new("Zoom 35%").min_width(120.0)),
+        );
+
+        let ready = text_run_for(&output, "Ready");
+        let zoom = text_run_for(&output, "Zoom 35%");
+
+        assert!(
+            !ready
+                .style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        assert!(
+            zoom.style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+    }
+
+    #[test]
+    fn status_bar_segment_text_visual_center_matches_segment_center() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(220.0, 40.0))
+                .with_child(
+                    StatusBar::new()
+                        .height(40.0)
+                        .segment(StatusBarSegment::new("Ready").min_width(96.0)),
+                ),
+        );
+        let text = text_run_for(&output, "Ready");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("status segment text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("status segment text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let segment = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Text && node.name.as_deref() == Some("Ready"))
+            .expect("status segment semantics should exist");
+        let segment_center = segment.bounds.y() + (segment.bounds.height() * 0.5);
+
+        assert!((actual_visual_center - segment_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn status_bar_segments_preserve_tall_measurements_and_numeric_features() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 28.0,
+            line_height: 10.0,
+        };
+        theme.metrics.status_bar_height = 52.0;
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(360.0, 52.0))
+                .with_child(
+                    StatusBar::new()
+                        .theme(theme)
+                        .height(52.0)
+                        .segment(StatusBarSegment::new("Ready").min_width(120.0))
+                        .segment(StatusBarSegment::new("Zoom 35%").min_width(140.0)),
+                ),
+        );
+        for label in ["Ready", "Zoom 35%"] {
+            let text = text_run_for(&output, label);
+            let layout = TextSystem::new()
+                .shape_text_run(&text, &FontRegistry::new())
+                .expect("status segment text should shape");
+            let segment = output
+                .semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::Text && node.name.as_deref() == Some(label)
+                })
+                .expect("status segment semantics should exist");
+            let segment_center = segment.bounds.y() + (segment.bounds.height() * 0.5);
+
+            assert_text_run_uses_token(&text, theme.text.xs);
+            assert!(text.rect.height() >= layout.measurement().height - 0.01);
+            assert!(text.rect.height() > text.style.line_height);
+            assert!((text_run_visual_center(&text) - segment_center).abs() < 0.75);
+        }
+
+        let ready = text_run_for(&output, "Ready");
+        let zoom = text_run_for(&output, "Zoom 35%");
+        assert!(
+            !ready
+                .style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        assert!(
+            zoom.style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
         );
     }
 
@@ -9502,6 +10119,137 @@ mod tests {
     }
 
     #[test]
+    fn property_row_inline_label_visual_center_matches_row_center() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 36.0))
+                .with_child(
+                    PropertyRow::new("Opacity", crate::Slider::new("Opacity"))
+                        .layout(PropertyRowLayout::Inline)
+                        .label_width(96.0),
+                ),
+        );
+        let text = text_run_for(&output, "Opacity");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("property row label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("property row label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let row_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - row_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn property_row_numeric_control_aligns_value_to_control_edge() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 36.0))
+                .with_child(
+                    PropertyRow::new(
+                        "Brush size",
+                        crate::NumberInput::new("Brush size")
+                            .precision(0)
+                            .value(128.0),
+                    )
+                    .layout(PropertyRowLayout::Inline)
+                    .label_width(96.0)
+                    .control_width(120.0),
+                ),
+        );
+        let value = text_run_for(&output, "128");
+        let label = text_run_for(&output, "Brush size");
+        let control = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::SpinBox && node.name.as_deref() == Some("Brush size")
+            })
+            .expect("number input semantics should exist");
+        let expected_right = control.bounds.max_x()
+            - theme.metrics.number_input_stepper_width
+            - theme.metrics.text_input_padding.right;
+
+        assert!(
+            value
+                .style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
+        assert!((value.rect.max_x() - expected_right).abs() < 1.0);
+        assert!(
+            (text_run_visual_center(&value) - (control.bounds.y() + control.bounds.height() * 0.5))
+                .abs()
+                < 0.75,
+            "property row numeric value should remain optically centered in the control"
+        );
+        assert!(
+            (text_run_visual_center(&value) - text_run_visual_center(&label)).abs() < 0.75,
+            "property row label and numeric value should share a visual baseline"
+        );
+    }
+
+    #[test]
+    fn property_row_inline_label_preserves_tall_metrics_with_numeric_control() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 28.0,
+            line_height: 10.0,
+        };
+        theme.sync_derived_fields();
+        theme.metrics.min_height = 56.0;
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(380.0, 64.0))
+                .with_child(
+                    PropertyRow::new(
+                        "Brush size",
+                        crate::NumberInput::new("Brush size")
+                            .theme(theme)
+                            .precision(0)
+                            .value(128.0),
+                    )
+                    .theme(theme)
+                    .layout(PropertyRowLayout::Inline)
+                    .label_width(132.0)
+                    .control_width(150.0),
+                ),
+        );
+        let label = text_run_for(&output, "Brush size");
+        let label_layout = TextSystem::new()
+            .shape_text_run(&label, &FontRegistry::new())
+            .expect("property row label should shape");
+        let value = text_run_for(&output, "128");
+        let row_center = output.frame.viewport.height * 0.5;
+        let control = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::SpinBox && node.name.as_deref() == Some("Brush size")
+            })
+            .expect("number input semantics should exist");
+        let expected_right = control.bounds.max_x()
+            - theme.metrics.number_input_stepper_width
+            - theme.metrics.text_input_padding.right;
+
+        assert_text_run_uses_token(&label, theme.text.sm);
+        assert!(label.rect.height() >= label_layout.measurement().height - 0.01);
+        assert!(label.rect.height() > label.style.line_height);
+        assert!((text_run_visual_center(&label) - row_center).abs() < 0.75);
+        assert!((value.rect.max_x() - expected_right).abs() < 1.0);
+        assert!(
+            (text_run_visual_center(&value) - text_run_visual_center(&label)).abs() < 0.75,
+            "property row label and numeric value should share a visual baseline for tall metrics"
+        );
+    }
+
+    #[test]
     fn property_row_label_id_is_javascript_safe() {
         let id = super::property_row_label_id(WidgetId::new(402)).get();
 
@@ -9560,6 +10308,165 @@ mod tests {
                 .iter()
                 .any(|node| node.role == SemanticsRole::Text
                     && node.name.as_deref() == Some("Default model"))
+        );
+    }
+
+    #[test]
+    fn form_section_header_text_block_centers_against_tall_header_action() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(420.0, 140.0))
+                .with_child(
+                    FormSection::new("Providers", crate::Label::new("Configured"))
+                        .theme(theme)
+                        .description("Credentials and defaults")
+                        .header_action(
+                            crate::SizedBox::new()
+                                .size(Size::new(76.0, 52.0))
+                                .with_child(crate::Label::new("Sync")),
+                        ),
+                ),
+        );
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Providers")
+            })
+            .expect("form section semantics should exist");
+
+        let title = text_run_for(&output, "Providers");
+        let title_layout = TextSystem::new()
+            .shape_text_run(&title, &FontRegistry::new())
+            .expect("form section title should shape");
+        let title_line = title_layout
+            .lines()
+            .first()
+            .expect("form section title should contain one line");
+        let title_visual_center = title.rect.y()
+            + title_line.baseline
+            + optical_visual_center(title_layout.measurement());
+
+        let description = text_run_for(&output, "Credentials and defaults");
+        let description_layout = TextSystem::new()
+            .shape_text_run(&description, &FontRegistry::new())
+            .expect("form section description should shape");
+        let description_line = description_layout
+            .lines()
+            .first()
+            .expect("form section description should contain one line");
+        let description_visual_center = description.rect.y()
+            + description_line.baseline
+            + optical_visual_center(description_layout.measurement());
+
+        let metrics = theme.metrics;
+        let content = super::inset_rect(section.bounds, metrics.form_section_padding);
+        let header_gap = metrics.form_section_header_gap;
+        let action_width = (76.0 + header_gap).min(content.width());
+        let text_width = (content.width() - action_width).max(0.0);
+        let title_height = title
+            .style
+            .line_height
+            .max(title_layout.measurement().height);
+        let description_height = description
+            .style
+            .line_height
+            .max(description_layout.measurement().height);
+        let text_block_height =
+            title_height + metrics.form_section_description_gap + description_height;
+        let header_height = text_block_height.max(52.0);
+        let text_y = content.y() + ((header_height - text_block_height) * 0.5).max(0.0);
+        let title_slot = Rect::new(content.x(), text_y, text_width, title_height);
+        let description_slot = Rect::new(
+            content.x(),
+            title_slot.max_y() + metrics.form_section_description_gap,
+            text_width,
+            description_height,
+        );
+
+        assert!((title_visual_center - super::rect_center(title_slot).y).abs() < 0.75);
+        assert!((description_visual_center - super::rect_center(description_slot).y).abs() < 0.75);
+    }
+
+    #[test]
+    fn form_section_header_text_preserves_tall_measurements_in_compact_line_boxes() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 30.0,
+            line_height: 10.0,
+        };
+        theme.text.xs = ThemeTextToken {
+            size: 28.0,
+            line_height: 10.0,
+        };
+        theme.sync_derived_fields();
+
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(460.0, 190.0))
+                .with_child(
+                    FormSection::new("Providers", crate::Label::new("Configured"))
+                        .theme(theme)
+                        .description("Credentials and defaults")
+                        .header_action(
+                            crate::SizedBox::new()
+                                .size(Size::new(76.0, 52.0))
+                                .with_child(crate::Label::new("Sync")),
+                        ),
+                ),
+        );
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Providers")
+            })
+            .expect("form section semantics should exist");
+        let title = text_run_for(&output, "Providers");
+        let title_layout = TextSystem::new()
+            .shape_text_run(&title, &FontRegistry::new())
+            .expect("form section title should shape");
+        let description = text_run_for(&output, "Credentials and defaults");
+        let description_layout = TextSystem::new()
+            .shape_text_run(&description, &FontRegistry::new())
+            .expect("form section description should shape");
+        let metrics = theme.metrics;
+        let content = super::inset_rect(section.bounds, metrics.form_section_padding);
+        let action_width = (76.0 + metrics.form_section_header_gap).min(content.width());
+        let text_width = (content.width() - action_width).max(0.0);
+        let title_height = title
+            .style
+            .line_height
+            .max(title_layout.measurement().height);
+        let description_height = description
+            .style
+            .line_height
+            .max(description_layout.measurement().height);
+        let text_block_height =
+            title_height + metrics.form_section_description_gap + description_height;
+        let header_height = text_block_height.max(52.0);
+        let text_y = content.y() + ((header_height - text_block_height) * 0.5).max(0.0);
+        let title_slot = Rect::new(content.x(), text_y, text_width, title_height);
+        let description_slot = Rect::new(
+            content.x(),
+            title_slot.max_y() + metrics.form_section_description_gap,
+            text_width,
+            description_height,
+        );
+
+        assert_text_run_uses_token(&title, theme.text.sm);
+        assert_text_run_uses_token(&description, theme.text.xs);
+        assert!(title.rect.height() >= title_layout.measurement().height - 0.01);
+        assert!(title.rect.height() > title.style.line_height);
+        assert!(description.rect.height() >= description_layout.measurement().height - 0.01);
+        assert!(description.rect.height() > description.style.line_height);
+        assert!((text_run_visual_center(&title) - super::rect_center(title_slot).y).abs() < 0.75);
+        assert!(
+            (text_run_visual_center(&description) - super::rect_center(description_slot).y).abs()
+                < 0.75
         );
     }
 
@@ -9642,6 +10549,95 @@ mod tests {
 
         assert!(action.bounds.x() > title.bounds.x());
         assert!(child.bounds.y() > action.bounds.max_y());
+    }
+
+    #[test]
+    fn panel_section_title_visual_center_matches_title_slot_center() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(240.0, 92.0))
+                .with_child(
+                    PanelSection::new("Layers", crate::Label::new("Paint"))
+                        .header_action(crate::IconButton::new(crate::IconGlyph::Add, "Add layer")),
+                ),
+        );
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Layers")
+            })
+            .expect("panel section group semantics should exist");
+        let title_slot = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.parent == Some(section.id)
+                    && node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layers")
+            })
+            .expect("panel section title semantics should exist")
+            .bounds;
+        let text = text_run_for(&output, "Layers");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("panel section title should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("panel section title should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+
+        assert!((actual_visual_center - super::rect_center(title_slot).y).abs() < 0.75);
+    }
+
+    #[test]
+    fn panel_section_title_preserves_tall_measurement_and_header_centering() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 30.0,
+            line_height: 10.0,
+        };
+        theme.sync_derived_fields();
+
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(280.0, 120.0))
+                .with_child(
+                    PanelSection::new("Layers", crate::Label::new("Paint"))
+                        .theme(theme)
+                        .header_action(crate::IconButton::new(crate::IconGlyph::Add, "Add layer")),
+                ),
+        );
+        let section = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Layers")
+            })
+            .expect("panel section group semantics should exist");
+        let title_slot = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.parent == Some(section.id)
+                    && node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layers")
+            })
+            .expect("panel section title semantics should exist")
+            .bounds;
+        let title = text_run_for(&output, "Layers");
+        let layout = TextSystem::new()
+            .shape_text_run(&title, &FontRegistry::new())
+            .expect("panel section title should shape");
+
+        assert_text_run_uses_token(&title, theme.text.xs);
+        assert!(title.rect.height() >= layout.measurement().height - 0.01);
+        assert!(title.rect.height() > title.style.line_height);
+        assert!((text_run_visual_center(&title) - super::rect_center(title_slot).y).abs() < 0.75);
     }
 
     #[test]
@@ -9784,6 +10780,98 @@ mod tests {
     }
 
     #[test]
+    fn dock_panel_title_visual_center_matches_header_title_slot_center() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(280.0, 160.0))
+                .with_child(
+                    DockPanel::new("Tool properties", crate::Label::new("Brush size"))
+                        .name("Inspector")
+                        .padding(sui_layout::Padding::all(8.0)),
+                ),
+        );
+        let panel = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Inspector")
+            })
+            .expect("dock panel semantics should exist");
+        let title_slot = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.parent == Some(panel.id)
+                    && node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Tool properties")
+            })
+            .expect("dock panel title semantics should exist")
+            .bounds;
+        let text = text_run_for(&output, "Tool properties");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("dock panel title should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("dock panel title should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+
+        assert!((actual_visual_center - super::rect_center(title_slot).y).abs() < 0.75);
+    }
+
+    #[test]
+    fn dock_panel_title_preserves_tall_measurement_and_header_centering() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 30.0,
+            line_height: 10.0,
+        };
+        theme.sync_derived_fields();
+        theme.metrics.dock_panel_header_height = 52.0;
+
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(300.0, 180.0))
+                .with_child(
+                    DockPanel::new("Tool properties", crate::Label::new("Brush size"))
+                        .theme(theme)
+                        .name("Inspector")
+                        .padding(sui_layout::Padding::all(8.0)),
+                ),
+        );
+        let panel = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Inspector")
+            })
+            .expect("dock panel semantics should exist");
+        let title_slot = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.parent == Some(panel.id)
+                    && node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Tool properties")
+            })
+            .expect("dock panel title semantics should exist")
+            .bounds;
+        let title = text_run_for(&output, "Tool properties");
+        let layout = TextSystem::new()
+            .shape_text_run(&title, &FontRegistry::new())
+            .expect("dock panel title should shape");
+
+        assert_text_run_uses_token(&title, theme.text.sm);
+        assert!(title.rect.height() >= layout.measurement().height - 0.01);
+        assert!(title.rect.height() > title.style.line_height);
+        assert!((text_run_visual_center(&title) - super::rect_center(title_slot).y).abs() < 0.75);
+    }
+
+    #[test]
     fn dock_panel_title_id_is_javascript_safe() {
         let id = super::dock_panel_title_id(WidgetId::new(402)).get();
 
@@ -9858,12 +10946,12 @@ mod tests {
     }
 
     fn text_run_for(output: &RenderOutput, text: &str) -> sui_text::TextRun {
-        output
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
+        let mut found = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if found.is_some() {
+                return;
+            }
+            found = match command {
                 sui_scene::SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
                 sui_scene::SceneCommand::DrawShapedText(run) => run
                     .resolve(output.frame.text_layout_registry.as_ref())
@@ -9879,14 +10967,91 @@ mod tests {
                         style: layout.style().clone(),
                     }),
                 _ => None,
-            })
-            .expect("text draw command present")
+            };
+        });
+        found.expect("text draw command present")
+    }
+
+    fn clip_rect_for_text(output: &RenderOutput, text: &str) -> Rect {
+        let mut stack = Vec::new();
+        let mut found = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if found.is_some() {
+                return;
+            }
+            match command {
+                sui_scene::SceneCommand::PushClip { rect } => stack.push(*rect),
+                sui_scene::SceneCommand::PopClip => {
+                    stack.pop();
+                }
+                sui_scene::SceneCommand::DrawText(run) if run.text == text => {
+                    found = stack.last().copied();
+                }
+                sui_scene::SceneCommand::DrawShapedText(run)
+                    if run
+                        .resolve(output.frame.text_layout_registry.as_ref())
+                        .is_some_and(|layout| layout.text() == text) =>
+                {
+                    found = stack.last().copied();
+                }
+                _ => {}
+            }
+        });
+        found.expect("text draw command should have an active clip")
     }
 
     fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
         let top = -measurement.cap_height.unwrap_or(measurement.ascent);
         let bottom = measurement.descent * 0.5;
         (top + bottom) * 0.5
+    }
+
+    fn text_run_visual_center(run: &sui_text::TextRun) -> f32 {
+        let layout = TextSystem::new()
+            .shape_text_run(run, &FontRegistry::new())
+            .expect("text run should shape");
+        let line = layout.lines().first().expect("text run should have a line");
+        run.rect.y() + line.baseline + optical_visual_center(layout.measurement())
+    }
+
+    fn text_visual_center_for(output: &RenderOutput, text: &str) -> f32 {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                sui_scene::SceneCommand::DrawText(run) if run.text == text => {
+                    Some(text_run_visual_center(run))
+                }
+                sui_scene::SceneCommand::DrawShapedText(run) => {
+                    let layout = run.resolve(output.frame.text_layout_registry.as_ref())?;
+                    if layout.text() != text {
+                        return None;
+                    }
+                    let line = layout.lines().first().expect("text run should have a line");
+                    Some(run.origin.y + line.baseline + optical_visual_center(layout.measurement()))
+                }
+                _ => None,
+            })
+            .expect("text draw command present")
+    }
+
+    fn assert_text_run_uses_token(run: &sui_text::TextRun, token: ThemeTextToken) {
+        assert!(
+            (run.style.font_size - token.size).abs() < 0.001,
+            "text '{}' used font size {}, expected token size {}",
+            run.text,
+            run.style.font_size,
+            token.size
+        );
+        assert!(
+            (run.style.line_height - token.line_height).abs() < 0.001,
+            "text '{}' used line height {}, expected token line height {}",
+            run.text,
+            run.style.line_height,
+            token.line_height
+        );
     }
 
     fn layer_descriptor_for(
@@ -10058,13 +11223,46 @@ mod tests {
             theme.interaction.tab_selected_blend,
         );
 
-        let tab_bar = render(
+        let tab_bar = render_isolated(
             TabBar::new("Main tabs")
                 .theme(theme)
                 .tabs(["Design", "Inspect"])
                 .selected(1),
         );
         assert!(solid_fill_colors(&tab_bar).contains(&selected_fill));
+
+        let tabs = render_isolated(
+            Tabs::new("Main tabs")
+                .theme(theme)
+                .selected(1)
+                .tab("Design", crate::Label::new("Design"))
+                .tab("Inspect", crate::Label::new("Inspect")),
+        );
+        assert!(solid_fill_colors(&tabs).contains(&selected_fill));
+    }
+
+    #[test]
+    fn selected_tab_labels_preserve_body_text_metrics() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 15.5,
+            line_height: 22.0,
+        };
+        theme.sync_derived_fields();
+
+        let tab_bar = render_isolated(
+            TabBar::new("Main tabs")
+                .theme(theme)
+                .tabs(["Design", "Inspect"])
+                .selected(1),
+        );
+        let tab_bar_label = text_run_for(&tab_bar, "Inspect");
+        assert_text_run_uses_token(&tab_bar_label, theme.text.sm);
+        assert_eq!(tab_bar_label.style.color, theme.palette.border_focus);
+        assert!(
+            (text_run_visual_center(&tab_bar_label) - (tab_bar.frame.viewport.height * 0.5)).abs()
+                < 0.75
+        );
 
         let tabs = render(
             Tabs::new("Main tabs")
@@ -10073,7 +11271,63 @@ mod tests {
                 .tab("Design", crate::Label::new("Design"))
                 .tab("Inspect", crate::Label::new("Inspect")),
         );
-        assert!(solid_fill_colors(&tabs).contains(&selected_fill));
+        let tabs_label = text_run_for(&tabs, "Inspect");
+        assert_text_run_uses_token(&tabs_label, theme.text.sm);
+        assert_eq!(tabs_label.style.color, theme.palette.border_focus);
+        assert!(
+            (text_run_visual_center(&tabs_label) - (theme.metrics.tab_height * 0.5)).abs() < 0.75
+        );
+    }
+
+    #[test]
+    fn selected_tab_labels_preserve_tall_measurements_and_exact_centering() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 28.0,
+            line_height: 12.0,
+        };
+        theme.sync_derived_fields();
+        theme.metrics.tab_height = 48.0;
+
+        let tab_bar = render_isolated(
+            TabBar::new("Main tabs")
+                .theme(theme)
+                .tabs(["Design", "Inspect"])
+                .selected(1),
+        );
+        let tab_bar_label = text_run_for(&tab_bar, "Inspect");
+        let tab_bar_layout = TextSystem::new()
+            .shape_text_run(&tab_bar_label, &FontRegistry::new())
+            .expect("selected tab bar label should shape");
+
+        assert_text_run_uses_token(&tab_bar_label, theme.text.sm);
+        assert!(tab_bar_label.rect.height() >= tab_bar_layout.measurement().height - 0.01);
+        assert!(tab_bar_label.rect.height() > tab_bar_label.style.line_height);
+        assert!(
+            (text_visual_center_for(&tab_bar, "Inspect") - (tab_bar.frame.viewport.height * 0.5))
+                .abs()
+                < 0.75
+        );
+
+        let tabs = render_isolated(
+            Tabs::new("Main tabs")
+                .theme(theme)
+                .selected(1)
+                .tab("Design", crate::Label::new("Design panel"))
+                .tab("Inspect", crate::Label::new("Selected panel")),
+        );
+        let tabs_label = text_run_for(&tabs, "Inspect");
+        let tabs_layout = TextSystem::new()
+            .shape_text_run(&tabs_label, &FontRegistry::new())
+            .expect("selected tabs label should shape");
+
+        assert_text_run_uses_token(&tabs_label, theme.text.sm);
+        assert!(tabs_label.rect.height() >= tabs_layout.measurement().height - 0.01);
+        assert!(tabs_label.rect.height() > tabs_label.style.line_height);
+        assert!(
+            (text_visual_center_for(&tabs, "Inspect") - (theme.metrics.tab_height * 0.5)).abs()
+                < 0.75
+        );
     }
 
     #[test]
@@ -10255,6 +11509,102 @@ mod tests {
     }
 
     #[test]
+    fn menu_shortcuts_align_to_trailing_edge_and_row_center() {
+        let theme = DefaultTheme::default();
+        let output = render(Menu::new("App menu").items([
+            MenuItem::new("New File").shortcut("Ctrl+N"),
+            MenuItem::new("Open...").shortcut("Ctrl+Shift+O"),
+        ]));
+        let first_row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("New File")
+            })
+            .expect("first menu item semantics present")
+            .bounds;
+        let second_row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Open...")
+            })
+            .expect("second menu item semantics present")
+            .bounds;
+        let first_shortcut = text_run_for(&output, "Ctrl+N");
+        let second_shortcut = text_run_for(&output, "Ctrl+Shift+O");
+        let first_label_clip = clip_rect_for_text(&output, "New File");
+        let second_label_clip = clip_rect_for_text(&output, "Open...");
+        let first_edge = first_row.max_x() - theme.metrics.menu_item_padding.right;
+        let second_edge = second_row.max_x() - theme.metrics.menu_item_padding.right;
+        let first_label_edge = first_row.max_x()
+            - theme.metrics.menu_item_padding.right
+            - theme.metrics.menu_shortcut_width;
+        let second_label_edge = second_row.max_x()
+            - theme.metrics.menu_item_padding.right
+            - theme.metrics.menu_shortcut_width;
+
+        assert_eq!(
+            first_shortcut.style.color,
+            theme.placeholder_text_style().color
+        );
+        assert!((first_label_clip.max_x() - first_label_edge).abs() < 0.75);
+        assert!((second_label_clip.max_x() - second_label_edge).abs() < 0.75);
+        assert!((first_shortcut.rect.max_x() - first_edge).abs() < 0.75);
+        assert!((second_shortcut.rect.max_x() - second_edge).abs() < 0.75);
+        assert!((first_shortcut.rect.max_x() - second_shortcut.rect.max_x()).abs() < 0.75);
+        assert!(
+            (text_run_visual_center(&first_shortcut) - (first_row.y() + first_row.height() * 0.5))
+                .abs()
+                < 0.75
+        );
+    }
+
+    #[test]
+    fn menu_shortcuts_preserve_tall_measurements_and_row_center() {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 28.0;
+        theme.typography.body_line_height = 12.0;
+        theme.metrics.menu_row_height = 64.0;
+        let metrics = theme.metrics;
+        let output = render_isolated(
+            Menu::new("App menu")
+                .theme(theme)
+                .items([MenuItem::new("New File").shortcut("Ctrl+N")]),
+        );
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("New File")
+            })
+            .expect("menu item semantics present")
+            .bounds;
+        let label = text_run_for(&output, "New File");
+        let shortcut = text_run_for(&output, "Ctrl+N");
+        let label_layout = TextSystem::new()
+            .shape_text_run(&label, &FontRegistry::new())
+            .expect("menu item text should shape");
+        let shortcut_layout = TextSystem::new()
+            .shape_text_run(&shortcut, &FontRegistry::new())
+            .expect("menu shortcut text should shape");
+        let shortcut_edge = row.max_x() - metrics.menu_item_padding.right;
+        let row_center = row.y() + (row.height() * 0.5);
+
+        assert_eq!(label.style.font_size, 28.0);
+        assert_eq!(label.style.line_height, 12.0);
+        assert_eq!(shortcut.style.font_size, 28.0);
+        assert_eq!(shortcut.style.line_height, 12.0);
+        assert!(label.rect.height() >= label_layout.measurement().height - 0.01);
+        assert!(shortcut.rect.height() >= shortcut_layout.measurement().height - 0.01);
+        assert!(label.rect.height() > label.style.line_height);
+        assert!(shortcut.rect.height() > shortcut.style.line_height);
+        assert!((shortcut.rect.max_x() - shortcut_edge).abs() < 0.75);
+        assert!((text_run_visual_center(&label) - row_center).abs() < 0.75);
+        assert!((text_run_visual_center(&shortcut) - row_center).abs() < 0.75);
+    }
+
+    #[test]
     fn context_menu_row_label_visual_center_matches_row_center() -> Result<(), String> {
         let (mut runtime, window_id) = build_runtime(
             ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
@@ -10315,8 +11665,131 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_shortcut_aligns_to_trailing_edge() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .items([MenuItem::new("Rename").shortcut("F2")]),
+        );
+
+        let closed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("context menu trigger present")
+            .bounds;
+        let trigger_center = Point::new(
+            trigger.x() + (trigger.width() * 0.5),
+            trigger.y() + (trigger.height() * 0.5),
+        );
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, trigger_center);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .map_err(|error| error.to_string())?;
+
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Rename")
+            })
+            .expect("context menu item semantics present")
+            .bounds;
+        let label_clip = clip_rect_for_text(&output, "Rename");
+        let shortcut = text_run_for(&output, "F2");
+        let label_edge =
+            row.max_x() - theme.metrics.menu_item_padding.right - theme.metrics.menu_shortcut_width;
+        let shortcut_edge = row.max_x() - theme.metrics.menu_item_padding.right;
+
+        assert_eq!(shortcut.style.color, theme.placeholder_text_style().color);
+        assert!((label_clip.max_x() - label_edge).abs() < 0.75);
+        assert!((shortcut.rect.max_x() - shortcut_edge).abs() < 0.75);
+        assert!((text_run_visual_center(&shortcut) - (row.y() + row.height() * 0.5)).abs() < 0.75);
+        Ok(())
+    }
+
+    #[test]
+    fn context_menu_shortcuts_preserve_tall_measurements_and_row_center() -> Result<(), String> {
+        let mut theme = DefaultTheme::default();
+        theme.typography.body_font_size = 28.0;
+        theme.typography.body_line_height = 12.0;
+        theme.metrics.menu_row_height = 64.0;
+        let metrics = theme.metrics;
+        let (mut runtime, window_id) = build_runtime(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .theme(theme)
+                .items([MenuItem::new("Rename").shortcut("F2")]),
+        );
+
+        let closed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("context menu trigger present")
+            .bounds;
+        let trigger_center = Point::new(
+            trigger.x() + (trigger.width() * 0.5),
+            trigger.y() + (trigger.height() * 0.5),
+        );
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, trigger_center);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .map_err(|error| error.to_string())?;
+
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Rename")
+            })
+            .expect("context menu item semantics present")
+            .bounds;
+        let label = text_run_for(&output, "Rename");
+        let shortcut = text_run_for(&output, "F2");
+        let label_layout = TextSystem::new()
+            .shape_text_run(&label, &FontRegistry::new())
+            .expect("context menu item text should shape");
+        let shortcut_layout = TextSystem::new()
+            .shape_text_run(&shortcut, &FontRegistry::new())
+            .expect("context menu shortcut text should shape");
+        let shortcut_edge = row.max_x() - metrics.menu_item_padding.right;
+        let row_center = row.y() + (row.height() * 0.5);
+
+        assert_eq!(label.style.font_size, 28.0);
+        assert_eq!(label.style.line_height, 12.0);
+        assert_eq!(shortcut.style.font_size, 28.0);
+        assert_eq!(shortcut.style.line_height, 12.0);
+        assert!(label.rect.height() >= label_layout.measurement().height - 0.01);
+        assert!(shortcut.rect.height() >= shortcut_layout.measurement().height - 0.01);
+        assert!(label.rect.height() > label.style.line_height);
+        assert!(shortcut.rect.height() > shortcut.style.line_height);
+        assert!((shortcut.rect.max_x() - shortcut_edge).abs() < 0.75);
+        assert!((text_run_visual_center(&label) - row_center).abs() < 0.75);
+        assert!((text_run_visual_center(&shortcut) - row_center).abs() < 0.75);
+        Ok(())
+    }
+
+    #[test]
     fn progress_bar_value_text_visual_center_matches_control_center() {
-        let output = render(
+        let output = render_isolated(
             ProgressBar::new("Export progress")
                 .range(0.0, 100.0)
                 .value(42.0)
@@ -10334,7 +11807,93 @@ mod tests {
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
         let control_center = output.frame.viewport.height * 0.5;
 
+        assert!(
+            text.style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1)
+        );
         assert!((actual_visual_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn progress_bar_value_text_preserves_tall_measurements_and_exact_centering() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 28.0,
+            line_height: 12.0,
+        };
+        theme.sync_derived_fields();
+
+        let output = render_isolated(
+            ProgressBar::new("Export progress")
+                .theme(theme)
+                .range(0.0, 100.0)
+                .value(42.0)
+                .height(48.0)
+                .show_value(true),
+        );
+        let text = text_run_for(&output, "42%");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("progress bar label should shape");
+
+        assert_text_run_uses_token(&text, theme.text.sm);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+        assert!(
+            (text_visual_center_for(&output, "42%") - (output.frame.viewport.height * 0.5)).abs()
+                < 0.75
+        );
+    }
+
+    #[test]
+    fn spinner_label_visual_center_matches_indicator_center() {
+        let output = render(Spinner::new("Background work").label("Uploading textures"));
+        let text = text_run_for(&output, "Uploading textures");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("spinner label should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("spinner label should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let indicator_center = output.frame.viewport.height * 0.5;
+
+        assert!((actual_visual_center - indicator_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn spinner_label_preserves_tall_measurement_and_indicator_centering() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 28.0,
+            line_height: 10.0,
+        };
+        theme.sync_derived_fields();
+        let output = render(
+            Spinner::new("Background work")
+                .theme(theme)
+                .label("Uploading"),
+        );
+        let text = text_run_for(&output, "Uploading");
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("spinner label should shape");
+        let busy = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::BusyIndicator)
+            .expect("spinner semantics should exist");
+        let center_y = busy.bounds.y() + busy.bounds.height() * 0.5;
+
+        assert_text_run_uses_token(&text, theme.text.sm);
+        assert!(busy.bounds.height() > 20.0);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+        assert!((text_run_visual_center(&text) - center_y).abs() < 0.75);
     }
 
     #[test]
@@ -10440,6 +11999,132 @@ mod tests {
                 _ => {}
             });
         assert!(painted_tooltip_border);
+        Ok(())
+    }
+
+    #[test]
+    fn tooltip_text_visual_center_matches_padded_bubble_center() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let tooltip_text = "Quick access to common commands";
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            16.0,
+            crate::Tooltip::new(
+                tooltip_text,
+                crate::Button::new("Hover for shortcuts").min_width(180.0),
+            )
+            .theme(theme),
+        ));
+
+        let initial = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = initial
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hover for shortcuts")
+            })
+            .expect("tooltip trigger semantics present")
+            .bounds;
+        let hover_point = Point::new(trigger.x() + 12.0, trigger.y() + (trigger.height() * 0.5));
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Move, hover_point, false),
+            )
+            .map_err(|error| error.to_string())?;
+
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let tooltip = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Tooltip && node.name.as_deref() == Some(tooltip_text)
+            })
+            .expect("tooltip semantics present");
+        let text = text_run_for(&output, tooltip_text);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("tooltip text should shape");
+        let line = layout
+            .lines()
+            .first()
+            .expect("tooltip text should contain one line");
+        let actual_visual_center =
+            text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        let text_slot = super::inset_rect(tooltip.bounds, theme.metrics.tooltip_padding);
+
+        assert!((actual_visual_center - super::rect_center(text_slot).y).abs() < 0.75);
+        Ok(())
+    }
+
+    #[test]
+    fn tooltip_text_preserves_tall_measurement_in_padded_bubble() -> Result<(), String> {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 28.0,
+            line_height: 10.0,
+        };
+        theme.sync_derived_fields();
+        let tooltip_text = "Quick commands";
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            16.0,
+            crate::Tooltip::new(
+                tooltip_text,
+                crate::Button::new("Hover for shortcuts").min_width(180.0),
+            )
+            .theme(theme),
+        ));
+
+        let initial = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = initial
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hover for shortcuts")
+            })
+            .expect("tooltip trigger semantics present")
+            .bounds;
+        let hover_point = Point::new(trigger.x() + 12.0, trigger.y() + (trigger.height() * 0.5));
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Move, hover_point, false),
+            )
+            .map_err(|error| error.to_string())?;
+
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let tooltip = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Tooltip && node.name.as_deref() == Some(tooltip_text)
+            })
+            .expect("tooltip semantics present");
+        let text = text_run_for(&output, tooltip_text);
+        let layout = TextSystem::new()
+            .shape_text_run(&text, &FontRegistry::new())
+            .expect("tooltip text should shape");
+        let text_slot = super::inset_rect(tooltip.bounds, theme.metrics.tooltip_padding);
+
+        assert_text_run_uses_token(&text, theme.text.sm);
+        assert!(text.rect.height() >= layout.measurement().height - 0.01);
+        assert!(text.rect.height() > text.style.line_height);
+        assert!(
+            (text_run_visual_center(&text) - super::rect_center(text_slot).y).abs() < 0.75,
+            "tooltip text should remain visually centered in the padded bubble; rect={:?}, slot={:?}, measurement={:?}",
+            text.rect,
+            text_slot,
+            layout.measurement()
+        );
         Ok(())
     }
 

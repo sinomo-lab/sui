@@ -997,6 +997,7 @@ pub struct ShapedText {
     pub layout_handle: TextLayoutHandle,
     pub layout_version: TextLayoutVersion,
     pub bounds: Rect,
+    pub color_override: Option<Color>,
 }
 
 impl ShapedText {
@@ -1006,6 +1007,7 @@ impl ShapedText {
             layout_handle: layout.handle(),
             layout_version: layout.version(),
             bounds: layout.measurement().bounds,
+            color_override: None,
         }
     }
 
@@ -1019,7 +1021,13 @@ impl ShapedText {
             layout_handle,
             layout_version: layout.version(),
             bounds: layout.measurement().bounds,
+            color_override: None,
         }
+    }
+
+    pub fn with_color(mut self, color: Color) -> Self {
+        self.color_override = Some(color);
+        self
     }
 
     pub fn translated_bounds(&self) -> Rect {
@@ -1039,6 +1047,7 @@ pub struct ShapedTextWindow {
     pub layout_version: TextLayoutVersion,
     pub line_range: Range<usize>,
     pub bounds: Rect,
+    pub color_override: Option<Color>,
 }
 
 impl ShapedTextWindow {
@@ -1059,7 +1068,13 @@ impl ShapedTextWindow {
             layout_version: layout.version(),
             line_range: window.line_range.clone(),
             bounds: window.bounds(),
+            color_override: None,
         }
+    }
+
+    pub fn with_color(mut self, color: Color) -> Self {
+        self.color_override = Some(color);
+        self
     }
 
     pub fn translated_bounds(&self) -> Rect {

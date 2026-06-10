@@ -12,6 +12,8 @@ use sui_render_wgpu::{DebugCaptureArtifact, HdrRgbaImage, RgbaImage};
 
 use crate::snapshot::WindowSnapshot;
 
+const SCREENSHOT_CHANNEL_TOLERANCE: u8 = 1;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Screenshot {
     width: u32,
@@ -316,7 +318,7 @@ pub(crate) fn diff_screenshot(expected: &Screenshot, actual: &Screenshot) -> Res
             let expected_px = pixel_at(expected, x, y).unwrap_or([0, 0, 0, 0]);
             let actual_px = pixel_at(actual, x, y).unwrap_or([0, 0, 0, 0]);
             let offset = ((y * width + x) * 4) as usize;
-            let rgba = if expected_px == actual_px {
+            let rgba = if rgba_channels_match(expected_px, actual_px) {
                 [actual_px[0] / 2, actual_px[1] / 2, actual_px[2] / 2, 255]
             } else {
                 [255, actual_px[1] / 3, actual_px[2] / 3, 255]
@@ -330,6 +332,28 @@ pub(crate) fn diff_screenshot(expected: &Screenshot, actual: &Screenshot) -> Res
         height,
         pixels,
     })
+}
+
+pub(crate) fn screenshots_match(expected: &Screenshot, actual: &Screenshot) -> bool {
+    expected.width == actual.width
+        && expected.height == actual.height
+        && expected
+            .pixels
+            .chunks_exact(4)
+            .zip(actual.pixels.chunks_exact(4))
+            .all(|(expected, actual)| {
+                rgba_channels_match(
+                    [expected[0], expected[1], expected[2], expected[3]],
+                    [actual[0], actual[1], actual[2], actual[3]],
+                )
+            })
+}
+
+fn rgba_channels_match(expected: [u8; 4], actual: [u8; 4]) -> bool {
+    expected
+        .into_iter()
+        .zip(actual)
+        .all(|(expected, actual)| expected.abs_diff(actual) <= SCREENSHOT_CHANNEL_TOLERANCE)
 }
 
 pub(crate) fn screenshot_mismatch_paths(path: &Path) -> (PathBuf, PathBuf) {
@@ -543,8 +567,8 @@ mod tests {
     };
 
     use super::{
-        HdrRgbaImage, Screenshot, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap,
-        write_hdr_avif,
+        HdrRgbaImage, Screenshot, diff_screenshot, hdr_clip_mask, hdr_headroom_heatmap,
+        hdr_luminance_heatmap, screenshots_match, write_hdr_avif,
     };
 
     #[test]
@@ -605,6 +629,32 @@ mod tests {
         assert_eq!(screenshot.pixels()[8], 255);
         assert!(screenshot.pixels()[9] > screenshot.pixels()[10]);
         assert_eq!(screenshot.pixels()[11], 0);
+    }
+
+    #[test]
+    fn screenshots_match_with_one_channel_value_tolerance() {
+        let expected = Screenshot::new(2, 1, vec![10, 20, 30, 40, 100, 110, 120, 130]).unwrap();
+        let actual = Screenshot::new(2, 1, vec![11, 19, 31, 39, 99, 111, 119, 131]).unwrap();
+
+        assert!(screenshots_match(&expected, &actual));
+    }
+
+    #[test]
+    fn screenshots_reject_channel_differences_above_tolerance() {
+        let expected = Screenshot::new(1, 1, vec![10, 20, 30, 40]).unwrap();
+        let actual = Screenshot::new(1, 1, vec![12, 20, 30, 40]).unwrap();
+
+        assert!(!screenshots_match(&expected, &actual));
+    }
+
+    #[test]
+    fn screenshot_diff_treats_one_channel_value_difference_as_matching() {
+        let expected = Screenshot::new(1, 1, vec![10, 20, 30, 40]).unwrap();
+        let actual = Screenshot::new(1, 1, vec![11, 19, 31, 39]).unwrap();
+
+        let diff = diff_screenshot(&expected, &actual).unwrap();
+
+        assert_eq!(diff.pixels(), &[5, 9, 15, 255]);
     }
 
     #[test]

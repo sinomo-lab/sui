@@ -1401,6 +1401,16 @@ impl PaintCtx {
             .measure_text(text, style, self.font_registry.as_ref())
     }
 
+    pub fn shape_text(
+        &self,
+        text: impl Into<String>,
+        box_size: Size,
+        style: TextStyle,
+    ) -> sui_core::Result<TextLayout> {
+        self.text_system
+            .shape_text(text, box_size, style, self.font_registry.as_ref())
+    }
+
     pub fn clear(&mut self, color: Color) {
         self.scene.push(SceneCommand::Clear(color));
     }
@@ -1477,6 +1487,17 @@ impl PaintCtx {
             )));
     }
 
+    pub fn draw_persistent_text_layout_with_color(
+        &mut self,
+        origin: Point,
+        layout: &PersistentTextLayout,
+        color: Color,
+    ) {
+        self.scene.push(SceneCommand::DrawShapedText(
+            ShapedText::new(origin, layout).with_color(color),
+        ));
+    }
+
     pub fn draw_persistent_text_layout_window(
         &mut self,
         origin: Point,
@@ -1487,6 +1508,18 @@ impl PaintCtx {
             .push(SceneCommand::DrawShapedTextWindow(ShapedTextWindow::new(
                 origin, layout, line_range,
             )));
+    }
+
+    pub fn draw_persistent_text_layout_window_with_color(
+        &mut self,
+        origin: Point,
+        layout: &PersistentTextLayout,
+        line_range: std::ops::Range<usize>,
+        color: Color,
+    ) {
+        self.scene.push(SceneCommand::DrawShapedTextWindow(
+            ShapedTextWindow::new(origin, layout, line_range).with_color(color),
+        ));
     }
 
     pub fn label(&mut self, rect: Rect, text: impl Into<String>, color: Color) {
