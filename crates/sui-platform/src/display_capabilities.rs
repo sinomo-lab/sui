@@ -316,7 +316,10 @@ fn display_capabilities_from_windows_advanced_color_info(
     let max_luminance_nits = finite_positive(info.max_luminance_nits);
     let max_full_frame_luminance_nits = finite_positive(info.max_full_frame_luminance_nits);
     let min_luminance_nits = finite_positive(info.min_luminance_nits);
-    let native_hdr_presentation_supported = hdr_active && info.bits_per_color >= 10;
+    let detected_sdr_white_nits = finite_positive(info.sdr_white_nits);
+    let sdr_white_nits = hdr_active.then_some(detected_sdr_white_nits).flatten();
+    let native_hdr_presentation_supported =
+        hdr_active && info.bits_per_color >= 10 && sdr_white_nits.is_some();
     let preferred_primaries = if hdr_active {
         DisplayColorPrimaries::Srgb
     } else if supports_wide_gamut {
@@ -329,8 +332,6 @@ fn display_capabilities_from_windows_advanced_color_info(
     } else {
         sui_render_wgpu::DynamicRangeMode::StandardDynamicRange
     };
-    let detected_sdr_white_nits = finite_positive(info.sdr_white_nits);
-    let sdr_white_nits = hdr_active.then_some(detected_sdr_white_nits).flatten();
     let sdr_reference_white_nits =
         detected_sdr_white_nits.unwrap_or(WINDOWS_SDR_REFERENCE_WHITE_NITS);
     let max_content_headroom = if hdr_active {
@@ -637,6 +638,30 @@ mod tests {
         assert!(capabilities.notes.contains("Advanced Color"));
         assert!(capabilities.notes.contains("scRGB"));
         assert!(capabilities.notes.contains("sdr_white_nits=Some(203.0)"));
+    }
+
+    #[test]
+    fn windows_hdr_without_sdr_white_avoids_native_hdr_presentation() {
+        let capabilities =
+            display_capabilities_from_windows_advanced_color_info(&WindowsAdvancedColorInfo {
+                monitor_name: "HDR Panel".to_string(),
+                device_name: Some("\\\\.\\DISPLAY1".to_string()),
+                bits_per_color: 10,
+                color_space: WindowsColorSpace::Hdr10P2020,
+                red_primary: Some([0.68, 0.32]),
+                green_primary: Some([0.265, 0.69]),
+                blue_primary: Some([0.15, 0.06]),
+                white_point: Some([0.3127, 0.3290]),
+                min_luminance_nits: Some(0.05),
+                max_luminance_nits: Some(1000.0),
+                max_full_frame_luminance_nits: Some(600.0),
+                sdr_white_nits: None,
+            });
+
+        assert!(capabilities.supports_hdr);
+        assert!(!capabilities.native_hdr_presentation_supported);
+        assert_eq!(capabilities.sdr_white_nits, None);
+        assert!(capabilities.notes.contains("sdr_white_nits=None"));
     }
 
     #[test]

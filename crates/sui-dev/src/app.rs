@@ -1468,24 +1468,16 @@ impl Widget for FloatingSettingsWindow {
         );
 
         let title = Self::title_rect(bounds);
-        ctx.fill(
-            Path::rounded_rect(
-                Rect::new(title.x(), title.y(), title.width(), title.height() + 8.0),
-                8.0,
-            ),
-            if self.state.is_dark() {
-                Color::rgba(0.12, 0.16, 0.21, 1.0)
-            } else {
-                Color::rgba(0.16, 0.20, 0.26, 1.0)
-            },
-        );
-        ctx.fill_rect(
-            Rect::new(title.x(), title.max_y() - 8.0, title.width(), 8.0),
-            if self.state.is_dark() {
-                Color::rgba(0.12, 0.16, 0.21, 1.0)
-            } else {
-                Color::rgba(0.16, 0.20, 0.26, 1.0)
-            },
+        let title_fill = if self.state.is_dark() {
+            Color::rgba(0.12, 0.16, 0.21, 1.0)
+        } else {
+            Color::rgba(0.16, 0.20, 0.26, 1.0)
+        };
+        ctx.fill(top_rounded_rect_path(title, 8.0), title_fill);
+        ctx.stroke_rect(
+            Rect::new(title.x(), title.max_y(), title.width(), 1.0),
+            content_palette.border.with_alpha(0.6),
+            StrokeStyle::new(1.0),
         );
         ctx.draw_text(
             Rect::new(
@@ -1699,6 +1691,38 @@ fn diagonal_handle_path(bounds: Rect, inset: f32, offset: f32) -> Path {
     let mut path = PathBuilder::new();
     path.move_to(Point::new(bounds.max_x() - inset, bounds.max_y() - offset));
     path.line_to(Point::new(bounds.max_x() - offset, bounds.max_y() - inset));
+    path.build()
+}
+
+fn top_rounded_rect_path(bounds: Rect, radius: f32) -> Path {
+    let radius = radius
+        .max(0.0)
+        .min(bounds.width() * 0.5)
+        .min(bounds.height());
+    let kappa = 0.552_284_8;
+    let x0 = bounds.x();
+    let y0 = bounds.y();
+    let x1 = bounds.max_x();
+    let y1 = bounds.max_y();
+    let r = radius;
+    let c = r * kappa;
+    let mut path = PathBuilder::new();
+    path.move_to(Point::new(x0 + r, y0));
+    path.line_to(Point::new(x1 - r, y0));
+    path.cubic_to(
+        Point::new(x1 - r + c, y0),
+        Point::new(x1, y0 + r - c),
+        Point::new(x1, y0 + r),
+    );
+    path.line_to(Point::new(x1, y1));
+    path.line_to(Point::new(x0, y1));
+    path.line_to(Point::new(x0, y0 + r));
+    path.cubic_to(
+        Point::new(x0, y0 + r - c),
+        Point::new(x0 + r - c, y0),
+        Point::new(x0 + r, y0),
+    );
+    path.close();
     path.build()
 }
 
@@ -1956,6 +1980,138 @@ where
         .control_width(width)
 }
 
+const SETTINGS_PANEL_MAX_WIDTH: f32 = 640.0;
+const SETTINGS_PANEL_PADDING_X: f32 = 14.0;
+const SETTINGS_PANEL_PADDING_TOP: f32 = 12.0;
+const SETTINGS_PANEL_PADDING_BOTTOM: f32 = 12.0;
+const SETTINGS_PANEL_TITLE_HEIGHT: f32 = 18.0;
+const SETTINGS_PANEL_TITLE_GAP: f32 = 10.0;
+const SETTINGS_PANEL_LINE_GAP: f32 = 3.0;
+
+fn settings_panel_width(max_width: f32) -> f32 {
+    if max_width.is_finite() {
+        max_width.min(SETTINGS_PANEL_MAX_WIDTH).max(0.0)
+    } else {
+        SETTINGS_PANEL_MAX_WIDTH
+    }
+}
+
+fn settings_panel_title_style(palette: ControlPalette) -> TextStyle {
+    TextStyle {
+        font_size: 14.0,
+        line_height: SETTINGS_PANEL_TITLE_HEIGHT,
+        color: palette.text,
+        ..TextStyle::default()
+    }
+}
+
+fn settings_panel_body_style(palette: ControlPalette) -> TextStyle {
+    TextStyle {
+        font_size: 11.0,
+        line_height: 15.0,
+        color: palette.text.with_alpha(0.9),
+        ..TextStyle::default()
+    }
+}
+
+fn settings_wrapped_text_height(
+    ctx: &MeasureCtx,
+    text: &str,
+    style: &TextStyle,
+    width: f32,
+) -> f32 {
+    ctx.layout()
+        .shape_text(
+            text.to_string(),
+            Size::new(width.max(1.0), f32::INFINITY),
+            style.clone(),
+        )
+        .map(|layout| layout.measurement().height.max(style.line_height))
+        .unwrap_or(style.line_height)
+}
+
+fn settings_panel_height(
+    ctx: &MeasureCtx,
+    lines: &[String],
+    width: f32,
+    title_style: &TextStyle,
+    body_style: &TextStyle,
+) -> f32 {
+    let text_width = (width - (SETTINGS_PANEL_PADDING_X * 2.0)).max(1.0);
+    let body_height = lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            settings_wrapped_text_height(ctx, line, body_style, text_width)
+                + if index == 0 {
+                    0.0
+                } else {
+                    SETTINGS_PANEL_LINE_GAP
+                }
+        })
+        .sum::<f32>();
+
+    SETTINGS_PANEL_PADDING_TOP
+        + title_style.line_height
+        + SETTINGS_PANEL_TITLE_GAP
+        + body_height
+        + SETTINGS_PANEL_PADDING_BOTTOM
+}
+
+fn paint_settings_panel(
+    ctx: &mut PaintCtx,
+    title: &str,
+    lines: &[String],
+    palette: ControlPalette,
+) {
+    let bounds = ctx.bounds();
+    ctx.fill_rect(bounds, palette.surface.with_alpha(0.35));
+    ctx.stroke_rect(
+        bounds,
+        palette.border.with_alpha(0.85),
+        StrokeStyle::default(),
+    );
+
+    let text_x = bounds.x() + SETTINGS_PANEL_PADDING_X;
+    let text_width = (bounds.width() - (SETTINGS_PANEL_PADDING_X * 2.0)).max(1.0);
+    let title_style = settings_panel_title_style(palette);
+    let body_style = settings_panel_body_style(palette);
+
+    ctx.push_clip_rect(bounds);
+    ctx.draw_text(
+        Rect::new(
+            text_x,
+            bounds.y() + SETTINGS_PANEL_PADDING_TOP,
+            text_width,
+            title_style.line_height,
+        ),
+        title,
+        title_style,
+    );
+
+    let mut y = bounds.y()
+        + SETTINGS_PANEL_PADDING_TOP
+        + SETTINGS_PANEL_TITLE_HEIGHT
+        + SETTINGS_PANEL_TITLE_GAP;
+    for line in lines {
+        let line_height = ctx
+            .shape_text(
+                line.clone(),
+                Size::new(text_width.max(1.0), f32::INFINITY),
+                body_style.clone(),
+            )
+            .map(|layout| layout.measurement().height.max(body_style.line_height))
+            .unwrap_or(body_style.line_height);
+        ctx.draw_text(
+            Rect::new(text_x, y, text_width, line_height),
+            line.clone(),
+            body_style.clone(),
+        );
+        y += line_height + SETTINGS_PANEL_LINE_GAP;
+    }
+    ctx.pop_clip();
+}
+
 struct HdrThemeInspectionPanel {
     theme_reader: DevThemeReader,
 }
@@ -1971,52 +2127,24 @@ impl HdrThemeInspectionPanel {
 }
 
 impl Widget for HdrThemeInspectionPanel {
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(constraints.max.width.min(640.0), 112.0))
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let palette = self.theme().palette;
+        let width = settings_panel_width(constraints.max.width);
+        let lines = hdr_theme_inspection_lines(ctx.window_id());
+        let height = settings_panel_height(
+            ctx,
+            &lines,
+            width,
+            &settings_panel_title_style(palette),
+            &settings_panel_body_style(palette),
+        );
+        constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let palette = self.theme().palette;
-        let border = StrokeStyle::default();
-        ctx.fill_rect(ctx.bounds(), palette.surface.with_alpha(0.35));
-        ctx.stroke_rect(ctx.bounds(), palette.border.with_alpha(0.85), border);
-
-        ctx.draw_text(
-            Rect::new(
-                ctx.bounds().x() + 14.0,
-                ctx.bounds().y() + 12.0,
-                ctx.bounds().width() - 28.0,
-                20.0,
-            ),
-            HDR_THEME_INSPECTION_TITLE,
-            TextStyle {
-                font_size: 14.0,
-                line_height: 18.0,
-                color: palette.text,
-                ..TextStyle::default()
-            },
-        );
-
-        for (index, line) in hdr_theme_inspection_lines(ctx.window_id())
-            .iter()
-            .enumerate()
-        {
-            ctx.draw_text(
-                Rect::new(
-                    ctx.bounds().x() + 14.0,
-                    ctx.bounds().y() + 40.0 + index as f32 * 18.0,
-                    ctx.bounds().width() - 28.0,
-                    18.0,
-                ),
-                line,
-                TextStyle {
-                    font_size: 11.0,
-                    line_height: 15.0,
-                    color: palette.text.with_alpha(0.9),
-                    ..TextStyle::default()
-                },
-            );
-        }
+        let lines = hdr_theme_inspection_lines(ctx.window_id());
+        paint_settings_panel(ctx, HDR_THEME_INSPECTION_TITLE, &lines, palette);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2046,57 +2174,35 @@ impl OutputDiagnosticsPanel {
 }
 
 impl Widget for OutputDiagnosticsPanel {
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(
-            constraints.max.width.min(640.0),
-            if constraints.max.height.is_finite() {
-                200.0
-            } else {
-                200.0
-            },
-        ))
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let palette = self.theme().palette;
+        let width = settings_panel_width(constraints.max.width);
+        let lines = output_diagnostics_lines(ctx.window_id());
+        let height = settings_panel_height(
+            ctx,
+            &lines,
+            width,
+            &settings_panel_title_style(palette),
+            &settings_panel_body_style(palette),
+        );
+        constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let palette = self.theme().palette;
-        let border = StrokeStyle::default();
-        ctx.fill_rect(ctx.bounds(), palette.surface.with_alpha(0.35));
-        ctx.stroke_rect(ctx.bounds(), palette.border.with_alpha(0.85), border);
-
-        ctx.draw_text(
-            Rect::new(
-                ctx.bounds().x() + 14.0,
-                ctx.bounds().y() + 12.0,
-                ctx.bounds().width() - 28.0,
-                20.0,
-            ),
-            OUTPUT_DIAGNOSTICS_TITLE,
-            TextStyle {
-                font_size: 14.0,
-                line_height: 18.0,
-                color: palette.text,
-                ..TextStyle::default()
-            },
-        );
-
         let lines = output_diagnostics_lines(ctx.window_id());
-        for (index, line) in lines.iter().enumerate() {
-            ctx.draw_text(
-                Rect::new(
-                    ctx.bounds().x() + 14.0,
-                    ctx.bounds().y() + 40.0 + index as f32 * 18.0,
-                    ctx.bounds().width() - 28.0,
-                    18.0,
-                ),
-                line,
-                TextStyle {
-                    font_size: 11.0,
-                    line_height: 15.0,
-                    color: palette.text.with_alpha(0.9),
-                    ..TextStyle::default()
-                },
-            );
-        }
+        paint_settings_panel(ctx, OUTPUT_DIAGNOSTICS_TITLE, &lines, palette);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(OUTPUT_DIAGNOSTICS_TITLE.to_string());
+        node.description = Some(output_diagnostics_lines(ctx.window_id()).join("\n"));
+        ctx.push(node);
     }
 }
 
@@ -2115,8 +2221,23 @@ impl SdrContentBrightnessStatus {
 }
 
 impl Widget for SdrContentBrightnessStatus {
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(constraints.max.width.min(420.0), 34.0))
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let text = window_output_diagnostics(ctx.window_id())
+            .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
+            .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
+        let style = TextStyle {
+            font_size: 12.0,
+            line_height: 16.0,
+            color: self.theme().palette.text.with_alpha(0.78),
+            ..TextStyle::default()
+        };
+        let width = if constraints.max.width.is_finite() {
+            constraints.max.width.min(420.0).max(0.0)
+        } else {
+            420.0
+        };
+        let height = settings_wrapped_text_height(ctx, &text, &style, width).max(34.0);
+        constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -5553,6 +5674,27 @@ final_max_luminance={final_max_luminance}
                 "expected semantics tree to expose settings control {label:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn settings_output_diagnostics_panel_grows_for_wrapped_text() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_settings(&window)?;
+        let _ = window.capture_screenshot()?;
+        let snapshot = window.snapshot()?;
+        let diagnostics = find_named_node(
+            &snapshot,
+            SemanticsRole::GenericContainer,
+            OUTPUT_DIAGNOSTICS_TITLE,
+        );
+
+        assert!(
+            diagnostics.bounds.height() > 200.0,
+            "output diagnostics should grow beyond the old fixed height when wrapped diagnostic lines are present; bounds={:?}",
+            diagnostics.bounds
+        );
         Ok(())
     }
 

@@ -2170,14 +2170,38 @@ impl Widget for ActionCard {
             title_paint_style.line_height,
             0.0,
         );
-        let description_rect = aligned_text_rect_for_text(
-            ctx,
-            description_slot,
-            &self.description,
-            &description_paint_style,
-            description_paint_style.line_height,
-            0.0,
-        );
+        let description_rect = ctx
+            .shape_text(
+                self.description.clone(),
+                Size::new(description_slot.width().max(1.0), f32::INFINITY),
+                description_paint_style.clone(),
+            )
+            .ok()
+            .filter(|layout| layout.lines().len() > 1)
+            .map(|layout| {
+                let measurement = layout.measurement();
+                let width = measurement.width.min(description_slot.width()).max(0.0);
+                let height = description_paint_style
+                    .line_height
+                    .max(measurement.height)
+                    .min(description_slot.height());
+                Rect::new(
+                    description_slot.x(),
+                    description_slot.y() + ((description_slot.height() - height).max(0.0) * 0.5),
+                    width,
+                    height,
+                )
+            })
+            .unwrap_or_else(|| {
+                aligned_text_rect_for_text(
+                    ctx,
+                    description_slot,
+                    &self.description,
+                    &description_paint_style,
+                    description_paint_style.line_height,
+                    0.0,
+                )
+            });
         ctx.push_clip_rect(title_slot);
         ctx.draw_text(title_rect, self.title.clone(), title_paint_style);
         ctx.pop_clip();
@@ -10640,6 +10664,41 @@ mod tests {
 
         assert!((title_visual_center - super::rect_center(title_slot).y).abs() < 0.75);
         assert!((description_visual_center - super::rect_center(description_slot).y).abs() < 0.75);
+    }
+
+    #[test]
+    fn action_card_multiline_description_stays_inside_clip_slot() {
+        let description = "Catalog of controls, containers, media, and text surfaces.";
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(360.0, 104.0))
+                .with_child(
+                    ActionCard::new("Widget book", description)
+                        .icon(crate::IconGlyph::MoreHorizontal),
+                ),
+        );
+        let run = text_run_for(&output, description);
+        let clip = clip_rect_for_text(&output, description);
+        let layout = TextSystem::new()
+            .shape_text_run(&run, &FontRegistry::new())
+            .expect("action card description should shape");
+
+        assert!(
+            layout.lines().len() > 1,
+            "test description should wrap in the dev picker-sized card"
+        );
+        assert!(
+            run.rect.y() >= clip.y() - 0.01,
+            "description should start inside its clip: rect={:?}, clip={:?}",
+            run.rect,
+            clip
+        );
+        assert!(
+            run.rect.max_y() <= clip.max_y() + 0.01,
+            "description should end inside its clip: rect={:?}, clip={:?}",
+            run.rect,
+            clip
+        );
     }
 
     #[test]

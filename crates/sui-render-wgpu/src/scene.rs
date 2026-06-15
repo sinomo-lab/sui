@@ -4354,7 +4354,7 @@ pub(crate) fn select_output_strategy(
     let primaries = requested_output_primaries(capabilities.clone(), requested);
     let native_hdr_format = preferred_hdr_surface_format(formats);
     let native_hdr_available =
-        capabilities.native_hdr_presentation_supported || native_hdr_format.is_some();
+        capabilities.native_hdr_presentation_supported && native_hdr_format.is_some();
 
     if matches!(requested.mode, RequestedColorManagementMode::ForceSdr) {
         return OutputStrategy::SdrSurface { format: sdr_format };
@@ -4390,7 +4390,7 @@ pub(crate) fn select_output_strategy(
 
     if wants_hdr {
         if capabilities.supports_hdr || native_hdr_available {
-            if let Some(format) = native_hdr_format {
+            if native_hdr_available && let Some(format) = native_hdr_format {
                 let uses_linear_sc_rgb = capabilities.native_hdr_presentation_supported
                     && matches!(
                         capabilities.preferred_primaries,

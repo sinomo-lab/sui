@@ -5397,7 +5397,7 @@ mod tests {
     }
 
     #[test]
-    fn select_output_strategy_automatic_uses_native_hdr_when_surface_exposes_float16() {
+    fn select_output_strategy_automatic_ignores_float16_without_native_hdr_support() {
         let strategy = select_output_strategy(
             &[
                 wgpu::TextureFormat::Rgba16Float,
@@ -5416,10 +5416,37 @@ mod tests {
 
         assert_eq!(
             strategy,
-            OutputStrategy::HdrNativeSurface {
-                format: wgpu::TextureFormat::Rgba16Float,
+            OutputStrategy::WideGamutSurface {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::DisplayP3,
+            }
+        );
+    }
+
+    #[test]
+    fn select_output_strategy_hdr_support_without_native_uses_intermediate_despite_float16() {
+        let strategy = select_output_strategy(
+            &[
+                wgpu::TextureFormat::Rgba16Float,
+                wgpu::TextureFormat::Bgra8UnormSrgb,
+            ],
+            DisplayCapabilities {
+                supports_wide_gamut: true,
+                supports_hdr: true,
+                preferred_primaries: DisplayColorPrimaries::Srgb,
+                preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
+                native_hdr_presentation_supported: false,
+                ..DisplayCapabilities::default()
+            },
+            ColorManagementMode::default(),
+        );
+
+        assert_eq!(
+            strategy,
+            OutputStrategy::HdrIntermediateThenToneMap {
+                intermediate_format: wgpu::TextureFormat::Rgba16Float,
+                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
                 primaries: DisplayColorPrimaries::Srgb,
-                transfer: DisplayTransferFunction::Srgb,
             }
         );
     }
