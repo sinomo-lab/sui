@@ -99,13 +99,7 @@
               wantsWideGamut: false,
               wantsHdr: false,
             };
-            const next = {
-              device: configuration.device,
-              format: configuration.format,
-              usage: configuration.usage,
-              alphaMode: configuration.alphaMode,
-              viewFormats: configuration.viewFormats,
-            };
+            const next = { ...configuration };
 
             if (preferences.wantsWideGamut && !preferences.wantsHdr) {
               next.colorSpace = "display-p3";
@@ -144,7 +138,7 @@
           return context;
         };
 
-        const patchVersion = 2;
+        const patchVersion = 3;
         const patchCanvas = (prototype) => {
           if (
             !prototype ||
@@ -618,18 +612,57 @@
             mirror.appendChild(labelElement);
           }
         };
-        const canvasEventCoordinates = (canvas, event) => {
-          const rect = canvas.getBoundingClientRect();
-          const scale =
-            state.devicePixelRatio || window.devicePixelRatio || 1;
-          const clientX = rect.left + (event.clientX - rect.left) * scale;
-          const clientY = rect.top + (event.clientY - rect.top) * scale;
+        const canvasEventCoordinates = (_canvas, event) => {
+          // Winit derives offsetX/offsetY from CSS-pixel client coordinates
+          // and applies the window scale factor itself.
           return {
-            clientX,
-            clientY,
-            screenX: event.screenX + (clientX - event.clientX),
-            screenY: event.screenY + (clientY - event.clientY),
+            clientX: event.clientX,
+            clientY: event.clientY,
+            screenX: event.screenX,
+            screenY: event.screenY,
           };
+        };
+        const canvasEventOffsets = (canvas, event) => {
+          const rect = canvas.getBoundingClientRect();
+          return {
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+          };
+        };
+        const ensureCoalescedPointerMove = (event) => {
+          if (
+            event.type !== "pointermove" ||
+            typeof event.getCoalescedEvents !== "function"
+          ) {
+            return;
+          }
+          try {
+            // Winit drops pointer moves when coalescing is supported but empty.
+            const coalesced = [event];
+            Object.defineProperty(event, "getCoalescedEvents", {
+              configurable: true,
+              value: () => coalesced,
+            });
+          } catch (_) {
+          }
+        };
+        const dispatchCanvasEvent = (canvas, event, sourceEvent) => {
+          const offsets = canvasEventOffsets(canvas, sourceEvent);
+          try {
+            Object.defineProperties(event, {
+              offsetX: {
+                configurable: true,
+                value: offsets.offsetX,
+              },
+              offsetY: {
+                configurable: true,
+                value: offsets.offsetY,
+              },
+            });
+          } catch (_) {
+          }
+          ensureCoalescedPointerMove(event);
+          canvas.dispatchEvent(event);
         };
         const clonePointerEventInit = (event, canvas) => ({
           bubbles: true,
@@ -653,6 +686,19 @@
           metaKey: event.metaKey,
           shiftKey: event.shiftKey,
         });
+        const cloneMouseEventInit = (event, canvas, overrides = {}) => ({
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          ...canvasEventCoordinates(canvas, event),
+          button: event.button,
+          buttons: event.buttons,
+          altKey: event.altKey,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          shiftKey: event.shiftKey,
+          ...overrides,
+        });
         const mouseEventTypeForPointer = (type) => {
           switch (type) {
             case "pointerdown":
@@ -665,25 +711,19 @@
               return null;
           }
         };
-        const dispatchMouseEventToCanvas = (canvas, event) => {
-          const type = mouseEventTypeForPointer(event.type);
+        const dispatchMouseEventToCanvas = (
+          canvas,
+          event,
+          type = mouseEventTypeForPointer(event.type),
+          overrides = {},
+        ) => {
           if (!type) {
             return false;
           }
-          const coordinates = canvasEventCoordinates(canvas, event);
-          canvas.dispatchEvent(
-            new MouseEvent(type, {
-              bubbles: true,
-              cancelable: true,
-              composed: true,
-              ...coordinates,
-              button: event.button,
-              buttons: event.buttons,
-              altKey: event.altKey,
-              ctrlKey: event.ctrlKey,
-              metaKey: event.metaKey,
-              shiftKey: event.shiftKey,
-            }),
+          dispatchCanvasEvent(
+            canvas,
+            new MouseEvent(type, cloneMouseEventInit(event, canvas, overrides)),
+            event,
           );
           return true;
         };
@@ -694,8 +734,10 @@
           }
           let forwarded = false;
           try {
-            canvas.dispatchEvent(
+            dispatchCanvasEvent(
+              canvas,
               new PointerEvent(event.type, clonePointerEventInit(event, canvas)),
+              event,
             );
             forwarded = true;
           } catch (_) {
@@ -712,13 +754,17 @@
             return false;
           }
           try {
-            const coordinates = canvasEventCoordinates(canvas, event);
-            canvas.dispatchEvent(
+            dispatchMouseEventToCanvas(canvas, event, "mousemove", {
+              button: 0,
+              buttons: event.buttons || 0,
+            });
+            dispatchCanvasEvent(
+              canvas,
               new WheelEvent("wheel", {
                 bubbles: true,
                 cancelable: true,
                 composed: true,
-                ...coordinates,
+                ...canvasEventCoordinates(canvas, event),
                 deltaX: event.deltaX,
                 deltaY: event.deltaY,
                 deltaZ: event.deltaZ,
@@ -728,6 +774,7 @@
                 metaKey: event.metaKey,
                 shiftKey: event.shiftKey,
               }),
+              event,
             );
             return true;
           } catch (_) {
@@ -914,11 +961,13 @@
             element.dataset.suiRole = node.role;
             element.dataset.suiName = label;
             element.dataset.suiValue = value;
+            element.dataset.suiFocused = node.state?.focused ? "true" : "false";
           } else {
             delete element.dataset.suiId;
             delete element.dataset.suiRole;
             delete element.dataset.suiName;
             delete element.dataset.suiValue;
+            delete element.dataset.suiFocused;
           }
 
           if (role) {

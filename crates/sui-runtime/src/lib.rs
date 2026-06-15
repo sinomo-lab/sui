@@ -1166,6 +1166,17 @@ impl WindowState {
                 self.focus.focused_widget,
                 event,
             )
+            .or_else(|| {
+                self.root.dispatch_event_for(
+                    target,
+                    self.id,
+                    dpi_info,
+                    self.last_tick_time,
+                    EventPhase::Target,
+                    self.focus.focused_widget,
+                    event,
+                )
+            })
             .unwrap_or_else(empty_dispatch)
     }
 
@@ -1545,8 +1556,9 @@ impl WindowState {
         let mut effects = EventEffects::default();
         let mut handled = false;
         let mut focus_request = None;
+        let target_only = matches!(event, Event::Wake(_));
 
-        if path.len() > 1 {
+        if !target_only && path.len() > 1 {
             for path_len in 1..path.len() {
                 let dispatch = self
                     .root
@@ -1585,6 +1597,17 @@ impl WindowState {
                     self.focus.focused_widget,
                     event,
                 )
+                .or_else(|| {
+                    self.root.dispatch_event_for(
+                        target,
+                        self.id,
+                        dpi_info,
+                        self.last_tick_time,
+                        EventPhase::Target,
+                        self.focus.focused_widget,
+                        event,
+                    )
+                })
                 .unwrap_or_else(|| empty_dispatch());
             let dispatch_handled = dispatch.handled;
             let dispatch_focus_request = dispatch.focus_request;
@@ -1595,7 +1618,7 @@ impl WindowState {
             handled = dispatch_handled;
         }
 
-        if !handled && path.len() > 1 {
+        if !target_only && !handled && path.len() > 1 {
             for path_len in (1..path.len()).rev() {
                 let dispatch = self
                     .root
@@ -4137,6 +4160,42 @@ mod tests {
         }
     }
 
+    struct AnimationWakeCapturingRoot {
+        child: SingleChild,
+        ancestor_wakes: Rc<RefCell<usize>>,
+    }
+
+    impl Widget for AnimationWakeCapturingRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. })) {
+                *self.ancestor_wakes.borrow_mut() += 1;
+                ctx.set_handled();
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
     struct RemovableAnimationRoot {
         child: Option<SingleChild>,
     }
@@ -5376,6 +5435,44 @@ mod tests {
         assert_eq!(state.last_animation_time, Some(0.0));
         assert_eq!(state.last_animation_delta, Some(0.0));
         assert_eq!(state.last_animation_frame_index, Some(0));
+        assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
+    }
+
+    #[test]
+    fn animation_frame_wakeups_are_target_only_not_captured_by_ancestors() {
+        let state = Rc::new(RefCell::new(AnimationWakeState::default()));
+        let ancestor_wakes = Rc::new(RefCell::new(0usize));
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Animation Capture").root(
+                AnimationWakeCapturingRoot {
+                    child: SingleChild::new(AnimationWakeLeaf {
+                        state: Rc::clone(&state),
+                    }),
+                    ancestor_wakes: Rc::clone(&ancestor_wakes),
+                },
+            ))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 15;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        let ready = runtime.drain_ready_events();
+        assert_eq!(ready.len(), 1);
+        for (ready_window, event) in ready {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+
+        assert_eq!(state.borrow().animation_wakes, 1);
+        assert_eq!(*ancestor_wakes.borrow(), 0);
         assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
     }
 

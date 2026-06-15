@@ -3791,14 +3791,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let half = max(in.p0.xy, vec2<f32>(0.0));
     let mode = in.p0.z; let feather = in.p0.w;
     let radii = clamp(in.radii, vec4<f32>(0.0), vec4<f32>(min(half.x, half.y)));
+    let p = in.local;
+    let derivative_width = length(vec2<f32>(fwidth(p.x), fwidth(p.y)));
     if (mode == RR_MODE_SHADOW) {
         let sigma = in.p2.y;
-        let pp = in.local - vec2<f32>(in.p2.z, in.p2.w);
+        let pp = p - vec2<f32>(in.p2.z, in.p2.w);
         let cov = gaussian_box_coverage(pp, half, radii, sigma);
         return vec4<f32>(in.color.rgb, in.color.a * cov);
     }
-    let p = in.local; let d = sd_round_box(p, half, radii);
-    let aa = max(feather, length(vec2<f32>(fwidth(p.x), fwidth(p.y))));
+    let d = sd_round_box(p, half, radii);
+    let aa = max(feather, derivative_width);
     let fill_cov = clamp(0.5 - d / max(aa, 1e-4), 0.0, 1.0);
     let bw = in.p2.x;
     if (bw > 0.0) {

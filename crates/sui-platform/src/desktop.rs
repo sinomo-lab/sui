@@ -660,6 +660,12 @@ impl DesktopApp {
         let is_redraw = matches!(event, Event::Window(WindowEvent::RedrawRequested));
         let is_close = matches!(event, Event::Window(WindowEvent::CloseRequested));
 
+        // Event handlers start widget motion from EventCtx::current_time(). Keep that
+        // time current for input after the event loop has been idle, not only for
+        // redraw and ready-event delivery.
+        self.update_clock();
+        self.runtime.tick(self.frame_clock);
+
         let event_started = Instant::now();
         self.runtime.handle_event(window_id, event)?;
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;

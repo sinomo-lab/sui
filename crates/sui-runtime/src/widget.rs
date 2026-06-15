@@ -525,6 +525,28 @@ impl WidgetPod {
         })
     }
 
+    pub(crate) fn dispatch_event_for(
+        &mut self,
+        target: WidgetId,
+        window_id: WindowId,
+        dpi_info: DpiInfo,
+        current_time: f64,
+        phase: EventPhase,
+        focused_widget: Option<WidgetId>,
+        event: &Event,
+    ) -> Option<EventDispatch> {
+        self.find_mut(target, &mut |pod| {
+            pod.dispatch_event(
+                window_id,
+                dpi_info,
+                current_time,
+                phase,
+                focused_widget,
+                event,
+            )
+        })
+    }
+
     pub(crate) fn notify_focus_change_for(
         &mut self,
         target: WidgetId,
