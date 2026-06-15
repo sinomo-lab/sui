@@ -9047,6 +9047,87 @@ mod tests {
     }
 
     #[test]
+    fn retained_scroll_layer_clips_direct_packet_after_child_layer_boundary() {
+        let scroll_id = WidgetId::new(209);
+        let child_id = WidgetId::new(210);
+        let scroll_bounds = Rect::new(0.0, 0.0, 200.0, 160.0);
+        let internal_clip = Rect::new(20.0, 24.0, 120.0, 80.0);
+        let scroll_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(scroll_id),
+            scroll_id,
+            scroll_bounds,
+        )
+        .with_content_bounds(scroll_bounds)
+        .with_paint_bounds(scroll_bounds)
+        .with_composition_mode(LayerCompositionMode::Scroll);
+        let child_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(child_id),
+            child_id,
+            Rect::new(32.0, 36.0, 48.0, 36.0),
+        )
+        .with_content_bounds(Rect::new(32.0, 36.0, 48.0, 36.0))
+        .with_paint_bounds(Rect::new(32.0, 36.0, 48.0, 36.0));
+
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(32.0, 36.0, 48.0, 36.0),
+            brush: Color::rgba(0.0, 0.0, 1.0, 1.0).into(),
+        });
+
+        let mut scroll_scene = Scene::new();
+        scroll_scene.push(SceneCommand::FillRect {
+            rect: scroll_bounds,
+            brush: Color::WHITE.into(),
+        });
+        scroll_scene.push(SceneCommand::PushClip {
+            rect: internal_clip,
+        });
+        scroll_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(28.0, 36.0, 52.0, 20.0),
+            brush: Color::rgba(0.90, 0.94, 0.98, 1.0).into(),
+        });
+        scroll_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            child_descriptor.clone(),
+            child_scene,
+        )));
+        scroll_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(28.0, 12.0, 96.0, 40.0),
+            brush: Color::rgba(1.0, 0.0, 0.0, 1.0).into(),
+        });
+        scroll_scene.push(SceneCommand::PopClip);
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            scroll_descriptor.clone(),
+            scroll_scene,
+        )));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(209),
+            viewport: Size::new(200.0, 160.0),
+            surface_size: Size::new(200.0, 160.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, scroll_descriptor)
+                    .with_damage(scroll_bounds),
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, child_descriptor),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut renderer = WgpuRenderer::default();
+        renderer.render(&frame).unwrap();
+        let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+
+        assert_rgba_pixel_near(&pixels, 32, 18, [255, 255, 255, 255], 2);
+        assert_rgba_pixel_near(&pixels, 32, 30, [255, 0, 0, 255], 2);
+    }
+
+    #[test]
     fn cached_scroll_ancestor_matches_direct_for_clipped_child_layer_rows() {
         let shell_id = WidgetId::new(97);
         let child_id = WidgetId::new(98);

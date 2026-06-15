@@ -310,6 +310,7 @@ struct PacketSnapshot {
     id: RetainedPacketId,
     scene: Scene,
     initial_state: ResolvedRasterState,
+    inherited_clip_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -524,6 +525,7 @@ impl RetainedCompositorState {
             CompositionTraversalState::default(),
             &mut snapshot,
             None,
+            0,
         )?;
         Ok(snapshot)
     }
@@ -535,6 +537,7 @@ impl RetainedCompositorState {
         mut state: CompositionTraversalState,
         snapshot: &mut CompositorSnapshot,
         parent_layer: Option<SceneLayerId>,
+        inherited_clip_count: usize,
     ) -> Result<RootSnapshot> {
         let mut result = RootSnapshot::default();
         let mut normal_items = Vec::new();
@@ -555,6 +558,7 @@ impl RetainedCompositorState {
                         &mut effect_items,
                         &mut segment_scene,
                         &mut segment_start,
+                        inherited_clip_count,
                     );
 
                     let mut child_state = state.clone();
@@ -613,6 +617,7 @@ impl RetainedCompositorState {
             &mut effect_items,
             &mut segment_scene,
             &mut segment_start,
+            inherited_clip_count,
         );
         result.items = normal_items;
         result.items.extend(overlay_items);
@@ -634,6 +639,7 @@ impl RetainedCompositorState {
             state,
             snapshot,
             Some(layer.layer_id()),
+            inherited_state.clip_stack.len(),
         )?;
         let clip_signature = normalized_clip_stack_signature(
             &inherited_state.clip_stack,
@@ -1252,6 +1258,7 @@ fn flush_container_segment(
     effect_items: &mut Vec<CompositionItem>,
     segment_scene: &mut Scene,
     segment_start: &mut Option<ResolvedRasterState>,
+    inherited_clip_count: usize,
 ) {
     if !scene_has_draw_content(segment_scene) {
         *segment_scene = Scene::new();
@@ -1279,6 +1286,7 @@ fn flush_container_segment(
         id: packet_id,
         scene: std::mem::take(segment_scene),
         initial_state,
+        inherited_clip_count,
     });
 }
 
@@ -1453,7 +1461,10 @@ fn normalize_packet_snapshot(
         snapshot.initial_state = translate_resolved_raster_state(&snapshot.initial_state, delta);
     }
     if coordinate_space == PacketCoordinateSpace::LayerLocal {
-        snapshot.initial_state.clip_stack.clear();
+        let strip_count = snapshot
+            .inherited_clip_count
+            .min(snapshot.initial_state.clip_stack.len());
+        snapshot.initial_state.clip_stack.drain(0..strip_count);
         snapshot.initial_state.clip_node = ClipNodeId::ROOT;
         snapshot.initial_state.pixel_snap_offset =
             physical_pixel_phase(pixel_snap_origin, raster_scale_factor);
@@ -1929,6 +1940,104 @@ mod tests {
                 ResolvedClipPrimitive::Path { .. } => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn layer_local_packets_preserve_internal_clips_after_child_layer_split() {
+        let scroll_id = WidgetId::new(62);
+        let child_id = WidgetId::new(63);
+        let scroll_bounds = Rect::new(0.0, 0.0, 200.0, 160.0);
+        let internal_clip = Rect::new(20.0, 24.0, 120.0, 80.0);
+        let scroll_descriptor = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(scroll_id),
+            scroll_id,
+            scroll_bounds,
+        )
+        .with_content_bounds(scroll_bounds)
+        .with_paint_bounds(scroll_bounds)
+        .with_composition_mode(LayerCompositionMode::Scroll);
+        let child_descriptor = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(child_id),
+            child_id,
+            Rect::new(32.0, 36.0, 48.0, 36.0),
+        )
+        .with_content_bounds(Rect::new(32.0, 36.0, 48.0, 36.0))
+        .with_paint_bounds(Rect::new(32.0, 36.0, 48.0, 36.0));
+
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(32.0, 36.0, 48.0, 36.0),
+            brush: Color::rgba(0.18, 0.54, 0.82, 1.0).into(),
+        });
+
+        let mut scroll_scene = Scene::new();
+        scroll_scene.push(SceneCommand::PushClip {
+            rect: internal_clip,
+        });
+        scroll_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(28.0, 36.0, 52.0, 20.0),
+            brush: Color::rgba(0.86, 0.92, 0.98, 1.0).into(),
+        });
+        scroll_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            child_descriptor.clone(),
+            child_scene,
+        )));
+        scroll_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(28.0, 12.0, 96.0, 40.0),
+            brush: Color::rgba(0.17, 0.21, 0.29, 1.0).into(),
+        });
+        scroll_scene.push(SceneCommand::PopClip);
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            scroll_descriptor.clone(),
+            scroll_scene,
+        )));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(26),
+            viewport: Size::new(200.0, 160.0),
+            surface_size: Size::new(200.0, 160.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, scroll_descriptor),
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, child_descriptor),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _ = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+
+        let packet_id = RetainedPacketId {
+            container: CompositionContainerId::Layer(SceneLayerId::from_widget(scroll_id)),
+            segment_index: 1,
+        };
+        let packet = compositor
+            .packets
+            .get(&packet_id)
+            .expect("post-child layer packet should be retained");
+
+        assert_eq!(
+            packet.initial_state.clip_stack,
+            vec![ResolvedClipPrimitive::Rect(internal_clip)],
+            "layer-local packets should strip only inherited layer clips"
+        );
+        assert!(
+            packet
+                .draw_ops
+                .draw_ops
+                .iter()
+                .any(|op| op.clip_rect == Some(internal_clip)),
+            "post-child draw op should keep the internal scroll viewport clip"
+        );
     }
 
     #[test]
