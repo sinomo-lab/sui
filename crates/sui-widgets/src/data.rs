@@ -686,8 +686,6 @@ impl Widget for ListView {
             let leading_color = item.leading_color.unwrap_or_else(|| {
                 if item.disabled {
                     palette.placeholder
-                } else if selected {
-                    palette.border_focus
                 } else {
                     palette.text_muted
                 }
@@ -768,8 +766,6 @@ impl Widget for ListView {
                 item.label.clone(),
                 if item.disabled {
                     theme.text_style(palette.placeholder)
-                } else if selected {
-                    theme.text_style(palette.border_focus)
                 } else {
                     label_style.clone()
                 },
@@ -782,14 +778,7 @@ impl Widget for ListView {
                 ctx.pop_clip();
             }
             if let (Some(trailing), Some(rect)) = (&item.trailing, trailing_rect) {
-                let style = if selected {
-                    TextStyle {
-                        color: palette.border_focus,
-                        ..detail_style.clone()
-                    }
-                } else {
-                    detail_style.clone()
-                };
+                let style = detail_style.clone();
                 let trailing_text_rect =
                     aligned_text_rect_for_text(ctx, rect, trailing, &style, style.line_height, 1.0);
                 ctx.push_clip_rect(rect);
@@ -1566,13 +1555,9 @@ impl Widget for LayerList {
             ctx.draw_text(
                 label_rect,
                 layer.label.clone(),
-                if selected {
-                    theme.text_style(palette.border_focus.with_alpha(text_alpha))
-                } else {
-                    TextStyle {
-                        color: label_style.color.with_alpha(text_alpha),
-                        ..label_style.clone()
-                    }
+                TextStyle {
+                    color: label_style.color.with_alpha(text_alpha),
+                    ..label_style.clone()
                 },
             );
             if let Some(detail_rect) = detail_rect {
@@ -2200,7 +2185,7 @@ impl Widget for TreeView {
                 ctx.fill(
                     disclosure_path(disclosure_rect(&theme, row_rect, row.depth), row.expanded),
                     if selected {
-                        palette.border_focus
+                        palette.text_muted
                     } else {
                         palette.placeholder
                     },
@@ -2234,8 +2219,6 @@ impl Widget for TreeView {
                 row.label.clone(),
                 if row.disabled {
                     theme.text_style(palette.placeholder)
-                } else if selected {
-                    theme.text_style(palette.border_focus)
                 } else {
                     label_style
                 },
@@ -2702,14 +2685,6 @@ impl Widget for Table {
         let header_style = theme.text_style(palette.placeholder);
         let body_style = theme.body_text_style();
         let numeric_body_style = numeric_text_style(body_style.clone());
-        let selected_body_style = TextStyle {
-            color: palette.border_focus,
-            ..body_style.clone()
-        };
-        let selected_numeric_body_style = TextStyle {
-            color: palette.border_focus,
-            ..numeric_body_style.clone()
-        };
         let body = self.body_rect(ctx.bounds());
         let padding = metrics.data_viewport_padding;
         let header = Rect::new(
@@ -2792,13 +2767,7 @@ impl Widget for Table {
                 let cell_rect = Rect::new(cell_x, row_rect.y(), width, row_rect.height());
                 if let Some(value) = self.rows[row_index].cells.get(column_index) {
                     let style = if column.numeric {
-                        if selected {
-                            selected_numeric_body_style.clone()
-                        } else {
-                            numeric_body_style.clone()
-                        }
-                    } else if selected {
-                        selected_body_style.clone()
+                        numeric_body_style.clone()
                     } else {
                         body_style.clone()
                     };
@@ -3159,7 +3128,7 @@ impl Widget for Breadcrumb {
             }
 
             let style = if current {
-                theme.text_style(palette.border_focus)
+                theme.body_text_style()
             } else {
                 theme.body_text_style()
             };
@@ -3315,29 +3284,18 @@ fn chevron_path(rect: Rect) -> Path {
     builder.build()
 }
 
-fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focus_progress: f32) {
+fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, _focus_progress: f32) {
     let palette = theme.palette;
     let metrics = theme.metrics;
-    let focus_progress = focus_progress.clamp(0.0, 1.0);
     ctx.fill(
         rounded_rect_path(rect, metrics.corner_radius),
         palette.surface,
     );
     ctx.stroke(
         rounded_rect_path(rect, metrics.corner_radius),
-        mix_color(palette.border, palette.border_focus, focus_progress),
+        palette.border,
         sui_scene::StrokeStyle::new(metrics.border_width.max(1.0)),
     );
-    if focus_progress > AnimatedScalar::EPSILON {
-        let outset = metrics.focus_ring_outset;
-        ctx.stroke(
-            rounded_rect_path(rect.inflate(outset, outset), metrics.corner_radius + outset),
-            palette
-                .focus_ring
-                .with_alpha(palette.focus_ring.alpha * focus_progress),
-            sui_scene::StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
-        );
-    }
 }
 
 fn draw_vertical_scroll_thumb(
@@ -3812,7 +3770,7 @@ fn paint_layer_visibility_button(
     let metrics = theme.metrics;
     let icon = inset_rect(rect, Insets::all(metrics.layer_action_icon_inset));
     let color = if visible {
-        palette.border_focus
+        palette.accent
     } else {
         palette.placeholder
     };
@@ -3876,7 +3834,7 @@ fn paint_layer_lock_button(
         },
         inset_rect(rect, Insets::all(metrics.layer_lock_icon_inset)),
         if locked {
-            palette.border_focus
+            palette.accent
         } else {
             palette.placeholder
         },
@@ -4407,12 +4365,11 @@ mod tests {
         Ok(count)
     }
 
-    fn assert_focus_surface_uses_theme_motion<W>(root: W, position: Point) -> Result<()>
+    fn assert_focus_surface_keeps_chrome_neutral<W>(root: W, position: Point) -> Result<()>
     where
         W: Widget + 'static,
     {
         let theme = DefaultTheme::default();
-        let focus_duration = theme.motion.focus_duration();
         let (mut runtime, window_id) = build_runtime(root);
         let _ = runtime.render(window_id)?;
 
@@ -4420,22 +4377,17 @@ mod tests {
             window_id,
             primary_pointer(PointerEventKind::Down, position, true),
         )?;
-        let _ = runtime.render(window_id)?;
 
-        runtime.tick(focus_duration * 0.5);
-        assert!(handle_ready_events(&mut runtime)? >= 1);
-        let mid = runtime.render(window_id)?;
+        let focused = runtime.render(window_id)?;
+        let focused_strokes = solid_stroke_colors(&focused);
         assert!(
-            !solid_stroke_colors(&mid).contains(&theme.palette.focus_ring),
-            "data focus ring should not snap to the settled focus color"
+            !focused_strokes.contains(&theme.palette.focus_ring),
+            "focused data containers should not paint a focus ring; strokes={focused_strokes:?}"
         );
-
-        runtime.tick(focus_duration);
-        assert!(handle_ready_events(&mut runtime)? >= 1);
-        let settled = runtime.render(window_id)?;
-        assert!(
-            solid_stroke_colors(&settled).contains(&theme.palette.focus_ring),
-            "data focus ring should settle to the theme focus color"
+        assert_eq!(
+            focused_strokes.first().copied(),
+            Some(theme.palette.border),
+            "focused data containers should keep their surface border neutral; strokes={focused_strokes:?}"
         );
 
         Ok(())
@@ -4496,15 +4448,15 @@ mod tests {
     }
 
     #[test]
-    fn data_focus_surfaces_use_theme_motion() -> Result<()> {
-        assert_focus_surface_uses_theme_motion(
+    fn data_focus_surfaces_keep_chrome_neutral() -> Result<()> {
+        assert_focus_surface_keeps_chrome_neutral(
             SizedBox::new().width(260.0).height(120.0).with_child(
                 ListView::new("Assets").items([ListItem::new("First"), ListItem::new("Second")]),
             ),
             Point::new(24.0, 24.0),
         )?;
 
-        assert_focus_surface_uses_theme_motion(
+        assert_focus_surface_keeps_chrome_neutral(
             SizedBox::new().width(280.0).height(120.0).with_child(
                 LayerList::new("Layers")
                     .layers([LayerListItem::new("Paint"), LayerListItem::new("Ink")]),
@@ -4512,14 +4464,14 @@ mod tests {
             Point::new(24.0, 24.0),
         )?;
 
-        assert_focus_surface_uses_theme_motion(
+        assert_focus_surface_keeps_chrome_neutral(
             SizedBox::new().width(260.0).height(120.0).with_child(
                 TreeView::new("Scene").items([TreeItem::new("Canvas"), TreeItem::new("Lighting")]),
             ),
             Point::new(24.0, 24.0),
         )?;
 
-        assert_focus_surface_uses_theme_motion(
+        assert_focus_surface_keeps_chrome_neutral(
             SizedBox::new().width(280.0).height(140.0).with_child(
                 Table::new("Objects")
                     .columns([TableColumn::new("Name")])
@@ -4528,7 +4480,7 @@ mod tests {
             Point::new(24.0, 58.0),
         )?;
 
-        assert_focus_surface_uses_theme_motion(
+        assert_focus_surface_keeps_chrome_neutral(
             Breadcrumb::new("Path").items([
                 BreadcrumbItem::new("Scene"),
                 BreadcrumbItem::new("Layers"),
@@ -5423,7 +5375,7 @@ mod tests {
             .next()
             .expect("unselected numeric cell should render");
 
-        assert_eq!(selected_label.style.color, theme.palette.border_focus);
+        assert_eq!(selected_label.style.color, theme.palette.text);
         assert_eq!(
             selected_label.style.font_size,
             theme.typography.body_font_size
@@ -5432,7 +5384,7 @@ mod tests {
             selected_label.style.line_height,
             theme.typography.body_line_height
         );
-        assert_eq!(selected_number.style.color, theme.palette.border_focus);
+        assert_eq!(selected_number.style.color, theme.palette.text);
         assert_eq!(
             selected_number.style.font_size,
             theme.typography.body_font_size
@@ -5505,7 +5457,7 @@ mod tests {
         ]));
         assert_eq!(
             text_runs_for(&breadcrumb, "Workspace")[0].style.color,
-            theme.palette.border_focus
+            theme.palette.text
         );
         assert!(solid_fill_colors(&breadcrumb).contains(&theme.palette.surface));
     }
@@ -6369,7 +6321,7 @@ mod tests {
             - theme.metrics.data_row_padding.right;
 
         assert_text_run_uses_token(&trailing, theme.text.xs);
-        assert_eq!(trailing.style.color, theme.palette.border_focus);
+        assert_eq!(trailing.style.color, theme.palette.placeholder);
         assert!((trailing_visual_center - row_center).abs() < 0.75);
         assert!(
             (trailing.rect.max_x() - trailing_edge).abs() < 0.75,

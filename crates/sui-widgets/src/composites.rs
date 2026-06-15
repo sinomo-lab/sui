@@ -5671,7 +5671,7 @@ impl Widget for TabBar {
         let tab_padding = metrics.tab_padding;
         let label_style = theme.body_text_style();
         let selected_label_style = TextStyle {
-            color: palette.border_focus,
+            color: palette.text,
             ..label_style.clone()
         };
 
@@ -5681,20 +5681,6 @@ impl Widget for TabBar {
         );
 
         let focus_progress = self.focus_animation.value;
-        if focus_progress > AnimatedScalar::EPSILON {
-            let outset = physical_pixels(ctx, metrics.focus_ring_outset);
-            ctx.stroke(
-                rounded_rect_path(
-                    ctx.bounds().inflate(outset, outset),
-                    metrics.corner_radius + outset,
-                ),
-                palette
-                    .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * focus_progress),
-                StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
-            );
-        }
-
         for (index, tab) in self.tabs.iter().enumerate() {
             let Some(rect) = self.tab_rect(ctx.bounds(), index) else {
                 continue;
@@ -5720,6 +5706,18 @@ impl Widget for TabBar {
                     physical_pixels(ctx, metrics.border_width),
                     background,
                     border,
+                );
+            }
+
+            if selected && focus_progress > AnimatedScalar::EPSILON {
+                draw_focus_ring_frame(
+                    ctx,
+                    rect,
+                    metrics.corner_radius,
+                    metrics,
+                    palette
+                        .focus_ring
+                        .with_alpha(palette.focus_ring.alpha * focus_progress),
                 );
             }
 
@@ -6225,7 +6223,7 @@ impl Widget for Tabs {
         let header = self.header_rect(ctx.bounds());
         let label_style = theme.body_text_style();
         let selected_label_style = TextStyle {
-            color: palette.border_focus,
+            color: palette.text,
             ..label_style.clone()
         };
 
@@ -6235,20 +6233,6 @@ impl Widget for Tabs {
         );
 
         let focus_progress = self.focus_animation.value;
-        if focus_progress > AnimatedScalar::EPSILON {
-            let outset = physical_pixels(ctx, metrics.focus_ring_outset);
-            ctx.stroke(
-                rounded_rect_path(
-                    header.inflate(outset, outset),
-                    metrics.corner_radius + outset,
-                ),
-                palette
-                    .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * focus_progress),
-                StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
-            );
-        }
-
         for (index, label) in self.labels.iter().enumerate() {
             let Some(rect) = self.tab_rect(ctx.bounds(), index) else {
                 continue;
@@ -6274,6 +6258,18 @@ impl Widget for Tabs {
                     physical_pixels(ctx, metrics.border_width),
                     background,
                     border,
+                );
+            }
+
+            if selected && focus_progress > AnimatedScalar::EPSILON {
+                draw_focus_ring_frame(
+                    ctx,
+                    rect,
+                    metrics.corner_radius,
+                    metrics,
+                    palette
+                        .focus_ring
+                        .with_alpha(palette.focus_ring.alpha * focus_progress),
                 );
             }
 
@@ -9737,7 +9733,7 @@ fn tab_state_visuals(
                 palette.accent,
                 interaction.tab_selected_blend,
             ),
-            palette.border_focus,
+            palette.border.with_alpha(0.72),
         ))
     } else if pressed || press_amount > 0.0 {
         Some((
@@ -10431,18 +10427,6 @@ mod tests {
                 .activation_button(PointerButton::Primary)
                 .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
             Point::new(24.0, 24.0),
-        )?;
-
-        assert_focus_ring_uses_theme_motion(
-            TabBar::new("Views").tabs(["Layers", "Assets"]),
-            Point::new(24.0, 18.0),
-        )?;
-
-        assert_focus_ring_uses_theme_motion(
-            Tabs::new("Inspector")
-                .tab("Style", crate::Label::new("Style"))
-                .tab("Layout", crate::Label::new("Layout")),
-            Point::new(24.0, 18.0),
         )?;
 
         assert_focus_ring_uses_theme_motion(
@@ -13049,6 +13033,14 @@ mod tests {
                 .selected(1),
         );
         assert!(solid_fill_colors(&tab_bar).contains(&selected_fill));
+        assert!(
+            !solid_stroke_colors(&tab_bar).contains(&theme.palette.border_focus),
+            "selected tab bar chrome should not use the focus border color"
+        );
+        assert!(
+            !solid_stroke_colors(&tab_bar).contains(&theme.palette.focus_ring),
+            "unfocused selected tab bar chrome should not paint a focus ring"
+        );
 
         let tabs = render_isolated(
             Tabs::new("Main tabs")
@@ -13058,6 +13050,94 @@ mod tests {
                 .tab("Inspect", crate::Label::new("Inspect")),
         );
         assert!(solid_fill_colors(&tabs).contains(&selected_fill));
+        assert!(
+            !solid_stroke_colors(&tabs).contains(&theme.palette.border_focus),
+            "selected tabs chrome should not use the focus border color"
+        );
+        assert!(
+            !solid_stroke_colors(&tabs).contains(&theme.palette.focus_ring),
+            "unfocused selected tabs chrome should not paint a focus ring"
+        );
+    }
+
+    #[test]
+    fn tab_widgets_focus_highlights_selected_tab_button() -> Result<(), String> {
+        let theme = DefaultTheme::default();
+        let focus_duration = theme.motion.focus_duration();
+        let tab_bar_point = Point::new(
+            theme.metrics.tab_min_width + theme.metrics.tab_gap + 8.0,
+            18.0,
+        );
+        let (mut tab_bar_runtime, tab_bar_window) = build_runtime(
+            TabBar::new("Main tabs")
+                .theme(theme)
+                .tabs(["Design", "Inspect"])
+                .selected(1),
+        );
+        let _ = tab_bar_runtime
+            .render(tab_bar_window)
+            .map_err(|error| error.to_string())?;
+        tab_bar_runtime
+            .handle_event(
+                tab_bar_window,
+                primary_pointer(PointerEventKind::Down, tab_bar_point, true),
+            )
+            .map_err(|error| error.to_string())?;
+        tab_bar_runtime.tick(focus_duration + 0.01);
+        assert!(handle_ready_events(&mut tab_bar_runtime)? >= 1);
+        let tab_bar_focused = tab_bar_runtime
+            .render(tab_bar_window)
+            .map_err(|error| error.to_string())?;
+        let tab_bar_strokes = solid_stroke_colors(&tab_bar_focused);
+        assert!(
+            contains_approx_color(&tab_bar_strokes, theme.palette.focus_ring),
+            "focused selected tab button should paint a focus ring; strokes={tab_bar_strokes:?}"
+        );
+        assert!(
+            !contains_approx_color(&tab_bar_strokes, theme.palette.border_focus),
+            "focused tab bar should keep neutral selected strokes; strokes={tab_bar_strokes:?}"
+        );
+
+        let tabs_point = Point::new(
+            theme.metrics.tab_min_width + theme.metrics.tab_gap + 8.0,
+            18.0,
+        );
+        let (mut tabs_runtime, tabs_window) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(260.0, 120.0))
+                .with_child(
+                    Tabs::new("Main tabs")
+                        .theme(theme)
+                        .selected(1)
+                        .tab("Design", crate::Label::new("Design"))
+                        .tab("Inspect", crate::Label::new("Inspect")),
+                ),
+        );
+        let _ = tabs_runtime
+            .render(tabs_window)
+            .map_err(|error| error.to_string())?;
+        tabs_runtime
+            .handle_event(
+                tabs_window,
+                primary_pointer(PointerEventKind::Down, tabs_point, true),
+            )
+            .map_err(|error| error.to_string())?;
+        tabs_runtime.tick(focus_duration + 0.01);
+        assert!(handle_ready_events(&mut tabs_runtime)? >= 1);
+        let tabs_focused = tabs_runtime
+            .render(tabs_window)
+            .map_err(|error| error.to_string())?;
+        let tabs_strokes = solid_stroke_colors(&tabs_focused);
+        assert!(
+            contains_approx_color(&tabs_strokes, theme.palette.focus_ring),
+            "focused selected tab button should paint a focus ring; strokes={tabs_strokes:?}"
+        );
+        assert!(
+            !contains_approx_color(&tabs_strokes, theme.palette.border_focus),
+            "focused tabs should keep neutral selected strokes; strokes={tabs_strokes:?}"
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -13077,7 +13157,7 @@ mod tests {
         );
         let tab_bar_label = text_run_for(&tab_bar, "Inspect");
         assert_text_run_uses_token(&tab_bar_label, theme.text.sm);
-        assert_eq!(tab_bar_label.style.color, theme.palette.border_focus);
+        assert_eq!(tab_bar_label.style.color, theme.palette.text);
         assert!(
             (text_run_visual_center(&tab_bar_label) - (tab_bar.frame.viewport.height * 0.5)).abs()
                 < 0.75
@@ -13092,7 +13172,7 @@ mod tests {
         );
         let tabs_label = text_run_for(&tabs, "Inspect");
         assert_text_run_uses_token(&tabs_label, theme.text.sm);
-        assert_eq!(tabs_label.style.color, theme.palette.border_focus);
+        assert_eq!(tabs_label.style.color, theme.palette.text);
         assert!(
             (text_run_visual_center(&tabs_label) - (theme.metrics.tab_height * 0.5)).abs() < 0.75
         );

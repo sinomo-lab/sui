@@ -541,14 +541,23 @@ impl DevBrowserShell {
                     Path::rounded_rect(*rect, 7.0),
                     tab_background.with_alpha(if selected { 1.0 } else { 0.82 }),
                 );
+                if hovered || pressed {
+                    ctx.stroke(
+                        Path::rounded_rect(*rect, 7.0),
+                        palette.border.with_alpha(0.62),
+                        StrokeStyle::new(1.0),
+                    );
+                }
+            }
+            if selected && ctx.is_focused() {
+                let focus_outset = theme.metrics.focus_ring_outset;
                 ctx.stroke(
-                    Path::rounded_rect(*rect, 7.0),
-                    if selected {
-                        palette.border_focus.with_alpha(0.72)
-                    } else {
-                        palette.border.with_alpha(0.62)
-                    },
-                    StrokeStyle::new(1.0),
+                    Path::rounded_rect(
+                        rect.inflate(focus_outset, focus_outset),
+                        7.0 + focus_outset,
+                    ),
+                    palette.focus_ring,
+                    StrokeStyle::new(theme.metrics.focus_ring_width.max(1.0)),
                 );
             }
 
@@ -559,11 +568,7 @@ impl DevBrowserShell {
                 TextStyle {
                     font_size: 13.0,
                     line_height: 18.0,
-                    color: if selected {
-                        palette.border_focus
-                    } else {
-                        palette.text
-                    },
+                    color: palette.text,
                     ..TextStyle::default()
                 },
             );
@@ -2848,11 +2853,11 @@ mod tests {
     };
 
     use sui::{
-        Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
-        SceneCommand, SceneStatisticsDetailMode, ScrollDelta, SemanticsNode, SemanticsRole,
-        StackOrderPolicy, Vector, WidgetId, WindowColorManagementMode, WindowDynamicRangeMode,
-        WindowEvent, WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowRenderOptions,
-        WindowToneMappingMode, set_window_scene_statistics_detail_mode,
+        Brush, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
+        RenderOutput, Result, SceneCommand, SceneStatisticsDetailMode, ScrollDelta, SemanticsNode,
+        SemanticsRole, StackOrderPolicy, Vector, WidgetId, WindowColorManagementMode,
+        WindowDynamicRangeMode, WindowEvent, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
+        WindowRenderOptions, WindowToneMappingMode, set_window_scene_statistics_detail_mode,
         window_performance_snapshot, window_scene_statistics_detail_mode,
     };
     use sui_render_wgpu::{
@@ -2948,6 +2953,31 @@ mod tests {
             build_button_grid_benchmark(),
         );
         finish_dev_application(views)
+    }
+
+    fn rects_overlap(a: Rect, b: Rect) -> bool {
+        a.x() < b.max_x() && a.max_x() > b.x() && a.y() < b.max_y() && a.max_y() > b.y()
+    }
+
+    fn solid_stroke_colors_in_rect(output: &RenderOutput, region: Rect) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect {
+                    rect,
+                    brush: Brush::Solid(color),
+                    ..
+                } if rects_overlap(*rect, region) => colors.push(*color),
+                SceneCommand::StrokePath {
+                    path,
+                    brush: Brush::Solid(color),
+                    ..
+                } if rects_overlap(path.bounds(), region) => colors.push(*color),
+                _ => {}
+            });
+        colors
     }
 
     #[test]
@@ -3367,6 +3397,69 @@ mod tests {
                 node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open demo")
             }),
             "expected the tab zone to expose the demo picker + button"
+        );
+    }
+
+    #[test]
+    fn dev_shell_active_tab_chrome_stays_neutral() {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            WindowRenderOptions::new(true, 1.0),
+            Some(WIDGET_BOOK_TAB_LABEL),
+        ))
+        .build()
+        .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render");
+        let theme = DefaultTheme::default();
+        let toolbar = Rect::new(
+            0.0,
+            0.0,
+            output.frame.viewport.width,
+            DEV_SHELL_TOOLBAR_HEIGHT,
+        );
+
+        assert!(
+            !solid_stroke_colors_in_rect(&output, toolbar).contains(&theme.palette.border_focus),
+            "active dev shell tab should not paint the focus border color"
+        );
+        assert!(
+            !solid_stroke_colors_in_rect(&output, toolbar).contains(&theme.palette.focus_ring),
+            "unfocused active dev shell tab should not paint a focus ring"
+        );
+
+        let active_tab = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some(WIDGET_BOOK_TAB_LABEL)
+            })
+            .expect("active dev shell tab semantics should exist");
+        let position = Point::new(
+            active_tab.bounds.x() + active_tab.bounds.width() * 0.5,
+            active_tab.bounds.y() + active_tab.bounds.height() * 0.5,
+        );
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .expect("tab focus pointer event should be handled");
+
+        let focused = runtime
+            .render(window_id)
+            .expect("focused dev application should render");
+        let focused_strokes = solid_stroke_colors_in_rect(&focused, toolbar);
+        assert!(
+            focused_strokes.contains(&theme.palette.focus_ring),
+            "focused active dev shell tab should paint a focus ring; strokes={focused_strokes:?}"
+        );
+        assert!(
+            !focused_strokes.contains(&theme.palette.border_focus),
+            "focused active dev shell tab should still avoid selection border focus color"
         );
     }
 

@@ -1984,12 +1984,6 @@ impl Widget for ScrollView {
         } else {
             self.child.paint(ctx);
         }
-        draw_focus_ring(
-            ctx,
-            ctx.bounds(),
-            self.theme.as_ref(),
-            self.focus_animation.value,
-        );
     }
 
     fn layer_options(&self) -> LayerOptions {
@@ -2204,12 +2198,6 @@ impl Widget for VirtualScrollView {
             child.paint(ctx);
         }
         ctx.pop_clip();
-        draw_focus_ring(
-            ctx,
-            viewport,
-            self.theme.as_ref(),
-            self.focus_animation.value,
-        );
     }
 
     fn layer_options(&self) -> LayerOptions {
@@ -2384,26 +2372,6 @@ where
             InvalidationKind::Transform,
         ));
     }
-}
-
-fn draw_focus_ring(ctx: &mut PaintCtx, bounds: Rect, theme: &DefaultTheme, progress: f32) {
-    if progress <= AnimatedScalar::EPSILON || bounds.is_empty() {
-        return;
-    }
-
-    let metrics = theme.metrics;
-    let outset = physical_pixels(ctx, metrics.focus_ring_outset);
-    ctx.stroke(
-        Path::rounded_rect(
-            bounds.inflate(outset, outset),
-            metrics.corner_radius + outset,
-        ),
-        theme
-            .palette
-            .focus_ring
-            .with_alpha(theme.palette.focus_ring.alpha * progress),
-        StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
-    );
 }
 
 fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
@@ -4011,9 +3979,8 @@ mod tests {
     }
 
     #[test]
-    fn scroll_view_focus_ring_uses_theme_motion() {
+    fn scroll_view_focus_keeps_viewport_chrome_neutral() {
         let theme = DefaultTheme::default();
-        let focus_duration = theme.motion.focus_duration();
         let point = Point::new(20.0, 20.0);
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
@@ -4034,28 +4001,17 @@ mod tests {
             .handle_event(window_id, Event::Pointer(down))
             .expect("focus event should be handled");
 
-        runtime.tick(focus_duration * 0.5);
-        assert!(handle_ready_events(&mut runtime) >= 1);
-        let mid_focus = runtime.render(window_id).expect("render should succeed");
+        let focused = runtime.render(window_id).expect("render should succeed");
+        let focused_strokes = solid_stroke_colors(&focused);
         assert!(
-            !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
-            "scroll view focus ring should not snap to the settled focus color"
-        );
-
-        runtime.tick(focus_duration + 0.01);
-        assert!(handle_ready_events(&mut runtime) >= 1);
-        let settled_focus = runtime.render(window_id).expect("render should succeed");
-        let settled_strokes = solid_stroke_colors(&settled_focus);
-        assert!(
-            contains_approx_color(&settled_strokes, theme.palette.focus_ring),
-            "scroll view focus ring should settle to the theme focus color; strokes={settled_strokes:?}"
+            !contains_approx_color(&focused_strokes, theme.palette.focus_ring),
+            "scroll view focus should not paint an activation ring; strokes={focused_strokes:?}"
         );
     }
 
     #[test]
-    fn virtual_scroll_view_focus_ring_uses_theme_motion() {
+    fn virtual_scroll_view_focus_keeps_viewport_chrome_neutral() {
         let theme = DefaultTheme::default();
-        let focus_duration = theme.motion.focus_duration();
         let point = Point::new(20.0, 20.0);
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
@@ -4085,21 +4041,11 @@ mod tests {
             .handle_event(window_id, Event::Pointer(down))
             .expect("focus event should be handled");
 
-        runtime.tick(focus_duration * 0.5);
-        assert!(handle_ready_events(&mut runtime) >= 1);
-        let mid_focus = runtime.render(window_id).expect("render should succeed");
+        let focused = runtime.render(window_id).expect("render should succeed");
+        let focused_strokes = solid_stroke_colors(&focused);
         assert!(
-            !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
-            "virtual scroll view focus ring should not snap to the settled focus color"
-        );
-
-        runtime.tick(focus_duration + 0.01);
-        assert!(handle_ready_events(&mut runtime) >= 1);
-        let settled_focus = runtime.render(window_id).expect("render should succeed");
-        let settled_strokes = solid_stroke_colors(&settled_focus);
-        assert!(
-            contains_approx_color(&settled_strokes, theme.palette.focus_ring),
-            "virtual scroll view focus ring should settle to the theme focus color; strokes={settled_strokes:?}"
+            !contains_approx_color(&focused_strokes, theme.palette.focus_ring),
+            "virtual scroll view focus should not paint an activation ring; strokes={focused_strokes:?}"
         );
     }
 
