@@ -4235,8 +4235,9 @@ pub(crate) fn output_sdr_content_scale(
 
     match strategy {
         OutputStrategy::HdrNativeSurface { .. } => sanitized / SCRGB_REFERENCE_WHITE_NITS,
-        OutputStrategy::HdrIntermediateThenToneMap { .. } => sanitized / SCRGB_REFERENCE_WHITE_NITS,
-        OutputStrategy::SdrSurface { .. } | OutputStrategy::WideGamutSurface { .. } => 1.0,
+        OutputStrategy::SdrSurface { .. }
+        | OutputStrategy::WideGamutSurface { .. }
+        | OutputStrategy::HdrIntermediateThenToneMap { .. } => 1.0,
     }
 }
 
@@ -4264,10 +4265,9 @@ pub(crate) fn apply_output_transform_for_testing(
         OutputStrategy::HdrNativeSurface { .. } => [scaled[0], scaled[1], scaled[2], scaled[3]],
         _ => match mode {
             RequestedToneMappingMode::Automatic => match strategy {
-                OutputStrategy::HdrIntermediateThenToneMap { .. } => {
-                    tone_map_linear_color(scaled, RequestedToneMappingMode::Reinhard)
-                }
-                OutputStrategy::SdrSurface { .. } | OutputStrategy::WideGamutSurface { .. } => {
+                OutputStrategy::SdrSurface { .. }
+                | OutputStrategy::WideGamutSurface { .. }
+                | OutputStrategy::HdrIntermediateThenToneMap { .. } => {
                     tone_map_linear_color(scaled, RequestedToneMappingMode::Clamp)
                 }
                 OutputStrategy::HdrNativeSurface { .. } => unreachable!(),

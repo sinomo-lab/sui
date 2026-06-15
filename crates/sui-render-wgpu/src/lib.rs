@@ -2257,10 +2257,7 @@ impl WgpuRenderer {
         let resolved_tone_mapping = match strategy {
             OutputStrategy::HdrNativeSurface { .. } => 0,
             _ => match requested_tone_mapping {
-                RequestedToneMappingMode::Automatic => match strategy {
-                    OutputStrategy::HdrIntermediateThenToneMap { .. } => 2,
-                    _ => 1,
-                },
+                RequestedToneMappingMode::Automatic => 1,
                 RequestedToneMappingMode::Clamp => 1,
                 RequestedToneMappingMode::Reinhard => 2,
             },
@@ -5690,7 +5687,7 @@ mod tests {
     }
 
     #[test]
-    fn hdr_tone_mapped_output_applies_requested_sdr_content_brightness_before_reinhard() {
+    fn hdr_tone_mapped_output_preserves_sdr_reference_white_by_default() {
         let transformed = apply_output_transform_for_testing(
             [1.0, 1.0, 1.0, 1.0],
             OutputStrategy::HdrIntermediateThenToneMap {
@@ -5703,8 +5700,27 @@ mod tests {
             None,
         );
 
-        let scaled_reference_white = 203.0 / 80.0;
-        let expected = scaled_reference_white / (1.0 + scaled_reference_white);
+        assert!((transformed[0] - 1.0).abs() < 0.0001);
+        assert!((transformed[1] - 1.0).abs() < 0.0001);
+        assert!((transformed[2] - 1.0).abs() < 0.0001);
+        assert_eq!(transformed[3], 1.0);
+    }
+
+    #[test]
+    fn hdr_tone_mapped_output_keeps_reinhard_as_explicit_opt_in() {
+        let transformed = apply_output_transform_for_testing(
+            [1.0, 1.0, 1.0, 1.0],
+            OutputStrategy::HdrIntermediateThenToneMap {
+                intermediate_format: wgpu::TextureFormat::Rgba16Float,
+                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                primaries: DisplayColorPrimaries::Srgb,
+            },
+            RequestedToneMappingMode::Reinhard,
+            203.0,
+            None,
+        );
+
+        let expected = 0.5;
         assert!((transformed[0] - expected).abs() < 0.0001);
         assert!((transformed[1] - expected).abs() < 0.0001);
         assert!((transformed[2] - expected).abs() < 0.0001);
