@@ -27,7 +27,7 @@ pub struct WindowsAdvancedColorProbe {
 mod dxgi;
 
 #[cfg(target_os = "windows")]
-pub use dxgi::probe_monitor_for_hwnd;
+pub use dxgi::{probe_monitor_for_hwnd, set_native_hdr_surface_color_space};
 
 #[cfg(not(target_os = "windows"))]
 pub fn probe_monitor_for_hwnd(_hwnd: isize) -> Option<WindowsAdvancedColorProbe> {

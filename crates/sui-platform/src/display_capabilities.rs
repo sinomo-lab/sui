@@ -318,8 +318,10 @@ fn display_capabilities_from_windows_advanced_color_info(
     let min_luminance_nits = finite_positive(info.min_luminance_nits);
     let detected_sdr_white_nits = finite_positive(info.sdr_white_nits);
     let sdr_white_nits = hdr_active.then_some(detected_sdr_white_nits).flatten();
-    let native_hdr_presentation_supported =
-        hdr_active && info.bits_per_color >= 10 && sdr_white_nits.is_some();
+    // Some Windows Advanced Color paths report 8 bpc even while presenting through
+    // an HDR-capable scRGB/PQ compositor path, so bpc is diagnostic rather than a
+    // native-HDR gate. The renderer still requires a float16 surface format.
+    let native_hdr_presentation_supported = hdr_active && sdr_white_nits.is_some();
     let preferred_primaries = if hdr_active {
         DisplayColorPrimaries::Srgb
     } else if supports_wide_gamut {
@@ -662,6 +664,31 @@ mod tests {
         assert!(!capabilities.native_hdr_presentation_supported);
         assert_eq!(capabilities.sdr_white_nits, None);
         assert!(capabilities.notes.contains("sdr_white_nits=None"));
+    }
+
+    #[test]
+    fn windows_hdr_with_sdr_white_allows_native_hdr_even_when_reported_bpc_is_8() {
+        let capabilities =
+            display_capabilities_from_windows_advanced_color_info(&WindowsAdvancedColorInfo {
+                monitor_name: "HDR Panel".to_string(),
+                device_name: Some("\\\\.\\DISPLAY4".to_string()),
+                bits_per_color: 8,
+                color_space: WindowsColorSpace::Hdr10P2020,
+                red_primary: Some([0.708, 0.292]),
+                green_primary: Some([0.17, 0.797]),
+                blue_primary: Some([0.131, 0.046]),
+                white_point: Some([0.3125, 0.3291]),
+                min_luminance_nits: Some(0.1009),
+                max_luminance_nits: Some(500.0),
+                max_full_frame_luminance_nits: Some(400.0),
+                sdr_white_nits: Some(220.0),
+            });
+
+        assert!(capabilities.supports_hdr);
+        assert!(capabilities.native_hdr_presentation_supported);
+        assert_eq!(capabilities.sdr_white_nits, Some(220.0));
+        assert!(capabilities.notes.contains("bits_per_color=8"));
+        assert!(capabilities.notes.contains("sdr_white_nits=Some(220.0)"));
     }
 
     #[test]

@@ -189,6 +189,10 @@ pub enum OutputStrategy {
         primaries: DisplayColorPrimaries,
         transfer: DisplayTransferFunction,
     },
+    /// Debug/offscreen-only path for inspecting HDR scene values on SDR outputs.
+    ///
+    /// Normal presentation should choose native HDR when the environment can present
+    /// HDR end-to-end; otherwise it should render SDR instead of tone mapping HDR.
     HdrIntermediateThenToneMap {
         intermediate_format: wgpu::TextureFormat,
         surface_format: wgpu::TextureFormat,
@@ -5424,7 +5428,7 @@ mod tests {
     }
 
     #[test]
-    fn select_output_strategy_hdr_support_without_native_uses_intermediate_despite_float16() {
+    fn select_output_strategy_hdr_support_without_native_uses_sdr_despite_float16() {
         let strategy = select_output_strategy(
             &[
                 wgpu::TextureFormat::Rgba16Float,
@@ -5443,16 +5447,14 @@ mod tests {
 
         assert_eq!(
             strategy,
-            OutputStrategy::HdrIntermediateThenToneMap {
-                intermediate_format: wgpu::TextureFormat::Rgba16Float,
-                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                primaries: DisplayColorPrimaries::Srgb,
+            OutputStrategy::SdrSurface {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
             }
         );
     }
 
     #[test]
-    fn select_output_strategy_automatic_hdr_falls_back_to_hdr_intermediate() {
+    fn select_output_strategy_automatic_hdr_falls_back_to_sdr_without_native_hdr() {
         let strategy = select_output_strategy(
             &[wgpu::TextureFormat::Bgra8UnormSrgb],
             DisplayCapabilities {
@@ -5468,10 +5470,8 @@ mod tests {
 
         assert_eq!(
             strategy,
-            OutputStrategy::HdrIntermediateThenToneMap {
-                intermediate_format: wgpu::TextureFormat::Rgba16Float,
-                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                primaries: DisplayColorPrimaries::DisplayP3,
+            OutputStrategy::SdrSurface {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
             }
         );
     }
@@ -5507,7 +5507,7 @@ mod tests {
     }
 
     #[test]
-    fn select_output_strategy_uses_hdr_intermediate_when_hdr_is_requested_without_native_support() {
+    fn select_output_strategy_uses_sdr_when_hdr_is_requested_without_native_support() {
         let strategy = select_output_strategy(
             &[wgpu::TextureFormat::Bgra8UnormSrgb],
             DisplayCapabilities {
@@ -5529,10 +5529,8 @@ mod tests {
 
         assert_eq!(
             strategy,
-            OutputStrategy::HdrIntermediateThenToneMap {
-                intermediate_format: wgpu::TextureFormat::Rgba16Float,
-                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                primaries: DisplayColorPrimaries::DisplayP3,
+            OutputStrategy::SdrSurface {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
             }
         );
     }

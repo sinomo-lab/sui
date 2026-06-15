@@ -171,3 +171,15 @@ pub fn probe_monitor_for_hwnd(hwnd: isize) -> Option<WindowsAdvancedColorProbe> 
 
     None
 }
+
+pub fn set_native_hdr_surface_color_space(surface: &wgpu::Surface<'_>) -> Result<(), String> {
+    let Some(hal_surface) = (unsafe { surface.as_hal::<wgpu::hal::api::Dx12>() }) else {
+        return Ok(());
+    };
+    let Some(swap_chain) = hal_surface.swap_chain() else {
+        return Ok(());
+    };
+
+    unsafe { swap_chain.SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) }
+        .map_err(|error| format!("IDXGISwapChain3::SetColorSpace1(scRGB) failed: {error}"))
+}

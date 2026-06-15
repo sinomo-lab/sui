@@ -4234,6 +4234,9 @@ pub(crate) fn output_sdr_content_scale(
     };
 
     match strategy {
+        // Native HDR is presented as linear scRGB: 1.0 is the 80 nit scRGB
+        // reference, so SDR reference white must be lifted to the requested
+        // SDR-content brightness before presentation.
         OutputStrategy::HdrNativeSurface { .. } => sanitized / SCRGB_REFERENCE_WHITE_NITS,
         OutputStrategy::SdrSurface { .. }
         | OutputStrategy::WideGamutSurface { .. }
@@ -4389,39 +4392,27 @@ pub(crate) fn select_output_strategy(
     };
 
     if wants_hdr {
-        if capabilities.supports_hdr || native_hdr_available {
-            if native_hdr_available && let Some(format) = native_hdr_format {
-                let uses_linear_sc_rgb = capabilities.native_hdr_presentation_supported
-                    && matches!(
-                        capabilities.preferred_primaries,
-                        DisplayColorPrimaries::Srgb
-                    );
-                let transfer = if uses_linear_sc_rgb {
-                    DisplayTransferFunction::LinearExtended
-                } else {
-                    DisplayTransferFunction::Srgb
-                };
-                return OutputStrategy::HdrNativeSurface {
-                    format,
-                    primaries: DisplayColorPrimaries::Srgb,
-                    transfer,
-                };
-            }
-
-            return OutputStrategy::HdrIntermediateThenToneMap {
-                intermediate_format: wgpu::TextureFormat::Rgba16Float,
-                surface_format: sdr_format,
-                primaries,
+        if native_hdr_available && let Some(format) = native_hdr_format {
+            let uses_linear_sc_rgb = capabilities.native_hdr_presentation_supported
+                && matches!(
+                    capabilities.preferred_primaries,
+                    DisplayColorPrimaries::Srgb
+                );
+            let transfer = if uses_linear_sc_rgb {
+                DisplayTransferFunction::LinearExtended
+            } else {
+                DisplayTransferFunction::Srgb
+            };
+            return OutputStrategy::HdrNativeSurface {
+                format,
+                primaries: DisplayColorPrimaries::Srgb,
+                transfer,
             };
         }
 
-        if wants_wide_gamut && capabilities.supports_wide_gamut {
-            return OutputStrategy::WideGamutSurface {
-                format: sdr_format,
-                primaries,
-            };
-        }
-
+        // If HDR cannot be presented end-to-end, normal presentation stays SDR.
+        // HdrIntermediateThenToneMap is reserved for debug captures and explicit
+        // diagnostics where seeing HDR scene values on an SDR display is useful.
         return OutputStrategy::SdrSurface { format: sdr_format };
     }
 
@@ -4460,7 +4451,29 @@ fn configure_surface_for_strategy(
         config.alpha_mode = wgpu::CompositeAlphaMode::Opaque;
     }
     surface.configure(device, &config);
+    configure_native_hdr_surface_color_space(surface, strategy)?;
     Ok(config)
+}
+
+fn configure_native_hdr_surface_color_space(
+    surface: &wgpu::Surface<'static>,
+    strategy: OutputStrategy,
+) -> Result<()> {
+    if !matches!(strategy, OutputStrategy::HdrNativeSurface { .. }) {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        sui_platform_windows::set_native_hdr_surface_color_space(surface)
+            .map_err(|error| Error::new(format!("failed to configure native HDR surface: {error}")))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = surface;
+        Ok(())
+    }
 }
 
 pub(crate) fn configure_surface(

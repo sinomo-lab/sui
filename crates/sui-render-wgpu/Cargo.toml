@@ -22,3 +22,6 @@ wgpu = { workspace = true }
 winit = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 web-time = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+sui-platform-windows = { path = "../sui-platform-windows" }
