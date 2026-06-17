@@ -3906,39 +3906,6 @@ fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
     return select(high, low, color <= vec3<f32>(0.04045));
 }
 
-// Gamma-aware coverage correction for grayscale + LCD glyph masks.
-//
-// Glyph AA coverage is alpha-blended into a LINEAR (Rgba16Float) target. A linear
-// blend of a dark glyph over a light surface composites too light once re-encoded to
-// sRGB at output: e.g. coverage 0.5 of black-on-white yields linear 0.5 -> sRGB ~0.735
-// instead of the perceptually-correct ~0.5, so light-mode text looks faint/thin.
-//
-// We darken mid-coverage with a `coverage^gamma` (gamma < 1 raises coverage, which in
-// the One/OneMinusSrcAlpha blend pulls the result toward the foreground -> darker text).
-// The correction is LUMINANCE-AWARE: full strength for dark foreground text (which is
-// effectively always drawn on a light surface) and tapered to zero for light foreground
-// text (light-on-dark, i.e. dark mode), so dark-mode weight is left visually unchanged.
-const TEXT_COVERAGE_GAMMA: f32 = 0.45;
-
-// Perceptual luminance of the (linear) foreground; below LUMA_LO it is treated as fully
-// "dark text" (full correction), above LUMA_HI as fully "light text" (no correction).
-const TEXT_COVERAGE_LUMA_LO: f32 = 0.20;
-const TEXT_COVERAGE_LUMA_HI: f32 = 0.55;
-
-fn coverage_correction_strength(linear_fg: vec3<f32>) -> f32 {
-    let luma = dot(linear_fg, vec3<f32>(0.2126, 0.7152, 0.0722));
-    // 1.0 for dark text, 0.0 for light text, smooth in between.
-    return 1.0 - smoothstep(TEXT_COVERAGE_LUMA_LO, TEXT_COVERAGE_LUMA_HI, luma);
-}
-
-fn correct_coverage(coverage: f32, strength: f32) -> f32 {
-    let c = clamp(coverage, 0.0, 1.0);
-    // Interpolate the exponent from identity (1.0, no change) toward TEXT_COVERAGE_GAMMA
-    // by `strength`, so light-on-dark text keeps its exact linear coverage.
-    let gamma = mix(1.0, TEXT_COVERAGE_GAMMA, strength);
-    return pow(c, gamma);
-}
-
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Clamp the sample point to the glyph's half-texel-inset UV rect so bilinear taps at the quad
@@ -3949,33 +3916,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
         let alpha = sampled.a * opacity;
-        // Color/bitmap emoji glyphs carry their own RGB; they are NOT coverage masks, so the
-        // gamma correction must not touch them. Linearize the stored sRGB and premultiply.
+        // Color/bitmap emoji glyphs carry their own RGB. Linearize the stored sRGB and premultiply.
         return vec4<f32>(srgb_to_linear(sampled.rgb) * alpha, alpha);
     }
 
-    // Foreground-luminance-aware correction strength, shared by every coverage-mask path.
-    let strength = coverage_correction_strength(in.color.rgb);
-
     if in.metadata.x > 0.5 {
-        // LCD subpixel: correct each channel of the per-subpixel coverage independently.
-        let coverage = vec3<f32>(
-            correct_coverage(sampled.r, strength),
-            correct_coverage(sampled.g, strength),
-            correct_coverage(sampled.b, strength),
-        );
+        let coverage = sampled.rgb;
         let max_coverage = max(max(coverage.r, coverage.g), coverage.b);
         let premul = in.color.rgb * coverage * in.color.a;
         return vec4<f32>(premul, in.color.a * max_coverage);
     }
 
     if in.metadata.y > 0.5 {
-        let coverage = correct_coverage((sampled.r + sampled.g + sampled.b) / 3.0, strength);
+        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
         let alpha = in.color.a * coverage;
         return vec4<f32>(in.color.rgb * alpha, alpha);
     }
 
-    let coverage = correct_coverage(sampled.a, strength);
+    let coverage = sampled.a;
     let alpha = in.color.a * coverage;
     return vec4<f32>(in.color.rgb * alpha, alpha);
 }
@@ -4034,24 +3992,6 @@ fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
     return select(high, low, color <= vec3<f32>(0.04045));
 }
 
-// See TEXT_ATLAS_SHADER_SOURCE for the rationale: a luminance-aware `coverage^gamma`
-// correction that restores light-mode (dark-text-on-light) weight without thickening
-// dark-mode (light-text-on-dark) text. Color/bitmap emoji are exempt (handled before).
-const TEXT_COVERAGE_GAMMA: f32 = 0.45;
-const TEXT_COVERAGE_LUMA_LO: f32 = 0.20;
-const TEXT_COVERAGE_LUMA_HI: f32 = 0.55;
-
-fn coverage_correction_strength(linear_fg: vec3<f32>) -> f32 {
-    let luma = dot(linear_fg, vec3<f32>(0.2126, 0.7152, 0.0722));
-    return 1.0 - smoothstep(TEXT_COVERAGE_LUMA_LO, TEXT_COVERAGE_LUMA_HI, luma);
-}
-
-fn correct_coverage(coverage: f32, strength: f32) -> f32 {
-    let c = clamp(coverage, 0.0, 1.0);
-    let gamma = mix(1.0, TEXT_COVERAGE_GAMMA, strength);
-    return pow(c, gamma);
-}
-
 fn dual_source(foreground: vec3<f32>, alpha: vec3<f32>) -> FragmentOutput {
     var out: FragmentOutput;
     let source_alpha = max(max(alpha.r, alpha.g), alpha.b);
@@ -4069,28 +4009,22 @@ fn fs_main(in: VsOut) -> FragmentOutput {
     let sampled = textureSample(text_atlas_texture, text_atlas_sampler, clamped_uv, i32(in.layer));
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
-        // Color/bitmap emoji glyphs carry their own RGB and are not coverage masks: exempt
-        // from the gamma correction. Linearize the stored sRGB before premultiplying.
+        // Color/bitmap emoji glyphs carry their own RGB. Linearize the stored sRGB before
+        // premultiplying.
         return dual_source(srgb_to_linear(sampled.rgb), vec3<f32>(sampled.a * opacity));
     }
 
-    let strength = coverage_correction_strength(in.color.rgb);
-
     if in.metadata.x > 0.5 {
-        let coverage = vec3<f32>(
-            correct_coverage(sampled.r, strength),
-            correct_coverage(sampled.g, strength),
-            correct_coverage(sampled.b, strength),
-        );
+        let coverage = sampled.rgb;
         return dual_source(in.color.rgb, coverage * in.color.a);
     }
 
     if in.metadata.y > 0.5 {
-        let coverage = correct_coverage((sampled.r + sampled.g + sampled.b) / 3.0, strength);
+        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
         return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
     }
 
-    let coverage = correct_coverage(sampled.a, strength);
+    let coverage = sampled.a;
     return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
 }
 "#;
@@ -6185,20 +6119,14 @@ mod tests {
     #[test]
     fn text_atlas_shaders_use_sampled_coverage_and_dual_source_blending() {
         assert!(!TEXT_ATLAS_SHADER_SOURCE.contains("apply_contrast_and_gamma_correction"));
-        // The grayscale coverage is still derived from `sampled.a`, now routed through the
-        // luminance-aware gamma correction (`correct_coverage`) that fixes light-mode washout.
-        assert!(
-            TEXT_ATLAS_SHADER_SOURCE
-                .contains("let coverage = correct_coverage(sampled.a, strength);")
-        );
-        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("fn correct_coverage("));
+        assert!(!TEXT_ATLAS_SHADER_SOURCE.contains("correct_coverage"));
+        assert!(!TEXT_ATLAS_SHADER_SOURCE.contains("TEXT_COVERAGE_GAMMA"));
+        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("let coverage = sampled.a;"));
         assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(0)"));
         assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(1)"));
-        assert!(
-            TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE
-                .contains("let coverage = correct_coverage(sampled.a, strength);")
-        );
-        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("fn correct_coverage("));
+        assert!(!TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("correct_coverage"));
+        assert!(!TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("TEXT_COVERAGE_GAMMA"));
+        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("let coverage = sampled.a;"));
     }
 
     #[test]
@@ -12275,18 +12203,11 @@ mod tests {
     }
 
     /// Renders a body-text + small-label sample on a LIGHT surface (dark text) and a DARK
-    /// surface (light text), then writes PNGs to the workspace target dir. The filenames are
-    /// suffixed `-after` when the shader carries the gamma coverage correction and `-before`
-    /// when it does not, so running this test across `git stash` of the shader change yields a
-    /// matched before/after set. It also prints the mean text luminance in each sample so the
-    /// effect is quantifiable (light-mode mean must drop; dark-mode mean must stay ~constant).
+    /// surface (light text), then writes PNGs to the workspace target dir. The filenames use
+    /// the active shader coverage behavior so captures can be compared across policy changes.
     #[test]
-    fn text_coverage_gamma_before_after_capture() {
-        let suffix = if TEXT_ATLAS_SHADER_SOURCE.contains("correct_coverage") {
-            "after"
-        } else {
-            "before"
-        };
+    fn text_coverage_linear_capture() {
+        let suffix = "linear";
 
         let handle = FontHandle::new(7001);
         let mut fonts = FontRegistry::new();

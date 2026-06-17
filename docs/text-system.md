@@ -271,11 +271,12 @@ The sections above describe the long-term direction. The current implementation 
 
 The active window carries a `WindowRenderOptions` bundle with the text-related controls that the dev workspace and validation surfaces expose:
 
-- `text_coverage_policy`, which defaults to `Linear`
-- `text_hinting`, which defaults to slight hinting for normal text sizes
+- `text_hinting`, which defaults to `None` in `WindowRenderOptions`
 - `stem_darkening`, which defaults to `None`
 
 These controls are window-scoped runtime presentation settings. They are not currently independent per sample card inside the comparison surface.
+
+Text coverage policy is a renderer-level setting on `WgpuRenderer`, not a runtime `WindowRenderOptions` field. It defaults to `TextCoveragePolicy::Linear`.
 
 ### Grayscale coverage vs LCD/subpixel rendering
 
@@ -286,7 +287,7 @@ SUI now distinguishes between two separate concerns:
 
 `TextRenderMode` currently defaults to `Grayscale`. LCD/subpixel rendering is available through `TextRenderMode::LcdSubpixel`, but it is intentionally conservative.
 
-`TextCoveragePolicy::Linear` is the default grayscale coverage policy for all text colors. Dark-on-light and light-on-dark UI text therefore share the same coverage curve unless a caller explicitly selects a different policy.
+`TextCoveragePolicy::Linear` is the default grayscale coverage policy for all text colors. It maps rasterized coverage directly to atlas alpha, and the text shaders sample that coverage without an additional gamma or luminance remap. Dark-on-light and light-on-dark UI text therefore share the same coverage curve unless a caller explicitly selects a different renderer coverage policy.
 
 ### When LCD/subpixel text is allowed
 
