@@ -260,6 +260,7 @@ pub(crate) struct FontContext {
     pub font_system: FontSystem,
     default_face: ResolvedTextFace,
     explicit_fonts: HashMap<FontHandle, ExplicitFontSpec>,
+    explicit_faces: HashMap<fontdb::ID, ResolvedTextFace>,
     shared_faces: Arc<Mutex<HashMap<fontdb::ID, ResolvedTextFace>>>,
 }
 
@@ -323,6 +324,10 @@ impl FontContext {
     }
 
     pub(crate) fn resolve_face(&self, font_id: fontdb::ID) -> Result<ResolvedTextFace> {
+        if let Some(face) = self.explicit_faces.get(&font_id).cloned() {
+            return Ok(face);
+        }
+
         if let Some(face) = self
             .shared_faces
             .lock()
@@ -407,25 +412,35 @@ impl TextSystemState {
     pub(crate) fn build_font_context(&self, font_registry: &FontRegistry) -> Result<FontContext> {
         let mut font_db = self.font_db.clone();
         let mut explicit_fonts = HashMap::new();
+        let mut explicit_faces = HashMap::new();
 
         for (handle, font) in &font_registry.fonts {
             let ids =
                 font_db.load_font_source(fontdb::Source::Binary(Arc::new(font.bytes().to_vec())));
-            let face_info = ids
-                .iter()
-                .find_map(|id| {
-                    font_db
-                        .face(*id)
-                        .filter(|face_info| face_info.index == font.face_index())
-                })
-                .ok_or_else(|| {
+            let mut family_name = None;
+            for id in ids {
+                let face_info = font_db.face(id).ok_or_else(|| {
                     Error::new("failed to register custom font face in text database")
                 })?;
-            let family_name = face_info
-                .families
-                .first()
-                .map(|(name, _language)| name.clone())
-                .unwrap_or_else(|| face_info.post_script_name.clone());
+                explicit_faces.insert(
+                    id,
+                    ResolvedTextFace::from_bytes(font.shared_bytes(), face_info.index),
+                );
+
+                if face_info.index == font.face_index() {
+                    family_name = Some(
+                        face_info
+                            .families
+                            .first()
+                            .map(|(name, _language)| name.clone())
+                            .unwrap_or_else(|| face_info.post_script_name.clone()),
+                    );
+                }
+            }
+
+            let family_name = family_name.ok_or_else(|| {
+                Error::new("failed to register custom font face in text database")
+            })?;
             explicit_fonts.insert(*handle, ExplicitFontSpec { family_name });
         }
 
@@ -434,6 +449,7 @@ impl TextSystemState {
             font_system,
             default_face: self.default_face.clone(),
             explicit_fonts,
+            explicit_faces,
             shared_faces: Arc::clone(&self.shared_faces),
         })
     }

@@ -226,6 +226,50 @@ fn text_system_uses_registered_font_handles() {
 }
 
 #[test]
+fn registered_face_cache_is_scoped_per_font_registry() {
+    let Some((first_font, second_font)) = load_distinct_test_fonts() else {
+        return;
+    };
+
+    let system = TextSystem::new();
+    let handle = FontHandle::new(39);
+    let style = TextStyle {
+        font: Some(handle),
+        ..TextStyle::new(Color::WHITE)
+    };
+
+    let mut first_registry = FontRegistry::new();
+    first_registry.insert(handle, first_font.clone());
+    let first = system
+        .shape_text(
+            "registered",
+            Size::new(160.0, 28.0),
+            style.clone(),
+            &first_registry,
+        )
+        .unwrap();
+
+    let mut second_registry = FontRegistry::new();
+    second_registry.insert(handle, second_font.clone());
+    let second = system
+        .shape_text(
+            "registered",
+            Size::new(160.0, 28.0),
+            style,
+            &second_registry,
+        )
+        .unwrap();
+
+    assert_eq!(first.run_face(0).shared_bytes(), first_font.shared_bytes());
+    assert_eq!(first.run_face(0).face_index(), first_font.face_index());
+    assert_eq!(
+        second.run_face(0).shared_bytes(),
+        second_font.shared_bytes()
+    );
+    assert_eq!(second.run_face(0).face_index(), second_font.face_index());
+}
+
+#[test]
 fn text_system_reuses_cached_layouts_across_color_changes() {
     let system = TextSystem::new();
     let layout = system
