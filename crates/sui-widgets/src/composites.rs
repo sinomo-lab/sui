@@ -12584,6 +12584,29 @@ mod tests {
         }
     }
 
+    fn text_run_from_shaped(
+        output: &RenderOutput,
+        run: &sui_text::ShapedText,
+    ) -> Option<sui_text::TextRun> {
+        run.resolve(output.frame.text_layout_registry.as_ref())
+            .map(|layout| {
+                let mut style = layout.style().clone();
+                if let Some(color) = run.color_override {
+                    style.color = color;
+                }
+                sui_text::TextRun {
+                    rect: Rect::new(
+                        run.origin.x,
+                        run.origin.y,
+                        layout.box_size().width,
+                        layout.box_size().height,
+                    ),
+                    text: layout.text().to_string(),
+                    style,
+                }
+            })
+    }
+
     fn first_text_run(output: &RenderOutput) -> sui_text::TextRun {
         output
             .frame
@@ -12592,18 +12615,7 @@ mod tests {
             .iter()
             .find_map(|command| match command {
                 sui_scene::SceneCommand::DrawText(text) => Some(text.clone()),
-                sui_scene::SceneCommand::DrawShapedText(text) => text
-                    .resolve(output.frame.text_layout_registry.as_ref())
-                    .map(|layout| sui_text::TextRun {
-                        rect: Rect::new(
-                            text.origin.x,
-                            text.origin.y,
-                            layout.box_size().width,
-                            layout.box_size().height,
-                        ),
-                        text: layout.text().to_string(),
-                        style: layout.style().clone(),
-                    }),
+                sui_scene::SceneCommand::DrawShapedText(text) => text_run_from_shaped(output, text),
                 _ => None,
             })
             .expect("text draw command present")
@@ -12617,19 +12629,9 @@ mod tests {
             }
             found = match command {
                 sui_scene::SceneCommand::DrawText(run) if run.text == text => Some(run.clone()),
-                sui_scene::SceneCommand::DrawShapedText(run) => run
-                    .resolve(output.frame.text_layout_registry.as_ref())
-                    .filter(|layout| layout.text() == text)
-                    .map(|layout| sui_text::TextRun {
-                        rect: Rect::new(
-                            run.origin.x,
-                            run.origin.y,
-                            layout.box_size().width,
-                            layout.box_size().height,
-                        ),
-                        text: layout.text().to_string(),
-                        style: layout.style().clone(),
-                    }),
+                sui_scene::SceneCommand::DrawShapedText(run) => {
+                    text_run_from_shaped(output, run).filter(|resolved| resolved.text == text)
+                }
                 _ => None,
             };
         });
