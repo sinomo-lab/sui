@@ -1506,24 +1506,26 @@ impl PaintCtx {
     }
 
     pub fn draw_text(&mut self, rect: Rect, text: impl Into<String>, style: TextStyle) {
-        let run = TextRun {
+        let text = text.into();
+        let paint_color = style.color;
+        let mut layout_style = style.clone();
+        layout_style.color = Color::WHITE;
+        let layout_run = TextRun {
             rect,
-            text: text.into(),
-            style,
+            text: text.clone(),
+            style: layout_style,
         };
+        let fallback_run = TextRun { rect, text, style };
 
         match self.text_system.shape_text_run_persistent(
-            Some(stable_text_run_handle(&run)),
-            &run,
+            Some(stable_text_run_handle(&layout_run)),
+            &layout_run,
             self.font_registry.as_ref(),
         ) {
-            Ok(layout) => self
-                .scene
-                .push(SceneCommand::DrawShapedText(ShapedText::new(
-                    rect.origin,
-                    &layout,
-                ))),
-            Err(_) => self.scene.push(SceneCommand::DrawText(run)),
+            Ok(layout) => self.scene.push(SceneCommand::DrawShapedText(
+                ShapedText::new(rect.origin, &layout).with_color(paint_color),
+            )),
+            Err(_) => self.scene.push(SceneCommand::DrawText(fallback_run)),
         }
     }
 
@@ -1533,6 +1535,7 @@ impl PaintCtx {
     }
 
     pub fn draw_persistent_text_layout(&mut self, origin: Point, layout: &PersistentTextLayout) {
+        self.text_system.touch_persistent_layout(layout);
         self.scene
             .push(SceneCommand::DrawShapedText(ShapedText::new(
                 origin, layout,
@@ -1545,6 +1548,7 @@ impl PaintCtx {
         layout: &PersistentTextLayout,
         color: Color,
     ) {
+        self.text_system.touch_persistent_layout(layout);
         self.scene.push(SceneCommand::DrawShapedText(
             ShapedText::new(origin, layout).with_color(color),
         ));
@@ -1556,6 +1560,7 @@ impl PaintCtx {
         layout: &PersistentTextLayout,
         line_range: std::ops::Range<usize>,
     ) {
+        self.text_system.touch_persistent_layout(layout);
         self.scene
             .push(SceneCommand::DrawShapedTextWindow(ShapedTextWindow::new(
                 origin, layout, line_range,
@@ -1569,6 +1574,7 @@ impl PaintCtx {
         line_range: std::ops::Range<usize>,
         color: Color,
     ) {
+        self.text_system.touch_persistent_layout(layout);
         self.scene.push(SceneCommand::DrawShapedTextWindow(
             ShapedTextWindow::new(origin, layout, line_range).with_color(color),
         ));
@@ -1816,10 +1822,10 @@ fn stable_text_run_handle(run: &TextRun) -> TextLayoutHandle {
     run.style.font.map(|font| font.get()).hash(&mut hasher);
     run.style.font_size.to_bits().hash(&mut hasher);
     run.style.line_height.to_bits().hash(&mut hasher);
-    run.style.color.red.to_bits().hash(&mut hasher);
-    run.style.color.green.to_bits().hash(&mut hasher);
-    run.style.color.blue.to_bits().hash(&mut hasher);
-    run.style.color.alpha.to_bits().hash(&mut hasher);
+    run.style.weight.value().hash(&mut hasher);
+    run.style.style.hash(&mut hasher);
+    run.style.stretch.hash(&mut hasher);
+    run.style.features.hash(&mut hasher);
     TextLayoutHandle::new(hasher.finish().max(1))
 }
 
@@ -1910,7 +1916,7 @@ mod tests {
     };
     use sui_layout::{Constraints, LayoutContext};
     use sui_scene::{ImageRegistry, RegisteredImage, SceneCommand, StrokeStyle};
-    use sui_text::{FontRegistry, TextStyle, TextSystem};
+    use sui_text::{FontRegistry, FontWeight, TextRun, TextStyle, TextSystem};
 
     fn measure_ctx(window_id: WindowId, widget_id: WidgetId) -> MeasureCtx {
         MeasureCtx::new(
@@ -2371,6 +2377,94 @@ mod tests {
         ));
         assert!(matches!(paint.scene().commands()[7], SceneCommand::PopClip));
         assert!(matches!(paint.scene().commands()[8], SceneCommand::PopClip));
+    }
+
+    #[test]
+    fn stable_text_run_handle_ignores_color_and_includes_layout_style() {
+        let run = TextRun {
+            rect: Rect::new(8.0, 10.0, 80.0, 20.0),
+            text: "hello".to_string(),
+            style: TextStyle::new(Color::BLACK),
+        };
+        let mut recolored = run.clone();
+        recolored.style.color = Color::WHITE;
+        let mut bold = run.clone();
+        bold.style.weight = FontWeight::BOLD;
+
+        assert_eq!(
+            super::stable_text_run_handle(&run),
+            super::stable_text_run_handle(&recolored)
+        );
+        assert_ne!(
+            super::stable_text_run_handle(&run),
+            super::stable_text_run_handle(&bold)
+        );
+    }
+
+    #[test]
+    fn paint_ctx_draw_text_uses_color_override_for_paint_color() {
+        let text_system = Arc::new(TextSystem::new());
+        let mut paint = PaintCtx::new(
+            WindowId::new(12),
+            WidgetId::new(13),
+            Rect::new(0.0, 0.0, 120.0, 60.0),
+            None,
+            DpiInfo::default(),
+            Arc::clone(&text_system),
+            Arc::new(FontRegistry::new()),
+            Arc::new(ImageRegistry::new()),
+        );
+        let paint_color = Color::BLACK;
+        paint.draw_text(
+            Rect::new(8.0, 10.0, 80.0, 20.0),
+            "hello",
+            TextStyle::new(paint_color),
+        );
+
+        let SceneCommand::DrawShapedText(text) = &paint.scene().commands()[0] else {
+            panic!("draw_text should emit shaped text when layout succeeds");
+        };
+        assert_eq!(text.color_override, Some(paint_color));
+
+        let registry = text_system.text_layout_registry();
+        let layout = text
+            .resolve(registry.as_ref())
+            .expect("drawn shaped text should resolve from the registry");
+        assert_eq!(layout.style().color, Color::WHITE);
+    }
+
+    #[test]
+    fn paint_ctx_draw_persistent_text_layout_reinserts_pruned_layout() {
+        let text_system = Arc::new(TextSystem::new());
+        let layout = text_system
+            .shape_text_persistent(
+                None,
+                "held",
+                Size::new(80.0, 20.0),
+                TextStyle::new(Color::WHITE),
+                &FontRegistry::new(),
+            )
+            .unwrap();
+        text_system.retain_persistent_layouts(&std::collections::HashSet::new());
+        assert!(!text_system.text_layout_registry().contains(layout.handle()));
+
+        let mut paint = PaintCtx::new(
+            WindowId::new(12),
+            WidgetId::new(13),
+            Rect::new(0.0, 0.0, 120.0, 60.0),
+            None,
+            DpiInfo::default(),
+            Arc::clone(&text_system),
+            Arc::new(FontRegistry::new()),
+            Arc::new(ImageRegistry::new()),
+        );
+        paint.draw_persistent_text_layout(Point::ZERO, &layout);
+
+        assert!(text_system.text_layout_registry().contains(layout.handle()));
+        assert!(matches!(
+            paint.scene().commands()[0],
+            SceneCommand::DrawShapedText(_)
+        ));
     }
 
     #[test]

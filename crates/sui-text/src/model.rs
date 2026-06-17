@@ -1,4 +1,9 @@
-use std::{collections::HashMap, ops::Deref, ops::Range, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Deref,
+    ops::Range,
+    sync::Arc,
+};
 
 use sui_core::{Color, FontHandle, Point, Rect, Size, Vector};
 
@@ -622,6 +627,11 @@ impl TextLayoutRegistry {
 
     pub(crate) fn insert(&mut self, handle: TextLayoutHandle, layout: TextLayout) {
         self.layouts.insert(handle, layout);
+    }
+
+    pub(crate) fn retain_handles(&mut self, handles: &HashSet<TextLayoutHandle>) {
+        self.layouts
+            .retain(|handle, _layout| handles.contains(handle));
     }
 }
 

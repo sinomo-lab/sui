@@ -23,7 +23,7 @@ use sui_scene::{
     ImageRegistry, LayerCompositionMode, RegisteredImage, Scene, SceneCommand, SceneFrame,
     SceneLayer, SceneLayerDescriptor, SceneLayerUpdate, SceneLayerUpdateKind,
 };
-use sui_text::{FontRegistry, RegisteredFont, TextSystem};
+use sui_text::{FontRegistry, RegisteredFont, TextLayoutHandle, TextSystem};
 use web_time::Instant;
 
 pub use diagnostics::{
@@ -2000,6 +2000,7 @@ impl WindowState {
             );
             let frame_image_registry =
                 self.frame_image_registry(Arc::clone(&image_registry), paint_images);
+            retain_text_layouts_for_scene(text_system.as_ref(), &scene);
             self.last_frame = Some(SceneFrame {
                 window_id: self.id,
                 viewport,
@@ -3310,6 +3311,24 @@ fn collect_scene_layers(scene: &Scene) -> HashMap<WidgetId, SceneLayerDescriptor
     layers
 }
 
+fn retain_text_layouts_for_scene(text_system: &TextSystem, scene: &Scene) {
+    text_system.retain_persistent_layouts(&active_text_layout_handles(scene));
+}
+
+fn active_text_layout_handles(scene: &Scene) -> HashSet<TextLayoutHandle> {
+    let mut handles = HashSet::new();
+    scene.visit_commands(&mut |command| match command {
+        SceneCommand::DrawShapedText(text) => {
+            handles.insert(text.layout_handle);
+        }
+        SceneCommand::DrawShapedTextWindow(text) => {
+            handles.insert(text.layout_handle);
+        }
+        _ => {}
+    });
+    handles
+}
+
 fn resolve_snapshot_paint_boundary_or_root(
     snapshot: &WidgetGraphSnapshot,
     widget_id: WidgetId,
@@ -3455,9 +3474,10 @@ mod tests {
     };
     use sui_layout::Constraints;
     use sui_scene::{
-        LayerCompositionMode, LayerProperties, RegisteredImage, SceneCommand, SceneLayerUpdateKind,
+        LayerCompositionMode, LayerProperties, RegisteredImage, Scene, SceneCommand,
+        SceneLayerUpdateKind,
     };
-    use sui_text::{PersistentTextLayout, RegisteredFont, TextStyle};
+    use sui_text::{PersistentTextLayout, RegisteredFont, TextStyle, TextSystem};
 
     #[derive(Default)]
     struct Counters {
@@ -5563,6 +5583,40 @@ mod tests {
             }
         });
         assert!(saw_shaped_text);
+    }
+
+    #[test]
+    fn text_layout_retention_follows_retained_scene_handles() {
+        let system = TextSystem::new();
+        let first = system
+            .shape_text_persistent(
+                None,
+                "first",
+                Size::new(120.0, 24.0),
+                TextStyle::new(Color::WHITE),
+                &sui_text::FontRegistry::new(),
+            )
+            .unwrap();
+        let second = system
+            .shape_text_persistent(
+                None,
+                "second",
+                Size::new(120.0, 24.0),
+                TextStyle::new(Color::WHITE),
+                &sui_text::FontRegistry::new(),
+            )
+            .unwrap();
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawShapedText(sui_text::ShapedText::new(
+            Point::ZERO,
+            &first,
+        )));
+        super::retain_text_layouts_for_scene(&system, &scene);
+
+        let registry = system.text_layout_registry();
+        assert!(registry.contains(first.handle()));
+        assert!(!registry.contains(second.handle()));
     }
 
     #[test]

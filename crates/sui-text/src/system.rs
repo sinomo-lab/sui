@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::atomic::{AtomicU64, Ordering},
     sync::{Arc, Mutex, OnceLock},
     time::Instant,
@@ -208,10 +208,24 @@ impl TextSystem {
         self.store_persistent_layout(handle, layout)
     }
 
+    pub fn touch_persistent_layout(&self, layout: &PersistentTextLayout) {
+        self.store_persistent_layout(layout.handle(), layout.layout().clone());
+    }
+
     pub fn text_layout_registry(&self) -> Arc<TextLayoutRegistry> {
         match self.persistent_layouts.lock() {
             Ok(registry) => Arc::clone(&registry),
             Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
+    }
+
+    pub fn retain_persistent_layouts(&self, handles: &HashSet<TextLayoutHandle>) {
+        match self.persistent_layouts.lock() {
+            Ok(mut registry) => Arc::make_mut(&mut registry).retain_handles(handles),
+            Err(poisoned) => {
+                let mut registry = poisoned.into_inner();
+                Arc::make_mut(&mut registry).retain_handles(handles);
+            }
         }
     }
 

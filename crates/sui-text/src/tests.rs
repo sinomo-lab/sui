@@ -914,3 +914,38 @@ fn adopted_layouts_register_content_derived_handles() {
     assert_eq!(resolved.text(), layout.text());
     assert_eq!(resolved.version(), layout.version());
 }
+
+#[test]
+fn persistent_layout_registry_retains_only_active_handles() {
+    let system = TextSystem::new();
+    let first = system
+        .shape_text_persistent(
+            None,
+            "first",
+            Size::new(120.0, 24.0),
+            TextStyle::new(Color::WHITE),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+    let second = system
+        .shape_text_persistent(
+            None,
+            "second",
+            Size::new(120.0, 24.0),
+            TextStyle::new(Color::WHITE),
+            &FontRegistry::new(),
+        )
+        .unwrap();
+
+    let registry = system.text_layout_registry();
+    assert_eq!(registry.len(), 2);
+    assert!(registry.contains(first.handle()));
+    assert!(registry.contains(second.handle()));
+
+    system.retain_persistent_layouts(&std::collections::HashSet::from([first.handle()]));
+
+    let registry = system.text_layout_registry();
+    assert_eq!(registry.len(), 1);
+    assert!(registry.contains(first.handle()));
+    assert!(!registry.contains(second.handle()));
+}
