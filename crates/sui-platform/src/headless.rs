@@ -10,7 +10,8 @@ use sui_runtime::{
 };
 
 use crate::{
-    AccessibilityBridge, AccessibilitySnapshot, map_window_stem_darkening, map_window_text_hinting,
+    AccessibilityBridge, AccessibilitySnapshot, map_window_stem_darkening,
+    map_window_text_coverage_policy, map_window_text_hinting,
 };
 
 #[derive(Debug, Clone)]
@@ -336,6 +337,11 @@ impl HeadlessPlatform {
                 );
                 self.renderer.set_runtime_stem_darkening_override(
                     render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
+                );
+                self.renderer.set_runtime_text_coverage_policy_override(
+                    render_options.map(|options| {
+                        map_window_text_coverage_policy(options.text_coverage_policy)
+                    }),
                 );
                 self.renderer.render(&output.frame)?;
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;

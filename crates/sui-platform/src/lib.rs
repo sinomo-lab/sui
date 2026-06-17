@@ -13,15 +13,15 @@ use sui_core::WindowId;
 use sui_render_wgpu::{
     ColorManagementMode, RendererFrameStats, RequestedColorManagementMode,
     RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
-    StemDarkening, TextHinting, WgpuRenderer,
+    StemDarkening, TextCoveragePolicy, TextHinting, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
     RendererSubmissionDiagnostics, RetainedPacketHotspotDiagnostics,
     RetainedPacketRebuildDiagnostics, SceneStatistics, TextCacheDiagnostics,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-    WindowPerformanceSnapshot, WindowStemDarkening, WindowTextHinting, WindowToneMappingMode,
-    clear_window_performance_snapshot, clear_window_performance_snapshots,
+    WindowPerformanceSnapshot, WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting,
+    WindowToneMappingMode, clear_window_performance_snapshot, clear_window_performance_snapshots,
     publish_window_performance_snapshot, window_performance_text_caches,
     window_scene_statistics_detail_mode,
 };
@@ -55,6 +55,18 @@ pub(crate) fn map_window_stem_darkening(darkening: WindowStemDarkening) -> StemD
         WindowStemDarkening::None => StemDarkening::None,
         WindowStemDarkening::Enabled { max_ppem, amount } => {
             StemDarkening::Enabled { max_ppem, amount }
+        }
+    }
+}
+
+pub(crate) fn map_window_text_coverage_policy(
+    policy: WindowTextCoveragePolicy,
+) -> TextCoveragePolicy {
+    match policy.normalized() {
+        WindowTextCoveragePolicy::Linear => TextCoveragePolicy::Linear,
+        WindowTextCoveragePolicy::Gamma(gamma) => TextCoveragePolicy::Gamma(gamma),
+        WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq => {
+            TextCoveragePolicy::TwoCoverageMinusCoverageSq
         }
     }
 }

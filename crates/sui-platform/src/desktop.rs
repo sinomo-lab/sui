@@ -46,7 +46,7 @@ const WEB_APPLE_TOUCH_ICON_ID: &str = "sui-window-apple-touch-icon";
 use crate::{
     AccessibilityBridge, WindowOutputDiagnostics, detect_window_display_capabilities,
     headless::PlatformWindow, map_window_color_management, map_window_stem_darkening,
-    map_window_text_hinting, publish_window_output_diagnostics,
+    map_window_text_coverage_policy, map_window_text_hinting, publish_window_output_diagnostics,
     resolve_sdr_content_brightness_nits,
 };
 
@@ -764,6 +764,10 @@ impl DesktopApp {
         );
         self.renderer.set_runtime_stem_darkening_override(
             render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
+        );
+        self.renderer.set_runtime_text_coverage_policy_override(
+            render_options
+                .map(|options| map_window_text_coverage_policy(options.text_coverage_policy)),
         );
         let active_render_options =
             render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));

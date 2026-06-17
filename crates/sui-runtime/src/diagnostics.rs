@@ -612,6 +612,30 @@ impl WindowStemDarkening {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WindowTextCoveragePolicy {
+    Linear,
+    Gamma(f32),
+    TwoCoverageMinusCoverageSq,
+}
+
+impl Default for WindowTextCoveragePolicy {
+    fn default() -> Self {
+        Self::Linear
+    }
+}
+
+impl WindowTextCoveragePolicy {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::Linear => Self::Linear,
+            Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
+            Self::Gamma(_) => Self::Linear,
+            Self::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowOutputColorPrimaries {
     #[default]
@@ -654,6 +678,7 @@ pub struct WindowRenderOptions {
     pub optical_vertical_text_alignment_enabled: bool,
     pub text_hinting: WindowTextHinting,
     pub stem_darkening: WindowStemDarkening,
+    pub text_coverage_policy: WindowTextCoveragePolicy,
     pub output_color_primaries: WindowOutputColorPrimaries,
     pub dynamic_range_mode: WindowDynamicRangeMode,
     pub tone_mapping_mode: WindowToneMappingMode,
@@ -670,6 +695,7 @@ impl WindowRenderOptions {
             optical_vertical_text_alignment_enabled: true,
             text_hinting: WindowTextHinting::None,
             stem_darkening: WindowStemDarkening::None,
+            text_coverage_policy: WindowTextCoveragePolicy::Linear,
             output_color_primaries: WindowOutputColorPrimaries::Automatic,
             dynamic_range_mode: WindowDynamicRangeMode::Automatic,
             tone_mapping_mode: WindowToneMappingMode::Automatic,
@@ -691,6 +717,11 @@ impl WindowRenderOptions {
 
     pub const fn with_stem_darkening(mut self, darkening: WindowStemDarkening) -> Self {
         self.stem_darkening = darkening;
+        self
+    }
+
+    pub const fn with_text_coverage_policy(mut self, policy: WindowTextCoveragePolicy) -> Self {
+        self.text_coverage_policy = policy;
         self
     }
 
@@ -734,6 +765,7 @@ impl WindowRenderOptions {
             optical_vertical_text_alignment_enabled: self.optical_vertical_text_alignment_enabled,
             text_hinting: self.text_hinting.normalized(),
             stem_darkening: self.stem_darkening.normalized(),
+            text_coverage_policy: self.text_coverage_policy.normalized(),
             output_color_primaries: self.output_color_primaries,
             dynamic_range_mode: self.dynamic_range_mode,
             tone_mapping_mode: self.tone_mapping_mode,
@@ -1294,8 +1326,9 @@ mod tests {
         RetainedPacketRebuildDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
         TextCacheDeltaDiagnostics, TextCacheDiagnostics, WindowColorManagementMode,
         WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
-        WindowRenderOptions, WindowToneMappingMode, clear_window_performance_snapshot,
-        set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
+        WindowRenderOptions, WindowTextCoveragePolicy, WindowToneMappingMode,
+        clear_window_performance_snapshot, set_window_render_options,
+        set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
     };
     use sui_core::{Color, DirtyRegion, InvalidationKind, Rect, Size, WidgetId, WindowId};
@@ -1713,6 +1746,7 @@ mod tests {
                 .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
                 .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
                 .with_color_management_mode(WindowColorManagementMode::PreferHdr)
+                .with_text_coverage_policy(WindowTextCoveragePolicy::Gamma(-2.0))
                 .with_sdr_content_brightness_nits(-25.0),
         );
 
@@ -1724,6 +1758,7 @@ mod tests {
                     .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange)
                     .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
                     .with_color_management_mode(WindowColorManagementMode::PreferHdr)
+                    .with_text_coverage_policy(WindowTextCoveragePolicy::Linear)
                     .with_sdr_content_brightness_nits(203.0)
             )
         );
@@ -1735,7 +1770,8 @@ mod tests {
                 .with_output_color_primaries(WindowOutputColorPrimaries::Srgb)
                 .with_dynamic_range_mode(WindowDynamicRangeMode::StandardDynamicRange)
                 .with_tone_mapping_mode(WindowToneMappingMode::Clamp)
-                .with_color_management_mode(WindowColorManagementMode::ForceSdr),
+                .with_color_management_mode(WindowColorManagementMode::ForceSdr)
+                .with_text_coverage_policy(WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq),
         );
 
         assert_eq!(
@@ -1747,6 +1783,9 @@ mod tests {
                     .with_dynamic_range_mode(WindowDynamicRangeMode::StandardDynamicRange)
                     .with_tone_mapping_mode(WindowToneMappingMode::Clamp)
                     .with_color_management_mode(WindowColorManagementMode::ForceSdr)
+                    .with_text_coverage_policy(
+                        WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq
+                    )
             )
         );
 

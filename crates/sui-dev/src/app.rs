@@ -3,11 +3,11 @@ use std::{cell::RefCell, rc::Rc};
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
-    TextHinting, ToggleState, WgpuRenderer, WidgetId, WidgetPodMutVisitor, WidgetPodVisitor,
-    WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
+    TextCoveragePolicy, TextHinting, ToggleState, WgpuRenderer, WidgetId, WidgetPodMutVisitor,
+    WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
     WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
-    WindowTextHinting, WindowToneMappingMode, default_sui_logo_image, prelude::*,
-    window_output_diagnostics,
+    WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode, default_sui_logo_image,
+    prelude::*, window_output_diagnostics,
 };
 #[cfg(test)]
 use sui_widget_book::build_widget_book_gallery;
@@ -44,6 +44,8 @@ const FEATHER_WIDTH_NAME: &str = "Feather width";
 const OPTICAL_TEXT_CENTERING_TOGGLE_LABEL: &str = "Enable optical vertical text centering";
 const TEXT_HINTING_TOGGLE_LABEL: &str = "Enable slight small-text hinting";
 const TEXT_HINTING_MAX_PPEM_NAME: &str = "Hinting max ppem";
+const TEXT_COVERAGE_POLICY_NAME: &str = "Text coverage policy";
+const TEXT_COVERAGE_GAMMA_NAME: &str = "Text coverage gamma";
 const STEM_DARKENING_TOGGLE_LABEL: &str = "Enable small-text stem darkening";
 const STEM_DARKENING_AMOUNT_NAME: &str = "Stem darkening amount";
 const STEM_DARKENING_MAX_PPEM_NAME: &str = "Stem darkening max ppem";
@@ -62,6 +64,7 @@ const COLOR_MANAGEMENT_MODE_OPTIONS: [&str; 4] =
 const OUTPUT_PRIMARIES_OPTIONS: [&str; 3] = ["Automatic", "sRGB", "Display P3"];
 const DYNAMIC_RANGE_MODE_OPTIONS: [&str; 3] = ["Automatic", "SDR", "HDR"];
 const TONE_MAPPING_MODE_OPTIONS: [&str; 3] = ["Automatic", "Clamp", "Reinhard"];
+const TEXT_COVERAGE_POLICY_OPTIONS: [&str; 3] = ["Linear", "Gamma", "2c - c^2"];
 const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
     "Disabled (SDR baseline)",
     "Wide-gamut only",
@@ -1772,6 +1775,38 @@ fn window_stem_darkening_from_renderer(darkening: sui::StemDarkening) -> WindowS
     }
 }
 
+fn window_text_coverage_policy_from_renderer(
+    policy: TextCoveragePolicy,
+) -> WindowTextCoveragePolicy {
+    match policy.normalized() {
+        TextCoveragePolicy::Linear => WindowTextCoveragePolicy::Linear,
+        TextCoveragePolicy::Gamma(gamma) => WindowTextCoveragePolicy::Gamma(gamma),
+        TextCoveragePolicy::TwoCoverageMinusCoverageSq => {
+            WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq
+        }
+    }
+}
+
+fn text_coverage_policy_selected_index(policy: WindowTextCoveragePolicy) -> usize {
+    match policy.normalized() {
+        WindowTextCoveragePolicy::Linear => 0,
+        WindowTextCoveragePolicy::Gamma(_) => 1,
+        WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq => 2,
+    }
+}
+
+fn update_text_coverage_policy_selection(state: &mut WindowRenderOptions, index: usize) {
+    state.text_coverage_policy = match index {
+        0 => WindowTextCoveragePolicy::Linear,
+        1 => WindowTextCoveragePolicy::Gamma(match state.text_coverage_policy.normalized() {
+            WindowTextCoveragePolicy::Gamma(gamma) => gamma,
+            _ => 1.6,
+        }),
+        2 => WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq,
+        _ => state.text_coverage_policy,
+    };
+}
+
 fn color_management_mode_selected_index(mode: WindowColorManagementMode) -> usize {
     match mode {
         WindowColorManagementMode::Automatic => 0,
@@ -2374,6 +2409,9 @@ impl RenderSettingsTab {
             .with_stem_darkening(window_stem_darkening_from_renderer(
                 renderer.stem_darkening(),
             ))
+            .with_text_coverage_policy(window_text_coverage_policy_from_renderer(
+                renderer.text_coverage_policy(),
+            ))
     }
 
     fn with_initial_options(initial: WindowRenderOptions, theme_reader: DevThemeReader) -> Self {
@@ -2383,6 +2421,8 @@ impl RenderSettingsTab {
         let text_centering_state = Rc::clone(&state);
         let hinting_toggle_state = Rc::clone(&state);
         let hinting_max_ppem_state = Rc::clone(&state);
+        let text_coverage_policy_state = Rc::clone(&state);
+        let text_coverage_gamma_state = Rc::clone(&state);
         let stem_darkening_toggle_state = Rc::clone(&state);
         let stem_darkening_amount_state = Rc::clone(&state);
         let stem_darkening_max_ppem_state = Rc::clone(&state);
@@ -2445,6 +2485,39 @@ impl RenderSettingsTab {
                             .value(initial.feather_width as f64)
                             .on_change(move |value| {
                                 width_state.borrow_mut().feather_width = value.max(0.0) as f32;
+                            }),
+                    ))
+                    .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
+                        TEXT_COVERAGE_POLICY_NAME,
+                        240.0,
+                        Select::new(TEXT_COVERAGE_POLICY_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
+                            .options(TEXT_COVERAGE_POLICY_OPTIONS)
+                            .selected(text_coverage_policy_selected_index(
+                                initial.text_coverage_policy,
+                            ))
+                            .on_change(move |index, _| {
+                                let mut state = text_coverage_policy_state.borrow_mut();
+                                update_text_coverage_policy_selection(&mut state, index);
+                            }),
+                    ))
+                    .with_child(labeled_settings_control(
+                        Rc::clone(&theme_reader),
+                        TEXT_COVERAGE_GAMMA_NAME,
+                        220.0,
+                        NumberInput::new(TEXT_COVERAGE_GAMMA_NAME)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
+                            .range(0.25, 4.0)
+                            .step(0.05)
+                            .precision(2)
+                            .value(match initial.text_coverage_policy.normalized() {
+                                WindowTextCoveragePolicy::Gamma(gamma) => gamma as f64,
+                                _ => 1.6,
+                            })
+                            .on_change(move |value| {
+                                text_coverage_gamma_state.borrow_mut().text_coverage_policy =
+                                    WindowTextCoveragePolicy::Gamma(value.clamp(0.25, 4.0) as f32);
                             }),
                     ))
                     .with_child(
@@ -2664,7 +2737,7 @@ impl RenderSettingsTab {
                     .with_child(OutputDiagnosticsPanel::new(Rc::clone(&theme_reader)))
                     .with_child(
                         Label::new(
-                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The render policy applies to both atlas and fallback glyph coverage; the gamma input is only used when the Gamma policy is selected. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
+                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The text coverage policy applies to both atlas and fallback glyph coverage; changing the gamma input selects and updates the Gamma policy. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)
@@ -5752,6 +5825,8 @@ final_max_luminance={final_max_luminance}
         let semantics = &snapshot.accessibility.nodes;
 
         for label in [
+            TEXT_COVERAGE_POLICY_NAME,
+            TEXT_COVERAGE_GAMMA_NAME,
             COLOR_MANAGEMENT_MODE_NAME,
             OUTPUT_PRIMARIES_NAME,
             DYNAMIC_RANGE_MODE_NAME,
