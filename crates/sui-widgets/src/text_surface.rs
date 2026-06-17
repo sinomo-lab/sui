@@ -81,7 +81,7 @@ pub struct TextSurface {
     focus_animation: AnimatedScalar,
     dragging_selection: bool,
     layout: Option<PersistentTextLayout>,
-    line_layouts: Vec<PersistentTextLayout>,
+    line_layouts: Vec<Option<PersistentTextLayout>>,
     line_offsets: Vec<usize>,
     line_lengths: Vec<usize>,
     line_layout_box_size: Option<Size>,
@@ -155,6 +155,7 @@ impl TextSurface {
         if self.wrap != TextWrap::NoWrap {
             self.editor.set_scroll(0.0, self.editor.scroll_y());
         }
+        self.invalidate_line_layouts();
         self
     }
 
@@ -245,7 +246,7 @@ impl TextSurface {
     }
 
     fn should_show_placeholder(&self) -> bool {
-        self.display_text().is_empty() && !self.placeholder.is_empty()
+        self.display_text_len() == 0 && !self.placeholder.is_empty()
     }
 
     fn resolved_padding(&self) -> Insets {
@@ -286,19 +287,39 @@ impl TextSurface {
         self.editor.display_text()
     }
 
+    fn display_text_len(&self) -> usize {
+        if let Some(composition) = self.editor.composition() {
+            self.editor
+                .document()
+                .len()
+                .saturating_sub(composition.replacement_range.len())
+                .saturating_add(composition.text.len())
+        } else {
+            self.editor.document().len()
+        }
+    }
+
     fn display_selection(&self) -> TextSelection {
         self.editor.display_selection()
     }
 
+    fn layout_box_width(&self, available_width: f32) -> f32 {
+        if self.wrap == TextWrap::NoWrap {
+            1_000_000.0
+        } else {
+            available_width.max(1.0)
+        }
+    }
+
     fn layout_box_size(&self, available_width: f32) -> Size {
         let style = self.resolved_text_style();
-        let estimated_lines = self.display_text().lines().count().max(1) as f32;
+        let estimated_lines = if self.editor.composition().is_some() {
+            self.display_text().lines().count().max(1)
+        } else {
+            self.editor.document().line_count().max(1)
+        } as f32;
         Size::new(
-            if self.wrap == TextWrap::NoWrap {
-                1_000_000.0
-            } else {
-                available_width.max(1.0)
-            },
+            self.layout_box_width(available_width),
             (estimated_lines * style.line_height).max(style.line_height),
         )
     }
@@ -356,7 +377,7 @@ impl TextSurface {
             self.selection_range().end
         };
 
-        let target = if !self.line_layouts.is_empty() {
+        let target = if self.has_line_layout_cache() {
             let line_index = self.line_index_for_offset(focus);
             if to_start {
                 self.line_offsets[line_index]
@@ -397,26 +418,27 @@ impl TextSurface {
             self.selection_range().end
         };
 
-        if !self.line_layouts.is_empty() {
+        if self.has_line_layout_cache() {
             let Some(caret) = self.caret_rect_for_cursor(TextCursor::new(focus)) else {
                 return EditorCommandResult::default();
             };
             let preferred_x = self.editor.preferred_x().unwrap_or(caret.x());
             let line_index = self.line_index_for_offset(focus) as isize + delta_lines;
             let target_line =
-                line_index.clamp(0, self.line_layouts.len().saturating_sub(1) as isize) as usize;
-            let Some(layout) = self.line_layouts.get(target_line) else {
-                return EditorCommandResult::default();
+                line_index.clamp(0, self.line_count().saturating_sub(1) as isize) as usize;
+            let local_offset = if let Some(Some(layout)) = self.line_layouts.get(target_line) {
+                let Some(line) = layout.lines().first() else {
+                    return EditorCommandResult::default();
+                };
+                let local = layout.hit_test_point(Point::new(
+                    preferred_x,
+                    line.rect.y() + (line.rect.height() * 0.5),
+                ));
+                local.utf8_offset.min(self.line_lengths[target_line])
+            } else {
+                self.estimate_inline_offset_for_x(target_line, preferred_x)
             };
-            let Some(line) = layout.lines().first() else {
-                return EditorCommandResult::default();
-            };
-            let local = layout.hit_test_point(Point::new(
-                preferred_x,
-                line.rect.y() + (line.rect.height() * 0.5),
-            ));
-            let target = self.line_offsets[target_line]
-                + local.utf8_offset.min(self.line_lengths[target_line]);
+            let target = self.line_offsets[target_line] + local_offset;
             let result = self.editor.execute(EditorCommand::MoveTo {
                 offset: target,
                 extend,
@@ -593,19 +615,22 @@ impl TextSurface {
             return None;
         }
 
-        if !self.line_layouts.is_empty() {
+        if self.has_line_layout_cache() {
             let local_x = position.x - content.x() + self.editor.scroll_x();
             let local_y = position.y - content.y() + self.editor.scroll_y();
             let line_index = self.line_index_for_y(local_y);
-            let layout = self.line_layouts.get(line_index)?;
-            let line = layout.lines().first()?;
-            let local = layout.hit_test_point(Point::new(
-                local_x,
-                line.rect.y() + (line.rect.height() * 0.5),
-            ));
+            let local_offset = if let Some(Some(layout)) = self.line_layouts.get(line_index) {
+                let line = layout.lines().first()?;
+                let local = layout.hit_test_point(Point::new(
+                    local_x,
+                    line.rect.y() + (line.rect.height() * 0.5),
+                ));
+                local.utf8_offset.min(self.line_lengths[line_index])
+            } else {
+                self.estimate_inline_offset_for_x(line_index, local_x)
+            };
             return Some(TextCursor::new(
-                self.line_offsets[line_index]
-                    + local.utf8_offset.min(self.line_lengths[line_index]),
+                self.line_offsets[line_index] + local_offset,
             ));
         }
 
@@ -619,7 +644,7 @@ impl TextSurface {
     }
 
     fn visible_line_range(&self, viewport_height: f32) -> Range<usize> {
-        if !self.line_layouts.is_empty() {
+        if self.has_line_layout_cache() {
             if viewport_height <= 0.0 {
                 return 0..0;
             }
@@ -630,9 +655,9 @@ impl TextSurface {
             let visible_bottom = self.editor.scroll_y() + viewport_height + overdraw;
             let start = (visible_top / line_height).floor() as usize;
             let end = ((visible_bottom / line_height).ceil() as usize + 1)
-                .min(self.line_layouts.len())
-                .max(start + usize::from(start < self.line_layouts.len()));
-            return start.min(self.line_layouts.len())..end;
+                .min(self.line_count())
+                .max(start + usize::from(start < self.line_count()));
+            return start.min(self.line_count())..end;
         }
 
         let Some(layout) = self.layout.as_ref() else {
@@ -666,7 +691,7 @@ impl TextSurface {
 
     fn clamp_scroll_to_bounds(&mut self, viewport_size: Size) -> bool {
         let previous = (self.editor.scroll_x(), self.editor.scroll_y());
-        let content_size = if !self.line_layouts.is_empty() {
+        let content_size = if self.has_line_layout_cache() {
             self.multi_line_content_size()
         } else if let Some(layout) = self.layout.as_ref() {
             layout_content_size(layout)
@@ -740,12 +765,29 @@ impl TextSurface {
         }
     }
 
-    fn line_height(&self) -> f32 {
-        let base_line_height = self.resolved_text_style().line_height;
-        self.line_layouts
+    fn line_count(&self) -> usize {
+        self.line_offsets.len()
+    }
+
+    fn has_line_layout_cache(&self) -> bool {
+        !self.line_offsets.is_empty()
+    }
+
+    fn line_slot_height_for_style(&self, base_style: &TextStyle) -> f32 {
+        let base = base_style.line_height.max(base_style.font_size).max(1.0);
+        self.style_spans
             .iter()
-            .map(|layout| self.line_layout_height(layout, base_line_height))
-            .fold(base_line_height, f32::max)
+            .map(|span| span.style.line_height.max(span.style.font_size))
+            .chain(
+                self.style_overlays
+                    .iter()
+                    .map(|overlay| overlay.style.line_height.max(overlay.style.font_size)),
+            )
+            .fold(base, f32::max)
+    }
+
+    fn line_height(&self) -> f32 {
+        self.line_slot_height_for_style(&self.resolved_text_style())
     }
 
     fn line_layout_height(&self, layout: &PersistentTextLayout, base_line_height: f32) -> f32 {
@@ -773,7 +815,14 @@ impl TextSurface {
     }
 
     fn line_index_for_offset(&self, offset: usize) -> usize {
-        let offset = offset.min(self.display_text().len());
+        let offset = offset.min(self.display_text_len());
+        if self.editor.composition().is_none() && self.has_line_layout_cache() {
+            return self
+                .editor
+                .document()
+                .line_index_for_offset(offset)
+                .min(self.line_count().saturating_sub(1));
+        }
         self.line_offsets
             .iter()
             .enumerate()
@@ -785,17 +834,40 @@ impl TextSurface {
 
     fn line_index_for_y(&self, y: f32) -> usize {
         let line_height = self.line_height().max(1.0);
-        ((y / line_height).floor() as usize).min(self.line_layouts.len().saturating_sub(1))
+        ((y / line_height).floor() as usize).min(self.line_count().saturating_sub(1))
+    }
+
+    fn estimate_inline_offset_for_x(&self, line_index: usize, x: f32) -> usize {
+        let length = self.line_lengths.get(line_index).copied().unwrap_or(0);
+        if length == 0 {
+            return 0;
+        }
+
+        let average_advance = (self.resolved_text_style().font_size * 0.55).max(1.0);
+        ((x.max(0.0) / average_advance).round() as usize).min(length)
+    }
+
+    fn estimated_caret_rect_for_line(&self, line_index: usize, local_offset: usize) -> Rect {
+        let style = self.resolved_text_style();
+        let average_advance = (style.font_size * 0.55).max(1.0);
+        Rect::new(
+            average_advance * local_offset as f32,
+            line_index as f32 * self.line_height(),
+            1.0,
+            style.line_height.max(1.0),
+        )
     }
 
     fn caret_rect_for_cursor(&self, cursor: TextCursor) -> Option<Rect> {
-        if !self.line_layouts.is_empty() {
+        if self.has_line_layout_cache() {
             let line_index = self.line_index_for_offset(cursor.utf8_offset);
-            let layout = self.line_layouts.get(line_index)?;
             let local_offset = cursor
                 .utf8_offset
                 .saturating_sub(self.line_offsets[line_index])
                 .min(self.line_lengths[line_index]);
+            let Some(Some(layout)) = self.line_layouts.get(line_index) else {
+                return Some(self.estimated_caret_rect_for_line(line_index, local_offset));
+            };
             let base_line_height = self.resolved_text_style().line_height;
             let slot_height = self.line_height();
             return Some(layout.caret_rect(local_offset).translate(Vector::new(
@@ -808,12 +880,20 @@ impl TextSurface {
     }
 
     fn selection_rects_for_display(&self, selection: &TextSelection) -> Vec<Rect> {
-        if !self.line_layouts.is_empty() {
+        if self.has_line_layout_cache() {
             let mut rects = Vec::new();
-            let range = selection_range(selection, self.display_text().len());
+            let range = selection_range(selection, self.display_text_len());
+            if range.is_empty() || self.line_count() == 0 {
+                return rects;
+            }
+
+            let start_line = self.line_index_for_offset(range.start);
+            let end_line = self
+                .line_index_for_offset(range.end)
+                .min(self.line_count().saturating_sub(1));
             let base_line_height = self.resolved_text_style().line_height;
             let slot_height = self.line_height();
-            for (line_index, layout) in self.line_layouts.iter().enumerate() {
+            for line_index in start_line..=end_line {
                 let line_start = self.line_offsets[line_index];
                 let line_end = line_start + self.line_lengths[line_index];
                 let selection_start = range.start.max(line_start);
@@ -822,10 +902,20 @@ impl TextSurface {
                     continue;
                 }
 
-                let local_rects = layout.selection_rects(
-                    selection_start.saturating_sub(line_start)
-                        ..selection_end.saturating_sub(line_start),
-                );
+                let local_range = selection_start.saturating_sub(line_start)
+                    ..selection_end.saturating_sub(line_start);
+                let Some(Some(layout)) = self.line_layouts.get(line_index) else {
+                    let start = self.estimated_caret_rect_for_line(line_index, local_range.start);
+                    let end = self.estimated_caret_rect_for_line(line_index, local_range.end);
+                    rects.push(Rect::new(
+                        start.x(),
+                        start.y(),
+                        (end.x() - start.x()).max(1.0),
+                        start.height(),
+                    ));
+                    continue;
+                };
+                let local_rects = layout.selection_rects(local_range);
                 rects.extend(local_rects.into_iter().map(|rect| {
                     rect.translate(Vector::new(
                         0.0,
@@ -843,12 +933,20 @@ impl TextSurface {
     }
 
     fn multi_line_content_size(&self) -> Size {
+        let estimated_width = self
+            .line_lengths
+            .iter()
+            .map(|length| *length as f32 * self.resolved_text_style().font_size * 0.55)
+            .fold(0.0_f32, f32::max);
+        let measured_width = self
+            .line_layouts
+            .iter()
+            .filter_map(|layout| layout.as_ref())
+            .map(|layout| layout.measurement().width)
+            .fold(0.0_f32, f32::max);
         Size::new(
-            self.line_layouts
-                .iter()
-                .map(|layout| layout.measurement().width)
-                .fold(0.0_f32, f32::max),
-            self.line_layouts.len() as f32 * self.line_height(),
+            estimated_width.max(measured_width),
+            self.line_count() as f32 * self.line_height(),
         )
     }
 }
@@ -1068,120 +1166,167 @@ impl Widget for TextSurface {
             (min_size.width - padding.left - padding.right).max(0.0)
         };
 
-        let display_text = self.display_text();
+        let composition_active = self.editor.composition().is_some();
         let line_style = self.display_text_style();
         let line_box_size = Size::new(
-            self.layout_box_size(available_width).width,
+            self.layout_box_width(available_width),
             line_style.line_height.max(1.0),
         );
+        let viewport_height = if constraints.max.height.is_finite() {
+            (constraints.max.height - padding.top - padding.bottom).max(0.0)
+        } else {
+            (min_size.height - padding.top - padding.bottom).max(line_style.line_height)
+        };
         let mut line_layout_failed = false;
 
-        if self.editor.composition().is_none() {
+        if !composition_active {
             let document = self.editor.document();
             let line_count = document.line_count();
-            let can_reuse_lines = self.line_layout_revision != u64::MAX
-                && self.line_layout_box_size == Some(line_box_size)
-                && self.line_layout_style.as_ref() == Some(&line_style)
-                && self.line_layout_style_revision == self.style_revision
-                && self.line_layouts.len() == line_count
-                && self.line_offsets.len() == line_count
-                && self.line_lengths.len() == line_count;
 
-            if can_reuse_lines {
-                let dirty = document.dirty_line_range();
-                for index in dirty {
-                    if index >= line_count {
+            if line_count > 1 {
+                let can_reuse_lines = self.line_layout_revision != u64::MAX
+                    && self.line_layout_box_size == Some(line_box_size)
+                    && self.line_layout_style.as_ref() == Some(&line_style)
+                    && self.line_layout_style_revision == self.style_revision
+                    && self.line_layouts.len() == line_count
+                    && self.line_offsets.len() == line_count
+                    && self.line_lengths.len() == line_count;
+
+                if !can_reuse_lines {
+                    self.line_layouts = vec![None; line_count];
+                    self.line_offsets.clear();
+                    self.line_lengths.clear();
+                    self.line_offsets.reserve(line_count);
+                    self.line_lengths.reserve(line_count);
+                    for index in 0..line_count {
+                        let line_range = document.line_range(index);
+                        self.line_offsets.push(line_range.start);
+                        self.line_lengths.push(line_range.len());
+                    }
+                } else {
+                    for index in document.dirty_line_range() {
+                        if index >= line_count {
+                            continue;
+                        }
+                        let line_range = document.line_range(index);
+                        self.line_layouts[index] = None;
+                        self.line_offsets[index] = line_range.start;
+                        self.line_lengths[index] = line_range.len();
+                    }
+                }
+
+                let visible_lines = self.visible_line_range(viewport_height);
+                let caret_line =
+                    self.line_index_for_offset(self.display_selection().focus.utf8_offset);
+                let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
+                lines_to_shape.extend(visible_lines);
+                if caret_line < line_count && !lines_to_shape.contains(&caret_line) {
+                    lines_to_shape.push(caret_line);
+                }
+
+                for index in lines_to_shape {
+                    if self.line_layouts[index].is_some() {
                         continue;
                     }
                     let line_range = document.line_range(index);
                     match self.shape_line_layout(
                         ctx,
-                        self.line_layouts.get(index).map(|layout| layout.handle()),
+                        None,
                         document.line_text(index),
-                        line_range.clone(),
+                        line_range,
                         line_box_size,
                         line_style.clone(),
                     ) {
-                        Ok(layout) => {
-                            self.line_layouts[index] = layout;
-                            self.line_offsets[index] = line_range.start;
-                            self.line_lengths[index] = line_range.len();
-                        }
+                        Ok(layout) => self.line_layouts[index] = Some(layout),
                         Err(_) => {
                             line_layout_failed = true;
                             break;
                         }
                     }
+                }
+
+                if !line_layout_failed {
+                    self.line_layout_box_size = Some(line_box_size);
+                    self.line_layout_style = Some(line_style.clone());
+                    self.line_layout_revision = document.revision();
+                    self.line_layout_style_revision = self.style_revision;
+                    self.layout = None;
+                    self.editor.clear_document_dirty();
                 }
             } else {
-                let mut next_line_layouts: Vec<PersistentTextLayout> =
-                    Vec::with_capacity(line_count);
-                let mut next_line_offsets = Vec::with_capacity(line_count);
-                let mut next_line_lengths = Vec::with_capacity(line_count);
-                for index in 0..line_count {
-                    let line_range = document.line_range(index);
+                self.line_layouts.clear();
+                self.line_offsets.clear();
+                self.line_lengths.clear();
+                self.line_layout_box_size = None;
+                self.line_layout_style = None;
+                self.line_layout_revision = u64::MAX;
+                self.line_layout_style_revision = u64::MAX;
+            }
+        } else {
+            let display_text = self.display_text();
+            let (line_texts, line_offsets, line_lengths) = split_lines_with_offsets(&display_text);
+            if line_texts.len() > 1 {
+                let metadata_matches = self.line_layout_box_size == Some(line_box_size)
+                    && self.line_layout_style.as_ref() == Some(&line_style)
+                    && self.line_layout_style_revision == self.style_revision
+                    && self.line_layouts.len() == line_texts.len()
+                    && self.line_offsets == line_offsets
+                    && self.line_lengths == line_lengths;
+
+                if !metadata_matches {
+                    self.line_layouts = vec![None; line_texts.len()];
+                    self.line_offsets = line_offsets;
+                    self.line_lengths = line_lengths;
+                } else {
+                    self.line_layouts.fill(None);
+                }
+
+                let visible_lines = self.visible_line_range(viewport_height);
+                let caret_line =
+                    self.line_index_for_offset(self.display_selection().focus.utf8_offset);
+                let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
+                lines_to_shape.extend(visible_lines);
+                if caret_line < line_texts.len() && !lines_to_shape.contains(&caret_line) {
+                    lines_to_shape.push(caret_line);
+                }
+
+                for index in lines_to_shape {
+                    if self.line_layouts[index].is_some() {
+                        continue;
+                    }
+                    let line_range = self.line_offsets[index]
+                        ..self.line_offsets[index] + self.line_lengths[index];
                     match self.shape_line_layout(
                         ctx,
-                        self.line_layouts.get(index).map(|layout| layout.handle()),
-                        document.line_text(index),
-                        line_range.clone(),
+                        None,
+                        &line_texts[index],
+                        line_range,
                         line_box_size,
                         line_style.clone(),
                     ) {
-                        Ok(layout) => {
-                            next_line_layouts.push(layout);
-                            next_line_offsets.push(line_range.start);
-                            next_line_lengths.push(line_range.len());
-                        }
+                        Ok(layout) => self.line_layouts[index] = Some(layout),
                         Err(_) => {
                             line_layout_failed = true;
                             break;
                         }
                     }
                 }
-                if !line_layout_failed {
-                    self.line_layouts = next_line_layouts;
-                    self.line_offsets = next_line_offsets;
-                    self.line_lengths = next_line_lengths;
-                }
-            }
 
-            if !line_layout_failed {
-                self.line_layout_box_size = Some(line_box_size);
-                self.line_layout_style = Some(line_style.clone());
-                self.line_layout_revision = document.revision();
-                self.line_layout_style_revision = self.style_revision;
-                self.editor.clear_document_dirty();
-            }
-        } else {
-            let (line_texts, line_offsets, line_lengths) = split_lines_with_offsets(&display_text);
-            let mut next_line_layouts: Vec<PersistentTextLayout> =
-                Vec::with_capacity(line_texts.len());
-            for (index, line) in line_texts.iter().enumerate() {
-                let line_range = line_offsets[index]..line_offsets[index] + line_lengths[index];
-                match self.shape_line_layout(
-                    ctx,
-                    self.line_layouts.get(index).map(|layout| layout.handle()),
-                    line,
-                    line_range,
-                    line_box_size,
-                    line_style.clone(),
-                ) {
-                    Ok(layout) => next_line_layouts.push(layout),
-                    Err(_) => {
-                        line_layout_failed = true;
-                        break;
-                    }
+                if !line_layout_failed {
+                    self.line_layout_box_size = Some(line_box_size);
+                    self.line_layout_style = Some(line_style.clone());
+                    self.line_layout_revision = u64::MAX;
+                    self.line_layout_style_revision = self.style_revision;
+                    self.layout = None;
                 }
-            }
-            if !line_layout_failed {
-                self.line_layouts = next_line_layouts;
-                self.line_offsets = line_offsets;
-                self.line_lengths = line_lengths;
-                self.line_layout_box_size = Some(line_box_size);
-                self.line_layout_style = Some(line_style.clone());
+            } else {
+                self.line_layouts.clear();
+                self.line_offsets.clear();
+                self.line_lengths.clear();
+                self.line_layout_box_size = None;
+                self.line_layout_style = None;
                 self.line_layout_revision = u64::MAX;
-                self.line_layout_style_revision = self.style_revision;
+                self.line_layout_style_revision = u64::MAX;
             }
         }
 
@@ -1195,20 +1340,30 @@ impl Widget for TextSurface {
             self.line_layout_style_revision = u64::MAX;
         }
 
-        self.layout = if self.line_layouts.len() <= 1 {
-            ctx.layout()
-                .shape_text_persistent(
-                    self.layout.as_ref().map(|layout| layout.handle()),
-                    display_text,
-                    self.layout_box_size(available_width),
+        self.layout = if !self.has_line_layout_cache() {
+            let display_text = self.display_text();
+            let handle = self.layout.as_ref().map(|layout| layout.handle());
+            let box_size = self.layout_box_size(available_width);
+            if self.style_spans.is_empty() && self.style_overlays.is_empty() {
+                ctx.layout()
+                    .shape_text_persistent(handle, display_text, box_size, line_style)
+                    .ok()
+            } else {
+                self.shape_line_layout(
+                    ctx,
+                    handle,
+                    &display_text,
+                    0..display_text.len(),
+                    box_size,
                     line_style,
                 )
                 .ok()
+            }
         } else {
             None
         };
 
-        let mut natural_content_size = if !self.line_layouts.is_empty() {
+        let mut natural_content_size = if self.has_line_layout_cache() {
             self.multi_line_content_size()
         } else {
             self.layout
@@ -1290,7 +1445,7 @@ impl Widget for TextSurface {
             metrics.focus_ring_outset,
         );
 
-        if self.line_layouts.is_empty() && self.layout.is_none() {
+        if !self.has_line_layout_cache() && self.layout.is_none() {
             return;
         }
 
@@ -1355,9 +1510,9 @@ impl Widget for TextSurface {
             );
         }
 
-        if !self.line_layouts.is_empty() {
+        if self.has_line_layout_cache() {
             for line_index in line_range {
-                if let Some(layout) = self.line_layouts.get(line_index) {
+                if let Some(Some(layout)) = self.line_layouts.get(line_index) {
                     let line_y =
                         self.line_origin_y(line_index, layout, base_line_height, slot_height);
                     ctx.draw_persistent_text_layout(
@@ -1606,7 +1761,10 @@ mod tests {
     use sui_core::{
         Event, Modifiers, PointerButtons, PointerEvent, PointerKind, SemanticsValue, WindowId,
     };
-    use sui_runtime::{Application, RenderOutput, Runtime, WindowBuilder};
+    use sui_runtime::{
+        Application, RenderOutput, Runtime, SceneStatisticsDetailMode, WindowBuilder,
+        set_window_scene_statistics_detail_mode,
+    };
     use sui_scene::{Brush, SceneCommand};
 
     fn build_runtime<W>(root: W) -> (Runtime, WindowId)
@@ -1661,11 +1819,20 @@ mod tests {
 
     fn shaped_text_commands(output: &RenderOutput) -> Vec<sui_text::ShapedText> {
         let mut found = Vec::new();
-        output.frame.scene.visit_commands(&mut |command| {
-            if let SceneCommand::DrawShapedText(text) = command {
-                found.push(text.clone());
-            }
-        });
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::DrawShapedText(text) => found.push(text.clone()),
+                SceneCommand::DrawShapedTextWindow(text) => found.push(sui_text::ShapedText {
+                    origin: text.origin,
+                    layout_handle: text.layout_handle,
+                    layout_version: text.layout_version,
+                    bounds: text.bounds,
+                    color_override: text.color_override,
+                }),
+                _ => {}
+            });
         found
     }
 
@@ -1786,7 +1953,7 @@ mod tests {
 
     #[test]
     fn text_surface_submits_only_visible_line_windows() {
-        let long_text = (0..24)
+        let long_text = (0..240)
             .map(|index| format!("line {index:02}"))
             .collect::<Vec<_>>()
             .join("\n");
@@ -1795,14 +1962,20 @@ mod tests {
                 .size(Size::new(180.0, 96.0))
                 .with_child(TextSurface::new("Editor").value(long_text)),
         );
+        set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
 
         let output = runtime.render(window_id).expect("render should succeed");
         let shaped = shaped_text_commands(&output);
+        let layout_misses = output.diagnostics.text_caches.runtime_layout.misses;
 
         assert!(
             shaped.len() < 24,
             "expected visible-line submission only, emitted {} shaped lines",
             shaped.len(),
+        );
+        assert!(
+            layout_misses < 80,
+            "expected viewport-aware measure, recorded {layout_misses} layout misses"
         );
         assert!(
             shaped
@@ -1840,7 +2013,7 @@ mod tests {
                     .expect("text surface line layout should shape"),
             );
         }
-        surface.line_layouts = line_layouts;
+        surface.line_layouts = line_layouts.into_iter().map(Some).collect();
         surface.line_offsets = line_offsets;
         surface.line_lengths = line_lengths;
 
@@ -1923,41 +2096,44 @@ mod tests {
             .text_style(base_style.clone())
             .value(value);
         geometry_surface.line_layouts = vec![
-            text_system
-                .shape_text_persistent(
-                    None,
-                    "tiny",
-                    Size::new(240.0, base_style.line_height),
-                    base_style.clone(),
-                    &sui_text::FontRegistry::new(),
-                )
-                .expect("first line should shape"),
-            text_system
-                .shape_text_persistent(
-                    None,
-                    "header",
-                    Size::new(240.0, base_style.line_height),
-                    TextStyle {
-                        font_size: 28.0,
-                        line_height: 36.0,
-                        ..base_style.clone()
-                    },
-                    &sui_text::FontRegistry::new(),
-                )
-                .expect("second line should shape"),
+            Some(
+                text_system
+                    .shape_text_persistent(
+                        None,
+                        "tiny",
+                        Size::new(240.0, base_style.line_height),
+                        base_style.clone(),
+                        &sui_text::FontRegistry::new(),
+                    )
+                    .expect("first line should shape"),
+            ),
+            Some(
+                text_system
+                    .shape_text_persistent(
+                        None,
+                        "header",
+                        Size::new(240.0, base_style.line_height),
+                        TextStyle {
+                            font_size: 28.0,
+                            line_height: 36.0,
+                            ..base_style.clone()
+                        },
+                        &sui_text::FontRegistry::new(),
+                    )
+                    .expect("second line should shape"),
+            ),
         ];
         geometry_surface.line_offsets = vec![0, "tiny\n".len()];
         geometry_surface.line_lengths = vec!["tiny".len(), "header".len()];
-        let local_caret = geometry_surface.line_layouts[0].caret_rect(0);
-        let local_selection = geometry_surface.line_layouts[0].selection_rects(0.."tiny".len());
+        let first_geometry_layout = geometry_surface.line_layouts[0]
+            .as_ref()
+            .expect("first line layout should exist");
+        let local_caret = first_geometry_layout.caret_rect(0);
+        let local_selection = first_geometry_layout.selection_rects(0.."tiny".len());
         let base_line_height = geometry_surface.resolved_text_style().line_height;
         let slot_height = geometry_surface.line_height();
-        let first_origin_y = geometry_surface.line_origin_y(
-            0,
-            &geometry_surface.line_layouts[0],
-            base_line_height,
-            slot_height,
-        );
+        let first_origin_y =
+            geometry_surface.line_origin_y(0, first_geometry_layout, base_line_height, slot_height);
         let caret = geometry_surface
             .caret_rect_for_cursor(TextCursor::new(0))
             .expect("caret should resolve");
@@ -2087,18 +2263,17 @@ mod tests {
         );
         let output = runtime.render(window_id).expect("render should succeed");
         let registry = output.frame.text_layout_registry.as_ref();
-        let placeholder = shaped_text_commands(&output)
+        let (placeholder_command, placeholder) = shaped_text_commands(&output)
             .into_iter()
             .find_map(|text| {
-                text.resolve(registry)
-                    .filter(|layout| layout.text() == "Write notes")
-                    .cloned()
+                let layout = text.resolve(registry)?;
+                (layout.text() == "Write notes").then(|| (text, layout.clone()))
             })
             .expect("placeholder text should draw");
         let node = text_input_node(&output);
 
         assert_eq!(node.value, Some(SemanticsValue::Text(String::new())));
-        assert_eq!(placeholder.style().color, placeholder_color);
+        assert_eq!(placeholder_command.color_override, Some(placeholder_color));
         assert_eq!(placeholder.style().font_size, text_style.font_size);
         assert_eq!(placeholder.style().line_height, text_style.line_height);
         assert!(placeholder.measurement().height > text_style.line_height);
