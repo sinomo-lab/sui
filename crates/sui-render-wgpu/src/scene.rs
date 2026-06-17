@@ -2685,6 +2685,7 @@ fn build_text_atlas_instance(
     let (top_left, top_right, bottom_left, bottom_right) = snapped_glyph_quad(
         transform,
         pixel_snap_offset,
+        Point::new(glyph.origin_x, glyph.origin_y),
         Rect::new(left, top, width, height),
         raster_scale_factor,
     );
@@ -2728,17 +2729,31 @@ pub(crate) fn glyph_subpixel_offset(
     let origin =
         transform.transform_point(Point::new(glyph.origin_x, glyph.origin_y)) + pixel_snap_offset;
     GlyphSubpixelOffsetKey::new(
-        subpixel_variant_for(origin.x * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_X),
-        subpixel_variant_for(origin.y * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_Y),
+        physical_pixel_phase(origin.x * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_X).variant,
+        physical_pixel_phase(origin.y * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_Y).variant,
     )
 }
 
-fn subpixel_variant_for(physical_position: f32, variants: u8) -> u8 {
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PhysicalPixelPhase {
+    integer: f32,
+    variant: u8,
+}
+
+fn physical_pixel_phase(physical_position: f32, variants: u8) -> PhysicalPixelPhase {
     if variants <= 1 {
-        return 0;
+        return PhysicalPixelPhase {
+            integer: physical_position.round(),
+            variant: 0,
+        };
     }
 
-    ((physical_position * f32::from(variants)).round() as i32).rem_euclid(i32::from(variants)) as u8
+    let variants_i32 = i32::from(variants);
+    let rounded = (physical_position * f32::from(variants)).round() as i32;
+    let variant = rounded.rem_euclid(variants_i32) as u8;
+    let integer = (rounded - i32::from(variant)) as f32 / f32::from(variants);
+
+    PhysicalPixelPhase { integer, variant }
 }
 
 #[cfg(test)]
@@ -2791,9 +2806,11 @@ fn append_text_instance_vertices(vertices: &mut Vec<Vertex>, instances: &[TextAt
 fn snapped_glyph_quad(
     transform: Transform,
     pixel_snap_offset: Vector,
+    glyph_origin: Point,
     rect: Rect,
     raster_scale_factor: f32,
 ) -> (Point, Point, Point, Point) {
+    let transformed_origin = transform.transform_point(glyph_origin);
     let top_left = transform.transform_point(rect.origin);
     let top_right = transform.transform_point(Point::new(rect.max_x(), rect.y()));
     let bottom_left = transform.transform_point(Point::new(rect.x(), rect.max_y()));
@@ -2803,11 +2820,23 @@ fn snapped_glyph_quad(
         return (top_left, top_right, bottom_left, bottom_right);
     }
 
-    let snapped_left =
-        snap_to_physical_pixel(top_left.x + pixel_snap_offset.x, raster_scale_factor)
-            - pixel_snap_offset.x;
-    let snapped_top = snap_to_physical_pixel(top_left.y + pixel_snap_offset.y, raster_scale_factor)
+    let snap_origin = transformed_origin + pixel_snap_offset;
+    let snapped_origin_x = physical_pixel_phase(
+        snap_origin.x * raster_scale_factor,
+        GLYPH_SUBPIXEL_VARIANTS_X,
+    )
+    .integer
+        / raster_scale_factor
+        - pixel_snap_offset.x;
+    let snapped_origin_y = physical_pixel_phase(
+        snap_origin.y * raster_scale_factor,
+        GLYPH_SUBPIXEL_VARIANTS_Y,
+    )
+    .integer
+        / raster_scale_factor
         - pixel_snap_offset.y;
+    let snapped_left = snapped_origin_x + (top_left.x - transformed_origin.x);
+    let snapped_top = snapped_origin_y + (top_left.y - transformed_origin.y);
     let width = top_right.x - top_left.x;
     let height = bottom_left.y - top_left.y;
 
@@ -2825,10 +2854,6 @@ fn transform_is_axis_aligned(transform: Transform) -> bool {
 
 fn transform_is_lcd_safe(transform: Transform) -> bool {
     transform_is_axis_aligned(transform) && transform.xx > 0.0 && transform.yy > 0.0
-}
-
-fn snap_to_physical_pixel(value: f32, raster_scale_factor: f32) -> f32 {
-    ((value * raster_scale_factor).round()) / raster_scale_factor
 }
 
 pub(crate) fn append_cached_path_mesh(

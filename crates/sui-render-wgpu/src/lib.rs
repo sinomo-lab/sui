@@ -5773,6 +5773,51 @@ mod tests {
     }
 
     #[test]
+    fn cached_glyph_atlas_places_quad_from_subpixel_phase_integer() {
+        let atlas = CachedGlyphAtlas {
+            scale: 12.0,
+            offset: Vector::ZERO,
+            size: Size::new(8.0, 10.0),
+            uv_min: [0.25, 0.5],
+            uv_max: [0.5, 0.75],
+            color_mode: TextAtlasColorMode::Grayscale,
+            is_color: false,
+            page_index: 0,
+        };
+        let glyph = ShapedGlyph {
+            glyph_id: 42,
+            cluster: 0,
+            span_id: sui_text::TextSpanId {
+                paragraph_index: 0,
+                span_index: 0,
+            },
+            run_index: 0,
+            line_index: 0,
+            face_index: 0,
+            origin_x: 10.75,
+            origin_y: 20.0,
+            advance: Vector::new(8.0, 0.0),
+            scale: 12.0,
+            bounds: None,
+        };
+        let viewport = Size::new(64.0, 64.0);
+        let mut vertices = Vec::new();
+        append_cached_glyph_atlas(
+            &mut vertices,
+            &atlas,
+            &glyph,
+            Color::WHITE,
+            Transform::IDENTITY,
+            viewport,
+            1.0,
+        );
+
+        assert_eq!(vertices.len(), 6);
+        let left = logical_x_from_ndc(vertices[0].position[0], viewport);
+        assert!((left - 10.0).abs() < 0.0001);
+    }
+
+    #[test]
     fn swash_placement_offsets_are_converted_to_screen_space() {
         let offset = glyph_raster_offset(
             &swash::zeno::Placement {
