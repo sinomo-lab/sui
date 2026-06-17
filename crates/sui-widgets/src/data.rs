@@ -15,7 +15,7 @@ use sui_text::{FontFeature, TextMeasurement, TextStyle};
 use crate::{
     DefaultTheme, MotionScalar,
     controls::{IconGlyph, draw_icon_glyph},
-    text_align::{aligned_text_rect_for_text, vertically_centered_text_rect_y},
+    text_align::{paint_aligned_text, vertically_centered_text_rect_y},
 };
 
 pub struct ListItem {
@@ -711,7 +711,7 @@ impl Widget for ListView {
                 let leading_measurement = paint_text_measurement(ctx, leading, &leading_style);
                 let leading_slot =
                     Rect::new(text_x, row.y(), leading_measurement.width, row.height());
-                let leading_rect = aligned_text_rect_for_text(
+                paint_aligned_text(
                     ctx,
                     leading_slot,
                     leading,
@@ -719,7 +719,6 @@ impl Widget for ListView {
                     leading_style.line_height,
                     0.0,
                 );
-                ctx.draw_text(leading_rect, leading.clone(), leading_style);
                 text_x += leading_measurement.width + metrics.data_row_icon_gap;
             }
 
@@ -779,10 +778,8 @@ impl Widget for ListView {
             }
             if let (Some(trailing), Some(rect)) = (&item.trailing, trailing_rect) {
                 let style = detail_style.clone();
-                let trailing_text_rect =
-                    aligned_text_rect_for_text(ctx, rect, trailing, &style, style.line_height, 1.0);
                 ctx.push_clip_rect(rect);
-                ctx.draw_text(trailing_text_rect, trailing.clone(), style);
+                paint_aligned_text(ctx, rect, trailing, &style, style.line_height, 1.0);
                 ctx.pop_clip();
             }
         }
@@ -3348,7 +3345,8 @@ fn draw_aligned_text(
         TableColumnAlignment::Center => 0.5,
         TableColumnAlignment::End => 1.0,
     };
-    let text_rect = aligned_text_rect_for_text(
+    ctx.push_clip_rect(rect);
+    paint_aligned_text(
         ctx,
         rect,
         text,
@@ -3356,8 +3354,6 @@ fn draw_aligned_text(
         style.line_height,
         horizontal_alignment,
     );
-    ctx.push_clip_rect(rect);
-    ctx.draw_text(text_rect, text.to_string(), style.clone());
     ctx.pop_clip();
 }
 
@@ -4067,18 +4063,29 @@ mod tests {
                         .resolve(output.frame.text_layout_registry.as_ref())
                         .filter(|layout| layout.text() == text)
                     {
-                        rects.push(Rect::new(
-                            run.origin.x,
-                            run.origin.y,
-                            layout.box_size().width,
-                            layout.box_size().height,
-                        ));
+                        rects.push(shaped_text_run_rect(run.origin, layout));
                     }
                 }
                 _ => {}
             });
 
         rects
+    }
+
+    fn shaped_text_run_rect(origin: Point, layout: &sui_text::TextLayout) -> Rect {
+        let measurement = layout.measurement();
+        let bounds = measurement.bounds;
+        let width = if bounds.width().is_finite() && bounds.width() > 0.0 {
+            bounds.width()
+        } else {
+            measurement.width
+        };
+        Rect::new(
+            origin.x + bounds.x(),
+            origin.y + ((layout.box_size().height - measurement.height).max(0.0) * 0.5),
+            width,
+            layout.style().line_height.max(measurement.height),
+        )
     }
 
     fn text_runs_for(output: &RenderOutput, text: &str) -> Vec<sui_text::TextRun> {
@@ -4093,15 +4100,14 @@ mod tests {
                         .resolve(output.frame.text_layout_registry.as_ref())
                         .filter(|layout| layout.text() == text)
                     {
+                        let mut style = layout.style().clone();
+                        if let Some(color) = run.color_override {
+                            style.color = color;
+                        }
                         runs.push(sui_text::TextRun {
-                            rect: Rect::new(
-                                run.origin.x,
-                                run.origin.y,
-                                layout.box_size().width,
-                                layout.box_size().height,
-                            ),
+                            rect: shaped_text_run_rect(run.origin, layout),
                             text: layout.text().to_string(),
-                            style: layout.style().clone(),
+                            style,
                         });
                     }
                 }
@@ -4244,7 +4250,12 @@ mod tests {
 
     fn text_run_visual_center(run: &sui_text::TextRun) -> f32 {
         let layout = TextSystem::new()
-            .shape_text_run(run, &FontRegistry::new())
+            .shape_text(
+                run.text.clone(),
+                Size::new(f32::INFINITY, run.rect.height().max(1.0)),
+                run.style.clone(),
+                &FontRegistry::new(),
+            )
             .expect("text run should shape");
         let line = layout.lines().first().expect("text run should have a line");
         run.rect.y() + line.baseline + optical_visual_center(layout.measurement())

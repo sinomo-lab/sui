@@ -23,7 +23,7 @@ use sui_scene::{
 };
 use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
-    TextMeasurement, TextRun, TextStyle, TextSystem,
+    TextLayoutRequest, TextMeasurement, TextRun, TextStyle, TextSystem,
 };
 use web_time::Instant;
 
@@ -1463,6 +1463,11 @@ impl PaintCtx {
             .shape_text(text, box_size, style, self.font_registry.as_ref())
     }
 
+    pub fn layout_text_document(&self, request: TextLayoutRequest) -> sui_core::Result<TextLayout> {
+        self.text_system
+            .layout_document(request, self.font_registry.as_ref())
+    }
+
     pub fn clear(&mut self, color: Color) {
         self.scene.push(SceneCommand::Clear(color));
     }
@@ -1532,6 +1537,16 @@ impl PaintCtx {
     pub fn draw_text_layout(&mut self, origin: Point, layout: &TextLayout) {
         let persistent = self.text_system.adopt_layout(layout.clone());
         self.draw_persistent_text_layout(origin, &persistent);
+    }
+
+    pub fn draw_text_layout_with_color(
+        &mut self,
+        origin: Point,
+        layout: &TextLayout,
+        color: Color,
+    ) {
+        let persistent = self.text_system.adopt_layout(layout.clone());
+        self.draw_persistent_text_layout_with_color(origin, &persistent, color);
     }
 
     pub fn draw_persistent_text_layout(&mut self, origin: Point, layout: &PersistentTextLayout) {

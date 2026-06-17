@@ -22,7 +22,7 @@ use crate::{
         EditorCommand, EditorCommandResult, EditorState, clamp_to_grapheme_boundary,
         selection_range,
     },
-    text_align::aligned_text_rect_for_text,
+    text_align::paint_aligned_text,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1495,18 +1495,13 @@ impl Widget for TextSurface {
                 content.width(),
                 slot_height.max(placeholder_style.line_height),
             );
-            let placeholder_rect = aligned_text_rect_for_text(
+            paint_aligned_text(
                 ctx,
                 placeholder_slot,
                 &self.placeholder,
                 &placeholder_style,
                 placeholder_style.line_height,
                 0.0,
-            );
-            ctx.draw_text(
-                placeholder_rect,
-                self.placeholder.clone(),
-                placeholder_style,
             );
         }
 

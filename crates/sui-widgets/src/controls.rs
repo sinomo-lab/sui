@@ -4,7 +4,11 @@ use crate::{
     WidgetMaterialRole,
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
     paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
-    text_align::{aligned_text_rect_for_layout, aligned_text_rect_for_text},
+    text_align::{
+        HorizontalTextAlignmentMode, aligned_text_rect_for_layout,
+        aligned_text_rect_for_layout_with_mode, aligned_text_rect_for_text, paint_aligned_text,
+        paint_single_line_aligned_text,
+    },
 };
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 use sui_core::{
@@ -980,9 +984,7 @@ impl Widget for Label {
     fn paint(&self, ctx: &mut PaintCtx) {
         let text = self.current_text();
         let style = self.resolved_style();
-        let text_rect =
-            aligned_text_rect_for_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
-        ctx.draw_text(text_rect, text, style);
+        paint_aligned_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1369,20 +1371,10 @@ impl Button {
         }
     }
 
-    fn button_content_rects(
-        &self,
-        ctx: &PaintCtx,
-        bounds: Rect,
-        padding: Insets,
-        text_style: &TextStyle,
-    ) -> (Option<Rect>, Rect) {
-        let line_height = text_style.line_height;
+    fn button_content_rects(&self, bounds: Rect, padding: Insets) -> (Option<Rect>, Rect, f32) {
         let content = inset_rect(bounds, padding);
         let Some((icon_size, icon_gap)) = self.icon_extent() else {
-            return (
-                None,
-                aligned_text_rect_for_text(ctx, content, &self.label, text_style, line_height, 0.5),
-            );
+            return (None, content, 0.5);
         };
 
         let measurement = self.label_measurement;
@@ -1411,10 +1403,7 @@ impl Button {
             label_width,
             content.height(),
         );
-        (
-            Some(icon_rect),
-            aligned_text_rect_for_text(ctx, label_base, &self.label, text_style, line_height, 0.0),
-        )
+        (Some(icon_rect), label_base, 0.0)
     }
 }
 
@@ -1570,9 +1559,9 @@ impl Widget for Button {
             visuals.border,
             visuals.focus_ring,
         );
-        let (icon_rect, label_rect) =
-            self.button_content_rects(ctx, ctx.bounds(), padding, &text_style);
-        let label_rect = label_rect.translate(content_offset);
+        let (icon_rect, label_slot, label_alignment) =
+            self.button_content_rects(ctx.bounds(), padding);
+        let label_slot = label_slot.translate(content_offset);
         if let (Some(icon), Some(icon_rect)) = (self.icon, icon_rect) {
             draw_icon_glyph(
                 ctx,
@@ -1584,23 +1573,35 @@ impl Widget for Button {
         if self.is_enabled()
             && let Some(layout) = &self.label_layout
         {
+            let layout_rect = aligned_text_rect_for_layout_with_mode(
+                ctx,
+                label_slot,
+                layout.layout(),
+                text_style.line_height,
+                label_alignment,
+                HorizontalTextAlignmentMode::Optical,
+            );
             let layout_bounds = layout.measurement().bounds;
-            ctx.push_clip_rect(label_rect);
+            ctx.push_clip_rect(layout_rect);
             ctx.draw_persistent_text_layout_with_color(
-                Point::new(label_rect.x() - layout_bounds.x(), label_rect.y()),
+                Point::new(layout_rect.x() - layout_bounds.x(), layout_rect.y()),
                 layout,
                 visuals.label_color,
             );
             ctx.pop_clip();
             return;
         }
-        ctx.draw_text(
-            label_rect,
-            self.label.clone(),
-            TextStyle {
-                color: visuals.label_color,
-                ..text_style
-            },
+        let paint_style = TextStyle {
+            color: visuals.label_color,
+            ..text_style
+        };
+        paint_aligned_text(
+            ctx,
+            label_slot,
+            &self.label,
+            &paint_style,
+            paint_style.line_height,
+            label_alignment,
         );
     }
 
@@ -1980,7 +1981,7 @@ impl Widget for Checkbox {
                 StrokeStyle::new(physical_pixels(ctx, interaction.active_indicator_thickness)),
             );
         }
-        let text_rect = aligned_text_rect_for_text(
+        paint_aligned_text(
             ctx,
             label_rect,
             &self.label,
@@ -1988,7 +1989,6 @@ impl Widget for Checkbox {
             text_style.line_height,
             0.0,
         );
-        ctx.draw_text(text_rect, self.label.clone(), text_style);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2489,7 +2489,7 @@ impl Widget for Switch {
             color: visuals.label_color,
             ..text_style
         };
-        let text_rect = aligned_text_rect_for_text(
+        paint_aligned_text(
             ctx,
             label_rect,
             &self.label,
@@ -2497,7 +2497,6 @@ impl Widget for Switch {
             text_style.line_height,
             0.0,
         );
-        ctx.draw_text(text_rect, self.label.clone(), text_style);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2862,7 +2861,7 @@ impl Widget for RadioButton {
                 palette.accent_text.with_alpha(toggle_progress),
             );
         }
-        let text_rect = aligned_text_rect_for_text(
+        paint_aligned_text(
             ctx,
             label_rect,
             &self.label,
@@ -2870,7 +2869,6 @@ impl Widget for RadioButton {
             text_style.line_height,
             0.0,
         );
-        ctx.draw_text(text_rect, self.label.clone(), text_style);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -3328,7 +3326,7 @@ impl Widget for RadioGroup {
                 );
             }
             let text_style = theme.body_text_style();
-            let text_rect = aligned_text_rect_for_text(
+            paint_aligned_text(
                 ctx,
                 label_rect,
                 option,
@@ -3336,7 +3334,6 @@ impl Widget for RadioGroup {
                 text_style.line_height,
                 0.0,
             );
-            ctx.draw_text(text_rect, option.clone(), text_style);
         }
     }
 
@@ -4187,7 +4184,7 @@ impl Widget for NumberInput {
             ),
         );
 
-        let text_rect = aligned_text_rect_for_text(
+        paint_aligned_text(
             ctx,
             content,
             &buffer,
@@ -4195,7 +4192,6 @@ impl Widget for NumberInput {
             text_style.line_height,
             1.0,
         );
-        ctx.draw_text(text_rect, buffer.clone(), text_style);
         ctx.stroke(
             line_path(
                 Point::new(stepper.x(), ctx.bounds().y() + 6.0),
@@ -4282,7 +4278,7 @@ impl Widget for NumberInput {
         );
 
         if ctx.is_focused() {
-            let caret_x = text_rect.max_x();
+            let caret_x = content.max_x();
             let caret_width = physical_pixels(ctx, metrics.caret_width);
             let caret = Rect::new(
                 caret_x.min((content.max_x() - caret_width).max(content.x())),
@@ -5251,7 +5247,8 @@ impl Widget for SelectMenuSurface {
                 );
             }
             let text_slot = horizontal_text_inset_rect(row, metrics.text_input_padding);
-            let text_rect = aligned_text_rect_for_text(
+            ctx.push_clip_rect(text_slot);
+            paint_aligned_text(
                 ctx,
                 text_slot,
                 option,
@@ -5259,8 +5256,6 @@ impl Widget for SelectMenuSurface {
                 text_style.line_height,
                 0.0,
             );
-            ctx.push_clip_rect(text_slot);
-            ctx.draw_text(text_rect, option.clone(), text_style);
             ctx.pop_clip();
         }
         ctx.pop_clip();
@@ -5933,16 +5928,6 @@ impl Widget for Select {
                 .max(0.0),
             header.height(),
         );
-        let text_rect = aligned_text_rect_for_text(
-            ctx,
-            text_slot,
-            &label,
-            &text_style,
-            text_style.line_height,
-            0.0,
-        )
-        .translate(content_offset);
-
         draw_control_frame(
             ctx,
             header,
@@ -5973,7 +5958,14 @@ impl Widget for Select {
             ),
         );
         ctx.push_clip_rect(text_slot);
-        ctx.draw_text(text_rect, label, text_style);
+        paint_single_line_aligned_text(
+            ctx,
+            text_slot.translate(content_offset),
+            &label,
+            &text_style,
+            text_style.line_height,
+            0.0,
+        );
         ctx.pop_clip();
         draw_icon_glyph(
             ctx,
@@ -6638,24 +6630,20 @@ impl Widget for TextInput {
                 layout,
             );
         } else {
-            let display_style = self.display_text_style();
-            let text_rect = self.single_line_text_rect(
+            let display_style = if placeholder {
+                theme.placeholder_text_style()
+            } else if self.read_only {
+                theme.text_style(palette.text_muted)
+            } else {
+                text_style.clone()
+            };
+            paint_aligned_text(
                 ctx,
                 content_rect,
                 &display_text,
                 &display_style,
                 display_style.line_height,
-            );
-            ctx.draw_text(
-                text_rect,
-                display_text,
-                if placeholder {
-                    theme.placeholder_text_style()
-                } else if self.read_only {
-                    theme.text_style(palette.text_muted)
-                } else {
-                    text_style.clone()
-                },
+                0.0,
             );
         }
         ctx.pop_clip();
@@ -7269,19 +7257,36 @@ mod tests {
                 SceneCommand::DrawText(text) => Some(text.clone()),
                 SceneCommand::DrawShapedText(text) => text
                     .resolve(output.frame.text_layout_registry.as_ref())
-                    .map(|layout| sui_text::TextRun {
-                        rect: Rect::new(
-                            text.origin.x,
-                            text.origin.y,
-                            layout.box_size().width,
-                            layout.box_size().height,
-                        ),
-                        text: layout.text().to_string(),
-                        style: layout.style().clone(),
+                    .map(|layout| {
+                        let mut style = layout.style().clone();
+                        if let Some(color) = text.color_override {
+                            style.color = color;
+                        }
+                        sui_text::TextRun {
+                            rect: shaped_text_run_rect(text.origin, layout),
+                            text: layout.text().to_string(),
+                            style,
+                        }
                     }),
                 _ => None,
             })
             .expect("text draw command present")
+    }
+
+    fn shaped_text_run_rect(origin: Point, layout: &sui_text::TextLayout) -> Rect {
+        let measurement = layout.measurement();
+        let bounds = measurement.bounds;
+        let width = if bounds.width().is_finite() && bounds.width() > 0.0 {
+            bounds.width()
+        } else {
+            measurement.width
+        };
+        Rect::new(
+            origin.x + bounds.x(),
+            origin.y + ((layout.box_size().height - measurement.height).max(0.0) * 0.5),
+            width,
+            layout.style().line_height.max(measurement.height),
+        )
     }
 
     fn first_shaped_text<'a>(output: &'a RenderOutput) -> &'a sui_text::ShapedText {
@@ -7358,23 +7363,30 @@ mod tests {
                 SceneCommand::DrawShapedText(run) => run
                     .resolve(output.frame.text_layout_registry.as_ref())
                     .filter(|layout| layout.text() == text)
-                    .map(|layout| sui_text::TextRun {
-                        rect: Rect::new(
-                            run.origin.x,
-                            run.origin.y,
-                            layout.box_size().width,
-                            layout.box_size().height,
-                        ),
-                        text: layout.text().to_string(),
-                        style: layout.style().clone(),
+                    .map(|layout| {
+                        let mut style = layout.style().clone();
+                        if let Some(color) = run.color_override {
+                            style.color = color;
+                        }
+                        sui_text::TextRun {
+                            rect: shaped_text_run_rect(run.origin, layout),
+                            text: layout.text().to_string(),
+                            style,
+                        }
                     }),
                 SceneCommand::DrawShapedTextWindow(run) => run
                     .resolve(output.frame.text_layout_registry.as_ref())
                     .filter(|layout| layout.text() == text)
-                    .map(|layout| sui_text::TextRun {
-                        rect: run.translated_bounds(),
-                        text: layout.text().to_string(),
-                        style: layout.style().clone(),
+                    .map(|layout| {
+                        let mut style = layout.style().clone();
+                        if let Some(color) = run.color_override {
+                            style.color = color;
+                        }
+                        sui_text::TextRun {
+                            rect: run.translated_bounds(),
+                            text: layout.text().to_string(),
+                            style,
+                        }
                     }),
                 _ => None,
             };
@@ -7459,10 +7471,19 @@ mod tests {
         visual_center(measurement, true)
     }
 
+    fn text_run_layout(run: &sui_text::TextRun) -> sui_text::TextLayout {
+        TextSystem::new()
+            .shape_text(
+                run.text.clone(),
+                Size::new(f32::INFINITY, run.rect.height().max(1.0)),
+                run.style.clone(),
+                &FontRegistry::new(),
+            )
+            .expect("text run should shape")
+    }
+
     fn text_run_visual_center(run: &sui_text::TextRun) -> f32 {
-        let layout = TextSystem::new()
-            .shape_text_run(run, &FontRegistry::new())
-            .expect("text run should shape");
+        let layout = text_run_layout(run);
         let line = layout
             .lines()
             .first()
@@ -9649,6 +9670,33 @@ mod tests {
     }
 
     #[test]
+    fn button_optically_centers_label_ink_with_side_bearings() {
+        let mut style = DefaultTheme::default().button_text_style();
+        style.font_size = 48.0;
+        style.line_height = 56.0;
+        let candidates = ["j", "T.", "f)", "(f", "AV", "To", "WA", "1"];
+        let (label, offset) = candidates
+            .iter()
+            .find_map(|candidate| {
+                let measurement = TextSystem::new()
+                    .measure_text(candidate.to_string(), style.clone(), &FontRegistry::new())
+                    .ok()?;
+                let offset = measurement.bounds.x() + (measurement.bounds.width() * 0.5)
+                    - (measurement.width * 0.5);
+                (offset.abs() > 0.75).then_some((*candidate, offset))
+            })
+            .expect("test font should expose a label with asymmetric side bearings");
+        let output = render(Button::new(label).text_style(style).min_width(220.0));
+        let text = first_shaped_text(&output);
+        let ink_bounds = text.translated_bounds();
+        let ink_center = ink_bounds.x() + (ink_bounds.width() * 0.5);
+        let control_center = output.frame.viewport.width * 0.5;
+
+        assert!(offset.abs() > 0.75);
+        assert!((ink_center - control_center).abs() < 0.75);
+    }
+
+    #[test]
     fn button_window_option_keeps_button_label_centered() {
         let (mut runtime, window_id) = build_runtime(Button::new("Go").min_width(140.0));
         set_window_render_options(
@@ -10445,9 +10493,7 @@ mod tests {
     fn number_input_value_text_visual_center_matches_control_center() {
         let output = render(NumberInput::new("Count").value(12.0));
         let text = text_run_for(&output, "12");
-        let layout = TextSystem::new()
-            .shape_text_run(&text, &FontRegistry::new())
-            .expect("number input text should shape");
+        let layout = text_run_layout(&text);
         let line = layout
             .lines()
             .first()
@@ -10502,9 +10548,7 @@ mod tests {
             ),
         );
         let text = text_run_for(&output, "12");
-        let layout = TextSystem::new()
-            .shape_text_run(&text, &FontRegistry::new())
-            .expect("number input text should shape");
+        let layout = text_run_layout(&text);
         let line = layout
             .lines()
             .first()

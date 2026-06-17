@@ -14,7 +14,7 @@ use sui_scene::{LayerCompositionMode, StrokeStyle};
 use crate::{
     DefaultTheme, MotionScalar,
     containers::{ScrollBar, ScrollState, ScrollView},
-    text_align::aligned_text_rect_for_text,
+    text_align::paint_aligned_text,
 };
 
 type AnimatedScalar = MotionScalar;
@@ -820,7 +820,8 @@ impl Widget for FloatingViewSurface {
                 (title_bar.height() - title_padding.top - title_padding.bottom).max(0.0),
             );
             let title_style = self.theme.text_style(palette.text);
-            let title_rect = aligned_text_rect_for_text(
+            ctx.push_clip_rect(text_slot);
+            paint_aligned_text(
                 ctx,
                 text_slot,
                 &view.title,
@@ -828,8 +829,6 @@ impl Widget for FloatingViewSurface {
                 title_style.line_height,
                 0.0,
             );
-            ctx.push_clip_rect(text_slot);
-            ctx.draw_text(title_rect, view.title, title_style);
             ctx.pop_clip();
         }
         self.host.paint(ctx);
@@ -2124,15 +2123,30 @@ mod tests {
                 SceneCommand::DrawShapedText(run) => run
                     .resolve(output.frame.text_layout_registry.as_ref())
                     .filter(|layout| layout.text() == text)
-                    .map(|layout| sui_text::TextRun {
-                        rect: Rect::new(
-                            run.origin.x,
-                            run.origin.y,
-                            layout.box_size().width,
-                            layout.box_size().height,
-                        ),
-                        text: layout.text().to_string(),
-                        style: layout.style().clone(),
+                    .map(|layout| {
+                        let measurement = layout.measurement();
+                        let bounds = measurement.bounds;
+                        let width = if bounds.width().is_finite() && bounds.width() > 0.0 {
+                            bounds.width()
+                        } else {
+                            measurement.width
+                        };
+                        let mut style = layout.style().clone();
+                        if let Some(color) = run.color_override {
+                            style.color = color;
+                        }
+                        sui_text::TextRun {
+                            rect: Rect::new(
+                                run.origin.x + bounds.x(),
+                                run.origin.y
+                                    + ((layout.box_size().height - measurement.height).max(0.0)
+                                        * 0.5),
+                                width,
+                                layout.style().line_height.max(measurement.height),
+                            ),
+                            text: layout.text().to_string(),
+                            style,
+                        }
                     }),
                 _ => None,
             };
@@ -2144,6 +2158,17 @@ mod tests {
         let top = -measurement.cap_height.unwrap_or(measurement.ascent);
         let bottom = measurement.descent * 0.5;
         (top + bottom) * 0.5
+    }
+
+    fn text_run_layout(run: &sui_text::TextRun) -> sui_text::TextLayout {
+        TextSystem::new()
+            .shape_text(
+                run.text.clone(),
+                Size::new(f32::INFINITY, run.rect.height().max(1.0)),
+                run.style.clone(),
+                &FontRegistry::new(),
+            )
+            .expect("text run should shape")
     }
 
     fn scene_layer_widget_ids(scene: &sui_scene::Scene) -> Vec<WidgetId> {
@@ -2924,9 +2949,7 @@ mod tests {
         );
         let output = runtime.render(window_id)?;
         let text = text_run_for(&output, "Inspector");
-        let layout = TextSystem::new()
-            .shape_text_run(&text, &FontRegistry::new())
-            .expect("floating view title should shape");
+        let layout = text_run_layout(&text);
         let line = layout
             .lines()
             .first()
@@ -2987,9 +3010,7 @@ mod tests {
         );
         let output = runtime.render(window_id)?;
         let text = text_run_for(&output, "Inspector");
-        let layout = TextSystem::new()
-            .shape_text_run(&text, &FontRegistry::new())
-            .expect("floating view title should shape");
+        let layout = text_run_layout(&text);
         let line = layout
             .lines()
             .first()

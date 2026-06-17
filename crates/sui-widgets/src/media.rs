@@ -10,7 +10,7 @@ use sui_text::{FontFeature, TextStyle};
 
 use crate::{
     ControlMetrics, DefaultTheme, MotionScalar, ThemeDensity, ThemeTextToken,
-    text_align::aligned_text_rect_for_text,
+    text_align::paint_aligned_text,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1280,7 +1280,8 @@ impl Widget for BrushPreview {
             color: palette.text.with_alpha(0.72),
             ..theme.body_text_style()
         };
-        let text_rect = aligned_text_rect_for_text(
+        ctx.push_clip_rect(text_slot);
+        paint_aligned_text(
             ctx,
             text_slot,
             &value_text,
@@ -1288,8 +1289,6 @@ impl Widget for BrushPreview {
             text_style.line_height,
             0.0,
         );
-        ctx.push_clip_rect(text_slot);
-        ctx.draw_text(text_rect, value_text, text_style);
         ctx.pop_clip();
     }
 
@@ -2748,9 +2747,11 @@ fn paint_labeled_row_text(
         value_width,
         rect.height(),
     );
-    let label_rect =
-        aligned_text_rect_for_text(ctx, label_slot, label, &label_style, paint_line_height, 0.0);
-    let value_rect = aligned_text_rect_for_text(
+    ctx.push_clip_rect(label_slot);
+    paint_aligned_text(ctx, label_slot, label, &label_style, paint_line_height, 0.0);
+    ctx.pop_clip();
+    ctx.push_clip_rect(value_slot);
+    paint_aligned_text(
         ctx,
         value_slot,
         value_text,
@@ -2758,11 +2759,6 @@ fn paint_labeled_row_text(
         paint_line_height,
         1.0,
     );
-    ctx.push_clip_rect(label_slot);
-    ctx.draw_text(label_rect, label.to_string(), label_style);
-    ctx.pop_clip();
-    ctx.push_clip_rect(value_slot);
-    ctx.draw_text(value_rect, value_text.to_string(), value_style);
     ctx.pop_clip();
 }
 
@@ -2779,8 +2775,6 @@ fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &
         rect.width() - padding.left.max(theme.spacing * 2.0) - metrics.icon_size - theme.spacing,
         rect.height(),
     );
-    let text_rect =
-        aligned_text_rect_for_text(ctx, text_slot, label, &style, paint_line_height, 0.0);
     ctx.fill(rounded_rect_path(rect, radius), theme.palette.control);
     ctx.stroke(
         rounded_rect_path(rect, radius),
@@ -2788,7 +2782,7 @@ fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &
         StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.push_clip_rect(text_slot);
-    ctx.draw_text(text_rect, label.to_string(), style);
+    paint_aligned_text(ctx, text_slot, label, &style, paint_line_height, 0.0);
     ctx.pop_clip();
     ctx.stroke(
         dropdown_chevron_path(rect),
@@ -2866,10 +2860,8 @@ fn paint_encoding_menu(
                 - theme.spacing * 2.0,
             row.height(),
         );
-        let text_rect =
-            aligned_text_rect_for_text(ctx, text_slot, label, &style, paint_line_height, 0.0);
         ctx.push_clip_rect(text_slot);
-        ctx.draw_text(text_rect, label, style);
+        paint_aligned_text(ctx, text_slot, label, &style, paint_line_height, 0.0);
         ctx.pop_clip();
     }
 }
@@ -2897,8 +2889,6 @@ fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: 
         rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
         rect.height(),
     );
-    let text_rect =
-        aligned_text_rect_for_text(ctx, text_slot, value, &style, paint_line_height, 0.0);
     ctx.fill(
         rounded_rect_path(rect, metrics.corner_radius),
         theme.palette.control,
@@ -2909,7 +2899,7 @@ fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: 
         StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.push_clip_rect(text_slot);
-    ctx.draw_text(text_rect, value.to_string(), style);
+    paint_aligned_text(ctx, text_slot, value, &style, paint_line_height, 0.0);
     ctx.pop_clip();
 }
 
@@ -2925,8 +2915,6 @@ fn paint_disabled_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, va
         rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
         rect.height(),
     );
-    let text_rect =
-        aligned_text_rect_for_text(ctx, text_slot, value, &style, paint_line_height, 0.0);
     ctx.fill(
         rounded_rect_path(rect, metrics.corner_radius),
         mix_color(theme.palette.control, theme.palette.surface, 0.5)
@@ -2938,7 +2926,7 @@ fn paint_disabled_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, va
         StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.push_clip_rect(text_slot);
-    ctx.draw_text(text_rect, value.to_string(), style);
+    paint_aligned_text(ctx, text_slot, value, &style, paint_line_height, 0.0);
     ctx.pop_clip();
 }
 
@@ -3383,19 +3371,36 @@ mod tests {
                 SceneCommand::DrawShapedText(run) => run
                     .resolve(output.frame.text_layout_registry.as_ref())
                     .filter(|layout| layout.text() == text)
-                    .map(|layout| sui_text::TextRun {
-                        rect: Rect::new(
-                            run.origin.x,
-                            run.origin.y,
-                            layout.box_size().width,
-                            layout.box_size().height,
-                        ),
-                        text: layout.text().to_string(),
-                        style: layout.style().clone(),
+                    .map(|layout| {
+                        let mut style = layout.style().clone();
+                        if let Some(color) = run.color_override {
+                            style.color = color;
+                        }
+                        sui_text::TextRun {
+                            rect: shaped_text_run_rect(run.origin, layout),
+                            text: layout.text().to_string(),
+                            style,
+                        }
                     }),
                 _ => None,
             })
             .expect("text draw command present")
+    }
+
+    fn shaped_text_run_rect(origin: Point, layout: &sui_text::TextLayout) -> Rect {
+        let measurement = layout.measurement();
+        let bounds = measurement.bounds;
+        let width = if bounds.width().is_finite() && bounds.width() > 0.0 {
+            bounds.width()
+        } else {
+            measurement.width
+        };
+        Rect::new(
+            origin.x + bounds.x(),
+            origin.y + ((layout.box_size().height - measurement.height).max(0.0) * 0.5),
+            width,
+            layout.style().line_height.max(measurement.height),
+        )
     }
 
     fn text_visual_center_for(output: &sui_runtime::RenderOutput, text: &str) -> f32 {

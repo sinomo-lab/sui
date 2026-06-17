@@ -10,7 +10,7 @@ use sui_runtime::{ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widg
 use sui_scene::{ImageSampling, ImageSource, RegisteredImage, StrokeStyle};
 use sui_text::{FontFeature, TextMeasurement, TextStyle};
 
-use crate::{DefaultTheme, animation::MotionScalar, text_align::aligned_text_rect_for_text};
+use crate::{DefaultTheme, animation::MotionScalar, text_align::paint_aligned_text};
 
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
 const PIXEL_CANVAS_HISTORY_LIMIT: usize = 32;
@@ -2785,7 +2785,7 @@ fn paint_canvas_ruler_label(
 
     if measurement.width <= slot.width() {
         let width = measurement.width.min(slot.width()).max(0.0);
-        let rect = aligned_text_rect_for_text(
+        paint_aligned_text(
             ctx,
             Rect::new(slot.x(), slot.y(), width, slot.height()),
             &label,
@@ -2793,7 +2793,6 @@ fn paint_canvas_ruler_label(
             style.line_height,
             0.0,
         );
-        ctx.draw_text(rect, label, style);
     }
 }
 
