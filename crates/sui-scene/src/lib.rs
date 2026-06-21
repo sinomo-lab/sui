@@ -1035,6 +1035,8 @@ impl ImageRegistry {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneFrame {
+    /// Host render target for this frame. The target may be a platform window
+    /// or an embedded viewport/region represented by SUI's `WindowId`.
     pub window_id: WindowId,
     pub viewport: Size,
     pub surface_size: Size,
@@ -1078,6 +1080,13 @@ mod tests {
     use sui_text::{
         FontRegistry, RegisteredFont, ShapedText, ShapedTextWindow, TextRun, TextStyle, TextSystem,
     };
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn scene_frame_is_send_sync() {
+        assert_send_sync::<SceneFrame>();
+    }
 
     #[test]
     fn scene_command_variants_store_extended_primitives() {

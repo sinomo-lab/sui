@@ -1,7 +1,8 @@
 use std::fmt;
 
 macro_rules! define_id {
-    ($name:ident) => {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
         pub struct $name(u64);
 
@@ -36,7 +37,15 @@ macro_rules! define_id {
 }
 
 define_id!(WidgetId);
-define_id!(WindowId);
+define_id!(
+    /// Identifies a host render/input target.
+    ///
+    /// A `WindowId` may refer to a native platform window or to an embedded
+    /// viewport/region owned by a host application. Platform events, runtime
+    /// scheduling, and `SceneFrame` submission use this ID as the common target
+    /// identity.
+    WindowId
+);
 define_id!(SurfaceId);
 define_id!(ImageHandle);
 define_id!(FontHandle);

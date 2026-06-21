@@ -221,7 +221,11 @@ pub enum ImeEvent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WindowEvent {
+    /// The host target should close. The target is identified by the
+    /// `WindowId` attached to the delivery path rather than by this event.
     CloseRequested,
+    /// The host target's viewport changed size. The target may be a native
+    /// window or an embedded viewport/region.
     Resized(Size),
     ScaleFactorChanged {
         scale_factor: f64,
@@ -254,6 +258,8 @@ pub enum Event {
     Keyboard(KeyboardEvent),
     Ime(ImeEvent),
     Wake(WakeEvent),
+    /// Window or embedded-viewport lifecycle event. The receiving `WindowId`
+    /// is carried by the platform/runtime call that delivers the event.
     Window(WindowEvent),
     Custom(CustomEvent),
 }

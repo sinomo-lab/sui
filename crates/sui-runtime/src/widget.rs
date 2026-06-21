@@ -86,8 +86,20 @@ pub trait Widget {
 
     fn focus_changed(&mut self, _ctx: &mut EventCtx, _focused: bool) {}
 
+    /// Visit this widget's logical children.
+    ///
+    /// The children do not need to correspond to every piece of state or every
+    /// visual element a widget owns internally. A widget may expose retained
+    /// local children, generated/virtual children, remote children represented
+    /// by local pods, or only the subset that should cooperate with the SUI
+    /// runtime for this pass.
     fn visit_children(&self, _visitor: &mut dyn WidgetPodVisitor) {}
 
+    /// Mutably visit this widget's logical children.
+    ///
+    /// This is the mutable counterpart to [`Widget::visit_children`]; SUI uses
+    /// it as a cooperation point for the retained runtime, not as ownership of
+    /// a widget's complete internal model.
     fn visit_children_mut(&mut self, _visitor: &mut dyn WidgetPodMutVisitor) {}
 }
 
@@ -288,6 +300,13 @@ impl WidgetChildren {
     }
 }
 
+/// Standard retained-widget adapter used by the SUI runtime.
+///
+/// `WidgetPod` gives a `Widget` stable identity, cached layout state, event
+/// routing participation, and scene/semantics cooperation. It is the default
+/// local retained model, but a widget's own internals may still use custom
+/// state, virtualization, worker threads, or remote systems before rejoining
+/// SUI through widget contexts and scene output.
 pub struct WidgetPod {
     id: WidgetId,
     layout_state: LayoutState,

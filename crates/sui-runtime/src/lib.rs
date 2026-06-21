@@ -3458,14 +3458,20 @@ pub struct RenderOutput {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::RefCell,
+        collections::VecDeque,
+        rc::Rc,
+        sync::{Arc, Mutex},
+    };
 
     use super::{
         Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
-        PaintBoundaryMode, PaintCtx, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
-        StackSurfaceOptions, Widget, WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot,
-        WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowIcon, WindowRenderOptions,
-        set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
+        PaintBoundaryMode, PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode,
+        SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren,
+        WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
+        WindowBuilder, WindowIcon, WindowRenderOptions, set_window_render_options,
+        set_window_scene_statistics_detail_mode, window_render_options,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
@@ -3576,6 +3582,136 @@ mod tests {
 
         fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
             self.child.visit_children_mut(visitor);
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct VirtualizedPaintState {
+        painted: Vec<usize>,
+    }
+
+    struct VirtualizedLeaf {
+        index: usize,
+        state: Rc<RefCell<VirtualizedPaintState>>,
+    }
+
+    impl Widget for VirtualizedLeaf {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(48.0, 24.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.state.borrow_mut().painted.push(self.index);
+            ctx.fill_bounds(Color::rgba(0.18, 0.31, 0.42, 1.0));
+        }
+    }
+
+    struct VirtualizedLogicalRoot {
+        children: WidgetChildren,
+        visible_count: usize,
+    }
+
+    impl VirtualizedLogicalRoot {
+        fn new(
+            logical_count: usize,
+            visible_count: usize,
+            state: Rc<RefCell<VirtualizedPaintState>>,
+        ) -> Self {
+            let mut children = WidgetChildren::with_capacity(logical_count);
+            for index in 0..logical_count {
+                children.push(VirtualizedLeaf {
+                    index,
+                    state: Rc::clone(&state),
+                });
+            }
+            Self {
+                children,
+                visible_count,
+            }
+        }
+    }
+
+    impl Widget for VirtualizedLogicalRoot {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            for index in 0..self.children.len() {
+                self.children
+                    .measure_child(index, ctx, Constraints::tight(Size::new(48.0, 24.0)));
+            }
+            constraints.clamp(Size::new(320.0, 180.0))
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            for index in 0..self.children.len() {
+                self.children.arrange_child(
+                    index,
+                    ctx,
+                    Rect::new(bounds.x() + (index as f32 * 52.0), bounds.y(), 48.0, 24.0),
+                );
+            }
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            for child in self.children.as_slice().iter().take(self.visible_count) {
+                child.paint(ctx);
+            }
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.children.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.children.visit_children_mut(visitor);
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct ThreadedSnapshotState {
+        async_token: Option<AsyncWakeToken>,
+        latest: Option<String>,
+        paints: usize,
+    }
+
+    struct ThreadedSnapshotRoot {
+        local: Rc<RefCell<ThreadedSnapshotState>>,
+        inbox: Arc<Mutex<VecDeque<String>>>,
+    }
+
+    impl Widget for ThreadedSnapshotRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Custom(custom) if custom.kind == "arm-threaded-snapshot" => {
+                    self.local.borrow_mut().async_token = Some(ctx.register_async_wakeup());
+                    ctx.set_handled();
+                }
+                Event::Wake(WakeEvent::Async { token, .. }) => {
+                    let mut local = self.local.borrow_mut();
+                    if local.async_token == Some(*token) {
+                        while let Some(value) = self.inbox.lock().unwrap().pop_front() {
+                            local.latest = Some(value);
+                        }
+                        ctx.request_paint();
+                        ctx.set_handled();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(160.0, 64.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.local.borrow_mut().paints += 1;
+            let active = self.local.borrow().latest.is_some();
+            let color = if active {
+                Color::rgba(0.20, 0.46, 0.30, 1.0)
+            } else {
+                Color::rgba(0.20, 0.24, 0.32, 1.0)
+            };
+            ctx.fill_bounds(color);
         }
     }
 
@@ -4735,6 +4871,86 @@ mod tests {
         assert_eq!(output.frame.viewport, Size::new(320.0, 180.0));
         assert_eq!(output.frame.surface_size, Size::new(320.0, 180.0));
         assert_eq!(output.frame.scale_factor, 1.0);
+    }
+
+    #[test]
+    fn render_output_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send_sync::<RenderOutput>();
+    }
+
+    #[test]
+    fn widget_graph_visits_logical_children_even_when_paint_is_virtualized() {
+        let paint_state = Rc::new(RefCell::new(VirtualizedPaintState::default()));
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Virtualized")
+                    .root(VirtualizedLogicalRoot::new(4, 2, Rc::clone(&paint_state))),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let root = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == graph.root)
+            .unwrap();
+
+        assert_eq!(root.children.len(), 4);
+        assert_eq!(graph.nodes.len(), 5);
+        assert_eq!(paint_state.borrow().painted, vec![0, 1]);
+    }
+
+    #[test]
+    fn worker_owned_snapshot_state_reenters_runtime_without_widget_send_sync() {
+        let local = Rc::new(RefCell::new(ThreadedSnapshotState::default()));
+        let inbox = Arc::new(Mutex::new(VecDeque::new()));
+        let mut runtime =
+            Application::new()
+                .window(WindowBuilder::new().title("Threaded Snapshot").root(
+                    ThreadedSnapshotRoot {
+                        local: Rc::clone(&local),
+                        inbox: Arc::clone(&inbox),
+                    },
+                ))
+                .build()
+                .unwrap();
+        let window_id = runtime.window_ids()[0];
+
+        let _ = runtime.render(window_id).unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                Event::Custom(CustomEvent::new("arm-threaded-snapshot")),
+            )
+            .unwrap();
+        let async_token = local.borrow().async_token.unwrap();
+
+        let worker_inbox = Arc::clone(&inbox);
+        std::thread::spawn(move || {
+            worker_inbox
+                .lock()
+                .unwrap()
+                .push_back("worker-ready".to_string());
+        })
+        .join()
+        .unwrap();
+
+        assert!(runtime.wake_async(window_id, async_token).unwrap());
+        for (ready_window, event) in runtime.drain_ready_events() {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+
+        assert_eq!(local.borrow().latest.as_deref(), Some("worker-ready"));
+        assert!(runtime.needs_render(window_id).unwrap());
+
+        let _ = runtime.render(window_id).unwrap();
+        assert_eq!(local.borrow().paints, 2);
     }
 
     #[test]
