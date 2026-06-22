@@ -22,10 +22,10 @@ use sui::{
 };
 use sui_platform::publish_frame_performance;
 use sui_runtime::{
-    PresentationLatencyDiagnostics, RenderOutput, RendererSubmissionDiagnostics,
-    RetainedPacketRebuildDiagnostics, SceneStatisticsDetailMode, WidgetTimingPhase,
-    WindowPerformanceSnapshot, clear_window_performance_snapshots,
-    set_window_scene_statistics_detail_mode, window_scene_statistics_detail_mode,
+    PresentationLatencyDiagnostics, RenderOutput, RetainedPacketRebuildDiagnostics,
+    SceneStatisticsDetailMode, WidgetTimingPhase, WindowPerformanceSnapshot,
+    clear_window_performance_snapshots, set_window_scene_statistics_detail_mode,
+    window_scene_statistics_detail_mode,
 };
 use sui_widget_book::{
     BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS,
@@ -1380,18 +1380,6 @@ fn click_primary(harness: &DesktopHarness, window_id: WindowId) -> Result<()> {
 
 fn resize_window(harness: &DesktopHarness, window_id: WindowId, size: Size) -> Result<()> {
     harness.dispatch(window_id, HostInputEvent::Resized { size })
-}
-
-fn live_performance_toggle_point(snapshot: &DesktopWindowSnapshot) -> Point {
-    let overlay = find_node(
-        snapshot,
-        SemanticsRole::GenericContainer,
-        "Live performance overlay",
-    );
-    Point::new(
-        overlay.bounds.max_x() - 12.0 - 38.0,
-        overlay.bounds.y() + 10.0 - 1.0 + 9.0,
-    )
 }
 
 fn find_node(snapshot: &DesktopWindowSnapshot, role: SemanticsRole, name: &str) -> SemanticsNode {
@@ -4204,7 +4192,7 @@ fn desktop_text_editing_benchmark_reports_frame_samples() -> Result<()> {
 }
 
 #[test]
-fn desktop_widget_book_overlay_toggle_publishes_detailed_scene_stats() -> Result<()> {
+fn desktop_widget_book_overlay_publishes_detailed_scene_stats() -> Result<()> {
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -4235,30 +4223,11 @@ fn desktop_widget_book_overlay_toggle_publishes_detailed_scene_stats() -> Result
 
     harness.dispatch(window_id, HostInputEvent::Focused(true))?;
 
-    let before_frame = harness.capture(window_id)?;
-    let before_snapshot = harness.snapshot(window_id)?;
-    let before_performance = before_snapshot
-        .performance
-        .clone()
-        .expect("desktop widget book should publish an initial performance snapshot");
-
-    assert!(!before_performance.scene.detail_mode.is_detailed());
-    assert!(before_performance.phase_timings.is_empty());
-    assert_eq!(
-        before_performance.renderer_submission,
-        RendererSubmissionDiagnostics::default()
-    );
-
-    click_at(
-        &harness,
-        window_id,
-        live_performance_toggle_point(&before_snapshot),
-    )?;
-
-    let after_frame = harness.capture(window_id)?;
+    harness.capture(window_id)?;
+    harness.capture(window_id)?;
     let after_snapshot = harness.snapshot(window_id)?;
     let after_performance = after_snapshot.performance.clone().expect(
-        "desktop widget book should publish a performance snapshot after toggling detail mode",
+        "desktop widget book should publish a performance snapshot while overlay is visible",
     );
     let overlay = find_node(
         &after_snapshot,
@@ -4266,14 +4235,10 @@ fn desktop_widget_book_overlay_toggle_publishes_detailed_scene_stats() -> Result
         "Live performance overlay",
     );
 
-    assert!(frame_pixel_diff_count(&before_frame, &after_frame) > 0);
     assert!(window_scene_statistics_detail_mode(window_id).is_detailed());
     assert!(after_performance.scene.detail_mode.is_detailed());
     assert!(!after_performance.scene.command_breakdown.is_empty());
-    assert_eq!(
-        overlay.value,
-        Some(SemanticsValue::Text("detail on".to_string()))
-    );
+    assert!(matches!(overlay.value, Some(SemanticsValue::Text(_))));
 
     Ok(())
 }

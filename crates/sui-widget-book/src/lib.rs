@@ -8,12 +8,12 @@ use std::{
 
 use sui::prelude::*;
 use sui::{
-    HdrLuminanceTokens, HdrThemeMode, HdrThemeTokens, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, PointerEventKind, Rect, SceneStatisticsDetailMode, SemanticColorToken,
-    SemanticsNode, SemanticsRole, SemanticsValue, TextDirection, TextStyle, TextSurface,
-    TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap,
-    ThemeColorScheme, TimerToken, Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowId, WindowPerformanceSnapshot,
+    FramePhase, HdrLuminanceTokens, HdrThemeMode, HdrThemeTokens, InvalidationKind,
+    InvalidationRequest, InvalidationTarget, PointerEventKind, Rect, SceneStatisticsDetailMode,
+    SemanticColorToken, SemanticsNode, SemanticsRole, SemanticsValue, TextDirection, TextStyle,
+    TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap,
+    ThemeColorScheme, Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot,
     resolve_semantic_color, resolve_widget_hdr_style, set_window_scene_statistics_detail_mode,
     window_performance_snapshot, window_scene_statistics_detail_mode,
 };
@@ -260,6 +260,9 @@ pub struct LivePerformanceRoot {
     window_title: String,
     window_description: String,
     overlay_enabled: bool,
+    overlay_enabled_reader: Option<Rc<dyn Fn() -> bool>>,
+    last_overlay_enabled: bool,
+    owns_detail_mode: bool,
 }
 
 impl LivePerformanceRoot {
@@ -290,11 +293,22 @@ impl LivePerformanceRoot {
             window_title: window_title.into(),
             window_description: window_description.into(),
             overlay_enabled: false,
+            overlay_enabled_reader: None,
+            last_overlay_enabled: false,
+            owns_detail_mode: false,
         }
     }
 
     pub fn show_performance_overlay(mut self) -> Self {
         self.overlay_enabled = true;
+        self
+    }
+
+    pub fn performance_overlay_enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.overlay_enabled_reader = Some(Rc::new(enabled));
         self
     }
 
@@ -304,12 +318,40 @@ impl LivePerformanceRoot {
         self
     }
 
+    fn overlay_enabled(&self) -> bool {
+        self.overlay_enabled
+            || self
+                .overlay_enabled_reader
+                .as_ref()
+                .map_or(false, |enabled| enabled())
+    }
+
     fn set_performance_display(
         &mut self,
         snapshot: Option<WindowPerformanceSnapshot>,
         idle: bool,
     ) -> bool {
-        let next = LivePerformanceDisplay { snapshot, idle };
+        let mut samples = self.performance_display.borrow().samples.clone();
+        if let Some(snapshot) = &snapshot {
+            if samples
+                .last()
+                .map_or(true, |sample| sample.frame_index != snapshot.frame_index)
+            {
+                samples.push(LivePerformanceFrameSample::from_snapshot(snapshot));
+                if samples.len() > LIVE_PERFORMANCE_HISTORY_LIMIT {
+                    let overflow = samples.len() - LIVE_PERFORMANCE_HISTORY_LIMIT;
+                    samples.drain(0..overflow);
+                }
+            }
+        } else {
+            samples.clear();
+        }
+
+        let next = LivePerformanceDisplay {
+            snapshot,
+            idle,
+            samples,
+        };
         let mut display = self.performance_display.borrow_mut();
         if *display == next {
             return false;
@@ -324,6 +366,49 @@ impl LivePerformanceRoot {
 struct LivePerformanceDisplay {
     snapshot: Option<WindowPerformanceSnapshot>,
     idle: bool,
+    samples: Vec<LivePerformanceFrameSample>,
+}
+
+const LIVE_PERFORMANCE_HISTORY_LIMIT: usize = 72;
+const LIVE_PERFORMANCE_STAGE_COUNT: usize = 8;
+
+#[derive(Debug, Clone, PartialEq)]
+struct LivePerformanceFrameSample {
+    frame_index: u64,
+    total_time_ms: f32,
+    stage_costs: [f32; LIVE_PERFORMANCE_STAGE_COUNT],
+}
+
+impl LivePerformanceFrameSample {
+    fn from_snapshot(snapshot: &WindowPerformanceSnapshot) -> Self {
+        let mut stage_costs = [0.0; LIVE_PERFORMANCE_STAGE_COUNT];
+        for timing in &snapshot.phase_timings {
+            stage_costs[frame_phase_index(timing.phase)] += timing.duration_ms.max(0.0) as f32;
+        }
+
+        if snapshot.phase_timings.is_empty() {
+            stage_costs[frame_phase_index(FramePhase::Renderer)] = snapshot.total_time_ms as f32;
+        }
+
+        Self {
+            frame_index: snapshot.frame_index,
+            total_time_ms: snapshot.total_time_ms.max(0.0) as f32,
+            stage_costs,
+        }
+    }
+}
+
+const fn frame_phase_index(phase: FramePhase) -> usize {
+    match phase {
+        FramePhase::Event => 0,
+        FramePhase::Redraw => 1,
+        FramePhase::MeasureArrange => 2,
+        FramePhase::HitTest => 3,
+        FramePhase::Paint => 4,
+        FramePhase::Semantics => 5,
+        FramePhase::Renderer => 6,
+        FramePhase::Diagnostics => 7,
+    }
 }
 
 pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
@@ -409,6 +494,25 @@ pub fn run_desktop_widget_book() -> Result<()> {
 impl Widget for LivePerformanceRoot {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
+            let overlay_enabled = self.overlay_enabled();
+            if overlay_enabled != self.last_overlay_enabled {
+                self.last_overlay_enabled = overlay_enabled;
+                ctx.request_measure();
+                ctx.request_semantics();
+                ctx.request_paint();
+
+                if !overlay_enabled {
+                    self.set_performance_display(None, true);
+                    if self.owns_detail_mode {
+                        set_window_scene_statistics_detail_mode(
+                            ctx.window_id(),
+                            SceneStatisticsDetailMode::Lightweight,
+                        );
+                        self.owns_detail_mode = false;
+                    }
+                }
+            }
+
             if let Some(state) = &self.watched_state {
                 let next_state = state.borrow().clone();
                 if self.last_seen_state.as_ref() != Some(&next_state) {
@@ -431,7 +535,15 @@ impl Widget for LivePerformanceRoot {
                 }
             }
 
-            if self.overlay_enabled {
+            if overlay_enabled {
+                if !window_scene_statistics_detail_mode(ctx.window_id()).is_detailed() {
+                    set_window_scene_statistics_detail_mode(
+                        ctx.window_id(),
+                        SceneStatisticsDetailMode::Detailed,
+                    );
+                    self.owns_detail_mode = true;
+                }
+
                 if let Some(snapshot) = window_performance_snapshot(ctx.window_id()) {
                     if self.set_performance_display(Some(snapshot), false) {
                         let overlay_id = self.performance_overlay.child().id();
@@ -462,7 +574,7 @@ impl Widget for LivePerformanceRoot {
             },
         ));
         self.content.measure(ctx, Constraints::tight(viewport));
-        if self.overlay_enabled {
+        if self.overlay_enabled() {
             self.performance_overlay
                 .measure(ctx, Constraints::new(Size::ZERO, viewport));
         }
@@ -473,7 +585,7 @@ impl Widget for LivePerformanceRoot {
         self.content
             .arrange(ctx, Rect::from_origin_size(bounds.origin, bounds.size));
 
-        if self.overlay_enabled {
+        if self.overlay_enabled() {
             let overlay_size = self.performance_overlay.child().measured_size();
             let overlay_x = (bounds.max_x() - overlay_size.width - Self::OVERLAY_MARGIN.right)
                 .max(bounds.x() + Self::OVERLAY_MARGIN.left);
@@ -488,7 +600,7 @@ impl Widget for LivePerformanceRoot {
     fn paint(&self, ctx: &mut PaintCtx) {
         ctx.clear(Color::rgba(0.95, 0.968, 0.985, 1.0));
         self.content.paint(ctx);
-        if self.overlay_enabled {
+        if self.overlay_enabled() {
             self.performance_overlay.paint(ctx);
         }
     }
@@ -499,21 +611,21 @@ impl Widget for LivePerformanceRoot {
         root.description = Some(self.window_description.clone());
         ctx.push(root);
         self.content.semantics(ctx);
-        if self.overlay_enabled {
+        if self.overlay_enabled() {
             self.performance_overlay.semantics(ctx);
         }
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.content.visit_children(visitor);
-        if self.overlay_enabled {
+        if self.overlay_enabled() {
             self.performance_overlay.visit_children(visitor);
         }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.content.visit_children_mut(visitor);
-        if self.overlay_enabled {
+        if self.overlay_enabled() {
             self.performance_overlay.visit_children_mut(visitor);
         }
     }
@@ -6224,32 +6336,18 @@ impl WidgetBookSummary {
 
 struct LivePerformancePanel {
     display: Rc<RefCell<LivePerformanceDisplay>>,
-    toggle_pressed: bool,
-    detail_refresh_timer: Option<TimerToken>,
-}
-
-#[derive(Debug, Clone)]
-struct LivePerformanceLine {
-    y: f32,
-    text: String,
-    style: TextStyle,
-}
-
-#[derive(Debug, Clone)]
-struct LivePerformanceLineSpec {
-    text: String,
-    style: TextStyle,
-    spacing_after: f32,
 }
 
 impl LivePerformancePanel {
-    const WIDTH: f32 = 252.0;
-    const HEIGHT: f32 = 244.0;
+    const WIDTH: f32 = 340.0;
+    const HEIGHT: f32 = 158.0;
     const PADDING_X: f32 = 12.0;
     const PADDING_Y: f32 = 10.0;
-    const CORNER_RADIUS: f32 = 12.0;
-    const TOGGLE_WIDTH: f32 = 76.0;
-    const TOGGLE_HEIGHT: f32 = 18.0;
+    const CORNER_RADIUS: f32 = 8.0;
+    const HEADER_HEIGHT: f32 = 32.0;
+    const GRAPH_HEIGHT: f32 = 72.0;
+    const LEGEND_HEIGHT: f32 = 28.0;
+    const BAR_GAP: f32 = 1.0;
 
     #[cfg(test)]
     fn new() -> Self {
@@ -6257,295 +6355,179 @@ impl LivePerformancePanel {
     }
 
     fn with_display(display: Rc<RefCell<LivePerformanceDisplay>>) -> Self {
-        Self {
-            display,
-            toggle_pressed: false,
-            detail_refresh_timer: None,
-        }
+        Self { display }
     }
 
-    fn toggle_bounds(&self, bounds: Rect) -> Rect {
+    fn graph_bounds(bounds: Rect) -> Rect {
         Rect::new(
-            bounds.max_x() - Self::PADDING_X - Self::TOGGLE_WIDTH,
-            bounds.y() + Self::PADDING_Y - 1.0,
-            Self::TOGGLE_WIDTH,
-            Self::TOGGLE_HEIGHT,
+            bounds.x() + Self::PADDING_X,
+            bounds.y() + Self::PADDING_Y + Self::HEADER_HEIGHT,
+            (bounds.width() - Self::PADDING_X * 2.0).max(1.0),
+            Self::GRAPH_HEIGHT,
         )
     }
 
-    fn toggle_label(detail_mode: SceneStatisticsDetailMode) -> &'static str {
-        if detail_mode.is_detailed() {
-            "detail on"
-        } else {
-            "detail off"
+    fn legend_bounds(bounds: Rect) -> Rect {
+        Rect::new(
+            bounds.x() + Self::PADDING_X,
+            bounds.max_y() - Self::PADDING_Y - Self::LEGEND_HEIGHT,
+            (bounds.width() - Self::PADDING_X * 2.0).max(1.0),
+            Self::LEGEND_HEIGHT,
+        )
+    }
+
+    fn frame_cost_scale(samples: &[LivePerformanceFrameSample]) -> f32 {
+        samples
+            .iter()
+            .map(|sample| sample.total_time_ms)
+            .fold(16.67, f32::max)
+            .clamp(16.67, 66.67)
+    }
+
+    fn stage_short_label(phase: FramePhase) -> &'static str {
+        match phase {
+            FramePhase::Event => "evt",
+            FramePhase::Redraw => "redraw",
+            FramePhase::MeasureArrange => "layout",
+            FramePhase::HitTest => "hit",
+            FramePhase::Paint => "paint",
+            FramePhase::Semantics => "a11y",
+            FramePhase::Renderer => "gpu",
+            FramePhase::Diagnostics => "diag",
         }
     }
 
-    fn rebuild_lines(
-        &self,
-        width: f32,
-        specs: &[LivePerformanceLineSpec],
-    ) -> Vec<LivePerformanceLine> {
-        let _text_width = (width - Self::PADDING_X * 2.0).max(1.0);
-        let mut y = Self::PADDING_Y;
-        let mut lines = Vec::new();
-
-        for spec in specs {
-            let line_height = spec.style.line_height.max(spec.style.font_size);
-            lines.push(LivePerformanceLine {
-                y,
-                text: spec.text.clone(),
-                style: spec.style.clone(),
-            });
-            y += line_height + spec.spacing_after;
-        }
-
-        lines
-    }
-
-    fn content_specs(&self, _window_id: WindowId) -> Vec<LivePerformanceLineSpec> {
-        let display = self.display.borrow().clone();
-
-        match display.snapshot {
-            Some(snapshot) => {
-                let headline = format!(
-                    "{}  |  {}",
-                    if display.idle {
-                        "0 fps".to_string()
-                    } else {
-                        format_fps(snapshot.total_time_ms)
-                    },
-                    if display.idle {
-                        "idle".to_string()
-                    } else {
-                        format_duration_ms(snapshot.total_time_ms)
-                    },
-                );
-                if !snapshot.scene.detail_mode.is_detailed() {
-                    return vec![
-                        LivePerformanceLineSpec::title("live performance".to_string()),
-                        LivePerformanceLineSpec::headline(headline),
-                        LivePerformanceLineSpec::metric(format!(
-                            "lat present {}  |  redraw {}",
-                            format_optional_duration_ms(
-                                snapshot.presentation_latency.event_to_present_ms,
-                            ),
-                            format_optional_duration_ms(
-                                snapshot.presentation_latency.redraw_request_to_callback_ms,
-                            ),
-                        )),
-                        LivePerformanceLineSpec::metric(format!(
-                            "lat render {}",
-                            format_optional_duration_ms(
-                                snapshot.presentation_latency.event_to_render_start_ms,
-                            ),
-                        )),
-                    ];
-                }
-
-                let slowest_phase = snapshot.slowest_phase();
-                let slowest_label = slowest_phase
-                    .map(|sample| sample.phase.label())
-                    .unwrap_or("idle");
-                let slowest_duration = slowest_phase
-                    .map(|sample| format_duration_ms(sample.duration_ms))
-                    .unwrap_or_else(|| "0.0 ms".to_string());
-                let scene_metric = format!(
-                    "widgets {}  |  repaint(now) {}  |  scene {}",
-                    snapshot.scene.total_widget_count,
-                    snapshot.scene.repaint_boundary_count,
-                    snapshot.scene.scene_layer_count,
-                );
-                let boundary_metric = format!(
-                    "stack {}  |  overlay {}  |  updates {}",
-                    snapshot.scene.stack_surface_count,
-                    snapshot.scene.overlay_layer_count,
-                    snapshot.scene.layer_update_count,
-                );
-                let animation_metric = format!(
-                    "anim active {}  |  wakes {}  |  repaint {}  |  retained {}",
-                    snapshot.scene.active_animated_widget_count,
-                    snapshot.scene.animation_frame_wake_count,
-                    snapshot.scene.animation_repaint_frame_count,
-                    snapshot.scene.animation_transform_effect_only_frame_count,
-                );
-                let retained_metric = format!(
-                    "retained rebuilds {}  |  state {}  |  compose {}",
-                    snapshot
-                        .renderer_submission
-                        .retained_packet_rebuilds
-                        .total_count(),
-                    format_duration_ms(
-                        snapshot.renderer_submission.retained_state_update_time_us as f64 / 1000.0
-                    ),
-                    format_duration_ms(
-                        snapshot.renderer_submission.composition_time_us as f64 / 1000.0
-                    ),
-                );
-
-                vec![
-                    LivePerformanceLineSpec::title("live performance".to_string()),
-                    LivePerformanceLineSpec::headline(headline),
-                    LivePerformanceLineSpec::metric(if display.idle {
-                        format!(
-                            "frame {}  |  last active {} {}",
-                            snapshot.frame_index, slowest_label, slowest_duration,
-                        )
-                    } else {
-                        format!(
-                            "frame {}  |  slowest {} {}",
-                            snapshot.frame_index, slowest_label, slowest_duration,
-                        )
-                    }),
-                    LivePerformanceLineSpec::metric(format!(
-                        "lat render {}  |  present {}",
-                        format_optional_duration_ms(
-                            snapshot.presentation_latency.event_to_render_start_ms,
-                        ),
-                        format_optional_duration_ms(
-                            snapshot.presentation_latency.event_to_present_ms,
-                        ),
-                    )),
-                    LivePerformanceLineSpec::metric(format!(
-                        "redraw wait {}  |  gpu present {}",
-                        format_optional_duration_ms(
-                            snapshot.presentation_latency.redraw_request_to_callback_ms,
-                        ),
-                        format_optional_duration_ms(
-                            snapshot.renderer_submission.surface_present_time_us as f64 / 1000.0,
-                        ),
-                    )),
-                    LivePerformanceLineSpec::metric(format!(
-                        "gpu {} passes  |  {} draws  |  {}",
-                        snapshot.renderer_submission.pass_count,
-                        snapshot.renderer_submission.draw_count,
-                        format_byte_size(snapshot.renderer_submission.uploaded_vertex_bytes),
-                    )),
-                    LivePerformanceLineSpec::metric(format!(
-                        "layers {} vis  |  packets {} direct",
-                        snapshot.renderer_submission.visible_layer_count,
-                        snapshot.renderer_submission.direct_packet_count,
-                    )),
-                    LivePerformanceLineSpec::metric(format!(
-                        "upload {}  |  packets {}  |  layers {}",
-                        format_byte_size(snapshot.renderer_submission.uploaded_vertex_bytes),
-                        snapshot.renderer_submission.direct_packet_count,
-                        snapshot.renderer_submission.visible_layer_count,
-                    )),
-                    LivePerformanceLineSpec::metric(retained_metric),
-                    LivePerformanceLineSpec::metric(scene_metric),
-                    LivePerformanceLineSpec::metric(boundary_metric),
-                    LivePerformanceLineSpec::metric(animation_metric),
-                ]
-            }
-            None => vec![
-                LivePerformanceLineSpec::title("live performance".to_string()),
-                LivePerformanceLineSpec::body("waiting for the first completed frame".to_string()),
-                LivePerformanceLineSpec::body("from the desktop loop".to_string()),
-            ],
-        }
-    }
-}
-
-impl LivePerformanceLineSpec {
-    fn title(text: String) -> Self {
-        Self {
-            text,
-            style: text_style(Color::rgba(0.14, 0.20, 0.29, 1.0), 11.0, 14.0),
-            spacing_after: 6.0,
+    fn stage_color(phase: FramePhase, alpha: f32) -> Color {
+        let alpha = alpha.clamp(0.0, 1.0);
+        match phase {
+            FramePhase::Event => Color::rgba(0.24, 0.78, 0.68, alpha),
+            FramePhase::Redraw => Color::rgba(0.50, 0.68, 0.95, alpha),
+            FramePhase::MeasureArrange => Color::rgba(0.96, 0.68, 0.30, alpha),
+            FramePhase::HitTest => Color::rgba(0.68, 0.56, 0.92, alpha),
+            FramePhase::Paint => Color::rgba(0.94, 0.42, 0.54, alpha),
+            FramePhase::Semantics => Color::rgba(0.72, 0.82, 0.36, alpha),
+            FramePhase::Renderer => Color::rgba(0.36, 0.78, 0.96, alpha),
+            FramePhase::Diagnostics => Color::rgba(0.78, 0.80, 0.86, alpha),
         }
     }
 
-    fn headline(text: String) -> Self {
-        Self {
-            text,
-            style: text_style(Color::rgba(0.07, 0.34, 0.52, 1.0), 14.0, 18.0),
-            spacing_after: 6.0,
-        }
-    }
-
-    fn body(text: String) -> Self {
-        Self {
-            text,
-            style: text_style(Color::rgba(0.42, 0.49, 0.58, 1.0), 12.0, 16.0),
-            spacing_after: 0.0,
-        }
-    }
-
-    fn metric(text: String) -> Self {
-        Self {
-            text,
-            style: text_style(Color::rgba(0.18, 0.24, 0.32, 1.0), 12.0, 16.0),
-            spacing_after: 4.0,
-        }
-    }
-}
-
-impl Widget for LivePerformancePanel {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if !matches!(
-            ctx.phase(),
-            sui::EventPhase::Capture | sui::EventPhase::Target
-        ) {
+    fn paint_budget_line(ctx: &mut PaintCtx, graph: Rect, scale_ms: f32, budget_ms: f32) {
+        if budget_ms > scale_ms {
             return;
         }
 
-        match event {
-            Event::Pointer(pointer)
-                if pointer.kind == sui::PointerEventKind::Down
-                    && pointer.button == Some(sui::PointerButton::Primary) =>
-            {
-                self.toggle_pressed = self.toggle_bounds(ctx.bounds()).contains(pointer.position);
-                if self.toggle_pressed {
-                    ctx.request_paint();
-                    ctx.set_handled();
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == sui::PointerEventKind::Up
-                    && pointer.button == Some(sui::PointerButton::Primary) =>
-            {
-                let was_pressed = self.toggle_pressed;
-                let activate =
-                    was_pressed && self.toggle_bounds(ctx.bounds()).contains(pointer.position);
-                self.toggle_pressed = false;
-
-                if activate {
-                    let current_mode = window_scene_statistics_detail_mode(ctx.window_id());
-                    let next_mode = if current_mode.is_detailed() {
-                        SceneStatisticsDetailMode::Lightweight
-                    } else {
-                        SceneStatisticsDetailMode::Detailed
-                    };
-                    set_window_scene_statistics_detail_mode(ctx.window_id(), next_mode);
-                    if let Some(token) = self.detail_refresh_timer.take() {
-                        ctx.cancel_timer(token);
-                    }
-                    self.detail_refresh_timer = Some(ctx.schedule_timer_after(0.0));
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                    ctx.set_handled();
-                } else if was_pressed {
-                    ctx.request_paint();
-                }
-            }
-            Event::Wake(WakeEvent::Timer { token, .. })
-                if self.detail_refresh_timer == Some(*token) =>
-            {
-                self.detail_refresh_timer = None;
-                ctx.request_paint();
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer) if pointer.kind == sui::PointerEventKind::Cancel => {
-                if self.toggle_pressed {
-                    self.toggle_pressed = false;
-                    ctx.request_paint();
-                }
-            }
-            _ => {}
-        }
+        let y = graph.max_y() - graph.height() * (budget_ms / scale_ms);
+        let mut path = Path::builder();
+        path.move_to(Point::new(graph.x(), y));
+        path.line_to(Point::new(graph.max_x(), y));
+        ctx.stroke(
+            path.build(),
+            Color::rgba(0.98, 1.0, 1.0, 0.28),
+            StrokeStyle::new(1.0),
+        );
     }
 
+    fn paint_graph(&self, ctx: &mut PaintCtx, display: &LivePerformanceDisplay, graph: Rect) {
+        ctx.fill_rect(graph, Color::rgba(0.0, 0.0, 0.0, 0.24));
+        ctx.stroke_rect(
+            graph,
+            Color::rgba(0.98, 1.0, 1.0, 0.22),
+            StrokeStyle::new(1.0),
+        );
+
+        let scale_ms = Self::frame_cost_scale(&display.samples);
+        Self::paint_budget_line(ctx, graph, scale_ms, 16.67);
+        Self::paint_budget_line(ctx, graph, scale_ms, 33.33);
+
+        if display.samples.is_empty() {
+            ctx.draw_text(
+                graph,
+                "waiting for frames",
+                text_style(Color::rgba(0.92, 0.96, 1.0, 0.72), 11.0, 14.0),
+            );
+            return;
+        }
+
+        let slot_width = (graph.width() / LIVE_PERFORMANCE_HISTORY_LIMIT as f32).max(2.0);
+        let bar_width = (slot_width - Self::BAR_GAP).max(1.0);
+        let visible_count = ((graph.width() / slot_width).floor() as usize)
+            .min(display.samples.len())
+            .max(1);
+        let samples = &display.samples[display.samples.len() - visible_count..];
+        let start_x = graph.max_x() - slot_width * samples.len() as f32;
+
+        ctx.push_clip_rect(graph);
+        for (sample_index, sample) in samples.iter().enumerate() {
+            let x = start_x + sample_index as f32 * slot_width;
+            let mut y = graph.max_y();
+            for phase in LIVE_PERFORMANCE_GRAPH_PHASES {
+                let duration = sample.stage_costs[frame_phase_index(phase)];
+                if duration <= 0.0 {
+                    continue;
+                }
+
+                let height = (graph.height() * (duration / scale_ms)).max(0.5);
+                y = (y - height).max(graph.y());
+                ctx.fill_rect(
+                    Rect::new(x, y, bar_width, (graph.max_y() - y).min(height)),
+                    Self::stage_color(phase, 0.88),
+                );
+            }
+        }
+        ctx.pop_clip();
+
+        ctx.draw_text(
+            Rect::new(graph.x() + 4.0, graph.y() + 2.0, 48.0, 14.0),
+            format!("{scale_ms:.0} ms"),
+            text_style(Color::rgba(0.92, 0.96, 1.0, 0.62), 10.0, 12.0),
+        );
+        ctx.draw_text(
+            Rect::new(graph.x() + 4.0, graph.max_y() - 16.0, 56.0, 14.0),
+            "16.7 ms",
+            text_style(Color::rgba(0.92, 0.96, 1.0, 0.62), 10.0, 12.0),
+        );
+    }
+
+    fn paint_legend(&self, ctx: &mut PaintCtx, bounds: Rect) {
+        let mut x = bounds.x();
+        let y = bounds.y() + 4.0;
+        for phase in LIVE_PERFORMANCE_GRAPH_PHASES {
+            let label = Self::stage_short_label(phase);
+            let label_width = match phase {
+                FramePhase::MeasureArrange => 42.0,
+                FramePhase::Redraw => 48.0,
+                _ => 34.0,
+            };
+            if x + label_width > bounds.max_x() {
+                break;
+            }
+
+            ctx.fill_rect(
+                Rect::new(x, y + 4.0, 7.0, 7.0),
+                Self::stage_color(phase, 0.95),
+            );
+            ctx.draw_text(
+                Rect::new(x + 10.0, y, label_width - 10.0, 16.0),
+                label,
+                text_style(Color::rgba(0.94, 0.97, 1.0, 0.74), 10.0, 13.0),
+            );
+            x += label_width;
+        }
+    }
+}
+
+const LIVE_PERFORMANCE_GRAPH_PHASES: [FramePhase; LIVE_PERFORMANCE_STAGE_COUNT] = [
+    FramePhase::Event,
+    FramePhase::Redraw,
+    FramePhase::MeasureArrange,
+    FramePhase::HitTest,
+    FramePhase::Paint,
+    FramePhase::Semantics,
+    FramePhase::Renderer,
+    FramePhase::Diagnostics,
+];
+
+impl Widget for LivePerformancePanel {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let width = if constraints.max.width.is_finite() {
             constraints.max.width.min(Self::WIDTH)
@@ -6563,70 +6545,103 @@ impl Widget for LivePerformancePanel {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let detail_mode = window_scene_statistics_detail_mode(ctx.window_id());
-        let lines = self.rebuild_lines(ctx.bounds().width(), &self.content_specs(ctx.window_id()));
-        let shadow = ctx.bounds().translate(Vector::new(0.0, 4.0));
-        ctx.fill(
-            rounded_rect_path(shadow, Self::CORNER_RADIUS),
-            Color::rgba(0.10, 0.16, 0.22, 0.12),
-        );
-
+        let display = self.display.borrow().clone();
         let frame = rounded_rect_path(ctx.bounds(), Self::CORNER_RADIUS);
-        ctx.fill(frame.clone(), Color::rgba(0.985, 0.993, 1.0, 0.96));
+        ctx.fill(frame.clone(), Color::rgba(0.015, 0.025, 0.035, 0.50));
         ctx.stroke(
             frame,
-            Color::rgba(0.78, 0.84, 0.90, 1.0),
+            Color::rgba(0.98, 1.0, 1.0, 0.18),
             StrokeStyle::new(1.0),
         );
 
-        let toggle_bounds = self.toggle_bounds(ctx.bounds());
-        let toggle_shape = rounded_rect_path(toggle_bounds, toggle_bounds.height() * 0.5);
-        let toggle_fill = if detail_mode.is_detailed() {
-            if self.toggle_pressed {
-                Color::rgba(0.07, 0.34, 0.52, 0.92)
+        let header_y = ctx.bounds().y() + Self::PADDING_Y;
+        let (fps_text, frame_text, slowest_text) = if let Some(snapshot) = &display.snapshot {
+            let fps = if display.idle {
+                "0 fps".to_string()
             } else {
-                Color::rgba(0.09, 0.40, 0.60, 0.88)
-            }
-        } else if self.toggle_pressed {
-            Color::rgba(0.88, 0.92, 0.96, 1.0)
+                format_fps(snapshot.total_time_ms)
+            };
+            let frame = if display.idle {
+                "idle".to_string()
+            } else {
+                format!(
+                    "frame {} | {}",
+                    snapshot.frame_index,
+                    format_duration_ms(snapshot.total_time_ms)
+                )
+            };
+            let slowest = snapshot
+                .slowest_phase()
+                .map(|sample| {
+                    format!(
+                        "{} {}",
+                        Self::stage_short_label(sample.phase),
+                        format_duration_ms(sample.duration_ms)
+                    )
+                })
+                .unwrap_or_else(|| "waiting for phases".to_string());
+            (fps, frame, slowest)
         } else {
-            Color::rgba(0.94, 0.96, 0.98, 1.0)
+            (
+                "0 fps".to_string(),
+                "waiting".to_string(),
+                "waiting for first frame".to_string(),
+            )
         };
-        let toggle_stroke = if detail_mode.is_detailed() {
-            Color::rgba(0.05, 0.28, 0.44, 1.0)
-        } else {
-            Color::rgba(0.76, 0.82, 0.88, 1.0)
-        };
-        ctx.fill(toggle_shape.clone(), toggle_fill);
-        ctx.stroke(toggle_shape, toggle_stroke, StrokeStyle::new(1.0));
+
         ctx.draw_text(
-            toggle_bounds,
-            Self::toggle_label(detail_mode).to_string(),
-            text_style(
-                if detail_mode.is_detailed() {
-                    Color::rgba(0.98, 0.995, 1.0, 1.0)
-                } else {
-                    Color::rgba(0.33, 0.40, 0.48, 1.0)
-                },
-                10.0,
-                14.0,
+            Rect::new(
+                ctx.bounds().x() + Self::PADDING_X,
+                header_y,
+                118.0,
+                Self::HEADER_HEIGHT,
             ),
+            fps_text,
+            text_style(Color::rgba(0.98, 1.0, 1.0, 0.96), 22.0, 28.0),
+        );
+        ctx.draw_text(
+            Rect::new(
+                ctx.bounds().x() + 136.0,
+                header_y + 2.0,
+                ctx.bounds().width() - 148.0,
+                15.0,
+            ),
+            frame_text,
+            text_style(Color::rgba(0.92, 0.96, 1.0, 0.76), 11.0, 14.0),
+        );
+        ctx.draw_text(
+            Rect::new(
+                ctx.bounds().x() + 136.0,
+                header_y + 17.0,
+                ctx.bounds().width() - 148.0,
+                15.0,
+            ),
+            slowest_text,
+            text_style(Color::rgba(0.92, 0.96, 1.0, 0.66), 11.0, 14.0),
         );
 
-        ctx.push_clip_rect(ctx.bounds());
-        for line in &lines {
-            let line_rect = Rect::new(
-                ctx.bounds().x() + Self::PADDING_X,
-                ctx.bounds().y() + line.y,
-                (ctx.bounds().width() - Self::PADDING_X * 2.0).max(1.0),
-                line.style.line_height.max(line.style.font_size),
-            );
-            ctx.draw_text(line_rect, line.text.clone(), line.style.clone());
-        }
-        ctx.pop_clip();
+        self.paint_graph(ctx, &display, Self::graph_bounds(ctx.bounds()));
+        self.paint_legend(ctx, Self::legend_bounds(ctx.bounds()));
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let display = self.display.borrow();
+        let value = display
+            .snapshot
+            .as_ref()
+            .map(|snapshot| {
+                format!(
+                    "{} | {} | {} samples",
+                    if display.idle {
+                        "0 fps".to_string()
+                    } else {
+                        format_fps(snapshot.total_time_ms)
+                    },
+                    format_duration_ms(snapshot.total_time_ms),
+                    display.samples.len()
+                )
+            })
+            .unwrap_or_else(|| "waiting for frames".to_string());
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
@@ -6634,10 +6649,8 @@ impl Widget for LivePerformancePanel {
         );
         node.name = Some("Live performance overlay".to_string());
         node.description =
-            Some("Compact floating renderer and scene performance statistics with a scene detail toggle.".to_string());
-        node.value = Some(SemanticsValue::Text(
-            Self::toggle_label(window_scene_statistics_detail_mode(ctx.window_id())).to_string(),
-        ));
+            Some("Transparent FPS overlay with rolling stacked frame phase costs.".to_string());
+        node.value = Some(SemanticsValue::Text(value));
         ctx.push(node);
     }
 }
@@ -6663,27 +6676,6 @@ fn format_fps(total_time_ms: f64) -> String {
 
 fn format_duration_ms(duration_ms: f64) -> String {
     format!("{duration_ms:.1} ms")
-}
-
-fn format_optional_duration_ms(duration_ms: f64) -> String {
-    if duration_ms <= 0.0 {
-        "n/a".to_string()
-    } else {
-        format_duration_ms(duration_ms)
-    }
-}
-
-fn format_byte_size(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = KIB * 1024;
-
-    if bytes >= MIB {
-        format!("{:.1} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.1} KiB", bytes as f64 / KIB as f64)
-    } else {
-        format!("{bytes} B")
-    }
 }
 
 impl Widget for WidgetBookSummary {
@@ -6891,33 +6883,34 @@ mod tests {
         BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, COLOR_PICKER_NAME, DIALOG_TITLE,
         DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME, GALLERY_SCROLL_NAME,
         LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
-        LivePerformanceDisplay, LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
-        POPOVER_NAME, POPOVER_TRIGGER_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
-        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, TEXT_AREA_LABEL,
-        TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
-        TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
-        TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
-        TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
-        TOOLTIP_TRIGGER_LABEL, WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL,
-        WIDGET_STATES_GALLERY_NAME, WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME,
-        WIDGET_STATES_SELECT_NAME, WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL,
-        WIDGET_STATES_TABS_NAME, WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL,
-        WINDOW_TITLE, build_animation_benchmark_application,
-        build_button_grid_benchmark_application, build_color_and_imagery_story,
-        build_retained_text_benchmark_application, build_text_editing_benchmark_application,
-        build_text_rendering_comparison_application, build_text_validation_surface,
-        build_theme_demo_application, build_widget_book_application, build_widget_book_gallery,
-        default_widget_book_state, register_widget_book_images, text_editing_benchmark_document,
+        LivePerformanceDisplay, LivePerformanceFrameSample, LivePerformancePanel, NAME_INPUT_LABEL,
+        NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL,
+        RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME,
+        SLIDER_NAME, SUMMARY_NAME, TEXT_AREA_LABEL, TEXT_EDITING_BENCHMARK_EDITOR_NAME,
+        TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME, TEXT_EDITING_BENCHMARK_TITLE,
+        TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
+        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
+        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
+        WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL, WIDGET_STATES_GALLERY_NAME,
+        WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME, WIDGET_STATES_SELECT_NAME,
+        WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL, WIDGET_STATES_TABS_NAME,
+        WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL, WINDOW_TITLE,
+        build_animation_benchmark_application, build_button_grid_benchmark_application,
+        build_color_and_imagery_story, build_retained_text_benchmark_application,
+        build_text_editing_benchmark_application, build_text_rendering_comparison_application,
+        build_text_validation_surface, build_theme_demo_application, build_widget_book_application,
+        build_widget_book_gallery, default_widget_book_state, frame_phase_index,
+        register_widget_book_images, text_editing_benchmark_document,
         text_editing_benchmark_style_overlays, text_editing_benchmark_style_spans,
         theme_preview_card,
     };
     use sui::{
         App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
-        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        PresentationLatencyDiagnostics, RenderOutput, RendererSubmissionDiagnostics, Result,
-        SceneStatistics, SceneStatisticsDetailMode, ScrollDelta, SemanticsRole, SemanticsValue,
-        Size, SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, TextSurfaceOverlayKind,
-        Vector, Widget, WidgetPod, WidgetPodVisitor, Window, WindowBuilder, WindowEvent, WindowId,
+        KeyboardEvent, Point, PointerEvent, PointerEventKind, PresentationLatencyDiagnostics,
+        RenderOutput, RendererSubmissionDiagnostics, Result, SceneStatistics,
+        SceneStatisticsDetailMode, ScrollDelta, SemanticsRole, SemanticsValue, Size, SizedBox,
+        TextCacheDeltaDiagnostics, TextCacheDiagnostics, TextSurfaceOverlayKind, Vector, Widget,
+        WidgetPod, WidgetPodVisitor, Window, WindowBuilder, WindowEvent, WindowId,
         WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
         window_scene_statistics_detail_mode,
     };
@@ -9088,16 +9081,26 @@ mod tests {
     }
 
     #[test]
-    fn live_performance_panel_replaces_snapshot_without_creating_children() {
+    fn live_performance_frame_sample_records_snapshot_phase_costs() {
         let display = Rc::new(RefCell::new(LivePerformanceDisplay::default()));
-        let panel = LivePerformancePanel::with_display(Rc::clone(&display));
+        assert!(display.borrow().samples.is_empty());
 
-        assert_eq!(panel.content_specs(WindowId::new(11)).len(), 3);
+        let snapshot = sample_detailed_window_performance_snapshot_record(WindowId::new(11));
+        display
+            .borrow_mut()
+            .samples
+            .push(LivePerformanceFrameSample::from_snapshot(&snapshot));
+        let sample = display.borrow().samples[0].clone();
 
-        display.borrow_mut().snapshot =
-            Some(sample_window_performance_snapshot_record(WindowId::new(11)));
-
-        assert_eq!(panel.content_specs(WindowId::new(11)).len(), 4);
+        assert_eq!(sample.frame_index, snapshot.frame_index);
+        assert_eq!(
+            sample.stage_costs[frame_phase_index(FramePhase::Paint)],
+            0.8
+        );
+        assert_eq!(
+            sample.stage_costs[frame_phase_index(FramePhase::Renderer)],
+            1.9
+        );
     }
 
     #[test]
@@ -9147,67 +9150,42 @@ mod tests {
             .find(|node| node.id == graph.root)
             .expect("panel root node present");
 
-        assert!(root.bounds.width() <= 252.0);
+        assert!(root.bounds.width() <= LivePerformancePanel::WIDTH);
         assert!(root.bounds.height() > 0.0);
     }
 
     #[test]
     fn live_performance_panel_reports_zero_fps_when_idle() {
+        let snapshot = sample_window_performance_snapshot_record(WindowId::new(11));
         let display = Rc::new(RefCell::new(LivePerformanceDisplay {
-            snapshot: Some(sample_window_performance_snapshot_record(WindowId::new(11))),
+            snapshot: Some(snapshot.clone()),
             idle: true,
+            samples: vec![LivePerformanceFrameSample::from_snapshot(&snapshot)],
         }));
         let panel = LivePerformancePanel::with_display(display);
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Overlay").root(panel))
+            .build()
+            .expect("runtime should build");
+        let window_id = runtime.window_ids()[0];
 
-        let lines = panel.content_specs(WindowId::new(11));
-        assert_eq!(lines[1].text, "0 fps  |  idle");
-        assert!(lines.iter().any(|line| line.text.contains("lat present")));
-        assert_eq!(lines.len(), 4);
-    }
+        runtime.render(window_id).expect("panel should render");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("semantics snapshot should exist");
+        let overlay = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Live performance overlay")
+            })
+            .expect("overlay semantics node present");
 
-    #[test]
-    fn live_performance_panel_renders_detailed_scene_metrics() {
-        let display = Rc::new(RefCell::new(LivePerformanceDisplay {
-            snapshot: Some(sample_detailed_window_performance_snapshot_record(
-                WindowId::new(11),
-            )),
-            idle: false,
-        }));
-        let panel = LivePerformancePanel::with_display(display);
-
-        let lines = panel.content_specs(WindowId::new(11));
-        assert!(lines.iter().any(|line| line.text.contains("lat render")));
-        assert!(lines.iter().any(|line| line.text.contains("widgets")));
-        assert!(lines.iter().any(|line| line.text.contains("repaint(now)")));
-        assert!(lines.iter().any(|line| line.text.contains("stack")));
-        assert!(lines.iter().any(|line| line.text.contains("overlay")));
-        assert!(lines.iter().any(|line| line.text.contains("anim active")));
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.text.contains("retained rebuilds"))
-        );
-    }
-
-    #[test]
-    fn widget_book_animation_demo_reports_animation_counters() {
-        let display = Rc::new(RefCell::new(LivePerformanceDisplay {
-            snapshot: Some(sample_detailed_window_performance_snapshot_record(
-                WindowId::new(21),
-            )),
-            idle: false,
-        }));
-        let panel = LivePerformancePanel::with_display(display);
-
-        let lines = panel.content_specs(WindowId::new(21));
-        assert!(lines.iter().any(|line| line.text.contains("anim active 3")));
-        assert!(lines.iter().any(|line| line.text.contains("wakes 2")));
-        assert!(lines.iter().any(|line| line.text.contains("repaint 1")));
-        assert!(lines.iter().any(|line| line.text.contains("retained 1")));
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.text.contains("retained rebuilds 3"))
+        assert_eq!(
+            overlay.value,
+            Some(SemanticsValue::Text(
+                "0 fps | 1.5 ms | 1 samples".to_string()
+            ))
         );
     }
 
@@ -9264,55 +9242,25 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_overlay_toggle_enables_detail_mode() -> Result<()> {
+    fn widget_book_overlay_enables_detail_mode_while_visible() -> Result<()> {
         let app = build_default_widget_book_app()?;
         let window = app.main_window()?;
         let overlay = window
             .get_by_role(SemanticsRole::GenericContainer)
             .with_name("Live performance overlay");
         let before = overlay.capture_screenshot()?;
-
-        let overlay_node = window
-            .snapshot()?
-            .accessibility
-            .nodes
-            .into_iter()
-            .find(|node| {
-                node.role == SemanticsRole::GenericContainer
-                    && node.name.as_deref() == Some("Live performance overlay")
-            })
-            .expect("overlay semantics node present");
-        let toggle_point = Point::new(
-            overlay_node.bounds.max_x()
-                - LivePerformancePanel::PADDING_X
-                - LivePerformancePanel::TOGGLE_WIDTH * 0.5,
-            overlay_node.bounds.y() + LivePerformancePanel::PADDING_Y - 1.0
-                + LivePerformancePanel::TOGGLE_HEIGHT * 0.5,
-        );
-
-        overlay.dispatch_event(Event::Pointer(PointerEvent::new(
-            PointerEventKind::Move,
-            toggle_point,
-        )))?;
-
-        let mut down = PointerEvent::new(PointerEventKind::Down, toggle_point);
-        down.button = Some(PointerButton::Primary);
-        down.buttons = PointerButtons::new(1);
-        overlay.dispatch_event(Event::Pointer(down))?;
-
-        let mut up = PointerEvent::new(PointerEventKind::Up, toggle_point);
-        up.button = Some(PointerButton::Primary);
-        overlay.dispatch_event(Event::Pointer(up))?;
-
+        window
+            .root()
+            .dispatch_event(Event::Window(WindowEvent::RedrawRequested))?;
         let after = overlay.capture_screenshot()?;
         assert_eq!(
             window_scene_statistics_detail_mode(window.id()),
             SceneStatisticsDetailMode::Detailed,
-            "overlay toggle did not enable detailed scene statistics mode"
+            "visible overlay should enable detailed scene statistics mode"
         );
         assert!(
             before != after,
-            "overlay screenshot did not change after toggling detail mode"
+            "overlay screenshot did not change after publishing detailed diagnostics"
         );
 
         Ok(())

@@ -39,6 +39,7 @@ const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
 const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
 const SETTINGS_TAB_LABEL: &str = "Settings";
+const LIVE_PERFORMANCE_OVERLAY_LABEL: &str = "Show live performance overlay";
 const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
 const FEATHER_WIDTH_NAME: &str = "Feather width";
 const OPTICAL_TEXT_CENTERING_TOGGLE_LABEL: &str = "Enable optical vertical text centering";
@@ -134,6 +135,7 @@ struct DevShellStateInner {
     active_tab: Option<usize>,
     picker_open: bool,
     dark_theme: bool,
+    performance_overlay_visible: bool,
     settings_visible: bool,
     settings_bounds: Rect,
     settings_host_bounds: Rect,
@@ -147,6 +149,7 @@ impl DevShellState {
                 active_tab: None,
                 picker_open: true,
                 dark_theme: false,
+                performance_overlay_visible: false,
                 settings_visible: false,
                 settings_bounds: Rect::new(
                     DEV_SHELL_DEFAULT_SETTINGS_X,
@@ -172,6 +175,11 @@ impl DevShellState {
         Rc::new(move || state.theme())
     }
 
+    fn performance_overlay_reader(&self) -> Rc<dyn Fn() -> bool> {
+        let state = self.clone();
+        Rc::new(move || state.performance_overlay_visible())
+    }
+
     fn is_dark(&self) -> bool {
         self.inner.borrow().dark_theme
     }
@@ -179,6 +187,14 @@ impl DevShellState {
     fn toggle_theme(&self) {
         let mut inner = self.inner.borrow_mut();
         inner.dark_theme = !inner.dark_theme;
+    }
+
+    fn performance_overlay_visible(&self) -> bool {
+        self.inner.borrow().performance_overlay_visible
+    }
+
+    fn set_performance_overlay_visible(&self, visible: bool) {
+        self.inner.borrow_mut().performance_overlay_visible = visible;
     }
 
     fn open_tabs(&self) -> Vec<usize> {
@@ -358,8 +374,12 @@ impl DevBrowserShell {
             plus_button: SingleChild::new(plus_button),
             theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
             settings_window: SingleChild::new(FloatingSettingsWindow::new(
-                state,
-                build_render_settings_tab_with_options(render_options, Rc::clone(&theme_reader)),
+                state.clone(),
+                build_render_settings_tab_with_options(
+                    render_options,
+                    Rc::clone(&theme_reader),
+                    state,
+                ),
             )),
             tab_widths: Vec::new(),
             tab_rects: Vec::new(),
@@ -369,6 +389,10 @@ impl DevBrowserShell {
             pressed_close_tab: None,
             content_bounds: Rect::ZERO,
         }
+    }
+
+    fn performance_overlay_reader(&self) -> Rc<dyn Fn() -> bool> {
+        self.state.performance_overlay_reader()
     }
 
     fn tab_at(&self, position: Point) -> Option<usize> {
@@ -2414,8 +2438,13 @@ impl RenderSettingsTab {
             ))
     }
 
-    fn with_initial_options(initial: WindowRenderOptions, theme_reader: DevThemeReader) -> Self {
+    fn with_initial_options(
+        initial: WindowRenderOptions,
+        theme_reader: DevThemeReader,
+        shell_state: DevShellState,
+    ) -> Self {
         let state = Rc::new(RefCell::new(initial));
+        let performance_overlay_state = shell_state.clone();
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
         let text_centering_state = Rc::clone(&state);
@@ -2454,6 +2483,15 @@ impl RenderSettingsTab {
                         .font_size(14.0)
                         .line_height(20.0)
                         .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
+                    )
+                    .with_child(
+                        Checkbox::new(LIVE_PERFORMANCE_OVERLAY_LABEL)
+                            .theme_when(clone_dev_theme_reader(&theme_reader))
+                            .checked(shell_state.performance_overlay_visible())
+                            .on_toggle(move |checked| {
+                                performance_overlay_state
+                                    .set_performance_overlay_visible(checked);
+                            }),
                     )
                     .with_child(
                         Checkbox::new(FEATHERING_TOGGLE_LABEL)
@@ -2820,25 +2858,27 @@ impl Widget for RenderSettingsTab {
 fn build_render_settings_tab_with_options(
     options: WindowRenderOptions,
     theme_reader: DevThemeReader,
+    shell_state: DevShellState,
 ) -> impl Widget {
-    RenderSettingsTab::with_initial_options(options, theme_reader)
+    RenderSettingsTab::with_initial_options(options, theme_reader, shell_state)
 }
 
 pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
     _widget_book_bounds: Rect,
     render_options: WindowRenderOptions,
 ) -> Application {
-    finish_dev_application(DevBrowserShell::new(render_options))
+    let shell = DevBrowserShell::new(render_options);
+    let performance_overlay_reader = shell.performance_overlay_reader();
+    finish_dev_application_with_performance_overlay_reader(shell, performance_overlay_reader)
 }
 
 pub(crate) fn build_dev_application_with_initial_demo_and_render_options(
     initial_demo: Option<&str>,
     render_options: WindowRenderOptions,
 ) -> Application {
-    finish_dev_application(DevBrowserShell::with_initial_demo(
-        render_options,
-        initial_demo,
-    ))
+    let shell = DevBrowserShell::with_initial_demo(render_options, initial_demo);
+    let performance_overlay_reader = shell.performance_overlay_reader();
+    finish_dev_application_with_performance_overlay_reader(shell, performance_overlay_reader)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2850,12 +2890,12 @@ fn build_dev_application_with_render_options_and_automation(
         DesktopAutomationMode::ButtonGridResize => BUTTON_GRID_TAB_LABEL,
         DesktopAutomationMode::WidgetBookScroll => WIDGET_BOOK_TAB_LABEL,
     });
-    finish_dev_application(DevBrowserShell::with_initial_demo(
-        render_options,
-        initial_demo,
-    ))
+    let shell = DevBrowserShell::with_initial_demo(render_options, initial_demo);
+    let performance_overlay_reader = shell.performance_overlay_reader();
+    finish_dev_application_with_performance_overlay_reader(shell, performance_overlay_reader)
 }
 
+#[cfg(test)]
 fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
     let mut app = App::new();
     {
@@ -2875,6 +2915,32 @@ fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
         WINDOW_DESCRIPTION,
         root,
     )))
+    .into_application()
+}
+
+fn finish_dev_application_with_performance_overlay_reader<W: Widget + 'static>(
+    root: W,
+    performance_overlay_reader: Rc<dyn Fn() -> bool>,
+) -> Application {
+    let mut app = App::new();
+    {
+        let mut resources = app.resources();
+        register_widget_book_images(&mut resources);
+        resources
+            .image(
+                DEV_SHELL_LOGO_IMAGE_HANDLE,
+                default_sui_logo_image(DEV_SHELL_LOGO_IMAGE_SIZE)
+                    .expect("default SUI logo SVG should rasterize for dev shell"),
+            )
+            .expect("dev shell logo SVG should register exactly once");
+    }
+
+    app.window(
+        Window::new(WINDOW_TITLE).root(
+            LivePerformanceRoot::new(WINDOW_TITLE, WINDOW_DESCRIPTION, root)
+                .performance_overlay_enabled_when(move || performance_overlay_reader()),
+        ),
+    )
     .into_application()
 }
 
@@ -5834,6 +5900,7 @@ final_max_luminance={final_max_luminance}
             SDR_CONTENT_BRIGHTNESS_NAME,
             USE_SYSTEM_SDR_BRIGHTNESS_LABEL,
             HDR_THEME_MODE_NAME,
+            LIVE_PERFORMANCE_OVERLAY_LABEL,
         ] {
             assert!(
                 semantics
@@ -5842,6 +5909,71 @@ final_max_luminance={final_max_luminance}
                 "expected semantics tree to expose settings control {label:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn settings_toggle_controls_live_performance_overlay() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        set_window_scene_statistics_detail_mode(
+            window.id(),
+            SceneStatisticsDetailMode::Lightweight,
+        );
+        open_dev_shell_settings(&window)?;
+
+        let before_snapshot = window.snapshot()?;
+        assert!(
+            before_snapshot.accessibility.nodes.iter().all(|node| {
+                node.role != SemanticsRole::GenericContainer
+                    || node.name.as_deref() != Some("Live performance overlay")
+            }),
+            "live performance overlay should be hidden by default"
+        );
+
+        window
+            .get_by_role(SemanticsRole::CheckBox)
+            .with_name(LIVE_PERFORMANCE_OVERLAY_LABEL)
+            .click()?;
+        window
+            .root()
+            .dispatch_event(Event::Window(WindowEvent::RedrawRequested))?;
+
+        let enabled_snapshot = window.snapshot()?;
+        assert!(
+            enabled_snapshot.accessibility.nodes.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Live performance overlay")
+            }),
+            "settings checkbox should show the live performance overlay"
+        );
+        assert_eq!(
+            window_scene_statistics_detail_mode(window.id()),
+            SceneStatisticsDetailMode::Detailed,
+            "visible live performance overlay should enable detailed frame diagnostics"
+        );
+
+        window
+            .get_by_role(SemanticsRole::CheckBox)
+            .with_name(LIVE_PERFORMANCE_OVERLAY_LABEL)
+            .click()?;
+        window
+            .root()
+            .dispatch_event(Event::Window(WindowEvent::RedrawRequested))?;
+
+        let disabled_snapshot = window.snapshot()?;
+        assert!(
+            disabled_snapshot.accessibility.nodes.iter().all(|node| {
+                node.role != SemanticsRole::GenericContainer
+                    || node.name.as_deref() != Some("Live performance overlay")
+            }),
+            "settings checkbox should hide the live performance overlay"
+        );
+        assert_eq!(
+            window_scene_statistics_detail_mode(window.id()),
+            SceneStatisticsDetailMode::Lightweight,
+            "hiding the overlay should release the detailed frame diagnostics mode it enabled"
+        );
         Ok(())
     }
 
@@ -5997,26 +6129,21 @@ final_max_luminance={final_max_luminance}
         })
     }
 
-    fn live_performance_toggle_point(snapshot: &WindowSnapshot) -> Point {
-        let overlay = find_named_node(
-            snapshot,
-            SemanticsRole::GenericContainer,
-            "Live performance overlay",
-        );
-        Point::new(overlay.bounds.max_x() - 50.0, overlay.bounds.y() + 18.0)
-    }
-
     fn ensure_live_overlay_detail_mode(window: &TestWindow) -> Result<()> {
-        if window_scene_statistics_detail_mode(window.id()) == SceneStatisticsDetailMode::Detailed {
-            return Ok(());
+        if window_scene_statistics_detail_mode(window.id()) != SceneStatisticsDetailMode::Detailed {
+            set_window_scene_statistics_detail_mode(
+                window.id(),
+                SceneStatisticsDetailMode::Detailed,
+            );
         }
 
-        let snapshot = window.snapshot()?;
-        click_pointer(window, live_performance_toggle_point(&snapshot))?;
+        window
+            .root()
+            .dispatch_event(Event::Window(WindowEvent::RedrawRequested))?;
         assert_eq!(
             window_scene_statistics_detail_mode(window.id()),
             SceneStatisticsDetailMode::Detailed,
-            "expected live performance overlay toggle to enable detailed mode"
+            "expected live performance diagnostics to run in detailed mode"
         );
         Ok(())
     }
