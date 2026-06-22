@@ -3569,9 +3569,13 @@ mod tests {
         let open_demo_bounds = open_demo.bounds;
         click_runtime_point(&mut runtime, window_id, center_of(open_demo_bounds));
 
-        let output = runtime
+        runtime
             .render(window_id)
             .expect("dev application should render picker again");
+        settle_runtime_animations(&mut runtime, window_id);
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render settled picker");
         let card = find_picker_button(&output.semantics, WIDGET_BOOK_TAB_LABEL);
         assert!(
             !card.state.hovered,
@@ -3580,6 +3584,13 @@ mod tests {
         assert!(
             !card.state.focused,
             "picker card focus state should clear while the card is hidden after activation"
+        );
+        assert!(
+            !contains_approx_color(
+                &solid_stroke_colors_in_rect(&output, card.bounds),
+                DefaultTheme::default().palette.focus_ring,
+            ),
+            "picker card focus glow should clear while the card is hidden after activation"
         );
 
         click_runtime_point(&mut runtime, window_id, center_of(card.bounds));
@@ -3599,9 +3610,13 @@ mod tests {
         let close_tab_bounds = close_tab.bounds;
         click_runtime_point(&mut runtime, window_id, center_of(close_tab_bounds));
 
-        let output = runtime
+        runtime
             .render(window_id)
             .expect("dev application should render picker after closing the only tab");
+        settle_runtime_animations(&mut runtime, window_id);
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render settled picker after closing the only tab");
         let card = find_picker_button(&output.semantics, WIDGET_BOOK_TAB_LABEL);
         assert!(
             !card.state.hovered,
@@ -3610,6 +3625,13 @@ mod tests {
         assert!(
             !card.state.focused,
             "picker card focus state should stay clear after returning by closing all tabs"
+        );
+        assert!(
+            !contains_approx_color(
+                &solid_stroke_colors_in_rect(&output, card.bounds),
+                DefaultTheme::default().palette.focus_ring,
+            ),
+            "picker card focus glow should stay clear after returning by closing all tabs"
         );
     }
 
@@ -6368,6 +6390,30 @@ final_max_luminance={final_max_luminance}
         runtime
             .handle_event(window_id, Event::Pointer(up))
             .expect("pointer up should dispatch");
+    }
+
+    fn settle_runtime_animations(runtime: &mut Runtime, window_id: WindowId) {
+        runtime.tick(DefaultTheme::default().motion.focus_duration() + 0.01);
+        for (ready_window_id, event) in runtime.drain_ready_events() {
+            runtime
+                .handle_event(ready_window_id, event)
+                .expect("ready animation event should dispatch");
+        }
+        runtime
+            .render(window_id)
+            .expect("runtime should render after settling animations");
+    }
+
+    fn contains_approx_color(colors: &[Color], expected: Color) -> bool {
+        const CHANNEL_TOLERANCE: f32 = 1.0 / 255.0;
+
+        colors.iter().any(|color| {
+            color.space == expected.space
+                && (color.red - expected.red).abs() <= CHANNEL_TOLERANCE
+                && (color.green - expected.green).abs() <= CHANNEL_TOLERANCE
+                && (color.blue - expected.blue).abs() <= CHANNEL_TOLERANCE
+                && (color.alpha - expected.alpha).abs() <= CHANNEL_TOLERANCE
+        })
     }
 
     fn assert_dev_shell_active_tab(window: &TestWindow, title: &str) -> Result<()> {

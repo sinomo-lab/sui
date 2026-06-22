@@ -1830,8 +1830,8 @@ impl ActionCard {
             | self.focus_animation.advance(time)
     }
 
-    fn clear_pointer_state_for_hidden_bounds(&mut self, ctx: &mut ArrangeCtx) {
-        if !self.hovered && !self.pressed {
+    fn clear_transient_state_for_hidden_bounds(&mut self, ctx: &mut ArrangeCtx) {
+        if !self.hovered && !self.pressed && !self.focus_animation.is_presented() {
             return;
         }
 
@@ -1839,6 +1839,7 @@ impl ActionCard {
         self.pressed = false;
         self.hover_animation = AnimatedScalar::new(0.0);
         self.press_animation = AnimatedScalar::new(0.0);
+        self.focus_animation = AnimatedScalar::new(0.0);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -2020,7 +2021,7 @@ impl Widget for ActionCard {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         if bounds.width() <= 0.0 || bounds.height() <= 0.0 {
-            self.clear_pointer_state_for_hidden_bounds(ctx);
+            self.clear_transient_state_for_hidden_bounds(ctx);
         }
     }
 
