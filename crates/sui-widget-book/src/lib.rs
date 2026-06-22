@@ -370,7 +370,7 @@ struct LivePerformanceDisplay {
 }
 
 const LIVE_PERFORMANCE_HISTORY_LIMIT: usize = 72;
-const LIVE_PERFORMANCE_STAGE_COUNT: usize = 8;
+const LIVE_PERFORMANCE_STAGE_COUNT: usize = 9;
 
 #[derive(Debug, Clone, PartialEq)]
 struct LivePerformanceFrameSample {
@@ -407,7 +407,8 @@ const fn frame_phase_index(phase: FramePhase) -> usize {
         FramePhase::Paint => 4,
         FramePhase::Semantics => 5,
         FramePhase::Renderer => 6,
-        FramePhase::Diagnostics => 7,
+        FramePhase::SurfaceWait => 7,
+        FramePhase::Diagnostics => 8,
     }
 }
 
@@ -6392,7 +6393,8 @@ impl LivePerformancePanel {
             FramePhase::HitTest => "hit",
             FramePhase::Paint => "paint",
             FramePhase::Semantics => "a11y",
-            FramePhase::Renderer => "gpu",
+            FramePhase::Renderer => "rend",
+            FramePhase::SurfaceWait => "wait",
             FramePhase::Diagnostics => "diag",
         }
     }
@@ -6407,6 +6409,7 @@ impl LivePerformancePanel {
             FramePhase::Paint => Color::rgba(0.94, 0.42, 0.54, alpha),
             FramePhase::Semantics => Color::rgba(0.72, 0.82, 0.36, alpha),
             FramePhase::Renderer => Color::rgba(0.36, 0.78, 0.96, alpha),
+            FramePhase::SurfaceWait => Color::rgba(0.68, 0.72, 0.78, alpha),
             FramePhase::Diagnostics => Color::rgba(0.78, 0.80, 0.86, alpha),
         }
     }
@@ -6494,9 +6497,10 @@ impl LivePerformancePanel {
         for phase in LIVE_PERFORMANCE_GRAPH_PHASES {
             let label = Self::stage_short_label(phase);
             let label_width = match phase {
-                FramePhase::MeasureArrange => 42.0,
-                FramePhase::Redraw => 48.0,
-                _ => 34.0,
+                FramePhase::MeasureArrange => 38.0,
+                FramePhase::Redraw => 42.0,
+                FramePhase::Renderer | FramePhase::SurfaceWait => 34.0,
+                _ => 30.0,
             };
             if x + label_width > bounds.max_x() {
                 break;
@@ -6514,6 +6518,15 @@ impl LivePerformancePanel {
             x += label_width;
         }
     }
+
+    fn snapshot_phase_duration(snapshot: &WindowPerformanceSnapshot, phase: FramePhase) -> f64 {
+        snapshot
+            .phase_timings
+            .iter()
+            .filter(|sample| sample.phase == phase)
+            .map(|sample| sample.duration_ms)
+            .sum()
+    }
 }
 
 const LIVE_PERFORMANCE_GRAPH_PHASES: [FramePhase; LIVE_PERFORMANCE_STAGE_COUNT] = [
@@ -6524,6 +6537,7 @@ const LIVE_PERFORMANCE_GRAPH_PHASES: [FramePhase; LIVE_PERFORMANCE_STAGE_COUNT] 
     FramePhase::Paint,
     FramePhase::Semantics,
     FramePhase::Renderer,
+    FramePhase::SurfaceWait,
     FramePhase::Diagnostics,
 ];
 
@@ -6570,16 +6584,26 @@ impl Widget for LivePerformancePanel {
                     format_duration_ms(snapshot.total_time_ms)
                 )
             };
-            let slowest = snapshot
-                .slowest_phase()
-                .map(|sample| {
-                    format!(
-                        "{} {}",
-                        Self::stage_short_label(sample.phase),
-                        format_duration_ms(sample.duration_ms)
-                    )
-                })
-                .unwrap_or_else(|| "waiting for phases".to_string());
+            let renderer_work_ms = Self::snapshot_phase_duration(snapshot, FramePhase::Renderer);
+            let surface_wait_ms = Self::snapshot_phase_duration(snapshot, FramePhase::SurfaceWait);
+            let slowest = if renderer_work_ms > 0.0 || surface_wait_ms > 0.0 {
+                format!(
+                    "rend {} | wait {}",
+                    format_duration_ms(renderer_work_ms),
+                    format_duration_ms(surface_wait_ms),
+                )
+            } else {
+                snapshot
+                    .slowest_phase()
+                    .map(|sample| {
+                        format!(
+                            "{} {}",
+                            Self::stage_short_label(sample.phase),
+                            format_duration_ms(sample.duration_ms)
+                        )
+                    })
+                    .unwrap_or_else(|| "waiting for phases".to_string())
+            };
             (fps, frame, slowest)
         } else {
             (

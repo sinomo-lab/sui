@@ -18,6 +18,7 @@ pub enum FramePhase {
     Paint,
     Semantics,
     Renderer,
+    SurfaceWait,
     Diagnostics,
 }
 
@@ -30,7 +31,8 @@ impl FramePhase {
             Self::HitTest => "Graph and hit test",
             Self::Paint => "Paint",
             Self::Semantics => "Semantics",
-            Self::Renderer => "Renderer",
+            Self::Renderer => "Renderer work",
+            Self::SurfaceWait => "Surface wait",
             Self::Diagnostics => "Diagnostics",
         }
     }

@@ -203,6 +203,21 @@ fn retained_packet_hotspot_diagnostics_from_frame_stats(
         })
 }
 
+fn split_renderer_phase_times_ms(
+    renderer_time_ms: f64,
+    renderer_stats: &RendererFrameStats,
+) -> (f64, f64) {
+    let renderer_time_ms = renderer_time_ms.max(0.0);
+    let surface_wait_time_ms = ((renderer_stats
+        .surface_acquire_time_us
+        .saturating_add(renderer_stats.surface_present_time_us))
+        as f64
+        / 1000.0)
+        .min(renderer_time_ms);
+    let renderer_work_time_ms = (renderer_time_ms - surface_wait_time_ms).max(0.0);
+    (renderer_work_time_ms, surface_wait_time_ms)
+}
+
 pub fn publish_frame_performance(
     window_id: WindowId,
     frame_index: u64,
@@ -281,10 +296,20 @@ pub fn publish_frame_performance(
     }
 
     phase_timings.extend(output.diagnostics.phase_timings.iter().copied());
-    phase_timings.push(FramePhaseSample::new(
-        FramePhase::Renderer,
-        renderer_time_ms,
-    ));
+    let (renderer_work_time_ms, surface_wait_time_ms) =
+        split_renderer_phase_times_ms(renderer_time_ms, &renderer_stats);
+    if renderer_work_time_ms > 0.0 {
+        phase_timings.push(FramePhaseSample::new(
+            FramePhase::Renderer,
+            renderer_work_time_ms,
+        ));
+    }
+    if surface_wait_time_ms > 0.0 {
+        phase_timings.push(FramePhaseSample::new(
+            FramePhase::SurfaceWait,
+            surface_wait_time_ms,
+        ));
+    }
     phase_timings.push(FramePhaseSample::new(
         FramePhase::Diagnostics,
         diagnostics_started.elapsed().as_secs_f64() * 1000.0,
@@ -334,6 +359,7 @@ mod tests {
     use super::{
         renderer_submission_diagnostics_from_frame_stats,
         retained_packet_hotspot_diagnostics_from_frame_stats, retained_packet_rebuild_diagnostics,
+        split_renderer_phase_times_ms,
     };
     use sui_render_wgpu::{RendererFrameStats, RendererPacketHotspot, RetainedPacketRebuildStats};
 
@@ -426,6 +452,36 @@ mod tests {
         assert_eq!(diagnostics.retained_packet_normalize_time_us, 41);
         assert_eq!(diagnostics.retained_packet_command_count, 45);
         assert_eq!(diagnostics.text_atlas_miss_count, 7);
+    }
+
+    #[test]
+    fn renderer_phase_split_separates_surface_wait_from_work() {
+        let renderer_stats = RendererFrameStats {
+            surface_acquire_time_us: 4_000,
+            surface_present_time_us: 8_000,
+            ..Default::default()
+        };
+
+        let (renderer_work_time_ms, surface_wait_time_ms) =
+            split_renderer_phase_times_ms(20.0, &renderer_stats);
+
+        assert_eq!(renderer_work_time_ms, 8.0);
+        assert_eq!(surface_wait_time_ms, 12.0);
+    }
+
+    #[test]
+    fn renderer_phase_split_caps_wait_at_renderer_wall_time() {
+        let renderer_stats = RendererFrameStats {
+            surface_acquire_time_us: 9_000,
+            surface_present_time_us: 9_000,
+            ..Default::default()
+        };
+
+        let (renderer_work_time_ms, surface_wait_time_ms) =
+            split_renderer_phase_times_ms(10.0, &renderer_stats);
+
+        assert_eq!(renderer_work_time_ms, 0.0);
+        assert_eq!(surface_wait_time_ms, 10.0);
     }
 
     #[test]

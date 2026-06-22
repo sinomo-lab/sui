@@ -6,8 +6,8 @@ use sui_core::{Color, DirtyRegion, Rect, SemanticsValue, Size, WidgetId, WindowI
 use sui_layout::Alignment;
 use sui_platform::AccessibilitySnapshot;
 use sui_runtime::{
-    CacheMetrics, CacheMetricsDelta, FocusState, FrameSchedule, SceneStatistics, Widget,
-    WidgetGraphSnapshot, WidgetNodeSnapshot, WindowPerformanceSnapshot,
+    CacheMetrics, CacheMetricsDelta, FocusState, FramePhase, FrameSchedule, SceneStatistics,
+    Widget, WidgetGraphSnapshot, WidgetNodeSnapshot, WindowPerformanceSnapshot,
 };
 use sui_scene::{SceneCommand, SceneFrame};
 use sui_widgets::{
@@ -846,6 +846,18 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         .map(|sample| sample.duration_ms)
         .unwrap_or(0.0);
     let renderer_submission = snapshot.renderer_submission;
+    let renderer_work_ms: f64 = snapshot
+        .phase_timings
+        .iter()
+        .filter(|sample| sample.phase == FramePhase::Renderer)
+        .map(|sample| sample.duration_ms)
+        .sum();
+    let surface_wait_ms: f64 = snapshot
+        .phase_timings
+        .iter()
+        .filter(|sample| sample.phase == FramePhase::SurfaceWait)
+        .map(|sample| sample.duration_ms)
+        .sum();
 
     let metrics = debug_metric_grid([
         DebugMetric::new("Frame", format_duration_ms(snapshot.total_time_ms))
@@ -878,6 +890,16 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         DebugMetric::new("Slowest phase", slowest_label)
             .detail(format_duration_ms(slowest_duration_ms))
             .tone(duration_tone(slowest_duration_ms)),
+        DebugMetric::new("Renderer work", format_duration_ms(renderer_work_ms))
+            .detail("Renderer wall time after subtracting surface acquire and present waits")
+            .tone(duration_tone(renderer_work_ms)),
+        DebugMetric::new("Surface wait", format_duration_ms(surface_wait_ms))
+            .detail(format!(
+                "acquire {} | present {}",
+                format_duration_ms(renderer_submission.surface_acquire_time_us as f64 / 1000.0),
+                format_duration_ms(renderer_submission.surface_present_time_us as f64 / 1000.0),
+            ))
+            .tone(latency_tone(surface_wait_ms)),
         DebugMetric::new("Commands", snapshot.scene.command_count.to_string())
             .detail("Renderer-neutral draw commands in the current scene")
             .tone(DebugTone::Neutral),
