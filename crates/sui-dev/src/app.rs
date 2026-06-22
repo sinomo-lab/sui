@@ -81,7 +81,7 @@ const DEV_SHELL_TAB_GAP: f32 = 6.0;
 const DEV_SHELL_TAB_CLOSE_SIZE: f32 = 18.0;
 const DEV_SHELL_TAB_CLOSE_MARGIN: f32 = 7.0;
 const DEV_SHELL_PLUS_BUTTON_SIZE: f32 = 30.0;
-const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 92.0;
+const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 140.0;
 const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
 const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 104.0;
 const DEV_SHELL_SETTINGS_TITLE_HEIGHT: f32 = 38.0;
@@ -92,6 +92,7 @@ const DEV_SHELL_DEFAULT_SETTINGS_WIDTH: f32 = 460.0;
 const DEV_SHELL_DEFAULT_SETTINGS_HEIGHT: f32 = 380.0;
 const DEV_SHELL_DEFAULT_SETTINGS_X: f32 = 420.0;
 const DEV_SHELL_DEFAULT_SETTINGS_Y: f32 = 96.0;
+const DEV_SHELL_THEME_TOGGLE_NAME: &str = "Theme mode";
 const DEV_SHELL_PICKER_TITLE: &str = "SUI Dev";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(not(target_arch = "wasm32"))]
@@ -125,6 +126,38 @@ where
     move || color(theme_reader())
 }
 
+fn next_dev_theme_scheme(scheme: ThemeColorScheme) -> ThemeColorScheme {
+    match scheme {
+        ThemeColorScheme::Light => ThemeColorScheme::Dark,
+        ThemeColorScheme::Dark => ThemeColorScheme::HighContrast,
+        ThemeColorScheme::HighContrast => ThemeColorScheme::Light,
+    }
+}
+
+fn dev_theme_scheme_label(scheme: ThemeColorScheme) -> &'static str {
+    match scheme {
+        ThemeColorScheme::Light => "Light",
+        ThemeColorScheme::Dark => "Dark",
+        ThemeColorScheme::HighContrast => "High contrast",
+    }
+}
+
+fn dev_theme_toggle_label(scheme: ThemeColorScheme) -> &'static str {
+    match scheme {
+        ThemeColorScheme::Light => "Light",
+        ThemeColorScheme::Dark => "Dark",
+        ThemeColorScheme::HighContrast => "High",
+    }
+}
+
+fn dev_theme_toggle_position(scheme: ThemeColorScheme) -> f32 {
+    match scheme {
+        ThemeColorScheme::Light => 0.0,
+        ThemeColorScheme::Dark => 0.5,
+        ThemeColorScheme::HighContrast => 1.0,
+    }
+}
+
 #[derive(Clone)]
 struct DevShellState {
     inner: Rc<RefCell<DevShellStateInner>>,
@@ -134,7 +167,7 @@ struct DevShellStateInner {
     open_tabs: Vec<usize>,
     active_tab: Option<usize>,
     picker_open: bool,
-    dark_theme: bool,
+    theme_scheme: ThemeColorScheme,
     performance_overlay_visible: bool,
     settings_visible: bool,
     settings_bounds: Rect,
@@ -148,7 +181,7 @@ impl DevShellState {
                 open_tabs: Vec::new(),
                 active_tab: None,
                 picker_open: true,
-                dark_theme: false,
+                theme_scheme: ThemeColorScheme::Light,
                 performance_overlay_visible: false,
                 settings_visible: false,
                 settings_bounds: Rect::new(
@@ -163,10 +196,10 @@ impl DevShellState {
     }
 
     fn theme(&self) -> DefaultTheme {
-        if self.inner.borrow().dark_theme {
-            DefaultTheme::dark()
-        } else {
-            DefaultTheme::default()
+        match self.theme_scheme() {
+            ThemeColorScheme::Light => DefaultTheme::default(),
+            ThemeColorScheme::Dark => DefaultTheme::dark(),
+            ThemeColorScheme::HighContrast => DefaultTheme::high_contrast(),
         }
     }
 
@@ -180,13 +213,21 @@ impl DevShellState {
         Rc::new(move || state.performance_overlay_visible())
     }
 
-    fn is_dark(&self) -> bool {
-        self.inner.borrow().dark_theme
+    fn theme_scheme(&self) -> ThemeColorScheme {
+        self.inner.borrow().theme_scheme
     }
 
-    fn toggle_theme(&self) {
+    fn is_dark(&self) -> bool {
+        matches!(
+            self.inner.borrow().theme_scheme,
+            ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
+        )
+    }
+
+    fn cycle_theme(&self) -> ThemeColorScheme {
         let mut inner = self.inner.borrow_mut();
-        inner.dark_theme = !inner.dark_theme;
+        inner.theme_scheme = next_dev_theme_scheme(inner.theme_scheme);
+        inner.theme_scheme
     }
 
     fn performance_overlay_visible(&self) -> bool {
@@ -1103,20 +1144,99 @@ struct ThemeToggleButton {
     state: DevShellState,
     hovered: bool,
     pressed: bool,
+    animation_from: ThemeColorScheme,
+    animation_progress: f32,
+    animation: Option<Transition<f32>>,
 }
 
 impl ThemeToggleButton {
     fn new(state: DevShellState) -> Self {
+        let scheme = state.theme_scheme();
         Self {
             state,
             hovered: false,
             pressed: false,
+            animation_from: scheme,
+            animation_progress: 1.0,
+            animation: None,
         }
     }
 
-    fn activate(&self, ctx: &mut EventCtx) {
-        self.state.toggle_theme();
+    fn activate(&mut self, ctx: &mut EventCtx) {
+        self.animation_from = self.state.theme_scheme();
+        self.animation_progress = 0.0;
+        self.state.cycle_theme();
+        let theme = self.state.theme();
+        self.animation = Some(Transition::new(
+            0.0,
+            1.0,
+            ctx.current_time(),
+            theme.motion.toggle_duration(),
+            theme.motion.toggle_easing(),
+        ));
+        ctx.request_animation_frame();
+        ctx.request_paint();
+        ctx.request_semantics();
         request_window_refresh(ctx, true);
+    }
+
+    fn advance_animation(&mut self, time: f64) -> bool {
+        let Some(animation) = self.animation else {
+            return false;
+        };
+
+        self.animation_progress = animation.sample(time);
+        if animation.is_complete(time) {
+            self.animation_progress = 1.0;
+            self.animation = None;
+            return false;
+        }
+
+        true
+    }
+
+    fn visual_transition(&self) -> (ThemeColorScheme, ThemeColorScheme, f32) {
+        let target = self.state.theme_scheme();
+        if self.animation.is_some() {
+            (
+                self.animation_from,
+                target,
+                self.animation_progress.clamp(0.0, 1.0),
+            )
+        } else {
+            (target, target, 1.0)
+        }
+    }
+
+    fn track_color(scheme: ThemeColorScheme) -> Color {
+        match scheme {
+            ThemeColorScheme::Light => Color::rgba(0.97, 0.985, 1.0, 1.0),
+            ThemeColorScheme::Dark => Color::rgba(0.11, 0.15, 0.20, 1.0),
+            ThemeColorScheme::HighContrast => Color::rgba(0.0, 0.0, 0.0, 1.0),
+        }
+    }
+
+    fn knob_color(scheme: ThemeColorScheme) -> Color {
+        match scheme {
+            ThemeColorScheme::Light => Color::rgba(0.98, 0.74, 0.24, 1.0),
+            ThemeColorScheme::Dark => Color::rgba(0.33, 0.74, 0.88, 1.0),
+            ThemeColorScheme::HighContrast => Color::rgba(1.0, 1.0, 1.0, 1.0),
+        }
+    }
+
+    fn label_rect(bounds: Rect, knob: Rect, scheme: ThemeColorScheme) -> Rect {
+        if matches!(scheme, ThemeColorScheme::HighContrast) {
+            let x = bounds.x() + 10.0;
+            Rect::new(x, bounds.y() + 8.0, (knob.x() - x - 6.0).max(0.0), 18.0)
+        } else {
+            let x = knob.max_x() + 8.0;
+            Rect::new(
+                x,
+                bounds.y() + 8.0,
+                (bounds.max_x() - x - 10.0).max(0.0),
+                18.0,
+            )
+        }
     }
 }
 
@@ -1181,6 +1301,12 @@ impl Widget for ThemeToggleButton {
                 self.activate(ctx);
                 ctx.set_handled();
             }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animation(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
+            }
             _ => {}
         }
     }
@@ -1193,15 +1319,16 @@ impl Widget for ThemeToggleButton {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let dark = self.state.is_dark();
         let theme = self.state.theme();
         let palette = theme.palette;
         let bounds = ctx.bounds();
-        let background = if dark {
-            Color::rgba(0.11, 0.15, 0.20, 1.0)
-        } else {
-            Color::rgba(0.97, 0.985, 1.0, 1.0)
-        };
+        let scheme = self.state.theme_scheme();
+        let (from_scheme, to_scheme, transition) = self.visual_transition();
+        let background = Color::interpolate(
+            Self::track_color(from_scheme),
+            Self::track_color(to_scheme),
+            transition,
+        );
         let border = if self.hovered || ctx.is_focused() {
             palette.border_focus
         } else {
@@ -1214,11 +1341,13 @@ impl Widget for ThemeToggleButton {
             StrokeStyle::new(1.0),
         );
 
-        let knob_x = if dark {
-            bounds.max_x() - 31.0
-        } else {
-            bounds.x() + 3.0
-        };
+        let knob_progress = f32::interpolate(
+            dev_theme_toggle_position(from_scheme),
+            dev_theme_toggle_position(to_scheme),
+            transition,
+        );
+        let knob_diameter = 28.0;
+        let knob_x = bounds.x() + 3.0 + ((bounds.width() - knob_diameter - 6.0) * knob_progress);
         let knob = Rect::new(knob_x, bounds.y() + 3.0, 28.0, 28.0);
         ctx.fill(
             Path::circle(
@@ -1228,30 +1357,29 @@ impl Widget for ThemeToggleButton {
                 ),
                 14.0,
             ),
-            if dark {
-                Color::rgba(0.33, 0.74, 0.88, 1.0)
-            } else {
-                Color::rgba(0.98, 0.74, 0.24, 1.0)
-            },
+            Color::interpolate(
+                Self::knob_color(from_scheme),
+                Self::knob_color(to_scheme),
+                transition,
+            ),
         );
-        let label_rect = if dark {
-            Rect::new(
-                bounds.x() + 12.0,
-                bounds.y() + 8.0,
-                bounds.width() - 48.0,
-                18.0,
-            )
-        } else {
-            Rect::new(
-                bounds.x() + 38.0,
-                bounds.y() + 8.0,
-                bounds.width() - 50.0,
-                18.0,
-            )
-        };
+        if matches!(scheme, ThemeColorScheme::HighContrast) {
+            ctx.stroke(
+                Path::circle(
+                    Point::new(
+                        knob.x() + knob.width() * 0.5,
+                        knob.y() + knob.height() * 0.5,
+                    ),
+                    14.0,
+                ),
+                Color::rgba(0.0, 0.0, 0.0, 1.0),
+                StrokeStyle::new(1.0),
+            );
+        }
+        let label_rect = Self::label_rect(bounds, knob, scheme);
         ctx.draw_text(
             label_rect,
-            if dark { "Dark" } else { "Light" },
+            dev_theme_toggle_label(scheme),
             TextStyle {
                 font_size: 12.0,
                 line_height: 16.0,
@@ -1263,11 +1391,15 @@ impl Widget for ThemeToggleButton {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Switch, ctx.bounds());
-        node.name = Some("Dark theme".to_string());
-        node.state.checked = Some(if self.state.is_dark() {
-            ToggleState::Checked
-        } else {
-            ToggleState::Unchecked
+        let scheme = self.state.theme_scheme();
+        node.name = Some(DEV_SHELL_THEME_TOGGLE_NAME.to_string());
+        node.value = Some(SemanticsValue::Text(
+            dev_theme_scheme_label(scheme).to_string(),
+        ));
+        node.state.checked = Some(match scheme {
+            ThemeColorScheme::Light => ToggleState::Unchecked,
+            ThemeColorScheme::Dark => ToggleState::Checked,
+            ThemeColorScheme::HighContrast => ToggleState::Mixed,
         });
         node.state.focused = ctx.is_focused();
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
@@ -1276,6 +1408,11 @@ impl Widget for ThemeToggleButton {
 
     fn accepts_focus(&self) -> bool {
         true
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
     }
 }
 
@@ -3538,6 +3675,53 @@ mod tests {
                 node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open demo")
             }),
             "expected the tab zone to expose the demo picker + button"
+        );
+    }
+
+    #[test]
+    fn dev_shell_theme_toggle_cycles_light_dark_high_contrast() {
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render");
+        let toggle = assert_theme_toggle_state(
+            &output.semantics,
+            ThemeColorScheme::Light,
+            ToggleState::Unchecked,
+        );
+
+        click_runtime_point(&mut runtime, window_id, center_of(toggle.bounds));
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render dark theme");
+        let toggle = assert_theme_toggle_state(
+            &output.semantics,
+            ThemeColorScheme::Dark,
+            ToggleState::Checked,
+        );
+
+        click_runtime_point(&mut runtime, window_id, center_of(toggle.bounds));
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render high contrast theme");
+        let toggle = assert_theme_toggle_state(
+            &output.semantics,
+            ThemeColorScheme::HighContrast,
+            ToggleState::Mixed,
+        );
+
+        click_runtime_point(&mut runtime, window_id, center_of(toggle.bounds));
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render light theme");
+        assert_theme_toggle_state(
+            &output.semantics,
+            ThemeColorScheme::Light,
+            ToggleState::Unchecked,
         );
     }
 
@@ -6113,7 +6297,7 @@ final_max_luminance={final_max_luminance}
 
         window
             .get_by_role(SemanticsRole::Switch)
-            .with_name("Dark theme")
+            .with_name(DEV_SHELL_THEME_TOGGLE_NAME)
             .click()?;
 
         let dark_snapshot = window.snapshot()?;
@@ -6131,6 +6315,16 @@ final_max_luminance={final_max_luminance}
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
         open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
+        let gallery = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
+        scroll_story_until_visible(
+            &window,
+            &gallery,
+            SemanticsRole::Button,
+            sui_widget_book::PRIMARY_BUTTON_LABEL,
+            240,
+        )?;
 
         let light_snapshot = window.snapshot()?;
         let primary_button = find_named_node(
@@ -6148,7 +6342,7 @@ final_max_luminance={final_max_luminance}
 
         window
             .get_by_role(SemanticsRole::Switch)
-            .with_name("Dark theme")
+            .with_name(DEV_SHELL_THEME_TOGGLE_NAME)
             .click()?;
 
         let dark_snapshot = window.snapshot()?;
@@ -6361,6 +6555,41 @@ final_max_luminance={final_max_luminance}
                 matches.len()
             ),
         }
+    }
+
+    fn assert_theme_toggle_state(
+        nodes: &[SemanticsNode],
+        scheme: ThemeColorScheme,
+        checked: ToggleState,
+    ) -> SemanticsNode {
+        let matches = nodes
+            .iter()
+            .filter(|node| {
+                node.role == SemanticsRole::Switch
+                    && node.name.as_deref() == Some(DEV_SHELL_THEME_TOGGLE_NAME)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let toggle = match matches.as_slice() {
+            [node] => node.clone(),
+            [] => panic!("missing theme toggle semantics node"),
+            _ => panic!("expected exactly one theme toggle, found {}", matches.len()),
+        };
+
+        assert_eq!(
+            toggle.value,
+            Some(SemanticsValue::Text(
+                dev_theme_scheme_label(scheme).to_string()
+            )),
+            "theme toggle should expose the active scheme"
+        );
+        assert_eq!(
+            toggle.state.checked,
+            Some(checked),
+            "theme toggle checked state should reflect {scheme:?}"
+        );
+        toggle
     }
 
     fn center_of(bounds: Rect) -> Point {
@@ -8331,7 +8560,15 @@ final_max_luminance={final_max_luminance}
         bounds: Rect,
         snapshot: &WindowSnapshot,
     ) -> Result<[u8; 4]> {
-        let pixel = screenshot.crop(scale_bounds_for_screenshot(bounds, snapshot, screenshot))?;
+        let scaled = scale_bounds_for_screenshot(bounds, snapshot, screenshot);
+        let pixel = screenshot.crop(scaled).map_err(|error| {
+            sui::Error::new(format!(
+                "sample pixel crop failed for bounds={bounds:?}, scaled={scaled:?}, screenshot={}x{}: {}",
+                screenshot.width(),
+                screenshot.height(),
+                error
+            ))
+        })?;
         let rgba = pixel.pixels();
         Ok([rgba[0], rgba[1], rgba[2], rgba[3]])
     }
