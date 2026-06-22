@@ -1830,6 +1830,19 @@ impl ActionCard {
             | self.focus_animation.advance(time)
     }
 
+    fn clear_pointer_state_for_hidden_bounds(&mut self, ctx: &mut ArrangeCtx) {
+        if !self.hovered && !self.pressed {
+            return;
+        }
+
+        self.hovered = false;
+        self.pressed = false;
+        self.hover_animation = AnimatedScalar::new(0.0);
+        self.press_animation = AnimatedScalar::new(0.0);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
     fn resolved_title_style(&self) -> TextStyle {
         let theme = self.resolved_theme();
         TextStyle {
@@ -2003,6 +2016,12 @@ impl Widget for ActionCard {
             ),
         );
         constraints.clamp(natural)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        if bounds.width() <= 0.0 || bounds.height() <= 0.0 {
+            self.clear_pointer_state_for_hidden_bounds(ctx);
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {

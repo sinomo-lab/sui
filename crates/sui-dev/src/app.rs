@@ -339,6 +339,7 @@ impl DevBrowserShell {
                     .min_width(220.0)
                     .min_height(DEV_SHELL_PICKER_TILE_HEIGHT)
                     .on_press_with_ctx(move |ctx| {
+                        ctx.clear_focus();
                         open_state.open_demo(index);
                         request_window_refresh(ctx, true);
                     }),
@@ -2993,11 +2994,12 @@ mod tests {
 
     use sui::{
         Brush, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        RenderOutput, Result, SceneCommand, SceneStatisticsDetailMode, ScrollDelta, SemanticsNode,
-        SemanticsRole, StackOrderPolicy, Vector, WidgetId, WindowColorManagementMode,
-        WindowDynamicRangeMode, WindowEvent, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
-        WindowRenderOptions, WindowToneMappingMode, set_window_scene_statistics_detail_mode,
-        window_performance_snapshot, window_scene_statistics_detail_mode,
+        RenderOutput, Result, Runtime, SceneCommand, SceneStatisticsDetailMode, ScrollDelta,
+        SemanticsNode, SemanticsRole, StackOrderPolicy, Vector, WidgetId,
+        WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowOutputColorPrimaries,
+        WindowPerformanceSnapshot, WindowRenderOptions, WindowToneMappingMode,
+        set_window_scene_statistics_detail_mode, window_performance_snapshot,
+        window_scene_statistics_detail_mode,
     };
     use sui_render_wgpu::{
         DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
@@ -3536,6 +3538,78 @@ mod tests {
                 node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open demo")
             }),
             "expected the tab zone to expose the demo picker + button"
+        );
+    }
+
+    #[test]
+    fn dev_shell_picker_card_transient_state_clears_after_opening_and_returning() {
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render picker");
+        let card = find_picker_button(&output.semantics, WIDGET_BOOK_TAB_LABEL);
+        click_runtime_point(&mut runtime, window_id, center_of(card.bounds));
+
+        runtime
+            .render(window_id)
+            .expect("dev application should render opened tab");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("dev application semantics should exist");
+        let open_demo = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open demo")
+            })
+            .expect("open demo button should remain in the tab strip");
+        let open_demo_bounds = open_demo.bounds;
+        click_runtime_point(&mut runtime, window_id, center_of(open_demo_bounds));
+
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render picker again");
+        let card = find_picker_button(&output.semantics, WIDGET_BOOK_TAB_LABEL);
+        assert!(
+            !card.state.hovered,
+            "picker card hover state should clear while the card is hidden after activation"
+        );
+        assert!(
+            !card.state.focused,
+            "picker card focus state should clear while the card is hidden after activation"
+        );
+
+        click_runtime_point(&mut runtime, window_id, center_of(card.bounds));
+        runtime
+            .render(window_id)
+            .expect("dev application should render reopened tab");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("dev application semantics should exist");
+        let close_tab = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Close Widget book tab")
+            })
+            .expect("close-tab button should be available for the opened tab");
+        let close_tab_bounds = close_tab.bounds;
+        click_runtime_point(&mut runtime, window_id, center_of(close_tab_bounds));
+
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render picker after closing the only tab");
+        let card = find_picker_button(&output.semantics, WIDGET_BOOK_TAB_LABEL);
+        assert!(
+            !card.state.hovered,
+            "picker card hover state should stay clear after returning by closing all tabs"
+        );
+        assert!(
+            !card.state.focused,
+            "picker card focus state should stay clear after returning by closing all tabs"
         );
     }
 
@@ -6244,6 +6318,56 @@ final_max_luminance={final_max_luminance}
                 matches.len()
             ),
         }
+    }
+
+    fn find_picker_button(nodes: &[SemanticsNode], name: &str) -> SemanticsNode {
+        let matches = nodes
+            .iter()
+            .filter(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some(name)
+                    && node.bounds.y() >= DEV_SHELL_TOOLBAR_HEIGHT
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        match matches.as_slice() {
+            [node] => node.clone(),
+            [] => panic!("missing picker button named {name:?}"),
+            _ => panic!(
+                "expected exactly one picker button named {name:?}, found {}",
+                matches.len()
+            ),
+        }
+    }
+
+    fn center_of(bounds: Rect) -> Point {
+        Point::new(
+            bounds.x() + bounds.width() * 0.5,
+            bounds.y() + bounds.height() * 0.5,
+        )
+    }
+
+    fn click_runtime_point(runtime: &mut Runtime, window_id: WindowId, position: Point) {
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(PointerEventKind::Move, position)),
+            )
+            .expect("pointer move should dispatch");
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .expect("pointer down should dispatch");
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.button = Some(PointerButton::Primary);
+        runtime
+            .handle_event(window_id, Event::Pointer(up))
+            .expect("pointer up should dispatch");
     }
 
     fn assert_dev_shell_active_tab(window: &TestWindow, title: &str) -> Result<()> {
