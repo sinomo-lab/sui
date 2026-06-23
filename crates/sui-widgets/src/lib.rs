@@ -43,8 +43,8 @@ pub use containers::{
 };
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label,
-    MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox,
-    Switch, TextArea, TextInput, draw_glyph, register_builtin_icon_resources,
+    Link, MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider,
+    SpinBox, Switch, TextArea, TextInput, draw_glyph, register_builtin_icon_resources,
 };
 pub use data::{
     Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, ListItem, ListView, PathBar,

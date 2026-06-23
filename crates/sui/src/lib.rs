@@ -29,8 +29,8 @@ pub use containers::{
 };
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label,
-    MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox,
-    Switch, TextArea, TextInput, draw_glyph, register_builtin_icon_resources,
+    Link, MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider,
+    SpinBox, Switch, TextArea, TextInput, draw_glyph, register_builtin_icon_resources,
 };
 pub use sui_core::{
     AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, DpiInfo, Error, Event, FontHandle,
@@ -485,7 +485,7 @@ pub mod prelude {
         FloatingWorkspace, FloatingWorkspaceState, FontFeature, FontFeatures, FontHandle,
         FontStretch, FontStyle, FontWeight, FormRow, FormSection, Icon, IconButton, IconGlyph,
         Image, ImageFit, ImageHandle, ImeEvent, Insets, Interpolate, KeyboardEvent, Keyframe,
-        KeyframeSelection, Label, LayerList, LayerListItem, ListItem, ListView, LoopMode,
+        KeyframeSelection, Label, LayerList, LayerListItem, Link, ListItem, ListView, LoopMode,
         MeasureCtx, Menu, MenuItem, Modal, MultilineTextInput, NumberInput, Overflow, PaintCtx,
         PanelSection, Path, PathBar, PathBuilder, PixelCanvas, PixelCanvasBlendMode,
         PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool,

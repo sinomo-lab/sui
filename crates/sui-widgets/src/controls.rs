@@ -998,6 +998,385 @@ impl Widget for Label {
     }
 }
 
+pub struct Link {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    label: String,
+    label_reader: Option<Box<dyn Fn() -> String>>,
+    url: String,
+    url_reader: Option<Box<dyn Fn() -> String>>,
+    semantic_name: Option<String>,
+    text_style: Option<TextStyle>,
+    enabled: bool,
+    enabled_reader: Option<Box<dyn Fn() -> bool>>,
+    hovered: bool,
+    pressed: bool,
+    measurement: Option<TextMeasurement>,
+    on_open: Option<Box<dyn FnMut(&str)>>,
+    on_open_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, &str)>>,
+}
+
+impl Link {
+    pub fn new(label: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            label: label.into(),
+            label_reader: None,
+            url: url.into(),
+            url_reader: None,
+            semantic_name: None,
+            text_style: None,
+            enabled: true,
+            enabled_reader: None,
+            hovered: false,
+            pressed: false,
+            measurement: None,
+            on_open: None,
+            on_open_with_ctx: None,
+        }
+    }
+
+    pub fn url(url: impl Into<String>) -> Self {
+        let url = url.into();
+        Self::new(url.clone(), url)
+    }
+
+    pub fn label_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.label_reader = Some(Box::new(reader));
+        self
+    }
+
+    pub fn url_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.url_reader = Some(Box::new(reader));
+        self
+    }
+
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
+        self
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+        self.text_style = Some(text_style);
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self.enabled_reader = None;
+        self
+    }
+
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled_reader = Some(Box::new(enabled));
+        self
+    }
+
+    pub fn on_open<F>(mut self, on_open: F) -> Self
+    where
+        F: FnMut(&str) + 'static,
+    {
+        self.on_open = Some(Box::new(on_open));
+        self
+    }
+
+    pub fn on_open_with_ctx<F>(mut self, on_open: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, &str) + 'static,
+    {
+        self.on_open_with_ctx = Some(Box::new(on_open));
+        self
+    }
+
+    fn current_label(&self) -> String {
+        single_line_text(
+            self.label_reader
+                .as_ref()
+                .map(|reader| reader())
+                .unwrap_or_else(|| self.label.clone()),
+        )
+    }
+
+    fn current_url(&self) -> String {
+        single_line_text(
+            self.url_reader
+                .as_ref()
+                .map(|reader| reader())
+                .unwrap_or_else(|| self.url.clone()),
+        )
+        .trim()
+        .to_string()
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled_reader
+            .as_ref()
+            .map(|enabled| enabled())
+            .unwrap_or(self.enabled)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn resolved_text_style(&self, color: Color) -> TextStyle {
+        let mut style = self
+            .text_style
+            .clone()
+            .unwrap_or_else(|| self.resolved_theme().body_text_style());
+        style.color = color;
+        style
+    }
+
+    fn resolved_color(&self, theme: &DefaultTheme) -> Color {
+        if !self.is_enabled() {
+            return theme
+                .palette
+                .placeholder
+                .with_alpha(theme.interaction.disabled_content_opacity);
+        }
+        if self.pressed {
+            theme.palette.accent_pressed
+        } else if self.hovered {
+            theme.palette.accent_hover
+        } else {
+            theme.palette.accent
+        }
+    }
+
+    fn is_visible_parts(label: &str, url: &str) -> bool {
+        !label.trim().is_empty() && !url.trim().is_empty()
+    }
+
+    fn is_visible(&self) -> bool {
+        Self::is_visible_parts(&self.current_label(), &self.current_url())
+    }
+
+    fn can_activate_parts(&self, label: &str, url: &str) -> bool {
+        self.is_enabled() && Self::is_visible_parts(label, url)
+    }
+
+    fn activate(&mut self, ctx: &mut EventCtx) {
+        let label = self.current_label();
+        let url = self.current_url();
+        if !self.can_activate_parts(&label, &url) {
+            return;
+        }
+        if let Some(on_open) = &mut self.on_open {
+            on_open(&url);
+        }
+        if let Some(on_open) = &mut self.on_open_with_ctx {
+            on_open(ctx, &url);
+        }
+    }
+
+    fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
+        if self.hovered != hovered {
+            self.hovered = hovered;
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
+    fn reset_interaction(&mut self, ctx: &mut EventCtx) {
+        if self.hovered || self.pressed {
+            self.hovered = false;
+            self.pressed = false;
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+}
+
+impl Widget for Link {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.is_visible() || !self.is_enabled() {
+            self.reset_interaction(ctx);
+            return;
+        }
+
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Enter => {
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+            }
+            Event::Pointer(_pointer) if _pointer.kind == PointerEventKind::Leave => {
+                self.set_hovered(false, ctx);
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                self.pressed = true;
+                self.hovered = true;
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.request_focus();
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let hovered = ctx.bounds().contains(pointer.position);
+                let activate = self.pressed && hovered;
+                self.pressed = false;
+                self.hovered = hovered;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                if activate {
+                    self.activate(ctx);
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed {
+                    self.pressed = false;
+                    self.hovered = false;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && matches!(key.key.as_str(), "Enter" | " ") =>
+            {
+                self.activate(ctx);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let label = self.current_label();
+        let url = self.current_url();
+        if !Self::is_visible_parts(&label, &url) {
+            self.measurement = None;
+            return constraints.clamp(Size::ZERO);
+        }
+
+        let theme = self.resolved_theme();
+        let style = self.resolved_text_style(self.resolved_color(&theme));
+        let measurement = measure_text(ctx, &label, &style);
+        self.measurement = Some(measurement);
+        constraints.clamp(Size::new(
+            measurement.width,
+            measurement.height.max(style.line_height),
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let label = self.current_label();
+        let url = self.current_url();
+        if !Self::is_visible_parts(&label, &url) {
+            return;
+        }
+
+        let theme = self.resolved_theme();
+        let color = self.resolved_color(&theme);
+        let style = self.resolved_text_style(color);
+        let bounds = ctx.bounds();
+        ctx.push_clip_rect(bounds);
+        paint_single_line_aligned_text(ctx, bounds, &label, &style, style.line_height, 0.0);
+        ctx.pop_clip();
+
+        let measured_width = self
+            .measurement
+            .map(|measurement| measurement.width)
+            .unwrap_or(bounds.width())
+            .min(bounds.width())
+            .max(0.0);
+        if measured_width > 0.0 {
+            let underline_y = bounds.y() + bounds.height() - physical_pixels(ctx, 2.0);
+            let mut underline = PathBuilder::new();
+            underline
+                .move_to(Point::new(bounds.x(), underline_y))
+                .line_to(Point::new(bounds.x() + measured_width, underline_y));
+            ctx.stroke(
+                underline.build(),
+                color,
+                StrokeStyle::new(physical_pixels(ctx, 1.0)),
+            );
+        }
+
+        if ctx.is_focused() && self.is_enabled() {
+            ctx.stroke_rect(
+                bounds.inflate(physical_pixels(ctx, 2.0), physical_pixels(ctx, 1.0)),
+                theme.palette.focus_ring,
+                StrokeStyle::new(physical_pixels(ctx, 1.0)),
+            );
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let label = self.current_label();
+        let url = self.current_url();
+        if !Self::is_visible_parts(&label, &url) {
+            return;
+        }
+
+        let enabled = self.is_enabled();
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Link, ctx.bounds());
+        node.name = Some(self.semantic_name.clone().unwrap_or(label));
+        node.value = Some(SemanticsValue::Text(url));
+        node.state.focused = ctx.is_focused();
+        node.state.hovered = self.hovered && enabled;
+        node.state.disabled = !enabled;
+        node.actions = if enabled {
+            vec![SemanticsAction::Focus, SemanticsAction::Activate]
+        } else {
+            Vec::new()
+        };
+        ctx.push(node);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.is_enabled() && self.is_visible()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
 pub struct Button {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -7095,7 +7474,7 @@ mod tests {
 
     use super::{
         Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, IconButton, IconGlyph, Label,
-        NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, Switch, TextArea,
+        Link, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, Switch, TextArea,
         TextInput, rect_is_finite,
     };
     use crate::containers::SizedBox;
@@ -7621,6 +8000,64 @@ mod tests {
             Some(SemanticsValue::Text("Zoom 50%".to_string()))
         );
         Ok(())
+    }
+
+    #[test]
+    fn link_exposes_link_semantics_and_activates_on_click() -> Result<()> {
+        let opened = Rc::new(RefCell::new(None::<String>));
+        let opened_for_link = Rc::clone(&opened);
+        let (mut runtime, window_id) = build_runtime(
+            Link::new("Open login", "https://example.test/device").on_open(move |url| {
+                *opened_for_link.borrow_mut() = Some(url.to_string());
+            }),
+        );
+
+        let output = runtime.render(window_id)?;
+        let link = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Link)
+            .expect("link semantics should be present");
+        assert_eq!(link.name.as_deref(), Some("Open login"));
+        assert_eq!(
+            link.value,
+            Some(SemanticsValue::Text(
+                "https://example.test/device".to_string()
+            ))
+        );
+        assert!(link.actions.contains(&SemanticsAction::Focus));
+        assert!(link.actions.contains(&SemanticsAction::Activate));
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false),
+        )?;
+        assert_eq!(
+            opened.borrow().as_deref(),
+            Some("https://example.test/device")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn link_with_empty_url_collapses_out_of_semantics() {
+        let output = render(
+            SizedBox::new()
+                .width(160.0)
+                .height(24.0)
+                .with_child(Link::new("Open login", "")),
+        );
+
+        assert!(
+            output
+                .semantics
+                .iter()
+                .all(|node| node.role != SemanticsRole::Link)
+        );
     }
 
     #[test]
