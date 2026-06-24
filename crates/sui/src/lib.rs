@@ -24,8 +24,8 @@ pub use composites::{
     TooltipPlacement,
 };
 pub use containers::{
-    Align, Background, Overflow, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox, Stack,
-    SwitchView, VirtualScrollView,
+    Align, Background, Flex, Overflow, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox,
+    Stack, SwitchView, VirtualScrollView,
 };
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label,
@@ -41,7 +41,11 @@ pub use sui_core::{
     ToggleState, Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 pub use sui_layout::Padding as Insets;
-pub use sui_layout::{Alignment, Axis, Constraints, LayoutContext, Padding};
+pub use sui_layout::{
+    Alignment, Axis, Constraints, FlexAlignContent, FlexBasis, FlexItem, FlexItemLayout,
+    FlexJustify, FlexLayout, FlexLineLayout, FlexStyle, FlexWrap, LayoutContext, Padding,
+    arrange_flex, flex_layout,
+};
 #[cfg(any(feature = "desktop", feature = "web"))]
 pub use sui_platform::{
     AccessibilitySnapshot, DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform,
@@ -481,33 +485,34 @@ pub mod prelude {
         Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSwatch, ComboBox, CommandGroup,
         CompiledClip, CompiledTimeline, CompiledTrack, Constraints, ContextMenu, ControlMetrics,
         ControlPalette, ControlTypography, DataGrid, DefaultTheme, Dialog, Divider, DockPanel,
-        Easing, Event, EventCtx, FieldGroup, FloatingViewConfig, FloatingViewSnapshot,
-        FloatingWorkspace, FloatingWorkspaceState, FontFeature, FontFeatures, FontHandle,
-        FontStretch, FontStyle, FontWeight, FormRow, FormSection, Icon, IconButton, IconGlyph,
-        Image, ImageFit, ImageHandle, ImeEvent, Insets, Interpolate, KeyboardEvent, Keyframe,
-        KeyframeSelection, Label, LayerList, LayerListItem, Link, ListItem, ListView, LoopMode,
-        MeasureCtx, Menu, MenuItem, Modal, MultilineTextInput, NumberInput, Overflow, PaintCtx,
-        PanelSection, Path, PathBar, PathBuilder, PixelCanvas, PixelCanvasBlendMode,
-        PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool,
-        PlaybackState, Point, PointerEvent, Popover, PresetStrip, ProgressBar, PropertyRow,
-        PropertyRowLayout, Pulse, RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage,
-        ResizablePane, ResourceRegistry, Result, SampleBatch, SampleBuffer, SampledAnimationValue,
-        ScrollAxes, ScrollBar, ScrollState, ScrollView, Select, SemanticsCtx, Separator,
-        ShapedText, SharedCompiledTimeline, SingleChild, Size, SizedBox, Slider, SpinBox, Spinner,
-        SplitView, SpringF32, Stack, StatusBar, StatusBarHost, StatusBarSegment, StrokeStyle,
-        Style, Surface, SurfaceBorder, SurfaceElevation, SurfacePalette, SurfaceRole, Switch,
-        SwitchView, TabBar, Table, TableColumn, TableColumnAlignment, TableRow, Tabs, TextArea,
-        TextInput, TextLayout, TextMeasurement, TextStyle, Theme, ThemeAspectRatios,
-        ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers,
-        ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
-        ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer,
-        ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking, Timeline, TimelineBindingSink,
-        TimelinePlayer, TimelineSnap, TimelineTick, TimerToken, ToolPalette, ToolPaletteItem,
-        Toolbar, Tooltip, TooltipPlacement, Track, Transform, Transition, TreeItem, TreeView,
-        VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WidgetShader, Window,
-        WindowBuilder, WindowRenderOptions, containers::Padding,
-        invalidation_for_animation_property, register_builtin_icon_resources,
-        set_window_render_options,
+        Easing, Event, EventCtx, FieldGroup, Flex, FlexAlignContent, FlexBasis, FlexItem,
+        FlexItemLayout, FlexJustify, FlexLayout, FlexLineLayout, FlexStyle, FlexWrap,
+        FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState,
+        FontFeature, FontFeatures, FontHandle, FontStretch, FontStyle, FontWeight, FormRow,
+        FormSection, Icon, IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImeEvent, Insets,
+        Interpolate, KeyboardEvent, Keyframe, KeyframeSelection, Label, LayerList, LayerListItem,
+        Link, ListItem, ListView, LoopMode, MeasureCtx, Menu, MenuItem, Modal, MultilineTextInput,
+        NumberInput, Overflow, PaintCtx, PanelSection, Path, PathBar, PathBuilder, PixelCanvas,
+        PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState,
+        PixelCanvasTool, PlaybackState, Point, PointerEvent, Popover, PresetStrip, ProgressBar,
+        PropertyRow, PropertyRowLayout, Pulse, RadioButton, RadioGroup, Rect, RegisteredFont,
+        RegisteredImage, ResizablePane, ResourceRegistry, Result, SampleBatch, SampleBuffer,
+        SampledAnimationValue, ScrollAxes, ScrollBar, ScrollState, ScrollView, Select,
+        SemanticsCtx, Separator, ShapedText, SharedCompiledTimeline, SingleChild, Size, SizedBox,
+        Slider, SpinBox, Spinner, SplitView, SpringF32, Stack, StatusBar, StatusBarHost,
+        StatusBarSegment, StrokeStyle, Style, Surface, SurfaceBorder, SurfaceElevation,
+        SurfacePalette, SurfaceRole, Switch, SwitchView, TabBar, Table, TableColumn,
+        TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextLayout, TextMeasurement,
+        TextStyle, Theme, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme,
+        ThemeColors, ThemeContainers, ThemeExtension, ThemeExtensions, ThemeFontFamilies,
+        ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii,
+        ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
+        Timeline, TimelineBindingSink, TimelinePlayer, TimelineSnap, TimelineTick, TimerToken,
+        ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement, Track, Transform,
+        Transition, TreeItem, TreeView, VirtualScrollView, WakeEvent, Widget, WidgetChildren,
+        WidgetPod, WidgetShader, Window, WindowBuilder, WindowRenderOptions, arrange_flex,
+        containers::Padding, flex_layout, invalidation_for_animation_property,
+        register_builtin_icon_resources, set_window_render_options,
     };
 }
 

@@ -38,8 +38,8 @@ pub use composites::{
     Toolbar, Tooltip, TooltipPlacement,
 };
 pub use containers::{
-    Align, Background, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView, SizedBox,
-    Stack, SwitchView, VirtualScrollView,
+    Align, Background, Flex, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView,
+    SizedBox, Stack, SwitchView, VirtualScrollView,
 };
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, Checkbox, ComboBox, Divider, Icon, IconButton, IconGlyph, Label,

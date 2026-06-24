@@ -5,7 +5,10 @@ use sui_core::{
     PointerButton, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode,
     SemanticsRole, SemanticsValue, Size, Vector, WakeEvent, WidgetId,
 };
-use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
+use sui_layout::{
+    Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexStyle, FlexWrap,
+    Padding as Insets, arrange_flex, flex_layout,
+};
 use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
     SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor,
@@ -444,6 +447,194 @@ impl Widget for Stack {
                 ),
             );
             main_offset += axis_main(self.axis, child_size);
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.children.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.children.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.children.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.children.visit_children_mut(visitor);
+    }
+}
+
+pub struct Flex {
+    style: FlexStyle,
+    items: Vec<FlexItem>,
+    children: WidgetChildren,
+}
+
+impl Flex {
+    pub fn new(axis: Axis) -> Self {
+        Self {
+            style: FlexStyle::new(axis),
+            items: Vec::new(),
+            children: WidgetChildren::new(),
+        }
+    }
+
+    pub fn horizontal() -> Self {
+        Self::new(Axis::Horizontal)
+    }
+
+    pub fn vertical() -> Self {
+        Self::new(Axis::Vertical)
+    }
+
+    pub fn with_style(mut self, style: FlexStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    pub fn wrap(mut self, wrap: FlexWrap) -> Self {
+        self.style = self.style.wrap(wrap);
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.style = self.style.gap(gap);
+        self
+    }
+
+    pub fn main_gap(mut self, gap: f32) -> Self {
+        self.style = self.style.main_gap(gap);
+        self
+    }
+
+    pub fn cross_gap(mut self, gap: f32) -> Self {
+        self.style = self.style.cross_gap(gap);
+        self
+    }
+
+    pub fn justify(mut self, justify: FlexJustify) -> Self {
+        self.style = self.style.justify(justify);
+        self
+    }
+
+    pub fn align_items(mut self, alignment: Alignment) -> Self {
+        self.style = self.style.align_items(alignment);
+        self
+    }
+
+    pub fn align_content(mut self, alignment: FlexAlignContent) -> Self {
+        self.style = self.style.align_content(alignment);
+        self
+    }
+
+    pub fn with_child<W>(mut self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self.items.push(FlexItem::new());
+        self
+    }
+
+    pub fn with_item<W>(mut self, child: W, item: FlexItem) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self.items.push(item);
+        self
+    }
+
+    pub fn spacer(mut self) -> Self {
+        self.push_spacer();
+        self
+    }
+
+    pub fn push<W>(&mut self, child: W)
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self.items.push(FlexItem::new());
+    }
+
+    pub fn push_item<W>(&mut self, child: W, item: FlexItem)
+    where
+        W: Widget + 'static,
+    {
+        self.children.push(child);
+        self.items.push(item);
+    }
+
+    pub fn push_spacer(&mut self) {
+        self.children.push(SizedBox::new());
+        self.items.push(FlexItem::fill());
+    }
+
+    pub const fn style(&self) -> FlexStyle {
+        self.style
+    }
+
+    pub fn items(&self) -> &[FlexItem] {
+        &self.items
+    }
+
+    pub fn items_mut(&mut self) -> &mut [FlexItem] {
+        &mut self.items
+    }
+
+    pub fn item(&self, index: usize) -> Option<FlexItem> {
+        self.items.get(index).copied()
+    }
+
+    pub fn set_item(&mut self, index: usize, item: FlexItem) -> bool {
+        let Some(slot) = self.items.get_mut(index) else {
+            return false;
+        };
+        *slot = item;
+        true
+    }
+
+    pub fn children(&self) -> &[WidgetPod] {
+        self.children.as_slice()
+    }
+
+    pub fn children_mut(&mut self) -> &mut [WidgetPod] {
+        self.children.as_mut_slice()
+    }
+}
+
+impl Widget for Flex {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let items = self.items.clone();
+        let layout = flex_layout(
+            self.style,
+            &items,
+            constraints,
+            |index, child_constraints| self.children.measure_child(index, ctx, child_constraints),
+        );
+
+        layout.size
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let measured_sizes = self
+            .children
+            .as_slice()
+            .iter()
+            .map(WidgetPod::measured_size)
+            .collect::<Vec<_>>();
+        let layout = arrange_flex(self.style, &self.items, bounds.size, &measured_sizes);
+
+        for (index, item_layout) in layout.items.iter().enumerate() {
+            self.children.arrange_child(
+                index,
+                ctx,
+                item_layout.rect.translate(bounds.origin.to_vector()),
+            );
         }
     }
 
@@ -2536,7 +2727,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Align, Background, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView,
+        Align, Background, Flex, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView,
         SizedBox, Stack, SwitchView, VirtualScrollView,
     };
     use crate::{DefaultTheme, SplitView};
@@ -2545,7 +2736,7 @@ mod tests {
         PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, ScrollDelta,
         SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
     };
-    use sui_layout::{Alignment, Axis, Constraints, Padding as Insets};
+    use sui_layout::{Alignment, Axis, Constraints, FlexItem, FlexWrap, Padding as Insets};
     use sui_runtime::{
         Application, ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
         PaintCtx, RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot,
@@ -3172,6 +3363,93 @@ mod tests {
         assert_eq!(output.frame.viewport, Size::new(100.0, 40.0));
         assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 15.0, 30.0, 10.0));
         assert_eq!(graph.nodes[3].bounds, Rect::new(35.0, 10.0, 20.0, 20.0));
+    }
+
+    #[test]
+    fn flex_grows_child_to_fill_available_main_axis_space() {
+        let (output, graph) = render_root(
+            SizedBox::new().size(Size::new(100.0, 20.0)).with_child(
+                Flex::horizontal()
+                    .with_child(FixedBox::new(
+                        Size::new(20.0, 10.0),
+                        Color::rgba(0.7, 0.2, 0.2, 1.0),
+                    ))
+                    .with_item(
+                        FixedBox::new(Size::new(10.0, 10.0), Color::rgba(0.2, 0.2, 0.7, 1.0)),
+                        FlexItem::new().grow(1.0),
+                    ),
+            ),
+        );
+
+        assert_eq!(output.frame.viewport, Size::new(100.0, 20.0));
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 20.0, 10.0));
+        assert_eq!(graph.nodes[3].bounds, Rect::new(20.0, 0.0, 80.0, 10.0));
+    }
+
+    #[test]
+    fn flex_spacer_pushes_following_children_to_remaining_edge() {
+        let (_, graph) = render_root(
+            SizedBox::new().size(Size::new(100.0, 10.0)).with_child(
+                Flex::horizontal()
+                    .with_child(FixedBox::new(
+                        Size::new(10.0, 10.0),
+                        Color::rgba(0.7, 0.2, 0.2, 1.0),
+                    ))
+                    .spacer()
+                    .with_child(FixedBox::new(
+                        Size::new(10.0, 10.0),
+                        Color::rgba(0.2, 0.2, 0.7, 1.0),
+                    )),
+            ),
+        );
+
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(graph.nodes[4].bounds, Rect::new(90.0, 0.0, 10.0, 10.0));
+    }
+
+    #[test]
+    fn flex_wraps_children_and_applies_cross_gap() {
+        let (output, graph) = render_root(
+            SizedBox::new().size(Size::new(70.0, 25.0)).with_child(
+                Flex::horizontal()
+                    .wrap(FlexWrap::Wrap)
+                    .main_gap(5.0)
+                    .cross_gap(5.0)
+                    .with_child(FixedBox::new(
+                        Size::new(30.0, 10.0),
+                        Color::rgba(0.7, 0.2, 0.2, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(30.0, 10.0),
+                        Color::rgba(0.2, 0.7, 0.2, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(30.0, 10.0),
+                        Color::rgba(0.2, 0.2, 0.7, 1.0),
+                    )),
+            ),
+        );
+
+        assert_eq!(output.frame.viewport, Size::new(70.0, 25.0));
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 30.0, 10.0));
+        assert_eq!(graph.nodes[3].bounds, Rect::new(35.0, 0.0, 30.0, 10.0));
+        assert_eq!(graph.nodes[4].bounds, Rect::new(0.0, 15.0, 30.0, 10.0));
+    }
+
+    #[test]
+    fn flex_stretches_children_on_cross_axis() {
+        let (_, graph) = render_root(
+            SizedBox::new().size(Size::new(60.0, 20.0)).with_child(
+                Flex::horizontal()
+                    .align_items(Alignment::Stretch)
+                    .with_child(FixedBox::new(
+                        Size::new(20.0, 8.0),
+                        Color::rgba(0.4, 0.3, 0.2, 1.0),
+                    )),
+            ),
+        );
+
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 20.0, 20.0));
     }
 
     #[test]

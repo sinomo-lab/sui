@@ -61,6 +61,68 @@ fn main() -> Result<()> {
 }
 ```
 
+## Layout Helpers
+
+Use `Stack` for simple rows and columns. Use `Flex` when a container needs
+weighted children, wrapping, or main-axis distribution.
+
+```rust,no_run
+use sui::prelude::*;
+
+fn search_row() -> impl Widget {
+    Flex::horizontal()
+        .gap(8.0)
+        .align_items(Alignment::Center)
+        .with_child(Label::new("Search"))
+        .with_item(
+            TextInput::new("Query"),
+            FlexItem::flex(1.0).min_width(120.0),
+        )
+        .with_child(Button::new("Run"))
+}
+```
+
+For wrapping layouts, opt in explicitly:
+
+```rust,no_run
+use sui::prelude::*;
+
+fn tag_cloud(tags: impl IntoIterator<Item = String>) -> impl Widget {
+    let mut flex = Flex::horizontal().wrap(FlexWrap::Wrap).gap(6.0);
+    for tag in tags {
+        flex.push(Label::new(tag));
+    }
+    flex
+}
+```
+
+Custom widgets can use `flex_layout` and `arrange_flex` from `sui-layout`
+through the `sui` facade when they need the same layout behavior without using
+the retained `Flex` container.
+
+Common item helpers cover the frequent cases:
+
+```rust,no_run
+use sui::prelude::*;
+
+let toolbar = Flex::horizontal()
+    .gap(8.0)
+    .with_child(Button::new("Back"))
+    .spacer()
+    .with_child(Button::new("Done"));
+
+let columns = Flex::horizontal()
+    .gap(12.0)
+    .with_item(left_panel(), FlexItem::fixed(240.0))
+    .with_item(main_panel(), FlexItem::fill());
+
+let cards = Flex::horizontal()
+    .wrap(FlexWrap::Wrap)
+    .gap(12.0)
+    .with_item(card_a(), FlexItem::new().basis_fraction(0.5))
+    .with_item(card_b(), FlexItem::new().basis_fraction(0.5));
+```
+
 `App::build()` returns a `Runtime` for tests, headless rendering, embedding, or
 custom platform integration. `App::run()` is the default desktop/web entry
 point. `App::into_application()` is an escape hatch for debug tooling and
