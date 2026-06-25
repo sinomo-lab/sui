@@ -11,9 +11,9 @@ use std::{
 use crate::diagnostics::{WidgetTimingPhase, record_widget_timing};
 
 use sui_core::{
-    AsyncWakeToken, Color, DpiInfo, Event, ImageHandle, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, Path, Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector,
-    WidgetId, WindowId,
+    AsyncWakeToken, Color, DpiInfo, DragPayload, DragScopeId, DragSessionId, DropEffect, Event,
+    ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, Path, Point, Rect,
+    SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
 };
 use sui_layout::{Constraints, LayoutContext};
 use sui_scene::{
@@ -30,6 +30,7 @@ use web_time::Instant;
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TIMER_TOKEN: AtomicU64 = AtomicU64::new(1);
 static NEXT_ASYNC_WAKE_TOKEN: AtomicU64 = AtomicU64::new(1);
+static NEXT_DRAG_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const WIDGET_IMAGE_HANDLE_NAMESPACE: u64 = 1 << 63;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -619,6 +620,8 @@ impl WidgetPod {
             focus_request: ctx.take_focus_request(),
             wake_requests: ctx.take_wake_requests(),
             pointer_capture_requests: ctx.take_pointer_capture_requests(),
+            drag_requests: ctx.take_drag_requests(),
+            drop_acceptances: ctx.take_drop_acceptances(),
         }
     }
 
@@ -646,6 +649,8 @@ impl WidgetPod {
             focus_request: ctx.take_focus_request(),
             wake_requests: ctx.take_wake_requests(),
             pointer_capture_requests: ctx.take_pointer_capture_requests(),
+            drag_requests: ctx.take_drag_requests(),
+            drop_acceptances: ctx.take_drop_acceptances(),
         }
     }
 
@@ -844,12 +849,37 @@ pub(crate) enum PointerCaptureRequest {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct BeginDragRequest {
+    pub session_id: DragSessionId,
+    pub scope_id: DragScopeId,
+    pub pointer_id: u64,
+    pub source: WidgetId,
+    pub position: Point,
+    pub payload: DragPayload,
+    pub allowed_effect: DropEffect,
+    pub preview_label: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum DragRequest {
+    Begin(BeginDragRequest),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DropAcceptanceRequest {
+    pub target: WidgetId,
+    pub effect: DropEffect,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct EventDispatch {
     pub handled: bool,
     pub invalidations: Vec<InvalidationRequest>,
     pub focus_request: Option<FocusRequest>,
     pub wake_requests: Vec<WakeRequest>,
     pub pointer_capture_requests: Vec<PointerCaptureRequest>,
+    pub drag_requests: Vec<DragRequest>,
+    pub drop_acceptances: Vec<DropAcceptanceRequest>,
 }
 
 #[derive(Debug, Clone)]
@@ -866,6 +896,8 @@ pub struct EventCtx {
     focus_request: Option<FocusRequest>,
     wake_requests: Vec<WakeRequest>,
     pointer_capture_requests: Vec<PointerCaptureRequest>,
+    drag_requests: Vec<DragRequest>,
+    drop_acceptances: Vec<DropAcceptanceRequest>,
 }
 
 impl EventCtx {
@@ -891,6 +923,8 @@ impl EventCtx {
             focus_request: None,
             wake_requests: Vec::new(),
             pointer_capture_requests: Vec::new(),
+            drag_requests: Vec::new(),
+            drop_acceptances: Vec::new(),
         }
     }
 
@@ -993,6 +1027,40 @@ impl EventCtx {
             .push(PointerCaptureRequest::Release { pointer_id });
     }
 
+    pub fn begin_drag(
+        &mut self,
+        scope_id: DragScopeId,
+        pointer_id: u64,
+        position: Point,
+        payload: DragPayload,
+        allowed_effect: DropEffect,
+        preview_label: Option<String>,
+    ) -> DragSessionId {
+        let session_id = DragSessionId::new(NEXT_DRAG_SESSION_ID.fetch_add(1, Ordering::Relaxed));
+        self.drag_requests
+            .push(DragRequest::Begin(BeginDragRequest {
+                session_id,
+                scope_id,
+                pointer_id,
+                source: self.widget_id,
+                position,
+                payload,
+                allowed_effect,
+                preview_label,
+            }));
+        session_id
+    }
+
+    pub fn accept_drop(&mut self, effect: DropEffect) {
+        if effect.is_none() {
+            return;
+        }
+        self.drop_acceptances.push(DropAcceptanceRequest {
+            target: self.widget_id,
+            effect,
+        });
+    }
+
     pub fn request(&mut self, request: InvalidationRequest) {
         self.invalidations.push(request);
     }
@@ -1069,6 +1137,14 @@ impl EventCtx {
 
     pub(crate) fn take_pointer_capture_requests(&mut self) -> Vec<PointerCaptureRequest> {
         std::mem::take(&mut self.pointer_capture_requests)
+    }
+
+    pub(crate) fn take_drag_requests(&mut self) -> Vec<DragRequest> {
+        std::mem::take(&mut self.drag_requests)
+    }
+
+    pub(crate) fn take_drop_acceptances(&mut self) -> Vec<DropAcceptanceRequest> {
+        std::mem::take(&mut self.drop_acceptances)
     }
 
     fn request_widget(&mut self, kind: InvalidationKind) {

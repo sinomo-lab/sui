@@ -972,6 +972,10 @@ impl Label {
         style
     }
 
+    fn has_explicit_line_break(text: &str) -> bool {
+        text.bytes().any(|byte| matches!(byte, b'\n' | b'\r'))
+    }
+
     fn owner_id(widget_id: WidgetId) -> SelectionOwnerId {
         SelectionOwnerId::from(widget_id)
     }
@@ -1131,23 +1135,40 @@ impl Widget for Label {
         let text = self.current_text();
         let style = self.resolved_style();
         let natural_measurement = measure_text(ctx, &text, &style);
-        let (measured_width, measurement) = if constraints.max.width.is_finite()
-            && natural_measurement.width > constraints.max.width
-        {
-            let wrapped_measurement = ctx
+        let max_width = constraints.max.width;
+        let wraps_to_constraint = max_width.is_finite() && natural_measurement.width > max_width;
+        let needs_layout = self.selection_scope.is_some()
+            || wraps_to_constraint
+            || Self::has_explicit_line_break(&text);
+        let mut measured_width = if wraps_to_constraint {
+            max_width.max(0.0)
+        } else {
+            natural_measurement.width
+        };
+        let mut measurement = natural_measurement;
+
+        if needs_layout {
+            let layout_width = if max_width.is_finite() {
+                measured_width.min(max_width).max(1.0)
+            } else {
+                measured_width.max(1.0)
+            };
+            measurement = ctx
                 .layout()
                 .shape_text(
                     text.clone(),
-                    Size::new(constraints.max.width.max(1.0), f32::INFINITY),
+                    Size::new(layout_width, f32::INFINITY),
                     style.clone(),
                 )
                 .map(|layout| layout.measurement())
-                .unwrap_or(natural_measurement);
-            (constraints.max.width.max(0.0), wrapped_measurement)
-        } else {
-            (natural_measurement.width, natural_measurement)
-        };
-        if self.selection_scope.is_some() {
+                .unwrap_or(measurement);
+            if !wraps_to_constraint {
+                measured_width = if max_width.is_finite() {
+                    measurement.width.min(max_width).max(0.0)
+                } else {
+                    measurement.width.max(0.0)
+                };
+            }
             self.layout = ctx
                 .layout()
                 .shape_text_persistent(
@@ -1155,7 +1176,7 @@ impl Widget for Label {
                     text,
                     Size::new(
                         measured_width.max(1.0),
-                        measurement.height.max(style.line_height),
+                        measurement.height.max(style.line_height).max(1.0),
                     ),
                     style.clone(),
                 )
@@ -1175,7 +1196,7 @@ impl Widget for Label {
         let style = self.resolved_style();
         if let Some(layout) = &self.layout {
             let layout_bounds = layout.measurement().bounds;
-            let layout_rect = aligned_text_rect_for_layout_with_mode(
+            let mut layout_rect = aligned_text_rect_for_layout_with_mode(
                 ctx,
                 ctx.bounds(),
                 layout.layout(),
@@ -1183,6 +1204,18 @@ impl Widget for Label {
                 0.0,
                 HorizontalTextAlignmentMode::Optical,
             );
+            if layout.lines().len() > 1 {
+                let block_height = style
+                    .line_height
+                    .max(layout.measurement().height)
+                    .min(ctx.bounds().height());
+                layout_rect = Rect::new(
+                    layout_rect.x(),
+                    ctx.bounds().y() + ((ctx.bounds().height() - block_height).max(0.0) * 0.5),
+                    layout_rect.width(),
+                    block_height,
+                );
+            }
             let origin = Point::new(layout_rect.x() - layout_bounds.x(), layout_rect.y());
             if let Some(range) = self.active_selection_range(ctx.widget_id(), text.len()) {
                 let theme = DefaultTheme::default();
@@ -8434,6 +8467,44 @@ mod tests {
         )));
 
         assert!(output.frame.viewport.height > DefaultTheme::default().typography.body_line_height);
+    }
+
+    #[test]
+    fn label_measures_explicit_multiline_text_height() {
+        let text = "First line\nSecond line";
+        let output = render(Label::new(text));
+        let layout = shaped_text_layout_for(&output, text);
+        let label = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Text && node.name.as_deref() == Some(text))
+            .expect("label semantics should exist");
+
+        assert_eq!(layout.lines().len(), 2);
+        assert!(label.bounds.height() >= layout.measurement().height - 0.01);
+        assert!(label.bounds.height() > DefaultTheme::default().typography.body_line_height);
+    }
+
+    #[test]
+    fn label_centers_explicit_multiline_text_as_a_block() {
+        let text = "First line\nSecond line";
+        let output = render(
+            SizedBox::new()
+                .width(180.0)
+                .height(96.0)
+                .with_child(Label::new(text)),
+        );
+        let shaped = first_shaped_text(&output);
+        let layout = shaped_text_layout_for(&output, text);
+        let expected_origin_y =
+            (output.frame.viewport.height - layout.measurement().height).max(0.0) * 0.5;
+
+        assert_eq!(layout.lines().len(), 2);
+        assert!(
+            (shaped.origin.y - expected_origin_y).abs() < 0.75,
+            "multiline label origin should block-center at {expected_origin_y}, got {}",
+            shaped.origin.y
+        );
     }
 
     #[test]

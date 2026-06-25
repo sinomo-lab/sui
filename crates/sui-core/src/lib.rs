@@ -2,6 +2,7 @@
 
 mod color;
 mod dpi;
+mod drag;
 mod error;
 mod event;
 mod geometry;
@@ -11,6 +12,10 @@ mod semantics;
 
 pub use color::{Color, ColorSpace};
 pub use dpi::DpiInfo;
+pub use drag::{
+    DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload, DragPreview, DragScopeId,
+    DragSessionId, DropEffect,
+};
 pub use error::{Error, Result};
 pub use event::{
     CustomEvent, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, PointerButton,

@@ -70,6 +70,7 @@ struct PaintDemoState {
 
 struct PaintDemoStateInner {
     selected_layer: usize,
+    layer_order: Vec<usize>,
     layer_visible: [bool; PAINT_LAYER_NAMES.len()],
     layer_locked: [bool; PAINT_LAYER_NAMES.len()],
     layer_opacity: [f32; PAINT_LAYER_NAMES.len()],
@@ -81,6 +82,7 @@ impl PaintDemoState {
         Self {
             inner: Rc::new(RefCell::new(PaintDemoStateInner {
                 selected_layer: 0,
+                layer_order: (0..PAINT_LAYER_NAMES.len()).collect(),
                 layer_visible: [true; PAINT_LAYER_NAMES.len()],
                 layer_locked: [false, true],
                 layer_opacity: [1.0; PAINT_LAYER_NAMES.len()],
@@ -93,6 +95,15 @@ impl PaintDemoState {
         self.inner.borrow().selected_layer
     }
 
+    fn selected_layer_visual_index(&self) -> usize {
+        let inner = self.inner.borrow();
+        inner
+            .layer_order
+            .iter()
+            .position(|layer| *layer == inner.selected_layer)
+            .unwrap_or(inner.selected_layer)
+    }
+
     fn selected_layer_name(&self) -> &'static str {
         paint_layer_name(self.selected_layer())
     }
@@ -100,6 +111,38 @@ impl PaintDemoState {
     fn set_selected_layer(&self, selected_layer: usize) {
         if selected_layer < PAINT_LAYER_NAMES.len() {
             self.inner.borrow_mut().selected_layer = selected_layer;
+        }
+    }
+
+    fn layer_at_visual_index(&self, index: usize) -> usize {
+        self.inner
+            .borrow()
+            .layer_order
+            .get(index)
+            .copied()
+            .unwrap_or(index)
+    }
+
+    fn set_selected_visual_layer(&self, index: usize) {
+        self.set_selected_layer(self.layer_at_visual_index(index));
+    }
+
+    fn reorder_layers(&self, from: usize, to: usize) {
+        let mut inner = self.inner.borrow_mut();
+        if from >= inner.layer_order.len() || to >= inner.layer_order.len() || from == to {
+            return;
+        }
+        let layer = inner.layer_order.remove(from);
+        inner.layer_order.insert(to, layer);
+    }
+
+    fn paint_layer_is_above_paper(&self) -> bool {
+        let inner = self.inner.borrow();
+        let paint = inner.layer_order.iter().position(|layer| *layer == 0);
+        let paper = inner.layer_order.iter().position(|layer| *layer == 1);
+        match (paint, paper) {
+            (Some(paint), Some(paper)) => paint < paper,
+            _ => true,
         }
     }
 
@@ -145,6 +188,7 @@ impl PaintDemoState {
         paint_state.set_display_visible(self.layer_visible(0));
         paint_state.set_display_opacity(self.layer_opacity(0));
         paint_state.set_display_blend_mode(self.layer_blend_mode(0));
+        paint_state.set_display_above_paper(self.paint_layer_is_above_paper());
         paint_state.set_paper_visible(self.layer_visible(1));
         paint_state.set_paper_opacity(self.layer_opacity(1));
     }
@@ -196,22 +240,22 @@ impl PaintDemoState {
     }
 
     fn can_select_layer_above(&self) -> bool {
-        self.selected_layer() > 0
+        self.selected_layer_visual_index() > 0
     }
 
     fn can_select_layer_below(&self) -> bool {
-        self.selected_layer() + 1 < PAINT_LAYER_NAMES.len()
+        self.selected_layer_visual_index() + 1 < PAINT_LAYER_NAMES.len()
     }
 
     fn select_layer_above(&self) {
         if self.can_select_layer_above() {
-            self.set_selected_layer(self.selected_layer() - 1);
+            self.set_selected_visual_layer(self.selected_layer_visual_index() - 1);
         }
     }
 
     fn select_layer_below(&self) {
         if self.can_select_layer_below() {
-            self.set_selected_layer(self.selected_layer() + 1);
+            self.set_selected_visual_layer(self.selected_layer_visual_index() + 1);
         }
     }
 }
@@ -563,15 +607,10 @@ fn build_paint_canvas_stage(
                                     }),
                             )
                             .with_child(
-                                PixelCanvas::from_fn(
+                                PixelCanvas::new(
                                     PAINT_TAB_LABEL,
                                     PAINT_DOCUMENT_WIDTH,
                                     PAINT_DOCUMENT_HEIGHT,
-                                    |x, y| {
-                                        let u = x as f32 / (PAINT_DOCUMENT_WIDTH - 1) as f32;
-                                        let v = y as f32 / (PAINT_DOCUMENT_HEIGHT - 1) as f32;
-                                        seeded_paint_color(u, v)
-                                    },
                                 )
                                 .theme_when(clone_dev_theme_reader(&theme_reader))
                                 .state(paint_state)
@@ -1134,7 +1173,7 @@ fn build_paint_layers_panel(
     paint_state: PixelCanvasState,
     theme_reader: DevThemeReader,
 ) -> impl Widget {
-    let selected_layer = state.selected_layer();
+    let selected_layer = state.selected_layer_visual_index();
     let selected_state = state.clone();
     let selection_state = state.clone();
     let selection_paint_state = paint_state.clone();
@@ -1142,6 +1181,8 @@ fn build_paint_layers_panel(
     let visibility_paint_state = paint_state.clone();
     let lock_change_state = state.clone();
     let lock_change_paint_state = paint_state.clone();
+    let reorder_change_state = state.clone();
+    let reorder_paint_state = paint_state.clone();
     let opacity_paint_state = paint_state.clone();
     let blend_paint_state = paint_state;
     let paint_detail_state = state.clone();
@@ -1176,25 +1217,30 @@ fn build_paint_layers_panel(
                             .locked_when(move || paper_lock_state.layer_locked(1)),
                     ])
                     .selected(selected_layer)
-                    .selected_when(move || Some(selected_state.selected_layer()))
+                    .selected_when(move || Some(selected_state.selected_layer_visual_index()))
                     .row_height(46.0)
                     .on_select_with_ctx(move |ctx, index, _| {
-                        selection_state.set_selected_layer(index);
+                        selection_state.set_selected_visual_layer(index);
                         selection_state.sync_canvas_editable(&selection_paint_state);
                         request_window_refresh(ctx, true);
                     })
                     .on_visibility_change_with_ctx(move |ctx, index, visible| {
-                        visibility_change_state.set_layer_visible(index, visible);
-                        if index <= 1 {
-                            visibility_change_state.sync_canvas_layers(&visibility_paint_state);
-                        }
+                        let layer = visibility_change_state.layer_at_visual_index(index);
+                        visibility_change_state.set_layer_visible(layer, visible);
+                        visibility_change_state.sync_canvas_layers(&visibility_paint_state);
                         request_window_refresh(ctx, true);
                     })
                     .on_lock_change_with_ctx(move |ctx, index, locked| {
-                        lock_change_state.set_layer_locked(index, locked);
-                        if lock_change_state.selected_layer() == index {
+                        let layer = lock_change_state.layer_at_visual_index(index);
+                        lock_change_state.set_layer_locked(layer, locked);
+                        if lock_change_state.selected_layer() == layer {
                             lock_change_state.sync_canvas_editable(&lock_change_paint_state);
                         }
+                        request_window_refresh(ctx, true);
+                    })
+                    .on_reorder_with_ctx(move |ctx, change| {
+                        reorder_change_state.reorder_layers(change.from, change.to);
+                        reorder_change_state.sync_canvas_layers(&reorder_paint_state);
                         request_window_refresh(ctx, true);
                     }),
             ),
@@ -1357,126 +1403,4 @@ fn paint_blend_mode_selected_index(mode: PixelCanvasBlendMode) -> usize {
         .iter()
         .position(|candidate| *candidate == mode)
         .unwrap_or(0)
-}
-
-fn seeded_paint_color(u: f32, v: f32) -> Color {
-    let mut color = Color::rgba(0.0, 0.0, 0.0, 0.0);
-    color = paint_over(
-        color,
-        Color::rgba(0.06, 0.62, 0.72, 0.58),
-        stroke_coverage(u, v, (0.16, 0.66), (0.86, 0.38), 0.120, 0.035),
-    );
-    color = paint_over(
-        color,
-        Color::rgba(0.08, 0.22, 0.78, 0.86),
-        stroke_coverage(u, v, (0.17, 0.34), (0.72, 0.27), 0.074, 0.024),
-    );
-    color = paint_over(
-        color,
-        Color::rgba(0.54, 0.30, 0.84, 0.68),
-        stroke_coverage(u, v, (0.34, 0.50), (0.88, 0.64), 0.088, 0.028),
-    );
-    color = paint_over(
-        color,
-        Color::rgba(0.96, 0.66, 0.18, 0.90),
-        circle_coverage(u, v, (0.24, 0.26), 0.060, 0.020),
-    );
-    color = paint_over(
-        color,
-        Color::rgba(0.96, 0.98, 1.00, 0.38),
-        stroke_coverage(u, v, (0.28, 0.60), (0.74, 0.44), 0.030, 0.016),
-    );
-    paint_over(
-        color,
-        Color::rgba(0.06, 0.08, 0.14, 0.88),
-        stroke_coverage(u, v, (0.42, 0.72), (0.72, 0.57), 0.024, 0.012),
-    )
-}
-
-fn paint_over(destination: Color, source: Color, coverage: f32) -> Color {
-    let coverage = coverage.clamp(0.0, 1.0);
-    if coverage <= 0.0 {
-        return destination;
-    }
-
-    let source_alpha = (source.alpha * coverage).clamp(0.0, 1.0);
-    let destination_alpha = destination.alpha.clamp(0.0, 1.0);
-    let output_alpha = source_alpha + (destination_alpha * (1.0 - source_alpha));
-    if output_alpha <= 0.0 {
-        return Color::rgba(0.0, 0.0, 0.0, 0.0);
-    }
-
-    let destination_weight = destination_alpha * (1.0 - source_alpha);
-    Color::rgba(
-        ((source.red * source_alpha) + (destination.red * destination_weight)) / output_alpha,
-        ((source.green * source_alpha) + (destination.green * destination_weight)) / output_alpha,
-        ((source.blue * source_alpha) + (destination.blue * destination_weight)) / output_alpha,
-        output_alpha,
-    )
-}
-
-fn stroke_coverage(
-    u: f32,
-    v: f32,
-    start: (f32, f32),
-    end: (f32, f32),
-    radius: f32,
-    feather: f32,
-) -> f32 {
-    let distance = distance_to_segment(u, v, start, end);
-    soft_coverage(distance, radius, feather)
-}
-
-fn circle_coverage(u: f32, v: f32, center: (f32, f32), radius: f32, feather: f32) -> f32 {
-    let dx = u - center.0;
-    let dy = v - center.1;
-    soft_coverage((dx * dx + dy * dy).sqrt(), radius, feather)
-}
-
-fn distance_to_segment(u: f32, v: f32, start: (f32, f32), end: (f32, f32)) -> f32 {
-    let ab_x = end.0 - start.0;
-    let ab_y = end.1 - start.1;
-    let length_squared = (ab_x * ab_x) + (ab_y * ab_y);
-    if length_squared <= f32::EPSILON {
-        let dx = u - start.0;
-        let dy = v - start.1;
-        return (dx * dx + dy * dy).sqrt();
-    }
-
-    let ap_x = u - start.0;
-    let ap_y = v - start.1;
-    let t = ((ap_x * ab_x) + (ap_y * ab_y)) / length_squared;
-    let t = t.clamp(0.0, 1.0);
-    let closest_x = start.0 + (ab_x * t);
-    let closest_y = start.1 + (ab_y * t);
-    let dx = u - closest_x;
-    let dy = v - closest_y;
-    (dx * dx + dy * dy).sqrt()
-}
-
-fn soft_coverage(distance: f32, radius: f32, feather: f32) -> f32 {
-    if distance <= radius {
-        1.0
-    } else if feather <= 0.0 {
-        0.0
-    } else {
-        1.0 - ((distance - radius) / feather).clamp(0.0, 1.0)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::seeded_paint_color;
-
-    #[test]
-    fn seeded_paint_starter_artwork_keeps_paper_visible() {
-        let transparent_corner = seeded_paint_color(0.02, 0.02);
-        let cyan_stroke = seeded_paint_color(0.50, 0.50);
-        let ink_stroke = seeded_paint_color(0.58, 0.63);
-
-        assert_eq!(transparent_corner.alpha, 0.0);
-        assert!(cyan_stroke.alpha > 0.2);
-        assert!(ink_stroke.alpha > cyan_stroke.alpha);
-        assert_ne!(cyan_stroke.red, ink_stroke.red);
-    }
 }

@@ -989,6 +989,7 @@ struct PixelCanvasStateInner {
     display_visible: bool,
     display_opacity: f32,
     display_blend_mode: PixelCanvasBlendMode,
+    display_above_paper: bool,
     paper_visible: bool,
     paper_opacity: f32,
     pending_undo: u32,
@@ -1114,6 +1115,7 @@ enum PixelCanvasImageSource {
     Composited {
         display: PixelCanvasDisplaySettings,
         paper: PixelCanvasPaperSettings,
+        display_above_paper: bool,
         paper_color: Color,
     },
 }
@@ -1314,6 +1316,19 @@ impl PixelCanvasState {
         true
     }
 
+    pub fn display_above_paper(&self) -> bool {
+        self.inner.borrow().display_above_paper
+    }
+
+    pub fn set_display_above_paper(&self, above: bool) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if inner.display_above_paper == above {
+            return false;
+        }
+        inner.display_above_paper = above;
+        true
+    }
+
     pub fn paper_visible(&self) -> bool {
         self.inner.borrow().paper_visible
     }
@@ -1480,6 +1495,7 @@ impl Default for PixelCanvasState {
                 display_visible: PixelCanvasDisplaySettings::DEFAULT.visible,
                 display_opacity: PixelCanvasDisplaySettings::DEFAULT.opacity,
                 display_blend_mode: PixelCanvasDisplaySettings::DEFAULT.blend_mode,
+                display_above_paper: true,
                 paper_visible: PixelCanvasPaperSettings::DEFAULT.visible,
                 paper_opacity: PixelCanvasPaperSettings::DEFAULT.opacity,
                 pending_undo: 0,
@@ -2101,8 +2117,14 @@ impl PixelCanvas {
     fn paint_image(&self) -> RegisteredImage {
         let display = self.state.display();
         let paper = self.state.paper();
+        let display_above_paper = self.state.display_above_paper();
         let paper_color = self.resolved_theme().surfaces.pixel_canvas_paper;
-        self.paint_image_for_source(Self::image_source(display, paper, paper_color))
+        self.paint_image_for_source(Self::image_source(
+            display,
+            paper,
+            display_above_paper,
+            paper_color,
+        ))
     }
 
     fn raw_paint_image(&self) -> RegisteredImage {
@@ -2112,12 +2134,14 @@ impl PixelCanvas {
     fn image_source(
         display: PixelCanvasDisplaySettings,
         paper: PixelCanvasPaperSettings,
+        display_above_paper: bool,
         paper_color: Color,
     ) -> PixelCanvasImageSource {
-        if display.requires_compositing() || paper.requires_compositing() {
+        if display.requires_compositing() || paper.requires_compositing() || !display_above_paper {
             PixelCanvasImageSource::Composited {
                 display,
                 paper,
+                display_above_paper,
                 paper_color,
             }
         } else {
@@ -2128,8 +2152,10 @@ impl PixelCanvas {
     fn can_paint_with_image_opacity(
         display: PixelCanvasDisplaySettings,
         paper: PixelCanvasPaperSettings,
+        display_above_paper: bool,
     ) -> bool {
-        display.visible
+        display_above_paper
+            && display.visible
             && display.blend_mode == PixelCanvasBlendMode::Normal
             && paper.visible
             && paper.opacity >= 0.999
@@ -2152,8 +2178,9 @@ impl PixelCanvas {
             PixelCanvasImageSource::Composited {
                 display,
                 paper,
+                display_above_paper,
                 paper_color,
-            } => self.display_image_data(display, paper, paper_color),
+            } => self.display_image_data(display, paper, display_above_paper, paper_color),
         };
         let image = RegisteredImage::from_rgba8(self.width as u32, self.height as u32, data)
             .expect("pixel canvas image data should match its dimensions");
@@ -2176,16 +2203,24 @@ impl PixelCanvas {
         &self,
         display: PixelCanvasDisplaySettings,
         paper: PixelCanvasPaperSettings,
+        display_above_paper: bool,
         paper_color: Color,
     ) -> Vec<u8> {
         let paper = paper.pixel(paper_color);
         let mut data = Vec::with_capacity(self.pixels.len() * 4);
         for pixel in &self.pixels {
-            let output = if display.visible {
-                paper.compose(pixel.to_color(), display.opacity, display.blend_mode)
+            let mut output = PixelColor::TRANSPARENT;
+            if display_above_paper {
+                output = output.compose(paper.to_color(), 1.0, PixelCanvasBlendMode::Normal);
+                if display.visible {
+                    output = output.compose(pixel.to_color(), display.opacity, display.blend_mode);
+                }
             } else {
-                paper
-            };
+                if display.visible {
+                    output = output.compose(pixel.to_color(), display.opacity, display.blend_mode);
+                }
+                output = output.compose(paper.to_color(), 1.0, PixelCanvasBlendMode::Normal);
+            }
             data.extend_from_slice(&[output.red, output.green, output.blue, output.alpha]);
         }
         data
@@ -2516,13 +2551,14 @@ impl Widget for PixelCanvas {
         paint_pixel_canvas_document_shadow(ctx, image_bounds, transform, &theme);
         let display = self.state.display();
         let paper = self.state.paper();
+        let display_above_paper = self.state.display_above_paper();
         let image_handle = ctx.widget_image_handle(0);
         let sampling = if self.viewport.zoom >= theme.metrics.pixel_canvas_nearest_sampling_zoom {
             ImageSampling::Nearest
         } else {
             ImageSampling::Linear
         };
-        if Self::can_paint_with_image_opacity(display, paper) {
+        if Self::can_paint_with_image_opacity(display, paper, display_above_paper) {
             fill_transformed_rect(
                 ctx,
                 image_bounds,
@@ -2537,7 +2573,9 @@ impl Widget for PixelCanvas {
                     .with_tint(Color::WHITE.with_alpha(display.opacity)),
             );
         } else {
-            let baked_image = display.requires_compositing() || paper.requires_compositing();
+            let baked_image = display.requires_compositing()
+                || paper.requires_compositing()
+                || !display_above_paper;
             if !baked_image {
                 fill_transformed_rect(
                     ctx,

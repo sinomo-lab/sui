@@ -13,7 +13,8 @@ use std::{
 };
 
 use sui_core::{
-    AsyncWakeToken, CustomEvent, DirtyRegion, Error, Event, FontHandle, ImageHandle,
+    AsyncWakeToken, CustomEvent, DirtyRegion, DragEvent, DragEventKind, DragOutcome, DragPayload,
+    DragScopeId, DragSessionId, DropEffect, Error, Event, FontHandle, ImageHandle,
     InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point, PointerEvent,
     PointerEventKind, Rect, Result, SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId,
     WindowEvent, WindowId,
@@ -50,7 +51,10 @@ pub use widget::{
     SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
     WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use widget::{FocusRequest, PointerCaptureRequest, WakeRequest};
+use widget::{
+    BeginDragRequest, DragRequest, DropAcceptanceRequest, FocusRequest, PointerCaptureRequest,
+    WakeRequest,
+};
 
 static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -901,6 +905,66 @@ struct GraphChangeSet {
 
 const ANIMATION_FRAME_INTERVAL_SECONDS: f64 = 1.0 / 120.0;
 
+#[derive(Debug, Clone)]
+struct ActiveDrag {
+    session_id: DragSessionId,
+    scope_id: DragScopeId,
+    pointer_id: u64,
+    source: WidgetId,
+    start_position: Point,
+    position: Point,
+    payload: DragPayload,
+    allowed_effect: DropEffect,
+    preview_label: Option<Arc<str>>,
+    hover_path: Vec<WidgetId>,
+    accepted_target: Option<WidgetId>,
+    accepted_effect: DropEffect,
+}
+
+impl ActiveDrag {
+    fn from_request(request: BeginDragRequest) -> Self {
+        Self {
+            session_id: request.session_id,
+            scope_id: request.scope_id,
+            pointer_id: request.pointer_id,
+            source: request.source,
+            start_position: request.position,
+            position: request.position,
+            payload: request.payload,
+            allowed_effect: request.allowed_effect,
+            preview_label: request.preview_label.map(Arc::from),
+            hover_path: Vec::new(),
+            accepted_target: None,
+            accepted_effect: DropEffect::None,
+        }
+    }
+
+    fn event(
+        &self,
+        kind: DragEventKind,
+        position: Point,
+        target: Option<WidgetId>,
+        accepted_effect: DropEffect,
+        outcome: Option<DragOutcome>,
+    ) -> Event {
+        Event::Drag(DragEvent {
+            kind,
+            session_id: self.session_id,
+            scope_id: self.scope_id,
+            pointer_id: self.pointer_id,
+            source: self.source,
+            target,
+            position,
+            start_position: self.start_position,
+            payload: self.payload.clone(),
+            allowed_effect: self.allowed_effect,
+            accepted_effect,
+            preview_label: self.preview_label.clone(),
+            outcome,
+        })
+    }
+}
+
 struct WindowState {
     id: WindowId,
     title: String,
@@ -919,6 +983,7 @@ struct WindowState {
     pending_invalidations: Vec<InvalidationRequest>,
     pointer_capture: HashMap<u64, WidgetId>,
     pointer_hover_paths: HashMap<u64, Vec<WidgetId>>,
+    active_drag: Option<ActiveDrag>,
     scheduled_timers: Vec<ScheduledTimer>,
     delivering_timers: HashMap<TimerToken, WidgetId>,
     async_wake_targets: HashMap<AsyncWakeToken, WidgetId>,
@@ -957,6 +1022,7 @@ impl WindowState {
             pending_invalidations: Vec::new(),
             pointer_capture: HashMap::new(),
             pointer_hover_paths: HashMap::new(),
+            active_drag: None,
             scheduled_timers: Vec::new(),
             delivering_timers: HashMap::new(),
             async_wake_targets: HashMap::new(),
@@ -998,19 +1064,13 @@ impl WindowState {
             _ => None,
         };
 
+        let pointer_hit_target = match &event {
+            Event::Pointer(pointer) => self.pointer_hit_target(pointer.position),
+            _ => None,
+        };
         let hit_target = match &event {
             Event::Pointer(_) if captured_target.is_some() => None,
-            Event::Pointer(pointer) => {
-                let floating_hit = self.floating_layer_hit_test(pointer.position);
-                let focused_floating_hit = if floating_hit.is_none() {
-                    self.focused_floating_layer_hit_test(pointer.position)
-                } else {
-                    None
-                };
-                floating_hit
-                    .or(focused_floating_hit)
-                    .or_else(|| self.graph.hit_test(pointer.position))
-            }
+            Event::Pointer(_) => pointer_hit_target,
             _ => None,
         };
 
@@ -1018,17 +1078,13 @@ impl WindowState {
         let mut skip_primary_route = false;
         if let Event::Pointer(pointer) = &event {
             let hover_route = self.update_pointer_hover_path(pointer, hit_target);
-            invalidations.extend(hover_route.effects.invalidations);
+            self.apply_event_effects(hover_route.effects, &mut invalidations);
 
             if let Some(request) = hover_route.focus_request {
                 let focus_effects = self.apply_focus_request(request);
-                invalidations.extend(focus_effects.invalidations);
-                self.apply_wake_requests(focus_effects.wake_requests);
-                self.apply_pointer_capture_requests(focus_effects.pointer_capture_requests);
+                self.apply_event_effects(focus_effects, &mut invalidations);
             }
 
-            self.apply_wake_requests(hover_route.effects.wake_requests);
-            self.apply_pointer_capture_requests(hover_route.effects.pointer_capture_requests);
             skip_primary_route = hover_route.skip_primary_route;
         }
 
@@ -1042,21 +1098,22 @@ impl WindowState {
         let target = self.resolve_event_target(&event, hit_target);
 
         let route = self.route_event(target, &event);
-        invalidations.extend(route.effects.invalidations);
 
         let focus_request = route
             .focus_request
             .or_else(|| self.default_focus_request(&event, hit_target, &route.path));
+        self.apply_event_effects(route.effects, &mut invalidations);
 
         if let Some(request) = focus_request {
             let focus_effects = self.apply_focus_request(request);
-            invalidations.extend(focus_effects.invalidations);
-            self.apply_wake_requests(focus_effects.wake_requests);
-            self.apply_pointer_capture_requests(focus_effects.pointer_capture_requests);
+            self.apply_event_effects(focus_effects, &mut invalidations);
         }
 
-        self.apply_wake_requests(route.effects.wake_requests);
-        self.apply_pointer_capture_requests(route.effects.pointer_capture_requests);
+        if let Event::Pointer(pointer) = &event {
+            let drag_effects = self.handle_drag_pointer_event(pointer, pointer_hit_target);
+            self.apply_event_effects(drag_effects, &mut invalidations);
+        }
+
         self.finish_event(&event);
         self.schedule.extend(&invalidations);
         self.pending_invalidations.extend(invalidations);
@@ -1178,6 +1235,18 @@ impl WindowState {
                 )
             })
             .unwrap_or_else(empty_dispatch)
+    }
+
+    fn pointer_hit_target(&mut self, point: Point) -> Option<WidgetId> {
+        let floating_hit = self.floating_layer_hit_test(point);
+        let focused_floating_hit = if floating_hit.is_none() {
+            self.focused_floating_layer_hit_test(point)
+        } else {
+            None
+        };
+        floating_hit
+            .or(focused_floating_hit)
+            .or_else(|| self.graph.hit_test(point))
     }
 
     fn floating_layer_hit_test(&mut self, point: Point) -> Option<WidgetId> {
@@ -1409,6 +1478,7 @@ impl WindowState {
                 self.focus.window_focused = *focused;
                 if !focused {
                     self.pointer_capture.clear();
+                    self.active_drag = None;
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -1474,6 +1544,199 @@ impl WindowState {
             WakeEvent::Async { token, .. } => self.async_wake_targets.get(&token).copied(),
             WakeEvent::AnimationFrame { .. } => self.delivering_animation_frames.front().copied(),
         }
+    }
+
+    fn apply_event_effects(
+        &mut self,
+        effects: EventEffects,
+        invalidations: &mut Vec<InvalidationRequest>,
+    ) {
+        invalidations.extend(effects.invalidations);
+        self.apply_wake_requests(effects.wake_requests);
+        self.apply_pointer_capture_requests(effects.pointer_capture_requests);
+        self.apply_drag_requests(effects.drag_requests, invalidations);
+    }
+
+    fn apply_drag_requests(
+        &mut self,
+        requests: Vec<DragRequest>,
+        invalidations: &mut Vec<InvalidationRequest>,
+    ) {
+        for request in requests {
+            match request {
+                DragRequest::Begin(request) => {
+                    self.active_drag = Some(ActiveDrag::from_request(request));
+                    invalidations.push(InvalidationRequest::new(
+                        InvalidationTarget::Window(self.id),
+                        InvalidationKind::Paint,
+                    ));
+                }
+            }
+        }
+    }
+
+    fn handle_drag_pointer_event(
+        &mut self,
+        pointer: &PointerEvent,
+        hit_target: Option<WidgetId>,
+    ) -> EventEffects {
+        if !self
+            .active_drag
+            .as_ref()
+            .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
+        {
+            return EventEffects::default();
+        }
+
+        match pointer.kind {
+            PointerEventKind::Move => self.update_active_drag(pointer.position, hit_target),
+            PointerEventKind::Up => {
+                let mut effects = self.update_active_drag(pointer.position, hit_target);
+                effects.merge(self.finish_active_drag(pointer.position, false));
+                effects
+            }
+            PointerEventKind::Cancel | PointerEventKind::Leave => {
+                self.finish_active_drag(pointer.position, true)
+            }
+            _ => EventEffects::default(),
+        }
+    }
+
+    fn update_active_drag(
+        &mut self,
+        position: Point,
+        hit_target: Option<WidgetId>,
+    ) -> EventEffects {
+        let Some((previous_path, active_snapshot)) = self.active_drag.as_mut().map(|active| {
+            active.position = position;
+            (active.hover_path.clone(), active.clone())
+        }) else {
+            return EventEffects::default();
+        };
+
+        let next_path = hit_target
+            .and_then(|target| self.graph.path_to(target))
+            .unwrap_or_default();
+
+        let mut effects = EventEffects::default();
+        effects.invalidations.push(InvalidationRequest::new(
+            InvalidationTarget::Window(self.id),
+            InvalidationKind::Paint,
+        ));
+
+        let shared_prefix_len = previous_path
+            .iter()
+            .zip(next_path.iter())
+            .take_while(|(left, right)| left == right)
+            .count();
+
+        for widget_id in previous_path[shared_prefix_len..].iter().rev().copied() {
+            let event = active_snapshot.event(
+                DragEventKind::Leave,
+                position,
+                Some(widget_id),
+                DropEffect::None,
+                None,
+            );
+            effects.extend(self.dispatch_direct_event(widget_id, &event));
+        }
+
+        for widget_id in next_path[shared_prefix_len..].iter().copied() {
+            let event = active_snapshot.event(
+                DragEventKind::Enter,
+                position,
+                Some(widget_id),
+                DropEffect::None,
+                None,
+            );
+            effects.extend(self.dispatch_direct_event(widget_id, &event));
+        }
+
+        let mut accepted = None;
+        if let Some(target) = hit_target {
+            let event = active_snapshot.event(
+                DragEventKind::Over,
+                position,
+                Some(target),
+                DropEffect::None,
+                None,
+            );
+            let route = self.route_event(target, &event);
+            accepted = nearest_drop_acceptance(&route.effects.drop_acceptances, &route.path);
+            if let Some(request) = route.focus_request {
+                effects.merge(self.apply_focus_request(request));
+            }
+            effects.merge(route.effects);
+        }
+
+        if let Some(active) = self.active_drag.as_mut() {
+            active.hover_path = next_path;
+            if let Some(accepted) = accepted {
+                active.accepted_target = Some(accepted.target);
+                active.accepted_effect = accepted.effect;
+            } else {
+                active.accepted_target = None;
+                active.accepted_effect = DropEffect::None;
+            }
+        }
+
+        effects
+    }
+
+    fn finish_active_drag(&mut self, position: Point, cancelled: bool) -> EventEffects {
+        let Some(active) = self.active_drag.take() else {
+            return EventEffects::default();
+        };
+
+        let mut effects = EventEffects::default();
+        let outcome = if !cancelled {
+            active
+                .accepted_target
+                .filter(|_| active.accepted_effect.is_some())
+                .map(|target| DragOutcome::Dropped {
+                    target,
+                    effect: active.accepted_effect,
+                })
+                .unwrap_or(DragOutcome::Cancelled)
+        } else {
+            DragOutcome::Cancelled
+        };
+
+        if let DragOutcome::Dropped { target, effect } = outcome {
+            let event = active.event(
+                DragEventKind::Drop,
+                position,
+                Some(target),
+                effect,
+                Some(outcome),
+            );
+            effects.extend(self.dispatch_direct_event(target, &event));
+        }
+
+        for widget_id in active.hover_path.iter().rev().copied() {
+            let event = active.event(
+                DragEventKind::Leave,
+                position,
+                Some(widget_id),
+                DropEffect::None,
+                None,
+            );
+            effects.extend(self.dispatch_direct_event(widget_id, &event));
+        }
+
+        let end_event = active.event(
+            DragEventKind::End,
+            position,
+            active.accepted_target,
+            active.accepted_effect,
+            Some(outcome),
+        );
+        effects.extend(self.dispatch_direct_event(active.source, &end_event));
+        effects.invalidations.push(InvalidationRequest::new(
+            InvalidationTarget::Window(self.id),
+            InvalidationKind::Paint,
+        ));
+        effects
     }
 
     fn apply_wake_requests(&mut self, requests: Vec<WakeRequest>) {
@@ -1557,6 +1820,7 @@ impl WindowState {
         let mut handled = false;
         let mut focus_request = None;
         let target_only = matches!(event, Event::Wake(_));
+        let ignore_handled = matches!(event, Event::Drag(_));
 
         if !target_only && path.len() > 1 {
             for path_len in 1..path.len() {
@@ -1578,14 +1842,14 @@ impl WindowState {
                 if dispatch_focus_request.is_some() {
                     focus_request = dispatch_focus_request;
                 }
-                if dispatch_handled {
+                if dispatch_handled && !ignore_handled {
                     handled = true;
                     break;
                 }
             }
         }
 
-        if !handled {
+        if !handled || ignore_handled {
             let dispatch = self
                 .root
                 .dispatch_event_for_path(
@@ -1615,10 +1879,10 @@ impl WindowState {
             if dispatch_focus_request.is_some() {
                 focus_request = dispatch_focus_request;
             }
-            handled = dispatch_handled;
+            handled = dispatch_handled && !ignore_handled;
         }
 
-        if !target_only && !handled && path.len() > 1 {
+        if !target_only && (!handled || ignore_handled) && path.len() > 1 {
             for path_len in (1..path.len()).rev() {
                 let dispatch = self
                     .root
@@ -1638,7 +1902,7 @@ impl WindowState {
                 if dispatch_focus_request.is_some() {
                     focus_request = dispatch_focus_request;
                 }
-                if dispatch_handled {
+                if dispatch_handled && !ignore_handled {
                     break;
                 }
             }
@@ -2771,6 +3035,13 @@ impl WindowState {
     fn prune_runtime_state(&mut self) {
         self.pointer_capture
             .retain(|_, widget_id| self.graph.contains(*widget_id));
+        if self
+            .active_drag
+            .as_ref()
+            .is_some_and(|drag| !self.graph.contains(drag.source))
+        {
+            self.active_drag = None;
+        }
         self.scheduled_timers
             .retain(|timer| self.graph.contains(timer.target));
         self.delivering_timers
@@ -3240,6 +3511,8 @@ struct EventEffects {
     invalidations: Vec<InvalidationRequest>,
     wake_requests: Vec<WakeRequest>,
     pointer_capture_requests: Vec<PointerCaptureRequest>,
+    drag_requests: Vec<DragRequest>,
+    drop_acceptances: Vec<DropAcceptanceRequest>,
 }
 
 impl EventEffects {
@@ -3248,6 +3521,17 @@ impl EventEffects {
         self.wake_requests.extend(dispatch.wake_requests);
         self.pointer_capture_requests
             .extend(dispatch.pointer_capture_requests);
+        self.drag_requests.extend(dispatch.drag_requests);
+        self.drop_acceptances.extend(dispatch.drop_acceptances);
+    }
+
+    fn merge(&mut self, effects: EventEffects) {
+        self.invalidations.extend(effects.invalidations);
+        self.wake_requests.extend(effects.wake_requests);
+        self.pointer_capture_requests
+            .extend(effects.pointer_capture_requests);
+        self.drag_requests.extend(effects.drag_requests);
+        self.drop_acceptances.extend(effects.drop_acceptances);
     }
 }
 
@@ -3258,7 +3542,24 @@ fn empty_dispatch() -> widget::EventDispatch {
         focus_request: None,
         wake_requests: Vec::new(),
         pointer_capture_requests: Vec::new(),
+        drag_requests: Vec::new(),
+        drop_acceptances: Vec::new(),
     }
+}
+
+fn nearest_drop_acceptance(
+    acceptances: &[DropAcceptanceRequest],
+    path: &[WidgetId],
+) -> Option<DropAcceptanceRequest> {
+    acceptances
+        .iter()
+        .filter_map(|acceptance| {
+            path.iter()
+                .position(|widget_id| *widget_id == acceptance.target)
+                .map(|index| (index, *acceptance))
+        })
+        .max_by_key(|(index, _)| *index)
+        .map(|(_, acceptance)| acceptance)
 }
 
 fn collect_dirty_regions<F>(
@@ -3474,9 +3775,10 @@ mod tests {
         set_window_scene_statistics_detail_mode, window_render_options,
     };
     use sui_core::{
-        AsyncWakeToken, Color, CustomEvent, Event, FontHandle, ImageHandle, KeyState,
-        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        SemanticsNode, SemanticsRole, Size, TimerToken, Vector, WakeEvent, WindowEvent,
+        AsyncWakeToken, Color, CustomEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId,
+        DragSessionId, DropEffect, Event, FontHandle, ImageHandle, KeyState, KeyboardEvent, Point,
+        PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, SemanticsNode,
+        SemanticsRole, Size, TimerToken, Vector, WakeEvent, WindowEvent,
     };
     use sui_layout::Constraints;
     use sui_scene::{
@@ -4135,6 +4437,15 @@ mod tests {
         ups: usize,
     }
 
+    #[derive(Debug, Default)]
+    struct RuntimeDragState {
+        source_moves: usize,
+        target_overs: usize,
+        drops: usize,
+        ends: usize,
+        outcome: Option<DragOutcome>,
+    }
+
     #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
     struct HoverTransitionState {
         enters: usize,
@@ -4144,6 +4455,21 @@ mod tests {
 
     struct PointerCaptureLeaf {
         state: Rc<RefCell<PointerCaptureState>>,
+    }
+
+    struct RuntimeDragSource {
+        state: Rc<RefCell<RuntimeDragState>>,
+        scope: DragScopeId,
+        session: Option<DragSessionId>,
+    }
+
+    struct RuntimeDragTarget {
+        state: Rc<RefCell<RuntimeDragState>>,
+        scope: DragScopeId,
+    }
+
+    struct RuntimeDragRoot {
+        children: WidgetChildren,
     }
 
     struct HoverTransitionLeaf {
@@ -4176,6 +4502,123 @@ mod tests {
 
         fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(120.0, 40.0))
+        }
+    }
+
+    impl Widget for RuntimeDragSource {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Pointer(pointer) => match pointer.kind {
+                    PointerEventKind::Down => {
+                        ctx.request_pointer_capture(pointer.pointer_id);
+                        ctx.set_handled();
+                    }
+                    PointerEventKind::Move if pointer.buttons.contains(PointerButton::Primary) => {
+                        self.state.borrow_mut().source_moves += 1;
+                        if self.session.is_none() {
+                            self.session = Some(ctx.begin_drag(
+                                self.scope,
+                                pointer.pointer_id,
+                                pointer.position,
+                                DragPayload::text("runtime"),
+                                DropEffect::Move,
+                                Some("runtime".to_string()),
+                            ));
+                        }
+                        ctx.set_handled();
+                    }
+                    PointerEventKind::Up => {
+                        ctx.set_handled();
+                    }
+                    _ => {}
+                },
+                Event::Drag(drag)
+                    if drag.kind == DragEventKind::End && self.session == Some(drag.session_id) =>
+                {
+                    let mut state = self.state.borrow_mut();
+                    state.ends += 1;
+                    state.outcome = drag.outcome;
+                    self.session = None;
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+    }
+
+    impl Widget for RuntimeDragTarget {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            let Event::Drag(drag) = event else {
+                return;
+            };
+            if drag.scope_id != self.scope {
+                return;
+            }
+            match drag.kind {
+                DragEventKind::Over => {
+                    self.state.borrow_mut().target_overs += 1;
+                    ctx.accept_drop(DropEffect::Move);
+                }
+                DragEventKind::Drop => {
+                    self.state.borrow_mut().drops += 1;
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+    }
+
+    impl RuntimeDragRoot {
+        fn new(state: Rc<RefCell<RuntimeDragState>>) -> Self {
+            let scope = DragScopeId::new(77);
+            let mut children = WidgetChildren::with_capacity(2);
+            children.push(RuntimeDragSource {
+                state: Rc::clone(&state),
+                scope,
+                session: None,
+            });
+            children.push(RuntimeDragTarget { state, scope });
+            Self { children }
+        }
+    }
+
+    impl Widget for RuntimeDragRoot {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.children
+                .measure_child(0, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            self.children
+                .measure_child(1, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.children.arrange_child(
+                0,
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
+            self.children.arrange_child(
+                1,
+                ctx,
+                Rect::new(bounds.x() + 172.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.children.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.children.visit_children_mut(visitor);
         }
     }
 
@@ -5514,6 +5957,55 @@ mod tests {
         assert_eq!(state.borrow().moves, 1);
         assert_eq!(state.borrow().ups, 1);
         assert_eq!(runtime.pointer_capture_target(window_id, 7).unwrap(), None);
+    }
+
+    #[test]
+    fn active_drag_hit_tests_drop_target_while_source_keeps_pointer_capture() {
+        let state = Rc::new(RefCell::new(RuntimeDragState::default()));
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Runtime Drag")
+                    .root(RuntimeDragRoot::new(Rc::clone(&state))),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 7;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, Point::new(188.0, 40.0));
+        moved.pointer_id = 7;
+        moved.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(moved))
+            .unwrap();
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, Point::new(188.0, 40.0));
+        up.pointer_id = 7;
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up)).unwrap();
+
+        let state = state.borrow();
+        assert_eq!(state.source_moves, 1);
+        assert!(state.target_overs >= 1);
+        assert_eq!(state.drops, 1);
+        assert_eq!(state.ends, 1);
+        assert!(matches!(
+            state.outcome,
+            Some(DragOutcome::Dropped {
+                effect: DropEffect::Move,
+                ..
+            })
+        ));
     }
 
     #[test]

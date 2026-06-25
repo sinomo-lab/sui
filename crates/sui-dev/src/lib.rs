@@ -1,4 +1,5 @@
 mod app;
+mod drag_drop_demo;
 mod layout_demo;
 mod paint_demo;
 mod vector_demo;
@@ -3607,6 +3608,7 @@ mod tests {
             "64 buttons",
             "HDR validation",
             "Layout",
+            "Drag and drop",
             "Paint",
             "Vector editor",
             "Open demo",

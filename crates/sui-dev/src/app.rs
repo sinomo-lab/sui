@@ -20,6 +20,9 @@ use sui_widget_book::{
 };
 
 #[cfg(test)]
+use crate::drag_drop_demo::DRAG_DROP_DEMO_SCROLL_NAME;
+use crate::drag_drop_demo::{DRAG_DROP_TAB_LABEL, build_drag_drop_demo_with_theme};
+#[cfg(test)]
 use crate::layout_demo::LAYOUT_DEMO_SCROLL_NAME;
 use crate::layout_demo::{LAYOUT_TAB_LABEL, build_layout_demo_with_theme};
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
@@ -1796,6 +1799,13 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             child: WidgetPod::new(build_layout_demo_with_theme(Rc::clone(&theme_reader))),
         },
         DevDemo {
+            title: DRAG_DROP_TAB_LABEL,
+            description: "Internal drag-and-drop payloads, targets, scopes, and preview overlay.",
+            icon: IconGlyph::Send,
+            accent: Color::rgba(0.20, 0.48, 0.78, 1.0),
+            child: WidgetPod::new(build_drag_drop_demo_with_theme(Rc::clone(&theme_reader))),
+        },
+        DevDemo {
             title: PAINT_TAB_LABEL,
             description: "Pixel canvas painting workspace with editor-style panels.",
             icon: IconGlyph::Brush,
@@ -1823,6 +1833,7 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "text-editing" => Some(TEXT_EDITING_TAB_LABEL),
         "hdr-validation" | "color-validation" => Some(HDR_VALIDATION_TAB_LABEL),
         "layout" | "layouts" | "flex" => Some(LAYOUT_TAB_LABEL),
+        "drag-drop" | "drag-and-drop" | "dnd" => Some(DRAG_DROP_TAB_LABEL),
         "paint" | "sui-paint" => Some(PAINT_TAB_LABEL),
         "vector-editor" | "vector" => Some(VECTOR_EDITOR_TAB_LABEL),
         _ => None,
@@ -3175,6 +3186,46 @@ mod tests {
         dir
     }
 
+    fn primary_pointer_event(
+        pointer_id: u64,
+        kind: PointerEventKind,
+        position: Point,
+        pressed: bool,
+    ) -> Event {
+        let mut event = PointerEvent::new(kind, position);
+        event.pointer_id = pointer_id;
+        event.button = Some(PointerButton::Primary);
+        if pressed {
+            event.buttons = PointerButtons::new(1);
+        }
+        Event::Pointer(event)
+    }
+
+    fn drag_primary_pointer(
+        runtime: &mut Runtime,
+        window_id: WindowId,
+        pointer_id: u64,
+        from: Point,
+        to: Point,
+    ) -> Result<()> {
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(pointer_id, PointerEventKind::Move, from, false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(pointer_id, PointerEventKind::Down, from, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(pointer_id, PointerEventKind::Move, to, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(pointer_id, PointerEventKind::Up, to, false),
+        )
+    }
+
     struct SolidFill {
         color: Color,
     }
@@ -3229,6 +3280,58 @@ mod tests {
             FloatingViewConfig::new(WIDGET_BOOK_TAB_LABEL, widget_book_bounds)
                 .min_size(Size::new(420.0, 320.0)),
             build_widget_book_gallery(default_widget_book_state()),
+        );
+        finish_dev_application(views)
+    }
+
+    fn build_floating_color_imagery_test_application(widget_book_bounds: Rect) -> Application {
+        const WIDGET_BOOK_TEST_IMAGE_HANDLE: ImageHandle = ImageHandle::new(1);
+
+        set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
+        let workspace = FloatingWorkspaceState::new();
+        let mut views = FloatingWorkspace::new(workspace).name("Widget book floating regression");
+        let gallery = ScrollView::vertical(Padding::all(
+            24.0,
+            Stack::vertical()
+                .spacing(18.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    SizedBox::new()
+                        .height(580.0)
+                        .with_child(Label::new("Color imagery scroll spacer")),
+                )
+                .with_child(
+                    Stack::vertical()
+                        .spacing(16.0)
+                        .alignment(Alignment::Start)
+                        .with_child(
+                            ColorSwatch::new(
+                                sui_widget_book::COLOR_SWATCH_NAME,
+                                Color::rgba(0.12, 0.55, 0.88, 1.0),
+                            )
+                            .size(Size::new(64.0, 36.0)),
+                        )
+                        .with_child(
+                            SizedBox::new().width(220.0).height(220.0).with_child(
+                                Image::new(WIDGET_BOOK_TEST_IMAGE_HANDLE)
+                                    .label(sui_widget_book::DEMO_IMAGE_LABEL)
+                                    .fit(ImageFit::Contain)
+                                    .background(Color::rgba(0.92, 0.95, 0.98, 1.0))
+                                    .corner_radius(12.0),
+                            ),
+                        ),
+                )
+                .with_child(
+                    SizedBox::new()
+                        .height(520.0)
+                        .with_child(Label::new("Color imagery trailing spacer")),
+                ),
+        ))
+        .name(sui_widget_book::GALLERY_SCROLL_NAME);
+        views.push_view(
+            FloatingViewConfig::new(WIDGET_BOOK_TAB_LABEL, widget_book_bounds)
+                .min_size(Size::new(420.0, 320.0)),
+            gallery,
         );
         finish_dev_application(views)
     }
@@ -3499,7 +3602,7 @@ mod tests {
     -> Result<()> {
         let initial_bounds = Rect::new(320.0, 28.0, 560.0, 520.0);
         let app = TestApp::new(move || {
-            build_floating_widget_book_test_application(initial_bounds).build()
+            build_floating_color_imagery_test_application(initial_bounds).build()
         })?;
         let window = app.main_window()?;
 
@@ -3672,6 +3775,7 @@ mod tests {
             BUTTON_GRID_TAB_LABEL,
             HDR_VALIDATION_TAB_LABEL,
             LAYOUT_TAB_LABEL,
+            DRAG_DROP_TAB_LABEL,
             PAINT_TAB_LABEL,
             VECTOR_EDITOR_TAB_LABEL,
         ] {
@@ -4213,8 +4317,8 @@ mod tests {
             })
             .expect("clear button should exist");
         assert!(
-            !clear.state.disabled,
-            "seeded paint document should be clearable"
+            clear.state.disabled,
+            "empty paint document should not be clearable"
         );
         assert!(
             semantics.iter().any(|node| {
@@ -4430,6 +4534,71 @@ mod tests {
                     && node.name.as_deref() == Some("Layer Paint / Normal / 100% / Unlocked")
             }),
             "expected the status bar to expose the selected Paint layer"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paint_workspace_layer_list_drag_reorders_layers() -> Result<()> {
+        let paint_state = PixelCanvasState::new();
+        let mut runtime = finish_dev_application(build_paint_demo_with_state(paint_state.clone()))
+            .build()
+            .expect("paint workspace application should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        assert!(paint_state.display_above_paper());
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row should exist");
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer row should exist");
+
+        drag_primary_pointer(
+            &mut runtime,
+            window_id,
+            41,
+            Point::new(
+                paint.bounds.x() + 104.0,
+                paint.bounds.y() + paint.bounds.height() * 0.5,
+            ),
+            Point::new(paint.bounds.x() + 104.0, paper.bounds.max_y() + 8.0),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer row should still exist");
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer row should still exist");
+        assert!(paper.bounds.y() < paint.bounds.y());
+        assert!(
+            !paint_state.display_above_paper(),
+            "paper should composite above paint after dragging it above the Paint layer"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Layer Paint / Normal / 100% / Unlocked")
+            }),
+            "reordering should not change the selected paint layer identity"
         );
         Ok(())
     }
@@ -5614,6 +5783,13 @@ mod tests {
             PAINT_DOCUMENT_WIDTH * PAINT_DOCUMENT_HEIGHT * 4
         );
         assert!(
+            snapshot
+                .rgba8()
+                .chunks_exact(4)
+                .all(|pixel| pixel == [0, 0, 0, 0]),
+            "paint demo should start with an empty transparent canvas"
+        );
+        assert!(
             !output.semantics.iter().any(|node| {
                 node.role == SemanticsRole::Text
                     && node
@@ -5698,25 +5874,59 @@ mod tests {
                 node.role == SemanticsRole::Button && node.name.as_deref() == Some("Clear")
             })
             .expect("clear button should exist");
+        assert!(clear.state.disabled);
+        let paint_position = Point::new(
+            canvas.bounds.x() + canvas.bounds.width() * 0.5,
+            canvas.bounds.y() + canvas.bounds.height() * 0.5,
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(1, PointerEventKind::Move, paint_position, false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(1, PointerEventKind::Down, paint_position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(1, PointerEventKind::Up, paint_position, false),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Canvas && node.name.as_deref() == Some(PAINT_TAB_LABEL)
+            })
+            .expect("paint canvas should still exist after painting");
+        assert!(canvas.actions.contains(&SemanticsAction::Undo));
+        let clear = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Clear")
+            })
+            .expect("clear button should be enabled after painting");
+        assert!(!clear.state.disabled);
         let position = Point::new(
             clear.bounds.x() + (clear.bounds.width() * 0.5),
             clear.bounds.y() + (clear.bounds.height() * 0.5),
         );
 
-        let mut move_event = PointerEvent::new(PointerEventKind::Move, position);
-        move_event.pointer_id = 1;
-        runtime.handle_event(window_id, Event::Pointer(move_event))?;
-
-        let mut down = PointerEvent::new(PointerEventKind::Down, position);
-        down.pointer_id = 1;
-        down.button = Some(PointerButton::Primary);
-        down.buttons = PointerButtons::new(1);
-        runtime.handle_event(window_id, Event::Pointer(down))?;
-
-        let mut up = PointerEvent::new(PointerEventKind::Up, position);
-        up.pointer_id = 1;
-        up.button = Some(PointerButton::Primary);
-        runtime.handle_event(window_id, Event::Pointer(up))?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(2, PointerEventKind::Move, position, false),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(2, PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(2, PointerEventKind::Up, position, false),
+        )?;
 
         let output = runtime.render(window_id)?;
         let canvas = output
@@ -7039,6 +7249,24 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
+    fn dev_workspace_registers_drag_drop_demo() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(DRAG_DROP_TAB_LABEL)
+            .expect()
+            .to_be_visible()?;
+        open_dev_shell_demo(&window, DRAG_DROP_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(DRAG_DROP_DEMO_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
+        Ok(())
+    }
+
+    #[test]
     fn dev_workspace_registers_canvas_editor_demos() -> Result<()> {
         let mut runtime = build_dev_application()
             .build()
@@ -7160,6 +7388,98 @@ final_max_luminance={final_max_luminance}
             "expected vector status bar to expose selected object"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn vector_editor_objects_list_drag_reorders_objects() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(VECTOR_EDITOR_TAB_LABEL),
+        ))
+        .build()
+        .expect("vector editor demo should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let blue = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Blue ellipse")
+            })
+            .expect("blue ellipse row should exist");
+        let amber = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem
+                    && node.name.as_deref() == Some("Amber ellipse")
+            })
+            .expect("amber ellipse row should exist");
+
+        drag_primary_pointer(
+            &mut runtime,
+            window_id,
+            51,
+            Point::new(
+                blue.bounds.x() + 104.0,
+                blue.bounds.y() + blue.bounds.height() * 0.5,
+            ),
+            Point::new(blue.bounds.x() + 104.0, amber.bounds.max_y() + 8.0),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let blue = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Blue ellipse")
+            })
+            .expect("blue ellipse row should still exist");
+        let amber = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem
+                    && node.name.as_deref() == Some("Amber ellipse")
+            })
+            .expect("amber ellipse row should still exist");
+        assert!(amber.bounds.y() < blue.bounds.y());
+
+        let amber_position = Point::new(
+            amber.bounds.x() + amber.bounds.width() * 0.5,
+            amber.bounds.y() + amber.bounds.height() * 0.5,
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(52, PointerEventKind::Down, amber_position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(52, PointerEventKind::Up, amber_position, false),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some("Object Amber ellipse")
+            }),
+            "clicking the reordered Amber row should select the Amber object"
+        );
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(VECTOR_WIDTH_NAME)
+                    && node.value
+                        == Some(SemanticsValue::Range {
+                            value: 142.0,
+                            min: f64::from(VECTOR_MIN_OBJECT_SIZE),
+                            max: f64::from(VECTOR_DOCUMENT_WIDTH),
+                        })
+            }),
+            "selected object controls should follow the reordered visual row"
+        );
         Ok(())
     }
 

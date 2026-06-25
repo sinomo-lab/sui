@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{AsyncWakeToken, Point, Size, TimerToken, Vector};
+use crate::{AsyncWakeToken, DragEvent, Point, Size, TimerToken, Vector};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers {
@@ -255,6 +255,7 @@ impl CustomEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Pointer(PointerEvent),
+    Drag(DragEvent),
     Keyboard(KeyboardEvent),
     Ime(ImeEvent),
     Wake(WakeEvent),

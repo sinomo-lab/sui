@@ -6,10 +6,12 @@ pub mod composites;
 pub mod containers;
 pub mod controls;
 pub mod data;
+pub mod drag_drop;
 mod editor;
 pub mod hdr_theme;
 pub mod media;
 pub mod panes;
+pub mod reorderable;
 pub mod selection;
 mod text_align;
 pub mod text_surface;
@@ -48,9 +50,11 @@ pub use controls::{
     SpinBox, Switch, TextArea, TextInput, draw_glyph, register_builtin_icon_resources,
 };
 pub use data::{
-    Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, ListItem, ListView, PathBar,
-    Table, TableColumn, TableColumnAlignment, TableRow, TreeItem, TreeView,
+    Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, LayerListReorderChange,
+    ListItem, ListView, PathBar, Table, TableColumn, TableColumnAlignment, TableRow, TreeItem,
+    TreeView,
 };
+pub use drag_drop::{DragDropHost, Draggable, DropTarget};
 pub use hdr_theme::{
     EffectToken, HdrColorRoles, HdrEffectTokens, HdrLuminanceTokens, HdrMaterialTokens,
     HdrPolicyTokens, HdrThemeMode, HdrThemeTokens, MaterialToken, ResolvedEffectStyle,
@@ -66,6 +70,7 @@ pub use panes::{
     FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
     FloatingWorkspaceState, ResizablePane, SplitView,
 };
+pub use reorderable::{ReorderableList, ReorderableListChange};
 pub use selection::{
     SelectionChange, SelectionEntry, SelectionIntent, SelectionOrder, SelectionOwnerId,
     SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,

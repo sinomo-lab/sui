@@ -217,6 +217,7 @@ enum VectorAlignment {
 
 struct VectorDemoStateInner {
     selected_object: usize,
+    object_order: Vec<usize>,
     object_visible: [bool; VECTOR_OBJECT_LABELS.len()],
     object_locked: [bool; VECTOR_OBJECT_LABELS.len()],
     objects: [VectorObject; VECTOR_OBJECT_LABELS.len()],
@@ -228,6 +229,7 @@ impl VectorDemoState {
         Self {
             inner: Rc::new(RefCell::new(VectorDemoStateInner {
                 selected_object: 1,
+                object_order: (0..VECTOR_OBJECT_LABELS.len()).collect(),
                 object_visible: [true; VECTOR_OBJECT_LABELS.len()],
                 object_locked: [true, false, false, false],
                 objects: vector_default_objects(),
@@ -240,9 +242,44 @@ impl VectorDemoState {
         self.inner.borrow().selected_object
     }
 
+    fn selected_object_visual_index(&self) -> usize {
+        let inner = self.inner.borrow();
+        inner
+            .object_order
+            .iter()
+            .position(|object| *object == inner.selected_object)
+            .unwrap_or(inner.selected_object)
+    }
+
     fn set_selected_object(&self, selected_object: usize) {
         self.inner.borrow_mut().selected_object =
             selected_object.min(VECTOR_OBJECT_LABELS.len().saturating_sub(1));
+    }
+
+    fn object_at_visual_index(&self, index: usize) -> usize {
+        self.inner
+            .borrow()
+            .object_order
+            .get(index)
+            .copied()
+            .unwrap_or(index)
+    }
+
+    fn set_selected_visual_object(&self, index: usize) {
+        self.set_selected_object(self.object_at_visual_index(index));
+    }
+
+    fn reorder_objects(&self, from: usize, to: usize) {
+        let mut inner = self.inner.borrow_mut();
+        if from >= inner.object_order.len() || to >= inner.object_order.len() || from == to {
+            return;
+        }
+        let object = inner.object_order.remove(from);
+        inner.object_order.insert(to, object);
+    }
+
+    fn object_order(&self) -> Vec<usize> {
+        self.inner.borrow().object_order.clone()
     }
 
     fn selected_object_label(&self) -> &'static str {
@@ -420,21 +457,17 @@ impl VectorDemoState {
 
     fn hit_test(&self, point: Point) -> Option<usize> {
         let inner = self.inner.borrow();
-        inner
-            .objects
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(index, object)| {
-                inner
-                    .object_visible
-                    .get(index)
-                    .copied()
-                    .unwrap_or(true)
-                    .then_some(())
-                    .filter(|_| object.contains(point))
-                    .map(|_| index)
-            })
+        inner.object_order.iter().copied().rev().find_map(|index| {
+            let object = inner.objects.get(index)?;
+            inner
+                .object_visible
+                .get(index)
+                .copied()
+                .unwrap_or(true)
+                .then_some(())
+                .filter(|_| object.contains(point))
+                .map(|_| index)
+        })
     }
 
     fn stroke_width(&self) -> f32 {
@@ -811,6 +844,7 @@ fn build_vector_objects_panel(state: VectorDemoState, theme_reader: DevThemeRead
     let stroke_locked_state = state.clone();
     let visibility_state = state.clone();
     let lock_state = state.clone();
+    let reorder_state = state.clone();
 
     SizedBox::new().width(284.0).height(204.0).with_child(
         LayerList::new(VECTOR_OBJECTS_NAME)
@@ -837,19 +871,25 @@ fn build_vector_objects_panel(state: VectorDemoState, theme_reader: DevThemeRead
                     .visible_when(move || stroke_visible_state.object_visible(3))
                     .locked_when(move || stroke_locked_state.object_locked(3)),
             ])
-            .selected(state.selected_object())
-            .selected_when(move || Some(selected_state.selected_object()))
+            .selected(state.selected_object_visual_index())
+            .selected_when(move || Some(selected_state.selected_object_visual_index()))
             .row_height(46.0)
             .on_select_with_ctx(move |ctx, index, _| {
-                state.set_selected_object(index);
+                state.set_selected_visual_object(index);
                 request_window_refresh(ctx, true);
             })
             .on_visibility_change_with_ctx(move |ctx, index, visible| {
-                visibility_state.set_object_visible(index, visible);
+                let object = visibility_state.object_at_visual_index(index);
+                visibility_state.set_object_visible(object, visible);
                 request_window_refresh(ctx, true);
             })
             .on_lock_change_with_ctx(move |ctx, index, locked| {
-                lock_state.set_object_locked(index, locked);
+                let object = lock_state.object_at_visual_index(index);
+                lock_state.set_object_locked(object, locked);
+                request_window_refresh(ctx, true);
+            })
+            .on_reorder_with_ctx(move |ctx, change| {
+                reorder_state.reorder_objects(change.from, change.to);
                 request_window_refresh(ctx, true);
             }),
     )
@@ -1673,7 +1713,7 @@ impl Widget for VectorEditorCanvas {
         ctx.stroke_bounds(theme.palette.border, StrokeStyle::new(1.0));
         ctx.push_clip_rect(bounds);
         Self::paint_grid(ctx, bounds, &theme);
-        for index in 0..VECTOR_OBJECT_LABELS.len() {
+        for index in self.state.object_order() {
             if !self.state.object_visible(index) {
                 continue;
             }
@@ -1705,7 +1745,7 @@ impl Widget for VectorEditorCanvas {
         ];
         ctx.push(node);
 
-        for index in 0..VECTOR_OBJECT_LABELS.len() {
+        for index in self.state.object_order() {
             if !self.state.object_visible(index) {
                 continue;
             }

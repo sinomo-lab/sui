@@ -2,8 +2,8 @@ use std::{fmt, rc::Rc};
 
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
-    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState, Vector,
-    WakeEvent, WidgetId,
+    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState, Transform,
+    Vector, WakeEvent, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
@@ -991,6 +991,32 @@ enum LayerListHit {
     Lock(usize),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerListReorderChange {
+    pub item: usize,
+    pub from: usize,
+    pub to: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LayerListReorderPress {
+    pointer_id: u64,
+    start_position: Point,
+    row: usize,
+    drag_offset_y: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LayerListReorderDrag {
+    pointer_id: u64,
+    row: usize,
+    target: usize,
+    position: Point,
+    drag_offset_y: f32,
+}
+
+type LayerListReorderCallback = Box<dyn FnMut(&mut EventCtx, LayerListReorderChange)>;
+
 pub struct LayerList {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -1000,16 +1026,20 @@ pub struct LayerList {
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<LayerListHit>,
     pressed: Option<LayerListHit>,
+    reorder_press: Option<LayerListReorderPress>,
+    reorder_drag: Option<LayerListReorderDrag>,
     hover_motion: IndexedInteractionMotion<LayerListHit>,
     press_motion: IndexedInteractionMotion<LayerListHit>,
     focus_animation: AnimatedScalar,
     row_height: Option<f32>,
+    drag_threshold: f32,
     on_select: Option<Box<dyn FnMut(usize, String)>>,
     on_select_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
     on_visibility_change: Option<Box<dyn FnMut(usize, bool)>>,
     on_visibility_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, bool)>>,
     on_lock_change: Option<Box<dyn FnMut(usize, bool)>>,
     on_lock_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, bool)>>,
+    on_reorder: Option<LayerListReorderCallback>,
 }
 
 impl LayerList {
@@ -1023,16 +1053,20 @@ impl LayerList {
             selected_reader: None,
             hovered: None,
             pressed: None,
+            reorder_press: None,
+            reorder_drag: None,
             hover_motion: IndexedInteractionMotion::new(),
             press_motion: IndexedInteractionMotion::new(),
             focus_animation: AnimatedScalar::new(0.0),
             row_height: None,
+            drag_threshold: 4.0,
             on_select: None,
             on_select_with_ctx: None,
             on_visibility_change: None,
             on_visibility_change_with_ctx: None,
             on_lock_change: None,
             on_lock_change_with_ctx: None,
+            on_reorder: None,
         }
     }
 
@@ -1082,6 +1116,11 @@ impl LayerList {
         self
     }
 
+    pub fn drag_threshold(mut self, threshold: f32) -> Self {
+        self.drag_threshold = threshold.max(0.0);
+        self
+    }
+
     pub fn on_select<F>(mut self, on_select: F) -> Self
     where
         F: FnMut(usize, String) + 'static,
@@ -1127,6 +1166,23 @@ impl LayerList {
         F: FnMut(&mut EventCtx, usize, bool) + 'static,
     {
         self.on_lock_change_with_ctx = Some(Box::new(on_lock_change));
+        self
+    }
+
+    pub fn on_reorder<F>(mut self, on_reorder: F) -> Self
+    where
+        F: FnMut(LayerListReorderChange) + 'static,
+    {
+        let mut on_reorder = on_reorder;
+        self.on_reorder = Some(Box::new(move |_, change| on_reorder(change)));
+        self
+    }
+
+    pub fn on_reorder_with_ctx<F>(mut self, on_reorder: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, LayerListReorderChange) + 'static,
+    {
+        self.on_reorder = Some(Box::new(on_reorder));
         self
     }
 
@@ -1254,6 +1310,165 @@ impl LayerList {
         })
     }
 
+    fn reorder_enabled(&self) -> bool {
+        self.on_reorder.is_some() && self.layers.len() > 1
+    }
+
+    fn reorder_press_at(
+        &self,
+        bounds: Rect,
+        pointer_id: u64,
+        position: Point,
+    ) -> Option<LayerListReorderPress> {
+        if !self.reorder_enabled() {
+            return None;
+        }
+        let LayerListHit::Row(row) = self.hit_at(bounds, position)? else {
+            return None;
+        };
+        let layer = self.layers.get(row)?;
+        if layer.disabled {
+            return None;
+        }
+        let rect = self.row_rect(bounds, row)?;
+        Some(LayerListReorderPress {
+            pointer_id,
+            start_position: position,
+            row,
+            drag_offset_y: position.y - rect.y(),
+        })
+    }
+
+    fn insertion_index_at(&self, bounds: Rect, position: Point) -> usize {
+        let viewport = self.viewport_rect(bounds);
+        let row_height = self.resolved_row_height();
+        if row_height <= 0.0 {
+            return 0;
+        }
+        let local_y = position.y - viewport.y();
+        for index in 0..self.layers.len() {
+            let midpoint = index as f32 * row_height + row_height * 0.5;
+            if local_y < midpoint {
+                return index;
+            }
+        }
+        self.layers.len()
+    }
+
+    fn reorder_target_at(&self, bounds: Rect, row: usize, position: Point) -> usize {
+        if self.layers.is_empty() {
+            return 0;
+        }
+        let insertion = self.insertion_index_at(bounds, position);
+        let target = if insertion > row {
+            insertion.saturating_sub(1)
+        } else {
+            insertion
+        };
+        target.min(self.layers.len().saturating_sub(1))
+    }
+
+    fn start_reorder_drag(
+        &mut self,
+        ctx: &mut EventCtx,
+        press: LayerListReorderPress,
+        position: Point,
+    ) {
+        let target = self.reorder_target_at(ctx.bounds(), press.row, position);
+        self.reorder_drag = Some(LayerListReorderDrag {
+            pointer_id: press.pointer_id,
+            row: press.row,
+            target,
+            position,
+            drag_offset_y: press.drag_offset_y,
+        });
+        self.pressed = None;
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn update_reorder_drag(&mut self, ctx: &mut EventCtx, position: Point) {
+        let Some(drag) = self.reorder_drag else {
+            return;
+        };
+        let target = self.reorder_target_at(ctx.bounds(), drag.row, position);
+        self.reorder_drag = Some(LayerListReorderDrag {
+            target,
+            position,
+            ..drag
+        });
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn remap_index_after_reorder(index: usize, from: usize, to: usize) -> usize {
+        if index == from {
+            to
+        } else if from < to && index > from && index <= to {
+            index - 1
+        } else if to < from && index >= to && index < from {
+            index + 1
+        } else {
+            index
+        }
+    }
+
+    fn finish_reorder_drag(&mut self, ctx: &mut EventCtx) {
+        let Some(drag) = self.reorder_drag.take() else {
+            return;
+        };
+        self.reorder_press = None;
+        self.pressed = None;
+
+        let from = drag.row;
+        let to = drag.target.min(self.layers.len().saturating_sub(1));
+        if from >= self.layers.len() || from == to {
+            ctx.request_paint();
+            ctx.request_semantics();
+            return;
+        }
+
+        let item = self.layers.remove(from);
+        self.layers.insert(to, item);
+        if self.selected_reader.is_none() {
+            self.selected = self
+                .selected
+                .map(|selected| Self::remap_index_after_reorder(selected, from, to));
+        }
+        if let Some(callback) = &mut self.on_reorder {
+            callback(
+                ctx,
+                LayerListReorderChange {
+                    item: from,
+                    from,
+                    to,
+                },
+            );
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn cancel_reorder_drag(&mut self, ctx: &mut EventCtx) {
+        if self.reorder_press.is_some() || self.reorder_drag.is_some() {
+            self.reorder_press = None;
+            self.reorder_drag = None;
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
+    fn reorder_marker_y(&self, bounds: Rect) -> Option<f32> {
+        let drag = self.reorder_drag?;
+        let target = drag.target.min(self.layers.len().saturating_sub(1));
+        let row = self.row_rect(bounds, target)?;
+        if target > drag.row {
+            Some(row.max_y())
+        } else {
+            Some(row.y())
+        }
+    }
+
     fn select(&mut self, ctx: &mut EventCtx, index: usize) {
         let Some(layer) = self.layers.get(index) else {
             return;
@@ -1352,6 +1567,100 @@ impl LayerList {
             ctx.request_animation_frame();
         }
     }
+
+    fn paint_row(
+        &self,
+        ctx: &mut PaintCtx,
+        viewport: Rect,
+        index: usize,
+        row: Rect,
+        theme: &DefaultTheme,
+        label_style: &TextStyle,
+        detail_style: &TextStyle,
+    ) {
+        let Some(layer) = self.layers.get(index) else {
+            return;
+        };
+        let palette = theme.palette;
+        let visible = layer.current_visible();
+        let locked = layer.current_locked();
+        let detail = layer.current_detail();
+        let selected = self.current_selected() == Some(index);
+        let row_hit = LayerListHit::Row(index);
+        let row_hover_amount = self.hover_motion.amount_for(&row_hit);
+        let row_press_amount = self.press_motion.amount_for(&row_hit);
+        if selected
+            || row_hover_amount > AnimatedScalar::EPSILON
+            || row_press_amount > AnimatedScalar::EPSILON
+        {
+            if let Some(highlight) = row_highlight_rect(row, viewport) {
+                ctx.fill_rect(
+                    highlight,
+                    data_row_state_fill(theme, selected, row_hover_amount, row_press_amount),
+                );
+            }
+        }
+
+        let visibility_hit = LayerListHit::Visibility(index);
+        paint_layer_visibility_button(
+            ctx,
+            self.visibility_rect(row),
+            theme,
+            visible,
+            self.hover_motion.amount_for(&visibility_hit),
+            self.press_motion.amount_for(&visibility_hit),
+        );
+        let lock_hit = LayerListHit::Lock(index);
+        paint_layer_lock_button(
+            ctx,
+            self.lock_rect(row),
+            theme,
+            locked,
+            self.hover_motion.amount_for(&lock_hit),
+            self.press_motion.amount_for(&lock_hit),
+        );
+        paint_layer_thumbnail(
+            ctx,
+            self.thumbnail_rect(row),
+            theme,
+            layer.thumbnail.unwrap_or(palette.control_hover),
+            visible,
+        );
+
+        let text_rect = self.text_rect(row);
+        let label_measurement = paint_text_measurement(ctx, &layer.label, label_style);
+        let detail_text = detail
+            .as_deref()
+            .unwrap_or(if visible { "Visible" } else { "Hidden" });
+        let detail_measurement = paint_text_measurement(ctx, detail_text, detail_style);
+        let (label_rect, detail_rect) = row_text_rects(
+            ctx,
+            text_rect,
+            label_measurement,
+            label_style.line_height,
+            Some(detail_measurement),
+            Some(detail_style.line_height),
+        );
+        let text_alpha = if visible { 1.0 } else { 0.58 };
+        ctx.draw_text(
+            label_rect,
+            layer.label.clone(),
+            TextStyle {
+                color: label_style.color.with_alpha(text_alpha),
+                ..label_style.clone()
+            },
+        );
+        if let Some(detail_rect) = detail_rect {
+            ctx.draw_text(
+                detail_rect,
+                detail_text.to_string(),
+                TextStyle {
+                    color: detail_style.color.with_alpha(text_alpha),
+                    ..detail_style.clone()
+                },
+            );
+        }
+    }
 }
 
 impl Widget for LayerList {
@@ -1360,6 +1669,27 @@ impl Widget for LayerList {
 
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                if self
+                    .reorder_drag
+                    .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
+                {
+                    self.update_reorder_drag(ctx, pointer.position);
+                    ctx.set_handled();
+                    return;
+                }
+                if self
+                    .reorder_press
+                    .is_some_and(|press| press.pointer_id == pointer.pointer_id)
+                {
+                    let press = self.reorder_press.unwrap();
+                    let delta = pointer.position - press.start_position;
+                    let distance_sq = delta.x * delta.x + delta.y * delta.y;
+                    if distance_sq >= self.drag_threshold * self.drag_threshold {
+                        self.start_reorder_drag(ctx, press, pointer.position);
+                        ctx.set_handled();
+                        return;
+                    }
+                }
                 let hovered = self.hit_at(ctx.bounds(), pointer.position);
                 self.set_hovered(hovered, ctx);
             }
@@ -1370,6 +1700,8 @@ impl Widget for LayerList {
                 let hovered = self.hit_at(ctx.bounds(), pointer.position);
                 self.set_hovered(hovered, ctx);
                 self.set_pressed(hovered, ctx);
+                self.reorder_press =
+                    self.reorder_press_at(ctx.bounds(), pointer.pointer_id, pointer.position);
                 if self.pressed.is_some() {
                     ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
@@ -1380,6 +1712,21 @@ impl Widget for LayerList {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                if self
+                    .reorder_drag
+                    .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
+                {
+                    self.finish_reorder_drag(ctx);
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                    return;
+                }
+                if self
+                    .reorder_press
+                    .is_some_and(|press| press.pointer_id == pointer.pointer_id)
+                {
+                    self.reorder_press = None;
+                }
                 let hovered = self.hit_at(ctx.bounds(), pointer.position);
                 if let Some(hit) = self
                     .pressed
@@ -1402,6 +1749,18 @@ impl Widget for LayerList {
                 self.set_hovered(None, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self
+                    .reorder_drag
+                    .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
+                    || self
+                        .reorder_press
+                        .is_some_and(|press| press.pointer_id == pointer.pointer_id)
+                {
+                    self.cancel_reorder_drag(ctx);
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                    return;
+                }
                 if self.pressed.is_some() {
                     self.set_pressed(None, ctx);
                     self.set_hovered(None, ctx);
@@ -1476,96 +1835,56 @@ impl Widget for LayerList {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        let palette = theme.palette;
         let viewport = self.viewport_rect(ctx.bounds());
         let label_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
+        let active_row = self.reorder_drag.map(|drag| drag.row);
 
         draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
         ctx.push_clip_rect(viewport);
 
-        for (index, layer) in self.layers.iter().enumerate() {
+        for index in 0..self.layers.len() {
+            if active_row == Some(index) {
+                continue;
+            }
             let Some(row) = self.row_rect(ctx.bounds(), index) else {
                 continue;
             };
-            let visible = layer.current_visible();
-            let locked = layer.current_locked();
-            let detail = layer.current_detail();
-            let selected = self.current_selected() == Some(index);
-            let row_hit = LayerListHit::Row(index);
-            let row_hover_amount = self.hover_motion.amount_for(&row_hit);
-            let row_press_amount = self.press_motion.amount_for(&row_hit);
-            if selected
-                || row_hover_amount > AnimatedScalar::EPSILON
-                || row_press_amount > AnimatedScalar::EPSILON
-            {
-                if let Some(highlight) = row_highlight_rect(row, viewport) {
-                    ctx.fill_rect(
-                        highlight,
-                        data_row_state_fill(&theme, selected, row_hover_amount, row_press_amount),
-                    );
-                }
-            }
+            self.paint_row(
+                ctx,
+                viewport,
+                index,
+                row,
+                &theme,
+                &label_style,
+                &detail_style,
+            );
+        }
 
-            let visibility_hit = LayerListHit::Visibility(index);
-            paint_layer_visibility_button(
-                ctx,
-                self.visibility_rect(row),
-                &theme,
-                visible,
-                self.hover_motion.amount_for(&visibility_hit),
-                self.press_motion.amount_for(&visibility_hit),
+        if let Some(marker_y) = self.reorder_marker_y(ctx.bounds()) {
+            let marker = Rect::new(
+                viewport.x() + 6.0,
+                (marker_y - 1.0).clamp(viewport.y(), viewport.max_y() - 2.0),
+                (viewport.width() - 12.0).max(0.0),
+                2.0,
             );
-            let lock_hit = LayerListHit::Lock(index);
-            paint_layer_lock_button(
-                ctx,
-                self.lock_rect(row),
-                &theme,
-                locked,
-                self.hover_motion.amount_for(&lock_hit),
-                self.press_motion.amount_for(&lock_hit),
-            );
-            paint_layer_thumbnail(
-                ctx,
-                self.thumbnail_rect(row),
-                &theme,
-                layer.thumbnail.unwrap_or(palette.control_hover),
-                visible,
-            );
+            ctx.fill(Path::rounded_rect(marker, 1.0), theme.palette.border_focus);
+        }
 
-            let text_rect = self.text_rect(row);
-            let label_measurement = paint_text_measurement(ctx, &layer.label, &label_style);
-            let detail_text =
-                detail
-                    .as_deref()
-                    .unwrap_or(if visible { "Visible" } else { "Hidden" });
-            let detail_measurement = paint_text_measurement(ctx, detail_text, &detail_style);
-            let (label_rect, detail_rect) = row_text_rects(
-                ctx,
-                text_rect,
-                label_measurement,
-                label_style.line_height,
-                Some(detail_measurement),
-                Some(detail_style.line_height),
-            );
-            let text_alpha = if visible { 1.0 } else { 0.58 };
-            ctx.draw_text(
-                label_rect,
-                layer.label.clone(),
-                TextStyle {
-                    color: label_style.color.with_alpha(text_alpha),
-                    ..label_style.clone()
-                },
-            );
-            if let Some(detail_rect) = detail_rect {
-                ctx.draw_text(
-                    detail_rect,
-                    detail_text.to_string(),
-                    TextStyle {
-                        color: detail_style.color.with_alpha(text_alpha),
-                        ..detail_style.clone()
-                    },
+        if let Some(drag) = self.reorder_drag {
+            if let Some(row) = self.row_rect(ctx.bounds(), drag.row) {
+                let y = drag.position.y - drag.drag_offset_y;
+                ctx.push_transform(Transform::translation(0.0, y - row.y()));
+                self.paint_row(
+                    ctx,
+                    viewport,
+                    drag.row,
+                    row,
+                    &theme,
+                    &label_style,
+                    &detail_style,
                 );
+                ctx.pop_transform();
             }
         }
 
@@ -3919,8 +4238,8 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Breadcrumb, BreadcrumbItem, DefaultTheme, LayerList, LayerListItem, ListItem, ListView,
-        Table, TableColumn, TableColumnAlignment, TableRow, TreeItem, TreeView,
+        Breadcrumb, BreadcrumbItem, DefaultTheme, LayerList, LayerListItem, LayerListReorderChange,
+        ListItem, ListView, Table, TableColumn, TableColumnAlignment, TableRow, TreeItem, TreeView,
     };
     use crate::{Button, Label, ScrollView, SizedBox, Stack, ThemeTextToken};
     use sui_core::{
@@ -4557,6 +4876,85 @@ mod tests {
             rect_center(visibility.bounds),
             &theme,
         )
+    }
+
+    #[test]
+    fn layer_list_drag_reorders_rows_without_activating_buttons() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let captured = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(280.0).height(168.0).with_child(
+                LayerList::new("Layers")
+                    .layers([
+                        LayerListItem::new("Paint"),
+                        LayerListItem::new("Paper"),
+                        LayerListItem::new("Ink"),
+                    ])
+                    .on_reorder(move |change| captured.borrow_mut().push(change)),
+            ),
+        );
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer semantics present");
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer semantics present");
+
+        let start = rect_center(paint.bounds);
+        let end = Point::new(start.x, paper.bounds.max_y() + 4.0);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, start, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, end, true),
+        )?;
+        runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, end, false))?;
+
+        assert_eq!(
+            changes.borrow().as_slice(),
+            &[LayerListReorderChange {
+                item: 0,
+                from: 0,
+                to: 1
+            }]
+        );
+
+        let output = runtime.render(window_id)?;
+        let paint = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paint")
+            })
+            .expect("paint layer semantics present after reorder");
+        let paper = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Paper")
+            })
+            .expect("paper layer semantics present after reorder");
+        assert!(paper.bounds.y() < paint.bounds.y());
+        assert!(
+            output.semantics.iter().any(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Hide Paint layer")
+                    && node.value == Some(SemanticsValue::Text("Visible".to_string()))
+            }),
+            "visibility button should remain a normal button after enabling row reorder"
+        );
+        Ok(())
     }
 
     #[test]
