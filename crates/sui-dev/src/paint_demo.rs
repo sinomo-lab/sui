@@ -233,6 +233,7 @@ fn build_paint_demo_with_state_and_theme(
     let demo_state = PaintDemoState::new();
     paint_state.set_brush_color(Color::rgba(0.08, 0.22, 0.78, 1.0));
     paint_state.set_brush_size(PAINT_INITIAL_BRUSH_SIZE);
+    paint_state.set_brush_shape(PixelCanvasBrushShape::Round);
     demo_state.sync_canvas_editable(&paint_state);
     demo_state.sync_canvas_layers(&paint_state);
 

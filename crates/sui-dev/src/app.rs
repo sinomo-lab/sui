@@ -4043,7 +4043,7 @@ mod tests {
                     && node.name.as_deref() == Some(PAINT_BRUSH_PREVIEW_NAME)
                     && node.value
                         == Some(SemanticsValue::Text(
-                            "Square brush, 18 px, 100% opacity".to_string(),
+                            "Round brush, 18 px, 100% opacity".to_string(),
                         ))
             }),
             "expected the brush preview to expose the current brush settings"
@@ -4288,7 +4288,7 @@ mod tests {
             semantics.iter().any(|node| {
                 node.role == SemanticsRole::ComboBox
                     && node.name.as_deref() == Some(PAINT_BRUSH_SHAPE_NAME)
-                    && node.value == Some(SemanticsValue::Text("Square".to_string()))
+                    && node.value == Some(SemanticsValue::Text("Round".to_string()))
             }),
             "expected the brush shape select to expose the current brush shape"
         );
@@ -5216,7 +5216,7 @@ mod tests {
                     && node.name.as_deref() == Some(PAINT_BRUSH_PREVIEW_NAME)
                     && node.value
                         == Some(SemanticsValue::Text(
-                            "Square brush, 36 px, 100% opacity".to_string(),
+                            "Round brush, 36 px, 100% opacity".to_string(),
                         ))
             }),
             "expected the brush preview to reflect the selected 36 px preset"
@@ -5416,7 +5416,7 @@ mod tests {
                     && node.name.as_deref() == Some(PAINT_ERASER_PREVIEW_NAME)
                     && node.value
                         == Some(SemanticsValue::Text(
-                            "Square eraser, 18 px, 100% opacity".to_string(),
+                            "Round eraser, 18 px, 100% opacity".to_string(),
                         ))
             }),
             "expected eraser selection to swap in the eraser preview pane"
@@ -5869,7 +5869,7 @@ mod tests {
         let _ = runtime.render(window_id)?;
         let option_position = Point::new(
             shape.bounds.x() + (shape.bounds.width() * 0.5),
-            shape.bounds.y() + shape.bounds.height() + 6.0 + (shape.bounds.height() * 1.5),
+            shape.bounds.y() + shape.bounds.height() + 6.0 + (shape.bounds.height() * 0.5),
         );
 
         let mut move_event = PointerEvent::new(PointerEventKind::Move, option_position);
@@ -5896,7 +5896,10 @@ mod tests {
                     && node.name.as_deref() == Some(PAINT_BRUSH_SHAPE_NAME)
             })
             .expect("brush shape select should still exist");
-        assert_eq!(shape.value, Some(SemanticsValue::Text("Round".to_string())));
+        assert_eq!(
+            shape.value,
+            Some(SemanticsValue::Text("Square".to_string()))
+        );
 
         let canvas = output
             .semantics
@@ -5909,7 +5912,7 @@ mod tests {
             panic!("paint canvas should expose text value");
         };
         assert!(
-            value.contains("shape Round"),
+            value.contains("shape Square"),
             "unexpected canvas value after brush shape selection: {value}"
         );
         Ok(())

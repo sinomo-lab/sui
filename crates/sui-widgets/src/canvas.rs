@@ -761,6 +761,7 @@ enum PixelCanvasDrag {
     },
     Paint {
         pointer_id: u64,
+        last_position: Point,
     },
 }
 
@@ -911,6 +912,10 @@ fn brush_shape_contains_pixel(
             (local_x * local_x) + (local_y * local_y) <= radius * radius
         }
     }
+}
+
+fn brush_stroke_spacing(brush_size: f32) -> f32 {
+    (brush_size.round().max(1.0) * 0.25).max(1.0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1101,6 +1106,28 @@ impl PixelCanvasPaperSettings {
             PixelColor::TRANSPARENT
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PixelCanvasImageSource {
+    Raw,
+    Composited {
+        display: PixelCanvasDisplaySettings,
+        paper: PixelCanvasPaperSettings,
+        paper_color: Color,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PixelCanvasImageCacheKey {
+    pixel_revision: u64,
+    source: PixelCanvasImageSource,
+}
+
+#[derive(Debug, Clone)]
+struct PixelCanvasImageCache {
+    key: PixelCanvasImageCacheKey,
+    image: RegisteredImage,
 }
 
 #[derive(Clone, Debug)]
@@ -1483,6 +1510,8 @@ pub struct PixelCanvas {
     width: usize,
     height: usize,
     pixels: Vec<PixelColor>,
+    pixel_revision: u64,
+    paint_image_cache: RefCell<Option<PixelCanvasImageCache>>,
     viewport: CanvasViewport,
     state: PixelCanvasState,
     drag: Option<PixelCanvasDrag>,
@@ -1507,6 +1536,8 @@ impl PixelCanvas {
             width,
             height,
             pixels: vec![PixelColor::TRANSPARENT; width * height],
+            pixel_revision: 0,
+            paint_image_cache: RefCell::new(None),
             viewport: CanvasViewport::new().zoom(14.0),
             state: PixelCanvasState::new(),
             drag: None,
@@ -1586,6 +1617,7 @@ impl PixelCanvas {
     pub fn with_pixels(mut self, pixels: Vec<Color>) -> Self {
         if pixels.len() == self.pixels.len() {
             self.pixels = pixels.into_iter().map(PixelColor::from_color).collect();
+            self.mark_pixels_changed();
             self.has_visible_pixels = self.pixels.iter().any(|pixel| pixel.alpha > 0);
             self.publish_canvas_availability();
         }
@@ -1597,7 +1629,11 @@ impl PixelCanvas {
             return false;
         };
         let next = PixelColor::from_color(color);
+        if self.pixels[index] == next {
+            return false;
+        }
         self.pixels[index] = next;
+        self.mark_pixels_changed();
         if next.alpha > 0 {
             self.has_visible_pixels = true;
         } else if self.has_visible_pixels {
@@ -1630,6 +1666,13 @@ impl PixelCanvas {
 
     fn document_origin(&self) -> Point {
         Point::new(self.width as f32 * 0.5, self.height as f32 * 0.5)
+    }
+
+    fn mark_pixels_changed(&mut self) {
+        self.pixel_revision = self.pixel_revision.wrapping_add(1);
+        if self.pixel_revision == 0 {
+            self.paint_image_cache.borrow_mut().take();
+        }
     }
 
     fn set_pixel_with_history(
@@ -1682,15 +1725,7 @@ impl PixelCanvas {
         true
     }
 
-    fn paint_at_position(
-        &mut self,
-        bounds: Rect,
-        position: Point,
-        edits: &mut Vec<PixelEdit>,
-    ) -> bool {
-        let world = self
-            .viewport
-            .screen_to_world(bounds, position, self.document_origin());
+    fn paint_at_world(&mut self, world: Point, edits: &mut Vec<PixelEdit>) -> bool {
         let x = world.x.floor() as isize;
         let y = world.y.floor() as isize;
         let brush = self.state.brush();
@@ -1730,6 +1765,52 @@ impl PixelCanvas {
                     PixelCanvasTool::Fill | PixelCanvasTool::Pan => false,
                 };
             }
+        }
+        if painted {
+            self.mark_pixels_changed();
+        }
+        painted
+    }
+
+    fn paint_at_position(
+        &mut self,
+        bounds: Rect,
+        position: Point,
+        edits: &mut Vec<PixelEdit>,
+    ) -> bool {
+        let world = self
+            .viewport
+            .screen_to_world(bounds, position, self.document_origin());
+        self.paint_at_world(world, edits)
+    }
+
+    fn paint_between_positions(
+        &mut self,
+        bounds: Rect,
+        start: Point,
+        end: Point,
+        edits: &mut Vec<PixelEdit>,
+    ) -> bool {
+        let document_origin = self.document_origin();
+        let start = self
+            .viewport
+            .screen_to_world(bounds, start, document_origin);
+        let end = self.viewport.screen_to_world(bounds, end, document_origin);
+        let delta = end - start;
+        let distance = (delta.x * delta.x + delta.y * delta.y).sqrt();
+        if distance <= f32::EPSILON {
+            return false;
+        }
+
+        let spacing = brush_stroke_spacing(self.state.brush_size());
+        let steps = (distance / spacing).ceil().max(1.0) as usize;
+        let mut painted = false;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            painted |= self.paint_at_world(
+                Point::new(start.x + (delta.x * t), start.y + (delta.y * t)),
+                edits,
+            );
         }
         painted
     }
@@ -1784,6 +1865,7 @@ impl PixelCanvas {
                 stack.push(index + self.width);
             }
         }
+        self.mark_pixels_changed();
         true
     }
 
@@ -1812,6 +1894,7 @@ impl PixelCanvas {
         for edit in edits.iter().rev() {
             self.pixels[edit.index] = edit.before;
         }
+        self.mark_pixels_changed();
         self.redo_stack.push(edits);
         self.has_visible_pixels = self.pixels.iter().any(|pixel| pixel.alpha > 0);
         self.publish_canvas_availability();
@@ -1830,6 +1913,7 @@ impl PixelCanvas {
         for edit in &edits {
             self.pixels[edit.index] = edit.after;
         }
+        self.mark_pixels_changed();
         self.undo_stack.push(edits);
         self.has_visible_pixels = self.pixels.iter().any(|pixel| pixel.alpha > 0);
         self.publish_canvas_availability();
@@ -1894,6 +1978,7 @@ impl PixelCanvas {
             return false;
         }
         self.has_visible_pixels = false;
+        self.mark_pixels_changed();
         self.push_history(edits);
         true
     }
@@ -2010,25 +2095,73 @@ impl PixelCanvas {
     }
 
     fn export_image_data(&self) -> Vec<u8> {
+        self.paint_image().bytes().to_vec()
+    }
+
+    fn paint_image(&self) -> RegisteredImage {
         let display = self.state.display();
         let paper = self.state.paper();
         let paper_color = self.resolved_theme().surfaces.pixel_canvas_paper;
+        self.paint_image_for_source(Self::image_source(display, paper, paper_color))
+    }
+
+    fn raw_paint_image(&self) -> RegisteredImage {
+        self.paint_image_for_source(PixelCanvasImageSource::Raw)
+    }
+
+    fn image_source(
+        display: PixelCanvasDisplaySettings,
+        paper: PixelCanvasPaperSettings,
+        paper_color: Color,
+    ) -> PixelCanvasImageSource {
         if display.requires_compositing() || paper.requires_compositing() {
-            self.display_image_data(display, paper, paper_color)
+            PixelCanvasImageSource::Composited {
+                display,
+                paper,
+                paper_color,
+            }
         } else {
-            self.image_data()
+            PixelCanvasImageSource::Raw
         }
     }
 
-    fn paint_image_data(&self) -> Vec<u8> {
-        let display = self.state.display();
-        let paper = self.state.paper();
-        let paper_color = self.resolved_theme().surfaces.pixel_canvas_paper;
-        if display.requires_compositing() || paper.requires_compositing() {
-            self.display_image_data(display, paper, paper_color)
-        } else {
-            self.image_data()
+    fn can_paint_with_image_opacity(
+        display: PixelCanvasDisplaySettings,
+        paper: PixelCanvasPaperSettings,
+    ) -> bool {
+        display.visible
+            && display.blend_mode == PixelCanvasBlendMode::Normal
+            && paper.visible
+            && paper.opacity >= 0.999
+    }
+
+    fn paint_image_for_source(&self, source: PixelCanvasImageSource) -> RegisteredImage {
+        let key = PixelCanvasImageCacheKey {
+            pixel_revision: self.pixel_revision,
+            source,
+        };
+
+        if let Some(cache) = self.paint_image_cache.borrow().as_ref()
+            && cache.key == key
+        {
+            return cache.image.clone();
         }
+
+        let data = match source {
+            PixelCanvasImageSource::Raw => self.image_data(),
+            PixelCanvasImageSource::Composited {
+                display,
+                paper,
+                paper_color,
+            } => self.display_image_data(display, paper, paper_color),
+        };
+        let image = RegisteredImage::from_rgba8(self.width as u32, self.height as u32, data)
+            .expect("pixel canvas image data should match its dimensions");
+        *self.paint_image_cache.borrow_mut() = Some(PixelCanvasImageCache {
+            key,
+            image: image.clone(),
+        });
+        image
     }
 
     fn image_data(&self) -> Vec<u8> {
@@ -2171,6 +2304,7 @@ impl Widget for PixelCanvas {
                         self.active_edits = edits;
                         self.drag = Some(PixelCanvasDrag::Paint {
                             pointer_id: pointer.pointer_id,
+                            last_position: pointer.position,
                         });
                     }
                     PixelCanvasTool::Fill if editable => {
@@ -2209,12 +2343,22 @@ impl Widget for PixelCanvas {
                     Self::request_interaction_update(ctx);
                     ctx.set_handled();
                 }
-                Some(PixelCanvasDrag::Paint { pointer_id })
-                    if pointer_id == pointer.pointer_id && self.state.is_editable() =>
-                {
+                Some(PixelCanvasDrag::Paint {
+                    pointer_id,
+                    last_position,
+                }) if pointer_id == pointer.pointer_id && self.state.is_editable() => {
                     let mut edits = std::mem::take(&mut self.active_edits);
-                    self.paint_at_position(ctx.bounds(), pointer.position, &mut edits);
+                    self.paint_between_positions(
+                        ctx.bounds(),
+                        last_position,
+                        pointer.position,
+                        &mut edits,
+                    );
                     self.active_edits = edits;
+                    self.drag = Some(PixelCanvasDrag::Paint {
+                        pointer_id,
+                        last_position: pointer.position,
+                    });
                     Self::request_interaction_update(ctx);
                     ctx.set_handled();
                 }
@@ -2227,13 +2371,21 @@ impl Widget for PixelCanvas {
                 let active_pointer = match self.drag {
                     Some(
                         PixelCanvasDrag::Pan { pointer_id, .. }
-                        | PixelCanvasDrag::Paint { pointer_id },
+                        | PixelCanvasDrag::Paint { pointer_id, .. },
                     ) => Some(pointer_id),
                     None => None,
                 };
                 if active_pointer == Some(pointer.pointer_id) {
-                    if matches!(self.drag, Some(PixelCanvasDrag::Paint { .. })) {
-                        let edits = std::mem::take(&mut self.active_edits);
+                    if let Some(PixelCanvasDrag::Paint { last_position, .. }) = self.drag {
+                        let mut edits = std::mem::take(&mut self.active_edits);
+                        if pointer.kind == PointerEventKind::Up && self.state.is_editable() {
+                            self.paint_between_positions(
+                                ctx.bounds(),
+                                last_position,
+                                pointer.position,
+                                &mut edits,
+                            );
+                        }
                         self.push_history(edits);
                     }
                     self.drag = None;
@@ -2364,32 +2516,42 @@ impl Widget for PixelCanvas {
         paint_pixel_canvas_document_shadow(ctx, image_bounds, transform, &theme);
         let display = self.state.display();
         let paper = self.state.paper();
-        let baked_image = display.requires_compositing() || paper.requires_compositing();
-        if !baked_image {
+        let image_handle = ctx.widget_image_handle(0);
+        let sampling = if self.viewport.zoom >= theme.metrics.pixel_canvas_nearest_sampling_zoom {
+            ImageSampling::Nearest
+        } else {
+            ImageSampling::Linear
+        };
+        if Self::can_paint_with_image_opacity(display, paper) {
             fill_transformed_rect(
                 ctx,
                 image_bounds,
                 transform,
                 theme.surfaces.pixel_canvas_paper,
             );
-        }
-        let image_handle = ctx.widget_image_handle(0);
-        let image = RegisteredImage::from_rgba8(
-            self.width as u32,
-            self.height as u32,
-            self.paint_image_data(),
-        )
-        .expect("pixel canvas image data should match its dimensions");
-        ctx.register_image(image_handle, image);
-        let sampling = if self.viewport.zoom >= theme.metrics.pixel_canvas_nearest_sampling_zoom {
-            ImageSampling::Nearest
+            ctx.register_image(image_handle, self.raw_paint_image());
+            ctx.draw_image_quad_source(
+                transformed_rect_points(image_bounds, transform),
+                ImageSource::new(image_handle)
+                    .with_sampling(sampling)
+                    .with_tint(Color::WHITE.with_alpha(display.opacity)),
+            );
         } else {
-            ImageSampling::Linear
-        };
-        ctx.draw_image_quad_source(
-            transformed_rect_points(image_bounds, transform),
-            ImageSource::new(image_handle).with_sampling(sampling),
-        );
+            let baked_image = display.requires_compositing() || paper.requires_compositing();
+            if !baked_image {
+                fill_transformed_rect(
+                    ctx,
+                    image_bounds,
+                    transform,
+                    theme.surfaces.pixel_canvas_paper,
+                );
+            }
+            ctx.register_image(image_handle, self.paint_image());
+            ctx.draw_image_quad_source(
+                transformed_rect_points(image_bounds, transform),
+                ImageSource::new(image_handle).with_sampling(sampling),
+            );
+        }
         if self.viewport.zoom >= theme.metrics.pixel_canvas_grid_zoom
             && let Some(range) = pixel_visible_range(
                 self.viewport,
@@ -3098,7 +3260,7 @@ mod tests {
         SemanticsValue, Size, Vector, WindowEvent,
     };
     use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
-    use sui_scene::{Brush, ImageSampling, SceneCommand};
+    use sui_scene::{Brush, ImageSampling, RegisteredImage, SceneCommand};
     use sui_text::{FontFeature, FontRegistry, TextSystem};
 
     const RGBA_CHANNEL_TOLERANCE: u8 = 1;
@@ -3153,21 +3315,36 @@ mod tests {
     }
 
     fn rendered_pixel_bytes(output: &RenderOutput) -> Vec<u8> {
+        rendered_pixel_image(output).bytes().to_vec()
+    }
+
+    fn rendered_pixel_image(output: &RenderOutput) -> &RegisteredImage {
+        let source = rendered_pixel_image_source(output);
+        output
+            .frame
+            .image_registry
+            .get(source.image)
+            .expect("pixel canvas image should be registered")
+    }
+
+    fn rendered_pixel_image_source(output: &RenderOutput) -> sui_scene::ImageSource {
         let mut image_handle = None;
+        let mut image_source = None;
         output.frame.scene.visit_commands(&mut |command| {
             if let SceneCommand::DrawImage { source, .. }
             | SceneCommand::DrawImageQuad { source, .. } = command
             {
                 image_handle = Some(source.image);
+                image_source = Some(source.clone());
             }
         });
-        output
-            .frame
-            .image_registry
-            .get(image_handle.expect("pixel canvas should draw an image"))
-            .expect("pixel canvas image should be registered")
-            .bytes()
-            .to_vec()
+        let source = image_source.expect("pixel canvas should draw an image");
+        assert_eq!(
+            Some(source.image),
+            image_handle,
+            "captured image source should match the image handle"
+        );
+        source
     }
 
     fn pixel_canvas_zoom_percent(output: &RenderOutput) -> f32 {
@@ -3922,6 +4099,52 @@ mod tests {
     }
 
     #[test]
+    fn pixel_canvas_fast_brush_drag_interpolates_sparse_pointer_samples() -> sui_core::Result<()> {
+        let state = PixelCanvasState::new();
+        state.set_brush_color(Color::rgba(1.0, 0.0, 0.0, 1.0));
+        state.set_brush_size(1.0);
+        let (mut runtime, window_id) =
+            build_runtime(PixelCanvas::new("Paint", 8, 8).state(state.clone()));
+
+        let output = runtime.render(window_id)?;
+        let canvas = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("pixel canvas semantics present");
+        let document_origin = Point::new(4.0, 4.0);
+        let start =
+            state
+                .viewport()
+                .world_to_screen(canvas.bounds, Point::new(1.5, 4.5), document_origin);
+        let middle =
+            state
+                .viewport()
+                .world_to_screen(canvas.bounds, Point::new(4.5, 4.5), document_origin);
+        let end =
+            state
+                .viewport()
+                .world_to_screen(canvas.bounds, Point::new(6.5, 4.5), document_origin);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, start, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, middle, true),
+        )?;
+        runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, end, false))?;
+
+        let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
+        for x in 1..=6 {
+            let index = ((4 * 8) + x) * 4;
+            assert_rgba_channels_near(&pixels[index..index + 4], [255, 0, 0, 255]);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn pixel_canvas_state_controls_brush_color_and_size() -> sui_core::Result<()> {
         let state = PixelCanvasState::new();
         state.set_brush_color(Color::rgba(1.0, 0.0, 0.0, 1.0));
@@ -4323,8 +4546,24 @@ mod tests {
             PixelCanvasBlendMode::Normal,
         );
 
-        let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert_rgba_channels_near(&pixels[0..4], [half.red, half.green, half.blue, half.alpha]);
+        let output = runtime.render(window_id)?;
+        let source = rendered_pixel_image_source(&output);
+        assert_eq!(source.tint, Some(Color::WHITE.with_alpha(0.5)));
+        let pixels = rendered_pixel_bytes(&output);
+        assert_rgba_channels_near(&pixels[0..4], [255, 0, 0, 255]);
+
+        state.request_export_snapshot();
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(521.0, 361.0))),
+        )?;
+        let snapshot = state
+            .latest_export_snapshot()
+            .expect("display opacity export should publish composited pixels");
+        assert_rgba_channels_near(
+            &snapshot.rgba8()[0..4],
+            [half.red, half.green, half.blue, half.alpha],
+        );
 
         state.set_display_opacity(1.0);
         state.set_display_blend_mode(PixelCanvasBlendMode::Multiply);
@@ -4342,6 +4581,27 @@ mod tests {
             &pixels[0..4],
             [multiply.red, multiply.green, multiply.blue, multiply.alpha],
         );
+        Ok(())
+    }
+
+    #[test]
+    fn pixel_canvas_layer_opacity_reuses_registered_data_between_repaints() -> sui_core::Result<()>
+    {
+        let state = PixelCanvasState::new();
+        state.set_display_opacity(0.5);
+        let (mut runtime, window_id) = build_runtime(
+            PixelCanvas::new("Paint", 1, 1)
+                .state(state)
+                .with_pixels(vec![Color::rgba(1.0, 0.0, 0.0, 1.0)]),
+        );
+
+        let first = runtime.render(window_id)?;
+        let second = runtime.render(window_id)?;
+
+        assert!(std::ptr::addr_eq(
+            rendered_pixel_image(&first).bytes().as_ptr(),
+            rendered_pixel_image(&second).bytes().as_ptr()
+        ));
         Ok(())
     }
 
