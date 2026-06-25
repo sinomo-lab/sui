@@ -217,6 +217,7 @@ enum VectorAlignment {
 
 struct VectorDemoStateInner {
     selected_object: usize,
+    // Visual layer order, frontmost first.
     object_order: Vec<usize>,
     object_visible: [bool; VECTOR_OBJECT_LABELS.len()],
     object_locked: [bool; VECTOR_OBJECT_LABELS.len()],
@@ -229,7 +230,7 @@ impl VectorDemoState {
         Self {
             inner: Rc::new(RefCell::new(VectorDemoStateInner {
                 selected_object: 1,
-                object_order: (0..VECTOR_OBJECT_LABELS.len()).collect(),
+                object_order: vector_default_object_order(),
                 object_visible: [true; VECTOR_OBJECT_LABELS.len()],
                 object_locked: [true, false, false, false],
                 objects: vector_default_objects(),
@@ -280,6 +281,16 @@ impl VectorDemoState {
 
     fn object_order(&self) -> Vec<usize> {
         self.inner.borrow().object_order.clone()
+    }
+
+    fn object_paint_order(&self) -> Vec<usize> {
+        self.inner
+            .borrow()
+            .object_order
+            .iter()
+            .rev()
+            .copied()
+            .collect()
     }
 
     fn selected_object_label(&self) -> &'static str {
@@ -457,7 +468,7 @@ impl VectorDemoState {
 
     fn hit_test(&self, point: Point) -> Option<usize> {
         let inner = self.inner.borrow();
-        inner.object_order.iter().copied().rev().find_map(|index| {
+        inner.object_order.iter().copied().find_map(|index| {
             let object = inner.objects.get(index)?;
             inner
                 .object_visible
@@ -569,6 +580,10 @@ fn vector_default_objects() -> [VectorObject; VECTOR_OBJECT_LABELS.len()] {
             0.0,
         ),
     ]
+}
+
+fn vector_default_object_order() -> Vec<usize> {
+    (0..VECTOR_OBJECT_LABELS.len()).rev().collect()
 }
 
 fn normalize_vector_rotation(rotation_degrees: f32) -> f32 {
@@ -830,47 +845,19 @@ fn build_vector_properties_panel(
 
 fn build_vector_objects_panel(state: VectorDemoState, theme_reader: DevThemeReader) -> impl Widget {
     let selected_state = state.clone();
-    let artboard_detail_state = state.clone();
-    let blue_detail_state = state.clone();
-    let amber_detail_state = state.clone();
-    let stroke_detail_state = state.clone();
-    let artboard_visible_state = state.clone();
-    let blue_visible_state = state.clone();
-    let amber_visible_state = state.clone();
-    let stroke_visible_state = state.clone();
-    let artboard_locked_state = state.clone();
-    let blue_locked_state = state.clone();
-    let amber_locked_state = state.clone();
-    let stroke_locked_state = state.clone();
     let visibility_state = state.clone();
     let lock_state = state.clone();
     let reorder_state = state.clone();
+    let layers = state
+        .object_order()
+        .into_iter()
+        .map(|index| vector_object_layer_item(&state, index))
+        .collect::<Vec<_>>();
 
     SizedBox::new().width(284.0).height(204.0).with_child(
         LayerList::new(VECTOR_OBJECTS_NAME)
             .theme_when(clone_dev_theme_reader(&theme_reader))
-            .layers([
-                LayerListItem::new(VECTOR_OBJECT_LABELS[0])
-                    .detail_when(move || artboard_detail_state.object_detail(0))
-                    .thumbnail(VECTOR_OBJECT_COLORS[0])
-                    .visible_when(move || artboard_visible_state.object_visible(0))
-                    .locked_when(move || artboard_locked_state.object_locked(0)),
-                LayerListItem::new(VECTOR_OBJECT_LABELS[1])
-                    .detail_when(move || blue_detail_state.object_detail(1))
-                    .thumbnail(VECTOR_OBJECT_COLORS[1])
-                    .visible_when(move || blue_visible_state.object_visible(1))
-                    .locked_when(move || blue_locked_state.object_locked(1)),
-                LayerListItem::new(VECTOR_OBJECT_LABELS[2])
-                    .detail_when(move || amber_detail_state.object_detail(2))
-                    .thumbnail(VECTOR_OBJECT_COLORS[2])
-                    .visible_when(move || amber_visible_state.object_visible(2))
-                    .locked_when(move || amber_locked_state.object_locked(2)),
-                LayerListItem::new(VECTOR_OBJECT_LABELS[3])
-                    .detail_when(move || stroke_detail_state.object_detail(3))
-                    .thumbnail(VECTOR_OBJECT_COLORS[3])
-                    .visible_when(move || stroke_visible_state.object_visible(3))
-                    .locked_when(move || stroke_locked_state.object_locked(3)),
-            ])
+            .layers(layers)
             .selected(state.selected_object_visual_index())
             .selected_when(move || Some(selected_state.selected_object_visual_index()))
             .row_height(46.0)
@@ -893,6 +880,17 @@ fn build_vector_objects_panel(state: VectorDemoState, theme_reader: DevThemeRead
                 request_window_refresh(ctx, true);
             }),
     )
+}
+
+fn vector_object_layer_item(state: &VectorDemoState, index: usize) -> LayerListItem {
+    let detail_state = state.clone();
+    let visible_state = state.clone();
+    let locked_state = state.clone();
+    LayerListItem::new(VECTOR_OBJECT_LABELS[index])
+        .detail_when(move || detail_state.object_detail(index))
+        .thumbnail(VECTOR_OBJECT_COLORS[index])
+        .visible_when(move || visible_state.object_visible(index))
+        .locked_when(move || locked_state.object_locked(index))
 }
 
 fn build_vector_transform_panel(
@@ -1713,7 +1711,7 @@ impl Widget for VectorEditorCanvas {
         ctx.stroke_bounds(theme.palette.border, StrokeStyle::new(1.0));
         ctx.push_clip_rect(bounds);
         Self::paint_grid(ctx, bounds, &theme);
-        for index in self.state.object_order() {
+        for index in self.state.object_paint_order() {
             if !self.state.object_visible(index) {
                 continue;
             }
@@ -1874,6 +1872,8 @@ mod tests {
     #[test]
     fn vector_demo_state_supports_selection_and_transform_edits() {
         let state = VectorDemoState::new();
+        assert_eq!(state.object_order(), vec![3, 2, 1, 0]);
+        assert_eq!(state.object_paint_order(), vec![0, 1, 2, 3]);
         assert_eq!(state.hit_test(Point::new(92.0, 44.0)), Some(2));
 
         state.set_selected_object(2);

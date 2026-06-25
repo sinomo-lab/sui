@@ -7416,6 +7416,10 @@ final_max_luminance={final_max_luminance}
                     && node.name.as_deref() == Some("Amber ellipse")
             })
             .expect("amber ellipse row should exist");
+        assert!(
+            amber.bounds.y() < blue.bounds.y(),
+            "default vector object list should show frontmost layers above lower layers"
+        );
 
         drag_primary_pointer(
             &mut runtime,
@@ -7425,7 +7429,7 @@ final_max_luminance={final_max_luminance}
                 blue.bounds.x() + 104.0,
                 blue.bounds.y() + blue.bounds.height() * 0.5,
             ),
-            Point::new(blue.bounds.x() + 104.0, amber.bounds.max_y() + 8.0),
+            Point::new(blue.bounds.x() + 104.0, amber.bounds.y() + 4.0),
         )?;
 
         let output = runtime.render(window_id)?;
@@ -7444,7 +7448,7 @@ final_max_luminance={final_max_luminance}
                     && node.name.as_deref() == Some("Amber ellipse")
             })
             .expect("amber ellipse row should still exist");
-        assert!(amber.bounds.y() < blue.bounds.y());
+        assert!(blue.bounds.y() < amber.bounds.y());
 
         let amber_position = Point::new(
             amber.bounds.x() + amber.bounds.width() * 0.5,
